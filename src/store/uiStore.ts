@@ -7,12 +7,18 @@ import type { UIState, PermissionRequest, Notification } from '../types/ui';
 import { NOTIFICATION_TIMEOUT } from '../types/ui';
 
 /**
+ * Storage key for persisting agent instructions
+ */
+const AGENT_INSTRUCTIONS_STORAGE_KEY = 'ai-agent-instructions';
+
+/**
  * UI store using Zustand
  */
 export const useUIStore = create<UIState>((set) => ({
   // ========== Initial State ==========
   sidebarVisible: true,
   settingsOpen: false,
+  currentView: 'chat',
   currentArtifactId: undefined,
   pendingPermission: undefined,
   notifications: [],
@@ -21,10 +27,16 @@ export const useUIStore = create<UIState>((set) => ({
   // Agentic UI State
   permissionMode: 'standard',
   rightPanelVisible: true,
-  agentInstructions: 'You are a powerful AI Agent designed by the Google Deepmind team.',
+  agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || 'You are a powerful AI Agent designed by the Google Deepmind team.',
   taskProgress: [],
 
   // ========== Action Methods ==========
+
+  /**
+   * Set current view (chat or workflow)
+   */
+  setCurrentView: (view: 'chat' | 'workflow') =>
+    set({ currentView: view }),
 
   /**
    * Toggle sidebar visibility
@@ -106,7 +118,10 @@ export const useUIStore = create<UIState>((set) => ({
   // Agentic Actions
   setPermissionMode: (mode) => set({ permissionMode: mode }),
   toggleRightPanel: () => set((state) => ({ rightPanelVisible: !state.rightPanelVisible })),
-  setAgentInstructions: (agentInstructions) => set({ agentInstructions }),
+  setAgentInstructions: (agentInstructions) => {
+    set({ agentInstructions });
+    localStorage.setItem(AGENT_INSTRUCTIONS_STORAGE_KEY, agentInstructions);
+  },
   addTaskStep: (label) => set((state) => ({
     taskProgress: [...state.taskProgress, { id: crypto.randomUUID(), label, status: 'pending' }]
   })),

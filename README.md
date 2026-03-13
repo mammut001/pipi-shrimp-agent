@@ -1,11 +1,18 @@
-# Tauri AI Agent
+# Pipi-Shrimp Agent (皮皮虾助手)
 
-一个轻量级的 AI 个人助手，基于 Tauri + React + TypeScript。
+一个**极致轻量级**、**高性能**的 AI 个人助手，基于 Tauri + React + TypeScript 打造。
+
+### ✨ 核心特性
+
+- **极致轻量**: 极速启动，内存占用极低，专注于核心效率工具。
+- **现代化架构**: 基于 Rust (Tauri) 后端，提供原生级性能与安全性。
+- **Workflow 系统**: 灵活的流式任务管理，让复杂操作自动化。
+- **项目级上下文**: 智能管理不同项目的对话上下文，保持思路清晰。
 
 ## 🚀 快速开始
 
 ### 前置要求
-- Node.js >= 24 < 25
+- Node.js >= 24
 - pnpm (或 npm)
 - Rust (通过 Tauri 安装)
 
@@ -17,47 +24,33 @@ pnpm install
 
 # 2. 启动开发服务器
 pnpm run tauri:dev
-
-# 3. 构建生产版本
-pnpm run tauri:build
 ```
-
-### 可用脚本
-
-- `pnpm dev` - 启动 Vite 开发服务器 (port 5173)
-- `pnpm build` - TypeScript 编译 + Vite 打包
-- `pnpm tauri:dev` - 启动 Tauri 应用 + 热重载
-- `pnpm tauri:build` - 打包发布版本
 
 ## 📂 项目结构
 
 ```
-src/              # React 前端代码
-src-tauri/        # Rust 后端代码
-├─ src/
-│  ├─ main.rs    # 应用入口
-│  └─ lib.rs     # Tauri Builder 配置
-├─ Cargo.toml    # Rust 依赖
-└─ tauri.conf.json # Tauri 配置
+src/              # React 前端 (轻量 UI 交互)
+src-tauri/        # Rust 后端 (高性能运行时)
+├─ src/           # 核心逻辑
+└─ tauri.conf.json # 配置
 ```
 
 ## 🛠️ 技术栈
 
 - **前端**: React 18 + TypeScript + Tailwind CSS
-- **状态管理**: Zustand
+- **状态管理**: Zustand (轻量级状态管理)
 - **后端**: Rust + Tauri
 - **构建工具**: Vite
-- **异步运行时**: Tokio
-- **IM 集成**: Grammy (Telegram)
+- **AI 集成**: Claude SDK (已优化工具调用)
 
-## 📝 开发进度
+## 📝 进度
 
-- ✅ Task 1.1: Tauri 项目初始化 + 基础配置
-- ⏳ Task 1.2: Zustand 状态管理
-- ⏳ Task 1.3: 基础 React UI
-- ⏳ Task 1.4: Rust 命令框架
-- ⏳ Task 2.1: Claude SDK 集成
-- ... (更多 Tasks)
+- ✅ Task 1: 核心框架初始化 (Tauri + React)
+- ✅ Task 2: 轻量级状态管理实现 (Zustand)
+- ✅ Task 3: Claude SDK 集成与优化器
+- ✅ Task 4: **Workflow 流式系统** (New)
+- ✅ Task 5: **项目级对话上下文管理** (New)
+- ⏳ Task 6: 更多自动化插件支持
 
 ## 🔧 IDE 推荐配置
 

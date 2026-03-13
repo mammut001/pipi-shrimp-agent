@@ -5,6 +5,13 @@
 
 // ============= Type Definitions =============
 
+/** Tool call interface (for Function Calling) */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 /** Chat message interface */
 export interface Message {
   id: string;                    // Unique ID (UUID v4)
@@ -12,6 +19,8 @@ export interface Message {
   content: string;              // Message content
   timestamp: number;            // Timestamp in milliseconds
   artifacts?: Artifact[];        // Attached code/charts etc
+  tool_calls?: ToolCall[];       // Tool calls made by assistant
+  tool_call_id?: string;         // ID of tool result (for tool role messages)
   metadata?: Record<string, unknown>;  // Additional metadata
 }
 
@@ -31,7 +40,17 @@ export interface Session {
   messages: Message[];          // All messages in the session
   createdAt: number;            // Creation timestamp
   updatedAt: number;            // Last update timestamp
-  cwd?: string;                 // Current working directory (for code execution)
+  cwd?: string;                  // Current working directory (for code execution)
+  projectId?: string;           // Project ID this session belongs to (optional)
+  model?: string;               // Model to use for this session (optional, defaults to apiConfig model)
+}
+
+/** Project (folder for grouping sessions) */
+export interface Project {
+  id: string;
+  name: string;                  // Project name
+  createdAt: number;            // Creation timestamp
+  updatedAt: number;            // Last update timestamp
 }
 
 // ============= Zustand State Interface =============
@@ -40,15 +59,19 @@ export interface Session {
 export interface ChatState {
   // ========== Data State ==========
   sessions: Session[];
+  projects: Project[];
   currentSessionId: string | null;
   isStreaming: boolean;
   isInitialized: boolean;
   streamingContent: string;
   error: string | null;         // Error message
+  streamingTimeoutId: ReturnType<typeof setTimeout> | null;  // Timeout ID for streaming protection
+  lastUiUpdateTime: number;     // Last UI update timestamp for throttling
 
   // ========== Computed Properties ==========
   currentSession: () => Session | null;  // Get current session
   currentMessages: () => Message[];      // Get current session's messages
+  getSessionsByProject: (projectId: string | null) => Session[];  // Get sessions by project
 
   // ========== Action Methods ==========
 
@@ -58,9 +81,9 @@ export interface ChatState {
   init: () => Promise<void>;
 
   /**
-   * Create a new session
+   * Create a new session (optionally in a project and with a specific model)
    */
-  startSession: () => Promise<void>;
+  startSession: (projectId?: string, model?: string) => Promise<void>;
 
   /**
    * Send message (call API)
@@ -83,9 +106,9 @@ export interface ChatState {
   addMessage: (message: Message) => void;
 
   /**
-   * Update last message (for streaming updates)
+   * Update last message (for streaming updates) and persist to database
    */
-  updateLastMessage: (content: string, artifacts?: Artifact[]) => void;
+  updateLastMessage: (content: string, artifacts?: Artifact[]) => Promise<void>;
 
   /**
    * Append streaming content to current buffer
@@ -93,7 +116,7 @@ export interface ChatState {
   appendStreamingContent: (content: string) => void;
 
   /**
-   * Set streaming status
+   * Set streaming status (with timeout protection)
    */
   setStreaming: (streaming: boolean) => void;
 
@@ -128,6 +151,26 @@ export interface ChatState {
   updateSessionCwd: (sessionId: string, cwd: string) => Promise<void>;
 
   /**
+   * Update session's project
+   */
+  updateSessionProject: (sessionId: string, projectId: string | null) => Promise<void>;
+
+  /**
+   * Create a new project
+   */
+  createProject: (name: string) => Promise<void>;
+
+  /**
+   * Delete a project (and all its sessions)
+   */
+  deleteProject: (projectId: string) => Promise<void>;
+
+  /**
+   * Rename a project
+   */
+  renameProject: (projectId: string, name: string) => Promise<void>;
+
+  /**
    * Send tool execution result back to AI
    */
   sendToolResult: (toolCallId: string, result: string) => Promise<void>;
@@ -158,10 +201,22 @@ export const createMessage = (
 /**
  * Helper function to create a new session
  */
-export const createSession = (title?: string): Session => ({
+export const createSession = (title?: string, projectId?: string, model?: string): Session => ({
   id: crypto.randomUUID(),
   title: title || 'New Conversation',
   messages: [],
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+  projectId,
+  model,
+});
+
+/**
+ * Helper function to create a new project
+ */
+export const createProject = (name: string): Project => ({
+  id: crypto.randomUUID(),
+  name,
   createdAt: Date.now(),
   updatedAt: Date.now(),
 });

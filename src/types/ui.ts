@@ -33,6 +33,7 @@ export interface UIState {
   // ========== Data State ==========
   sidebarVisible: boolean;
   settingsOpen: boolean;
+  currentView: 'chat' | 'workflow';
   currentArtifactId?: string;
   pendingPermission?: PermissionRequest;
   notifications: Notification[];
@@ -45,6 +46,11 @@ export interface UIState {
   taskProgress: TaskStep[];
 
   // ========== Action Methods ==========
+
+  /**
+   * Set current view (chat or workflow)
+   */
+  setCurrentView: (view: 'chat' | 'workflow') => void;
 
   /**
    * Toggle sidebar visibility

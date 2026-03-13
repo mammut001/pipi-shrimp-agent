@@ -472,27 +472,25 @@ function formatMessagesForAnthropic(messages) {
       const parts = msg.content.split(':');
       const toolCallId = parts[1];
       const content = parts.slice(2).join(':');
-      
+
+      // For OpenAI-compatible APIs, tool results should have role: 'tool', not 'user'
       formatted.push({
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: toolCallId,
-            content: content
-          }
-        ]
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: content
       });
       continue;
     }
 
-    // 如果 assistant 消息后紧跟着工具结果，可能需要将之前的 assistant 消息补充 tool_use 块
-    // 但在当前的简易实现中，我们假设 AI 的 tool_use 已经由后端识别并处理
-    // 为了让 Anthropic API 接受，之前的 assistant 消息必须包含对应的 tool_use 块
-    
-    // 检查是否是包含工具调用的 assistant 消息（由后端在之前的 turn 中处理）
-    // 实际上，如果我们要完美支持，我们需要把 tool_use 的原样 block 存回 message 历史
-    // 暂时按普通文本处理，如果 API 报错，我们再进一步细化
+    // 如果是包含工具调用的 assistant 消息，需要保留 tool_calls
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      formatted.push({
+        role: 'assistant',
+        content: msg.content || '',
+        tool_calls: msg.tool_calls
+      });
+      continue;
+    }
     formatted.push({
       role: msg.role === 'assistant' ? 'assistant' : 'user',
       content: msg.content

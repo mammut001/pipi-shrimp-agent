@@ -7,7 +7,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
 import type { ChatState, Session, Message } from '../types/chat';
-import { createSession, createMessage } from '../types/chat';
+import { createSession, createMessage, createProject } from '../types/chat';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 
@@ -20,6 +20,8 @@ interface DbSession {
   created_at: number;
   updated_at: number;
   cwd: string | null;
+  project_id: string | null;
+  model: string | null;
 }
 
 interface DbMessage {
@@ -40,6 +42,8 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
   createdAt: dbSession.created_at,
   updatedAt: dbSession.updated_at,
   cwd: dbSession.cwd || undefined,
+  projectId: dbSession.project_id || undefined,
+  model: dbSession.model || undefined,
   messages: dbMessages.map((m) => ({
     id: m.id,
     role: m.role as 'user' | 'assistant',
@@ -58,6 +62,8 @@ const sessionToDb = (session: Session): DbSession => ({
   created_at: session.createdAt,
   updated_at: session.updatedAt,
   cwd: session.cwd || null,
+  project_id: session.projectId || null,
+  model: session.model || null,
 });
 
 /**
@@ -79,11 +85,14 @@ export const useChatStore = create<ChatState>()(
   subscribeWithSelector((set, get) => ({
     // ========== Initial State ==========
     sessions: [],
+    projects: [],
     currentSessionId: null,
     isStreaming: false,
     isInitialized: false,
     streamingContent: '',
     error: null,
+    streamingTimeoutId: null as ReturnType<typeof setTimeout> | null,
+    lastUiUpdateTime: 0,
 
     // ========== Computed Properties ==========
     currentSession: () => {
@@ -95,6 +104,15 @@ export const useChatStore = create<ChatState>()(
     currentMessages: () => {
       const session = get().currentSession();
       return session?.messages || [];
+    },
+
+    getSessionsByProject: (projectId: string | null) => {
+      const { sessions } = get();
+      if (projectId === null) {
+        // Return sessions without a project
+        return sessions.filter((s) => !s.projectId);
+      }
+      return sessions.filter((s) => s.projectId === projectId);
     },
 
     // ========== Action Methods ==========
@@ -137,9 +155,43 @@ export const useChatStore = create<ChatState>()(
           arguments: string;
         }>('claude-tool-use', async (event) => {
           console.log('Tool use requested:', event.payload);
-          
+
           const { permissionMode, setPermissionRequest, addTaskStep } = useUIStore.getState();
-          const { executeTool } = get();
+          const { executeTool, currentMessages } = get();
+
+          // Update the last assistant message to include tool_calls
+          // This is needed so when we send tool result, the API knows which tool_call we're responding to
+          const messages = currentMessages();
+          if (messages.length > 0) {
+            const lastMsg = messages[messages.length - 1];
+            if (lastMsg.role === 'assistant') {
+              // Add tool_calls to the last assistant message
+              set((state) => ({
+                sessions: state.sessions.map((s) =>
+                  s.id === get().currentSessionId
+                    ? {
+                        ...s,
+                        messages: s.messages.map((m, i) =>
+                          i === s.messages.length - 1 && m.role === 'assistant'
+                            ? {
+                                ...m,
+                                tool_calls: [
+                                  ...(m.tool_calls || []),
+                                  {
+                                    id: event.payload.tool_call_id,
+                                    name: event.payload.name,
+                                    arguments: event.payload.arguments,
+                                  },
+                                ],
+                              }
+                            : m
+                        ),
+                      }
+                    : s
+                ),
+              }));
+            }
+          }
 
           // Add to task progress UI
           addTaskStep(`${event.payload.name}: ${event.payload.arguments.slice(0, 50)}${event.payload.arguments.length > 50 ? '...' : ''}`);
@@ -178,10 +230,10 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
-     * Create a new session
+     * Create a new session (optionally in a project and with a specific model)
      */
-    startSession: async () => {
-      const newSession = createSession();
+    startSession: async (projectId?: string, model?: string) => {
+      const newSession = createSession(undefined, projectId, model);
 
       // Save to database
       try {
@@ -244,12 +296,12 @@ export const useChatStore = create<ChatState>()(
      * Send tool execution result back to AI
      */
     sendToolResult: async (toolCallId: string, result: string) => {
-      const { 
-        currentSessionId, 
-        addMessage, 
-        setStreaming, 
+      const {
+        currentSessionId,
+        addMessage,
+        setStreaming,
         setError,
-        currentMessages 
+        currentMessages
       } = get();
 
       if (!currentSessionId) return;
@@ -258,19 +310,20 @@ export const useChatStore = create<ChatState>()(
         setStreaming(true);
         set({ streamingContent: '' });
 
-        // Add tool result as a "user" message for now (Claude SDK bridge will convert)
-        // Note: In a real SDK, this would be a 'tool' role message
+        // Add tool result as a "user" message (Claude SDK bridge will convert to 'tool' role)
         const resultMessage = createMessage('user', `__TOOL_RESULT__:${toolCallId}:${result}`);
-        // We don't necessarily want to show this in UI, or we show it as a special block
-        // For simplicity in this v1, we'll adding it to the message log
+        // Include the tool_call_id for reference
+        (resultMessage as any).tool_call_id = toolCallId;
         await addMessage(resultMessage);
 
         const apiConfig = useSettingsStore.getState().getActiveConfig();
-        
-        // Prepare all messages for next turn
+
+        // Prepare all messages for next turn - include tool_calls when present
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
+          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
         if (messages.length === 0) {
@@ -291,7 +344,7 @@ export const useChatStore = create<ChatState>()(
           apiKey: apiConfig?.apiKey,
           model: apiConfig?.model,
           baseUrl: apiConfig?.baseUrl || '',
-          systemPrompt: null,
+          systemPrompt: useUIStore.getState().agentInstructions,
         });
 
         // Event listener 'claude-token' will handle UI updates
@@ -342,6 +395,7 @@ export const useChatStore = create<ChatState>()(
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
+          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
         }));
 
         if (messages.length === 0) {
@@ -370,7 +424,7 @@ export const useChatStore = create<ChatState>()(
           apiKey: apiConfig.apiKey,
           model: apiConfig.model,
           baseUrl: apiConfig.baseUrl || '',
-          systemPrompt: null,
+          systemPrompt: useUIStore.getState().agentInstructions,
         });
 
         // The streaming content has been accumulated in streamingContent via the event listener
@@ -379,7 +433,7 @@ export const useChatStore = create<ChatState>()(
 
         const fullContent = finalContent || response.content;
 
-        updateLastMessage(
+        await updateLastMessage(
           fullContent,
           response.artifacts?.map((a) => ({
             id: crypto.randomUUID(),
@@ -415,7 +469,7 @@ export const useChatStore = create<ChatState>()(
         if (streamingContent) {
           const { updateLastMessage } = get();
           // Mark the current message as complete with whatever we have so far
-          updateLastMessage(streamingContent);
+          await updateLastMessage(streamingContent);
         }
 
         // Clear streaming state
@@ -472,40 +526,50 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
-     * Update last message content (for streaming updates)
+     * Update last message content (for streaming updates) and persist to database
      */
-    updateLastMessage: (content: string, artifacts?: Message['artifacts']) => {
+    updateLastMessage: async (content: string, artifacts?: Message['artifacts']) => {
       const { currentSessionId } = get();
       if (!currentSessionId) return;
+
+      let messageToUpdate: Message | null = null;
 
       set((state) => ({
         sessions: state.sessions.map((s) => {
           if (s.id !== currentSessionId || s.messages.length === 0) return s;
           const messages = [...s.messages];
           const lastMessage = messages[messages.length - 1];
-          messages[messages.length - 1] = {
-            ...lastMessage,
-            content,
-            ...(artifacts && { artifacts }),
-          };
+          messageToUpdate = { ...lastMessage, content, ...(artifacts && { artifacts }) };
+          messages[messages.length - 1] = messageToUpdate;
           return { ...s, messages, updatedAt: Date.now() };
         }),
       }));
+
+      // Persist to database
+      if (messageToUpdate) {
+        try {
+          await invoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
+        } catch (error) {
+          console.error('Failed to update message in database:', error);
+        }
+      }
     },
 
     /**
-     * Append streaming content to buffer and update last message in real-time
+     * Append streaming content to buffer and update last message with throttling (100ms)
      */
     appendStreamingContent: (content: string) => {
-      const { currentSessionId, streamingContent } = get();
+      const { currentSessionId, streamingContent, lastUiUpdateTime } = get();
       const newContent = streamingContent + content;
+      const now = Date.now();
 
-      // Update streaming content buffer
+      // Always update streaming content buffer
       set({ streamingContent: newContent });
 
-      // Also update the last message in real-time for immediate UI feedback
-      if (currentSessionId) {
+      // Throttle UI updates to every 100ms
+      if (now - lastUiUpdateTime >= 100 && currentSessionId) {
         set((state) => ({
+          lastUiUpdateTime: now,
           sessions: state.sessions.map((s) => {
             if (s.id !== currentSessionId || s.messages.length === 0) return s;
             const messages = [...s.messages];
@@ -518,10 +582,43 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
-     * Set streaming status
+     * Set streaming status with timeout protection (30 seconds)
      */
     setStreaming: (streaming: boolean) => {
-      set({ isStreaming: streaming });
+      const { streamingTimeoutId, currentSessionId, streamingContent } = get();
+
+      // Clear existing timeout when stopping streaming
+      if (!streaming && streamingTimeoutId) {
+        clearTimeout(streamingTimeoutId);
+
+        // Final UI update to ensure content is fully displayed
+        if (currentSessionId && streamingContent) {
+          set((state) => ({
+            isStreaming: false,
+            streamingTimeoutId: null,
+            sessions: state.sessions.map((s) => {
+              if (s.id !== currentSessionId || s.messages.length === 0) return s;
+              const messages = [...s.messages];
+              const lastMessage = messages[messages.length - 1];
+              messages[messages.length - 1] = { ...lastMessage, content: streamingContent };
+              return { ...s, messages, updatedAt: Date.now() };
+            }),
+          }));
+        } else {
+          set({ isStreaming: false, streamingTimeoutId: null });
+        }
+        return;
+      }
+
+      // Start streaming with 30 second timeout
+      if (streaming) {
+        const timeoutId = setTimeout(() => {
+          console.warn('Streaming timeout (30s) reached, stopping...');
+          const { setStreaming } = get();
+          setStreaming(false);
+        }, 30000);
+        set({ isStreaming: true, streamingTimeoutId: timeoutId });
+      }
     },
 
     /**
@@ -603,7 +700,74 @@ export const useChatStore = create<ChatState>()(
         ),
       }));
     },
+
+    /**
+     * Update session's project
+     */
+    updateSessionProject: async (sessionId: string, projectId: string | null) => {
+      const session = get().sessions.find((s) => s.id === sessionId);
+      if (session) {
+        const updatedSession = { ...session, projectId: projectId || undefined, updatedAt: Date.now() };
+        try {
+          await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+        } catch (error) {
+          console.error('Failed to update session project in database:', error);
+        }
+      }
+
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, projectId: projectId || undefined, updatedAt: Date.now() } : s
+        ),
+      }));
+    },
+
+    /**
+     * Create a new project
+     */
+    createProject: async (name: string) => {
+      const newProject = createProject(name);
+
+      set((state) => ({
+        projects: [...state.projects, newProject],
+      }));
+    },
+
+    /**
+     * Delete a project (and all its sessions)
+     */
+    deleteProject: async (projectId: string) => {
+      // Delete all sessions in this project from database
+      const sessionsInProject = get().sessions.filter((s) => s.projectId === projectId);
+      for (const session of sessionsInProject) {
+        try {
+          await invoke('db_delete_session', { sessionId: session.id });
+        } catch (error) {
+          console.error('Failed to delete session from database:', error);
+        }
+      }
+
+      set((state) => ({
+        projects: state.projects.filter((p) => p.id !== projectId),
+        sessions: state.sessions.filter((s) => s.projectId !== projectId),
+        // If the current session was deleted, select another one
+        currentSessionId: sessionsInProject.some((s) => s.id === state.currentSessionId)
+          ? state.sessions.find((s) => s.projectId !== projectId)?.id || null
+          : state.currentSessionId,
+      }));
+    },
+
+    /**
+     * Rename a project
+     */
+    renameProject: async (projectId: string, name: string) => {
+      set((state) => ({
+        projects: state.projects.map((p) =>
+          p.id === projectId ? { ...p, name, updatedAt: Date.now() } : p
+        ),
+      }));
+    },
   }))
 );
 
-export type { Session, Message } from '../types/chat';
+export type { Session, Message, Project } from '../types/chat';

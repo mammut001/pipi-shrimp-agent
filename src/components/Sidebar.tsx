@@ -9,8 +9,9 @@
  */
 
 import React, { useState } from 'react';
-import { useChatStore, useUIStore } from '@/store';
+import { useChatStore, useUIStore, useWorkflowStore } from '@/store';
 import type { Session } from '@/types/chat';
+
 
 /**
  * Helper to truncate path for display
@@ -26,16 +27,177 @@ const truncatePath = (path: string, maxLength: number = 20): string => {
  * Sidebar component
  */
 export function Sidebar() {
-  const { sessions, currentSessionId, selectSession, startSession, deleteSession, updateSessionCwd } = useChatStore();
-  const { toggleSettings } = useUIStore();
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [tempCwd, setTempCwd] = useState('');
+  const { sessions, projects, currentSessionId, selectSession, deleteSession, createProject, deleteProject, getSessionsByProject, updateSessionProject, startSession } = useChatStore();
+  const { toggleSettings, currentView, setCurrentView } = useUIStore();
+  const { workflowRuns } = useWorkflowStore();
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
+  // Projects state
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ type: 'session' | 'project'; id: string; x: number; y: number } | null>(null);
+
+  // Move session modal state
+  const [showMoveChatModal, setShowMoveChatModal] = useState(false);
+  const [sessionToMove, setSessionToMove] = useState<string | null>(null);
+  const [targetProjectForMove, setTargetProjectForMove] = useState<string | null>(null);
+
+  // Delete session confirm state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+
+  // New Chat modal state
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
+  const [selectedProjectForNewChat, setSelectedProjectForNewChat] = useState<string | null>(null);
+
+  // Get sessions without a project
+  const ungroupedSessions = getSessionsByProject(null);
 
   /**
-   * Handle creating a new chat session
+   * Handle creating a new project
    */
-  const handleNewChat = async () => {
-    await startSession();
+  const handleCreateProject = async () => {
+    if (newProjectName.trim()) {
+      await createProject(newProjectName.trim());
+      setNewProjectName('');
+      setShowNewProjectModal(false);
+    }
+  };
+
+  /**
+   * Handle creating a new chat with project selection
+   */
+  const handleNewChat = () => {
+    startSession(selectedProjectForNewChat || undefined);
+    setShowNewChatModal(false);
+    setSelectedProjectForNewChat(null);
+  };
+
+  /**
+   * Open new chat modal
+   */
+  const openNewChatModal = () => {
+    setSelectedProjectForNewChat(null);
+    setShowNewChatModal(true);
+  };
+
+  /**
+   * Toggle project expansion
+   */
+  const toggleProject = (projectId: string) => {
+    setExpandedProjects(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(projectId)) {
+        newSet.delete(projectId);
+      } else {
+        newSet.add(projectId);
+      }
+      return newSet;
+    });
+  };
+
+  /**
+   * Handle delete project
+   */
+  const handleDeleteProject = async (projectId: string) => {
+    if (confirm('Are you sure you want to delete this project and all its conversations?')) {
+      await deleteProject(projectId);
+    }
+    setContextMenu(null);
+  };
+
+  /**
+   * Handle opening move chat modal
+   */
+  const handleOpenMoveChatModal = (sessionId: string) => {
+    setSessionToMove(sessionId);
+    setTargetProjectForMove(null);
+    setShowMoveChatModal(true);
+  };
+
+  /**
+   * Handle moving session to a project
+   */
+  const handleMoveSession = async () => {
+    if (sessionToMove) {
+      await updateSessionProject(sessionToMove, targetProjectForMove || null);
+      setShowMoveChatModal(false);
+      setSessionToMove(null);
+      setTargetProjectForMove(null);
+    }
+  };
+
+  /**
+   * Handle opening delete confirmation
+   */
+  const handleOpenDeleteConfirm = (sessionId: string) => {
+    setSessionToDelete(sessionId);
+    setShowDeleteConfirm(true);
+  };
+
+  /**
+   * Handle confirming delete
+   */
+  const handleConfirmDelete = async () => {
+    if (sessionToDelete) {
+      await deleteSession(sessionToDelete);
+      setShowDeleteConfirm(false);
+      setSessionToDelete(null);
+    }
+  };
+
+  /**
+   * Handle context menu
+   */
+  const handleContextMenu = (e: React.MouseEvent, type: 'session' | 'project', id: string) => {
+    e.preventDefault();
+    setContextMenu({ type, id, x: e.clientX, y: e.clientY });
+  };
+
+  /**
+   * Close context menu
+   */
+  const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  /**
+   * Handle workflow run selection
+   */
+  const handleSelectRun = (runId: string) => {
+    setSelectedRunId(runId);
+  };
+
+  /**
+   * Format date for display
+   */
+  const formatDate = (timestamp: number): string => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  /**
+   * Get status color for workflow run
+   */
+  const getStatusColor = (status: string): string => {
+    switch (status) {
+      case 'completed': return 'text-green-600';
+      case 'error': return 'text-red-600';
+      case 'running': return 'text-blue-600';
+      case 'stopped': return 'text-gray-500';
+      default: return 'text-gray-400';
+    }
   };
 
   /**
@@ -44,44 +206,6 @@ export function Sidebar() {
   const handleSelectSession = (sessionId: string) => {
     selectSession(sessionId);
   };
-
-  /**
-   * Handle session deletion
-   */
-  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    if (confirm('Are you sure you want to delete this conversation?')) {
-      await deleteSession(sessionId);
-    }
-  };
-
-  /**
-   * Handle directory icon click - start editing cwd
-   */
-  const handleDirectoryClick = (e: React.MouseEvent, session: Session) => {
-    e.stopPropagation();
-    setEditingSessionId(session.id);
-    setTempCwd(session.cwd || '');
-  };
-
-  /**
-   * Handle directory input confirm
-   */
-  const handleDirectoryConfirm = async (sessionId: string) => {
-    await updateSessionCwd(sessionId, tempCwd.trim());
-    setEditingSessionId(null);
-    setTempCwd('');
-  };
-
-  /**
-   * Handle directory input cancel
-   */
-  const handleDirectoryCancel = () => {
-    setEditingSessionId(null);
-    setTempCwd('');
-  };
-
-
 
   /**
    * Get session preview text
@@ -108,7 +232,7 @@ export function Sidebar() {
 
         {/* New Chat Button */}
         <button
-          onClick={handleNewChat}
+          onClick={openNewChatModal}
           className="w-full px-4 py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-xl transition-all flex items-center justify-center gap-2 font-medium shadow-sm active:scale-[0.98]"
         >
           <svg
@@ -117,73 +241,232 @@ export function Sidebar() {
             viewBox="0 0 20 20"
             fill="currentColor"
           >
-            <path
-              fillRule="evenodd"
-              d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
-              clipRule="evenodd"
-            />
+            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
           </svg>
           New Chat
         </button>
+
+        {/* View Toggle */}
+        <div className="flex border border-gray-200 rounded-xl overflow-hidden mt-2">
+          <button
+            onClick={() => setCurrentView('chat')}
+            className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+              currentView === 'chat' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Chat
+          </button>
+          <button
+            onClick={() => setCurrentView('workflow')}
+            className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+              currentView === 'workflow' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Workflow
+          </button>
+        </div>
       </div>
 
-      {/* Session List */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {sessions.length === 0 ? (
-          <div className="p-8 text-center text-gray-400 text-sm">
-            <div className="mb-2 opacity-50">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
+      {/* Session/Run List */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar" onClick={closeContextMenu}>
+        {currentView === 'chat' ? (
+          // Chat Sessions
+          sessions.length === 0 ? (
+            <div className="p-8 text-center text-gray-400 text-sm">
+              <div className="mb-2 opacity-50">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+              </div>
+              <p>No conversations yet</p>
             </div>
-            <p>No conversations yet</p>
-          </div>
-        ) : (
-          <ul className="py-2 space-y-1 px-2">
-            {sessions.map((session) => (
-              <li key={session.id}>
-                {editingSessionId === session.id ? (
-                  // Directory input mode
-                  <div className="px-3 py-2 bg-gray-100 rounded-xl" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1 mb-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
+          ) : (
+            <ul className="py-2 space-y-1 px-2">
+              {/* Ungrouped Sessions */}
+              {ungroupedSessions.length > 0 && (
+                <>
+                  {ungroupedSessions.map((session) => (
+                <li key={session.id}>
+                  <button
+                      onClick={() => handleSelectSession(session.id)}
+                      className={`w-full px-3 py-3 text-left rounded-xl transition-all group relative ${
+                        session.id === currentSessionId
+                          ? 'bg-gray-100 shadow-sm'
+                          : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-gray-900 truncate text-sm">
+                            {session.title || 'New Conversation'}
+                          </h3>
+                          <p className="text-xs text-gray-500 truncate mt-0.5">
+                            {getSessionPreview(session)}
+                          </p>
+                          {session.cwd && (
+                            <p className="text-[10px] text-blue-600 truncate mt-0.5 flex items-center gap-1" title={session.cwd}>
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                              </svg>
+                              {truncatePath(session.cwd)}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          {/* Move Chat Button */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleOpenMoveChatModal(session.id); }}
+                            className={`opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all ${
+                              session.cwd ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'
+                            }`}
+                            title="Move to project"
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-4 w-4"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 7H8a1 1 0 100 2z" />
+                              <path d="M3 9a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1V9z" />
+                            </svg>
+                          </button>
+
+                          {/* Delete Button */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleOpenDeleteConfirm(session.id); }}
+                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-red-500"
+                            title="Delete chat"
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-4 w-4"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </button>
+                </li>
+              ))}
+                </>
+              )}
+
+              {/* Projects Section */}
+              <li className="pt-4 pb-2">
+                <div className="flex items-center justify-between px-3">
+                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Projects</h2>
+                  <button
+                    onClick={() => setShowNewProjectModal(true)}
+                    className="p-1 hover:bg-gray-200 rounded-lg text-gray-400 hover:text-gray-600 transition-colors"
+                    title="New Project"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+              </li>
+
+              {/* Project List */}
+              {projects.length === 0 ? (
+                <li className="px-3 py-2 text-xs text-gray-400">No projects yet</li>
+              ) : (
+                projects.map((project) => (
+                  <li key={project.id}>
+                    {/* Project Header */}
+                    <button
+                      onClick={() => toggleProject(project.id)}
+                      onContextMenu={(e) => handleContextMenu(e, 'project', project.id)}
+                      className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-gray-50 rounded-xl transition-colors group"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className={`h-4 w-4 text-gray-400 transition-transform ${expandedProjects.has(project.id) ? 'rotate-90' : ''}`}
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                      >
+                        <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                      </svg>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
                         <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
                       </svg>
-                      <span className="text-xs text-gray-500 font-medium">Working Directory</span>
-                    </div>
-                    <input
-                      type="text"
-                      value={tempCwd}
-                      onChange={(e) => setTempCwd(e.target.value)}
-                      placeholder="/path/to/workspace"
-                      className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleDirectoryConfirm(session.id);
-                        if (e.key === 'Escape') handleDirectoryCancel();
-                      }}
-                    />
-                    <div className="flex gap-1 mt-2">
-                      <button
-                        onClick={() => handleDirectoryConfirm(session.id)}
-                        className="flex-1 px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={handleDirectoryCancel}
-                        className="flex-1 px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded hover:bg-gray-300 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  // Normal session display
+                      <span className="text-sm font-medium text-gray-700 truncate flex-1">{project.name}</span>
+                      <span className="text-xs text-gray-400">{getSessionsByProject(project.id).length}</span>
+                    </button>
+
+                    {/* Project Sessions */}
+                    {expandedProjects.has(project.id) && (
+                      <ul className="ml-6 space-y-1 mt-1">
+                        {getSessionsByProject(project.id).map((session) => (
+                          <li key={session.id}>
+                            <button
+                              onClick={() => handleSelectSession(session.id)}
+                              onContextMenu={(e) => handleContextMenu(e, 'session', session.id)}
+                              className={`w-full px-3 py-2 text-left rounded-xl transition-all group relative ${
+                                session.id === currentSessionId
+                                  ? 'bg-gray-100 shadow-sm'
+                                  : 'hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="font-semibold text-gray-900 truncate text-sm">
+                                    {session.title || 'New Conversation'}
+                                  </h3>
+                                  <p className="text-xs text-gray-500 truncate mt-0.5">
+                                    {getSessionPreview(session)}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleOpenMoveChatModal(session.id); }}
+                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-blue-500"
+                                    title="Move to project"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))
+              )}
+            </ul>
+          )
+        ) : (
+          // Workflow Runs
+          workflowRuns.length === 0 ? (
+            <div className="p-8 text-center text-gray-400 text-sm">
+              <div className="mb-2 opacity-50">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                </svg>
+              </div>
+              <p>No workflow runs yet</p>
+            </div>
+          ) : (
+            <ul className="py-2 space-y-1 px-2">
+              {workflowRuns.map((run) => (
+                <li key={run.id}>
                   <button
-                    onClick={() => handleSelectSession(session.id)}
-                    className={`w-full px-3 py-3 text-left rounded-xl transition-all group relative ${
-                      session.id === currentSessionId
+                    onClick={() => handleSelectRun(run.id)}
+                    className={`w-full px-3 py-3 text-left rounded-xl transition-all group ${
+                      run.id === selectedRunId
                         ? 'bg-gray-100 shadow-sm'
                         : 'hover:bg-gray-50'
                     }`}
@@ -191,77 +474,233 @@ export function Sidebar() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-gray-900 truncate text-sm">
-                          {session.title || 'New Conversation'}
+                          {run.title || 'Untitled Run'}
                         </h3>
-                        <p className="text-xs text-gray-500 truncate mt-0.5">
-                          {getSessionPreview(session)}
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className={`text-xs font-medium ${getStatusColor(run.status)}`}>
+                            {run.status.charAt(0).toUpperCase() + run.status.slice(1)}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            {run.agents.filter(a => a.status === 'completed').length}/{run.agents.length} agents
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {formatDate(run.startTime)}
                         </p>
-                        {session.cwd && (
-                          <p className="text-[10px] text-blue-600 truncate mt-0.5 flex items-center gap-1" title={session.cwd}>
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                              <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                            </svg>
-                            {truncatePath(session.cwd)}
-                          </p>
-                        )}
                       </div>
 
-                      <div className="flex items-center gap-1">
-                        {/* Directory Button */}
-                        <button
-                          onClick={(e) => handleDirectoryClick(e, session)}
-                          className={`opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all ${
-                            session.cwd ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'
-                          }`}
-                          title={session.cwd || 'Set working directory'}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="h-4 w-4"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
-                          >
-                            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                      {/* Status Icon */}
+                      <div className="flex items-center">
+                        {run.status === 'running' ? (
+                          <svg className="h-4 w-4 text-blue-500 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                           </svg>
-                        </button>
-
-                        {/* Delete Button */}
-                        <button
-                          onClick={(e) => handleDeleteSession(e, session.id)}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-red-500"
-                          title="Delete conversation"
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="h-4 w-4"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
-                          >
-                            <path
-                              fillRule="evenodd"
-                              d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
-                              clipRule="evenodd"
-                            />
+                        ) : run.status === 'completed' ? (
+                          <svg className="h-4 w-4 text-green-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                           </svg>
-                        </button>
+                        ) : run.status === 'error' ? (
+                          <svg className="h-4 w-4 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          <svg className="h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+                          </svg>
+                        )}
                       </div>
                     </div>
                   </button>
-                )}
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          )
         )}
       </div>
+
+      {/* New Project Modal */}
+      {showNewProjectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowNewProjectModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">New Project</h3>
+            <input
+              type="text"
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="Project name"
+              className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateProject();
+                if (e.key === 'Escape') setShowNewProjectModal(false);
+              }}
+            />
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => setShowNewProjectModal(false)}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateProject}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Chat Modal - Select Project */}
+      {showNewChatModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowNewChatModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">New Chat</h3>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select Project</label>
+              <select
+                value={selectedProjectForNewChat || ''}
+                onChange={(e) => setSelectedProjectForNewChat(e.target.value || null)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">No project (root)</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowNewChatModal(false);
+                  setSelectedProjectForNewChat(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleNewChat}
+                className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move Chat Modal */}
+      {showMoveChatModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowMoveChatModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Move Chat</h3>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select Chat</label>
+              <select
+                value={sessionToMove || ''}
+                onChange={(e) => setSessionToMove(e.target.value || null)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Select a chat...</option>
+                {sessions.map((session) => (
+                  <option key={session.id} value={session.id}>
+                    {session.title || 'New Conversation'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Move to Project</label>
+              <select
+                value={targetProjectForMove || ''}
+                onChange={(e) => setTargetProjectForMove(e.target.value || null)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">No project (root)</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowMoveChatModal(false);
+                  setSessionToMove(null);
+                  setTargetProjectForMove(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMoveSession}
+                disabled={!sessionToMove}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Move
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Chat</h3>
+            <p className="text-sm text-gray-600 mb-4">Are you sure you want to delete this conversation? This action cannot be undone.</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setSessionToDelete(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {contextMenu.type === 'project' && (
+            <button
+              onClick={() => handleDeleteProject(contextMenu.id)}
+              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100"
+            >
+              Delete Project
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Footer / User Profile & Settings */}
       <div className="p-4 border-t border-gray-100 bg-gray-50/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-sm ring-2 ring-white">
+            <div className="w-9 h-9 rounded-full bg-gray-900 flex items-center justify-center text-white shadow-sm ring-2 ring-white select-none">
               <span className="font-bold text-sm">D</span>
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 select-none">
               <p className="text-sm font-semibold text-gray-900 truncate leading-none mb-1">Doge User</p>
               <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider opacity-60">Personal Account</p>
             </div>

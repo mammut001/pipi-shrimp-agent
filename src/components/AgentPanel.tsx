@@ -11,12 +11,21 @@ import { useUIStore } from '@/store';
 export const AgentPanel: React.FC = () => {
   const { 
     agentInstructions, 
+    setAgentInstructions,
     taskProgress,
     permissionMode,
-    setPermissionMode
+    setPermissionMode,
+    addNotification
   } = useUIStore();
 
   const [showBypassConfirm, setShowBypassConfirm] = useState(false);
+  const [localInstructions, setLocalInstructions] = useState(agentInstructions);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Update local instructions when global state changes (e.g. from store initialization)
+  React.useEffect(() => {
+    setLocalInstructions(agentInstructions);
+  }, [agentInstructions]);
 
   const handleModeChange = (mode: string) => {
     if (mode === 'bypass' && permissionMode !== 'bypass') {
@@ -30,6 +39,22 @@ export const AgentPanel: React.FC = () => {
   const confirmBypass = () => {
     setPermissionMode('bypass');
     setShowBypassConfirm(false);
+  };
+
+  const handleSaveSoul = async () => {
+    if (isSaving) return;
+    
+    setIsSaving(true);
+    try {
+      // Simulate saving delay for animation
+      await new Promise(resolve => setTimeout(resolve, 800));
+      setAgentInstructions(localInstructions);
+      addNotification('success', 'Agent Soul saved successfully');
+    } catch (error) {
+      addNotification('error', 'Failed to save Agent Soul');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -102,15 +127,43 @@ export const AgentPanel: React.FC = () => {
 
       {/* Agent Soul / Instructions - Editable area */}
       <div className="p-3 border-b border-gray-100">
-        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 100-2 1 1 0 000 2zm7-1a1 1 0 11-2 0 1 1 0 012 0zm-7.535 5.535a1 1 0 001.415 0 3 3 0 014.242 0 1 1 0 001.415-1.415 5 5 0 00-7.072 0 1 1 0 000 1.415z" clipRule="evenodd" />
-          </svg>
-          Agent Soul
-        </h3>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 100-2 1 1 0 000 2zm7-1a1 1 0 11-2 0 1 1 0 012 0zm-7.535 5.535a1 1 0 001.415 0 3 3 0 014.242 0 1 1 0 001.415-1.415 5 5 0 00-7.072 0 1 1 0 000 1.415z" clipRule="evenodd" />
+            </svg>
+            Agent Soul
+          </h3>
+          {localInstructions !== agentInstructions && (
+            <button
+              onClick={handleSaveSoul}
+              disabled={isSaving}
+              className={`text-[9px] font-bold uppercase tracking-tighter px-2 py-0.5 rounded transition-all duration-200 flex items-center gap-1 ${
+                isSaving 
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                  : 'bg-blue-50 text-blue-600 hover:bg-blue-100 active:scale-95'
+              }`}
+            >
+              {isSaving ? (
+                <>
+                  <div className="h-2 w-2 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 10-1.414-1.414L11 11.586V4.5a1 1 0 00-2 0v7.086l-1.293-1.293z" />
+                    <path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
+                  </svg>
+                  Save
+                </>
+              )}
+            </button>
+          )}
+        </div>
         <textarea
-          value={agentInstructions}
-          onChange={(e) => useUIStore.getState().setAgentInstructions(e.target.value)}
+          value={localInstructions}
+          onChange={(e) => setLocalInstructions(e.target.value)}
           placeholder="Enter agent instructions..."
           className="w-full max-h-32 min-h-[60px] overflow-y-auto text-[11px] text-gray-600 leading-normal italic bg-gray-50 p-2.5 rounded-lg border border-gray-50 focus:border-blue-200 focus:bg-white focus:outline-none transition-all resize-none scrollbar-hide hover:scrollbar-default"
         />

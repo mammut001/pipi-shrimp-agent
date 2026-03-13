@@ -1,13 +1,13 @@
 /**
  * App - Main application component
  *
- * Handles routing between Chat and Settings pages based on API configuration.
+ * Handles routing between Chat and Workflow pages via uiStore.currentView.
  * Settings is shown as a modal overlay when triggered from sidebar.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
-import { Chat, Settings } from '@/pages';
+import { Chat, Settings, Workflow } from '@/pages';
 
 /**
  * Main application component
@@ -15,8 +15,7 @@ import { Chat, Settings } from '@/pages';
 export default function App() {
   const { apiConfig, getApiConfig } = useSettingsStore();
   const { init: initChat } = useChatStore();
-  const { settingsOpen, toggleSettings } = useUIStore();
-  const [isLoading, setIsLoading] = useState(true);
+  const { settingsOpen, toggleSettings, currentView } = useUIStore();
 
   // Load settings on mount
   useEffect(() => {
@@ -26,8 +25,6 @@ export default function App() {
         await initChat();
       } catch (error) {
         console.error('Failed to initialize:', error);
-      } finally {
-        setIsLoading(false);
       }
     };
 
@@ -35,29 +32,16 @@ export default function App() {
   }, [getApiConfig, initChat]);
 
   // If no API key, auto-open settings modal
-  // NOTE: This must be before any conditional return to comply with React's Rules of Hooks
   useEffect(() => {
-    if (!isLoading && !apiConfig?.apiKey && !settingsOpen) {
+    if (!apiConfig?.apiKey && !settingsOpen) {
       toggleSettings();
     }
-  }, [isLoading, apiConfig, settingsOpen, toggleSettings]);
+  }, [apiConfig, settingsOpen, toggleSettings]);
 
-  // Show loading state
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4" />
-          <p className="text-gray-500">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Show Chat page with Settings modal overlay
+  // Render active page (each page includes MainLayout with Sidebar)
   return (
     <>
-      <Chat />
+      {currentView === 'chat' ? <Chat /> : <Workflow />}
       {settingsOpen && <Settings />}
     </>
   );
