@@ -5,9 +5,15 @@
 // Sidebar components
 export { Sidebar } from './Sidebar';
 
+// Agentic components
+export { AgentPanel } from './AgentPanel';
+
 // Chat components
 export { ChatMessage } from './ChatMessage';
 export { ChatInput } from './ChatInput';
 
 // Modal components
 export { PermissionModal } from './PermissionModal';
+
+// Feedback components
+export { NotificationToast } from './NotificationToast';

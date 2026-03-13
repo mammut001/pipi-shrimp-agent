@@ -8,6 +8,15 @@ use crate::models::ExecuteCodeResponse;
 use crate::utils::{AppError, AppResult};
 use std::process::Command;
 
+/// Check if a command exists in PATH
+fn command_exists(command: &str) -> bool {
+    Command::new("which")
+        .arg(command)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 /**
  * Execute a bash command
  *
@@ -19,6 +28,13 @@ pub async fn execute_bash(
     cwd: Option<String>,
 ) -> AppResult<ExecuteCodeResponse> {
     let work_dir = cwd.unwrap_or_else(|| ".".to_string());
+
+    // Check if bash exists
+    if !command_exists("bash") {
+        return Err(AppError::ProcessError(
+            "Bash is not installed on your system".to_string()
+        ));
+    }
 
     let output = Command::new("bash")
         .arg("-c")
@@ -46,6 +62,13 @@ pub async fn execute_python(
 ) -> AppResult<ExecuteCodeResponse> {
     let work_dir = cwd.unwrap_or_else(|| ".".to_string());
 
+    // Check if python3 is installed
+    if !command_exists("python3") {
+        return Err(AppError::ProcessError(
+            "Python 3 is not installed on your system. Please install Python 3 to run Python code.".to_string()
+        ));
+    }
+
     let output = Command::new("python3")
         .arg("-c")
         .arg(&code)
@@ -71,6 +94,13 @@ pub async fn execute_node(
     cwd: Option<String>,
 ) -> AppResult<ExecuteCodeResponse> {
     let work_dir = cwd.unwrap_or_else(|| ".".to_string());
+
+    // Check if node is installed
+    if !command_exists("node") {
+        return Err(AppError::ProcessError(
+            "Node.js is not installed on your system. Please install Node.js to run JavaScript code.".to_string()
+        ));
+    }
 
     let output = Command::new("node")
         .arg("-e")

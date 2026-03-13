@@ -55,6 +55,9 @@ pub struct ChatResponse {
     pub model: String,
     /// Token usage
     pub usage: UsageInfo,
+    /// Tool calls (if finish_reason is "tool_calls")
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCall>,
 }
 
 /**
@@ -82,6 +85,9 @@ pub struct ChatRequest {
     pub systemPrompt: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub maxTokens: Option<i32>,
+    /// Enable streaming mode
+    #[serde(default)]
+    pub stream: bool,
 }
 
 impl ChatRequest {
@@ -99,6 +105,7 @@ impl ChatRequest {
             baseURL: None,
             systemPrompt: None,
             maxTokens: None,
+            stream: false,
         }
     }
 
@@ -118,5 +125,62 @@ impl ChatRequest {
     pub fn with_max_tokens(mut self, tokens: i32) -> Self {
         self.maxTokens = Some(tokens);
         self
+    }
+
+    /// Enable streaming mode
+    pub fn with_streaming(mut self) -> Self {
+        self.stream = true;
+        self
+    }
+}
+
+/**
+ * Streaming chunk from Node.js process
+ */
+#[derive(Debug, Deserialize)]
+pub struct StreamChunk {
+    #[serde(rename = "type")]
+    pub chunk_type: String,
+    pub content: Option<String>,
+    pub error: Option<String>,
+    pub model: Option<String>,
+    pub artifacts: Option<Vec<Artifact>>,
+    pub usage: Option<UsageInfo>,
+    /// Tool call info (for tool_use events)
+    pub tool_call_id: Option<String>,
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+    /// Finish reason (e.g., "tool_calls")
+    pub finish_reason: Option<String>,
+}
+
+/**
+ * Tool call request from AI
+ */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub tool_call_id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/**
+ * Tool result to send back to AI
+ */
+#[derive(Debug, Serialize)]
+pub struct ToolResult {
+    #[serde(rename = "type")]
+    pub result_type: String,
+    pub tool_call_id: String,
+    pub result: String,
+}
+
+impl ToolResult {
+    pub fn new(tool_call_id: String, result: String) -> Self {
+        Self {
+            result_type: "tool_result".to_string(),
+            tool_call_id,
+            result,
+        }
     }
 }

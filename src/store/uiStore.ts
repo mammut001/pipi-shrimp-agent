@@ -18,6 +18,12 @@ export const useUIStore = create<UIState>((set) => ({
   notifications: [],
   showApiKey: false,
 
+  // Agentic UI State
+  permissionMode: 'standard',
+  rightPanelVisible: true,
+  agentInstructions: 'You are a powerful AI Agent designed by the Google Deepmind team.',
+  taskProgress: [],
+
   // ========== Action Methods ==========
 
   /**
@@ -96,6 +102,18 @@ export const useUIStore = create<UIState>((set) => ({
    */
   clearNotifications: () =>
     set({ notifications: [] }),
+
+  // Agentic Actions
+  setPermissionMode: (mode) => set({ permissionMode: mode }),
+  toggleRightPanel: () => set((state) => ({ rightPanelVisible: !state.rightPanelVisible })),
+  setAgentInstructions: (agentInstructions) => set({ agentInstructions }),
+  addTaskStep: (label) => set((state) => ({
+    taskProgress: [...state.taskProgress, { id: crypto.randomUUID(), label, status: 'pending' }]
+  })),
+  updateTaskStep: (id, status) => set((state) => ({
+    taskProgress: state.taskProgress.map(step => step.id === id ? { ...step, status } : step)
+  })),
+  clearTaskProgress: () => set({ taskProgress: [] }),
 }));
 
-export type { PermissionRequest, Notification } from '../types/ui';
+export type { PermissionRequest, Notification, TaskStep } from '../types/ui';

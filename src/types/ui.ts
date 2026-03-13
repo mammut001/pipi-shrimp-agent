@@ -21,6 +21,13 @@ export interface Notification {
   timestamp?: number;
 }
 
+/** Task step for progress tracking */
+export interface TaskStep {
+  id: string;
+  label: string;
+  status: 'pending' | 'running' | 'done' | 'failed';
+}
+
 /** UI store state interface */
 export interface UIState {
   // ========== Data State ==========
@@ -30,6 +37,12 @@ export interface UIState {
   pendingPermission?: PermissionRequest;
   notifications: Notification[];
   showApiKey: boolean;
+  
+  // Agentic UI State
+  permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only';
+  rightPanelVisible: boolean;
+  agentInstructions: string;
+  taskProgress: TaskStep[];
 
   // ========== Action Methods ==========
 
@@ -82,6 +95,14 @@ export interface UIState {
    * Clear all notifications
    */
   clearNotifications: () => void;
+
+  // Agentic Actions
+  setPermissionMode: (mode: UIState['permissionMode']) => void;
+  toggleRightPanel: () => void;
+  setAgentInstructions: (instructions: string) => void;
+  addTaskStep: (label: string) => void;
+  updateTaskStep: (id: string, status: TaskStep['status']) => void;
+  clearTaskProgress: () => void;
 }
 
 // ============= Constants =============

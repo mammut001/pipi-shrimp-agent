@@ -10,6 +10,7 @@
  */
 
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
+import { open } from '@tauri-apps/api/dialog';
 import { useChatStore } from '@/store';
 
 /**
@@ -25,9 +26,10 @@ interface ChatInputProps {
  */
 export function ChatInput({ onSend }: ChatInputProps) {
   const [input, setInput] = useState('');
+  const [references, setReferences] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const { isStreaming, sendMessage, currentSessionId, startSession } = useChatStore();
+  const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession } = useChatStore();
 
   // Auto-resize textarea
   useEffect(() => {
@@ -35,7 +37,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
-  }, [input]);
+  }, [input, references]);
 
   // Auto-focus on mount
   useEffect(() => {
@@ -45,21 +47,65 @@ export function ChatInput({ onSend }: ChatInputProps) {
   }, []);
 
   /**
+   * Handle file attachment
+   */
+  const handleAttachFile = async () => {
+    try {
+      const selected = await open({
+        multiple: true,
+        directory: false,
+      });
+
+      if (selected && Array.isArray(selected)) {
+        setReferences(prev => [...prev, ...selected]);
+      } else if (selected && typeof selected === 'string') {
+        setReferences(prev => [...prev, selected]);
+      }
+    } catch (err) {
+      console.error('Failed to open file dialog:', err);
+    }
+  };
+
+  /**
+   * Remove a file reference
+   */
+  const removeReference = (path: string) => {
+    setReferences(prev => prev.filter(p => p !== path));
+  };
+
+  /**
    * Handle message submission
    */
   const handleSubmit = async () => {
     const trimmedInput = input.trim();
-    if (!trimmedInput || isStreaming) return;
+    if ((!trimmedInput && references.length === 0) || isStreaming) return;
+
+    // Build the message with references
+    let finalMessage = trimmedInput;
+    if (references.length > 0) {
+      const refText = references.map(p => `[File Reference: ${p}]`).join('\n');
+      finalMessage = `${refText}\n\n${trimmedInput}`;
+    }
 
     // Create session if none exists
     if (!currentSessionId) {
       await startSession();
     }
 
-    // Clear input and send message
+    // Clear state
     setInput('');
-    onSend?.(trimmedInput);
-    await sendMessage(trimmedInput);
+    setReferences([]);
+    
+    // Send message
+    onSend?.(finalMessage);
+    await sendMessage(finalMessage);
+  };
+
+  /**
+   * Handle stop generation
+   */
+  const handleStop = async () => {
+    await stopGeneration();
   };
 
   /**
@@ -77,6 +123,31 @@ export function ChatInput({ onSend }: ChatInputProps) {
   return (
     <div className="border-t border-gray-200 bg-white p-4">
       <div className="max-w-3xl mx-auto">
+        {/* References list */}
+        {references.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {references.map((path) => (
+              <div 
+                key={path} 
+                className="flex items-center gap-1.5 bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-1 rounded-full border border-blue-100 group animate-in slide-in-from-bottom-1 duration-200"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                </svg>
+                <span className="max-w-[150px] truncate">{path.split('/').pop()}</span>
+                <button 
+                  onClick={() => removeReference(path)}
+                  className="p-0.5 hover:bg-blue-200 rounded-full transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="relative flex items-end gap-2 bg-gray-50 rounded-xl border border-gray-200 focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-gray-100 transition-all">
           {/* Text Input */}
           <textarea
@@ -84,7 +155,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
+            placeholder={references.length > 0 ? "Ask about the attached files..." : "Type a message..."}
             disabled={isDisabled}
             rows={1}
             className="flex-1 bg-transparent px-4 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
@@ -95,6 +166,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
           <div className="flex items-center gap-1 pr-2 pb-2">
             {/* File Upload Button (Optional) */}
             <button
+              onClick={handleAttachFile}
               type="button"
               disabled={isDisabled}
               className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -114,35 +186,33 @@ export function ChatInput({ onSend }: ChatInputProps) {
               </svg>
             </button>
 
-            {/* Send Button */}
-            <button
-              onClick={handleSubmit}
-              disabled={isDisabled || !input.trim()}
-              className="p-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Send message"
-            >
-              {isStreaming ? (
+            {/* Send/Stop Button */}
+            {isStreaming ? (
+              <button
+                onClick={handleStop}
+                className="p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors"
+                title="Stop generation"
+              >
                 <svg
-                  className="h-5 w-5 animate-spin"
                   xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
+                  className="h-5 w-5"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
                 >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
                   <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z"
+                    clipRule="evenodd"
                   />
                 </svg>
-              ) : (
+              </button>
+            ) : (
+              <button
+                onClick={handleSubmit}
+                disabled={isDisabled || (!input.trim() && references.length === 0)}
+                className="p-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Send message"
+              >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   className="h-5 w-5"
@@ -151,15 +221,14 @@ export function ChatInput({ onSend }: ChatInputProps) {
                 >
                   <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
                 </svg>
-              )}
-            </button>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Hint */}
-        <p className="text-center text-xs text-gray-400 mt-2">
-          Press <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">Enter</kbd> to send,{' '}
-          <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">Shift + Enter</kbd> for new line
+        <p className="text-center text-[10px] text-gray-400 mt-2 uppercase tracking-tight font-bold">
+          Enter <span className="text-gray-300 mx-1">/</span> Shift + Enter for new line
         </p>
       </div>
     </div>

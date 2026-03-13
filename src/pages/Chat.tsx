@@ -26,6 +26,7 @@ export function Chat() {
     isStreaming,
     error,
     clearError,
+    retryLastMessage,
     init,
   } = useChatStore();
 
@@ -51,10 +52,17 @@ export function Chat() {
   /**
    * Handle permission approval
    */
-  const handleApprovePermission = () => {
-    addNotification('success', 'Permission granted');
+  const handleApprovePermission = async () => {
+    if (!pendingPermission) return;
+
+    const { id, toolName, toolInput } = pendingPermission;
+    
+    // Clear request first to close modal
     clearPermissionRequest();
-    // TODO: Execute the approved action
+
+    // Call central execution logic in chatStore
+    const { executeTool } = useChatStore.getState();
+    await executeTool(toolName, toolInput, id);
   };
 
   /**
@@ -90,12 +98,12 @@ export function Chat() {
             </div>
           ) : (
             /* Empty State */
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex items-center justify-center pt-64 pb-20 select-none pointer-events-none">
               <div className="text-center">
-                <div className="mb-4">
+                <div className="mb-4 opacity-40">
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
-                    className="h-16 w-16 mx-auto text-gray-300"
+                    className="h-16 w-16 mx-auto text-gray-500"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -108,11 +116,11 @@ export function Chat() {
                     />
                   </svg>
                 </div>
-                <h2 className="text-xl font-semibold text-gray-700 mb-2">
+                <h2 className="text-xl font-black text-gray-600 mb-2 uppercase tracking-[0.2em]">
                   Start a conversation
                 </h2>
-                <p className="text-gray-500 max-w-sm">
-                  Send a message to begin chatting with AI Agent. Your conversations will be saved here.
+                <p className="text-gray-700 max-w-sm text-xs font-bold uppercase tracking-widest leading-loose">
+                  Send a message to begin chatting with AI Agent. <br /> Your conversations will be saved here.
                 </p>
               </div>
             </div>
@@ -122,11 +130,11 @@ export function Chat() {
         {/* Error Banner */}
         {error && (
           <div className="px-4 py-3 bg-red-50 border-t border-red-200">
-            <div className="max-w-3xl mx-auto flex items-center justify-between">
+            <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
               <div className="flex items-center gap-2 text-red-700">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
+                  className="h-5 w-5 flex-shrink-0"
                   viewBox="0 0 20 20"
                   fill="currentColor"
                 >
@@ -138,23 +146,35 @@ export function Chat() {
                 </svg>
                 <span className="text-sm font-medium">{error}</span>
               </div>
-              <button
-                onClick={handleDismissError}
-                className="p-1 hover:bg-red-100 rounded text-red-600"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
+              <div className="flex items-center gap-2">
+                {/* Retry Button */}
+                <button
+                  onClick={() => {
+                    retryLastMessage();
+                  }}
+                  className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors"
                 >
-                  <path
-                    fillRule="evenodd"
-                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </button>
+                  Retry
+                </button>
+                {/* Dismiss Button */}
+                <button
+                  onClick={handleDismissError}
+                  className="p-1 hover:bg-red-100 rounded text-red-600"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         )}

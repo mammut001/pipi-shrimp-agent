@@ -9,7 +9,7 @@
 
 import React from 'react';
 import { useUIStore } from '@/store';
-import { Sidebar } from '@/components';
+import { Sidebar, AgentPanel, NotificationToast } from '@/components';
 
 /**
  * Props for MainLayout component
@@ -25,11 +25,14 @@ interface MainLayoutProps {
  * Main application layout with sidebar and content area
  */
 export function MainLayout({ children, showSidebar = true }: MainLayoutProps) {
-  const { sidebarVisible } = useUIStore();
+  const { sidebarVisible, rightPanelVisible } = useUIStore();
   const shouldShowSidebar = showSidebar && sidebarVisible;
 
   return (
     <div className="h-screen flex overflow-hidden bg-gray-50">
+      {/* Toast Notifications */}
+      <NotificationToast />
+
       {/* Left Sidebar */}
       {shouldShowSidebar && (
         <aside className="w-[300px] flex-shrink-0 border-r border-gray-200 bg-white">
@@ -41,6 +44,13 @@ export function MainLayout({ children, showSidebar = true }: MainLayoutProps) {
       <main className="flex-1 flex flex-col min-w-0 bg-white">
         {children}
       </main>
+
+      {/* Right Agent Panel */}
+      {rightPanelVisible && (
+        <aside className="w-[320px] flex-shrink-0 border-l border-gray-200 bg-gray-50 overflow-y-auto">
+          <AgentPanel />
+        </aside>
+      )}
     </div>
   );
 }

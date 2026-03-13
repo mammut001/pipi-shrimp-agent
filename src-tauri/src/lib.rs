@@ -9,13 +9,15 @@ mod commands;
 mod models;
 mod utils;
 mod claude;
+mod database;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::Manager;
 
-use claude::{ClaudeClient, ChatResponse, Message};
+use claude::{ClaudeClient, ChatResponse, Message, node_subprocess};
+use database::{DbSession, DbMessage, init_database, get_all_sessions, save_session, delete_session, save_message, get_messages_for_session};
 
 /**
  * State for Claude SDK client
@@ -36,9 +38,43 @@ async fn send_claude_sdk_chat(
     system_prompt: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<ChatResponse, String> {
+    // Convert empty string to None for custom API
+    let base_url = base_url.filter(|s| !s.is_empty());
     let state = state.lock().await;
     state.client
         .chat(messages, api_key, model, base_url, system_prompt)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/**
+ * Send a chat message using Claude SDK with streaming (emits events)
+ */
+#[tauri::command]
+async fn send_claude_sdk_chat_streaming(
+    messages: Vec<Message>,
+    api_key: String,
+    model: String,
+    base_url: Option<String>,
+    system_prompt: Option<String>,
+    state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
+    window: tauri::Window,
+) -> Result<ChatResponse, String> {
+    // Convert empty string to None for custom API
+    let base_url = base_url.filter(|s| !s.is_empty());
+    let state = state.lock().await;
+    state.client
+        .chat_streaming(messages, api_key, model, base_url, system_prompt, window)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/**
+ * Stop the current running subprocess (cancel generation)
+ */
+#[tauri::command]
+async fn stop_subprocess() -> Result<(), String> {
+    node_subprocess::stop_current_subprocess()
         .await
         .map_err(|e| e.to_string())
 }
@@ -53,6 +89,9 @@ async fn test_connection(
     base_url: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<bool, String> {
+    // Convert empty string to None for custom API
+    let base_url = base_url.filter(|s| !s.is_empty());
+
     // Create a simple test message
     let messages = vec![Message {
         role: "user".to_string(),
@@ -71,6 +110,35 @@ async fn test_connection(
 }
 
 /**
+ * Database commands for session/message persistence
+ */
+
+#[tauri::command]
+fn db_save_session(session: DbSession) -> Result<(), String> {
+    save_session(&session).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_get_all_sessions() -> Result<Vec<DbSession>, String> {
+    get_all_sessions().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_delete_session(session_id: String) -> Result<(), String> {
+    delete_session(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_save_message(message: DbMessage) -> Result<(), String> {
+    save_message(&message).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_get_messages(session_id: String) -> Result<Vec<DbMessage>, String> {
+    get_messages_for_session(&session_id).map_err(|e| e.to_string())
+}
+
+/**
  * Main entry point for the Tauri application
  */
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -78,6 +146,11 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             println!("🚀 AI Agent starting...");
+
+            // Initialize database
+            if let Err(e) = init_database() {
+                println!("❌ Failed to initialize database: {}", e);
+            }
 
             // Get the main window
             let _window = app.get_window("main").unwrap();
@@ -127,6 +200,7 @@ pub fn run() {
             commands::start_session,
             commands::send_message,
             commands::get_session,
+            commands::execute_tool,
             // Code execution commands
             commands::execute_bash,
             commands::execute_python,
@@ -152,8 +226,16 @@ pub fn run() {
             claude::claude_chat,
             // Claude SDK commands (API-based)
             send_claude_sdk_chat,
+            send_claude_sdk_chat_streaming,
+            stop_subprocess,
             test_connection,
             commands::fetch_available_models,
+            // Database commands
+            db_save_session,
+            db_get_all_sessions,
+            db_delete_session,
+            db_save_message,
+            db_get_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

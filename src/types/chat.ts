@@ -41,8 +41,9 @@ export interface ChatState {
   // ========== Data State ==========
   sessions: Session[];
   currentSessionId: string | null;
-  isStreaming: boolean;          // Whether receiving streaming response
-  streamingContent: string;      // Current streaming content buffer
+  isStreaming: boolean;
+  isInitialized: boolean;
+  streamingContent: string;
   error: string | null;         // Error message
 
   // ========== Computed Properties ==========
@@ -67,6 +68,16 @@ export interface ChatState {
   sendMessage: (content: string) => Promise<void>;
 
   /**
+   * Stop/cancel the current generation (kill subprocess)
+   */
+  stopGeneration: () => Promise<void>;
+
+  /**
+   * Retry the last failed message
+   */
+  retryLastMessage: () => Promise<void>;
+
+  /**
    * Add message to current session
    */
   addMessage: (message: Message) => void;
@@ -74,7 +85,7 @@ export interface ChatState {
   /**
    * Update last message (for streaming updates)
    */
-  updateLastMessage: (content: string) => void;
+  updateLastMessage: (content: string, artifacts?: Artifact[]) => void;
 
   /**
    * Append streaming content to current buffer
@@ -110,6 +121,21 @@ export interface ChatState {
    * Delete a session
    */
   deleteSession: (sessionId: string) => Promise<void>;
+
+  /**
+   * Update session's working directory
+   */
+  updateSessionCwd: (sessionId: string, cwd: string) => Promise<void>;
+
+  /**
+   * Send tool execution result back to AI
+   */
+  sendToolResult: (toolCallId: string, result: string) => Promise<void>;
+
+  /**
+   * Execute a tool and handle the result (permission-aware)
+   */
+  executeTool: (toolName: string, toolInput: string, toolCallId: string) => Promise<void>;
 }
 
 // ============= Helper Functions =============
