@@ -3,20 +3,21 @@
  */
 
 import React, { useState } from 'react';
-import { useUIStore } from '@/store';
+import { useUIStore, useSettingsStore } from '@/store';
 
 /**
  * AgentPanel component
  */
 export const AgentPanel: React.FC = () => {
-  const { 
-    agentInstructions, 
+  const {
+    agentInstructions,
     setAgentInstructions,
     taskProgress,
     permissionMode,
     setPermissionMode,
     addNotification
   } = useUIStore();
+  const { importedFiles, removeImportedFile } = useSettingsStore();
 
   const [showBypassConfirm, setShowBypassConfirm] = useState(false);
   const [localInstructions, setLocalInstructions] = useState(agentInstructions);
@@ -167,6 +168,56 @@ export const AgentPanel: React.FC = () => {
           placeholder="Enter agent instructions..."
           className="w-full max-h-32 min-h-[60px] overflow-y-auto text-[11px] text-gray-600 leading-normal italic bg-gray-50 p-2.5 rounded-lg border border-gray-50 focus:border-blue-200 focus:bg-white focus:outline-none transition-all resize-none scrollbar-hide hover:scrollbar-default"
         />
+      </div>
+
+      {/* Imported Files - Scrollable fixed height */}
+      <div className="p-3 border-b border-gray-100">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+            </svg>
+            Imported Files
+            {importedFiles.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 bg-blue-100 text-blue-600 text-[9px] font-bold rounded-full">
+                {importedFiles.length}
+              </span>
+            )}
+          </h3>
+        </div>
+        <div className="h-28 overflow-y-auto space-y-1.5 pr-1 scrollbar-thin scrollbar-thumb-gray-200">
+          {importedFiles.length > 0 ? (
+            importedFiles.map((file) => (
+              <div
+                key={file.id}
+                className="flex items-center gap-2 p-2 bg-gray-50 rounded-md group hover:bg-gray-100 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                </svg>
+                <span className="flex-1 text-[10px] text-gray-600 truncate" title={file.name}>
+                  {file.name}
+                </span>
+                <button
+                  onClick={() => removeImportedFile(file.id)}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-100 rounded transition-all"
+                  title="Remove file"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="flex flex-col items-center justify-center h-20 opacity-40">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mb-1 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <p className="text-[9px] text-gray-400 uppercase tracking-wider">No files imported</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Task Progress - Flexible growth */}

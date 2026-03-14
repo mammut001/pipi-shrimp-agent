@@ -12,7 +12,7 @@ use tauri::Window;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-use super::message::{ChatRequest, ChatResponse, ErrorResponse, Message, StreamChunk, ToolCall, ToolResult};
+use super::message::{ChatRequest, ChatResponse, ErrorResponse, Message, StreamChunk, ToolCall};
 
 /// Global state to track the current running subprocess PID
 static CURRENT_PID: once_cell::sync::Lazy<tokio::sync::Mutex<Option<u32>>> =
@@ -22,7 +22,7 @@ static CURRENT_PID: once_cell::sync::Lazy<tokio::sync::Mutex<Option<u32>>> =
  * Send a message to stop/kill the current subprocess
  */
 pub async fn stop_current_subprocess() -> AppResult<()> {
-    let pid_guard = CURRENT_PID.lock().await;
+    let pid_guard: tokio::sync::MutexGuard<Option<u32>> = CURRENT_PID.lock().await;
     if let Some(pid) = *pid_guard {
         // Use kill command to terminate the process
         #[cfg(unix)]
@@ -48,7 +48,7 @@ pub async fn stop_current_subprocess() -> AppResult<()> {
  * Check if there's a running subprocess
  */
 pub async fn has_running_subprocess() -> bool {
-    let pid_guard = CURRENT_PID.lock().await;
+    let pid_guard: tokio::sync::MutexGuard<Option<u32>> = CURRENT_PID.lock().await;
     pid_guard.is_some()
 }
 

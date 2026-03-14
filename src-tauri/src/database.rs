@@ -138,7 +138,7 @@ pub fn get_connection() -> std::sync::MutexGuard<'static, Option<Connection>> {
  * Save a session to database
  */
 pub fn save_session(session: &DbSession) -> SqliteResult<()> {
-    let guard = DATABASE.lock().unwrap();
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd)
@@ -153,7 +153,7 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
  * Get all sessions from database
  */
 pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
-    let guard = DATABASE.lock().unwrap();
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     let mut sessions = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -175,7 +175,7 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
  * Delete a session and its messages
  */
 pub fn delete_session(session_id: &str) -> SqliteResult<()> {
-    let guard = DATABASE.lock().unwrap();
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute("DELETE FROM messages WHERE session_id = ?1", params![session_id])?;
         conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
@@ -187,7 +187,7 @@ pub fn delete_session(session_id: &str) -> SqliteResult<()> {
  * Save a message to database
  */
 pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
-    let guard = DATABASE.lock().unwrap();
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO messages (id, session_id, role, content, artifacts, created_at)
@@ -209,7 +209,7 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
  * Get all messages for a session
  */
 pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>> {
-    let guard = DATABASE.lock().unwrap();
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     let mut messages = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -232,7 +232,7 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
  * Delete all messages for a session
  */
 pub fn clear_messages_for_session(session_id: &str) -> SqliteResult<()> {
-    let guard = DATABASE.lock().unwrap();
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute("DELETE FROM messages WHERE session_id = ?1", params![session_id])?;
     }

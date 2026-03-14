@@ -12,6 +12,16 @@
   "tauri": {
     "allowlist": {
       "all": false,
+      "fs": {
+        "all": false,
+        "readFile": true,
+        "readTextFile": true,
+        "scope": ["$APPDATA/**", "$HOME/Library/Application Support/LobsterAI/SKILLs/**"]
+      },
+      "path": {
+        "all": false,
+        "homeDir": true
+      },
       "shell": {
         "all": false,
         "open": true

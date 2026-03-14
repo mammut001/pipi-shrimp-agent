@@ -27,6 +27,7 @@ export interface SettingsState {
   telegramToken?: string;
   theme: 'light' | 'dark';
   language: 'en' | 'zh';
+  importedFiles: ImportedFile[];
 
   // ========== Action Methods ==========
 
@@ -96,6 +97,21 @@ export interface SettingsState {
    * Clear API key (for security)
    */
   clearApiKey: () => Promise<void>;
+
+  /**
+   * Add imported files
+   */
+  addImportedFiles: (files: { name: string; path: string }[]) => void;
+
+  /**
+   * Remove imported file by ID
+   */
+  removeImportedFile: (id: string) => void;
+
+  /**
+   * Clear all imported files
+   */
+  clearImportedFiles: () => void;
 }
 
 // ============= Constants =============
@@ -142,3 +158,11 @@ export const PROVIDER_MODELS: Record<ApiConfig['provider'], string[]> = {
 
 /** Default working directory */
 export const DEFAULT_WORKING_DIRECTORY = '';
+
+/** Imported file interface */
+export interface ImportedFile {
+  id: string;
+  name: string;
+  path: string;
+  addedAt: number;
+}

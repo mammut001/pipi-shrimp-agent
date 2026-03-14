@@ -7,7 +7,7 @@
 
 import { useEffect } from 'react';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
-import { Chat, Settings, Workflow } from '@/pages';
+import { Chat, Settings, Workflow, Skill } from '@/pages';
 
 /**
  * Main application component
@@ -41,7 +41,7 @@ export default function App() {
   // Render active page (each page includes MainLayout with Sidebar)
   return (
     <>
-      {currentView === 'chat' ? <Chat /> : <Workflow />}
+      {currentView === 'chat' ? <Chat /> : currentView === 'workflow' ? <Workflow /> : <Skill />}
       {settingsOpen && <Settings />}
     </>
   );

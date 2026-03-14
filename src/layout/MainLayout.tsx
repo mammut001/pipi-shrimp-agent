@@ -9,7 +9,7 @@
 
 import React from 'react';
 import { useUIStore } from '@/store';
-import { Sidebar, AgentPanel, NotificationToast } from '@/components';
+import { Sidebar, AgentPanel, NotificationToast, FileDropOverlay } from '@/components';
 
 /**
  * Props for MainLayout component
@@ -30,6 +30,9 @@ export function MainLayout({ children, showSidebar = true }: MainLayoutProps) {
 
   return (
     <div className="h-screen flex overflow-hidden bg-gray-50">
+      {/* Global file drop overlay (appears on drag-enter anywhere in the app) */}
+      <FileDropOverlay />
+
       {/* Toast Notifications */}
       <NotificationToast />
 

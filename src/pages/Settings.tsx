@@ -30,6 +30,7 @@ export function Settings() {
     telegramToken,
     theme,
     language,
+    importedFiles,
     availableModels,
     addApiConfig,
     updateApiConfig,
@@ -40,6 +41,8 @@ export function Settings() {
     setTelegramToken,
     setTheme,
     setLanguage,
+    removeImportedFile,
+    clearImportedFiles,
   } = useSettingsStore();
 
   const { addNotification, toggleSettings, showApiKey, toggleShowApiKey } = useUIStore();
@@ -735,6 +738,70 @@ export function Settings() {
                 </label>
               </div>
             </div>
+          </div>
+
+          {/* ====== Imported Files Section ====== */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">已导入文件</h2>
+                <p className="text-xs text-gray-400 mt-0.5">可直接将文件拖入应用窗口导入</p>
+              </div>
+              {importedFiles.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearImportedFiles}
+                  className="text-xs text-red-500 hover:text-red-600 font-medium"
+                >
+                  清空
+                </button>
+              )}
+            </div>
+
+            {/* File list */}
+            {importedFiles.length === 0 ? (
+              <div className="py-6 text-center text-gray-400 text-xs">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                暂无文件 · 直接将文件拖入窗口即可导入
+              </div>
+            ) : (
+              <ul className="space-y-2 max-h-48 overflow-y-auto">
+                {importedFiles.map((file) => (
+                  <li
+                    key={file.id}
+                    className="flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-lg group"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-4 w-4 text-gray-400 flex-shrink-0"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                        <p className="text-xs text-gray-500 truncate" title={file.path}>{file.path}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeImportedFile(file.id)}
+                      className="flex-shrink-0 p-1 text-gray-400 hover:text-red-500 rounded transition-colors opacity-0 group-hover:opacity-100"
+                      title="移除"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           {/* ====== Save Other Settings Button ====== */}

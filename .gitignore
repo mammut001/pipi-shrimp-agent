@@ -26,3 +26,4 @@ dist-ssr
 doc/
 .cowork-temp/
 node-scripts/.env
+/docs

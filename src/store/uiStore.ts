@@ -18,7 +18,7 @@ export const useUIStore = create<UIState>((set) => ({
   // ========== Initial State ==========
   sidebarVisible: true,
   settingsOpen: false,
-  currentView: 'chat',
+  currentView: 'chat' as 'chat' | 'workflow' | 'skill',
   currentArtifactId: undefined,
   pendingPermission: undefined,
   notifications: [],
@@ -26,16 +26,16 @@ export const useUIStore = create<UIState>((set) => ({
 
   // Agentic UI State
   permissionMode: 'standard',
-  rightPanelVisible: true,
+  rightPanelVisible: false,
   agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || 'You are a powerful AI Agent designed by the Google Deepmind team.',
   taskProgress: [],
 
   // ========== Action Methods ==========
 
   /**
-   * Set current view (chat or workflow)
+   * Set current view (chat, workflow, or skill)
    */
-  setCurrentView: (view: 'chat' | 'workflow') =>
+  setCurrentView: (view: 'chat' | 'workflow' | 'skill') =>
     set({ currentView: view }),
 
   /**

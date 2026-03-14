@@ -17,3 +17,6 @@ export { PermissionModal } from './PermissionModal';
 
 // Feedback components
 export { NotificationToast } from './NotificationToast';
+
+// File drag overlay
+export { FileDropOverlay } from './FileDropOverlay';

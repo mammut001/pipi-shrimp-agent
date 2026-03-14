@@ -9,8 +9,7 @@
  * - Auto focus
  */
 
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
-import { open } from '@tauri-apps/api/dialog';
+import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from 'react';
 import { useChatStore } from '@/store';
 
 /**
@@ -46,24 +45,33 @@ export function ChatInput({ onSend }: ChatInputProps) {
     }
   }, []);
 
-  /**
-   * Handle file attachment
-   */
-  const handleAttachFile = async () => {
-    try {
-      const selected = await open({
-        multiple: true,
-        directory: false,
-      });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-      if (selected && Array.isArray(selected)) {
-        setReferences(prev => [...prev, ...selected]);
-      } else if (selected && typeof selected === 'string') {
-        setReferences(prev => [...prev, selected]);
-      }
-    } catch (err) {
-      console.error('Failed to open file dialog:', err);
+  /**
+   * Handle file attachment - trigger hidden file input
+   */
+  const handleAttachFile = () => {
+    fileInputRef.current?.click();
+  };
+
+  /**
+   * Handle file selection from native file input
+   */
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const paths: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      // In Tauri, files have a .path property
+      const path = (file as unknown as { path?: string }).path || file.name;
+      paths.push(path);
     }
+    setReferences(prev => [...prev, ...paths]);
+
+    // Reset input so same file can be selected again
+    e.target.value = '';
   };
 
   /**
@@ -160,6 +168,15 @@ export function ChatInput({ onSend }: ChatInputProps) {
             rows={1}
             className="flex-1 bg-transparent px-4 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
             style={{ minHeight: '48px' }}
+          />
+
+          {/* Hidden file input for native file selection */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileChange}
+            className="hidden"
           />
 
           {/* Actions */}

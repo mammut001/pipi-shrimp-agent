@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import type { SettingsState, ApiConfig } from '../types/settings';
+import type { SettingsState, ApiConfig, ImportedFile } from '../types/settings';
 import { DEFAULT_WORKING_DIRECTORY } from '../types/settings';
 
 /**
@@ -16,6 +16,7 @@ const WORKING_DIR_STORAGE_KEY = 'ai-agent-working-dir';
 const TELEGRAM_TOKEN_STORAGE_KEY = 'ai-agent-telegram-token';
 const THEME_STORAGE_KEY = 'ai-agent-theme';
 const LANGUAGE_STORAGE_KEY = 'ai-agent-language';
+const IMPORTED_FILES_STORAGE_KEY = 'ai-agent-imported-files';
 
 /** Legacy storage key (for migration) */
 const LEGACY_API_CONFIG_KEY = 'ai-agent-api-config';
@@ -54,8 +55,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   telegramToken: undefined,
   theme: 'dark',
   language: 'en',
+  importedFiles: [],
 
-  // ========== Multi-Config Methods ==========
+  // ========== Imported Files Methods ==========
 
   /**
    * Add a new API configuration
@@ -283,6 +285,54 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       await get().updateApiConfig(activeConfigId, { apiKey: '' });
     }
   },
+
+  /**
+   * Add imported files
+   */
+  addImportedFiles: (files: { name: string; path: string }[]) => {
+    const newFiles: ImportedFile[] = files.map((f) => ({
+      id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: f.name,
+      path: f.path,
+      addedAt: Date.now(),
+    }));
+
+    const updatedFiles = [...get().importedFiles, ...newFiles];
+    set({ importedFiles: updatedFiles });
+
+    try {
+      localStorage.setItem(IMPORTED_FILES_STORAGE_KEY, JSON.stringify(updatedFiles));
+    } catch (error) {
+      console.error('Failed to persist imported files:', error);
+    }
+  },
+
+  /**
+   * Remove imported file by ID
+   */
+  removeImportedFile: (id: string) => {
+    const updatedFiles = get().importedFiles.filter((f) => f.id !== id);
+    set({ importedFiles: updatedFiles });
+
+    try {
+      localStorage.setItem(IMPORTED_FILES_STORAGE_KEY, JSON.stringify(updatedFiles));
+    } catch (error) {
+      console.error('Failed to persist imported files:', error);
+    }
+  },
+
+  /**
+   * Clear all imported files
+   */
+  clearImportedFiles: () => {
+    set({ importedFiles: [] });
+
+    try {
+      localStorage.removeItem(IMPORTED_FILES_STORAGE_KEY);
+    } catch (error) {
+      console.error('Failed to clear imported files:', error);
+    }
+  },
 }));
 
 // ========== Initialize from localStorage ==========
@@ -311,6 +361,12 @@ const initializeSettings = () => {
     const storedTelegramToken = localStorage.getItem(TELEGRAM_TOKEN_STORAGE_KEY);
     if (storedTelegramToken) {
       useSettingsStore.setState({ telegramToken: storedTelegramToken });
+    }
+
+    // Load imported files
+    const storedImportedFiles = localStorage.getItem(IMPORTED_FILES_STORAGE_KEY);
+    if (storedImportedFiles) {
+      useSettingsStore.setState({ importedFiles: JSON.parse(storedImportedFiles) });
     }
 
     // Load API configs (new format)
