@@ -20,3 +20,6 @@ export { NotificationToast } from './NotificationToast';
 
 // File drag overlay
 export { FileDropOverlay } from './FileDropOverlay';
+
+// Typst Preview
+export { TypstPreview } from './TypstPreview';

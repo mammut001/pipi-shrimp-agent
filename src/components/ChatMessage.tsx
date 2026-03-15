@@ -21,6 +21,8 @@ interface ChatMessageProps {
   message: Message;
   /** Whether this is the latest message (may show loading animation) */
   isLatest?: boolean;
+  /** Callback when user clicks preview on a Typst code block */
+  onTypstPreview?: (code: string) => void;
 }
 
 /**
@@ -37,7 +39,7 @@ const formatTimestamp = (timestamp: number): string => {
 /**
  * Single chat message component
  */
-export function ChatMessage({ message, isLatest = false }: ChatMessageProps) {
+export function ChatMessage({ message, isLatest = false, onTypstPreview }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -113,6 +115,9 @@ export function ChatMessage({ message, isLatest = false }: ChatMessageProps) {
                     code({ className, children, ...props }) {
                       const match = /language-(\w+)/.exec(className || '');
                       const isInline = !match;
+                      const language = match?.[1];
+                      const isTypst = language === 'typst';
+                      const codeContent = String(children).replace(/\n$/, '');
 
                       if (isInline) {
                         return (
@@ -126,9 +131,31 @@ export function ChatMessage({ message, isLatest = false }: ChatMessageProps) {
                       }
 
                       return (
-                        <div className="my-2 rounded-lg overflow-hidden">
-                          <div className="bg-gray-800 text-gray-300 px-4 py-1 text-xs">
-                            {match[1]}
+                        <div className="my-2 rounded-lg overflow-hidden relative group">
+                          {/* Header with language and preview button */}
+                          <div className="bg-gray-800 text-gray-300 px-4 py-1 text-xs flex items-center justify-between">
+                            <span>{language}</span>
+                            {isTypst && onTypstPreview && (
+                              <button
+                                onClick={() => onTypstPreview(codeContent)}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs flex items-center gap-1"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  className="h-3 w-3"
+                                  viewBox="0 0 20 20"
+                                  fill="currentColor"
+                                >
+                                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+                                    clipRule="evenodd"
+                                  />
+                                </svg>
+                                Preview
+                              </button>
+                            )}
                           </div>
                           <pre className="bg-gray-800 text-gray-100 p-4 overflow-x-auto">
                             <code className={className} {...props}>

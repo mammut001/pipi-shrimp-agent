@@ -15,12 +15,10 @@
       "fs": {
         "all": false,
         "readFile": true,
-        "readTextFile": true,
         "scope": ["$APPDATA/**", "$HOME/Library/Application Support/LobsterAI/SKILLs/**"]
       },
       "path": {
-        "all": false,
-        "homeDir": true
+        "all": false
       },
       "shell": {
         "all": false,
