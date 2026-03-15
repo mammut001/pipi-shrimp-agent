@@ -2,7 +2,7 @@
  * Skill - Skill Market page component
  *
  * Features:
- * - Display 5 core skills in a clean grid
+ * - Display 4 core skills in a clean grid
  * - Simple black/gray design (Vercel style)
  */
 
@@ -18,40 +18,33 @@ const defaultSkills = [
     name: 'PDF 分析器',
     description: '读取 PDF，提取文本、表格、元数据',
     icon: 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z',
-    skillPath: 'pdf/SKILL.md',
+    skillPath: 'src/skills/pdf/SKILL.md',
   },
   {
     id: 'docx',
     name: 'Word 文档',
     description: '创建和编辑 Word 文档',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
-    skillPath: 'docx/SKILL.md',
+    skillPath: 'src/skills/docx/SKILL.md',
   },
   {
     id: 'xlsx',
     name: '数据统计',
     description: '处理 CSV/JSON/Excel，生成报告',
     icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
-    skillPath: 'xlsx/SKILL.md',
-  },
-  {
-    id: 'seedream',
-    name: 'AI 图像生成',
-    description: '使用 Volcengine Seedream 模型生成 AI 图像',
-    icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z',
-    skillPath: 'seedream/SKILL.md',
+    skillPath: 'src/skills/xlsx/SKILL.md',
   },
   {
     id: 'email',
     name: '邮件发送',
     description: '通过 SMTP 发送邮件',
     icon: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
-    skillPath: 'imap-smtp-email/SKILL.md',
+    skillPath: 'src/skills/email/SKILL.md',
   },
 ];
 
 /**
- * Skill page component - displays 5 core skills
+ * Skill page component - displays 4 core skills
  */
 export function Skill() {
   const { setCurrentView } = useUIStore();

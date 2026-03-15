@@ -18,12 +18,21 @@ use tauri::Manager;
 
 use claude::{ClaudeClient, ChatResponse, Message, node_subprocess};
 use database::{DbSession, DbMessage, init_database, get_all_sessions, save_session, delete_session, save_message, get_messages_for_session};
+use utils::{FontDb, init_font_database, compile_typst_to_svg_with_fonts};
 
 /**
  * State for Claude SDK client
  */
 struct ClaudeState {
     client: ClaudeClient,
+}
+
+/**
+ * State for cached font database (initialized once at startup)
+ * This avoids reloading system fonts on every compilation
+ */
+struct FontDbState {
+    font_db: FontDb,
 }
 
 /**
@@ -139,6 +148,28 @@ fn db_get_messages(session_id: String) -> Result<Vec<DbMessage>, String> {
 }
 
 /**
+ * Render Typst source to SVG (async command)
+ * Uses cached font database from State for better performance
+ */
+#[tauri::command]
+async fn render_typst_to_svg(
+    source: String,
+    font_state: tauri::State<'_, FontDbState>,
+) -> Result<String, String> {
+    // Use the cached font database from State
+    let font_db = &font_state.font_db;
+    compile_typst_to_svg_with_fonts(&source, font_db)
+}
+
+/**
+ * Check how many fonts are available (diagnostic)
+ */
+#[tauri::command]
+fn get_font_count(font_state: tauri::State<'_, FontDbState>) -> usize {
+    font_state.font_db.faces().count()
+}
+
+/**
  * Main entry point for the Tauri application
  */
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -191,6 +222,14 @@ pub fn run() {
                 client: claude_client,
             })));
 
+            // Initialize font database and manage it in State
+            // This avoids reloading system fonts on every compilation
+            println!("🔤 Loading system fonts...");
+            let font_db = init_font_database();
+            let font_count = font_db.faces().count();
+            println!("✅ Loaded {} fonts", font_count);
+            app.manage(FontDbState { font_db });
+
             println!("✅ Main window created successfully");
 
             Ok(())
@@ -236,6 +275,9 @@ pub fn run() {
             db_delete_session,
             db_save_message,
             db_get_messages,
+            // Typst rendering commands
+            render_typst_to_svg,
+            get_font_count,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,16 +10,22 @@
  * - Permission dialog integration
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { ChatMessage, ChatInput, PermissionModal } from '@/components';
+import { ChatMessage, ChatInput, PermissionModal, TypstPreview } from '@/components';
+import { getLatestTypstBlock } from '@/utils/typst';
 
 /**
  * Chat page component
  */
 export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Preview panel state
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewContent, setPreviewContent] = useState<string>('');
+  const [autoSync, setAutoSync] = useState(true);
 
   const {
     currentMessages,
@@ -80,57 +86,82 @@ export function Chat() {
     clearError();
   };
 
+  /**
+   * Handle Typst preview button click from code block
+   */
+  const handleTypstPreview = useCallback((code: string) => {
+    setPreviewContent(code);
+    setShowPreview(true);
+    setAutoSync(false); // Disable auto-sync when user manually selects
+  }, []);
+
+  /**
+   * Auto-sync to latest Typst block when messages change
+   */
+  useEffect(() => {
+    if (autoSync && messages.length > 0) {
+      const latestBlock = getLatestTypstBlock(messages);
+      if (latestBlock) {
+        setPreviewContent(latestBlock);
+        setShowPreview(true);
+      }
+    }
+  }, [messages, autoSync]);
+
   return (
     <MainLayout>
-      <div className="flex-1 flex flex-col min-h-0">
-        {/* Messages List */}
-        <div className="flex-1 overflow-y-auto">
-          {hasMessages ? (
-            <div className="divide-y divide-gray-100">
-              {messages.map((message, index) => (
-                <ChatMessage
-                  key={message.id}
-                  message={message}
-                  isLatest={index === messages.length - 1}
-                />
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-          ) : (
-            /* Empty State */
-            <div className="flex-1 flex items-center justify-center pt-64 pb-20 select-none pointer-events-none">
-              <div className="text-center">
-                <div className="mb-4 opacity-40">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-16 w-16 mx-auto text-gray-500"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                    />
-                  </svg>
-                </div>
-                <h2 className="text-xl font-black text-gray-600 mb-2 uppercase tracking-[0.2em]">
-                  Start a conversation
-                </h2>
-                <p className="text-gray-700 max-w-sm text-xs font-bold uppercase tracking-widest leading-loose">
-                  Send a message to begin chatting with AI Agent. <br /> Your conversations will be saved here.
-                </p>
+      <div className="flex-1 flex min-h-0">
+        {/* Left Panel - Chat */}
+        <div className={`flex flex-col min-h-0 ${showPreview ? 'w-1/2' : 'w-full'}`}>
+          {/* Messages List */}
+          <div className="flex-1 overflow-y-auto">
+            {hasMessages ? (
+              <div className="divide-y divide-gray-100">
+                {messages.map((message, index) => (
+                  <ChatMessage
+                    key={message.id}
+                    message={message}
+                    isLatest={index === messages.length - 1}
+                    onTypstPreview={handleTypstPreview}
+                  />
+                ))}
+                <div ref={messagesEndRef} />
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              /* Empty State */
+              <div className="flex-1 flex items-center justify-center pt-64 pb-20 select-none pointer-events-none">
+                <div className="text-center">
+                  <div className="mb-4 opacity-40">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-16 w-16 mx-auto text-gray-500"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                      />
+                    </svg>
+                  </div>
+                  <h2 className="text-xl font-black text-gray-600 mb-2 uppercase tracking-[0.2em]">
+                    Start a conversation
+                  </h2>
+                  <p className="text-gray-700 max-w-sm text-xs font-bold uppercase tracking-widest leading-loose">
+                    Send a message to begin chatting with AI Agent. <br /> Your conversations will be saved here.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
 
         {/* Error Banner */}
         {error && (
           <div className="px-4 py-3 bg-red-50 border-t border-red-200">
-            <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
+            <div className={`mx-auto flex items-center justify-between gap-4 ${showPreview ? 'max-w-full' : 'max-w-3xl'}`}>
               <div className="flex items-center gap-2 text-red-700">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -182,7 +213,7 @@ export function Chat() {
         {/* Loading Indicator */}
         {isStreaming && (
           <div className="px-4 py-2 bg-blue-50 border-t border-blue-200">
-            <div className="max-w-3xl mx-auto flex items-center gap-2 text-blue-700">
+            <div className={`mx-auto flex items-center gap-2 text-blue-700 ${showPreview ? 'max-w-full' : 'max-w-3xl'}`}>
               <svg
                 className="animate-spin h-4 w-4"
                 xmlns="http://www.w3.org/2000/svg"
@@ -210,6 +241,63 @@ export function Chat() {
 
         {/* Chat Input */}
         <ChatInput />
+        </div>
+
+        {/* Right Panel - Typst Preview */}
+        {showPreview && (
+          <div className="w-1/2 border-l border-gray-200 flex flex-col bg-gray-50">
+            {/* Preview Header */}
+            <div className="px-4 py-2 border-b border-gray-200 bg-white flex items-center justify-between">
+              <span className="font-medium text-gray-700">Typst Preview</span>
+              <div className="flex items-center gap-2">
+                {/* Auto-sync Toggle */}
+                <button
+                  onClick={() => setAutoSync(!autoSync)}
+                  className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
+                    autoSync ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                  }`}
+                  title={autoSync ? 'Auto-sync enabled' : 'Auto-sync disabled'}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-3 w-3"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  Sync
+                </button>
+                {/* Close Button */}
+                <button
+                  onClick={() => setShowPreview(false)}
+                  className="p-1 hover:bg-gray-100 rounded text-gray-500"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {/* Preview Content */}
+            <div className="flex-1 overflow-hidden p-4">
+              <TypstPreview rawContent={previewContent} className="h-full" />
+            </div>
+          </div>
+        )}
 
         {/* Permission Modal */}
         {pendingPermission && (
