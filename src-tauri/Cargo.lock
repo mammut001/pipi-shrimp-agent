@@ -4192,6 +4192,7 @@ dependencies = [
  "comemo",
  "dirs",
  "fontdb 0.14.1",
+ "glob",
  "once_cell",
  "open 5.3.3",
  "reqwest",

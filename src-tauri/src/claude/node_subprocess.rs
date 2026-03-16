@@ -243,7 +243,7 @@ impl ClaudeClient {
             err_output
         };
 
-        let timeout = tokio::time::Duration::from_secs(60);
+        let timeout = tokio::time::Duration::from_secs(120);
         let wait_fut = tokio::time::timeout(timeout, child.wait());
 
         // Run all three concurrently
@@ -256,7 +256,7 @@ impl ClaudeClient {
         let status = match status_result {
             Ok(Ok(s)) => s,
             Ok(Err(e)) => return Err(AppError::ProcessError(format!("Node.js process failed: {}", e))),
-            Err(_) => return Err(AppError::ProcessError("Node.js subprocess timed out (60s)".to_string())),
+            Err(_) => return Err(AppError::ProcessError("Node.js subprocess timed out (120s)".to_string())),
         };
 
         // 4. Handle non-zero exit status

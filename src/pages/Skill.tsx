@@ -7,9 +7,92 @@
  */
 
 import { useState, useEffect } from 'react';
-import { MainLayout } from '@/layout';
 import { useUIStore } from '@/store';
-import { readTextFile } from '@tauri-apps/api/fs';
+
+// Skill documentation content
+const skillDocumentation: Record<string, string> = {
+  pdf: `# PDF 分析器
+
+智能 PDF 文档分析工具，可以：
+- 提取文本内容
+- 识别表格结构
+- 获取文档元数据
+- 处理多页文档
+
+## 快速开始
+
+选择 PDF 文件后，工具会自动分析文档结构并提取相关信息。
+
+## 功能特性
+
+- 支持扫描的 PDF（OCR）
+- 表格识别和提取
+- 元数据读取
+- 批量处理`,
+
+  docx: `# Word 文档处理器
+
+创建和编辑 Microsoft Word 文档（.docx）
+
+## 功能
+
+- 创建新文档
+- 添加段落、标题、列表
+- 插入表格和图片
+- 设置页面样式
+- 导出为 PDF
+
+## 使用示例
+
+工具支持：
+- 文本格式化（加粗、斜体、下划线）
+- 页面设置（页边距、纸张大小）
+- 页码和页眉页脚
+- 目录生成`,
+
+  xlsx: `# 数据统计分析工具
+
+处理电子表格数据，支持 CSV、JSON 和 Excel 格式。
+
+## 功能
+
+- 导入多种数据格式
+- 数据清理和转换
+- 统计分析和汇总
+- 图表生成
+- 报告输出
+
+## 支持的操作
+
+- 数据透视表
+- 公式计算
+- 条件格式化
+- 数据验证
+- 自动排序和筛选`,
+
+  'skill-creator': `# Skill 创建器
+
+开发和优化自定义 skills
+
+## 创建新 Skill
+
+1. 点击"添加自定义 Skill"按钮
+2. 输入 skill 名称和描述
+3. 选择图标
+4. 保存 skill
+
+## 编辑 Skill
+
+- 鼠标悬停在 skill 卡片上
+- 点击编辑按钮修改信息
+- 或点击删除按钮移除 skill
+
+## Skill 最佳实践
+
+- 命名清晰明了
+- 描述详细准确
+- 图标简洁易识别`,
+};
 
 // Core skills only - no categories
 const defaultSkills = [
@@ -18,28 +101,24 @@ const defaultSkills = [
     name: 'PDF 分析器',
     description: '读取 PDF，提取文本、表格、元数据',
     icon: 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z',
-    skillPath: 'src/skills/pdf/SKILL.md',
   },
   {
     id: 'docx',
     name: 'Word 文档',
     description: '创建和编辑 Word 文档',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
-    skillPath: 'src/skills/docx/SKILL.md',
   },
   {
     id: 'xlsx',
     name: '数据统计',
     description: '处理 CSV/JSON/Excel，生成报告',
     icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
-    skillPath: 'src/skills/xlsx/SKILL.md',
   },
   {
-    id: 'email',
-    name: '邮件发送',
-    description: '通过 SMTP 发送邮件',
-    icon: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
-    skillPath: 'src/skills/email/SKILL.md',
+    id: 'skill-creator',
+    name: 'Skill 创建器',
+    description: '创建和优化自定义 skills',
+    icon: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z',
   },
 ];
 
@@ -103,14 +182,17 @@ export function Skill() {
       }
     } else {
       // Create new skill
+      const newSkillId = `custom-${Date.now()}`;
       const newSkill = {
-        id: `custom-${Date.now()}`,
+        id: newSkillId,
         name: skillForm.name,
         description: skillForm.description,
         icon: skillForm.icon,
-        skillPath: `${skillForm.name.toLowerCase().replace(/\s+/g, '-')}/SKILL.md`,
       };
       setSkills(prev => [...prev, newSkill]);
+
+      // Add default documentation for new custom skill
+      skillDocumentation[newSkillId] = `# ${skillForm.name}\n\n${skillForm.description}\n\n## 功能\n\n- 待实现\n- 待实现\n- 待实现`;
     }
     setShowCustomSkillModal(false);
   };
@@ -131,25 +213,13 @@ export function Skill() {
       return;
     }
 
-    const loadSkillContent = async () => {
-      setLoadingContent(true);
-      try {
-        // Construct the full path to the SKILL.md file
-        const homeDir = await import('@tauri-apps/api/path').then(p => p.homeDir());
-        const skillFullPath = `${homeDir}/Library/Application Support/LobsterAI/SKILLs/${selectedSkill.skillPath}`;
+    setLoadingContent(true);
 
-        const content = await readTextFile(skillFullPath);
-        setSkillContent(content);
-      } catch (error) {
-        console.error('Failed to load skill content:', error);
-        setSkillContent('# 无法加载 SKILL.md\n\n请确保已安装此 skill。');
-      } finally {
-        setLoadingContent(false);
-      }
-    };
-
-    loadSkillContent();
-  }, [selectedSkill, skills]);
+    // Use inline documentation
+    const content = skillDocumentation[selectedSkill.id] || `# ${selectedSkill.name}\n\n${selectedSkill.description}`;
+    setSkillContent(content);
+    setLoadingContent(false);
+  }, [selectedSkill]);
 
   // Filter skills based on search
   const filteredSkills = skills.filter(skill =>
@@ -158,7 +228,7 @@ export function Skill() {
   );
 
   return (
-    <MainLayout>
+    <div className="h-screen flex flex-col bg-white">
       <div className="flex-1 flex min-h-0 bg-white">
         {/* Skills Grid - Left Panel */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -316,10 +386,22 @@ export function Skill() {
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
                 </div>
               ) : (
-                <div className="prose prose-sm max-w-none">
-                  <pre className="whitespace-pre-wrap font-sans text-xs text-gray-700 bg-white p-4 rounded-lg border border-gray-200 overflow-x-auto">
-                    {skillContent}
-                  </pre>
+                <div className="prose prose-sm max-w-none text-gray-700 space-y-4">
+                  {skillContent.split('\n').map((line, idx) => {
+                    if (line.startsWith('# ')) {
+                      return <h1 key={idx} className="text-lg font-bold text-gray-900 mt-0 mb-2">{line.substring(2)}</h1>;
+                    }
+                    if (line.startsWith('## ')) {
+                      return <h2 key={idx} className="text-base font-semibold text-gray-800 mt-3 mb-2">{line.substring(3)}</h2>;
+                    }
+                    if (line.startsWith('- ')) {
+                      return <li key={idx} className="text-sm text-gray-600 ml-4">{line.substring(2)}</li>;
+                    }
+                    if (line.trim() === '') {
+                      return <div key={idx} className="h-2" />;
+                    }
+                    return <p key={idx} className="text-sm text-gray-600 leading-relaxed">{line}</p>;
+                  })}
                 </div>
               )}
             </div>
@@ -409,7 +491,7 @@ export function Skill() {
           </div>
         </div>
       )}
-    </MainLayout>
+    </div>
   );
 }
 

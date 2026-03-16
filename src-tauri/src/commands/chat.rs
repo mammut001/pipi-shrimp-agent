@@ -326,6 +326,16 @@ pub async fn execute_tool(
             let result = crate::commands::file::path_exists(path.to_string()).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
+        "list_files" => {
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for list_files".to_string()))?;
+            let pattern = args.get("pattern")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let result = crate::commands::file::list_files(path.to_string(), pattern).await?;
+            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
+        }
         _ => return Err(AppError::InternalError(format!("Unknown tool: {}", tool_name)))
     };
 

@@ -15,7 +15,7 @@
       "fs": {
         "all": false,
         "readFile": true,
-        "scope": ["$APPDATA/**", "$HOME/Library/Application Support/LobsterAI/SKILLs/**"]
+        "scope": ["$RESOURCE/**"]
       },
       "path": {
         "all": false
@@ -70,7 +70,7 @@
         "providerShortName": null,
         "signingIdentity": null
       },
-      "resources": [],
+      "resources": ["skills/**"],
       "shortDescription": "",
       "targets": "all",
       "windows": {

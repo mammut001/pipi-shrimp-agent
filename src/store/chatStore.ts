@@ -610,13 +610,13 @@ export const useChatStore = create<ChatState>()(
         return;
       }
 
-      // Start streaming with 30 second timeout
+      // Start streaming with 60 second timeout
       if (streaming) {
         const timeoutId = setTimeout(() => {
-          console.warn('Streaming timeout (30s) reached, stopping...');
+          console.warn('Streaming timeout (60s) reached, stopping...');
           const { setStreaming } = get();
           setStreaming(false);
-        }, 30000);
+        }, 60000);
         set({ isStreaming: true, streamingTimeoutId: timeoutId });
       }
     },
