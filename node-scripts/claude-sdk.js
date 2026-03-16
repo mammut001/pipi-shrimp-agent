@@ -261,13 +261,16 @@ function detectArtifacts(content) {
  */
 function formatMessagesForOpenAI(messages) {
   const formatted = [];
-  
+
   for (const msg of messages) {
     if (msg.role === 'user' && msg.content.startsWith('__TOOL_RESULT__:')) {
-      const parts = msg.content.split(':');
-      const toolCallId = parts[1];
-      const content = parts.slice(2).join(':');
-      
+      // ✅ 使用正则表达式安全分割（ID 可能包含冒号）
+      const match = msg.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
+      if (!match) continue;
+
+      const toolCallId = match[1];
+      const content = match[2];
+
       formatted.push({
         role: 'tool',
         tool_call_id: toolCallId,
@@ -275,13 +278,13 @@ function formatMessagesForOpenAI(messages) {
       });
       continue;
     }
-    
+
     formatted.push({
       role: msg.role,
       content: msg.content
     });
   }
-  
+
   return formatted;
 }
 
@@ -328,6 +331,8 @@ async function callCustomAPI(request, isStreaming = false) {
     const decoder = new TextDecoder();
     let buffer = '';
     let fullContent = '';
+    // 累积 tool_calls 数据
+    let currentToolCalls = [];
 
     try {
       while (true) {
@@ -368,17 +373,37 @@ async function callCustomAPI(request, isStreaming = false) {
               
               const finishReason = data.choices?.[0]?.finish_reason;
 
-              // 检测工具调用
+              // 累积 tool_calls 数据
+              const toolCallsDelta = data.choices?.[0]?.delta?.tool_calls || [];
+              for (const toolCall of toolCallsDelta) {
+                const index = toolCall.index;
+                if (index !== undefined) {
+                  // 初始化或更新对应索引的 tool_call
+                  if (!currentToolCalls[index]) {
+                    currentToolCalls[index] = {
+                      id: toolCall.id || '',
+                      function: { name: '', arguments: '' }
+                    };
+                  }
+                  if (toolCall.id) currentToolCalls[index].id = toolCall.id;
+                  if (toolCall.function?.name) currentToolCalls[index].function.name = toolCall.function.name;
+                  if (toolCall.function?.arguments) currentToolCalls[index].function.arguments += toolCall.function.arguments;
+                }
+              }
+
+              // 检测工具调用结束
               if (finishReason === 'tool_calls') {
-                const toolCalls = data.choices?.[0]?.delta?.tool_calls || [];
-                for (const toolCall of toolCalls) {
-                  writeToolUseEvent({
-                    id: toolCall.id || `tool_${Date.now()}`,
-                    function: {
-                      name: toolCall.function?.name || '',
-                      arguments: toolCall.function?.arguments || ''
-                    }
-                  });
+                // 使用累积的完整 tool_calls 数据
+                for (const toolCall of currentToolCalls) {
+                  if (toolCall && toolCall.id) {  // ✅ 检查 ID 是否存在
+                    writeToolUseEvent({
+                      id: toolCall.id,  // ✅ 使用真实 ID，不生成假 ID
+                      function: {
+                        name: toolCall.function.name,
+                        arguments: toolCall.function.arguments
+                      }
+                    });
+                  }
                 }
                 // 发送结束信号，标记为工具调用
                 writeStreamEnd({
@@ -469,9 +494,12 @@ function formatMessagesForAnthropic(messages) {
     
     // 如果是工具结果标记
     if (msg.role === 'user' && msg.content.startsWith('__TOOL_RESULT__:')) {
-      const parts = msg.content.split(':');
-      const toolCallId = parts[1];
-      const content = parts.slice(2).join(':');
+      // ✅ 使用正则表达式安全分割（ID 可能包含冒号）
+      const match = msg.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
+      if (!match) continue;
+
+      const toolCallId = match[1];
+      const content = match[2];
 
       // For OpenAI-compatible APIs, tool results should have role: 'tool', not 'user'
       formatted.push({

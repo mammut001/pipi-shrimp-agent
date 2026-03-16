@@ -249,6 +249,7 @@ pub fn run() {
             commands::write_file,
             commands::path_exists,
             commands::create_directory,
+            commands::list_files,
             // Config commands
             commands::get_config,
             commands::set_config,
