@@ -57,9 +57,9 @@ export default function ChangelogPage() {
   };
 
   return (
-    <div className="page-enter">
+    <div className="page-enter stack-reset">
       {/* Hero Section */}
-      <section className="py-20 bg-[var(--background-secondary)]">
+      <section className="section-padding bg-secondary pt-32">
         <div className="max-w-[1200px] mx-auto px-6">
           <h1 className="text-4xl md:text-5xl font-bold text-[var(--text-primary)] mb-6">
             {t.changelog.title}
@@ -71,7 +71,7 @@ export default function ChangelogPage() {
       </section>
 
       {/* Changelog List */}
-      <section className="py-20">
+      <section className="section-padding">
         <div className="max-w-[1200px] mx-auto px-6">
           {loading ? (
             <div className="flex items-center justify-center py-20">
