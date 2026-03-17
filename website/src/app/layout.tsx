@@ -17,10 +17,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen flex flex-col">
+      <body className="min-h-screen antialiased overflow-x-hidden" suppressHydrationWarning>
         <LanguageProvider>
           <Header />
-          <main className="flex-1 pt-16">{children}</main>
+          <main className="main-content-padding">{children}</main>
           <Footer />
         </LanguageProvider>
       </body>

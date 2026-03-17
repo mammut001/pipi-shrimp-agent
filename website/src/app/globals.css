@@ -34,8 +34,10 @@
   padding: 0;
 }
 
-html {
-  scroll-behavior: smooth;
+html, body {
+  min-height: 100%;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
 
 body {
@@ -45,6 +47,7 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  position: relative;
 }
 
 /* Typography */
@@ -127,4 +130,36 @@ a {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.main-content-padding {
+  padding-top: 64px; /* Header height (h-16) */
+}
+
+/* Explicit Layout Utilities */
+.hero-padding {
+  padding-top: 120px;
+  padding-bottom: 80px;
+}
+
+@media (min-width: 768px) {
+  .hero-padding {
+    padding-top: 180px;
+    padding-bottom: 120px;
+  }
+}
+
+.section-padding {
+  padding-top: 80px;
+  padding-bottom: 80px;
+}
+
+.bg-secondary {
+  background-color: var(--background-secondary);
+}
+
+.stack-reset section {
+  display: block;
+  position: relative;
+  width: 100%;
 }

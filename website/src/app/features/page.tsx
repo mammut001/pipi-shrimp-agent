@@ -27,9 +27,9 @@ export default function FeaturesPage() {
   const { t } = useLanguage();
 
   return (
-    <div className="page-enter">
+    <div className="page-enter stack-reset">
       {/* Hero Section */}
-      <section className="py-20 bg-[var(--background-secondary)]">
+      <section className="section-padding bg-secondary pt-32">
         <div className="max-w-[1200px] mx-auto px-6 text-center">
           <h1 className="text-4xl md:text-5xl font-bold text-[var(--text-primary)] mb-6">
             {t.features.title}
@@ -41,15 +41,12 @@ export default function FeaturesPage() {
       </section>
 
       {/* Features Grid */}
-      <section className="py-20">
+      <section className="section-padding">
         <div className="max-w-[1200px] mx-auto px-6">
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             {t.features.list.map((feature, index) => (
-              <div
-                key={index}
-                className="p-8 bg-white rounded-2xl border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-lg transition-all duration-300 group"
-              >
-                <div className="w-12 h-12 mb-5 flex items-center justify-center bg-[var(--accent)] bg-opacity-10 rounded-xl group-hover:bg-[var(--accent)] group-hover:bg-opacity-20 transition-colors">
+              <div className="p-8 bg-white rounded-2xl border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-lg transition-all duration-300 group">
+                <div className="w-12 h-12 mb-5 flex items-center justify-center bg-[var(--accent)]/10 rounded-xl group-hover:bg-[var(--accent)]/20 transition-colors">
                   <div className="text-[var(--accent)] group-hover:text-[var(--accent)] transition-colors">
                     {featureIcons[index]}
                   </div>
@@ -67,7 +64,7 @@ export default function FeaturesPage() {
       </section>
 
       {/* Call to Action */}
-      <section className="py-20 bg-[var(--background-secondary)]">
+      <section className="section-padding bg-secondary">
         <div className="max-w-[1200px] mx-auto px-6 text-center">
           <h2 className="text-3xl font-bold text-[var(--text-primary)] mb-4">
             Start using Pipi Shrimp Agent today
