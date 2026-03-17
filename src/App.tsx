@@ -5,7 +5,7 @@
  * Settings is shown as a modal overlay when triggered from sidebar.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
 import { Chat, Settings, Workflow, Skill } from '@/pages';
 
@@ -16,6 +16,9 @@ export default function App() {
   const { apiConfig, getApiConfig } = useSettingsStore();
   const { init: initChat } = useChatStore();
   const { settingsOpen, toggleSettings, currentView } = useUIStore();
+
+  // Track if settings has been initialized (to prevent infinite loop)
+  const hasInitialized = useRef(false);
 
   // Load settings on mount
   useEffect(() => {
@@ -31,12 +34,15 @@ export default function App() {
     init();
   }, [getApiConfig, initChat]);
 
-  // If no API key, auto-open settings modal
+  // If no API key on first load, auto-open settings modal
   useEffect(() => {
-    if (!apiConfig?.apiKey && !settingsOpen) {
-      toggleSettings();
+    if (!hasInitialized.current) {
+      hasInitialized.current = true;
+      if (!apiConfig?.apiKey) {
+        toggleSettings();
+      }
     }
-  }, [apiConfig, settingsOpen, toggleSettings]);
+  }, [apiConfig, toggleSettings]);
 
   // Render active page (each page includes MainLayout with Sidebar)
   return (

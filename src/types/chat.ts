@@ -150,6 +150,11 @@ export interface ChatState {
   deleteSession: (sessionId: string) => Promise<void>;
 
   /**
+   * Delete multiple sessions
+   */
+  deleteSessions: (sessionIds: string[]) => Promise<void>;
+
+  /**
    * Update session's working directory
    */
   updateSessionCwd: (sessionId: string, cwd: string) => Promise<void>;
