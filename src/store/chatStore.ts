@@ -12,10 +12,10 @@ import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 
 /**
- * Streaming timeout - 30 seconds
+ * Streaming timeout - 300 seconds
  * If the API doesn't respond within this time, we'll force stop the streaming
  */
-const STREAMING_TIMEOUT_MS = 30000;
+const STREAMING_TIMEOUT_MS = 300000;
 
 /**
  * Database types matching Rust backend
@@ -196,7 +196,7 @@ export const useChatStore = create<ChatState>()(
       set({ isInitialized: true });
 
       try {
-        // Load Projects from database (with fallback)
+        // Load Projects from database (preserve existing if fails)
         try {
           console.log('🔄 Loading projects from database...');
           const dbProjects = await invoke<DbProject[]>('db_get_all_projects');
@@ -204,8 +204,8 @@ export const useChatStore = create<ChatState>()(
           const projects: Project[] = dbProjects.map(dbToProject);
           set({ projects });
         } catch (error) {
-          console.warn('Failed to load projects, continuing with empty projects:', error);
-          set({ projects: [] });
+          // Don't clear projects on load failure - preserve whatever is in state
+          console.warn('Failed to load projects from database, keeping existing state:', error);
         }
 
         // Load sessions from database
@@ -223,8 +223,9 @@ export const useChatStore = create<ChatState>()(
               });
               return dbToSession(dbSession, dbMessages);
             } catch (err) {
-              console.error(`Failed to load messages for session ${dbSession.id}:`, err);
-              throw err;
+              // Don't throw - return session with empty messages so other sessions still load
+              console.warn(`Failed to load messages for session ${dbSession.id}, loading with empty messages:`, err);
+              return dbToSession(dbSession, []);
             }
           })
         );
@@ -936,7 +937,7 @@ export const useChatStore = create<ChatState>()(
     deleteSession: async (sessionId: string) => {
       // Delete from database
       try {
-        await invoke('db_delete_session', { session_id: sessionId });
+        await invoke('db_delete_session', { sessionId });
       } catch (error) {
         console.error('Failed to delete session from database:', error);
       }
@@ -949,6 +950,44 @@ export const useChatStore = create<ChatState>()(
               ? newSessions[0].id
               : null
             : state.currentSessionId;
+
+        return {
+          sessions: newSessions,
+          currentSessionId: newCurrentSessionId,
+        };
+      });
+    },
+
+    /**
+     * Delete multiple sessions at once
+     */
+    deleteSessions: async (sessionIds: string[]) => {
+      // Delete from database
+      let deleteErrors = 0;
+      for (const sessionId of sessionIds) {
+        try {
+          await invoke('db_delete_session', { sessionId });
+          console.log(`🗑️ Deleted session from DB: ${sessionId}`);
+        } catch (error) {
+          deleteErrors++;
+          console.error(`❌ Failed to delete session ${sessionId} from database:`, error);
+        }
+      }
+      if (deleteErrors > 0) {
+        console.warn(`⚠️ ${deleteErrors}/${sessionIds.length} sessions failed to delete from database`);
+      } else {
+        console.log(`✅ All ${sessionIds.length} sessions deleted from database`);
+      }
+
+      set((state) => {
+        const sessionIdSet = new Set(sessionIds);
+        const newSessions = state.sessions.filter((s) => !sessionIdSet.has(s.id));
+        let newCurrentSessionId = state.currentSessionId;
+
+        // If current session was deleted, select the first available one
+        if (sessionIdSet.has(state.currentSessionId || '')) {
+          newCurrentSessionId = newSessions.length > 0 ? newSessions[0].id : null;
+        }
 
         return {
           sessions: newSessions,
@@ -1024,7 +1063,7 @@ export const useChatStore = create<ChatState>()(
     deleteProject: async (projectId: string) => {
       // Delete from database first
       try {
-        await invoke('db_delete_project', { project_id: projectId });
+        await invoke('db_delete_project', { projectId });
       } catch (error) {
         console.error('Failed to delete project from database:', error);
       }
@@ -1033,7 +1072,7 @@ export const useChatStore = create<ChatState>()(
       const sessionsInProject = get().sessions.filter((s) => s.projectId === projectId);
       for (const session of sessionsInProject) {
         try {
-          await invoke('db_delete_session', { session_id: session.id });
+          await invoke('db_delete_session', { sessionId: session.id });
         } catch (error) {
           console.error('Failed to delete session from database:', error);
         }
