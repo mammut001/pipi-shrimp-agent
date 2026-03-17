@@ -130,6 +130,76 @@ const TOOLS = [
         required: ['path']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_files',
+      description: 'Search for a pattern in files using ripgrep (rg). Supports regex patterns and file type filtering.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: {
+            type: 'string',
+            description: 'The search pattern (supports regex)'
+          },
+          path: {
+            type: 'string',
+            description: 'The directory path to search in'
+          },
+          extensions: {
+            type: 'array',
+            items: {
+              type: 'string'
+            },
+            description: 'Optional list of file extensions to filter (e.g., ["rs", "ts"])'
+          }
+        },
+        required: ['pattern', 'path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'glob_search',
+      description: 'Find files matching a glob pattern (e.g., "**/*.rs", "src/**/*.ts").',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: {
+            type: 'string',
+            description: 'The glob pattern (e.g., "**/*.rs", "*.ts")'
+          },
+          path: {
+            type: 'string',
+            description: 'The directory path to search in'
+          }
+        },
+        required: ['pattern', 'path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'grep_files',
+      description: 'Fallback grep search when ripgrep is not available. Search for a pattern in files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: {
+            type: 'string',
+            description: 'The search pattern'
+          },
+          path: {
+            type: 'string',
+            description: 'The file path or directory to search in'
+          }
+        },
+        required: ['pattern', 'path']
+      }
+    }
   }
 ];
 
@@ -195,8 +265,8 @@ function writeStdout(data) {
  * 向标准输出写入流式 chunk (每个 token 一行)
  * 格式: { type: 'chunk', content: 'token text' }
  */
-function writeStreamChunk(content) {
-  console.log(JSON.stringify({ type: 'chunk', content }));
+function writeStreamChunk(content, reasoning) {
+  console.log(JSON.stringify({ type: 'chunk', content, reasoning }));
 }
 
 /**
@@ -263,18 +333,42 @@ function formatMessagesForOpenAI(messages) {
   const formatted = [];
 
   for (const msg of messages) {
-    if (msg.role === 'user' && msg.content.startsWith('__TOOL_RESULT__:')) {
-      // ✅ 使用正则表达式安全分割（ID 可能包含冒号）
-      const match = msg.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
-      if (!match) continue;
+    if (msg.role === 'user' && (msg.content.startsWith('__TOOL_RESULT__:') || msg.tool_call_id)) {
+      let toolCallId, content;
+      
+      if (msg.tool_call_id) {
+        toolCallId = msg.tool_call_id;
+        content = msg.content;
+      } else {
+        const match = msg.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
+        if (match) {
+          toolCallId = match[1];
+          content = match[2];
+        }
+      }
 
-      const toolCallId = match[1];
-      const content = match[2];
+      if (toolCallId) {
+        formatted.push({
+          role: 'tool',
+          tool_call_id: toolCallId,
+          content: content
+        });
+        continue;
+      }
+    }
 
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
       formatted.push({
-        role: 'tool',
-        tool_call_id: toolCallId,
-        content: content
+        role: 'assistant',
+        content: msg.content,
+        tool_calls: msg.tool_calls.map(tc => ({
+          id: tc.id || tc.tool_call_id,
+          type: 'function',
+          function: {
+            name: tc.name,
+            arguments: tc.arguments
+          }
+        }))
       });
       continue;
     }
@@ -373,53 +467,15 @@ async function callCustomAPI(request, isStreaming = false) {
               
               const finishReason = data.choices?.[0]?.finish_reason;
 
-              // 累积 tool_calls 数据
-              const toolCallsDelta = data.choices?.[0]?.delta?.tool_calls || [];
-              for (const toolCall of toolCallsDelta) {
-                const index = toolCall.index;
-                if (index !== undefined) {
-                  // 初始化或更新对应索引的 tool_call
-                  if (!currentToolCalls[index]) {
-                    currentToolCalls[index] = {
-                      id: toolCall.id || '',
-                      function: { name: '', arguments: '' }
-                    };
-                  }
-                  if (toolCall.id) currentToolCalls[index].id = toolCall.id;
-                  if (toolCall.function?.name) currentToolCalls[index].function.name = toolCall.function.name;
-                  if (toolCall.function?.arguments) currentToolCalls[index].function.arguments += toolCall.function.arguments;
-                }
+              // Emit reasoning content if present
+              if (reasoningDelta) {
+                writeStreamChunk('', reasoningDelta); // Emit as reasoning
               }
 
-              // 检测工具调用结束
-              if (finishReason === 'tool_calls') {
-                // 使用累积的完整 tool_calls 数据
-                for (const toolCall of currentToolCalls) {
-                  if (toolCall && toolCall.id) {  // ✅ 检查 ID 是否存在
-                    writeToolUseEvent({
-                      id: toolCall.id,  // ✅ 使用真实 ID，不生成假 ID
-                      function: {
-                        name: toolCall.function.name,
-                        arguments: toolCall.function.arguments
-                      }
-                    });
-                  }
-                }
-                // 发送结束信号，标记为工具调用
-                writeStreamEnd({
-                  content: fullContent,
-                  model,
-                  usage: { input_tokens: 0, output_tokens: fullContent.length },
-                  finishReason: 'tool_calls'
-                });
-                return;
-              }
-
-              // Append whatever content we got (reasoning or actual content)
-              const contentToEmit = reasoningDelta || delta || '';
-              if (contentToEmit) {
-                fullContent += contentToEmit;
-                writeStreamChunk(contentToEmit);
+              // Emit standard content if present
+              if (delta) {
+                fullContent += delta;
+                writeStreamChunk(delta);
               }
             } catch (e) {
               // 忽略解析错误
@@ -489,36 +545,61 @@ async function callCustomAPI(request, isStreaming = false) {
 function formatMessagesForAnthropic(messages) {
   const formatted = [];
   
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    
-    // 如果是工具结果标记
-    if (msg.role === 'user' && msg.content.startsWith('__TOOL_RESULT__:')) {
-      // ✅ 使用正则表达式安全分割（ID 可能包含冒号）
-      const match = msg.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
-      if (!match) continue;
+  for (const msg of messages) {
+    // 1. Handle tool results (sent as role: user with tool_result block)
+    if (msg.role === 'user' && (msg.content.startsWith('__TOOL_RESULT__:') || msg.tool_call_id)) {
+      let toolCallId, content;
+      
+      if (msg.tool_call_id) {
+        toolCallId = msg.tool_call_id;
+        content = msg.content;
+      } else {
+        const match = msg.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
+        if (match) {
+          toolCallId = match[1];
+          content = match[2];
+        }
+      }
 
-      const toolCallId = match[1];
-      const content = match[2];
+      if (toolCallId) {
+        formatted.push({
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: toolCallId,
+              content: content
+            }
+          ]
+        });
+        continue;
+      }
+    }
 
-      // For OpenAI-compatible APIs, tool results should have role: 'tool', not 'user'
+    // 2. Handle assistant messages with tool calls
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      const content = [];
+      if (msg.content) {
+        content.push({ type: 'text', text: msg.content });
+      }
+      
+      for (const tc of msg.tool_calls) {
+        content.push({
+          type: 'tool_use',
+          id: tc.id || tc.tool_call_id,
+          name: tc.name,
+          input: typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
+        });
+      }
+      
       formatted.push({
-        role: 'tool',
-        tool_call_id: toolCallId,
+        role: 'assistant',
         content: content
       });
       continue;
     }
 
-    // 如果是包含工具调用的 assistant 消息，需要保留 tool_calls
-    if (msg.role === 'assistant' && msg.tool_calls) {
-      formatted.push({
-        role: 'assistant',
-        content: msg.content || '',
-        tool_calls: msg.tool_calls
-      });
-      continue;
-    }
+    // 3. Standard messages
     formatted.push({
       role: msg.role === 'assistant' ? 'assistant' : 'user',
       content: msg.content
@@ -547,24 +628,41 @@ async function callAnthropicStreaming(request) {
     input_schema: t.function.parameters
   }));
 
+  // 检测是否使用支持 extended thinking 的模型
+  const resolvedModel = model || 'claude-3-5-sonnet-20241022';
+  const supportsThinking = resolvedModel.includes('claude-3-7') ||
+    resolvedModel.includes('claude-opus-4') ||
+    resolvedModel.includes('claude-sonnet-4') ||
+    resolvedModel.includes('claude-haiku-4');
+  const thinkingBudget = 5000;
+
   // 使用 Anthropic 的流式 API
   const stream = await client.messages.stream({
-    model: model || 'claude-3-5-sonnet-20241022',
-    max_tokens: maxTokens || 2048,
+    model: resolvedModel,
+    max_tokens: supportsThinking ? Math.max((maxTokens || 2048), thinkingBudget + 1000) : (maxTokens || 2048),
     system: systemPrompt || undefined,
     messages: msgs,
-    ...(anthropicTools && { tools: anthropicTools })
+    ...(supportsThinking && { thinking: { type: 'enabled', budget_tokens: thinkingBudget } }),
+    ...(anthropicTools && !supportsThinking && { tools: anthropicTools })
   });
 
   let fullContent = '';
+  let fullReasoning = '';
 
   // 处理每个 chunk
   for await (const chunk of stream) {
     if (chunk.type === 'content_block_delta') {
+      // 处理正常文本
       const text = chunk.delta?.text || '';
       if (text) {
         fullContent += text;
         writeStreamChunk(text);
+      }
+      // 处理 thinking (reasoning) delta
+      const thinkingText = chunk.delta?.thinking || '';
+      if (thinkingText) {
+        fullReasoning += thinkingText;
+        writeStreamChunk('', thinkingText); // 发送 reasoning chunk
       }
     } else if (chunk.type === 'message_delta') {
       // 检查是否触发了工具调用
@@ -581,6 +679,15 @@ async function callAnthropicStreaming(request) {
     output_tokens: finalMessage?.usage?.output_tokens || fullContent.length
   };
 
+  // 提取 reasoning 内容（优先用实时流式收集的，回退到 finalMessage 的 thinking blocks）
+  let reasoning = fullReasoning;
+  if (!reasoning) {
+    const thinkingBlocks = finalMessage.content.filter(c => c.type === 'thinking');
+    if (thinkingBlocks.length > 0) {
+      reasoning = thinkingBlocks.map(block => block.thinking).join('\n');
+    }
+  }
+
   // 检测工具调用
   const toolCalls = finalMessage.content.filter(c => c.type === 'tool_use');
   if (toolCalls.length > 0) {
@@ -596,6 +703,7 @@ async function callAnthropicStreaming(request) {
     
     writeStreamEnd({
       content: fullContent,
+      reasoning: reasoning || undefined,
       model: model || 'claude-3-5-sonnet-20241022',
       usage,
       finishReason: 'tool_use'
@@ -608,6 +716,7 @@ async function callAnthropicStreaming(request) {
 
   writeStreamEnd({
     content: fullContent,
+    reasoning: reasoning || undefined,
     artifacts,
     model: model || 'claude-3-5-sonnet-20241022',
     usage

@@ -18,6 +18,8 @@ fn row_to_session(row: &Row) -> SqliteResult<DbSession> {
         created_at: row.get(2)?,
         updated_at: row.get(3)?,
         cwd: row.get(4)?,
+        project_id: row.get(5)?,
+        model: row.get(6)?,
     })
 }
 
@@ -30,8 +32,23 @@ fn row_to_message(row: &Row) -> SqliteResult<DbMessage> {
         session_id: row.get(1)?,
         role: row.get(2)?,
         content: row.get(3)?,
-        artifacts: row.get(4)?,
-        created_at: row.get(5)?,
+        reasoning: row.get(4)?,
+        artifacts: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+/**
+ * Helper to map a row to DbProject
+ */
+fn row_to_project(row: &Row) -> SqliteResult<DbProject> {
+    Ok(DbProject {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        description: row.get(2)?,
+        color: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
     })
 }
 
@@ -50,6 +67,8 @@ pub struct DbSession {
     pub created_at: i64,
     pub updated_at: i64,
     pub cwd: Option<String>,
+    pub project_id: Option<String>,
+    pub model: Option<String>,
 }
 
 /**
@@ -61,8 +80,22 @@ pub struct DbMessage {
     pub session_id: String,
     pub role: String,
     pub content: String,
+    pub reasoning: Option<String>,
     pub artifacts: Option<String>,
     pub created_at: i64,
+}
+
+/**
+ * Project model for database
+ */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbProject {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub color: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 /**
@@ -93,7 +126,9 @@ pub fn init_database() -> SqliteResult<()> {
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
-            cwd TEXT
+            cwd TEXT,
+            project_id TEXT,
+            model TEXT
         )",
         [],
     )?;
@@ -105,6 +140,7 @@ pub fn init_database() -> SqliteResult<()> {
             session_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
+            reasoning TEXT,
             artifacts TEXT,
             created_at INTEGER NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -112,9 +148,95 @@ pub fn init_database() -> SqliteResult<()> {
         [],
     )?;
 
+    // Handle migration: add reasoning column if it doesn't exist
+    // Use pragmas for better compatibility
+    let column_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(messages)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "reasoning" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !column_exists {
+        println!("🚀 Migrating database: adding 'reasoning' column to 'messages' table");
+        // Ignore error if it somehow exists (e.g. race condition)
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT", []);
+    }
+
     // Create index for faster message lookups
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
+        [],
+    )?;
+
+    // Check if project_id column exists in sessions table
+    let project_id_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "project_id" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !project_id_exists {
+        println!("🚀 Migrating database: adding 'project_id' column to 'sessions' table");
+        // Ignore error if it somehow exists (e.g. race condition)
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN project_id TEXT", []);
+    }
+
+    // Check if model column exists in sessions table
+    let model_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "model" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !model_exists {
+        println!("🚀 Migrating database: adding 'model' column to 'sessions' table");
+        // Ignore error if it somehow exists (e.g. race condition)
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN model TEXT", []);
+    }
+
+    // Create projects table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            color TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
+    // Create index for faster lookups
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)",
         [],
     )?;
 
@@ -141,9 +263,9 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![session.id, session.title, session.created_at, session.updated_at, session.cwd],
+            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model],
         )?;
     }
     Ok(())
@@ -158,7 +280,7 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, cwd FROM sessions ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, cwd, project_id, model FROM sessions ORDER BY updated_at DESC"
         )?;
 
         let session_iter = stmt.query_map([], row_to_session)?;
@@ -190,13 +312,14 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO messages (id, session_id, role, content, artifacts, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, artifacts, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 message.id,
                 message.session_id,
                 message.role,
                 message.content,
+                message.reasoning,
                 message.artifacts,
                 message.created_at
             ],
@@ -214,7 +337,7 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, artifacts, created_at
+            "SELECT id, session_id, role, content, reasoning, artifacts, created_at
              FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"
         )?;
 
@@ -235,6 +358,84 @@ pub fn clear_messages_for_session(session_id: &str) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute("DELETE FROM messages WHERE session_id = ?1", params![session_id])?;
+    }
+    Ok(())
+}
+
+/**
+ * Save a project to database (INSERT OR REPLACE)
+ */
+pub fn save_project(project: &DbProject) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute(
+            "INSERT OR REPLACE INTO projects (id, name, description, color, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                project.id,
+                project.name,
+                project.description,
+                project.color,
+                project.created_at,
+                project.updated_at
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/**
+ * Get all projects from database
+ */
+pub fn get_all_projects() -> SqliteResult<Vec<DbProject>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let mut projects = Vec::new();
+
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, color, created_at, updated_at FROM projects ORDER BY updated_at DESC"
+        )?;
+
+        let project_iter = stmt.query_map([], row_to_project)?;
+
+        for project in project_iter {
+            projects.push(project?);
+        }
+    }
+
+    Ok(projects)
+}
+
+/**
+ * Delete a project
+ */
+pub fn delete_project(project_id: &str) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        // Delete all sessions in this project first
+        conn.execute("UPDATE sessions SET project_id = NULL WHERE project_id = ?1", params![project_id])?;
+        // Delete the project
+        conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+    }
+    Ok(())
+}
+
+/**
+ * Update a project
+ */
+pub fn update_project(project: &DbProject) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute(
+            "UPDATE projects SET name = ?1, description = ?2, color = ?3, updated_at = ?4 WHERE id = ?5",
+            params![
+                project.name,
+                project.description,
+                project.color,
+                project.updated_at,
+                project.id
+            ],
+        )?;
     }
     Ok(())
 }

@@ -17,6 +17,7 @@ export interface Message {
   id: string;                    // Unique ID (UUID v4)
   role: 'user' | 'assistant';    // Message sender role
   content: string;              // Message content
+  reasoning?: string;           // AI reasoning/thinking process (optional)
   timestamp: number;            // Timestamp in milliseconds
   artifacts?: Artifact[];        // Attached code/charts etc
   tool_calls?: ToolCall[];       // Tool calls made by assistant
@@ -64,9 +65,12 @@ export interface ChatState {
   isStreaming: boolean;
   isInitialized: boolean;
   streamingContent: string;
+  streamingReasoning: string;
   error: string | null;         // Error message
   streamingTimeoutId: ReturnType<typeof setTimeout> | null;  // Timeout ID for streaming protection
   lastUiUpdateTime: number;     // Last UI update timestamp for throttling
+  pendingToolCalls: number;     // Counter for pending parallel tool executions
+  pendingToolResults: { toolCallId: string; result: string }[];  // Accumulated tool results for batching
 
   // ========== Computed Properties ==========
   currentSession: () => Session | null;  // Get current session
@@ -108,7 +112,7 @@ export interface ChatState {
   /**
    * Update last message (for streaming updates) and persist to database
    */
-  updateLastMessage: (content: string, artifacts?: Artifact[]) => Promise<void>;
+  updateLastMessage: (content: string, artifacts?: Artifact[], reasoning?: string) => Promise<void>;
 
   /**
    * Append streaming content to current buffer
@@ -174,6 +178,11 @@ export interface ChatState {
    * Send tool execution result back to AI
    */
   sendToolResult: (toolCallId: string, result: string) => Promise<void>;
+
+  /**
+   * Send all accumulated tool results to AI in a single batch
+   */
+  sendAllToolResults: () => Promise<void>;
 
   /**
    * Execute a tool and handle the result (permission-aware)

@@ -224,7 +224,7 @@ export function Sidebar() {
       {/* Header */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between mb-4">
-          <h1 className="text-xl font-bold text-gray-900 tracking-tight">AI Agent</h1>
+          <h1 className="text-xl font-bold text-gray-900 tracking-tight">🦐 PiPi Shrimp Agent</h1>
           <div className="flex items-center gap-2">
             {/* Status Indicator or other top-right actions can go here */}
           </div>

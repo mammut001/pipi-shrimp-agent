@@ -21,6 +21,8 @@ interface ChatMessageProps {
   message: Message;
   /** Whether this is the latest message (may show loading animation) */
   isLatest?: boolean;
+  /** Whether the message is currently streaming */
+  isStreaming?: boolean;
   /** Callback when user clicks preview on a Typst code block */
   onTypstPreview?: (code: string) => void;
 }
@@ -39,7 +41,7 @@ const formatTimestamp = (timestamp: number): string => {
 /**
  * Single chat message component
  */
-export function ChatMessage({ message, isLatest = false, onTypstPreview }: ChatMessageProps) {
+export function ChatMessage({ message, isLatest = false, isStreaming = false, onTypstPreview }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -95,12 +97,17 @@ export function ChatMessage({ message, isLatest = false, onTypstPreview }: ChatM
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="font-medium text-gray-900">
-                {isUser ? 'You' : 'AI Agent'}
+                {isUser ? 'You' : 'pipi-shrimp-agent'}
               </span>
               <span className="text-xs text-gray-400">
                 {formatTimestamp(message.timestamp)}
               </span>
             </div>
+
+            {/* AI Reasoning Block */}
+            {!isUser && message.reasoning && (
+              <ReasoningBlock content={message.reasoning} isStreaming={isStreaming || (isLatest && message.content === '')} />
+            )}
 
             {/* Message Body */}
             <div className="prose prose-sm max-w-none">
@@ -234,6 +241,48 @@ export function ChatMessage({ message, isLatest = false, onTypstPreview }: ChatM
         </div>
       </div>
     </div>
+  );
+}
+/**
+ * ReasoningBlock - Vercel style collapsible reasoning display
+ * Features: Native <details> element, smooth animations, dark mode support
+ */
+function ReasoningBlock({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+  // Use native <details> for built-in expand/collapse
+  // Default to expanded when streaming
+
+  return (
+    <details className="mt-3 cursor-pointer group" open={isStreaming ? true : undefined}>
+      <summary className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors py-2 list-none marker:hidden">
+        {isStreaming ? (
+          <span className="flex gap-1">
+            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" />
+            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+          </span>
+        ) : (
+          <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+        )}
+        <span>🦐 PiPi Shrimp is thinking...</span>
+        <span className="text-xs opacity-50">({content.length} chars)</span>
+        <svg
+          className="w-4 h-4 transform transition-transform duration-200 ml-auto group-open:rotate-180"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </summary>
+      <div className="mt-2 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
+        <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono overflow-x-auto leading-relaxed">
+          {content}
+          {isStreaming && <span className="inline-block w-1.5 h-4 ml-1 bg-blue-400 animate-pulse align-middle" />}
+        </pre>
+      </div>
+    </details>
   );
 }
 

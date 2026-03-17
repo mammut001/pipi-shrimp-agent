@@ -6,13 +6,14 @@
 
 use crate::utils::{AppResult, AppError};
 use serde_json;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tauri::Window;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-use super::message::{ChatRequest, ChatResponse, ErrorResponse, Message, StreamChunk, ToolCall};
+use super::message::{ChatRequest, ChatResponse, ErrorResponse, Message, StreamChunk, ToolCall, UsageInfo};
 
 /// Global state to track the current running subprocess PID
 static CURRENT_PID: once_cell::sync::Lazy<tokio::sync::Mutex<Option<u32>>> =
@@ -24,11 +25,16 @@ static CURRENT_PID: once_cell::sync::Lazy<tokio::sync::Mutex<Option<u32>>> =
 pub async fn stop_current_subprocess() -> AppResult<()> {
     let pid_guard: tokio::sync::MutexGuard<Option<u32>> = CURRENT_PID.lock().await;
     if let Some(pid) = *pid_guard {
+        println!("🔴 Stopping subprocess with PID: {}", pid);
         // Use kill command to terminate the process
         #[cfg(unix)]
         {
             use std::process::Command as StdCommand;
-            let _ = StdCommand::new("kill").arg("-9").arg(pid.to_string()).output();
+            let output = StdCommand::new("kill").arg("-9").arg(pid.to_string()).output();
+            match output {
+                Ok(_) => println!("✅ Successfully killed process {}", pid),
+                Err(e) => println!("⚠️  Failed to kill process {}: {}", pid, e),
+            }
         }
         #[cfg(windows)]
         {
@@ -38,9 +44,10 @@ pub async fn stop_current_subprocess() -> AppResult<()> {
     }
     drop(pid_guard);
 
-    // Clear the PID
+    // ✅ 立即清理 PID
     let mut pid_guard = CURRENT_PID.lock().await;
     *pid_guard = None;
+    println!("✅ Cleared CURRENT_PID");
     Ok(())
 }
 
@@ -387,8 +394,16 @@ impl ClaudeClient {
                                     "chunk" => {
                                         // Emit token to frontend
                                         if let Some(content) = chunk.content {
-                                            full_content.push_str(&content);
-                                            let _ = window.emit("claude-token", content);
+                                            if !content.is_empty() {
+                                                full_content.push_str(&content);
+                                                let _ = window.emit("claude-token", content);
+                                            }
+                                        }
+                                        // Emit reasoning to frontend
+                                        if let Some(reasoning) = chunk.reasoning {
+                                            if !reasoning.is_empty() {
+                                                let _ = window.emit("claude-reasoning", reasoning);
+                                            }
                                         }
                                     },
                                     "done" => {
@@ -412,6 +427,12 @@ impl ClaudeClient {
                                         // Capture finish reason (e.g., "tool_calls")
                                         if let Some(fr) = chunk.finish_reason {
                                             finish_reason = Some(fr);
+                                        }
+                                        // Emit final reasoning to frontend
+                                        if let Some(reasoning) = chunk.reasoning {
+                                            if !reasoning.is_empty() {
+                                                let _ = window.emit("claude-reasoning", reasoning);
+                                            }
                                         }
                                     },
                                     "tool_use" => {
@@ -463,18 +484,34 @@ impl ClaudeClient {
 
         // 6. Handle non-zero exit status
         if !status.success() {
+            clear_current_subprocess().await; // ✅ 立即清理，不延迟
+
             let stderr_msg = error_output.trim().to_string();
+
+            // ✅ 区分 SIGKILL（用户取消）
+            if status.signal() == Some(9) {
+                println!("⚠️  Process killed (SIGKILL) - User cancelled");
+                return Ok(ChatResponse {
+                    content: String::new(),
+                    artifacts: vec![],
+                    model: String::new(),
+                    usage: UsageInfo {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                    tool_calls: vec![],
+                });
+            }
+
             if !stderr_msg.is_empty() {
-                clear_current_subprocess().await;
                 return Err(AppError::ProcessError(format!(
                     "Node.js error: {}",
                     stderr_msg
                 )));
             }
 
-            clear_current_subprocess().await;
             return Err(AppError::ProcessError(
-                format!("Node.js process exited with non-zero status: {}", status)
+                format!("Node.js process exited with status: {}", status)
             ));
         }
 

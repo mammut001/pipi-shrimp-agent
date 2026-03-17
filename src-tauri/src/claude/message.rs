@@ -15,6 +15,12 @@ pub struct Message {
     pub role: String,
     /// Message content
     pub content: String,
+    /// Tool calls made by assistant
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// Tool call ID (for tool result role)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /**
@@ -142,6 +148,7 @@ pub struct StreamChunk {
     #[serde(rename = "type")]
     pub chunk_type: String,
     pub content: Option<String>,
+    pub reasoning: Option<String>,
     pub error: Option<String>,
     pub model: Option<String>,
     pub artifacts: Option<Vec<Artifact>>,
