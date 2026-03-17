@@ -122,6 +122,7 @@ export function Chat() {
                     key={message.id}
                     message={message}
                     isLatest={index === messages.length - 1}
+                    isStreaming={isStreaming && index === messages.length - 1}
                     onTypstPreview={handleTypstPreview}
                   />
                 ))}

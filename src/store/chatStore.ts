@@ -6,10 +6,16 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
-import type { ChatState, Session, Message } from '../types/chat';
+import type { ChatState, Session, Message, Project } from '../types/chat';
 import { createSession, createMessage, createProject } from '../types/chat';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
+
+/**
+ * Streaming timeout - 30 seconds
+ * If the API doesn't respond within this time, we'll force stop the streaming
+ */
+const STREAMING_TIMEOUT_MS = 30000;
 
 /**
  * Database types matching Rust backend
@@ -29,8 +35,18 @@ interface DbMessage {
   session_id: string;
   role: string;
   content: string;
+  reasoning: string | null;
   artifacts: string | null;
   created_at: number;
+}
+
+interface DbProject {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+  created_at: number;
+  updated_at: number;
 }
 
 /**
@@ -48,6 +64,7 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
     id: m.id,
     role: m.role as 'user' | 'assistant',
     content: m.content,
+    reasoning: m.reasoning || undefined,
     timestamp: m.created_at,
     artifacts: m.artifacts ? JSON.parse(m.artifacts) : undefined,
   })),
@@ -74,9 +91,59 @@ const messageToDb = (message: Message, sessionId: string): DbMessage => ({
   session_id: sessionId,
   role: message.role,
   content: message.content,
+  reasoning: message.reasoning || null,
   artifacts: message.artifacts ? JSON.stringify(message.artifacts) : null,
   created_at: message.timestamp,
 });
+
+/**
+ * Convert database project to frontend project
+ */
+const dbToProject = (dbProject: DbProject): Project => ({
+  id: dbProject.id,
+  name: dbProject.name,
+  createdAt: dbProject.created_at,
+  updatedAt: dbProject.updated_at,
+});
+
+/**
+ * Convert frontend project to database project
+ */
+const projectToDb = (project: Project): DbProject => ({
+  id: project.id,
+  name: project.name,
+  created_at: project.createdAt,
+  updated_at: project.updatedAt,
+});
+
+/**
+ * Parse <think>...</think> tags from content
+ * Returns { content: string (without think tags), reasoning: string | undefined }
+ */
+const parseThinkContent = (rawContent: string): { content: string; reasoning?: string } => {
+  const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+  const thinkingParts: string[] = [];
+  let cleanContent = rawContent;
+
+  let match;
+  while ((match = thinkRegex.exec(rawContent)) !== null) {
+    thinkingParts.push(match[1].trim());
+  }
+
+  // Remove all <think>...</think> blocks from content
+  cleanContent = rawContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+  // Handle incomplete thinking (still streaming) - remove partial <think> at the end
+  const partialThink = cleanContent.match(/<think>[\s\S]*$/);
+  if (partialThink) {
+    cleanContent = cleanContent.replace(/<think>[\s\S]*$/, '').trim();
+  }
+
+  return {
+    content: cleanContent,
+    reasoning: thinkingParts.length > 0 ? thinkingParts.join('\n') : undefined,
+  };
+};
 
 /**
  * Chat store using Zustand
@@ -90,9 +157,12 @@ export const useChatStore = create<ChatState>()(
     isStreaming: false,
     isInitialized: false,
     streamingContent: '',
+    streamingReasoning: '',
     error: null,
     streamingTimeoutId: null as ReturnType<typeof setTimeout> | null,
     lastUiUpdateTime: 0,
+    pendingToolCalls: 0,  // Counter for pending parallel tool executions
+    pendingToolResults: [] as { toolCallId: string; result: string }[],  // Accumulated tool results
 
     // ========== Computed Properties ==========
     currentSession: () => {
@@ -122,21 +192,43 @@ export const useChatStore = create<ChatState>()(
      */
     init: async () => {
       if (get().isInitialized) return;
+      // 立即设置，防止并发调用（App.tsx 和 Chat.tsx 都会调用 init）
       set({ isInitialized: true });
 
       try {
+        // Load Projects from database (with fallback)
+        try {
+          console.log('🔄 Loading projects from database...');
+          const dbProjects = await invoke<DbProject[]>('db_get_all_projects');
+          console.log('✅ Projects loaded:', dbProjects);
+          const projects: Project[] = dbProjects.map(dbToProject);
+          set({ projects });
+        } catch (error) {
+          console.warn('Failed to load projects, continuing with empty projects:', error);
+          set({ projects: [] });
+        }
+
         // Load sessions from database
+        console.log('🔄 Loading sessions from database...');
         const dbSessions = await invoke<DbSession[]>('db_get_all_sessions');
+        console.log('✅ Sessions loaded:', dbSessions);
 
         // Load messages for each session
+        console.log('🔄 Loading messages for', dbSessions.length, 'sessions...');
         const sessions: Session[] = await Promise.all(
           dbSessions.map(async (dbSession) => {
-            const dbMessages = await invoke<DbMessage[]>('db_get_messages', {
-              sessionId: dbSession.id,
-            });
-            return dbToSession(dbSession, dbMessages);
+            try {
+              const dbMessages = await invoke<DbMessage[]>('db_get_messages', {
+                sessionId: dbSession.id,
+              });
+              return dbToSession(dbSession, dbMessages);
+            } catch (err) {
+              console.error(`Failed to load messages for session ${dbSession.id}:`, err);
+              throw err;
+            }
           })
         );
+        console.log('✅ All messages loaded');
 
         set({ sessions });
 
@@ -148,6 +240,11 @@ export const useChatStore = create<ChatState>()(
           appendStreamingContent(event.payload);
         });
 
+        // Listen for token events from Rust backend (Reasoning)
+        const unlistenReasoning = await listen<string>('claude-reasoning', (event) => {
+          set((state) => ({ streamingReasoning: state.streamingReasoning + event.payload }));
+        });
+
         // Listen for tool_use events from Rust backend
         const unlistenToolUse = await listen<{
           tool_call_id: string;
@@ -155,6 +252,9 @@ export const useChatStore = create<ChatState>()(
           arguments: string;
         }>('claude-tool-use', async (event) => {
           console.log('Tool use requested:', event.payload);
+
+          // Increment pending tool calls counter for batching
+          set((state) => ({ pendingToolCalls: state.pendingToolCalls + 1 }));
 
           const { permissionMode, setPermissionRequest, addTaskStep } = useUIStore.getState();
           const { executeTool, currentMessages } = get();
@@ -212,20 +312,32 @@ export const useChatStore = create<ChatState>()(
 
         // Store unlisten functions for cleanup
         (window as unknown as { __claudeTokenUnlisten: () => void }).__claudeTokenUnlisten = unlistenToken;
+        (window as unknown as { __claudeReasoningUnlisten: () => void }).__claudeReasoningUnlisten = unlistenReasoning;
         (window as unknown as { __claudeToolUseUnlisten: () => void }).__claudeToolUseUnlisten = unlistenToolUse;
+
+        console.log('✅ Store initialization completed successfully');
+        set({ isInitialized: true, error: null });
       } catch (error) {
-        console.error('Failed to load sessions:', error);
+        console.error('❌ Failed to load sessions:', error);
+        console.error('Error details:', {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          error: error,
+        });
+
         // Fallback to localStorage if database fails
         try {
           const stored = localStorage.getItem('ai-agent-sessions');
           if (stored) {
             const sessions: Session[] = JSON.parse(stored);
+            console.log('📦 Loaded', sessions.length, 'sessions from localStorage');
             set({ sessions });
           }
         } catch (e) {
           console.error('Failed to load from localStorage:', e);
         }
-        set({ error: 'Failed to load sessions' });
+        // 重置 isInitialized 以允许重试
+        set({ isInitialized: false, error: 'Failed to load sessions: ' + (error instanceof Error ? error.message : String(error)) });
       }
     },
 
@@ -250,9 +362,10 @@ export const useChatStore = create<ChatState>()(
 
     /**
      * Execute a tool and handle the result (permission-aware)
+     * Modified to batch tool results - collects results and sends all at once
      */
     executeTool: async (toolName: string, toolInput: string, toolCallId: string) => {
-      const { sendToolResult, setError } = get();
+      const { setError } = get();
       const { addNotification, taskProgress, updateTaskStep } = useUIStore.getState();
 
       // Find the task step to update status
@@ -266,29 +379,123 @@ export const useChatStore = create<ChatState>()(
 
         // Call Rust backend to execute the tool
         const result = await invoke<string>('execute_tool', {
-          toolName,
+          tool_name: toolName,
           arguments: toolInput,
         });
 
         console.log(`Tool ${toolName} executed successfully:`, result);
-        
+
         if (currentStep) {
           updateTaskStep(currentStep.id, 'done');
         }
 
-        // Feed back the result to the AI to continue the conversation
-        await sendToolResult(toolCallId, result);
-        
+        // Collect the result instead of sending immediately (for batching)
+        set((state) => ({
+          pendingToolResults: [...state.pendingToolResults, { toolCallId, result }],
+          pendingToolCalls: state.pendingToolCalls - 1,
+        }));
+
+        // Check if all tool calls are complete, then send all results at once
+        const { pendingToolCalls: remaining, sendAllToolResults } = get();
+        if (remaining === 0) {
+          console.log('All tool calls complete, sending batched results...');
+          await sendAllToolResults();
+        }
+
       } catch (error) {
         console.error(`Tool ${toolName} execution failed:`, error);
-        
+
         if (currentStep) {
           updateTaskStep(currentStep.id, 'failed');
         }
 
+        // Still decrement counter on error
+        set((state) => ({
+          pendingToolCalls: state.pendingToolCalls - 1,
+        }));
+
         setError(`Tool ${toolName} failed: ${error instanceof Error ? error.message : String(error)}`);
         useUIStore.getState().addNotification('error', `Execution failed: ${toolName}`);
-        set({ isStreaming: false });
+
+        // Check if all tools are done (even with errors)
+        const { pendingToolCalls: remaining, sendAllToolResults } = get();
+        if (remaining === 0) {
+          await sendAllToolResults();
+        }
+      }
+    },
+
+    /**
+     * Send all accumulated tool results to AI in a single batch
+     */
+    sendAllToolResults: async () => {
+      const {
+        currentSessionId,
+        pendingToolResults,
+        addMessage,
+        setStreaming,
+        setError,
+        currentMessages
+      } = get();
+
+      if (!currentSessionId || pendingToolResults.length === 0) {
+        // Clear pending state
+        set({ pendingToolResults: [], pendingToolCalls: 0 });
+        return;
+      }
+
+      try {
+        setStreaming(true);
+        set({ streamingContent: '' });
+
+        // Add all tool results as user messages (Claude SDK bridge will convert to 'tool' role)
+        for (const { toolCallId, result } of pendingToolResults) {
+          const resultMessage = createMessage('user', `__TOOL_RESULT__:${toolCallId}:${result}`);
+          (resultMessage as any).tool_call_id = toolCallId;
+          await addMessage(resultMessage);
+        }
+
+        const apiConfig = useSettingsStore.getState().getActiveConfig();
+
+        // Prepare all messages for next turn - include tool_calls when present
+        const messages = currentMessages().map((msg) => ({
+          role: msg.role as 'user' | 'assistant' | 'system',
+          content: msg.content,
+          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
+        }));
+
+        if (messages.length === 0) {
+          setError('Message history is empty. Cannot continue conversation.');
+          setStreaming(false);
+          set({ pendingToolResults: [], pendingToolCalls: 0 });
+          return;
+        }
+
+        // Create placeholder for AI's next thought
+        const assistantMessage = createMessage('assistant', '');
+        await addMessage(assistantMessage);
+
+        await invoke<{
+          content: string;
+          artifacts: any[];
+        }>('send_claude_sdk_chat_streaming', {
+          messages,
+          apiKey: apiConfig?.apiKey,
+          model: apiConfig?.model,
+          baseUrl: apiConfig?.baseUrl || '',
+          systemPrompt: useUIStore.getState().agentInstructions,
+        });
+
+        // Clear pending results after sending
+        set({ pendingToolResults: [] });
+
+        // Event listener 'claude-token' will handle UI updates
+      } catch (error) {
+        console.error('Failed to send tool results:', error);
+        setError('Failed to send tool results back to AI');
+        setStreaming(false);
+        set({ pendingToolResults: [], pendingToolCalls: 0 });
       }
     },
 
@@ -382,6 +589,9 @@ export const useChatStore = create<ChatState>()(
         return;
       }
 
+      // Timeout timer reference
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
       try {
         // Add user message
         const userMessage = createMessage('user', content);
@@ -391,11 +601,24 @@ export const useChatStore = create<ChatState>()(
         setStreaming(true);
         set({ streamingContent: '' });
 
+        // Set timeout protection - if no response in 30 seconds, force stop
+        timeoutId = setTimeout(() => {
+          console.warn('⏱️ Streaming timeout after 30s, force stopping...');
+          if (get().isStreaming) {
+            setStreaming(false);
+            set({ streamingContent: '', streamingReasoning: '' });
+            setError('Response timeout (30s exceeded). Please try again.');
+            // Try to stop the subprocess
+            invoke('stop_subprocess').catch(console.error);
+          }
+        }, STREAMING_TIMEOUT_MS);
+
         // Convert frontend messages to Rust format
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
           ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
         if (messages.length === 0) {
@@ -428,7 +651,7 @@ export const useChatStore = create<ChatState>()(
         });
 
         // The streaming content has been accumulated in streamingContent via the event listener
-        const { streamingContent: finalContent } = get();
+        const { streamingContent: finalContent, streamingReasoning } = get();
         const { updateLastMessage } = get();
 
         const fullContent = finalContent || response.content;
@@ -441,16 +664,30 @@ export const useChatStore = create<ChatState>()(
             content: a.content,
             title: a.title,
             language: a.language,
-          }))
+          })),
+          streamingReasoning
         );
 
+        // Clear timeout on success
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+
         setStreaming(false);
-        set({ streamingContent: '' });
+        set({ streamingContent: '', streamingReasoning: '' });
       } catch (error) {
+        // Clear timeout on error
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+
         console.error('Failed to send message:', error);
         const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to send message');
         setError(errorMsg);
         setStreaming(false);
+        set({ streamingContent: '', streamingReasoning: '' });
       }
     },
 
@@ -458,7 +695,7 @@ export const useChatStore = create<ChatState>()(
      * Stop/cancel the current generation (kill subprocess)
      */
     stopGeneration: async () => {
-      const { isStreaming, streamingContent, setStreaming } = get();
+      const { isStreaming, streamingContent, streamingReasoning, setStreaming } = get();
       if (!isStreaming) return;
 
       try {
@@ -466,20 +703,20 @@ export const useChatStore = create<ChatState>()(
         await invoke('stop_subprocess');
 
         // If there's accumulated streaming content, finalize the message
-        if (streamingContent) {
+        if (streamingContent || streamingReasoning) {
           const { updateLastMessage } = get();
           // Mark the current message as complete with whatever we have so far
-          await updateLastMessage(streamingContent);
+          await updateLastMessage(streamingContent, undefined, streamingReasoning);
         }
 
         // Clear streaming state
         setStreaming(false);
-        set({ streamingContent: '' });
+        set({ streamingContent: '', streamingReasoning: '' });
       } catch (error) {
         console.error('Failed to stop generation:', error);
         // Still clear the streaming state even if kill fails
         setStreaming(false);
-        set({ streamingContent: '' });
+        set({ streamingContent: '', streamingReasoning: '' });
       }
     },
 
@@ -528,7 +765,7 @@ export const useChatStore = create<ChatState>()(
     /**
      * Update last message content (for streaming updates) and persist to database
      */
-    updateLastMessage: async (content: string, artifacts?: Message['artifacts']) => {
+    updateLastMessage: async (content: string, artifacts?: Message['artifacts'], reasoning?: string) => {
       const { currentSessionId } = get();
       if (!currentSessionId) return;
 
@@ -537,11 +774,27 @@ export const useChatStore = create<ChatState>()(
       set((state) => ({
         sessions: state.sessions.map((s) => {
           if (s.id !== currentSessionId || s.messages.length === 0) return s;
-          const messages = [...s.messages];
-          const lastMessage = messages[messages.length - 1];
-          messageToUpdate = { ...lastMessage, content, ...(artifacts && { artifacts }) };
-          messages[messages.length - 1] = messageToUpdate;
-          return { ...s, messages, updatedAt: Date.now() };
+
+          const lastMessageIndex = s.messages.length - 1;
+          const lastMessage = s.messages[lastMessageIndex];
+
+          if (lastMessage.role !== 'assistant') return s;
+
+          const updatedMessage = {
+            ...lastMessage,
+            content,
+            reasoning: reasoning !== undefined ? reasoning : lastMessage.reasoning,
+            artifacts: artifacts !== undefined ? artifacts : lastMessage.artifacts,
+            updatedAt: Date.now(),
+          };
+
+          messageToUpdate = updatedMessage;
+
+          return {
+            ...s,
+            messages: s.messages.map((m, i) => (i === lastMessageIndex ? updatedMessage : m)),
+            updatedAt: Date.now(),
+          };
         }),
       }));
 
@@ -550,7 +803,7 @@ export const useChatStore = create<ChatState>()(
         try {
           await invoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
         } catch (error) {
-          console.error('Failed to update message in database:', error);
+          console.error('Failed to persist streaming update to database:', error);
         }
       }
     },
@@ -568,13 +821,23 @@ export const useChatStore = create<ChatState>()(
 
       // Throttle UI updates to every 100ms
       if (now - lastUiUpdateTime >= 100 && currentSessionId) {
+        const { streamingReasoning } = get();
+        // Parse <think> tags from streaming content
+        const parsed = parseThinkContent(newContent);
+        const displayContent = parsed.content;
+        const parsedReasoning = parsed.reasoning;
+
         set((state) => ({
           lastUiUpdateTime: now,
           sessions: state.sessions.map((s) => {
             if (s.id !== currentSessionId || s.messages.length === 0) return s;
             const messages = [...s.messages];
             const lastMessage = messages[messages.length - 1];
-            messages[messages.length - 1] = { ...lastMessage, content: newContent };
+            messages[messages.length - 1] = {
+              ...lastMessage,
+              content: displayContent,
+              reasoning: parsedReasoning || streamingReasoning || lastMessage.reasoning,
+            };
             return { ...s, messages, updatedAt: Date.now() };
           }),
         }));
@@ -582,7 +845,7 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
-     * Set streaming status with timeout protection (30 seconds)
+     * Set streaming status with timeout protection (300 seconds)
      */
     setStreaming: (streaming: boolean) => {
       const { streamingTimeoutId, currentSessionId, streamingContent } = get();
@@ -593,6 +856,12 @@ export const useChatStore = create<ChatState>()(
 
         // Final UI update to ensure content is fully displayed
         if (currentSessionId && streamingContent) {
+          // Parse <think> tags from final content
+          const parsed = parseThinkContent(streamingContent);
+          const finalContent = parsed.content;
+          const finalReasoning = parsed.reasoning;
+          const { streamingReasoning } = get();
+
           set((state) => ({
             isStreaming: false,
             streamingTimeoutId: null,
@@ -600,7 +869,11 @@ export const useChatStore = create<ChatState>()(
               if (s.id !== currentSessionId || s.messages.length === 0) return s;
               const messages = [...s.messages];
               const lastMessage = messages[messages.length - 1];
-              messages[messages.length - 1] = { ...lastMessage, content: streamingContent };
+              messages[messages.length - 1] = {
+                ...lastMessage,
+                content: finalContent,
+                reasoning: finalReasoning || streamingReasoning || lastMessage.reasoning,
+              };
               return { ...s, messages, updatedAt: Date.now() };
             }),
           }));
@@ -610,13 +883,13 @@ export const useChatStore = create<ChatState>()(
         return;
       }
 
-      // Start streaming with 60 second timeout
+      // Start streaming with 300 second timeout (5 minutes for complex tasks)
       if (streaming) {
         const timeoutId = setTimeout(() => {
-          console.warn('Streaming timeout (60s) reached, stopping...');
+          console.warn('Streaming timeout (300s) reached, stopping...');
           const { setStreaming } = get();
           setStreaming(false);
-        }, 60000);
+        }, 300000);
         set({ isStreaming: true, streamingTimeoutId: timeoutId });
       }
     },
@@ -648,7 +921,12 @@ export const useChatStore = create<ChatState>()(
     selectSession: (sessionId: string) => {
       const exists = get().sessions.some((s) => s.id === sessionId);
       if (exists) {
-        set({ currentSessionId: sessionId });
+        set({
+          currentSessionId: sessionId,
+          error: null, // ✅ 清理错误
+          isStreaming: false, // ✅ 清理流式状态
+          streamingContent: '', // ✅ 清理内容
+        });
       }
     },
 
@@ -658,7 +936,7 @@ export const useChatStore = create<ChatState>()(
     deleteSession: async (sessionId: string) => {
       // Delete from database
       try {
-        await invoke('db_delete_session', { sessionId });
+        await invoke('db_delete_session', { session_id: sessionId });
       } catch (error) {
         console.error('Failed to delete session from database:', error);
       }
@@ -728,6 +1006,13 @@ export const useChatStore = create<ChatState>()(
     createProject: async (name: string) => {
       const newProject = createProject(name);
 
+      // Persist to database
+      try {
+        await invoke('db_save_project', { project: projectToDb(newProject) });
+      } catch (error) {
+        console.error('Failed to save project to database:', error);
+      }
+
       set((state) => ({
         projects: [...state.projects, newProject],
       }));
@@ -737,11 +1022,18 @@ export const useChatStore = create<ChatState>()(
      * Delete a project (and all its sessions)
      */
     deleteProject: async (projectId: string) => {
+      // Delete from database first
+      try {
+        await invoke('db_delete_project', { project_id: projectId });
+      } catch (error) {
+        console.error('Failed to delete project from database:', error);
+      }
+
       // Delete all sessions in this project from database
       const sessionsInProject = get().sessions.filter((s) => s.projectId === projectId);
       for (const session of sessionsInProject) {
         try {
-          await invoke('db_delete_session', { sessionId: session.id });
+          await invoke('db_delete_session', { session_id: session.id });
         } catch (error) {
           console.error('Failed to delete session from database:', error);
         }
@@ -761,11 +1053,22 @@ export const useChatStore = create<ChatState>()(
      * Rename a project
      */
     renameProject: async (projectId: string, name: string) => {
-      set((state) => ({
-        projects: state.projects.map((p) =>
-          p.id === projectId ? { ...p, name, updatedAt: Date.now() } : p
-        ),
-      }));
+      const project = get().projects.find((p) => p.id === projectId);
+      if (project) {
+        const updatedProject = { ...project, name, updatedAt: Date.now() };
+        // Persist to database
+        try {
+          await invoke('db_update_project', { project: projectToDb(updatedProject) });
+        } catch (error) {
+          console.error('Failed to update project in database:', error);
+        }
+
+        set((state) => ({
+          projects: state.projects.map((p) =>
+            p.id === projectId ? { ...p, name, updatedAt: Date.now() } : p
+          ),
+        }));
+      }
     },
   }))
 );

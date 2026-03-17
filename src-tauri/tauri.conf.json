@@ -6,7 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "AI Agent",
+    "productName": "pipi-shrimp-agent",
     "version": "0.1.0"
   },
   "tauri": {
@@ -61,7 +61,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "identifier": "com.tauri.ai-agent",
+      "identifier": "com.tauri.pipi-shrimp-agent",
       "longDescription": "",
       "macOS": {
         "entitlements": null,
@@ -104,7 +104,7 @@
         "height": 800,
         "label": "main",
         "resizable": true,
-        "title": "AI Agent",
+        "title": "pipi-shrimp-agent",
         "width": 1200,
         "center": true
       }

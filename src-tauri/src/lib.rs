@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 use tauri::Manager;
 
 use claude::{ClaudeClient, ChatResponse, Message, node_subprocess};
-use database::{DbSession, DbMessage, init_database, get_all_sessions, save_session, delete_session, save_message, get_messages_for_session};
+use database::{DbSession, DbMessage, DbProject, init_database, get_all_sessions, save_session, delete_session, save_message, get_messages_for_session, save_project, get_all_projects, delete_project, update_project};
 use utils::{FontDb, init_font_database, compile_typst_to_svg_with_fonts};
 
 /**
@@ -105,6 +105,8 @@ async fn test_connection(
     let messages = vec![Message {
         role: "user".to_string(),
         content: "Hi".to_string(),
+        tool_calls: None,
+        tool_call_id: None,
     }];
 
     let state = state.lock().await;
@@ -148,6 +150,30 @@ fn db_get_messages(session_id: String) -> Result<Vec<DbMessage>, String> {
 }
 
 /**
+ * Database commands for projects
+ */
+
+#[tauri::command]
+fn db_save_project(project: DbProject) -> Result<(), String> {
+    save_project(&project).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_get_all_projects() -> Result<Vec<DbProject>, String> {
+    get_all_projects().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_delete_project(project_id: String) -> Result<(), String> {
+    delete_project(&project_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_update_project(project: DbProject) -> Result<(), String> {
+    update_project(&project).map_err(|e| e.to_string())
+}
+
+/**
  * Render Typst source to SVG (async command)
  * Uses cached font database from State for better performance
  */
@@ -178,9 +204,11 @@ pub fn run() {
         .setup(|app| {
             println!("🚀 AI Agent starting...");
 
-            // Initialize database
+            // Initialize database - CRITICAL, cannot proceed without it
             if let Err(e) = init_database() {
-                println!("❌ Failed to initialize database: {}", e);
+                eprintln!("❌ CRITICAL: Failed to initialize database: {}", e);
+                eprintln!("   Make sure the database file is writable at: ~/.local/share/pipi-shrimp-agent/data.db");
+                panic!("Database initialization failed: {}. Application cannot start.", e);
             }
 
             // Get the main window
@@ -276,6 +304,11 @@ pub fn run() {
             db_delete_session,
             db_save_message,
             db_get_messages,
+            // Project commands
+            db_save_project,
+            db_get_all_projects,
+            db_delete_project,
+            db_update_project,
             // Typst rendering commands
             render_typst_to_svg,
             get_font_count,

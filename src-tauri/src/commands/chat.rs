@@ -29,6 +29,7 @@ pub struct SessionData {
 pub struct Message {
     pub role: String,
     pub content: String,
+    pub reasoning: Option<String>,
     pub artifacts: Option<String>,
     pub timestamp: u64,
 }
@@ -53,6 +54,7 @@ fn db_session_to_session_data(db_session: DbSession) -> AppResult<SessionData> {
         .map(|m| Message {
             role: m.role,
             content: m.content,
+            reasoning: m.reasoning,
             artifacts: m.artifacts,
             timestamp: m.created_at as u64,
         })
@@ -84,6 +86,8 @@ pub async fn start_session(_app: AppHandle) -> AppResult<String> {
         created_at: timestamp,
         updated_at: timestamp,
         cwd: None,
+        project_id: None,
+        model: None,
     };
 
     database::save_session(&session)
@@ -110,6 +114,7 @@ pub async fn send_message(_app: AppHandle, req: SendMessageRequest) -> AppResult
         session_id: req.session_id.clone(),
         role: "user".to_string(),
         content: req.content.clone(),
+        reasoning: None,
         artifacts: None,
         created_at: timestamp,
     };
@@ -144,6 +149,7 @@ pub async fn save_message_to_db(
     session_id: String,
     role: String,
     content: String,
+    reasoning: Option<String>,
     artifacts: Option<String>,
 ) -> AppResult<String> {
     let timestamp = get_timestamp() as i64;
@@ -154,6 +160,7 @@ pub async fn save_message_to_db(
         session_id,
         role,
         content,
+        reasoning,
         artifacts,
         created_at: timestamp,
     };
@@ -335,6 +342,36 @@ pub async fn execute_tool(
                 .map(|s| s.to_string());
             let result = crate::commands::file::list_files(path.to_string(), pattern).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
+        }
+        "search_files" => {
+            let pattern = args.get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'pattern' argument for search_files".to_string()))?;
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for search_files".to_string()))?;
+            let extensions = args.get("extensions")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect());
+            crate::commands::search::search_files(pattern.to_string(), path.to_string(), extensions).await?
+        }
+        "glob_search" => {
+            let pattern = args.get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'pattern' argument for glob_search".to_string()))?;
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for glob_search".to_string()))?;
+            crate::commands::search::glob_search(pattern.to_string(), path.to_string()).await?
+        }
+        "grep_files" => {
+            let pattern = args.get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'pattern' argument for grep_files".to_string()))?;
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for grep_files".to_string()))?;
+            crate::commands::search::grep_files(pattern.to_string(), path.to_string()).await?
         }
         _ => return Err(AppError::InternalError(format!("Unknown tool: {}", tool_name)))
     };
