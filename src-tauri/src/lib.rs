@@ -11,12 +11,11 @@ mod utils;
 mod claude;
 mod database;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::Manager;
 
-use claude::{ClaudeClient, ChatResponse, Message, node_subprocess};
+use claude::{ClaudeClient, ChatResponse, Message};
 use database::{DbSession, DbMessage, DbProject, init_database, get_all_sessions, save_session, delete_session, save_message, get_messages_for_session, save_project, get_all_projects, delete_project, update_project};
 use utils::{FontDb, init_font_database, compile_typst_to_svg_with_fonts};
 
@@ -79,11 +78,11 @@ async fn send_claude_sdk_chat_streaming(
 }
 
 /**
- * Stop the current running subprocess (cancel generation)
+ * Stop the current running request (cancel generation)
  */
 #[tauri::command]
 async fn stop_subprocess() -> Result<(), String> {
-    node_subprocess::stop_current_subprocess()
+    claude::stop_current_request()
         .await
         .map_err(|e| e.to_string())
 }
@@ -202,8 +201,6 @@ fn get_font_count(font_state: tauri::State<'_, FontDbState>) -> usize {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            println!("🚀 AI Agent starting...");
-
             // Initialize database - CRITICAL, cannot proceed without it
             if let Err(e) = init_database() {
                 eprintln!("❌ CRITICAL: Failed to initialize database: {}", e);
@@ -214,36 +211,8 @@ pub fn run() {
             // Get the main window
             let _window = app.get_window("main").unwrap();
 
-            // Initialize Claude SDK client
-            // Resolve the path to node-scripts/claude-sdk.js
-            // During `tauri dev`, CWD is typically src-tauri/, so we need to
-            // check both CWD and one level up (project root) to find node-scripts/
-            let node_script_path = {
-                let candidates = if let Ok(cwd) = std::env::current_dir() {
-                    vec![
-                        cwd.join("node-scripts/claude-sdk.js"),              // CWD/node-scripts/
-                        cwd.join("../node-scripts/claude-sdk.js"),           // CWD/../node-scripts/ (project root)
-                    ]
-                } else {
-                    vec![PathBuf::from("node-scripts/claude-sdk.js")]
-                };
-
-                candidates.into_iter()
-                    .find(|p| p.exists())
-                    .unwrap_or_else(|| {
-                        // Fallback: assume project root is one level up from src-tauri
-                        std::env::current_dir()
-                            .map(|cwd| cwd.join("../node-scripts/claude-sdk.js"))
-                            .unwrap_or_else(|_| PathBuf::from("node-scripts/claude-sdk.js"))
-                    })
-                    // Canonicalize to get a clean absolute path
-                    .canonicalize()
-                    .unwrap_or_else(|_| PathBuf::from("node-scripts/claude-sdk.js"))
-            };
-
-            println!("📂 Node script path: {:?}", node_script_path);
-
-            let claude_client = ClaudeClient::new(node_script_path);
+            // Initialize Claude HTTP client (no Node.js required)
+            let claude_client = ClaudeClient::new();
 
             // Manage Claude state
             app.manage(Arc::new(Mutex::new(ClaudeState {
@@ -312,6 +281,11 @@ pub fn run() {
             // Typst rendering commands
             render_typst_to_svg,
             get_font_count,
+            // Workspace / Work Dir commands
+            commands::open_folder_dialog,
+            commands::init_pipi_shrimp,
+            commands::get_next_output_dir,
+            commands::list_pipi_shrimp_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

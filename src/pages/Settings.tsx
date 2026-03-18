@@ -326,9 +326,9 @@ export function Settings() {
 
     try {
       const result = await invoke<boolean>('test_connection', {
-        apiKey: formData.apiKey,
+        api_key: formData.apiKey,
         model: formData.model,
-        baseUrl: (formData.provider === 'custom' || formData.provider === 'minimax') ? formData.baseUrl : null,
+        base_url: (formData.provider === 'custom' || formData.provider === 'minimax') ? formData.baseUrl : null,
       });
 
       if (result) {

@@ -15,7 +15,9 @@
       "fs": {
         "all": false,
         "readFile": true,
-        "scope": ["$RESOURCE/**"]
+        "scope": [
+          "$RESOURCE/**"
+        ]
       },
       "path": {
         "all": false
@@ -70,7 +72,9 @@
         "providerShortName": null,
         "signingIdentity": null
       },
-      "resources": ["skills/**"],
+      "resources": [
+        "skills/**"
+      ],
       "shortDescription": "",
       "targets": "all",
       "windows": {
@@ -88,7 +92,7 @@
       }
     },
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: blob:; font-src 'self' https: data:; frame-src https:; media-src 'self' https: blob:;"
     },
     "updater": {
       "active": false,
@@ -104,7 +108,7 @@
         "height": 800,
         "label": "main",
         "resizable": true,
-        "title": "pipi-shrimp-agent",
+        "title": "",
         "width": 1200,
         "center": true
       }

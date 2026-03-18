@@ -88,6 +88,7 @@ pub async fn start_session(_app: AppHandle) -> AppResult<String> {
         cwd: None,
         project_id: None,
         model: None,
+        work_dir: None,
     };
 
     database::save_session(&session)

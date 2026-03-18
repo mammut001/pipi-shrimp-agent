@@ -86,7 +86,7 @@ export const translations: Record<Language, TranslationKeys> = {
         title: "Key Features",
         ai: {
           title: "Powerful AI Integration",
-          description: "Deeply integrated with the Claude SDK, supporting real-time streaming output and robust tool calls.",
+          description: "Deeply integrated with the Claude SDK, supporting real-time DeepSeek-style reasoning and robust tool calls.",
         },
         privacy: {
           title: "Rich Local Toolchain",
@@ -103,28 +103,28 @@ export const translations: Record<Language, TranslationKeys> = {
       subtitle: "Everything you need to boost your productivity",
       list: [
         {
+          title: "Reasoning UI (Thinking)",
+          description: "Real-time AI 'Thinking' process visualization. See the logic behind every answer with collapsible reasoning blocks.",
+        },
+        {
+          title: "Advanced Search (Ripgrep)",
+          description: "High-speed codebase search using integrated ripgrep. Support for regex, glob patterns, and recursive filtering.",
+        },
+        {
+          title: "Claude-Style Sidebar",
+          description: "Redesigned premium sidebar with collapsible sections for Progress, Working Folders, and Context.",
+        },
+        {
+          title: "Chrome Connector",
+          description: "Direct browser integration allowing the agent to interact with web pages and automate workflows.",
+        },
+        {
           title: "Local Code Execution",
           description: "Execute Bash, Python, and Node.js scripts locally directly from the AI prompt.",
         },
         {
           title: "Advanced Document Rendering",
-          description: "Exclusively integrates the Typst engine for real-time rendering of high-quality SVG/PDF layouts.",
-        },
-        {
-          title: "Workflow System",
-          description: "Flexible stream-based task management for automating multi-step complex operations.",
-        },
-        {
-          title: "Project-Level Context",
-          description: "Intelligently manages conversation history for different projects backed by a local SQLite database.",
-        },
-        {
-          title: "File & Web Operations",
-          description: "Powerful local file management capabilities and integrated web browsing and automation.",
-        },
-        {
-          title: "Rich Skill Plugins",
-          description: "Built-in, out-of-the-box utility components like PDF analysis, Excel processing, and Docx extraction.",
+          description: "Integrates the Typst engine for real-time rendering of high-quality SVG/PDF layouts.",
         },
       ],
     },
@@ -246,7 +246,7 @@ export const translations: Record<Language, TranslationKeys> = {
         title: "核心功能",
         ai: {
           title: "强大的大模型集成",
-          description: "深度集成 Claude SDK，支持流式输出 (Streaming) 和强大的工具调用能力。",
+          description: "深度集成 Claude SDK，支持实时的 DeepSeek 风格“思考”过程 (Reasoning) 和强大的工具调用能力。",
         },
         privacy: {
           title: "丰富的本地化工具链",
@@ -263,28 +263,28 @@ export const translations: Record<Language, TranslationKeys> = {
       subtitle: "提升生产力所需的一切",
       list: [
         {
+          title: "推理 UI (Thinking)",
+          description: "实时的 AI “思考”过程可视化。通过可折叠的推理块，查看每个回答背后的逻辑。",
+        },
+        {
+          title: "高级搜索 (Ripgrep)",
+          description: "集成 ripgrep 的高速代码库搜索。支持正则表达式、Glob 模式和递归过滤。",
+        },
+        {
+          title: "Claude 风格侧边栏",
+          description: "重新设计的高级侧边栏，包含进度、工作文件夹和上下文的可折叠部分。",
+        },
+        {
+          title: "Chrome 插件连接器",
+          description: "直接的浏览器集成，允许 Agent 与网页交互并自动执行工作流。",
+        },
+        {
           title: "本地代码执行",
           description: "在本地直接执行 Bash, Python, 和 Node.js 脚本。",
         },
         {
           title: "高级文档渲染",
-          description: "独家集成 Typst 引擎，支持实时渲染高质量 SVG/PDF 排版。",
-        },
-        {
-          title: "Workflow 工作流系统",
-          description: "灵活的流式任务管理，让多步骤的复杂操作自动化执行。",
-        },
-        {
-          title: "项目级上下文管理",
-          description: "基于本地 SQLite 数据库，智能管理不同项目和会话的对话历史。",
-        },
-        {
-          title: "文件与 Web 操作",
-          description: "强大的本地文件读写、搜索能力以及集成的网页自动化控制。",
-        },
-        {
-          title: "丰富的技能插件",
-          description: "内置多种开箱即用的实用工具组件（PDF 分析、Excel 处理等）。",
+          description: "集成 Typst 引擎，支持实时渲染高质量 SVG/PDF 排版。",
         },
       ],
     },

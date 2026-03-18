@@ -4,8 +4,11 @@
  * Inspired by Claude Code's sidebar layout.
  */
 
-import React, { useState } from 'react';
-import { useUIStore, useSettingsStore } from '@/store';
+import React, { useState, useEffect } from 'react';
+import { useUIStore, useSettingsStore, useChatStore } from '@/store';
+import { TypstPreview } from './TypstPreview';
+import { BrowserPanel } from './BrowserPanel';
+import { getLatestTypstBlock } from '@/utils/typst';
 
 /**
  * Section Container Component
@@ -41,7 +44,7 @@ const Section: React.FC<{
           </svg>
         </div>
       </button>
-      
+
       {expanded && (
         <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-1 duration-300">
           {children}
@@ -123,10 +126,28 @@ export const AgentPanel: React.FC = () => {
     addNotification
   } = useUIStore();
   const { importedFiles, removeImportedFile } = useSettingsStore();
+  const { currentMessages } = useChatStore();
 
   const [showBypassConfirm, setShowBypassConfirm] = useState(false);
   const [localInstructions, setLocalInstructions] = useState(agentInstructions);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Tab state: 'main' | 'browser' | 'typst-preview' | 'typst-code'
+  const [activeTab, setActiveTab] = useState<'main' | 'browser' | 'typst-preview' | 'typst-code'>('main');
+  const [previewContent, setPreviewContent] = useState<string>('');
+  const [autoSync, setAutoSync] = useState(true);
+
+  const messages = currentMessages();
+
+  // Auto-sync latest Typst block from messages
+  useEffect(() => {
+    if (autoSync && messages.length > 0) {
+      const latestBlock = getLatestTypstBlock(messages);
+      if (latestBlock) {
+        setPreviewContent(latestBlock);
+      }
+    }
+  }, [messages, autoSync]);
 
   React.useEffect(() => {
     setLocalInstructions(agentInstructions);
@@ -166,21 +187,137 @@ export const AgentPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full bg-[#fbfbfd] text-gray-800 border-l border-gray-200/60 transition-all duration-300 select-none">
-      
+
+      {/* Top Tab Bar */}
+      <div className="flex items-center gap-1 px-3 pt-3 pb-2 border-b border-gray-200/60 bg-white/70">
+        {/* Main tab */}
+        <button
+          onClick={() => setActiveTab('main')}
+          className={`px-2.5 py-1 text-[10px] font-bold rounded-lg uppercase tracking-tight transition-all ${
+            activeTab === 'main'
+              ? 'bg-gray-900 text-white'
+              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+          }`}
+        >
+          Main
+        </button>
+
+        {/* Browser tab */}
+        <button
+          onClick={() => setActiveTab('browser')}
+          className={`p-1.5 rounded-lg transition-all ${
+            activeTab === 'browser'
+              ? 'bg-gray-100 text-gray-900'
+              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+          }`}
+          title="Browser"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+        </button>
+
+        {/* Typst Preview tab */}
+        <button
+          onClick={() => setActiveTab('typst-preview')}
+          className={`p-1.5 rounded-lg transition-all ${
+            activeTab === 'typst-preview'
+              ? 'bg-gray-100 text-gray-900'
+              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+          }`}
+          title="Typst Preview"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        </button>
+
+        {/* Typst Code tab */}
+        <button
+          onClick={() => setActiveTab('typst-code')}
+          className={`p-1.5 rounded-lg transition-all ${
+            activeTab === 'typst-code'
+              ? 'bg-gray-100 text-gray-900'
+              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+          }`}
+          title="Typst Code"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+        </button>
+
+        {/* Sync toggle (only relevant for Typst tabs) */}
+        {(activeTab === 'typst-preview' || activeTab === 'typst-code') && (
+          <button
+            onClick={() => setAutoSync(!autoSync)}
+            className={`ml-auto px-2 py-1 text-[9px] font-bold rounded-lg uppercase tracking-tight flex items-center gap-1 transition-all ${
+              autoSync ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+            }`}
+            title={autoSync ? 'Auto-sync on' : 'Auto-sync off'}
+          >
+            <svg className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+            </svg>
+            Sync
+          </button>
+        )}
+      </div>
+
+      {/* Tab content: Browser */}
+      {activeTab === 'browser' && (
+        <div className="flex-1 overflow-hidden">
+          <BrowserPanel />
+        </div>
+      )}
+
+      {/* Tab content: Typst Preview */}
+      {activeTab === 'typst-preview' && (
+        <div className="flex-1 overflow-hidden p-3">
+          <TypstPreview rawContent={previewContent} className="h-full" />
+        </div>
+      )}
+
+      {/* Tab content: Typst Code */}
+      {activeTab === 'typst-code' && (
+        <div className="flex-1 overflow-hidden p-3">
+          <textarea
+            value={previewContent}
+            onChange={(e) => {
+              setPreviewContent(e.target.value);
+              setAutoSync(false);
+            }}
+            className="w-full h-full resize-none font-mono text-xs p-3 border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white"
+            placeholder="Enter Typst source code..."
+            spellCheck={false}
+          />
+        </div>
+      )}
+
+      {/* Tab content: Main (original AgentPanel) */}
+      {activeTab === 'main' && <>
+
       {/* Header / Mode Control */}
       <div className="p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-gray-400 tracking-widest uppercase">Mode</span>
-            <div className={`h-1.5 w-1.5 rounded-full ${
-              permissionMode === 'bypass' ? 'bg-red-500 animate-pulse' :
+            <span className="text-[10px] font-bold text-gray-400 tracking-widest uppercase">Execution Mode</span>
+            <div className={`h-1.5 w-1.5 rounded-full ${permissionMode === 'bypass' ? 'bg-red-500 animate-pulse' :
               permissionMode === 'standard' ? 'bg-blue-500' :
-              permissionMode === 'auto-edits' ? 'bg-indigo-500' :
-              'bg-green-500'
-            }`} />
+                permissionMode === 'auto-edits' ? 'bg-indigo-500' :
+                  'bg-green-500'
+              }`} />
+            {permissionMode === 'bypass' && (
+              <span className="text-[9px] text-red-600 font-bold uppercase tracking-tight ml-auto">Bypass Active</span>
+            )}
           </div>
         </div>
-        
+
         <div className="flex p-1 bg-gray-200/50 rounded-xl">
           {[
             { id: 'standard', label: 'Ask' },
@@ -191,11 +328,10 @@ export const AgentPanel: React.FC = () => {
             <button
               key={mode.id}
               onClick={() => handleModeChange(mode.id)}
-              className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all uppercase ${
-                permissionMode === mode.id
-                  ? 'bg-white shadow-sm text-gray-900'
-                  : 'text-gray-400 hover:text-gray-600'
-              }`}
+              className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all uppercase ${permissionMode === mode.id
+                ? 'bg-white shadow-sm text-gray-900'
+                : 'text-gray-400 hover:text-gray-600'
+                }`}
             >
               {mode.label}
             </button>
@@ -214,10 +350,10 @@ export const AgentPanel: React.FC = () => {
       </div>
 
       <div className="flex-1 overflow-y-auto pb-6 scrollbar-hide hover:scrollbar-default transition-all">
-        
+
         {/* Progress Section */}
-        <Section 
-          title="Progress" 
+        <Section
+          title="Progress"
           count={totalSteps > 0 ? `${completedSteps} of ${totalSteps}` : undefined}
           defaultExpanded={totalSteps > 0}
         >
@@ -228,12 +364,11 @@ export const AgentPanel: React.FC = () => {
                   {idx < taskProgress.length - 1 && (
                     <div className="absolute left-[9px] top-5 bottom-0 w-[1px] bg-gray-100" />
                   )}
-                  <div className={`mt-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center flex-shrink-0 z-10 transition-all ${
-                    step.status === 'done' ? 'bg-green-500 text-white' :
+                  <div className={`mt-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center flex-shrink-0 z-10 transition-all ${step.status === 'done' ? 'bg-green-500 text-white' :
                     step.status === 'running' ? 'bg-blue-600 text-white shadow-[0_0_8px_rgba(37,99,235,0.3)]' :
-                    step.status === 'failed' ? 'bg-red-500 text-white' :
-                    'bg-white border-2 border-gray-100 text-gray-300'
-                  }`}>
+                      step.status === 'failed' ? 'bg-red-500 text-white' :
+                        'bg-white border-2 border-gray-100 text-gray-300'
+                    }`}>
                     {step.status === 'done' ? (
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -243,10 +378,9 @@ export const AgentPanel: React.FC = () => {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className={`text-[11px] font-medium leading-[1.4] transition-colors ${
-                      step.status === 'running' ? 'text-gray-900 font-bold' : 
+                    <p className={`text-[11px] font-medium leading-[1.4] transition-colors ${step.status === 'running' ? 'text-gray-900 font-bold' :
                       step.status === 'done' ? 'text-gray-500' : 'text-gray-400'
-                    }`}>
+                      }`}>
                       {step.label}
                     </p>
                     {step.status === 'running' && (
@@ -274,8 +408,8 @@ export const AgentPanel: React.FC = () => {
         </Section>
 
         {/* Working Folders Section */}
-        <Section 
-          title="Working folders" 
+        <Section
+          title="Working folders"
           count={importedFiles.length > 0 ? importedFiles.length.toString() : undefined}
         >
           <div className="pt-2 space-y-1">
@@ -286,7 +420,7 @@ export const AgentPanel: React.FC = () => {
                   <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.name}>
                     {file.name}
                   </span>
-                  <button 
+                  <button
                     onClick={() => removeImportedFile(file.id)}
                     className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 text-red-400 hover:text-red-500 rounded-lg transition-all"
                   >
@@ -298,7 +432,7 @@ export const AgentPanel: React.FC = () => {
               ))
             ) : (
               <div className="py-6 flex flex-col items-center justify-center opacity-25">
-                 <p className="text-[10px] font-bold uppercase tracking-tight text-center px-4 leading-normal">Drop files here to add to context</p>
+                <p className="text-[10px] font-bold uppercase tracking-tight text-center px-4 leading-normal">Drop files here to add to context</p>
               </div>
             )}
           </div>
@@ -317,19 +451,39 @@ export const AgentPanel: React.FC = () => {
                   </div>
                 ))}
                 <div className="px-2 py-1 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-[10px] font-medium text-gray-400">
-                  + more
+                  + 12 more
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Connectors</h4>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between p-2.5 bg-white border border-gray-200 rounded-xl shadow-sm hover:border-blue-200 transition-all group">
+                  <div className="flex items-center gap-3">
+                    <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold text-gray-800">Claude in Chrome</p>
+                      <p className="text-[9px] text-gray-400 font-medium uppercase tracking-tight">Active Connection</p>
+                    </div>
+                  </div>
+                  <div className="h-1.5 w-1.5 rounded-full bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]" />
                 </div>
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-2.5">
-                 <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Agent Soul</h4>
-                 {localInstructions !== agentInstructions && (
-                    <button onClick={handleSaveSoul} className="text-[9px] font-bold text-blue-600 uppercase tracking-tight hover:underline">
-                      {isSaving ? 'Saving...' : 'Save Changes'}
-                    </button>
-                 )}
+                <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Agent Soul (Default)</h4>
+                {localInstructions !== agentInstructions && (
+                  <button onClick={handleSaveSoul} className="text-[9px] font-bold text-blue-600 uppercase tracking-tight hover:underline">
+                    {isSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                )}
               </div>
               <textarea
                 value={localInstructions}
@@ -343,13 +497,15 @@ export const AgentPanel: React.FC = () => {
 
       </div>
 
+      </> /* end activeTab === 'main' */}
+
       {/* Footer / Status Area */}
       <div className="px-4 py-3 border-t border-gray-200/60 bg-white/50 flex items-center justify-between text-[10px] font-bold text-gray-400 uppercase tracking-tighter cursor-default">
-          <div className="flex items-center gap-2">
-            <div className={`h-1.5 w-1.5 rounded-full ${taskProgress.some(s => s.status === 'running') ? 'bg-blue-500 animate-pulse' : 'bg-green-500'}`} />
-            {taskProgress.some(s => s.status === 'running') ? 'Processing' : 'System Ready'}
-          </div>
-          <div className="opacity-60">v0.1.0-alpha</div>
+        <div className="flex items-center gap-2">
+          <div className={`h-1.5 w-1.5 rounded-full ${taskProgress.some(s => s.status === 'running') ? 'bg-blue-500 animate-pulse' : 'bg-green-500'}`} />
+          {taskProgress.some(s => s.status === 'running') ? 'Processing' : 'System Ready'}
+        </div>
+        <div className="opacity-60">v0.1.0-alpha</div>
       </div>
     </div>
   );

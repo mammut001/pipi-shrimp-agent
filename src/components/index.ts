@@ -23,3 +23,6 @@ export { FileDropOverlay } from './FileDropOverlay';
 
 // Typst Preview
 export { TypstPreview } from './TypstPreview';
+
+// Browser Panel (PageAgent)
+export { BrowserPanel } from './BrowserPanel';
