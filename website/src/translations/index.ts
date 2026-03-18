@@ -61,79 +61,73 @@ export type Language = "en" | "fr" | "zh" | "ko" | "vi";
 
 export const translations: Record<Language, TranslationKeys> = {
   en: {
-    // Navigation
     nav: {
       home: "Home",
       about: "About",
       features: "Features",
       changelog: "Changelog",
     },
-    // Header
     header: {
       download: "Download",
       github: "GitHub",
     },
-    // Hero Section
     hero: {
       title: "Pipi Shrimp Agent",
-      subtitle: "Your intelligent AI assistant for macOS",
-      description: "A powerful, elegant AI assistant that helps you get things done. Built for developers and power users.",
+      subtitle: "Your intelligent AI assistant, powered by Tauri",
+      description: "A blazingly fast, lightweight, and high-performance AI personal assistant built with Tauri + React + TypeScript.",
       downloadArm: "Download for Apple Silicon",
       downloadIntel: "Download for Intel",
       version: "Version",
     },
-    // About Page
     about: {
       title: "About",
-      description: "Pipi Shrimp Agent is a modern AI assistant designed for macOS. It combines the power of large language models with a beautiful, intuitive interface.",
+      description: "Pipi Shrimp Agent is a modern AI assistant designed for speed and native performance. It fully unlocks the tool-calling potential of large language models.",
       features: {
         title: "Key Features",
         ai: {
-          title: "AI-Powered",
-          description: "Powered by advanced large language models for intelligent conversations.",
+          title: "Powerful AI Integration",
+          description: "Deeply integrated with the Claude SDK, supporting real-time streaming output and robust tool calls.",
         },
         privacy: {
-          title: "Privacy First",
-          description: "Your data stays on your device. No cloud processing of personal information.",
+          title: "Rich Local Toolchain",
+          description: "Execute Bash, Python, and Node.js scripts locally, manage files, and automate the web.",
         },
         fast: {
           title: "Lightning Fast",
-          description: "Optimized for performance with native macOS integration.",
+          description: "Powered by a Rust and Tauri backend, it boasts instantaneous startup times and minimal memory footprint.",
         },
       },
     },
-    // Features Page
     features: {
       title: "Features",
       subtitle: "Everything you need to boost your productivity",
       list: [
         {
-          title: "Intelligent Conversations",
-          description: "Natural, contextual AI interactions that understand your intent.",
+          title: "Local Code Execution",
+          description: "Execute Bash, Python, and Node.js scripts locally directly from the AI prompt.",
         },
         {
-          title: "Code Assistance",
-          description: "Get help with coding tasks, from debugging to refactoring.",
+          title: "Advanced Document Rendering",
+          description: "Exclusively integrates the Typst engine for real-time rendering of high-quality SVG/PDF layouts.",
         },
         {
-          title: "Quick Access",
-          description: "Launch via menu bar or keyboard shortcuts for instant assistance.",
+          title: "Workflow System",
+          description: "Flexible stream-based task management for automating multi-step complex operations.",
         },
         {
-          title: "Customizable",
-          description: "Tailor the assistant to your workflow with personalized settings.",
+          title: "Project-Level Context",
+          description: "Intelligently manages conversation history for different projects backed by a local SQLite database.",
         },
         {
-          title: "Multi-language",
-          description: "Support for 5 languages: English, French, Chinese, Korean, Vietnamese.",
+          title: "File & Web Operations",
+          description: "Powerful local file management capabilities and integrated web browsing and automation.",
         },
         {
-          title: "Regular Updates",
-          description: "Continuous improvements with frequent feature releases.",
+          title: "Rich Skill Plugins",
+          description: "Built-in, out-of-the-box utility components like PDF analysis, Excel processing, and Docx extraction.",
         },
       ],
     },
-    // Changelog Page
     changelog: {
       title: "Changelog",
       subtitle: "Latest updates and improvements",
@@ -141,86 +135,79 @@ export const translations: Record<Language, TranslationKeys> = {
       error: "Failed to load commits",
       viewOnGithub: "View on GitHub",
     },
-    // Footer
     footer: {
       copyright: "All rights reserved.",
       builtWith: "Built with",
     },
   },
   fr: {
-    // Navigation
     nav: {
       home: "Accueil",
       about: "À propos",
       features: "Fonctionnalités",
       changelog: "Journal des modifications",
     },
-    // Header
     header: {
       download: "Télécharger",
       github: "GitHub",
     },
-    // Hero Section
     hero: {
       title: "Pipi Shrimp Agent",
-      subtitle: "Votre assistant IA intelligent pour macOS",
-      description: "Un assistant IA puissant et élégant qui vous aide à accomplir vos tâches. Conçu pour les développeurs et les utilisateurs avancés.",
+      subtitle: "Votre assistant IA intelligent, propulsé par Tauri",
+      description: "Un assistant personnel IA ultra-rapide, léger et performant construit avec Tauri + React + TypeScript.",
       downloadArm: "Télécharger pour Apple Silicon",
       downloadIntel: "Télécharger pour Intel",
       version: "Version",
     },
-    // About Page
     about: {
       title: "À propos",
-      description: "Pipi Shrimp Agent est un assistant IA moderne conçu pour macOS. Il combine la puissance des grands modèles de langage avec une belle interface intuitive.",
+      description: "Pipi Shrimp Agent est conçu pour la vitesse et les performances natives. Il libère tout le potentiel d'appel d'outils des grands modèles de langage.",
       features: {
         title: "Fonctionnalités clés",
         ai: {
-          title: "Alimenté par l'IA",
-          description: "Propulsé par des modèles de langage avancés pour des conversations intelligentes.",
+          title: "Intégration IA puissante",
+          description: "Profondément intégré au SDK Claude, prenant en charge la sortie en streaming et les appels d'outils robustes.",
         },
         privacy: {
-          title: "Confidentialité d'abord",
-          description: "Vos données restent sur votre appareil. Pas de traitement cloud des informations personnelles.",
+          title: "Riche chaîne d'outils locaux",
+          description: "Exécutez des scripts Bash, Python et Node.js localement, gérez les fichiers et automatisez le web.",
         },
         fast: {
           title: "Éclair rapide",
-          description: "Optimisé pour les performances avec une intégration native macOS.",
+          description: "Propulsé par un backend Rust et Tauri, il offre des temps de démarrage instantanés et une empreinte mémoire minimale.",
         },
       },
     },
-    // Features Page
     features: {
       title: "Fonctionnalités",
       subtitle: "Tout ce dont vous avez besoin pour booster votre productivité",
       list: [
         {
-          title: "Conversations intelligentes",
-          description: "Interactions IA naturelles et contextuelles qui comprennent vos intentions.",
+          title: "Exécution de code local",
+          description: "Exécutez des scripts Bash, Python et Node.js localement directement depuis l'invite IA.",
         },
         {
-          title: "Assistance au code",
-          description: "Obtenez de l'aide pour les tâches de codage, du débogage au refactoring.",
+          title: "Rendu de document avancé",
+          description: "Intègre exclusivement le moteur Typst pour le rendu en temps réel de mises en page SVG/PDF de haute qualité.",
         },
         {
-          title: "Accès rapide",
-          description: "Lancez via la barre de menu ou les raccourcis clavier pour une assistance instantanée.",
+          title: "Système de flux de travail",
+          description: "Gestion flexible des tâches pour automatiser les opérations complexes en plusieurs étapes.",
         },
         {
-          title: "Personnalisable",
-          description: "Adaptez l'assistant à votre flux de travail avec des paramètres personnalisés.",
+          title: "Contexte au niveau du projet",
+          description: "Gère intelligemment l'historique des conversations pour différents projets soutenu par une base de données SQLite locale.",
         },
         {
-          title: "Multilingue",
-          description: "Support pour 5 langues : anglais, français, chinois, coréen, vietnamien.",
+          title: "Opérations de fichiers et web",
+          description: "Puissantes capacités de gestion de fichiers locaux et navigation web intégrée.",
         },
         {
-          title: "Mises à jour régulières",
-          description: "Améliorations continues avec des versions de fonctionnalités fréquentes.",
+          title: "Plugins de compétences riches",
+          description: "Composants utilitaires intégrés et prêts à l'emploi tels que l'analyse PDF, le traitement Excel et l'extraction Docx.",
         },
       ],
     },
-    // Changelog Page
     changelog: {
       title: "Journal des modifications",
       subtitle: "Dernières mises à jour et améliorations",
@@ -228,86 +215,79 @@ export const translations: Record<Language, TranslationKeys> = {
       error: "Échec du chargement des commits",
       viewOnGithub: "Voir sur GitHub",
     },
-    // Footer
     footer: {
       copyright: "Tous droits réservés.",
       builtWith: "Construit avec",
     },
   },
   zh: {
-    // Navigation
     nav: {
       home: "首页",
       about: "关于",
       features: "功能",
       changelog: "更新日志",
     },
-    // Header
     header: {
       download: "下载",
       github: "GitHub",
     },
-    // Hero Section
     hero: {
       title: "Pipi Shrimp Agent",
-      subtitle: "您的智能 macOS AI 助手",
-      description: "一个强大、优雅的 AI 助手，帮助您完成任务。为开发者和高级用户打造。",
+      subtitle: "您的智能本地 AI 助手",
+      description: "一个极致轻量级、高性能的 AI 个人助手，基于 Tauri + React + TypeScript 打造。",
       downloadArm: "下载 Apple Silicon 版",
       downloadIntel: "下载 Intel 版",
       version: "版本",
     },
-    // About Page
     about: {
       title: "关于",
-      description: "Pipi Shrimp Agent 是专为 macOS 设计的现代 AI 助手。它将大型语言模型的强大能力与美观、直观的界面相结合。",
+      description: "Pipi Shrimp Agent 旨在提供快速、强大的本地 AI 客户端，彻底释放大语言模型的工具调用潜力。",
       features: {
         title: "核心功能",
         ai: {
-          title: "AI 驱动",
-          description: "由先进的大型语言模型驱动，进行智能对话。",
+          title: "强大的大模型集成",
+          description: "深度集成 Claude SDK，支持流式输出 (Streaming) 和强大的工具调用能力。",
         },
         privacy: {
-          title: "隐私优先",
-          description: "您的数据留在设备上。不在云端处理个人信息。",
+          title: "丰富的本地化工具链",
+          description: "本地执行 Bash, Python 和 Node.js 脚本，强大的文件管理和 Web 自动化功能。",
         },
         fast: {
-          title: "闪电般快速",
-          description: "针对性能优化，原生 macOS 集成。",
+          title: "极致轻量与原生性能",
+          description: "基于 Rust 和 Tauri 构建后端，极速启动，内存占用极低。",
         },
       },
     },
-    // Features Page
     features: {
       title: "功能",
       subtitle: "提升生产力所需的一切",
       list: [
         {
-          title: "智能对话",
-          description: "自然、情境化的 AI 交互，理解您的意图。",
+          title: "本地代码执行",
+          description: "在本地直接执行 Bash, Python, 和 Node.js 脚本。",
         },
         {
-          title: "代码助手",
-          description: "获取编码任务帮助，从调试到重构。",
+          title: "高级文档渲染",
+          description: "独家集成 Typst 引擎，支持实时渲染高质量 SVG/PDF 排版。",
         },
         {
-          title: "快速访问",
-          description: "通过菜单栏或键盘快捷键启动，即时获得帮助。",
+          title: "Workflow 工作流系统",
+          description: "灵活的流式任务管理，让多步骤的复杂操作自动化执行。",
         },
         {
-          title: "可定制",
-          description: "通过个性化设置定制助手以适应您的工作流程。",
+          title: "项目级上下文管理",
+          description: "基于本地 SQLite 数据库，智能管理不同项目和会话的对话历史。",
         },
         {
-          title: "多语言",
-          description: "支持 5 种语言：英语、法语、中文、韩语、越南语。",
+          title: "文件与 Web 操作",
+          description: "强大的本地文件读写、搜索能力以及集成的网页自动化控制。",
         },
         {
-          title: "定期更新",
-          description: "持续改进，频繁发布新功能。",
+          title: "丰富的技能插件",
+          description: "内置多种开箱即用的实用工具组件（PDF 分析、Excel 处理等）。",
         },
       ],
     },
-    // Changelog Page
     changelog: {
       title: "更新日志",
       subtitle: "最新更新和改进",
@@ -315,86 +295,79 @@ export const translations: Record<Language, TranslationKeys> = {
       error: "加载提交失败",
       viewOnGithub: "在 GitHub 上查看",
     },
-    // Footer
     footer: {
       copyright: "版权所有。",
       builtWith: "由",
     },
   },
   ko: {
-    // Navigation
     nav: {
       home: "홈",
       about: "정보",
       features: "기능",
       changelog: "변경 로그",
     },
-    // Header
     header: {
       download: "다운로드",
       github: "GitHub",
     },
-    // Hero Section
     hero: {
       title: "Pipi Shrimp Agent",
-      subtitle: "macOS용 지능형 AI 어시스턴트",
-      description: "작업을 완료하도록 도와주는 강력하고 우아한 AI 어시스턴트. 개발자와 전력 사용자를 위해 구축되었습니다.",
+      subtitle: "Tauri로 구동되는 지능형 AI 어시스턴트",
+      description: "Tauri + React + TypeScript로 구축된 매우 빠르고 가벼우며 성능이 뛰어난 AI 개인 비서입니다.",
       downloadArm: "Apple Silicon용 다운로드",
       downloadIntel: "Intel용 다운로드",
       version: "버전",
     },
-    // About Page
     about: {
       title: "정보",
-      description: "Pipi Shrimp Agent는 macOS를 위해 설계된 현대적인 AI 어시스턴트입니다. 대규모 언어 모델의 힘을 아름다운 직관적인 인터페이스와 결합합니다.",
+      description: "Pipi Shrimp Agent는 속도와 네이티브 성능을 위해 설계된 현대적인 AI 어시스턴트입니다. 대규모 언어 모델의 도구 호출 잠재력을 완전히 끌어냅니다.",
       features: {
         title: "주요 기능",
         ai: {
-          title: "AI 구동",
-          description: "지능적인 대화를 위한 고급 대규모 언어 모델로 구동됩니다.",
+          title: "강력한 AI 통합",
+          description: "Claude SDK와 깊이 통합되어 실시간 스트리밍 출력 및 강력한 도구 호출을 지원합니다.",
         },
         privacy: {
-          title: "개인정보 보호 우선",
-          description: "데이터는 기기에 남아 있습니다. 개인 정보의 클라우드 처리 없음.",
+          title: "풍부한 로컬 도구 체인",
+          description: "Bash, Python 및 Node.js 스크립트를 로컬에서 실행하고 파일을 관리하며 웹을 자동화합니다.",
         },
         fast: {
           title: "번개처럼 빠름",
-          description: "기본 macOS 통합으로 성능에 최적화되었습니다.",
+          description: "Rust 및 Tauri 백엔드로 구동되어 즉각적인 시작 시간과 최소한의 메모리 사용 공간을 자랑합니다.",
         },
       },
     },
-    // Features Page
     features: {
       title: "기능",
       subtitle: "생산성을 높이기 위해 필요한 모든 것",
       list: [
         {
-          title: "지능형 대화",
-          description: "의도를 이해하는 자연스러운 상황별 AI 상호작용.",
+          title: "로컬 코드 실행",
+          description: "AI 프롬프트에서 직접 Bash, Python 및 Node.js 스크립트를 로컬에서 실행합니다.",
         },
         {
-          title: "코드 지원",
-          description: "디버깅부터 리팩토링까지 코딩 작업에 대한 도움말을 받으세요.",
+          title: "고급 문서 렌더링",
+          description: "고품질 SVG/PDF 레이아웃의 실시간 렌더링을 위해 Typst 엔진을 독점적으로 통합합니다.",
         },
         {
-          title: "빠른 액세스",
-          description: "메뉴 모음 또는 키보드 단축키로 실행하여 즉각적인 지원을 받으세요.",
+          title: "워크플로 시스템",
+          description: "다단계 복잡한 작업을 자동화하기 위한 유연한 스트림 기반 작업 관리.",
         },
         {
-          title: "사용자 정의 가능",
-          description: "개인화된 설정으로 워크플로에 맞게 어시스턴트를 조정하세요.",
+          title: "프로젝트 수준 컨텍스트",
+          description: "로컬 SQLite 데이터베이스를 기반으로 다양한 프로젝트의 대화 기록을 지능적으로 관리합니다.",
         },
         {
-          title: "다국어 지원",
-          description: "5개 언어 지원: 영어, 프랑스어, 중국어, 한국어, 베ietnam어.",
+          title: "파일 및 웹 작업",
+          description: "강력한 로컬 파일 관리 기능과 통합된 웹 브라우징 및 자동화.",
         },
         {
-          title: "정기 업데이트",
-          description: "자주적인 기능 출시로 지속적인 개선.",
+          title: "풍부한 기술 플러그인",
+          description: "PDF 분석, Excel 처리 및 Docx 추출과 같은 기본 유틸리티 구성 요소 내장.",
         },
       ],
     },
-    // Changelog Page
     changelog: {
       title: "변경 로그",
       subtitle: "최신 업데이트 및 개선 사항",
@@ -402,86 +375,79 @@ export const translations: Record<Language, TranslationKeys> = {
       error: "커밋 로드 실패",
       viewOnGithub: "GitHub에서 보기",
     },
-    // Footer
     footer: {
       copyright: "모든 권리 보유.",
       builtWith: "만든 곳",
     },
   },
   vi: {
-    // Navigation
     nav: {
       home: "Trang chủ",
       about: "Giới thiệu",
       features: "Tính năng",
       changelog: "Nhật ký thay đổi",
     },
-    // Header
     header: {
       download: "Tải xuống",
       github: "GitHub",
     },
-    // Hero Section
     hero: {
       title: "Pipi Shrimp Agent",
-      subtitle: "Trợ lý AI thông minh cho macOS",
-      description: "Một trợ lý AI mạnh mẽ, thanh lịch giúp bạn hoàn thành công việc. Được xây dựng cho nhà phát triển và người dùng nâng cao.",
+      subtitle: "Trợ lý AI thông minh của bạn, được hỗ trợ bởi Tauri",
+      description: "Một trợ lý cá nhân AI cực nhanh, nhẹ và hiệu suất cao được xây dựng bằng Tauri + React + TypeScript.",
       downloadArm: "Tải cho Apple Silicon",
       downloadIntel: "Tải cho Intel",
       version: "Phiên bản",
     },
-    // About Page
     about: {
       title: "Giới thiệu",
-      description: "Pipi Shrimp Agent là một trợ lý AI hiện đại được thiết kế cho macOS. Nó kết hợp sức mạnh của các mô hình ngôn ngữ lớn với giao diện đẹp mắt và trực quan.",
+      description: "Pipi Shrimp Agent là một trợ lý AI hiện đại được thiết kế cho tốc độ và hiệu suất gốc. Nó mở khóa hoàn toàn tiềm năng gọi công cụ của các mô hình ngôn ngữ lớn.",
       features: {
         title: "Tính năng chính",
         ai: {
-          title: "Được cấp năng lượng bởi AI",
-          description: "Được cung cấp bởi các mô hình ngôn ngữ lớn tiên tiến cho các cuộc trò chuyện thông minh.",
+          title: "Tích hợp AI mạnh mẽ",
+          description: "Tích hợp sâu với Claude SDK, hỗ trợ đầu ra phát trực tuyến theo thời gian thực và gọi công cụ mạnh mẽ.",
         },
         privacy: {
-          title: "Quyền riêng tư trước tiên",
-          description: "Dữ liệu của bạn nằm trên thiết bị của bạn. Không xử lý đám mây cho thông tin cá nhân.",
+          title: "Chuỗi công cụ cục bộ phong phú",
+          description: "Thực thi các tệp lệnh Bash, Python và Node.js cục bộ, quản lý tệp và tự động hóa web.",
         },
         fast: {
           title: "Nhanh như chớp",
-          description: "Được tối ưu hóa cho hiệu suất với tích hợp macOS gốc.",
+          description: "Được cung cấp bởi backend Rust và Tauri, nó có thời gian khởi động tức thì và dung lượng bộ nhớ tối thiểu.",
         },
       },
     },
-    // Features Page
     features: {
       title: "Tính năng",
       subtitle: "Mọi thứ bạn cần để tăng năng suất",
       list: [
         {
-          title: "Cuộc trò chuyện thông minh",
-          description: "Tương tác AI tự nhiên, theo ngữ cảnh hiểu ý định của bạn.",
+          title: "Thực thi mã cục bộ",
+          description: "Thực thi các tệp lệnh Bash, Python và Node.js cục bộ trực tiếp từ lời nhắc AI.",
         },
         {
-          title: "Hỗ trợ mã",
-          description: "Nhận hỗ trợ cho các tác vụ lập trình, từ gỡ lỗi đến tái cấu trúc.",
+          title: "Kết xuất tài liệu nâng cao",
+          description: "Tích hợp độc quyền công cụ Typst để kết xuất bố cục SVG/PDF chất lượng cao theo thời gian thực.",
         },
         {
-          title: "Truy cập nhanh",
-          description: "Khởi chạy qua thanh menu hoặc phím tắt để được hỗ trợ ngay lập tức.",
+          title: "Hệ thống quy trình làm việc",
+          description: "Quản lý tác vụ dựa trên luồng linh hoạt để tự động hóa các thao tác phức tạp nhiều bước.",
         },
         {
-          title: "Tùy chỉnh được",
-          description: "Điều chỉnh trợ lý theo quy trình làm việc của bạn với cài đặt cá nhân hóa.",
+          title: "Bối cảnh cấp dự án",
+          description: "Quản lý thông minh lịch sử cuộc trò chuyện cho các dự án khác nhau được hỗ trợ bởi cơ sở dữ liệu SQLite cục bộ.",
         },
         {
-          title: "Đa ngôn ngữ",
-          description: "Hỗ trợ 5 ngôn ngữ: Anh, Pháp, Trung, Hàn, Việt.",
+          title: "Hoạt động tệp & web",
+          description: "Khả năng quản lý tệp cục bộ mạnh mẽ và duyệt web và tự động hóa tích hợp.",
         },
         {
-          title: "Cập nhật thường xuyên",
-          description: "Cải tiến liên tục với các bản phát hành tính năng thường xuyên.",
+          title: "Plugin kỹ năng phong phú",
+          description: "Các thành phần tiện ích tích hợp, sẵn sàng sử dụng như phân tích PDF, xử lý Excel và trích xuất Docx.",
         },
       ],
     },
-    // Changelog Page
     changelog: {
       title: "Nhật ký thay đổi",
       subtitle: "Cập nhật và cải tiến mới nhất",
@@ -489,7 +455,6 @@ export const translations: Record<Language, TranslationKeys> = {
       error: "Tải commits thất bại",
       viewOnGithub: "Xem trên GitHub",
     },
-    // Footer
     footer: {
       copyright: "Mọi quyền được bảo lưu.",
       builtWith: "Được xây dựng với",
