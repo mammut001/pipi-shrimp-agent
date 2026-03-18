@@ -20,6 +20,7 @@ fn row_to_session(row: &Row) -> SqliteResult<DbSession> {
         cwd: row.get(4)?,
         project_id: row.get(5)?,
         model: row.get(6)?,
+        work_dir: row.get(7)?,      // NEW
     })
 }
 
@@ -47,8 +48,9 @@ fn row_to_project(row: &Row) -> SqliteResult<DbProject> {
         name: row.get(1)?,
         description: row.get(2)?,
         color: row.get(3)?,
-        created_at: row.get(4)?,
-        updated_at: row.get(5)?,
+        work_dir: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 
@@ -69,6 +71,7 @@ pub struct DbSession {
     pub cwd: Option<String>,
     pub project_id: Option<String>,
     pub model: Option<String>,
+    pub work_dir: Option<String>,    // NEW: each session's work directory
 }
 
 /**
@@ -94,6 +97,7 @@ pub struct DbProject {
     pub name: String,
     pub description: Option<String>,
     pub color: Option<String>,
+    pub work_dir: Option<String>,   // NEW: path to local work directory
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -128,7 +132,8 @@ pub fn init_database() -> SqliteResult<()> {
             updated_at INTEGER NOT NULL,
             cwd TEXT,
             project_id TEXT,
-            model TEXT
+            model TEXT,
+            work_dir TEXT
         )",
         [],
     )?;
@@ -221,7 +226,28 @@ pub fn init_database() -> SqliteResult<()> {
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN model TEXT", []);
     }
 
-    // Create projects table
+    // Migration: add work_dir column to sessions table for existing installs
+    let sessions_work_dir_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "work_dir" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !sessions_work_dir_exists {
+        println!("🚀 Migrating database: adding 'work_dir' column to 'sessions' table");
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN work_dir TEXT", []);
+    }
+
+    // Create projects table (work_dir included from the start for new installs)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
@@ -233,6 +259,28 @@ pub fn init_database() -> SqliteResult<()> {
         )",
         [],
     )?;
+
+    // Migration: add work_dir column for existing installs that pre-date this column.
+    // Must run AFTER the CREATE TABLE above so the table is guaranteed to exist.
+    let work_dir_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(projects)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "work_dir" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !work_dir_exists {
+        println!("🚀 Migrating database: adding 'work_dir' column to 'projects' table");
+        let _ = conn.execute("ALTER TABLE projects ADD COLUMN work_dir TEXT", []);
+    }
 
     // Create index for faster lookups
     conn.execute(
@@ -263,9 +311,9 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model],
+            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model, session.work_dir],
         )?;
     }
     Ok(())
@@ -280,7 +328,7 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, cwd, project_id, model FROM sessions ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir FROM sessions ORDER BY updated_at DESC"
         )?;
 
         let session_iter = stmt.query_map([], row_to_session)?;
@@ -369,13 +417,14 @@ pub fn save_project(project: &DbProject) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO projects (id, name, description, color, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO projects (id, name, description, color, work_dir, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 project.id,
                 project.name,
                 project.description,
                 project.color,
+                project.work_dir,
                 project.created_at,
                 project.updated_at
             ],
@@ -393,7 +442,7 @@ pub fn get_all_projects() -> SqliteResult<Vec<DbProject>> {
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, color, created_at, updated_at FROM projects ORDER BY updated_at DESC"
+            "SELECT id, name, description, color, work_dir, created_at, updated_at FROM projects ORDER BY updated_at DESC"
         )?;
 
         let project_iter = stmt.query_map([], row_to_project)?;
@@ -427,11 +476,12 @@ pub fn update_project(project: &DbProject) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "UPDATE projects SET name = ?1, description = ?2, color = ?3, updated_at = ?4 WHERE id = ?5",
+            "UPDATE projects SET name = ?1, description = ?2, color = ?3, work_dir = ?4, updated_at = ?5 WHERE id = ?6",
             params![
                 project.name,
                 project.description,
                 project.color,
+                project.work_dir,
                 project.updated_at,
                 project.id
             ],

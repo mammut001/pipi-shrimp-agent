@@ -340,6 +340,15 @@ export function Sidebar() {
           >
             Workflow
           </button>
+          <button
+            onClick={() => setCurrentView('browser')}
+            className={`flex-1 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${currentView === 'browser'
+                ? 'bg-white text-gray-900 shadow-md'
+                : 'text-gray-600 hover:text-gray-900'
+              }`}
+          >
+            Browser
+          </button>
 
           {/* Multi-select Button - Integrated in Tab Container */}
           {currentView === 'chat' && sessions.length > 0 && (
@@ -442,19 +451,19 @@ export function Sidebar() {
       {/* Session/Run List */}
       <div className="flex-1 overflow-y-auto custom-scrollbar" onClick={closeContextMenu}>
         {currentView === 'chat' ? (
-          // Chat Sessions
-          sessions.length === 0 ? (
-            <div className="p-8 text-center text-gray-400 text-sm">
-              <div className="mb-2 opacity-50">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
+          // Chat Sessions - wrap everything in Fragment
+          <div className="flex flex-col h-full">
+            {/* Sessions List - show empty state OR sessions */}
+            {sessions.length === 0 ? (
+              <div className="p-8 text-center text-gray-400 text-sm">
+                <div className="mb-2 opacity-50">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <p>No conversations yet</p>
               </div>
-              <p>No conversations yet</p>
-            </div>
-          ) : (
-            <>
-              {/* Sessions List */}
+            ) : (
               <ul className="py-2 space-y-1 px-2">
                 {/* Ungrouped Sessions */}
                 {ungroupedSessions.length > 0 && (
@@ -491,6 +500,17 @@ export function Sidebar() {
                           <div className="flex-1 min-w-0">
                             <h3 className="font-semibold text-gray-900 truncate text-sm">
                               {session.title || 'New Conversation'}
+                              {session.workDir && (
+                                <span title={session.workDir} className="inline-flex">
+                                  <svg
+                                    className="w-3 h-3 text-gray-400 flex-shrink-0 inline ml-1"
+                                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                  >
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                      d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                                  </svg>
+                                </span>
+                              )}
                             </h3>
                             <p className="text-xs text-gray-500 truncate mt-0.5">
                               {getSessionPreview(session)}
@@ -551,9 +571,10 @@ export function Sidebar() {
                 </>
               )}
               </ul>
+            )}
 
-              {/* Projects Section - moved outside ul so it always shows */}
-              <ul className="py-2 space-y-1 px-2">
+            {/* Projects Section - always show, even when no sessions */}
+            <ul className="py-2 space-y-1 px-2 mt-auto">
                 <li className="pt-4 pb-2">
                   <div className="flex items-center justify-between px-3">
                     <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Projects</h2>
@@ -658,9 +679,9 @@ export function Sidebar() {
                   ))
                 )}
               </ul>
-            </>
+            </div>
           )
-        ) : (
+        : (
           // Workflow Runs
           workflowRuns.length === 0 ? (
             <div className="p-8 text-center text-gray-400 text-sm">

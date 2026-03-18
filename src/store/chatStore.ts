@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
-import type { ChatState, Session, Message, Project } from '../types/chat';
+import type { ChatState, Session, Message, Project, OutputFolder } from '../types/chat';
 import { createSession, createMessage, createProject } from '../types/chat';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
@@ -28,6 +28,7 @@ interface DbSession {
   cwd: string | null;
   project_id: string | null;
   model: string | null;
+  work_dir?: string | null;   // NEW
 }
 
 interface DbMessage {
@@ -45,6 +46,7 @@ interface DbProject {
   name: string;
   description?: string;
   color?: string;
+  work_dir?: string;      // NEW
   created_at: number;
   updated_at: number;
 }
@@ -60,6 +62,7 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
   cwd: dbSession.cwd || undefined,
   projectId: dbSession.project_id || undefined,
   model: dbSession.model || undefined,
+  workDir: dbSession.work_dir || undefined,     // NEW
   messages: dbMessages.map((m) => ({
     id: m.id,
     role: m.role as 'user' | 'assistant',
@@ -81,6 +84,7 @@ const sessionToDb = (session: Session): DbSession => ({
   cwd: session.cwd || null,
   project_id: session.projectId || null,
   model: session.model || null,
+  work_dir: session.workDir || null,            // NEW
 });
 
 /**
@@ -104,6 +108,7 @@ const dbToProject = (dbProject: DbProject): Project => ({
   name: dbProject.name,
   createdAt: dbProject.created_at,
   updatedAt: dbProject.updated_at,
+  workDir: dbProject.work_dir || undefined,   // NEW
 });
 
 /**
@@ -114,6 +119,7 @@ const projectToDb = (project: Project): DbProject => ({
   name: project.name,
   created_at: project.createdAt,
   updated_at: project.updatedAt,
+  work_dir: project.workDir,                  // NEW
 });
 
 /**
@@ -219,7 +225,7 @@ export const useChatStore = create<ChatState>()(
           dbSessions.map(async (dbSession) => {
             try {
               const dbMessages = await invoke<DbMessage[]>('db_get_messages', {
-                sessionId: dbSession.id,
+                session_id: dbSession.id,
               });
               return dbToSession(dbSession, dbMessages);
             } catch (err) {
@@ -1107,6 +1113,75 @@ export const useChatStore = create<ChatState>()(
             p.id === projectId ? { ...p, name, updatedAt: Date.now() } : p
           ),
         }));
+      }
+    },
+
+    setSessionWorkDir: async (sessionId: string) => {
+      // 1. Open native folder picker
+      const selectedPath = await invoke<string | null>('open_folder_dialog');
+      if (!selectedPath) return null;
+
+      // 2. Init .pipi-shrimp in selected folder
+      await invoke('init_pipi_shrimp', { workDir: selectedPath });
+
+      // 3. Update session in state and DB
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return null;
+
+      const updated = { ...session, workDir: selectedPath, updatedAt: Date.now() };
+      await invoke('db_save_session', { session: sessionToDb(updated) });
+
+      set(state => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? updated : s)
+      }));
+
+      return selectedPath;
+    },
+
+    clearSessionWorkDir: async (sessionId: string) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return;
+
+      const updated = { ...session, workDir: undefined, updatedAt: Date.now() };
+      await invoke('db_save_session', { session: sessionToDb(updated) });
+
+      set(state => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? updated : s)
+      }));
+    },
+
+    writeToWorkDir: async (sessionId: string, filename: string, content: string) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session?.workDir) return null;
+
+      try {
+        // Get next output directory path
+        const outputDir = await invoke<string>('get_next_output_dir', { workDir: session.workDir });
+
+        // Create the directory
+        await invoke('create_directory', { path: outputDir });
+
+        // Write the file
+        const filePath = `${outputDir}/${filename}`;
+        await invoke('write_file', { path: filePath, content });
+
+        console.log(`✅ Written to work dir: ${filePath}`);
+        return filePath;
+      } catch (error) {
+        console.error('Failed to write to work dir:', error);
+        return null;
+      }
+    },
+
+    getWorkDirIndex: async (sessionId: string) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session?.workDir) return [];
+
+      try {
+        return await invoke<OutputFolder[]>('list_pipi_shrimp_index', { workDir: session.workDir });
+      } catch (error) {
+        console.error('Failed to get work dir index:', error);
+        return [];
       }
     },
   }))

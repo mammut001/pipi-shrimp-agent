@@ -33,7 +33,7 @@ export interface UIState {
   // ========== Data State ==========
   sidebarVisible: boolean;
   settingsOpen: boolean;
-  currentView: 'chat' | 'workflow' | 'skill';
+  currentView: 'chat' | 'workflow' | 'skill' | 'browser';
   currentArtifactId?: string;
   pendingPermission?: PermissionRequest;
   notifications: Notification[];
@@ -50,7 +50,7 @@ export interface UIState {
   /**
    * Set current view (chat, workflow, or skill)
    */
-  setCurrentView: (view: 'chat' | 'workflow' | 'skill') => void;
+  setCurrentView: (view: 'chat' | 'workflow' | 'skill' | 'browser') => void;
 
   /**
    * Toggle sidebar visibility

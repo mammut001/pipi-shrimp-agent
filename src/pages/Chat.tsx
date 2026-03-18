@@ -10,22 +10,16 @@
  * - Permission dialog integration
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { ChatMessage, ChatInput, PermissionModal, TypstPreview } from '@/components';
-import { getLatestTypstBlock } from '@/utils/typst';
+import { ChatMessage, ChatInput, PermissionModal } from '@/components';
 
 /**
  * Chat page component
  */
 export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Preview panel state
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewContent, setPreviewContent] = useState<string>('');
-  const [autoSync, setAutoSync] = useState(true);
 
   const {
     currentMessages,
@@ -62,7 +56,7 @@ export function Chat() {
     if (!pendingPermission) return;
 
     const { id, toolName, toolInput } = pendingPermission;
-    
+
     // Clear request first to close modal
     clearPermissionRequest();
 
@@ -86,33 +80,11 @@ export function Chat() {
     clearError();
   };
 
-  /**
-   * Handle Typst preview button click from code block
-   */
-  const handleTypstPreview = useCallback((code: string) => {
-    setPreviewContent(code);
-    setShowPreview(true);
-    setAutoSync(false); // Disable auto-sync when user manually selects
-  }, []);
-
-  /**
-   * Auto-sync to latest Typst block when messages change
-   */
-  useEffect(() => {
-    if (autoSync && messages.length > 0) {
-      const latestBlock = getLatestTypstBlock(messages);
-      if (latestBlock) {
-        setPreviewContent(latestBlock);
-        setShowPreview(true);
-      }
-    }
-  }, [messages, autoSync]);
-
   return (
     <MainLayout>
       <div className="flex-1 flex min-h-0">
-        {/* Left Panel - Chat */}
-        <div className={`flex flex-col min-h-0 ${showPreview ? 'w-1/2' : 'w-full'}`}>
+        {/* Chat Panel - full width */}
+        <div className="flex flex-col min-h-0 w-full">
           {/* Messages List */}
           <div className="flex-1 overflow-y-auto">
             {hasMessages ? (
@@ -123,7 +95,6 @@ export function Chat() {
                     message={message}
                     isLatest={index === messages.length - 1}
                     isStreaming={isStreaming && index === messages.length - 1}
-                    onTypstPreview={handleTypstPreview}
                   />
                 ))}
                 <div ref={messagesEndRef} />
@@ -159,146 +130,61 @@ export function Chat() {
             )}
           </div>
 
-        {/* Error Banner */}
-        {error && (
-          <div className="px-4 py-3 bg-red-50 border-t border-red-200">
-            <div className={`mx-auto flex items-center justify-between gap-4 ${showPreview ? 'max-w-full' : 'max-w-3xl'}`}>
-              <div className="flex items-center gap-2 text-red-700">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5 flex-shrink-0"
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                    clipRule="evenodd"
-                  />
+          {/* Error Banner */}
+          {error && (
+            <div className="px-4 py-3 bg-red-50 border-t border-red-200">
+              <div className="mx-auto flex items-center justify-between gap-4 max-w-3xl">
+                <div className="flex items-center gap-2 text-red-700">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5 flex-shrink-0"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium">{error}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => retryLastMessage()}
+                    className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={handleDismissError}
+                    className="p-1 hover:bg-red-100 rounded text-red-600"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Loading Indicator */}
+          {isStreaming && (
+            <div className="px-4 py-2 bg-blue-50 border-t border-blue-200">
+              <div className="mx-auto flex items-center gap-2 text-blue-700 max-w-3xl">
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                <span className="text-sm font-medium">{error}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {/* Retry Button */}
-                <button
-                  onClick={() => {
-                    retryLastMessage();
-                  }}
-                  className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors"
-                >
-                  Retry
-                </button>
-                {/* Dismiss Button */}
-                <button
-                  onClick={handleDismissError}
-                  className="p-1 hover:bg-red-100 rounded text-red-600"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </button>
+                <span className="text-sm">AI is thinking...</span>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Loading Indicator */}
-        {isStreaming && (
-          <div className="px-4 py-2 bg-blue-50 border-t border-blue-200">
-            <div className={`mx-auto flex items-center gap-2 text-blue-700 ${showPreview ? 'max-w-full' : 'max-w-3xl'}`}>
-              <svg
-                className="animate-spin h-4 w-4"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              <span className="text-sm">AI is thinking...</span>
-            </div>
-          </div>
-        )}
-
-        {/* Chat Input */}
-        <ChatInput />
+          {/* Chat Input */}
+          <ChatInput />
         </div>
-
-        {/* Right Panel - Typst Preview */}
-        {showPreview && (
-          <div className="w-1/2 border-l border-gray-200 flex flex-col bg-gray-50">
-            {/* Preview Header */}
-            <div className="px-4 py-2 border-b border-gray-200 bg-white flex items-center justify-between">
-              <span className="font-medium text-gray-700">Typst Preview</span>
-              <div className="flex items-center gap-2">
-                {/* Auto-sync Toggle */}
-                <button
-                  onClick={() => setAutoSync(!autoSync)}
-                  className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${
-                    autoSync ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                  }`}
-                  title={autoSync ? 'Auto-sync enabled' : 'Auto-sync disabled'}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-3 w-3"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Sync
-                </button>
-                {/* Close Button */}
-                <button
-                  onClick={() => setShowPreview(false)}
-                  className="p-1 hover:bg-gray-100 rounded text-gray-500"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            {/* Preview Content */}
-            <div className="flex-1 overflow-hidden p-4">
-              <TypstPreview rawContent={previewContent} className="h-full" />
-            </div>
-          </div>
-        )}
 
         {/* Permission Modal */}
         {pendingPermission && (

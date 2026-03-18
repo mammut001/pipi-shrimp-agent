@@ -44,6 +44,7 @@ export interface Session {
   cwd?: string;                  // Current working directory (for code execution)
   projectId?: string;           // Project ID this session belongs to (optional)
   model?: string;               // Model to use for this session (optional, defaults to apiConfig model)
+  workDir?: string;             // NEW: work directory for this session
 }
 
 /** Project (folder for grouping sessions) */
@@ -52,6 +53,14 @@ export interface Project {
   name: string;                  // Project name
   createdAt: number;            // Creation timestamp
   updatedAt: number;            // Last update timestamp
+  workDir?: string;             // NEW: absolute path to local work directory
+}
+
+/** Output folder structure from .pipi-shrimp/ */
+export interface OutputFolder {
+  name: string;   // e.g. "2025-01-15-2"
+  path: string;   // absolute path
+  files: string[]; // file names inside
 }
 
 // ============= Zustand State Interface =============
@@ -178,6 +187,30 @@ export interface ChatState {
    * Rename a project
    */
   renameProject: (projectId: string, name: string) => Promise<void>;
+
+  /**
+   * Bind a local folder as the work directory for this session.
+   * Opens the native folder-picker dialog.
+   * Returns the selected path or null if cancelled.
+   */
+  setSessionWorkDir: (sessionId: string) => Promise<string | null>;
+
+  /**
+   * Remove the work directory binding from this session.
+   */
+  clearSessionWorkDir: (sessionId: string) => Promise<void>;
+
+  /**
+   * Write a file into the work dir output structure.
+   * Automatically computes/creates the correct .pipi-shrimp/{date}-{i}/ folder.
+   * Returns the absolute path where the file was written.
+   */
+  writeToWorkDir: (sessionId: string, filename: string, content: string) => Promise<string | null>;
+
+  /**
+   * Get the index of all previously generated output folders for this session.
+   */
+  getWorkDirIndex: (sessionId: string) => Promise<OutputFolder[]>;
 
   /**
    * Send tool execution result back to AI

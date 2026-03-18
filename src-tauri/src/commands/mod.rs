@@ -8,6 +8,7 @@
  * - config: Application configuration
  * - web: Web automation
  * - search: High-performance text searching (ripgrep)
+ * - workspace: Work directory management
  */
 
 pub mod chat;
@@ -17,6 +18,7 @@ pub mod file;
 pub mod models;
 pub mod search;
 pub mod web;
+pub mod workspace;       // NEW
 
 pub use chat::*;
 pub use code::*;
@@ -25,3 +27,4 @@ pub use file::*;
 pub use models::*;
 pub use search::*;
 pub use web::*;
+pub use workspace::*;   // NEW

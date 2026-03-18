@@ -26,9 +26,14 @@ interface ChatInputProps {
 export function ChatInput({ onSend }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [references, setReferences] = useState<string[]>([]);
+  const [isBindingFolder, setIsBindingFolder] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession } = useChatStore();
+  const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
+
+  // Get current session
+  const currentSession = sessions.find(s => s.id === currentSessionId);
+  const workDir = currentSession?.workDir;
 
   // Auto-resize textarea
   useEffect(() => {
@@ -131,6 +136,97 @@ export function ChatInput({ onSend }: ChatInputProps) {
   return (
     <div className="border-t border-gray-200 bg-white p-4">
       <div className="max-w-3xl mx-auto">
+        {/* Work Dir chip — shown for all sessions */}
+        {currentSession && (
+          <div className="px-4 pt-4 pb-2 flex items-center gap-2">
+            {workDir ? (
+              // Has work dir — show path chip
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full
+                              bg-gray-100 border border-gray-200/80
+                              text-xs text-gray-600
+                              hover:bg-gray-50 transition-colors group">
+                {/* Folder icon */}
+                <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                </svg>
+
+                {/* Show only last folder name for brevity */}
+                <span className="truncate max-w-[180px]">
+                  {workDir.split('/').pop() ?? workDir}
+                </span>
+
+                {/* Subtle full path tooltip */}
+                <span className="hidden group-hover:inline text-gray-400 text-[10px] truncate max-w-[120px]">
+                  .pipi-shrimp/
+                </span>
+
+                {/* Change button */}
+                <button
+                  onClick={async () => {
+                    setIsBindingFolder(true);
+                    try {
+                      await setSessionWorkDir(currentSession.id);
+                    } finally {
+                      setIsBindingFolder(false);
+                    }
+                  }}
+                  disabled={isBindingFolder}
+                  className="ml-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[10px] font-medium"
+                  title="Change work directory"
+                >
+                  {isBindingFolder ? 'binding...' : 'change'}
+                </button>
+
+                {/* Remove button */}
+                <button
+                  onClick={async () => {
+                    setIsBindingFolder(true);
+                    try {
+                      await clearSessionWorkDir(currentSession.id);
+                    } finally {
+                      setIsBindingFolder(false);
+                    }
+                  }}
+                  disabled={isBindingFolder}
+                  className="text-gray-300 hover:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ml-0.5"
+                  title="Remove work directory"
+                  aria-label="Remove work directory"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              // No work dir — show quiet "bind folder" prompt
+              <button
+                onClick={async () => {
+                  setIsBindingFolder(true);
+                  try {
+                    await setSessionWorkDir(currentSession.id);
+                  } finally {
+                    setIsBindingFolder(false);
+                  }
+                }}
+                disabled={isBindingFolder}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full
+                           border border-dashed border-gray-200
+                           text-xs text-gray-400
+                           hover:border-gray-300 hover:text-gray-600
+                           disabled:opacity-50 disabled:cursor-not-allowed
+                           transition-all duration-150"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                </svg>
+                {isBindingFolder ? 'binding...' : 'Bind work folder'}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* References list */}
         {references.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
@@ -156,7 +252,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
           </div>
         )}
 
-        <div className="relative flex items-end gap-2 bg-gray-50 rounded-xl border border-gray-200 focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-gray-100 transition-all">
+        <div className="relative flex items-end gap-2 bg-gray-50 rounded-xl border border-gray-200 focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-gray-100 transition-all px-4">
           {/* Text Input */}
           <textarea
             ref={textareaRef}
@@ -166,7 +262,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
             placeholder={references.length > 0 ? "Ask about the attached files..." : "Type a message..."}
             disabled={isDisabled}
             rows={1}
-            className="flex-1 bg-transparent px-4 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
+            className="flex-1 bg-transparent px-0 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
             style={{ minHeight: '48px' }}
           />
 
