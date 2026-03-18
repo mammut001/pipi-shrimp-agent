@@ -16,8 +16,9 @@ use tokio::sync::Mutex;
 use tauri::Manager;
 
 use claude::{ClaudeClient, ChatResponse, Message};
+use commands::browser::BrowserState;
 use database::{DbSession, DbMessage, DbProject, init_database, get_all_sessions, save_session, delete_session, save_message, get_messages_for_session, save_project, get_all_projects, delete_project, update_project};
-use utils::{FontDb, init_font_database, compile_typst_to_svg_with_fonts};
+use utils::{PrebuiltFonts, init_font_database, build_fonts, compile_typst_to_svg_with_prebuilt, compile_typst_to_pdf_with_prebuilt};
 
 /**
  * State for Claude SDK client
@@ -27,11 +28,11 @@ struct ClaudeState {
 }
 
 /**
- * State for cached font database (initialized once at startup)
- * This avoids reloading system fonts on every compilation
+ * Pre-built font state (initialized once at startup).
+ * Fonts are Arc-wrapped internally, so cloning for each render is O(n) but free of disk I/O.
  */
 struct FontDbState {
-    font_db: FontDb,
+    prebuilt: PrebuiltFonts,
 }
 
 /**
@@ -173,17 +174,54 @@ fn db_update_project(project: DbProject) -> Result<(), String> {
 }
 
 /**
- * Render Typst source to SVG (async command)
- * Uses cached font database from State for better performance
+ * Render Typst source to SVG.
+ *
+ * Uses pre-built fonts from State (no disk I/O per render).
+ * Runs the blocking compile call on a dedicated thread via spawn_blocking
+ * so it doesn't stall the async Tokio executor.
  */
 #[tauri::command]
 async fn render_typst_to_svg(
     source: String,
     font_state: tauri::State<'_, FontDbState>,
 ) -> Result<String, String> {
-    // Use the cached font database from State
-    let font_db = &font_state.font_db;
-    compile_typst_to_svg_with_fonts(&source, font_db)
+    // Clone the fonts (Arc clones — cheap, no disk I/O)
+    let book = font_state.prebuilt.book.clone();
+    let fonts = font_state.prebuilt.fonts.clone();
+
+    // Run the blocking Typst compilation on a thread-pool thread
+    tauri::async_runtime::spawn_blocking(move || {
+        let prebuilt = PrebuiltFonts { book, fonts };
+        compile_typst_to_svg_with_prebuilt(&source, &prebuilt)
+    })
+    .await
+    .map_err(|e| format!("Thread error: {}", e))?
+}
+
+/**
+ * Render Typst source to PDF and save to file.
+ */
+#[tauri::command]
+async fn render_typst_to_pdf(
+    source: String,
+    file_path: String,
+    font_state: tauri::State<'_, FontDbState>,
+) -> Result<String, String> {
+    let book = font_state.prebuilt.book.clone();
+    let fonts = font_state.prebuilt.fonts.clone();
+
+    let pdf_bytes = tauri::async_runtime::spawn_blocking(move || {
+        let prebuilt = PrebuiltFonts { book, fonts };
+        compile_typst_to_pdf_with_prebuilt(&source, &prebuilt)
+    })
+    .await
+    .map_err(|e| format!("Thread error: {}", e))??;
+
+    // Write PDF to file
+    std::fs::write(&file_path, pdf_bytes)
+        .map_err(|e| format!("Failed to write PDF: {}", e))?;
+
+    Ok(file_path)
 }
 
 /**
@@ -191,7 +229,7 @@ async fn render_typst_to_svg(
  */
 #[tauri::command]
 fn get_font_count(font_state: tauri::State<'_, FontDbState>) -> usize {
-    font_state.font_db.faces().count()
+    font_state.prebuilt.fonts.len()
 }
 
 /**
@@ -219,13 +257,16 @@ pub fn run() {
                 client: claude_client,
             })));
 
-            // Initialize font database and manage it in State
-            // This avoids reloading system fonts on every compilation
+            // Build fonts once at startup — avoids reading font files on every render
             println!("🔤 Loading system fonts...");
             let font_db = init_font_database();
-            let font_count = font_db.faces().count();
-            println!("✅ Loaded {} fonts", font_count);
-            app.manage(FontDbState { font_db });
+            let prebuilt = build_fonts(&font_db);
+            println!("✅ Pre-built {} fonts for Typst rendering", prebuilt.fonts.len());
+            app.manage(FontDbState { prebuilt });
+
+            // Initialize BrowserState for second WebviewWindow approach
+            app.manage(Arc::new(Mutex::new(BrowserState::default())));
+            println!("🌐 Browser state initialized");
 
             println!("✅ Main window created successfully");
 
@@ -280,12 +321,20 @@ pub fn run() {
             db_update_project,
             // Typst rendering commands
             render_typst_to_svg,
+            render_typst_to_pdf,
             get_font_count,
             // Workspace / Work Dir commands
             commands::open_folder_dialog,
             commands::init_pipi_shrimp,
             commands::get_next_output_dir,
             commands::list_pipi_shrimp_index,
+            // Browser window commands (second WebviewWindow for PageAgent)
+            commands::open_browser_window,
+            commands::close_browser_window,
+            commands::execute_agent_task,
+            commands::get_browser_url,
+            commands::inject_script,
+            commands::is_agent_busy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -11,6 +11,7 @@
  * - workspace: Work directory management
  */
 
+pub mod browser;    // NEW - Browser window commands for PageAgent
 pub mod chat;
 pub mod code;
 pub mod config;
@@ -18,8 +19,9 @@ pub mod file;
 pub mod models;
 pub mod search;
 pub mod web;
-pub mod workspace;       // NEW
+pub mod workspace;
 
+pub use browser::*;  // NEW
 pub use chat::*;
 pub use code::*;
 pub use config::*;
@@ -27,4 +29,4 @@ pub use file::*;
 pub use models::*;
 pub use search::*;
 pub use web::*;
-pub use workspace::*;   // NEW
+pub use workspace::*;

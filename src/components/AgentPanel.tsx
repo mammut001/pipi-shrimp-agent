@@ -136,10 +136,32 @@ export const AgentPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'main' | 'browser' | 'typst-preview' | 'typst-code'>('main');
   const [previewContent, setPreviewContent] = useState<string>('');
   const [autoSync, setAutoSync] = useState(true);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const messages = currentMessages();
 
-  // Auto-sync latest Typst block from messages
+  // Sync on mount (immediate, not debounced)
+  useEffect(() => {
+    if (autoSync && messages.length > 0) {
+      const latestBlock = getLatestTypstBlock(messages);
+      if (latestBlock && isInitialLoad) {
+        setPreviewContent(latestBlock);
+        setIsInitialLoad(false);
+      }
+    }
+  }, []); // Only run on mount
+
+  // Sync immediately when switching to typst-preview tab
+  useEffect(() => {
+    if (activeTab === 'typst-preview' && autoSync && messages.length > 0) {
+      const latestBlock = getLatestTypstBlock(messages);
+      if (latestBlock) {
+        setPreviewContent(latestBlock);
+      }
+    }
+  }, [activeTab]); // Run when tab changes
+
+  // Auto-sync latest Typst block from messages (for new messages while on tab)
   useEffect(() => {
     if (autoSync && messages.length > 0) {
       const latestBlock = getLatestTypstBlock(messages);

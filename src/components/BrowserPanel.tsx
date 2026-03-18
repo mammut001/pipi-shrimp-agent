@@ -1,6 +1,10 @@
 /**
  * BrowserPanel - PageAgent UI for controlling web pages
- * Provides URL input, task input, iframe view, and execution logs
+ *
+ * Uses the second WebviewWindow approach:
+ * - Browser window opens separately via Tauri commands
+ * - Task execution happens in the browser window
+ * - Events are emitted back to this panel for display
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -10,32 +14,42 @@ export const BrowserPanel: React.FC = () => {
   const [urlInput, setUrlInput] = useState('');
   const [taskInput, setTaskInput] = useState('');
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   const {
     status,
+    isWindowOpen,
     logs,
     currentUrl,
     error,
-    initializeAgent,
+    openWindow,
+    closeWindow,
     executeTask,
     stopTask,
-    setUrl,
     clearLogs,
+    setupEventListeners,
   } = useBrowserAgentStore();
+
+  // Setup event listeners on mount
+  useEffect(() => {
+    const setup = async () => {
+      cleanupRef.current = await setupEventListeners();
+    };
+    setup();
+
+    return () => {
+      cleanupRef.current?.();
+    };
+  }, [setupEventListeners]);
 
   // Auto-scroll logs
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  // Initialize agent on mount
-  useEffect(() => {
-    initializeAgent();
-  }, []);
-
-  const handleNavigate = () => {
+  const handleOpenWindow = async () => {
     if (urlInput.trim()) {
-      setUrl(urlInput.trim());
+      await openWindow(urlInput.trim());
     }
   };
 
@@ -72,38 +86,76 @@ export const BrowserPanel: React.FC = () => {
     }
   };
 
+  const getLogColor = (level: string) => {
+    switch (level) {
+      case 'success': return 'text-green-400';
+      case 'error': return 'text-red-400';
+      case 'thinking': return 'text-yellow-400';
+      case 'info': return 'text-blue-400';
+      default: return 'text-gray-300';
+    }
+  };
+
+  const getLogIcon = (level: string) => {
+    switch (level) {
+      case 'success': return '✅';
+      case 'error': return '❌';
+      case 'thinking': return '🤔';
+      case 'info': return 'ℹ️';
+      default: return '';
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-gray-50">
       {/* Header */}
       <div className="p-4 border-b border-gray-200 bg-white">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-bold text-gray-800 uppercase tracking-tight">浏览器控制</h2>
-          <span className={`text-xs font-medium ${getStatusColor()}`}>
-            {getStatusText()}
-          </span>
+          <div className="flex items-center gap-2">
+            {isWindowOpen && (
+              <span className="text-xs text-green-500">
+                ● 窗口已打开
+              </span>
+            )}
+            <span className={`text-xs font-medium ${getStatusColor()}`}>
+              {getStatusText()}
+            </span>
+          </div>
         </div>
 
-        {/* URL Input */}
+        {/* URL Input Row */}
         <div className="flex gap-2">
           <input
             type="url"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleNavigate()}
+            onKeyDown={(e) => e.key === 'Enter' && handleOpenWindow()}
             placeholder="输入网址 (例如: https://www.example.com)"
             className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
-          <button
-            onClick={handleNavigate}
-            className="px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            打开
-          </button>
+          {isWindowOpen ? (
+            <button
+              onClick={closeWindow}
+              className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+            >
+              关闭
+            </button>
+          ) : (
+            <button
+              onClick={handleOpenWindow}
+              disabled={!urlInput.trim()}
+              className="px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              打开窗口
+            </button>
+          )}
         </div>
 
         {currentUrl && (
-          <div className="mt-2 text-[10px] text-gray-400 truncate">
-            {currentUrl}
+          <div className="mt-2 text-[10px] text-gray-400 truncate flex items-center gap-2">
+            <span>当前页面:</span>
+            <span className="text-blue-500">{currentUrl}</span>
           </div>
         )}
       </div>
@@ -116,8 +168,8 @@ export const BrowserPanel: React.FC = () => {
             value={taskInput}
             onChange={(e) => setTaskInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入任务指令 (例如: 点击登录按钮)"
-            disabled={status === 'running'}
+            placeholder={isWindowOpen ? "输入任务指令 (例如: 点击登录按钮)" : "请先打开浏览器窗口"}
+            disabled={status === 'running' || !isWindowOpen}
             className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
           />
           {status === 'running' ? (
@@ -130,7 +182,7 @@ export const BrowserPanel: React.FC = () => {
           ) : (
             <button
               onClick={handleExecute}
-              disabled={!taskInput.trim()}
+              disabled={!taskInput.trim() || !isWindowOpen}
               className="px-3 py-2 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               执行
@@ -139,15 +191,26 @@ export const BrowserPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* WebView iframe */}
-      <div className="flex-1 border-b border-gray-200 bg-white overflow-hidden min-h-0">
-        <iframe
-          id="browser-webview"
-          src={currentUrl || 'about:blank'}
-          style={{ width: '100%', height: '100%', border: 'none' }}
-          title="Browser Preview"
-          sandbox="allow-scripts allow-same-origin allow-forms"
-        />
+      {/* Info Panel - Explains the architecture */}
+      <div className="flex-1 border-b border-gray-200 bg-white overflow-hidden min-h-0 p-4">
+        {!isWindowOpen ? (
+          <div className="h-full flex flex-col items-center justify-center text-gray-400">
+            <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+            </svg>
+            <p className="text-sm font-medium mb-2">浏览器窗口已关闭</p>
+            <p className="text-xs">在上方输入网址并点击"打开窗口"开始</p>
+          </div>
+        ) : (
+          <div className="h-full flex flex-col items-center justify-center text-gray-400">
+            <svg className="w-12 h-12 mb-3 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm font-medium text-gray-600 mb-1">浏览器窗口已打开</p>
+            <p className="text-xs">任务将在独立的浏览器窗口中执行</p>
+            <p className="text-xs text-gray-400 mt-2">查看窗口日志了解执行进度</p>
+          </div>
+        )}
       </div>
 
       {/* Error Display */}
@@ -173,15 +236,9 @@ export const BrowserPanel: React.FC = () => {
               {logs.map((log, index) => (
                 <p
                   key={index}
-                  className={`text-[10px] font-mono leading-relaxed ${
-                    log.includes('❌') ? 'text-red-400' :
-                    log.includes('✅') ? 'text-green-400' :
-                    log.includes('🤔') ? 'text-yellow-400' :
-                    log.includes('🔧') ? 'text-blue-400' :
-                    'text-gray-300'
-                  }`}
+                  className={`text-[10px] font-mono leading-relaxed ${getLogColor(log.level)}`}
                 >
-                  {log}
+                  [{log.timestamp}] {getLogIcon(log.level)} {log.message}
                 </p>
               ))}
               <div ref={logsEndRef} />

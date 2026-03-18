@@ -28,6 +28,7 @@
       },
       "window": {
         "all": false,
+        "create": true,
         "close": true,
         "hide": true,
         "show": true,
@@ -46,6 +47,9 @@
         "setAlwaysOnTop": true,
         "setDecorations": true,
         "setResizable": true
+      },
+      "dialog": {
+        "all": true
       }
     },
     "bundle": {
@@ -96,7 +100,7 @@
     },
     "updater": {
       "active": false,
-      "dialog": false,
+      "dialog": true,
       "pubkey": "",
       "windows": {
         "installMode": "passive"
