@@ -1,0 +1,76 @@
+/**
+ * Browser commands - Frontend invoke wrappers
+ *
+ * These functions invoke the Tauri backend commands for browser automation
+ * using the second WebviewWindow approach.
+ */
+
+import { invoke } from '@tauri-apps/api/tauri';
+
+export interface AgentLog {
+  timestamp: string;
+  message: string;
+  level: 'info' | 'success' | 'error' | 'thinking';
+}
+
+export interface AgentTaskComplete {
+  success: boolean;
+  final_url: string;
+  result: string;
+}
+
+/**
+ * Open a new browser window with the given URL
+ */
+export async function openBrowserWindow(url: string): Promise<string> {
+  return invoke<string>('open_browser_window', { url });
+}
+
+/**
+ * Close the browser window
+ */
+export async function closeBrowserWindow(): Promise<string> {
+  return invoke<string>('close_browser_window');
+}
+
+/**
+ * Execute a PageAgent task in the browser window
+ */
+export async function executeAgentTask(
+  task: string,
+  apiKey: string,
+  model: string,
+  options?: {
+    baseUrl?: string;
+    systemPrompt?: string;
+  }
+): Promise<string> {
+  return invoke<string>('execute_agent_task', {
+    task,
+    apiKey,
+    model,
+    baseUrl: options?.baseUrl ?? null,
+    systemPrompt: options?.systemPrompt ?? null,
+  });
+}
+
+/**
+ * Get the current URL of the browser window
+ */
+export async function getBrowserUrl(): Promise<string> {
+  return invoke<string>('get_browser_url');
+}
+
+/**
+ * Inject arbitrary JavaScript into the browser window
+ */
+export async function injectScript(script: string): Promise<string> {
+  return invoke<string>('inject_script', { script });
+}
+
+/**
+ * Check if the agent is currently busy
+ */
+export async function isAgentBusy(): Promise<boolean> {
+  return invoke<boolean>('is_agent_busy');
+}

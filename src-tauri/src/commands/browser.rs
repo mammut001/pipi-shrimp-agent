@@ -1,0 +1,263 @@
+/**
+ * Browser commands for second WebviewWindow approach
+ *
+ * Opens a separate Tauri window to load target URLs, then injects
+ * PageAgent JavaScript for real browser automation control.
+ *
+ * Uses Tauri v1.5 API (WindowBuilder, not WebviewWindowBuilder)
+ */
+
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tauri::{Window, WindowBuilder, WindowUrl, Url};
+use crate::utils::{AppError, AppResult};
+
+/// Browser window state management
+pub struct BrowserState {
+    pub browser_window: Option<Window>,
+    pub is_busy: bool,
+}
+
+impl Default for BrowserState {
+    fn default() -> Self {
+        Self {
+            browser_window: None,
+            is_busy: false,
+        }
+    }
+}
+
+/// Open a new browser window with the given URL
+#[tauri::command]
+pub async fn open_browser_window(
+    url: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    println!("[Browser] Opening window for URL: {}", url);
+
+    // Validate URL
+    if url.is_empty() {
+        return Err(AppError::InvalidInput("URL cannot be empty".to_string()));
+    }
+
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(AppError::InvalidInput(
+            "URL must start with http:// or https://".to_string()
+        ));
+    }
+
+    // Parse URL to validate it
+    let parsed_url = Url::parse(&url)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid URL: {}", e)))?;
+
+    let mut state = state.lock().await;
+
+    // Close existing browser window if any
+    if let Some(window) = state.browser_window.take() {
+        let _ = window.close();
+    }
+
+    // Create new browser window using Tauri v1.5 WindowBuilder API
+    let window = WindowBuilder::new(
+        &app,
+        "browser-window",
+        WindowUrl::External(parsed_url),
+    )
+    .title("Browser Agent")
+    .inner_size(1200.0, 800.0)
+    .min_inner_size(800.0, 600.0)
+    .center()
+    .build()
+    .map_err(|e| AppError::InternalError(format!("Failed to create browser window: {}", e)))?;
+
+    state.browser_window = Some(window);
+
+    println!("[Browser] Window created successfully");
+    Ok("Browser window opened".to_string())
+}
+
+/// Close the browser window
+#[tauri::command]
+pub async fn close_browser_window(
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    let mut state = state.lock().await;
+
+    if let Some(window) = state.browser_window.take() {
+        window.close().map_err(|e| AppError::InternalError(format!("Failed to close window: {}", e)))?;
+        println!("[Browser] Window closed");
+    }
+
+    Ok("Browser window closed".to_string())
+}
+
+/// Execute PageAgent task in the browser window
+#[tauri::command]
+pub async fn execute_agent_task(
+    task: String,
+    base_url: Option<String>,
+    api_key: String,
+    model: String,
+    system_prompt: Option<String>,
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    // Build the script before locking state to avoid borrow issues
+    let page_agent_script = build_page_agent_script(&task, base_url, &api_key, &model, system_prompt);
+
+    let browser_window = {
+        let mut state = state.lock().await;
+
+        if state.is_busy {
+            return Err(AppError::InvalidInput("Agent is already running".to_string()));
+        }
+
+        let window = state.browser_window.as_ref()
+            .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
+            .clone();
+
+        state.is_busy = true;
+        window
+    };
+
+    println!("[Browser] Executing agent task: {}", task);
+
+    // Inject and execute the script in the browser window
+    // Note: JavaScript in the browser window will emit events via window.__TAURI__.event.emit
+    browser_window.eval(&page_agent_script)
+        .map_err(|e| AppError::InternalError(format!("Failed to inject script: {}", e)))?;
+
+    // Mark as not busy immediately (the JS will handle completion events)
+    {
+        let mut state = state.lock().await;
+        state.is_busy = false;
+    }
+
+    Ok("Task execution started".to_string())
+}
+
+/// Build the JavaScript code to inject into the browser window
+fn build_page_agent_script(
+    task: &str,
+    base_url: Option<String>,
+    api_key: &str,
+    model: &str,
+    system_prompt: Option<String>,
+) -> String {
+    let base_url_js = match base_url {
+        Some(url) => format!("\"{}\"", url),
+        None => "undefined".to_string(),
+    };
+
+    let system_prompt_js = match system_prompt {
+        Some(prompt) => format!("\"{}\"", prompt.replace('"', "\\\"")),
+        None => "undefined".to_string(),
+    };
+
+    // Escape the task string for JavaScript
+    let escaped_task = task.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
+    let escaped_api_key = api_key.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped_model = model.replace('\\', "\\\\").replace('"', "\\\"");
+
+    format!(r#"
+(function() {{
+    // Emit log event helper
+    function emitLog(level, message) {{
+        if (window.__TAURI__) {{
+            window.__TAURI__.event.emit('agent_log', {{
+                timestamp: new Date().toISOString(),
+                message: message,
+                level: level
+            }});
+        }}
+        console.log('[PageAgent ' + level + ']', message);
+    }}
+
+    // Emit task complete event
+    function emitComplete(success, result) {{
+        if (window.__TAURI__) {{
+            window.__TAURI__.event.emit('agent_task_complete', {{
+                success: success,
+                final_url: window.location.href,
+                result: result
+            }});
+        }}
+        emitLog(success ? 'success' : 'error', 'Task ' + (success ? 'completed' : 'failed') + ': ' + result);
+    }}
+
+    emitLog('info', 'Initializing PageAgent...');
+
+    // Check if PageAgent is available
+    if (typeof PageAgent === 'undefined') {{
+        emitLog('error', 'PageAgent not found. Make sure page-agent is loaded.');
+        emitComplete(false, 'PageAgent library not loaded');
+        return;
+    }}
+
+    try {{
+        const agent = new PageAgent({{
+            baseURL: {base_url_js},
+            apiKey: "{escaped_api_key}",
+            model: "{escaped_model}",
+            systemPrompt: {system_prompt_js}
+        }});
+
+        emitLog('info', 'PageAgent initialized, executing task...');
+
+        // Execute the task
+        agent.execute("{escaped_task}").then(result => {{
+            emitLog('success', 'Task result: ' + result);
+            emitComplete(true, result);
+        }}).catch(error => {{
+            emitLog('error', 'Task error: ' + error.message);
+            emitComplete(false, error.message);
+        }});
+    }} catch (error) {{
+        emitLog('error', 'Initialization error: ' + error.message);
+        emitComplete(false, error.message);
+    }}
+}})();
+"#)
+}
+
+/// Get current browser window URL
+#[tauri::command]
+pub async fn get_browser_url(
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    let state = state.lock().await;
+
+    let browser_window = state.browser_window.as_ref()
+        .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?;
+
+    // tauri::Url has a to_string method
+    Ok(browser_window.url().to_string())
+}
+
+/// Inject arbitrary JavaScript into the browser window
+#[tauri::command]
+pub async fn inject_script(
+    script: String,
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    let browser_window = {
+        let state = state.lock().await;
+        state.browser_window.as_ref()
+            .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
+            .clone()
+    };
+
+    browser_window.eval(&script)
+        .map_err(|e| AppError::InternalError(format!("Failed to inject script: {}", e)))?;
+
+    Ok("Script injected successfully".to_string())
+}
+
+/// Check if browser window is busy
+#[tauri::command]
+pub async fn is_agent_busy(
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<bool> {
+    let state = state.lock().await;
+    Ok(state.is_busy)
+}

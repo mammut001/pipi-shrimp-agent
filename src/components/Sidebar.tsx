@@ -340,16 +340,6 @@ export function Sidebar() {
           >
             Workflow
           </button>
-          <button
-            onClick={() => setCurrentView('browser')}
-            className={`flex-1 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${currentView === 'browser'
-                ? 'bg-white text-gray-900 shadow-md'
-                : 'text-gray-600 hover:text-gray-900'
-              }`}
-          >
-            Browser
-          </button>
-
           {/* Multi-select Button - Integrated in Tab Container */}
           {currentView === 'chat' && sessions.length > 0 && (
             <button

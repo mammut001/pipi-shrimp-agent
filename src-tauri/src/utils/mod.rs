@@ -9,9 +9,10 @@ pub mod typst;
 
 pub use error::{AppError, AppResult};
 pub use typst::{
-    compile_typst_to_svg,
-    compile_typst_to_svg_with_fonts,
+    PrebuiltFonts,
+    build_fonts,
     init_font_database,
-    check_font_availability,
+    compile_typst_to_svg_with_prebuilt,
+    compile_typst_to_pdf_with_prebuilt,
     FontDb,
 };
