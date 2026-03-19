@@ -589,6 +589,54 @@ struct OpenAIUsage {
     total_tokens: Option<i32>,
 }
 
+/// Split a streaming content chunk into segments, routing `<think>...</think>` content
+/// separately from regular text. Handles partial tags split across SSE chunks via `in_think`.
+///
+/// Returns a Vec of `(text, is_reasoning)` pairs.
+/// Mutates `in_think` to carry state across calls for the same stream.
+fn split_think_content(input: &str, in_think: &mut bool) -> Vec<(String, bool)> {
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    let mut remaining = input;
+
+    loop {
+        if *in_think {
+            // We're inside <think>...</think> — look for closing tag
+            if let Some(close_pos) = remaining.find("</think>") {
+                let reasoning_part = &remaining[..close_pos];
+                if !reasoning_part.is_empty() {
+                    segments.push((reasoning_part.to_string(), true));
+                }
+                *in_think = false;
+                remaining = &remaining[close_pos + "</think>".len()..];
+            } else {
+                // No closing tag yet — entire remaining chunk is reasoning
+                if !remaining.is_empty() {
+                    segments.push((remaining.to_string(), true));
+                }
+                break;
+            }
+        } else {
+            // Outside <think> — look for opening tag
+            if let Some(open_pos) = remaining.find("<think>") {
+                let text_part = &remaining[..open_pos];
+                if !text_part.is_empty() {
+                    segments.push((text_part.to_string(), false));
+                }
+                *in_think = true;
+                remaining = &remaining[open_pos + "<think>".len()..];
+            } else {
+                // No opening tag — entire remaining chunk is regular content
+                if !remaining.is_empty() {
+                    segments.push((remaining.to_string(), false));
+                }
+                break;
+            }
+        }
+    }
+
+    segments
+}
+
 impl ClaudeClient {
     /**
      * Send a chat message to Claude (non-streaming)
@@ -1062,6 +1110,13 @@ impl ClaudeClient {
         let mut tool_call_map: std::collections::HashMap<usize, (String, String, String)> =
             std::collections::HashMap::new();
 
+        // State machine for <think>...</think> tag routing.
+        // MiniMax (and some other models) embed chain-of-thought reasoning inline in delta.content
+        // as <think>...</think> blocks. We route those to claude-reasoning events and strip them
+        // from the visible content stream. This flag tracks whether we're currently inside a
+        // <think> block across SSE chunk boundaries.
+        let mut in_think = false;
+
         // Stream response body
         use futures::stream::StreamExt;
         let mut stream = response.bytes_stream();
@@ -1134,20 +1189,31 @@ impl ClaudeClient {
                                 }
                             }
 
-                            // MiniMax text content (some versions use this field name)
-                            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                                full_content.push_str(content);
-                                if let Some(ref w) = window {
-                                    let _ = w.emit("claude-token", content);
-                                }
-                            }
+                            // Content field — may contain inline <think>...</think> reasoning
+                            // from MiniMax. Use state machine to split and route correctly.
+                            let raw_content = delta.get("content")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| {
+                                    // "text" field fallback (only if "content" absent)
+                                    if delta.get("content").is_none() {
+                                        delta.get("text").and_then(|v| v.as_str())
+                                    } else {
+                                        None
+                                    }
+                                });
 
-                            // Standard "text" field (fallback)
-                            if let Some(text_field) = delta.get("text").and_then(|v| v.as_str()) {
-                                if delta.get("content").is_none() {
-                                    full_content.push_str(text_field);
-                                    if let Some(ref w) = window {
-                                        let _ = w.emit("claude-token", text_field);
+                            if let Some(raw) = raw_content {
+                                for (segment, is_reasoning) in split_think_content(raw, &mut in_think) {
+                                    if is_reasoning {
+                                        full_reasoning.push_str(&segment);
+                                        if let Some(ref w) = window {
+                                            let _ = w.emit("claude-reasoning", segment);
+                                        }
+                                    } else {
+                                        full_content.push_str(&segment);
+                                        if let Some(ref w) = window {
+                                            let _ = w.emit("claude-token", segment);
+                                        }
                                     }
                                 }
                             }
@@ -1209,13 +1275,23 @@ impl ClaudeClient {
                                 }
                             }
 
-                            // Content
+                            // Content — route through <think> state machine to avoid duplicates
+                            // and to correctly split inline reasoning from visible text.
                             if let Some(content) = delta.content {
-                                // Avoid duplicate if already processed
-                                if !full_content.ends_with(&content) {
-                                    full_content.push_str(&content);
-                                    if let Some(ref w) = window {
-                                        let _ = w.emit("claude-token", content);
+                                // Avoid duplicate if already processed by the generic JSON path above
+                                if !full_content.ends_with(&content) && !full_reasoning.ends_with(&content) {
+                                    for (segment, is_reasoning) in split_think_content(&content, &mut in_think) {
+                                        if is_reasoning {
+                                            full_reasoning.push_str(&segment);
+                                            if let Some(ref w) = window {
+                                                let _ = w.emit("claude-reasoning", segment);
+                                            }
+                                        } else {
+                                            full_content.push_str(&segment);
+                                            if let Some(ref w) = window {
+                                                let _ = w.emit("claude-token", segment);
+                                            }
+                                        }
                                     }
                                 }
                             }
