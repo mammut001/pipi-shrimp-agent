@@ -3,6 +3,8 @@
  * Includes Message, Artifact, Session, and ChatState interfaces
  */
 
+import { ImportedFile } from './settings';
+
 // ============= Type Definitions =============
 
 /** Tool call interface (for Function Calling) */
@@ -44,7 +46,8 @@ export interface Session {
   cwd?: string;                  // Current working directory (for code execution)
   projectId?: string;           // Project ID this session belongs to (optional)
   model?: string;               // Model to use for this session (optional, defaults to apiConfig model)
-  workDir?: string;             // NEW: work directory for this session
+  workDir?: string;             // work directory for this session
+  workingFiles?: ImportedFile[]; // session-level working files
 }
 
 /** Project (folder for grouping sessions) */
@@ -226,6 +229,21 @@ export interface ChatState {
    * Execute a tool and handle the result (permission-aware)
    */
   executeTool: (toolName: string, toolInput: string, toolCallId: string) => Promise<void>;
+
+  /**
+   * Add working files to a session (session-level)
+   */
+  addSessionWorkingFiles: (sessionId: string, files: ImportedFile[]) => Promise<void>;
+
+  /**
+   * Remove a working file from a session
+   */
+  removeSessionWorkingFile: (sessionId: string, fileId: string) => Promise<void>;
+
+  /**
+   * Clear all working files from a session
+   */
+  clearSessionWorkingFiles: (sessionId: string) => Promise<void>;
 }
 
 // ============= Helper Functions =============

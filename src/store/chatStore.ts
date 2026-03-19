@@ -10,6 +10,7 @@ import type { ChatState, Session, Message, Project, OutputFolder } from '../type
 import { createSession, createMessage, createProject } from '../types/chat';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
+import type { ImportedFile } from '../types/settings';
 
 /**
  * Streaming timeout - 300 seconds
@@ -28,7 +29,8 @@ interface DbSession {
   cwd: string | null;
   project_id: string | null;
   model: string | null;
-  work_dir?: string | null;   // NEW
+  work_dir?: string | null;
+  working_files?: string | null;  // JSON serialized ImportedFile[]
 }
 
 interface DbMessage {
@@ -62,7 +64,8 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
   cwd: dbSession.cwd || undefined,
   projectId: dbSession.project_id || undefined,
   model: dbSession.model || undefined,
-  workDir: dbSession.work_dir || undefined,     // NEW
+  workDir: dbSession.work_dir || undefined,
+  workingFiles: dbSession.working_files ? JSON.parse(dbSession.working_files) : undefined,
   messages: dbMessages.map((m) => ({
     id: m.id,
     role: m.role as 'user' | 'assistant',
@@ -84,7 +87,8 @@ const sessionToDb = (session: Session): DbSession => ({
   cwd: session.cwd || null,
   project_id: session.projectId || null,
   model: session.model || null,
-  work_dir: session.workDir || null,            // NEW
+  work_dir: session.workDir || null,
+  working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
 });
 
 /**
@@ -225,7 +229,7 @@ export const useChatStore = create<ChatState>()(
           dbSessions.map(async (dbSession) => {
             try {
               const dbMessages = await invoke<DbMessage[]>('db_get_messages', {
-                session_id: dbSession.id,
+                sessionId: dbSession.id,  // Tauri v1: camelCase → Rust session_id
               });
               return dbToSession(dbSession, dbMessages);
             } catch (err) {
@@ -238,6 +242,13 @@ export const useChatStore = create<ChatState>()(
         console.log('✅ All messages loaded');
 
         set({ sessions });
+
+        // Auto-select most recent session so conversation is visible after restart
+        if (sessions.length > 0) {
+          const mostRecent = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+          set({ currentSessionId: mostRecent.id });
+          console.log('✅ Auto-selected most recent session:', mostRecent.id, mostRecent.title);
+        }
 
         // Set up streaming event listener
         const { appendStreamingContent } = get();
@@ -303,11 +314,12 @@ export const useChatStore = create<ChatState>()(
           // Add to task progress UI
           addTaskStep(`${event.payload.name}: ${event.payload.arguments.slice(0, 50)}${event.payload.arguments.length > 50 ? '...' : ''}`);
 
-          if (permissionMode === 'bypass') {
-            console.log('Bypass mode active, auto-executing tool...');
+          if (permissionMode === 'bypass' || permissionMode === 'auto-edits') {
+            // Auto mode and bypass mode: execute without asking
+            console.log(`${permissionMode} mode active, auto-executing tool...`);
             await executeTool(event.payload.name, event.payload.arguments, event.payload.tool_call_id);
           } else {
-            // Trigger permission request via UI store
+            // ASK mode: show permission modal
             setPermissionRequest({
               id: event.payload.tool_call_id,
               toolName: event.payload.name,
@@ -386,7 +398,7 @@ export const useChatStore = create<ChatState>()(
 
         // Call Rust backend to execute the tool
         const result = await invoke<string>('execute_tool', {
-          tool_name: toolName,
+          toolName: toolName,   // Tauri v1: TS sends camelCase → Rust receives tool_name
           arguments: toolInput,
         });
 
@@ -433,6 +445,72 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
+     * Add working files to a session (session-level)
+     */
+    addSessionWorkingFiles: async (sessionId: string, files: ImportedFile[]) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return;
+
+      const updatedSession = {
+        ...session,
+        workingFiles: [...(session.workingFiles ?? []), ...files],
+        updatedAt: Date.now(),
+      };
+
+      // Update local state
+      set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
+      }));
+
+      // Persist to database
+      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+    },
+
+    /**
+     * Remove a working file from a session
+     */
+    removeSessionWorkingFile: async (sessionId: string, fileId: string) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return;
+
+      const updatedSession = {
+        ...session,
+        workingFiles: (session.workingFiles ?? []).filter(f => f.id !== fileId),
+        updatedAt: Date.now(),
+      };
+
+      // Update local state
+      set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
+      }));
+
+      // Persist to database
+      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+    },
+
+    /**
+     * Clear all working files from a session
+     */
+    clearSessionWorkingFiles: async (sessionId: string) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return;
+
+      const updatedSession = {
+        ...session,
+        workingFiles: [],
+        updatedAt: Date.now(),
+      };
+
+      // Update local state
+      set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
+      }));
+
+      // Persist to database
+      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+    },
+
+    /**
      * Send all accumulated tool results to AI in a single batch
      */
     sendAllToolResults: async () => {
@@ -442,7 +520,8 @@ export const useChatStore = create<ChatState>()(
         addMessage,
         setStreaming,
         setError,
-        currentMessages
+        currentMessages,
+        updateLastMessage,
       } = get();
 
       if (!currentSessionId || pendingToolResults.length === 0) {
@@ -453,22 +532,32 @@ export const useChatStore = create<ChatState>()(
 
       try {
         setStreaming(true);
-        set({ streamingContent: '' });
+        // Reset both streaming buffers before the second API call
+        set({ streamingContent: '', streamingReasoning: '' });
 
         // Add all tool results as user messages (Claude SDK bridge will convert to 'tool' role)
+        // NOTE: Do NOT set tool_call_id on the message — the __TOOL_RESULT__: prefix in content
+        // is the sole source of truth for Rust's format_messages_for_anthropic().
+        // Setting tool_call_id causes Rust's branch-1 to use the raw content (still prefixed).
         for (const { toolCallId, result } of pendingToolResults) {
           const resultMessage = createMessage('user', `__TOOL_RESULT__:${toolCallId}:${result}`);
-          (resultMessage as any).tool_call_id = toolCallId;
           await addMessage(resultMessage);
         }
 
         const apiConfig = useSettingsStore.getState().getActiveConfig();
 
         // Prepare all messages for next turn - include tool_calls when present
+        // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
-          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          ...(msg.tool_calls && {
+            tool_calls: msg.tool_calls.map((tc) => ({
+              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
+              name: tc.name,
+              arguments: tc.arguments,
+            })),
+          }),
           ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
@@ -483,26 +572,74 @@ export const useChatStore = create<ChatState>()(
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
-        await invoke<{
+        // Build full system prompt (same enrichment as sendMessage)
+        let systemPrompt = useUIStore.getState().agentInstructions;
+        const toolResultSession = get().sessions.find(s => s.id === currentSessionId);
+        const sessionWorkingFilesForTool = toolResultSession?.workingFiles ?? [];
+        const globalImportedFilesForTool = useSettingsStore.getState().importedFiles;
+        const allWorkingFilesForTool = [
+          ...sessionWorkingFilesForTool,
+          ...globalImportedFilesForTool.filter(f => !sessionWorkingFilesForTool.some(sf => sf.path === f.path))
+        ];
+        if (allWorkingFilesForTool.length > 0) {
+          const filesList = allWorkingFilesForTool.map(f => `- ${f.name}: ${f.path}`).join('\n');
+          systemPrompt += `\n\n## Working Context\n\nYou have access to the following working files in this session:\n${filesList}\n\n### How to use these files:\n\n1. **Read file contents**: Use the \`read_file\` tool with the exact path provided above.\n2. **Write/modify files**: Use the \`write_file\` tool to create or update files.\n3. **Search files**: Use \`grep\` to search for content within files.\n4. **Execute commands**: Use \`bash\` to run scripts or commands.\n\n### Guidelines:\n- Always read files first before editing them\n- Use the exact absolute paths provided above`;
+        }
+
+        const response = await invoke<{
           content: string;
-          artifacts: any[];
+          artifacts: Array<{
+            type: string;
+            content: string;
+            title?: string;
+            language?: string;
+          }>;
+          tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
         }>('send_claude_sdk_chat_streaming', {
           messages,
           apiKey: apiConfig?.apiKey,
           model: apiConfig?.model,
           baseUrl: apiConfig?.baseUrl || '',
-          systemPrompt: useUIStore.getState().agentInstructions,
+          systemPrompt,
         });
 
-        // Clear pending results after sending
-        set({ pendingToolResults: [] });
+        // Finalize the assistant message with streamed content
+        const { streamingContent: finalContent, streamingReasoning } = get();
 
-        // Event listener 'claude-token' will handle UI updates
+        const usedMoreTools = response.tool_calls && response.tool_calls.length > 0;
+
+        if (usedMoreTools) {
+          // AI called another tool in this turn - save reasoning, let the next
+          // sendAllToolResults handle finalization (the event handler already fired)
+          await updateLastMessage('', undefined, streamingReasoning);
+          // Clear pending list (already processed) but leave streaming active
+          set({ pendingToolResults: [], streamingContent: '', streamingReasoning: '' });
+        } else {
+          // Final response - no more tools
+          // Strip <think>...</think> tags before persisting (MiniMax embeds think inline).
+          const rawFinal = finalContent || response.content || '';
+          const { content: cleanFinal, reasoning: parsedFinalReasoning } = parseThinkContent(rawFinal);
+          await updateLastMessage(
+            cleanFinal,
+            response.artifacts?.map((a) => ({
+              id: crypto.randomUUID(),
+              type: a.type as 'html' | 'svg' | 'mermaid' | 'react' | 'code',
+              content: a.content,
+              title: a.title,
+              language: a.language,
+            })),
+            streamingReasoning || parsedFinalReasoning
+          );
+          // Clear all streaming + pending state
+          set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '' });
+          setStreaming(false);
+        }
+
       } catch (error) {
         console.error('Failed to send tool results:', error);
         setError('Failed to send tool results back to AI');
         setStreaming(false);
-        set({ pendingToolResults: [], pendingToolCalls: 0 });
+        set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '' });
       }
     },
 
@@ -525,18 +662,24 @@ export const useChatStore = create<ChatState>()(
         set({ streamingContent: '' });
 
         // Add tool result as a "user" message (Claude SDK bridge will convert to 'tool' role)
+        // NOTE: Do NOT set tool_call_id — use __TOOL_RESULT__: prefix only (see sendAllToolResults)
         const resultMessage = createMessage('user', `__TOOL_RESULT__:${toolCallId}:${result}`);
-        // Include the tool_call_id for reference
-        (resultMessage as any).tool_call_id = toolCallId;
         await addMessage(resultMessage);
 
         const apiConfig = useSettingsStore.getState().getActiveConfig();
 
         // Prepare all messages for next turn - include tool_calls when present
+        // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
-          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          ...(msg.tool_calls && {
+            tool_calls: msg.tool_calls.map((tc) => ({
+              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
+              name: tc.name,
+              arguments: tc.arguments,
+            })),
+          }),
           ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
@@ -621,10 +764,17 @@ export const useChatStore = create<ChatState>()(
         }, STREAMING_TIMEOUT_MS);
 
         // Convert frontend messages to Rust format
+        // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
-          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          ...(msg.tool_calls && {
+            tool_calls: msg.tool_calls.map((tc) => ({
+              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
+              name: tc.name,
+              arguments: tc.arguments,
+            })),
+          }),
           ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
@@ -638,7 +788,48 @@ export const useChatStore = create<ChatState>()(
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
+        // Build system prompt with session-level working files context
+        let systemPrompt = useUIStore.getState().agentInstructions;
+
+        // Get session-level working files (higher priority than global importedFiles)
+        const currentSession = get().sessions.find(s => s.id === currentSessionId);
+        const sessionWorkingFiles = currentSession?.workingFiles ?? [];
+        const globalImportedFiles = useSettingsStore.getState().importedFiles;
+
+        // Combine session files and global files (session files first)
+        const allWorkingFiles = [...sessionWorkingFiles, ...globalImportedFiles.filter(
+          (f) => !sessionWorkingFiles.some(sf => sf.path === f.path)
+        )];
+
+        if (allWorkingFiles.length > 0) {
+          const filesList = allWorkingFiles.map((f) => `- ${f.name}: ${f.path}`).join('\n');
+          systemPrompt += `
+
+## Working Context
+
+You have access to the following working files in this session:
+${filesList}
+
+### How to use these files:
+
+1. **Read file contents**: Use the \`read_file\` tool with the exact path provided above.
+   Example: read_file path=/Users/user/project/README.md
+
+2. **Write/modify files**: Use the \`write_file\` tool to create or update files.
+
+3. **Search files**: Use \`grep\` to search for content within files.
+
+4. **Execute commands**: Use \`bash\` to run scripts or commands.
+
+### Guidelines:
+- Always read files first before editing them
+- Use relative paths when possible, or the exact absolute paths provided above
+- Report any file access errors clearly
+- Proactively examine these files to understand the project structure`;
+        }
+
         // Use streaming command
+        // NOTE: response.tool_calls is non-empty when AI used tools this turn
         const response = await invoke<{
           content: string;
           artifacts: Array<{
@@ -649,31 +840,14 @@ export const useChatStore = create<ChatState>()(
           }>;
           model: string;
           usage: { input_tokens: number; output_tokens: number };
+          tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
         }>('send_claude_sdk_chat_streaming', {
           messages,
           apiKey: apiConfig.apiKey,
           model: apiConfig.model,
           baseUrl: apiConfig.baseUrl || '',
-          systemPrompt: useUIStore.getState().agentInstructions,
+          systemPrompt,
         });
-
-        // The streaming content has been accumulated in streamingContent via the event listener
-        const { streamingContent: finalContent, streamingReasoning } = get();
-        const { updateLastMessage } = get();
-
-        const fullContent = finalContent || response.content;
-
-        await updateLastMessage(
-          fullContent,
-          response.artifacts?.map((a) => ({
-            id: crypto.randomUUID(),
-            type: a.type as 'html' | 'svg' | 'mermaid' | 'react' | 'code',
-            content: a.content,
-            title: a.title,
-            language: a.language,
-          })),
-          streamingReasoning
-        );
 
         // Clear timeout on success
         if (timeoutId) {
@@ -681,8 +855,41 @@ export const useChatStore = create<ChatState>()(
           timeoutId = null;
         }
 
-        setStreaming(false);
-        set({ streamingContent: '', streamingReasoning: '' });
+        const { streamingContent: finalContent, streamingReasoning } = get();
+        const { updateLastMessage } = get();
+
+        const usedTools = response.tool_calls && response.tool_calls.length > 0;
+
+        if (usedTools) {
+          // Tools were called this turn. The event handler (claude-tool-use) will call
+          // executeTool → sendAllToolResults which handles the second API call and ALL
+          // final cleanup (setStreaming(false), clearing state).
+          // Save any text the AI wrote before the tool call + reasoning.
+          // Strip <think>...</think> so DB doesn't store raw think tags.
+          const rawPrefix = finalContent || response.content || '';
+          const { content: cleanPrefix, reasoning: parsedPrefixReasoning } = parseThinkContent(rawPrefix);
+          await updateLastMessage(cleanPrefix, undefined, streamingReasoning || parsedPrefixReasoning);
+          // Do NOT call setStreaming(false) or clear streamingContent here —
+          // that would race with sendAllToolResults' second streaming invoke.
+        } else {
+          // Normal text response — finalize here.
+          // Strip <think>...</think> tags before persisting (MiniMax embeds think inline).
+          const rawContent = finalContent || response.content || '';
+          const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(rawContent);
+          await updateLastMessage(
+            cleanContent,
+            response.artifacts?.map((a) => ({
+              id: crypto.randomUUID(),
+              type: a.type as 'html' | 'svg' | 'mermaid' | 'react' | 'code',
+              content: a.content,
+              title: a.title,
+              language: a.language,
+            })),
+            streamingReasoning || parsedReasoning
+          );
+          setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '' });
+        }
       } catch (error) {
         // Clear timeout on error
         if (timeoutId) {
@@ -702,29 +909,49 @@ export const useChatStore = create<ChatState>()(
      * Stop/cancel the current generation (kill subprocess)
      */
     stopGeneration: async () => {
-      const { isStreaming, streamingContent, streamingReasoning, setStreaming } = get();
+      const { isStreaming, streamingContent, streamingReasoning, setStreaming, currentSessionId } = get();
       if (!isStreaming) return;
 
       try {
         // Call the Rust backend to kill the subprocess
         await invoke('stop_subprocess');
-
-        // If there's accumulated streaming content, finalize the message
-        if (streamingContent || streamingReasoning) {
-          const { updateLastMessage } = get();
-          // Mark the current message as complete with whatever we have so far
-          await updateLastMessage(streamingContent, undefined, streamingReasoning);
-        }
-
-        // Clear streaming state
-        setStreaming(false);
-        set({ streamingContent: '', streamingReasoning: '' });
       } catch (error) {
-        console.error('Failed to stop generation:', error);
-        // Still clear the streaming state even if kill fails
-        setStreaming(false);
-        set({ streamingContent: '', streamingReasoning: '' });
+        console.error('Failed to stop subprocess:', error);
       }
+
+      // Parse any <think> tags from streamingContent
+      const parsed = parseThinkContent(streamingContent);
+      const finalContent = parsed.content;
+      const finalReasoning = streamingReasoning || parsed.reasoning;
+
+      // Clear streaming content BEFORE updating message to prevent setStreaming from re-updating
+      set({ streamingContent: '', streamingReasoning: '' });
+
+      // Update the last message with final content and reasoning
+      if (currentSessionId && (finalContent || finalReasoning)) {
+        set((state) => ({
+          sessions: state.sessions.map((s) => {
+            if (s.id !== currentSessionId || s.messages.length === 0) return s;
+            const lastMessage = s.messages[s.messages.length - 1];
+            if (lastMessage.role !== 'assistant') return s;
+            return {
+              ...s,
+              messages: [
+                ...s.messages.slice(0, -1),
+                {
+                  ...lastMessage,
+                  content: finalContent,
+                  reasoning: finalReasoning || lastMessage.reasoning,
+                },
+              ],
+              updatedAt: Date.now(),
+            };
+          }),
+        }));
+      }
+
+      // Now call setStreaming(false) - it won't re-update since streamingContent is now empty
+      setStreaming(false);
     },
 
     /**

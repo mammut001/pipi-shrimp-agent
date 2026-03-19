@@ -27,3 +27,4 @@ doc/
 .cowork-temp/
 node-scripts/.env
 /docs
+.pipi-shrimp/

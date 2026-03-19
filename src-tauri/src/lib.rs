@@ -335,6 +335,7 @@ pub fn run() {
             commands::get_browser_url,
             commands::inject_script,
             commands::is_agent_busy,
+            commands::browser_go_back,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

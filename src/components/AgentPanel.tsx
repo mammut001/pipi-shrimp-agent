@@ -6,6 +6,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useUIStore, useSettingsStore, useChatStore } from '@/store';
+import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { TypstPreview } from './TypstPreview';
 import { BrowserPanel } from './BrowserPanel';
 import { getLatestTypstBlock } from '@/utils/typst';
@@ -123,22 +124,41 @@ export const AgentPanel: React.FC = () => {
     taskProgress,
     permissionMode,
     setPermissionMode,
-    addNotification
+    addNotification,
+    agentPanelTab: activeTab,
+    setAgentPanelTab: setActiveTab,
   } = useUIStore();
-  const { importedFiles, removeImportedFile } = useSettingsStore();
-  const { currentMessages } = useChatStore();
+  const { importedFiles: globalImportedFiles, removeImportedFile } = useSettingsStore();
+  const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile } = useChatStore();
+  const { status: browserStatus } = useBrowserAgentStore();
+
+  // Get session-level working files for current session
+  const currentSession = sessions.find(s => s.id === currentSessionId);
+  const sessionWorkingFiles = currentSession?.workingFiles ?? [];
+
+  // Combine session files and global files (deduplicated by path)
+  const allWorkingFiles = [
+    ...sessionWorkingFiles,
+    ...globalImportedFiles.filter(f => !sessionWorkingFiles.some(sf => sf.path === f.path))
+  ];
 
   const [showBypassConfirm, setShowBypassConfirm] = useState(false);
   const [localInstructions, setLocalInstructions] = useState(agentInstructions);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Tab state: 'main' | 'browser' | 'typst-preview' | 'typst-code'
-  const [activeTab, setActiveTab] = useState<'main' | 'browser' | 'typst-preview' | 'typst-code'>('main');
+  // activeTab / setActiveTab come from global useUIStore (agentPanelTab / setAgentPanelTab)
   const [previewContent, setPreviewContent] = useState<string>('');
   const [autoSync, setAutoSync] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const messages = currentMessages();
+
+  // Auto-switch to browser tab when browser starts running
+  useEffect(() => {
+    if (browserStatus === 'running' && activeTab !== 'browser') {
+      setActiveTab('browser');
+    }
+  }, [browserStatus]);
 
   // Sync on mount (immediate, not debounced)
   useEffect(() => {
@@ -432,26 +452,40 @@ export const AgentPanel: React.FC = () => {
         {/* Working Folders Section */}
         <Section
           title="Working folders"
-          count={importedFiles.length > 0 ? importedFiles.length.toString() : undefined}
+          count={allWorkingFiles.length > 0 ? allWorkingFiles.length.toString() : undefined}
         >
           <div className="pt-2 space-y-1">
-            {importedFiles.length > 0 ? (
-              importedFiles.map((file) => (
-                <div key={file.id} className="group flex items-center gap-3 p-2 hover:bg-gray-100/50 rounded-xl transition-all">
-                  <FileIcon filename={file.name} />
-                  <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.name}>
-                    {file.name}
-                  </span>
-                  <button
-                    onClick={() => removeImportedFile(file.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 text-red-400 hover:text-red-500 rounded-lg transition-all"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                </div>
-              ))
+            {allWorkingFiles.length > 0 ? (
+              allWorkingFiles.map((file) => {
+                // Check if file is from session or global
+                const isSessionFile = sessionWorkingFiles.some(sf => sf.id === file.id);
+                const handleRemove = () => {
+                  if (isSessionFile && currentSessionId) {
+                    removeSessionWorkingFile(currentSessionId, file.id);
+                  } else {
+                    removeImportedFile(file.id);
+                  }
+                };
+                return (
+                  <div key={file.id} className="group flex items-center gap-3 p-2 hover:bg-gray-100/50 rounded-xl transition-all">
+                    <FileIcon filename={file.name} />
+                    <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.path}>
+                      {file.name}
+                    </span>
+                    {isSessionFile && (
+                      <span className="text-[8px] text-blue-400 font-bold">session</span>
+                    )}
+                    <button
+                      onClick={handleRemove}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 text-red-400 hover:text-red-500 rounded-lg transition-all"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                );
+              })
             ) : (
               <div className="py-6 flex flex-col items-center justify-center opacity-25">
                 <p className="text-[10px] font-bold uppercase tracking-tight text-center px-4 leading-normal">Drop files here to add to context</p>

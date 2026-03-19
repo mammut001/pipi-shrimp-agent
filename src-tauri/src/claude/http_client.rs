@@ -283,10 +283,21 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<serde_json::Va
     let mut formatted = Vec::new();
 
     for msg in messages {
-        // 1. Handle tool results (role: user with tool_call_id)
+        // 1. Handle tool results (role: user with tool_call_id or __TOOL_RESULT__: prefix)
         if msg.role == "user" && (msg.content.starts_with("__TOOL_RESULT__:") || msg.tool_call_id.is_some()) {
             let (tool_call_id, content) = if let Some(ref id) = msg.tool_call_id {
-                (id.clone(), msg.content.clone())
+                // tool_call_id is set — extract clean content, stripping __TOOL_RESULT__: prefix if present
+                let clean_content = if let Some(rest) = msg.content.strip_prefix("__TOOL_RESULT__:") {
+                    // Format: "__TOOL_RESULT__:{id}:{result}" — skip the id part and take result
+                    if let Some(colon_pos) = rest.find(':') {
+                        rest[colon_pos + 1..].to_string()
+                    } else {
+                        msg.content.clone()
+                    }
+                } else {
+                    msg.content.clone()
+                };
+                (id.clone(), clean_content)
             } else if let Some(cap) = msg.content.strip_prefix("__TOOL_RESULT__:").and_then(|s| {
                 let parts: Vec<&str> = s.splitn(2, ':').collect();
                 if parts.len() == 2 {
@@ -363,7 +374,17 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<serde_json::Value
         // 1. Handle tool results
         if msg.role == "user" && (msg.content.starts_with("__TOOL_RESULT__:") || msg.tool_call_id.is_some()) {
             let (tool_call_id, content) = if let Some(ref id) = msg.tool_call_id {
-                (id.clone(), msg.content.clone())
+                // tool_call_id is set — extract clean content, stripping __TOOL_RESULT__: prefix if present
+                let clean_content = if let Some(rest) = msg.content.strip_prefix("__TOOL_RESULT__:") {
+                    if let Some(colon_pos) = rest.find(':') {
+                        rest[colon_pos + 1..].to_string()
+                    } else {
+                        msg.content.clone()
+                    }
+                } else {
+                    msg.content.clone()
+                };
+                (id.clone(), clean_content)
             } else if let Some(cap) = msg.content.strip_prefix("__TOOL_RESULT__:").and_then(|s| {
                 let parts: Vec<&str> = s.splitn(2, ':').collect();
                 if parts.len() == 2 {
@@ -541,6 +562,9 @@ struct OpenAIDelta {
 struct OpenAIToolCall {
     #[serde(default)]
     id: Option<String>,
+    /// Stream index for accumulating partial tool call arguments across chunks
+    #[serde(default)]
+    index: Option<usize>,
     #[serde(rename = "type", default)]
     call_type: Option<String>,
     #[serde(default)]
@@ -1025,11 +1049,18 @@ impl ClaudeClient {
         window: Option<Window>,
     ) -> AppResult<ChatResponse> {
         let mut full_content = String::new();
+        let mut full_reasoning = String::new();
         let mut model = String::new();
         let mut usage = UsageInfo {
             input_tokens: 0,
             output_tokens: 0,
         };
+
+        // Tool call accumulation: index → (id, name, accumulated_args)
+        // OpenAI streaming sends tool call arguments in fragments across multiple SSE chunks.
+        // We accumulate them here and emit claude-tool-use events once the stream ends.
+        let mut tool_call_map: std::collections::HashMap<usize, (String, String, String)> =
+            std::collections::HashMap::new();
 
         // Stream response body
         use futures::stream::StreamExt;
@@ -1061,36 +1092,212 @@ impl ClaudeClient {
                     continue;
                 }
 
-                let event: OpenAIStreamResponse = match serde_json::from_str(data_str) {
-                    Ok(e) => e,
+                // Parse as generic JSON to handle different model formats
+                let json: serde_json::Value = match serde_json::from_str(data_str) {
+                    Ok(v) => v,
                     Err(e) => {
                         println!("⚠️ Failed to parse stream event: {}", e);
                         continue;
                     }
                 };
 
-                for choice in event.choices {
-                    if let Some(delta) = choice.delta {
-                        // Reasoning content (DeepSeek)
-                        if let Some(reasoning) = delta.reasoning_content {
-                            if let Some(ref w) = window {
-                                let _ = w.emit("claude-reasoning", reasoning);
-                            }
-                        }
+                // Get model from first response
+                if model.is_empty() {
+                    if let Some(m) = json.get("model").and_then(|v| v.as_str()) {
+                        model = m.to_string();
+                    }
+                }
 
-                        // Content
-                        if let Some(content) = delta.content {
-                            full_content.push_str(&content);
-                            if let Some(ref w) = window {
-                                let _ = w.emit("claude-token", content);
+                // Handle MiniMax and other OpenAI-compatible reasoning formats
+                // MiniMax uses "thinking" field, others use "reasoning_content"
+                // Also check if content contains <think>...</think> tags
+                if let Some(choices) = json.get("choices").and_then(|v| v.as_array()) {
+                    for choice in choices {
+                        if let Some(delta) = choice.get("delta") {
+                            // MiniMax reasoning format: "thinking" field
+                            if let Some(thinking) = delta.get("thinking").and_then(|v| v.as_str()) {
+                                if !thinking.is_empty() {
+                                    full_reasoning.push_str(thinking);
+                                    if let Some(ref w) = window {
+                                        let _ = w.emit("claude-reasoning", thinking);
+                                    }
+                                }
+                            }
+
+                            // DeepSeek/other reasoning format: "reasoning_content" field
+                            if let Some(reasoning) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
+                                if !reasoning.is_empty() {
+                                    full_reasoning.push_str(reasoning);
+                                    if let Some(ref w) = window {
+                                        let _ = w.emit("claude-reasoning", reasoning);
+                                    }
+                                }
+                            }
+
+                            // MiniMax text content (some versions use this field name)
+                            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+                                full_content.push_str(content);
+                                if let Some(ref w) = window {
+                                    let _ = w.emit("claude-token", content);
+                                }
+                            }
+
+                            // Standard "text" field (fallback)
+                            if let Some(text_field) = delta.get("text").and_then(|v| v.as_str()) {
+                                if delta.get("content").is_none() {
+                                    full_content.push_str(text_field);
+                                    if let Some(ref w) = window {
+                                        let _ = w.emit("claude-token", text_field);
+                                    }
+                                }
+                            }
+
+                            // ── Tool call accumulation (OpenAI streaming format) ──────────────
+                            // Each SSE chunk may contain partial tool call data.
+                            // Format: delta.tool_calls = [{index, id?, function: {name?, arguments}}]
+                            // The id and name appear only in the FIRST chunk for that index;
+                            // subsequent chunks only carry the incremental arguments string.
+                            if let Some(tc_array) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                                for tc in tc_array {
+                                    let idx = tc.get("index")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as usize;
+
+                                    // Get or create entry for this index
+                                    let entry = tool_call_map.entry(idx)
+                                        .or_insert_with(|| (String::new(), String::new(), String::new()));
+
+                                    // id: only present in the first chunk for this tool call
+                                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                        if !id.is_empty() {
+                                            entry.0 = id.to_string();
+                                        }
+                                    }
+
+                                    if let Some(func) = tc.get("function") {
+                                        // name: only in first chunk
+                                        if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                                            if !name.is_empty() {
+                                                entry.1 = name.to_string();
+                                            }
+                                        }
+                                        // arguments: incremental across chunks — APPEND not overwrite
+                                        if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                                            entry.2.push_str(args);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
 
-                // Get model from first response
-                if model.is_empty() {
-                    model = event.model.unwrap_or_default();
+                // Also try to parse as OpenAIStreamResponse for backwards compatibility
+                if let Ok(event) = serde_json::from_str::<OpenAIStreamResponse>(data_str) {
+                    for choice in event.choices {
+                        if let Some(delta) = choice.delta {
+                            // Reasoning content (DeepSeek)
+                            if let Some(reasoning) = delta.reasoning_content {
+                                if !reasoning.is_empty() {
+                                    // Avoid duplicate if already processed
+                                    if !full_reasoning.ends_with(&reasoning) {
+                                        full_reasoning.push_str(&reasoning);
+                                        if let Some(ref w) = window {
+                                            let _ = w.emit("claude-reasoning", reasoning);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Content
+                            if let Some(content) = delta.content {
+                                // Avoid duplicate if already processed
+                                if !full_content.ends_with(&content) {
+                                    full_content.push_str(&content);
+                                    if let Some(ref w) = window {
+                                        let _ = w.emit("claude-token", content);
+                                    }
+                                }
+                            }
+
+                            // Tool calls via typed struct (backup path — generic JSON path above is primary)
+                            if let Some(tcs) = delta.tool_calls {
+                                for tc in tcs {
+                                    let idx = tc.index.unwrap_or(0);
+                                    let entry = tool_call_map.entry(idx)
+                                        .or_insert_with(|| (String::new(), String::new(), String::new()));
+                                    if let Some(id) = tc.id {
+                                        if !id.is_empty() && entry.0.is_empty() {
+                                            entry.0 = id;
+                                        }
+                                    }
+                                    if let Some(func) = tc.function {
+                                        if let Some(name) = func.name {
+                                            if !name.is_empty() && entry.1.is_empty() {
+                                                entry.1 = name;
+                                            }
+                                        }
+                                        if let Some(args) = func.arguments {
+                                            // Only append if not already captured by the JSON path
+                                            if !args.is_empty() && !entry.2.ends_with(&args) {
+                                                entry.2.push_str(&args);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Finalize tool calls: emit events and build return list ──────────────────
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        if !tool_call_map.is_empty() {
+            let mut sorted_indices: Vec<usize> = tool_call_map.keys().cloned().collect();
+            sorted_indices.sort();
+            for idx in sorted_indices {
+                if let Some((id, name, args)) = tool_call_map.get(&idx) {
+                    if name.is_empty() {
+                        continue; // Skip incomplete entries
+                    }
+                    println!("🔧 OpenAI tool call finalized: id={} name={} args_len={}", id, name, args.len());
+                    let tool_call = ToolCall {
+                        tool_call_id: id.clone(),
+                        name: name.clone(),
+                        arguments: args.clone(),
+                    };
+                    tool_calls.push(tool_call.clone());
+                    if let Some(ref w) = window {
+                        let _ = w.emit("claude-tool-use", tool_call);
+                    }
+                }
+            }
+        }
+
+        // Handle MiniMax-style <think>...</think> tags in content
+        // If we have reasoning but no separate reasoning field, extract from content
+        if full_reasoning.is_empty() && !full_content.is_empty() {
+            let think_regex = regex::Regex::new(r"<think>([\s\S]*?)<\/think>").unwrap();
+            for cap in think_regex.captures_iter(&full_content) {
+                if let Some(thinking) = cap.get(1) {
+                    let thinking_text = thinking.as_str().trim();
+                    if !thinking_text.is_empty() {
+                        full_reasoning.push_str(thinking_text);
+                        full_reasoning.push('\n');
+                    }
+                }
+            }
+            // Remove <think>...</think> from content
+            if full_reasoning.contains("<think>") || full_content.contains("<think>") {
+                let clean_content = full_content
+                    .replace(r"<think>", "")
+                    .replace(r"</think>", "")
+                    .trim()
+                    .to_string();
+                if !clean_content.is_empty() {
+                    full_content = clean_content;
                 }
             }
         }
@@ -1102,7 +1309,7 @@ impl ClaudeClient {
             artifacts,
             model,
             usage,
-            tool_calls: vec![],
+            tool_calls,
         })
     }
 }

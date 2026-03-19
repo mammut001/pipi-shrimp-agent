@@ -9,7 +9,6 @@
  * - Timestamp display
  */
 
-import { useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Message } from '@/types/chat';
 
@@ -43,19 +42,9 @@ const formatTimestamp = (timestamp: number): string => {
  */
 export function ChatMessage({ message, isLatest = false, isStreaming = false, onTypstPreview }: ChatMessageProps) {
   const isUser = message.role === 'user';
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll to latest message
-  useEffect(() => {
-    if (isLatest && contentRef.current) {
-      contentRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [message.content, isLatest]);
 
   return (
-    <div
-      ref={contentRef}
-      className={`py-4 px-4 ${isUser ? 'bg-gray-50' : 'bg-white'}`}
+    <div className={`py-4 px-4 ${isUser ? 'bg-gray-50' : 'bg-white'}`}
     >
       <div className="max-w-3xl mx-auto">
         <div className="flex gap-4">
@@ -106,7 +95,7 @@ export function ChatMessage({ message, isLatest = false, isStreaming = false, on
 
             {/* AI Reasoning Block */}
             {!isUser && message.reasoning && (
-              <ReasoningBlock content={message.reasoning} isStreaming={isStreaming || (isLatest && message.content === '')} />
+              <ReasoningBlock content={message.reasoning} isStreaming={isStreaming} />
             )}
 
             {/* Message Body */}
@@ -221,7 +210,7 @@ export function ChatMessage({ message, isLatest = false, isStreaming = false, on
             </div>
 
             {/* Loading indicator for latest message */}
-            {isLatest && !isUser && message.content === '' && (
+            {isLatest && !isUser && message.content === '' && !message.reasoning && (
               <div className="mt-2 flex items-center gap-2 text-gray-400">
                 <div className="flex gap-1">
                   <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />

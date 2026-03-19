@@ -27,6 +27,7 @@ export const useUIStore = create<UIState>((set) => ({
   // Agentic UI State
   permissionMode: 'standard',
   rightPanelVisible: true,
+  agentPanelTab: 'main' as const,
   agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || 'You are a powerful AI Agent designed by the Google Deepmind team.',
   taskProgress: [],
 
@@ -129,6 +130,7 @@ export const useUIStore = create<UIState>((set) => ({
     taskProgress: state.taskProgress.map(step => step.id === id ? { ...step, status } : step)
   })),
   clearTaskProgress: () => set({ taskProgress: [] }),
+  setAgentPanelTab: (tab) => set({ agentPanelTab: tab }),
 }));
 
 export type { PermissionRequest, Notification, TaskStep } from '../types/ui';

@@ -4,13 +4,13 @@
  * Features:
  * - Display current session messages
  * - User/assistant message styles
- * - Auto-scroll to latest message
+ * - Auto-scroll to latest message (only when user is at bottom)
  * - Loading state (isStreaming)
  * - Error display
  * - Permission dialog integration
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal } from '@/components';
@@ -20,6 +20,8 @@ import { ChatMessage, ChatInput, PermissionModal } from '@/components';
  */
 export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
 
   const {
     currentMessages,
@@ -30,11 +32,11 @@ export function Chat() {
     init,
   } = useChatStore();
 
-  const {
-    pendingPermission,
-    clearPermissionRequest,
-    addNotification,
-  } = useUIStore();
+  // Use precise selectors so each field has its own subscription, guaranteeing
+  // the modal renders as soon as pendingPermission changes (avoids stale-ref issues)
+  const pendingPermission = useUIStore((s) => s.pendingPermission);
+  const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
+  const addNotification = useUIStore((s) => s.addNotification);
 
   const messages = currentMessages();
   const hasMessages = messages.length > 0;
@@ -44,10 +46,20 @@ export function Chat() {
     init();
   }, [init]);
 
-  // Auto-scroll to bottom when messages change
+  // Detect if user has scrolled up (away from bottom)
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setUserScrolledUp(distanceFromBottom > 100); // Consider user scrolled up if >100px from bottom
+  }, []);
+
+  // Auto-scroll to bottom only when user is at bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (!userScrolledUp) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, userScrolledUp]);
 
   /**
    * Handle permission approval
@@ -86,7 +98,11 @@ export function Chat() {
         {/* Chat Panel - full width */}
         <div className="flex flex-col min-h-0 w-full">
           {/* Messages List */}
-          <div className="flex-1 overflow-y-auto">
+          <div
+            ref={scrollContainerRef}
+            onScroll={handleScroll}
+            className="flex-1 overflow-y-auto"
+          >
             {hasMessages ? (
               <div className="divide-y divide-gray-100">
                 {messages.map((message, index) => (

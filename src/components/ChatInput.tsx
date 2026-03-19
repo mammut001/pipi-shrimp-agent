@@ -100,16 +100,16 @@ export function ChatInput({ onSend }: ChatInputProps) {
       finalMessage = `${refText}\n\n${trimmedInput}`;
     }
 
-    // Create session if none exists
+    // Ensure session exists before sending
     if (!currentSessionId) {
       await startSession();
     }
 
-    // Clear state
+    // Clear input state first
     setInput('');
     setReferences([]);
-    
-    // Send message
+
+    // Send to AI (browser is controlled manually or via AI tools, not by client-side regex)
     onSend?.(finalMessage);
     await sendMessage(finalMessage);
   };

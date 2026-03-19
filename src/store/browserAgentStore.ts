@@ -35,6 +35,7 @@ interface BrowserAgentState {
   currentUrl: string;
   error: string | null;
   screenshots: string[]; // base64 encoded screenshots
+  _abortController: AbortController | null; // Internal: for task cancellation
 
   // Actions
   openWindow: (url: string) => Promise<void>;
@@ -57,6 +58,7 @@ export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
   currentUrl: '',
   error: null,
   screenshots: [],
+  _abortController: null,
 
   addLog: (level: LogEntry['level'], message: string) => {
     const entry: LogEntry = {
@@ -102,14 +104,15 @@ export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
     const { addLog } = get();
 
     try {
-      // Validate URL
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        throw new Error('URL must start with http:// or https://');
+      // Auto-add protocol if missing
+      let normalizedUrl = url.trim();
+      if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
+        normalizedUrl = `https://${normalizedUrl}`;
       }
 
-      addLog('info', `正在打开浏览器窗口: ${url}`);
-      await openBrowserWindow(url);
-      set({ isWindowOpen: true, currentUrl: url, status: 'idle', error: null });
+      addLog('info', `正在打开浏览器窗口: ${normalizedUrl}`);
+      await openBrowserWindow(normalizedUrl);
+      set({ isWindowOpen: true, currentUrl: normalizedUrl, status: 'idle', error: null });
       addLog('success', '浏览器窗口已打开');
 
       // Update URL periodically
@@ -153,35 +156,49 @@ export const useBrowserAgentStore = create<BrowserAgentState>((set, get) => ({
       return;
     }
 
+    // Create abort controller for this task
+    const controller = new AbortController();
+    set({ _abortController: controller, status: 'running' });
+
     try {
       // Get config from settings
       const config = useSettingsStore.getState().getActiveConfig();
       if (!config?.apiKey) {
         addLog('error', '请先配置 API 设置');
+        set({ status: 'idle', _abortController: null });
         return;
       }
 
       addLog('info', `开始执行任务: ${task.substring(0, 50)}${task.length > 50 ? '...' : ''}`);
-      set({ status: 'running' });
 
-      await executeAgentTask(task, config.apiKey, config.model || 'MiniMax-Embedding-32G', {
+      await executeAgentTask(task, config.apiKey, config.model || 'claude-3-5-sonnet-20241022', {
         baseUrl: config.baseUrl,
       });
 
       // The browser window will emit completion events
       // We don't set status here as it will be updated by the event listener
     } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        addLog('info', '任务已停止');
+        set({ status: 'idle', _abortController: null });
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       addLog('error', `执行失败: ${errorMessage}`);
-      set({ status: 'error', error: errorMessage });
+      set({ status: 'error', error: errorMessage, _abortController: null });
     }
   },
 
   stopTask: () => {
-    // In the second window approach, stopping is handled differently
-    // We could inject a script to stop the agent, but for now just log it
-    const { addLog } = get();
-    addLog('info', '停止任务功能正在开发中...');
+    const { addLog, _abortController } = get();
+
+    if (_abortController) {
+      _abortController.abort();
+      set({ _abortController: null });
+      addLog('info', '正在停止任务...');
+    } else {
+      addLog('info', '没有正在执行的任务');
+    }
   },
 
   clearLogs: () => {
