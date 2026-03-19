@@ -20,7 +20,8 @@ fn row_to_session(row: &Row) -> SqliteResult<DbSession> {
         cwd: row.get(4)?,
         project_id: row.get(5)?,
         model: row.get(6)?,
-        work_dir: row.get(7)?,      // NEW
+        work_dir: row.get(7)?,
+        working_files: row.get(8)?,  // NEW: session-level working files
     })
 }
 
@@ -71,7 +72,8 @@ pub struct DbSession {
     pub cwd: Option<String>,
     pub project_id: Option<String>,
     pub model: Option<String>,
-    pub work_dir: Option<String>,    // NEW: each session's work directory
+    pub work_dir: Option<String>,    // each session's work directory
+    pub working_files: Option<String>, // JSON serialized ImportedFile[]
 }
 
 /**
@@ -133,7 +135,8 @@ pub fn init_database() -> SqliteResult<()> {
             cwd TEXT,
             project_id TEXT,
             model TEXT,
-            work_dir TEXT
+            work_dir TEXT,
+            working_files TEXT
         )",
         [],
     )?;
@@ -247,6 +250,27 @@ pub fn init_database() -> SqliteResult<()> {
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN work_dir TEXT", []);
     }
 
+    // Migration: add working_files column to sessions table
+    let sessions_working_files_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "working_files" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !sessions_working_files_exists {
+        println!("🚀 Migrating database: adding 'working_files' column to 'sessions' table");
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN working_files TEXT", []);
+    }
+
     // Create projects table (work_dir included from the start for new installs)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects (
@@ -311,9 +335,9 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model, session.work_dir],
+            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model, session.work_dir, session.working_files],
         )?;
     }
     Ok(())
@@ -328,7 +352,7 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir FROM sessions ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files FROM sessions ORDER BY updated_at DESC"
         )?;
 
         let session_iter = stmt.query_map([], row_to_session)?;

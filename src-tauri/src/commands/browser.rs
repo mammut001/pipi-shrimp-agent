@@ -137,6 +137,7 @@ pub async fn execute_agent_task(
 }
 
 /// Build the JavaScript code to inject into the browser window
+/// This script loads the PageAgent SDK from CDN and executes the task
 fn build_page_agent_script(
     task: &str,
     base_url: Option<String>,
@@ -158,6 +159,12 @@ fn build_page_agent_script(
     let escaped_task = task.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
     let escaped_api_key = api_key.replace('\\', "\\\\").replace('"', "\\\"");
     let escaped_model = model.replace('\\', "\\\\").replace('"', "\\\"");
+
+    // PageAgent SDK CDN URLs (in order of preference)
+    let sdk_urls = [
+        "https://cdn.jsdelivr.net/npm/page-agent@latest/dist/page-agent.min.js",
+        "https://unpkg.com/page-agent@latest/dist/page-agent.min.js",
+    ];
 
     format!(r#"
 (function() {{
@@ -185,37 +192,78 @@ fn build_page_agent_script(
         emitLog(success ? 'success' : 'error', 'Task ' + (success ? 'completed' : 'failed') + ': ' + result);
     }}
 
-    emitLog('info', 'Initializing PageAgent...');
+    // SDK load URLs
+    const SDK_URLS = {sdk_urls:?};
 
-    // Check if PageAgent is available
-    if (typeof PageAgent === 'undefined') {{
-        emitLog('error', 'PageAgent not found. Make sure page-agent is loaded.');
-        emitComplete(false, 'PageAgent library not loaded');
-        return;
+    // Load PageAgent SDK from CDN
+    async function loadSDK(urls, index) {{
+        if (index >= urls.length) {{
+            throw new Error('Failed to load PageAgent SDK from all CDN sources');
+        }}
+
+        const url = urls[index];
+        emitLog('info', 'Loading PageAgent SDK from: ' + url);
+
+        return new Promise((resolve, reject) => {{
+            const script = document.createElement('script');
+            script.src = url;
+            script.onload = () => {{
+                emitLog('success', 'PageAgent SDK loaded from: ' + url);
+                resolve();
+            }};
+            script.onerror = () => {{
+                emitLog('error', 'Failed to load from: ' + url);
+                // Try next URL
+                loadSDK(urls, index + 1).then(resolve).catch(reject);
+            }};
+            document.head.appendChild(script);
+        }});
     }}
 
-    try {{
-        const agent = new PageAgent({{
-            baseURL: {base_url_js},
-            apiKey: "{escaped_api_key}",
-            model: "{escaped_model}",
-            systemPrompt: {system_prompt_js}
-        }});
+    async function initAndExecute() {{
+        try {{
+            emitLog('info', 'Initializing PageAgent...');
 
-        emitLog('info', 'PageAgent initialized, executing task...');
+            // Load SDK if not already loaded
+            if (typeof PageAgent === 'undefined') {{
+                await loadSDK(SDK_URLS, 0);
+            }} else {{
+                emitLog('info', 'PageAgent SDK already available');
+            }}
 
-        // Execute the task
-        agent.execute("{escaped_task}").then(result => {{
-            emitLog('success', 'Task result: ' + result);
-            emitComplete(true, result);
-        }}).catch(error => {{
-            emitLog('error', 'Task error: ' + error.message);
+            // Verify PageAgent is available
+            if (typeof PageAgent === 'undefined') {{
+                throw new Error('PageAgent not found after loading attempts');
+            }}
+
+            emitLog('info', 'Creating PageAgent instance...');
+
+            const agent = new PageAgent({{
+                baseURL: {base_url_js},
+                apiKey: "{escaped_api_key}",
+                model: "{escaped_model}",
+                systemPrompt: {system_prompt_js}
+            }});
+
+            emitLog('info', 'PageAgent initialized, executing task...');
+            emitLog('info', 'Task: {escaped_task}');
+
+            // Execute the task
+            agent.execute("{escaped_task}").then(result => {{
+                emitLog('success', 'Task completed successfully');
+                emitComplete(true, result);
+            }}).catch(error => {{
+                emitLog('error', 'Task execution error: ' + error.message);
+                emitComplete(false, error.message);
+            }});
+        }} catch (error) {{
+            emitLog('error', 'Initialization error: ' + error.message);
             emitComplete(false, error.message);
-        }});
-    }} catch (error) {{
-        emitLog('error', 'Initialization error: ' + error.message);
-        emitComplete(false, error.message);
+        }}
     }}
+
+    // Start execution
+    initAndExecute();
 }})();
 "#)
 }
@@ -260,4 +308,23 @@ pub async fn is_agent_busy(
 ) -> AppResult<bool> {
     let state = state.lock().await;
     Ok(state.is_busy)
+}
+
+/// Navigate back in browser history
+#[tauri::command]
+pub async fn browser_go_back(
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    let browser_window = {
+        let state = state.lock().await;
+        state.browser_window.as_ref()
+            .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
+            .clone()
+    };
+
+    // Use eval to call window.history.back()
+    browser_window.eval("window.history.back();")
+        .map_err(|e| AppError::InternalError(format!("Failed to go back: {}", e)))?;
+
+    Ok("Navigated back".to_string())
 }

@@ -45,6 +45,9 @@ export interface UIState {
   agentInstructions: string;
   taskProgress: TaskStep[];
 
+  // Right panel active tab (global so external triggers like browser intent can switch it)
+  agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code';
+
   // ========== Action Methods ==========
 
   /**
@@ -109,6 +112,7 @@ export interface UIState {
   addTaskStep: (label: string) => void;
   updateTaskStep: (id: string, status: TaskStep['status']) => void;
   clearTaskProgress: () => void;
+  setAgentPanelTab: (tab: UIState['agentPanelTab']) => void;
 }
 
 // ============= Constants =============

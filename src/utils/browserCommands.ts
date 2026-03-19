@@ -74,3 +74,10 @@ export async function injectScript(script: string): Promise<string> {
 export async function isAgentBusy(): Promise<boolean> {
   return invoke<boolean>('is_agent_busy');
 }
+
+/**
+ * Navigate back in browser history
+ */
+export async function goBack(): Promise<string> {
+  return invoke<string>('browser_go_back');
+}

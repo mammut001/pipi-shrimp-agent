@@ -38,11 +38,8 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={onDeny}
-      />
+      {/* Backdrop - no click-to-dismiss to prevent accidental denial */}
+      <div className="absolute inset-0 bg-black/50" />
 
       {/* Modal Content */}
       <div className="relative bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden">
