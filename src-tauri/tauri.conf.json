@@ -19,7 +19,8 @@
         "resizable": true,
         "fullscreen": false,
         "center": true,
-        "label": "main"
+        "label": "main",
+        "visible": false
       }
     ],
     "security": {

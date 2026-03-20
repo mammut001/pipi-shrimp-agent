@@ -8,6 +8,14 @@ export const metadata: Metadata = {
   description:
     "A powerful, elegant AI assistant that helps you get things done. Built for developers and power users.",
   keywords: ["AI", "assistant", "macOS", "developer", "productivity"],
+  other: {
+    "font-preconnect": "https://fonts.googleapis.com https://fonts.gstatic.com",
+  },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -17,6 +25,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      </head>
       <body className="min-h-screen antialiased overflow-x-hidden" suppressHydrationWarning>
         <LanguageProvider>
           <Header />
