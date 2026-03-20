@@ -231,6 +231,15 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                 "required": ["pattern", "path"]
             }
         }),
+        serde_json::json!({
+            "name": "get_current_workspace",
+            "description": "Get the current session's bound working directory path. Call this (with no arguments) to discover the absolute workspace path before using any file or shell tools.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
     ]
 }
 
@@ -1414,7 +1423,7 @@ mod tests {
     #[test]
     fn test_get_tools_count() {
         let tools = get_tools();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10);
     }
 
     #[test]
