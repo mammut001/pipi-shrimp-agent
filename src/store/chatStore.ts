@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { ChatState, Session, Message, Project, OutputFolder } from '../types/chat';
 import { createSession, createMessage, createProject } from '../types/chat';
@@ -31,6 +31,7 @@ interface DbSession {
   model: string | null;
   work_dir?: string | null;
   working_files?: string | null;  // JSON serialized ImportedFile[]
+  permission_mode?: string | null;  // NEW: session permission mode
 }
 
 interface DbMessage {
@@ -40,6 +41,7 @@ interface DbMessage {
   content: string;
   reasoning: string | null;
   artifacts: string | null;
+  tool_calls: string | null;  // JSON-serialized Vec<ToolCall>
   created_at: number;
 }
 
@@ -66,6 +68,7 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
   model: dbSession.model || undefined,
   workDir: dbSession.work_dir || undefined,
   workingFiles: dbSession.working_files ? JSON.parse(dbSession.working_files) : undefined,
+  permissionMode: (dbSession.permission_mode as Session['permissionMode']) || undefined,
   messages: dbMessages.map((m) => ({
     id: m.id,
     role: m.role as 'user' | 'assistant',
@@ -73,6 +76,7 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
     reasoning: m.reasoning || undefined,
     timestamp: m.created_at,
     artifacts: m.artifacts ? JSON.parse(m.artifacts) : undefined,
+    tool_calls: m.tool_calls ? JSON.parse(m.tool_calls) : undefined,
   })),
 });
 
@@ -89,6 +93,7 @@ const sessionToDb = (session: Session): DbSession => ({
   model: session.model || null,
   work_dir: session.workDir || null,
   working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
+  permission_mode: session.permissionMode || null,
 });
 
 /**
@@ -101,6 +106,7 @@ const messageToDb = (message: Message, sessionId: string): DbMessage => ({
   content: message.content,
   reasoning: message.reasoning || null,
   artifacts: message.artifacts ? JSON.stringify(message.artifacts) : null,
+  tool_calls: message.tool_calls ? JSON.stringify(message.tool_calls) : null,
   created_at: message.timestamp,
 });
 
@@ -140,14 +146,20 @@ const parseThinkContent = (rawContent: string): { content: string; reasoning?: s
     thinkingParts.push(match[1].trim());
   }
 
-  // Remove all <think>...</think> blocks from content
+  // Remove all complete <think>...</think> blocks from content
   cleanContent = rawContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
   // Handle incomplete thinking (still streaming) - remove partial <think> at the end
+  // e.g. content ends with "<think>some reasoning still coming..."
   const partialThink = cleanContent.match(/<think>[\s\S]*$/);
   if (partialThink) {
     cleanContent = cleanContent.replace(/<think>[\s\S]*$/, '').trim();
   }
+
+  // Strip orphaned </think> closing tags that have no matching <think> opener.
+  // This happens when a previous streaming chunk already consumed the <think> block
+  // but a stray </think> token arrives in a subsequent chunk.
+  cleanContent = cleanContent.replace(/<\/think>/g, '').trim();
 
   return {
     content: cleanContent,
@@ -274,45 +286,55 @@ export const useChatStore = create<ChatState>()(
           // Increment pending tool calls counter for batching
           set((state) => ({ pendingToolCalls: state.pendingToolCalls + 1 }));
 
-          const { permissionMode, setPermissionRequest, addTaskStep } = useUIStore.getState();
-          const { executeTool, currentMessages } = get();
+          const { setPermissionRequest, addTaskStep } = useUIStore.getState();
+          const { executeTool, currentMessages, currentSession } = get();
+
+          // Get permissionMode from current session (per-session setting)
+          const session = currentSession();
+          const permissionMode = session?.permissionMode || 'standard';
 
           // Update the last assistant message to include tool_calls
           // This is needed so when we send tool result, the API knows which tool_call we're responding to
-          const messages = currentMessages();
-          if (messages.length > 0) {
-            const lastMsg = messages[messages.length - 1];
+          const currentSessId = get().currentSessionId;
+          const msgs = currentMessages();
+          if (msgs.length > 0) {
+            const lastMsg = msgs[msgs.length - 1];
             if (lastMsg.role === 'assistant') {
-              // Add tool_calls to the last assistant message
+              const updatedToolCalls = [
+                ...(lastMsg.tool_calls || []),
+                {
+                  id: event.payload.tool_call_id,
+                  name: event.payload.name,
+                  arguments: event.payload.arguments,
+                },
+              ];
+              // Add tool_calls to the last assistant message in memory
               set((state) => ({
                 sessions: state.sessions.map((s) =>
-                  s.id === get().currentSessionId
+                  s.id === currentSessId
                     ? {
                         ...s,
                         messages: s.messages.map((m, i) =>
                           i === s.messages.length - 1 && m.role === 'assistant'
-                            ? {
-                                ...m,
-                                tool_calls: [
-                                  ...(m.tool_calls || []),
-                                  {
-                                    id: event.payload.tool_call_id,
-                                    name: event.payload.name,
-                                    arguments: event.payload.arguments,
-                                  },
-                                ],
-                              }
+                            ? { ...m, tool_calls: updatedToolCalls }
                             : m
                         ),
                       }
                     : s
                 ),
               }));
+              // CRITICAL: persist to database so tool_calls survive across message rebuilds
+              const updatedMsg = { ...lastMsg, tool_calls: updatedToolCalls };
+              invoke('db_save_message', { message: messageToDb(updatedMsg, currentSessId!) })
+                .catch((e: unknown) => console.error('Failed to persist tool_calls:', e));
             }
           }
 
-          // Add to task progress UI
-          addTaskStep(`${event.payload.name}: ${event.payload.arguments.slice(0, 50)}${event.payload.arguments.length > 50 ? '...' : ''}`);
+          // Add to task progress UI — use tool_call_id as step id for precise lookup later
+          addTaskStep(
+            `${event.payload.name}: ${event.payload.arguments.slice(0, 50)}${event.payload.arguments.length > 50 ? '...' : ''}`,
+            event.payload.tool_call_id
+          );
 
           if (permissionMode === 'bypass' || permissionMode === 'auto-edits') {
             // Auto mode and bypass mode: execute without asking
@@ -376,6 +398,13 @@ export const useChatStore = create<ChatState>()(
       set((state) => ({
         sessions: [...state.sessions, newSession],
         currentSessionId: newSession.id,
+        // Reset streaming/error state so stale state from previous session doesn't bleed in
+        isStreaming: false,
+        error: null,
+        streamingContent: '',
+        streamingReasoning: '',
+        pendingToolCalls: 0,
+        pendingToolResults: [],
       }));
     },
 
@@ -387,8 +416,8 @@ export const useChatStore = create<ChatState>()(
       const { setError } = get();
       const { addNotification, taskProgress, updateTaskStep } = useUIStore.getState();
 
-      // Find the task step to update status
-      const currentStep = taskProgress.find(s => s.label.startsWith(toolName));
+      // Find the task step by toolCallId (exact match — avoids wrong step when same tool runs multiple times)
+      const currentStep = taskProgress.find(s => s.id === toolCallId);
       if (currentStep) {
         updateTaskStep(currentStep.id, 'running');
       }
@@ -511,6 +540,28 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
+     * Update session's permission mode (execution mode: standard, auto-edits, bypass, plan-only)
+     */
+    updateSessionPermissionMode: async (sessionId: string, permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only') => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return;
+
+      const updatedSession = {
+        ...session,
+        permissionMode,
+        updatedAt: Date.now(),
+      };
+
+      // Update local state
+      set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
+      }));
+
+      // Persist to database
+      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+    },
+
+    /**
      * Send all accumulated tool results to AI in a single batch
      */
     sendAllToolResults: async () => {
@@ -545,19 +596,20 @@ export const useChatStore = create<ChatState>()(
         }
 
         const apiConfig = useSettingsStore.getState().getActiveConfig();
+        if (!apiConfig) {
+          setError('No API configuration found. Please add an API key in Settings.');
+          setStreaming(false);
+          set({ pendingToolResults: [], pendingToolCalls: 0 });
+          return;
+        }
 
         // Prepare all messages for next turn - include tool_calls when present
         // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
-          ...(msg.tool_calls && {
-            tool_calls: msg.tool_calls.map((tc) => ({
-              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
-              name: tc.name,
-              arguments: tc.arguments,
-            })),
-          }),
+          // Pass tool_calls as-is; Rust ToolCall accepts both 'id' and 'tool_call_id' via serde alias
+          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
           ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
@@ -572,18 +624,18 @@ export const useChatStore = create<ChatState>()(
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
-        // Build full system prompt (same enrichment as sendMessage)
+        // Build full system prompt — mirror sendMessage: session-level only, no global files
         let systemPrompt = useUIStore.getState().agentInstructions;
         const toolResultSession = get().sessions.find(s => s.id === currentSessionId);
         const sessionWorkingFilesForTool = toolResultSession?.workingFiles ?? [];
-        const globalImportedFilesForTool = useSettingsStore.getState().importedFiles;
-        const allWorkingFilesForTool = [
-          ...sessionWorkingFilesForTool,
-          ...globalImportedFilesForTool.filter(f => !sessionWorkingFilesForTool.some(sf => sf.path === f.path))
-        ];
-        if (allWorkingFilesForTool.length > 0) {
-          const filesList = allWorkingFilesForTool.map(f => `- ${f.name}: ${f.path}`).join('\n');
-          systemPrompt += `\n\n## Working Context\n\nYou have access to the following working files in this session:\n${filesList}\n\n### How to use these files:\n\n1. **Read file contents**: Use the \`read_file\` tool with the exact path provided above.\n2. **Write/modify files**: Use the \`write_file\` tool to create or update files.\n3. **Search files**: Use \`grep\` to search for content within files.\n4. **Execute commands**: Use \`bash\` to run scripts or commands.\n\n### Guidelines:\n- Always read files first before editing them\n- Use the exact absolute paths provided above`;
+        const sessionWorkDirForTool = toolResultSession?.workDir;
+
+        if (sessionWorkDirForTool) {
+          systemPrompt += `\n\n## Working Directory\n\nYour working directory for this session is: \`${sessionWorkDirForTool}\`\nUse this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and \`grep\` tools.`;
+        }
+        if (sessionWorkingFilesForTool.length > 0) {
+          const filesList = sessionWorkingFilesForTool.map(f => `- ${f.name}: ${f.path}`).join('\n');
+          systemPrompt += `\n\n## Working Files\n\nThe following files have been added to this session's context:\n${filesList}\n\nUse \`read_file\` with the exact paths above to read their contents before editing.`;
         }
 
         const response = await invoke<{
@@ -597,9 +649,9 @@ export const useChatStore = create<ChatState>()(
           tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
         }>('send_claude_sdk_chat_streaming', {
           messages,
-          apiKey: apiConfig?.apiKey,
-          model: apiConfig?.model,
-          baseUrl: apiConfig?.baseUrl || '',
+          apiKey: apiConfig.apiKey,
+          model: apiConfig.model,
+          baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
         });
 
@@ -637,9 +689,29 @@ export const useChatStore = create<ChatState>()(
 
       } catch (error) {
         console.error('Failed to send tool results:', error);
-        setError('Failed to send tool results back to AI');
+        // Surface the actual error message so the user can diagnose the problem
+        // (e.g. API error, context-length exceeded, network failure, etc.)
+        const errMsg = typeof error === 'string'
+          ? error
+          : (error instanceof Error ? error.message : String(error));
+        setError(`Failed to send tool results: ${errMsg}`);
         setStreaming(false);
         set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '' });
+
+        // Remove empty assistant placeholder to prevent "Thinking..." stuck state
+        const sid = get().currentSessionId;
+        if (sid) {
+          set((state) => ({
+            sessions: state.sessions.map((s) => {
+              if (s.id !== sid || s.messages.length === 0) return s;
+              const last = s.messages[s.messages.length - 1];
+              if (last.role === 'assistant' && !last.content && !last.reasoning) {
+                return { ...s, messages: s.messages.slice(0, -1) };
+              }
+              return s;
+            }),
+          }));
+        }
       }
     },
 
@@ -673,13 +745,8 @@ export const useChatStore = create<ChatState>()(
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
-          ...(msg.tool_calls && {
-            tool_calls: msg.tool_calls.map((tc) => ({
-              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
-              name: tc.name,
-              arguments: tc.arguments,
-            })),
-          }),
+          // Pass tool_calls as-is; Rust ToolCall accepts both 'id' and 'tool_call_id' via serde alias
+          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
           ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
@@ -788,44 +855,24 @@ export const useChatStore = create<ChatState>()(
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
-        // Build system prompt with session-level working files context
+        // Build system prompt with session-level context only.
+        // IMPORTANT: Global importedFiles are intentionally NOT included here — they would
+        // contaminate every conversation. Each session's context is self-contained.
         let systemPrompt = useUIStore.getState().agentInstructions;
 
-        // Get session-level working files (higher priority than global importedFiles)
         const currentSession = get().sessions.find(s => s.id === currentSessionId);
         const sessionWorkingFiles = currentSession?.workingFiles ?? [];
-        const globalImportedFiles = useSettingsStore.getState().importedFiles;
+        const sessionWorkDir = currentSession?.workDir;
 
-        // Combine session files and global files (session files first)
-        const allWorkingFiles = [...sessionWorkingFiles, ...globalImportedFiles.filter(
-          (f) => !sessionWorkingFiles.some(sf => sf.path === f.path)
-        )];
+        // Inject bound working directory into system prompt so AI knows where to navigate
+        if (sessionWorkDir) {
+          systemPrompt += `\n\n## Working Directory\n\nYour working directory for this session is: \`${sessionWorkDir}\`\nUse this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and \`grep\` tools. Resolve all relative paths against this directory.`;
+        }
 
-        if (allWorkingFiles.length > 0) {
-          const filesList = allWorkingFiles.map((f) => `- ${f.name}: ${f.path}`).join('\n');
-          systemPrompt += `
-
-## Working Context
-
-You have access to the following working files in this session:
-${filesList}
-
-### How to use these files:
-
-1. **Read file contents**: Use the \`read_file\` tool with the exact path provided above.
-   Example: read_file path=/Users/user/project/README.md
-
-2. **Write/modify files**: Use the \`write_file\` tool to create or update files.
-
-3. **Search files**: Use \`grep\` to search for content within files.
-
-4. **Execute commands**: Use \`bash\` to run scripts or commands.
-
-### Guidelines:
-- Always read files first before editing them
-- Use relative paths when possible, or the exact absolute paths provided above
-- Report any file access errors clearly
-- Proactively examine these files to understand the project structure`;
+        // Inject session-level working files (only files explicitly added to this session)
+        if (sessionWorkingFiles.length > 0) {
+          const filesList = sessionWorkingFiles.map((f) => `- ${f.name}: ${f.path}`).join('\n');
+          systemPrompt += `\n\n## Working Files\n\nThe following files have been added to this session's context:\n${filesList}\n\nUse \`read_file\` with the exact paths above to read their contents before editing.`;
         }
 
         // Use streaming command
@@ -902,6 +949,21 @@ ${filesList}
         setError(errorMsg);
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '' });
+
+        // Remove empty assistant placeholder to prevent "Thinking..." stuck state
+        const sid = get().currentSessionId;
+        if (sid) {
+          set((state) => ({
+            sessions: state.sessions.map((s) => {
+              if (s.id !== sid || s.messages.length === 0) return s;
+              const last = s.messages[s.messages.length - 1];
+              if (last.role === 'assistant' && !last.content && !last.reasoning) {
+                return { ...s, messages: s.messages.slice(0, -1) };
+              }
+              return s;
+            }),
+          }));
+        }
       }
     },
 
@@ -1236,7 +1298,7 @@ ${filesList}
       // Get the current session to update in database
       const session = get().sessions.find((s) => s.id === sessionId);
       if (session) {
-        const updatedSession = { ...session, cwd, updatedAt: Date.now() };
+        const updatedSession = { ...session, cwd, workDir: cwd, updatedAt: Date.now() };
         try {
           await invoke('db_save_session', { session: sessionToDb(updatedSession) });
         } catch (error) {
@@ -1246,7 +1308,7 @@ ${filesList}
 
       set((state) => ({
         sessions: state.sessions.map((s) =>
-          s.id === sessionId ? { ...s, cwd, updatedAt: Date.now() } : s
+          s.id === sessionId ? { ...s, cwd, workDir: cwd, updatedAt: Date.now() } : s
         ),
       }));
     },

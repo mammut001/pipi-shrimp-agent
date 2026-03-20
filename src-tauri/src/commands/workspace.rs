@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use tauri::api::dialog::FileDialogBuilder;
+use tauri_plugin_dialog::DialogExt;
 
 /// Summary of one dated output folder inside .pipi-shrimp/
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,16 +31,16 @@ pub struct OutputFolder {
 ///
 /// 使用 async + oneshot channel 避免在主线程上 blocking 导致的卡死问题。
 #[tauri::command]
-pub async fn open_folder_dialog() -> Option<String> {
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<PathBuf>>();
+pub async fn open_folder_dialog(app: tauri::AppHandle) -> Option<String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
 
     // FileDialogBuilder (非 blocking 版本) 在主线程上展示对话框，通过 callback 返回结果
-    FileDialogBuilder::new().pick_folder(move |path| {
+    app.dialog().file().pick_folder(move |path| {
         let _ = tx.send(path);
     });
 
     rx.await.ok().flatten()
-        .map(|p| p.to_string_lossy().to_string())
+        .map(|p| p.to_string())
 }
 
 /// Initialise the `.pipi-shrimp/` directory inside `work_dir`.

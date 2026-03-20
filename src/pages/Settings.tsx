@@ -12,7 +12,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { ApiConfig } from '@/types/settings';
 import { API_PROVIDERS, PROVIDER_MODELS } from '@/types/settings';
 
@@ -326,9 +326,9 @@ export function Settings() {
 
     try {
       const result = await invoke<boolean>('test_connection', {
-        api_key: formData.apiKey,
+        apiKey: formData.apiKey,
         model: formData.model,
-        base_url: (formData.provider === 'custom' || formData.provider === 'minimax') ? formData.baseUrl : null,
+        baseUrl: (formData.provider === 'custom' || formData.provider === 'minimax') ? formData.baseUrl : null,
       });
 
       if (result) {

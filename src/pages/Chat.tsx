@@ -33,12 +33,19 @@ export function Chat() {
   } = useChatStore();
 
   // Use precise selectors so each field has its own subscription, guaranteeing
-  // the modal renders as soon as pendingPermission changes (avoids stale-ref issues)
-  const pendingPermission = useUIStore((s) => s.pendingPermission);
+  // the modal renders as soon as the queue changes (avoids stale-ref issues).
+  // permissionQueue is FIFO — we always show the front item.
+  const permissionQueue = useUIStore((s) => s.permissionQueue);
+  const pendingPermission = permissionQueue[0];   // undefined when queue is empty
   const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
 
-  const messages = currentMessages();
+  // Filter out internal tool-result messages — these are user messages with the
+  // __TOOL_RESULT__:{id}:{content} prefix used by the Rust backend. They carry
+  // tool output back to the AI but should never be shown as chat bubbles.
+  const messages = currentMessages().filter(
+    (m) => !(m.role === 'user' && m.content.startsWith('__TOOL_RESULT__:'))
+  );
   const hasMessages = messages.length > 0;
 
   // Initialize chat store on mount
@@ -79,10 +86,27 @@ export function Chat() {
 
   /**
    * Handle permission denial
+   * Must also decrement pendingToolCalls so sendAllToolResults can still fire
+   * when all other tool calls complete.
    */
   const handleDenyPermission = () => {
+    if (!pendingPermission) return;
     addNotification('info', 'Permission denied');
     clearPermissionRequest();
+
+    // Decrement the counter and, if it hits 0, flush whatever results we have
+    const { pendingToolCalls, sendAllToolResults } = useChatStore.getState();
+    useChatStore.setState((state) => ({
+      pendingToolCalls: state.pendingToolCalls - 1,
+      // Inject a "denied" placeholder so the AI gets a tool result for this call
+      pendingToolResults: [
+        ...state.pendingToolResults,
+        { toolCallId: pendingPermission.id, result: 'Permission denied by user.' },
+      ],
+    }));
+    if (pendingToolCalls - 1 <= 0) {
+      sendAllToolResults();
+    }
   };
 
   /**
@@ -146,14 +170,14 @@ export function Chat() {
             )}
           </div>
 
-          {/* Error Banner */}
+          {/* Error Banner — responsive: wraps on small windows */}
           {error && (
-            <div className="px-4 py-3 bg-red-50 border-t border-red-200">
-              <div className="mx-auto flex items-center justify-between gap-4 max-w-3xl">
-                <div className="flex items-center gap-2 text-red-700">
+            <div className="px-3 py-2 bg-red-50 border-t border-red-200">
+              <div className="mx-auto max-w-3xl flex flex-col sm:flex-row sm:items-center gap-2">
+                <div className="flex items-start gap-2 text-red-700 min-w-0 flex-1">
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5 flex-shrink-0"
+                    className="h-5 w-5 flex-shrink-0 mt-0.5"
                     viewBox="0 0 20 20"
                     fill="currentColor"
                   >
@@ -163,12 +187,12 @@ export function Chat() {
                       clipRule="evenodd"
                     />
                   </svg>
-                  <span className="text-sm font-medium">{error}</span>
+                  <span className="text-sm font-medium break-words overflow-hidden" style={{ wordBreak: 'break-word' }}>{error}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-auto">
                   <button
                     onClick={() => retryLastMessage()}
-                    className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors"
+                    className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors whitespace-nowrap"
                   >
                     Retry
                   </button>

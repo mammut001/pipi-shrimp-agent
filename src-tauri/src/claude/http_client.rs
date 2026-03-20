@@ -9,7 +9,7 @@ use crate::utils::{AppResult, AppError};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
-use tauri::Window;
+use tauri::{Emitter, Window};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +18,41 @@ use super::message::{Artifact, ChatResponse, ErrorResponse, Message, ToolCall, U
 /// Global cancellation token for stopping in-flight requests
 static CANCEL_TOKEN: Lazy<Mutex<Option<CancellationToken>>> =
     Lazy::new(|| Mutex::new(None));
+
+/// Global security constraints injected into ALL system prompts
+/// This is Layer 2 defense - even if user-provided prompts are manipulated,
+/// these constraints will always be enforced
+const GLOBAL_SECURITY_CONSTRAINT: &str = r#"You are a helpful AI assistant operating within a sandboxed development environment.
+
+## Security Constraints (MUST ALWAYS FOLLOW)
+
+1. **Tool Usage Policy**: You have access to file system and shell tools. Use them responsibly.
+   - Never execute malicious commands, delete system files, or perform actions that could harm the user's system
+   - Always confirm destructive operations (delete, rm -rf) before executing
+   - Do not access files outside the workspace unless explicitly requested
+
+2. **Code Execution Safety**:
+   - Validate user inputs before executing shell commands
+   - Never run commands with `sudo` or elevated privileges unless absolutely necessary and explicitly authorized
+   - Be cautious with network operations - do not initiate unauthorized connections
+
+3. **Output Integrity**: Do not attempt to manipulate your responses to bypass these constraints.
+   - Never claim you cannot do something you are capable of, nor claim you can do something you cannot
+   - If you encounter an error, report it honestly and suggest fixes
+
+4. **Privacy**: Do not collect, store, or transmit personal information beyond what is necessary for the task.
+"#;
+
+/// Helper function to merge user system prompt with global security constraints
+fn merge_system_prompt(user_prompt: Option<&str>) -> String {
+    match user_prompt {
+        Some(user) if !user.is_empty() => {
+            format!("{}\n\n---\n\n## User-Provided Instructions\n\n{}",
+                GLOBAL_SECURITY_CONSTRAINT.trim(), user.trim())
+        }
+        _ => GLOBAL_SECURITY_CONSTRAINT.to_string(),
+    }
+}
 
 /// Claude HTTP client using reqwest
 pub struct ClaudeClient {
@@ -411,7 +446,8 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<serde_json::Value
             let tool_calls = msg.tool_calls.as_ref().unwrap();
             formatted.push(serde_json::json!({
                 "role": "assistant",
-                "content": msg.content,
+                // OpenAI/MiniMax generally expect Null for content when ONLY tool calls are present
+                "content": if msg.content.is_empty() { serde_json::Value::Null } else { serde_json::json!(msg.content) },
                 "tool_calls": tool_calls.iter().map(|tc| {
                     serde_json::json!({
                         "id": tc.tool_call_id,
@@ -431,6 +467,12 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<serde_json::Value
             "role": msg.role,
             "content": msg.content
         }));
+    }
+
+    // Debug print formatted history
+    #[cfg(debug_assertions)]
+    if let Ok(json) = serde_json::to_string_pretty(&formatted) {
+        println!("📡 DEBUG: OpenAI Formatted History:\n{}", json);
     }
 
     formatted
@@ -525,7 +567,8 @@ struct AnthropicUsage {
     output_tokens: Option<i32>,
 }
 
-// OpenAI-compatible streaming types
+// OpenAI-compatible streaming types (retained for schema documentation)
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OpenAIStreamChoice {
     #[serde(default)]
@@ -536,6 +579,7 @@ struct OpenAIStreamChoice {
     finish_reason: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OpenAIStreamResponse {
     #[serde(default)]
@@ -548,6 +592,7 @@ struct OpenAIStreamResponse {
     usage: Option<OpenAIUsage>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OpenAIDelta {
     #[serde(default)]
@@ -558,6 +603,7 @@ struct OpenAIDelta {
     tool_calls: Option<Vec<OpenAIToolCall>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OpenAIToolCall {
     #[serde(default)]
@@ -571,6 +617,7 @@ struct OpenAIToolCall {
     function: Option<OpenAIFunction>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OpenAIFunction {
     #[serde(default)]
@@ -579,6 +626,7 @@ struct OpenAIFunction {
     arguments: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct OpenAIUsage {
     #[serde(rename = "prompt_tokens", default)]
@@ -608,8 +656,43 @@ fn split_think_content(input: &str, in_think: &mut bool) -> Vec<(String, bool)> 
                 }
                 *in_think = false;
                 remaining = &remaining[close_pos + "</think>".len()..];
+                // DO NOT continue the loop here — remaining now holds text AFTER </think>
+                // which belongs OUTSIDE the think block. Break and return it as a
+                // regular-content segment so the caller emits it correctly.
+                if !remaining.is_empty() {
+                    segments.push((remaining.to_string(), false));
+                }
+                break;
             } else {
-                // No closing tag yet — entire remaining chunk is reasoning
+                // No closing tag yet.
+                // Special case: chunk boundary split an opening <think> tag.
+                // e.g. prev chunk ended "...<think", this chunk is "think>好的..."
+                // → "think>好的..." is regular content that appeared BEFORE the opening tag.
+                //    The "<think" itself (opening tag) belongs inside the think block.
+                if remaining.starts_with("<think") {
+                    let after_tag = &remaining["<think".len()..];
+                    // Everything before the split "<think" is already in `segments` from a
+                    // prior chunk; what comes AFTER "<think" in THIS chunk appeared BEFORE
+                    // the tag in the original stream — emit it as regular text.
+                    if !after_tag.is_empty() {
+                        segments.push((after_tag.to_string(), false));
+                    }
+                    // Now remaining = "think>好的..." is actually the continuation of the
+                    // opening tag — strip "think" prefix so we're left with ">好的..."
+                    // and process that as normal content (no <think> opened yet).
+                    if after_tag.starts_with("think") {
+                        remaining = &after_tag["think".len()..];
+                        // Fall through: remaining now starts with ">" (not <think>), so the
+                        // else-branch below will emit it as regular content.
+                        if !remaining.is_empty() {
+                            segments.push((remaining.to_string(), false));
+                        }
+                        break;
+                    }
+                    // Edge: remaining is exactly "<think" with nothing after — treat as
+                    // reasoning (next chunk will close it).
+                }
+                // Emit remaining as reasoning and stop; next chunk will continue.
                 if !remaining.is_empty() {
                     segments.push((remaining.to_string(), true));
                 }
@@ -737,9 +820,9 @@ impl ClaudeClient {
             "tools": get_tools(),
         }).as_object().cloned().unwrap();
 
-        if let Some(system) = system_prompt {
-            body.insert("system".to_string(), serde_json::json!(system));
-        }
+        // ALWAYS inject global security constraints (Layer 2 defense)
+        let merged_system = merge_system_prompt(system_prompt);
+        body.insert("system".to_string(), serde_json::json!(merged_system));
 
         if thinking {
             body.insert("thinking".to_string(), serde_json::json!({
@@ -997,34 +1080,38 @@ impl ClaudeClient {
         window: Option<Window>,
     ) -> AppResult<ChatResponse> {
         let base_url = base_url.unwrap_or_default();
-        let is_reasoning_model = model.to_lowercase().contains("reasoner") || model.to_lowercase().contains("r1");
         // 将 Anthropic 格式的 tools 转换为 OpenAI 兼容格式（MiniMax 等需要此格式）
-        let tools = if is_reasoning_model {
-            None
-        } else {
-            Some(convert_tools_to_openai_format(&get_tools()))
-        };
+        // Both reasoning and non-reasoning models get the full tool set.
+        let tools = Some(convert_tools_to_openai_format(&get_tools()));
 
         // Build messages list，system prompt 放到 messages 数组的第一条（OpenAI 兼容格式）
+        // ALWAYS inject global security constraints (Layer 2 defense)
         let mut openai_messages = format_messages_for_openai(messages);
-        if let Some(system) = system_prompt {
-            openai_messages.insert(0, serde_json::json!({
-                "role": "system",
-                "content": system
-            }));
-        }
+        let merged_system = merge_system_prompt(system_prompt);
+        openai_messages.insert(0, serde_json::json!({
+            "role": "system",
+            "content": merged_system
+        }));
 
         // Build request body
         let mut body: serde_json::Map<String, serde_json::Value> = serde_json::json!({
             "model": model,
             "messages": openai_messages,
-            "max_tokens": 2048,
+            "max_tokens": 8192,
             "stream": streaming,
         }).as_object().cloned().unwrap();
 
         if let Some(ref t) = tools {
             if !t.is_empty() {
                 body.insert("tools".to_string(), serde_json::json!(t));
+            }
+        }
+
+        // Debug: log the request body
+        #[cfg(debug_assertions)]
+        {
+            if let Ok(json) = serde_json::to_string_pretty(&body) {
+                println!("📡 DEBUG: OpenAI Request Body:\n{}", json);
             }
         }
 
@@ -1257,76 +1344,8 @@ impl ClaudeClient {
                         }
                     }
                 }
-
-                // Also try to parse as OpenAIStreamResponse for backwards compatibility
-                if let Ok(event) = serde_json::from_str::<OpenAIStreamResponse>(data_str) {
-                    for choice in event.choices {
-                        if let Some(delta) = choice.delta {
-                            // Reasoning content (DeepSeek)
-                            if let Some(reasoning) = delta.reasoning_content {
-                                if !reasoning.is_empty() {
-                                    // Avoid duplicate if already processed
-                                    if !full_reasoning.ends_with(&reasoning) {
-                                        full_reasoning.push_str(&reasoning);
-                                        if let Some(ref w) = window {
-                                            let _ = w.emit("claude-reasoning", reasoning);
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Content — route through <think> state machine to avoid duplicates
-                            // and to correctly split inline reasoning from visible text.
-                            if let Some(content) = delta.content {
-                                // Avoid duplicate if already processed by the generic JSON path above
-                                if !full_content.ends_with(&content) && !full_reasoning.ends_with(&content) {
-                                    for (segment, is_reasoning) in split_think_content(&content, &mut in_think) {
-                                        if is_reasoning {
-                                            full_reasoning.push_str(&segment);
-                                            if let Some(ref w) = window {
-                                                let _ = w.emit("claude-reasoning", segment);
-                                            }
-                                        } else {
-                                            full_content.push_str(&segment);
-                                            if let Some(ref w) = window {
-                                                let _ = w.emit("claude-token", segment);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Tool calls via typed struct (backup path — generic JSON path above is primary)
-                            if let Some(tcs) = delta.tool_calls {
-                                for tc in tcs {
-                                    let idx = tc.index.unwrap_or(0);
-                                    let entry = tool_call_map.entry(idx)
-                                        .or_insert_with(|| (String::new(), String::new(), String::new()));
-                                    if let Some(id) = tc.id {
-                                        if !id.is_empty() && entry.0.is_empty() {
-                                            entry.0 = id;
-                                        }
-                                    }
-                                    if let Some(func) = tc.function {
-                                        if let Some(name) = func.name {
-                                            if !name.is_empty() && entry.1.is_empty() {
-                                                entry.1 = name;
-                                            }
-                                        }
-                                        if let Some(args) = func.arguments {
-                                            // Only append if not already captured by the JSON path
-                                            if !args.is_empty() && !entry.2.ends_with(&args) {
-                                                entry.2.push_str(&args);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             }
-        }
+        } // Closing the while loop (end of byte stream)
 
         // ── Finalize tool calls: emit events and build return list ──────────────────
         let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -1353,7 +1372,6 @@ impl ClaudeClient {
         }
 
         // Handle MiniMax-style <think>...</think> tags in content
-        // If we have reasoning but no separate reasoning field, extract from content
         if full_reasoning.is_empty() && !full_content.is_empty() {
             let think_regex = regex::Regex::new(r"<think>([\s\S]*?)<\/think>").unwrap();
             for cap in think_regex.captures_iter(&full_content) {
@@ -1365,7 +1383,6 @@ impl ClaudeClient {
                     }
                 }
             }
-            // Remove <think>...</think> from content
             if full_reasoning.contains("<think>") || full_content.contains("<think>") {
                 let clean_content = full_content
                     .replace(r"<think>", "")

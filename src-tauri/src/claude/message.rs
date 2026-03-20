@@ -166,6 +166,9 @@ pub struct StreamChunk {
  */
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    /// Accepts both "id" (frontend/DB JSON) and "tool_call_id" (internal Rust) when deserializing.
+    /// Serializes as "tool_call_id" for internal use; format_messages_for_openai uses "id" explicitly.
+    #[serde(alias = "id", alias = "tool_call_id")]
     pub tool_call_id: String,
     pub name: String,
     pub arguments: String,

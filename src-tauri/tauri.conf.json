@@ -1,121 +1,74 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "pipi-shrimp-agent",
+  "version": "0.1.0",
+  "identifier": "com.tauri.pipi-shrimp-agent",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:5173",
-    "distDir": "../dist"
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "pipi-shrimp-agent",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "fs": {
-        "all": false,
-        "readFile": true,
-        "scope": [
-          "$RESOURCE/**"
-        ]
-      },
-      "path": {
-        "all": false
-      },
-      "shell": {
-        "all": false,
-        "open": true
-      },
-      "window": {
-        "all": false,
-        "create": true,
-        "close": true,
-        "hide": true,
-        "show": true,
-        "maximize": true,
-        "minimize": true,
-        "unmaximize": true,
-        "unminimize": true,
-        "startDragging": true,
-        "setTitle": true,
-        "setSize": true,
-        "setMinSize": true,
-        "setMaxSize": true,
-        "setPosition": true,
-        "setFullscreen": true,
-        "setFocus": true,
-        "setAlwaysOnTop": true,
-        "setDecorations": true,
-        "setResizable": true
-      },
-      "dialog": {
-        "all": true
-      }
-    },
-    "bundle": {
-      "active": true,
-      "category": "DeveloperTool",
-      "copyright": "",
-      "deb": {
-        "depends": []
-      },
-      "externalBin": [],
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
-      "identifier": "com.tauri.pipi-shrimp-agent",
-      "longDescription": "",
-      "macOS": {
-        "entitlements": null,
-        "exceptionDomain": "",
-        "frameworks": [],
-        "providerShortName": null,
-        "signingIdentity": null
-      },
-      "resources": [
-        "skills/**"
-      ],
-      "shortDescription": "",
-      "targets": "all",
-      "windows": {
-        "certificateThumbprint": null,
-        "digestAlgorithm": "sha256",
-        "timestampUrl": "",
-        "wix": null,
-        "nsis": {
-          "compression": "lzma",
-          "installerIcon": "icons/icon.ico",
-          "installMode": "currentUser",
-          "languages": null,
-          "template": null
-        }
-      }
-    },
-    "security": {
-      "csp": "default-src 'self'; connect-src 'self' https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: blob:; font-src 'self' https: data:; frame-src https:; media-src 'self' https: blob:;"
-    },
-    "updater": {
-      "active": false,
-      "dialog": true,
-      "pubkey": "",
-      "windows": {
-        "installMode": "passive"
-      }
-    },
+  "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
-        "fullscreen": false,
-        "height": 800,
-        "label": "main",
-        "resizable": true,
-        "title": "",
+        "title": "pipi-shrimp-agent",
         "width": 1200,
-        "center": true
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "label": "main"
       }
-    ]
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: blob:; font-src 'self' https: data:; frame-src https:; media-src 'self' https: blob:;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "frameworks": [],
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "entitlements": null,
+      "providerShortName": null
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "nsis": {
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": null,
+        "template": null
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "category": "DeveloperTool",
+    "shortDescription": "",
+    "longDescription": "",
+    "copyright": "",
+    "externalBin": []
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
   }
 }

@@ -48,6 +48,7 @@ export interface Session {
   model?: string;               // Model to use for this session (optional, defaults to apiConfig model)
   workDir?: string;             // work directory for this session
   workingFiles?: ImportedFile[]; // session-level working files
+  permissionMode?: 'standard' | 'auto-edits' | 'bypass' | 'plan-only'; // NEW: execution permission mode
 }
 
 /** Project (folder for grouping sessions) */
@@ -244,6 +245,11 @@ export interface ChatState {
    * Clear all working files from a session
    */
   clearSessionWorkingFiles: (sessionId: string) => Promise<void>;
+
+  /**
+   * Update session's permission mode (execution mode: standard, auto-edits, bypass, plan-only)
+   */
+  updateSessionPermissionMode: (sessionId: string, permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only') => Promise<void>;
 }
 
 // ============= Helper Functions =============

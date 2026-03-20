@@ -21,7 +21,8 @@ fn row_to_session(row: &Row) -> SqliteResult<DbSession> {
         project_id: row.get(5)?,
         model: row.get(6)?,
         work_dir: row.get(7)?,
-        working_files: row.get(8)?,  // NEW: session-level working files
+        working_files: row.get(8)?,
+        permission_mode: row.get(9)?,  // NEW: session permission mode
     })
 }
 
@@ -36,7 +37,8 @@ fn row_to_message(row: &Row) -> SqliteResult<DbMessage> {
         content: row.get(3)?,
         reasoning: row.get(4)?,
         artifacts: row.get(5)?,
-        created_at: row.get(6)?,
+        tool_calls: row.get(6)?,
+        created_at: row.get(7)?,
     })
 }
 
@@ -74,6 +76,7 @@ pub struct DbSession {
     pub model: Option<String>,
     pub work_dir: Option<String>,    // each session's work directory
     pub working_files: Option<String>, // JSON serialized ImportedFile[]
+    pub permission_mode: Option<String>, // NEW: session permission mode ('standard', 'auto-edits', 'bypass', 'plan-only')
 }
 
 /**
@@ -87,6 +90,7 @@ pub struct DbMessage {
     pub content: String,
     pub reasoning: Option<String>,
     pub artifacts: Option<String>,
+    pub tool_calls: Option<String>,  // JSON-serialized Vec<ToolCall>
     pub created_at: i64,
 }
 
@@ -177,6 +181,27 @@ pub fn init_database() -> SqliteResult<()> {
         println!("🚀 Migrating database: adding 'reasoning' column to 'messages' table");
         // Ignore error if it somehow exists (e.g. race condition)
         let _ = conn.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT", []);
+    }
+
+    // Migration: add tool_calls column to messages table
+    let tool_calls_col_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(messages)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "tool_calls" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !tool_calls_col_exists {
+        println!("🚀 Migrating database: adding 'tool_calls' column to 'messages' table");
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN tool_calls TEXT", []);
     }
 
     // Create index for faster message lookups
@@ -271,6 +296,27 @@ pub fn init_database() -> SqliteResult<()> {
         let _ = conn.execute("ALTER TABLE sessions ADD COLUMN working_files TEXT", []);
     }
 
+    // Migration: add permission_mode column to sessions table
+    let sessions_permission_mode_exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut found = false;
+        for name in rows {
+            if let Ok(name) = name {
+                if name == "permission_mode" {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    if !sessions_permission_mode_exists {
+        println!("🚀 Migrating database: adding 'permission_mode' column to 'sessions' table");
+        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN permission_mode TEXT", []);
+    }
+
     // Create projects table (work_dir included from the start for new installs)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS projects (
@@ -335,9 +381,9 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model, session.work_dir, session.working_files],
+            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model, session.work_dir, session.working_files, session.permission_mode],
         )?;
     }
     Ok(())
@@ -352,7 +398,7 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files FROM sessions ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode FROM sessions ORDER BY updated_at DESC"
         )?;
 
         let session_iter = stmt.query_map([], row_to_session)?;
@@ -384,8 +430,8 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, artifacts, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, artifacts, tool_calls, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 message.id,
                 message.session_id,
@@ -393,6 +439,7 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
                 message.content,
                 message.reasoning,
                 message.artifacts,
+                message.tool_calls,
                 message.created_at
             ],
         )?;
@@ -409,7 +456,7 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, reasoning, artifacts, created_at
+            "SELECT id, session_id, role, content, reasoning, artifacts, tool_calls, created_at
              FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"
         )?;
 

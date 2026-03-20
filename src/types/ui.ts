@@ -35,12 +35,11 @@ export interface UIState {
   settingsOpen: boolean;
   currentView: 'chat' | 'workflow' | 'skill' | 'browser';
   currentArtifactId?: string;
-  pendingPermission?: PermissionRequest;
+  permissionQueue: PermissionRequest[];  // FIFO queue — supports multiple concurrent tool calls
   notifications: Notification[];
   showApiKey: boolean;
-  
+
   // Agentic UI State
-  permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only';
   rightPanelVisible: boolean;
   agentInstructions: string;
   taskProgress: TaskStep[];
@@ -106,10 +105,9 @@ export interface UIState {
   clearNotifications: () => void;
 
   // Agentic Actions
-  setPermissionMode: (mode: UIState['permissionMode']) => void;
   toggleRightPanel: () => void;
   setAgentInstructions: (instructions: string) => void;
-  addTaskStep: (label: string) => void;
+  addTaskStep: (label: string, id?: string) => void;
   updateTaskStep: (id: string, status: TaskStep['status']) => void;
   clearTaskProgress: () => void;
   setAgentPanelTab: (tab: UIState['agentPanelTab']) => void;
