@@ -117,6 +117,7 @@ pipi-shrimp-agent/
 - [x] Task 7: Core local system operation commands (Bash/Node/Python/File System)
 - [ ] Task 8: More automated plugins and third-party API extension support
 - [ ] Task 9: Knowledge base (RAG) retrieval augmentation integration
+- [ ] Task 10: Font selection feature for Typst rendering (allow users to choose preferred fonts)
 
 ### 🔧 Recommended IDE Setup
 
@@ -226,6 +227,7 @@ pipi-shrimp-agent/
 - [x] Task 7: 核心本地系统操作指令集 (Bash/Node/Python/文件系统)
 - [ ] Task 8: 更多自动化插件与第三方 API 扩展支持
 - [ ] Task 9: 知识库 (RAG) 检索增强集成
+- [ ] Task 10: 字体选择功能 (允许用户为 Typst 渲染选择首选字体)
 
 ### 🔧 IDE 推荐配置
 
