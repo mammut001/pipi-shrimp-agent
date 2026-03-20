@@ -14,6 +14,9 @@ mod database;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_fs::FsExt;
 
 use claude::{ClaudeClient, ChatResponse, Message};
 use commands::browser::BrowserState;
@@ -62,18 +65,21 @@ async fn send_claude_sdk_chat(
 #[tauri::command]
 async fn send_claude_sdk_chat_streaming(
     messages: Vec<Message>,
-    api_key: String,
+    #[allow(non_snake_case)]
+    apiKey: String,
     model: String,
-    base_url: Option<String>,
-    system_prompt: Option<String>,
+    #[allow(non_snake_case)]
+    baseUrl: Option<String>,
+    #[allow(non_snake_case)]
+    systemPrompt: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, String> {
     // Convert empty string to None for custom API
-    let base_url = base_url.filter(|s| !s.is_empty());
+    let base_url = baseUrl.filter(|s| !s.is_empty());
     let state = state.lock().await;
     state.client
-        .chat_streaming(messages, api_key, model, base_url, system_prompt, window)
+        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, window)
         .await
         .map_err(|e| e.to_string())
 }
@@ -93,13 +99,15 @@ async fn stop_subprocess() -> Result<(), String> {
  */
 #[tauri::command]
 async fn test_connection(
-    api_key: String,
+    #[allow(non_snake_case)]
+    apiKey: String,
     model: String,
-    base_url: Option<String>,
+    #[allow(non_snake_case)]
+    baseUrl: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<bool, String> {
     // Convert empty string to None for custom API
-    let base_url = base_url.filter(|s| !s.is_empty());
+    let base_url = baseUrl.filter(|s| !s.is_empty());
 
     // Create a simple test message
     let messages = vec![Message {
@@ -112,7 +120,7 @@ async fn test_connection(
     let state = state.lock().await;
     match state
         .client
-        .chat(messages, api_key, model, base_url, None)
+        .chat(messages, apiKey, model, base_url, None)
         .await
     {
         Ok(_) => Ok(true),
@@ -190,7 +198,7 @@ async fn render_typst_to_svg(
     let fonts = font_state.prebuilt.fonts.clone();
 
     // Run the blocking Typst compilation on a thread-pool thread
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let prebuilt = PrebuiltFonts { book, fonts };
         compile_typst_to_svg_with_prebuilt(&source, &prebuilt)
     })
@@ -210,7 +218,7 @@ async fn render_typst_to_pdf(
     let book = font_state.prebuilt.book.clone();
     let fonts = font_state.prebuilt.fonts.clone();
 
-    let pdf_bytes = tauri::async_runtime::spawn_blocking(move || {
+    let pdf_bytes = tokio::task::spawn_blocking(move || {
         let prebuilt = PrebuiltFonts { book, fonts };
         compile_typst_to_pdf_with_prebuilt(&source, &prebuilt)
     })
@@ -238,6 +246,9 @@ fn get_font_count(font_state: tauri::State<'_, FontDbState>) -> usize {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // Initialize database - CRITICAL, cannot proceed without it
             if let Err(e) = init_database() {
@@ -247,7 +258,7 @@ pub fn run() {
             }
 
             // Get the main window
-            let _window = app.get_window("main").unwrap();
+            let _window = app.get_webview_window("main").unwrap();
 
             // Initialize Claude HTTP client (no Node.js required)
             let claude_client = ClaudeClient::new();

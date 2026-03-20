@@ -20,12 +20,11 @@ export const useUIStore = create<UIState>((set) => ({
   settingsOpen: false,
   currentView: 'chat' as 'chat' | 'workflow' | 'skill' | 'browser',
   currentArtifactId: undefined,
-  pendingPermission: undefined,
+  permissionQueue: [],
   notifications: [],
   showApiKey: false,
 
   // Agentic UI State
-  permissionMode: 'standard',
   rightPanelVisible: true,
   agentPanelTab: 'main' as const,
   agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || 'You are a powerful AI Agent designed by the Google Deepmind team.',
@@ -70,16 +69,16 @@ export const useUIStore = create<UIState>((set) => ({
     set({ currentArtifactId: undefined }),
 
   /**
-   * Set pending permission request
+   * Enqueue a permission request (supports multiple concurrent tool calls)
    */
   setPermissionRequest: (req: PermissionRequest) =>
-    set({ pendingPermission: req }),
+    set((state) => ({ permissionQueue: [...state.permissionQueue, req] })),
 
   /**
-   * Clear permission request
+   * Dequeue the front permission request (called after approve or deny)
    */
   clearPermissionRequest: () =>
-    set({ pendingPermission: undefined }),
+    set((state) => ({ permissionQueue: state.permissionQueue.slice(1) })),
 
   /**
    * Add notification with auto-dismiss
@@ -117,14 +116,13 @@ export const useUIStore = create<UIState>((set) => ({
     set({ notifications: [] }),
 
   // Agentic Actions
-  setPermissionMode: (mode) => set({ permissionMode: mode }),
   toggleRightPanel: () => set((state) => ({ rightPanelVisible: !state.rightPanelVisible })),
   setAgentInstructions: (agentInstructions) => {
     set({ agentInstructions });
     localStorage.setItem(AGENT_INSTRUCTIONS_STORAGE_KEY, agentInstructions);
   },
-  addTaskStep: (label) => set((state) => ({
-    taskProgress: [...state.taskProgress, { id: crypto.randomUUID(), label, status: 'pending' }]
+  addTaskStep: (label, id) => set((state) => ({
+    taskProgress: [...state.taskProgress, { id: id ?? crypto.randomUUID(), label, status: 'pending' }]
   })),
   updateTaskStep: (id, status) => set((state) => ({
     taskProgress: state.taskProgress.map(step => step.id === id ? { ...step, status } : step)

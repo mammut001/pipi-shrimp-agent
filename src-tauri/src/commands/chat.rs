@@ -24,13 +24,14 @@ pub struct SessionData {
     pub cwd: Option<String>,
     pub messages: Vec<Message>,
 }
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Message {
     pub role: String,
     pub content: String,
     pub reasoning: Option<String>,
     pub artifacts: Option<String>,
+    pub tool_calls: Option<String>,
+    pub tool_call_id: Option<String>,
     pub timestamp: u64,
 }
 
@@ -56,6 +57,8 @@ fn db_session_to_session_data(db_session: DbSession) -> AppResult<SessionData> {
             content: m.content,
             reasoning: m.reasoning,
             artifacts: m.artifacts,
+            tool_calls: m.tool_calls,
+            tool_call_id: None, // This field is used for API requests, not persisted in DB for every msg role yet (in prefix)
             timestamp: m.created_at as u64,
         })
         .collect();
@@ -90,6 +93,7 @@ pub async fn start_session(_app: AppHandle) -> AppResult<String> {
         model: None,
         work_dir: None,
         working_files: None,
+        permission_mode: Some("standard".to_string()),
     };
 
     database::save_session(&session)
@@ -118,6 +122,7 @@ pub async fn send_message(_app: AppHandle, req: SendMessageRequest) -> AppResult
         content: req.content.clone(),
         reasoning: None,
         artifacts: None,
+        tool_calls: None,
         created_at: timestamp,
     };
 
@@ -153,6 +158,7 @@ pub async fn save_message_to_db(
     content: String,
     reasoning: Option<String>,
     artifacts: Option<String>,
+    tool_calls: Option<String>,
 ) -> AppResult<String> {
     let timestamp = get_timestamp() as i64;
     let message_id = Uuid::new_v4().to_string();
@@ -164,6 +170,7 @@ pub async fn save_message_to_db(
         content,
         reasoning,
         artifacts,
+        tool_calls,
         created_at: timestamp,
     };
 
@@ -269,7 +276,7 @@ pub async fn update_session_cwd(
         .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
 
     if let Some(mut session) = sessions.into_iter().find(|s| s.id == session_id) {
-        session.cwd = Some(cwd);
+        session.work_dir = Some(cwd);
         session.updated_at = get_timestamp() as i64;
         database::save_session(&session)
             .map_err(|e| AppError::InternalError(format!("Failed to update cwd: {}", e)))?;
@@ -375,7 +382,29 @@ pub async fn execute_tool(
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for grep_files".to_string()))?;
             crate::commands::search::grep_files(pattern.to_string(), path.to_string()).await?
         }
-        _ => return Err(AppError::InternalError(format!("Unknown tool: {}", tool_name)))
+        "get_current_workspace" => {
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for get_current_workspace. This tool requires a 'path' parameter pointing to the working directory.".to_string()))?;
+            let result = crate::commands::file::get_workspace_info(path.to_string()).await?;
+            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
+        }
+        // 第一层防御：unknown tool 返回合法 JSON，让 Claude 自己 fallback 到文本回复
+        _ => {
+            let supported_tools = vec![
+                "read_file", "write_file", "append_file", "list_files", "path_exists",
+                "create_directory", "code_execution", "search_files", "glob_search",
+                "grep_files", "get_current_workspace"
+            ];
+            return Ok(serde_json::json!({
+                "error": true,
+                "message": format!(
+                    "工具 '{}' 不存在或暂不支持。可用工具: {}",
+                    tool_name,
+                    supported_tools.join(", ")
+                )
+            }).to_string());
+        }
     };
 
     Ok(result_json)

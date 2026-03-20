@@ -122,19 +122,19 @@ export const AgentPanel: React.FC = () => {
     agentInstructions,
     setAgentInstructions,
     taskProgress,
-    permissionMode,
-    setPermissionMode,
     addNotification,
     agentPanelTab: activeTab,
     setAgentPanelTab: setActiveTab,
   } = useUIStore();
-  const { importedFiles: globalImportedFiles, removeImportedFile } = useSettingsStore();
-  const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile } = useChatStore();
+  const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
+  const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode } = useChatStore();
   const { status: browserStatus } = useBrowserAgentStore();
 
-  // Get session-level working files for current session
+  // Get session-level working files and permissionMode for current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
   const sessionWorkingFiles = currentSession?.workingFiles ?? [];
+  // Get permissionMode from current session (defaults to 'standard')
+  const permissionMode = currentSession?.permissionMode || 'standard';
 
   // Combine session files and global files (deduplicated by path)
   const allWorkingFiles = [
@@ -199,13 +199,17 @@ export const AgentPanel: React.FC = () => {
     if (mode === 'bypass' && permissionMode !== 'bypass') {
       setShowBypassConfirm(true);
     } else {
-      setPermissionMode(mode as any);
+      if (currentSessionId) {
+        updateSessionPermissionMode(currentSessionId, mode as 'standard' | 'auto-edits' | 'bypass' | 'plan-only');
+      }
       setShowBypassConfirm(false);
     }
   };
 
   const confirmBypass = () => {
-    setPermissionMode('bypass');
+    if (currentSessionId) {
+      updateSessionPermissionMode(currentSessionId, 'bypass');
+    }
     setShowBypassConfirm(false);
   };
 
@@ -472,8 +476,10 @@ export const AgentPanel: React.FC = () => {
                     <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.path}>
                       {file.name}
                     </span>
-                    {isSessionFile && (
+                    {isSessionFile ? (
                       <span className="text-[8px] text-blue-400 font-bold">session</span>
+                    ) : (
+                      <span className="text-[8px] text-orange-400 font-bold">global</span>
                     )}
                     <button
                       onClick={handleRemove}
@@ -489,6 +495,19 @@ export const AgentPanel: React.FC = () => {
             ) : (
               <div className="py-6 flex flex-col items-center justify-center opacity-25">
                 <p className="text-[10px] font-bold uppercase tracking-tight text-center px-4 leading-normal">Drop files here to add to context</p>
+              </div>
+            )}
+            {globalImportedFiles.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
+                <span className="text-[9px] text-gray-400 font-medium">
+                  {globalImportedFiles.length} global file{globalImportedFiles.length !== 1 ? 's' : ''} (all sessions)
+                </span>
+                <button
+                  onClick={clearImportedFiles}
+                  className="text-[9px] text-orange-500 hover:text-orange-700 font-bold uppercase tracking-tight hover:underline transition-colors"
+                >
+                  Clear global
+                </button>
               </div>
             )}
           </div>

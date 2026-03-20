@@ -7,7 +7,7 @@
 use crate::models::FileResponse;
 use crate::utils::{AppError, AppResult};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /**
  * Expand ~ to home directory
@@ -155,4 +155,71 @@ pub struct FileInfo {
     pub name: String,
     pub path: String,
     pub is_directory: bool,
+}
+
+/// Workspace information returned by get_workspace_info
+#[derive(serde::Serialize)]
+pub struct WorkspaceInfo {
+    pub work_dir: String,
+    pub files: Vec<FileInfo>,
+    pub subdirs: Vec<FileInfo>,
+    pub total_files: usize,
+    pub total_dirs: usize,
+}
+
+/// Get workspace information including all files and subdirectories
+/// in the specified working directory
+#[tauri::command]
+pub async fn get_workspace_info(path: String) -> AppResult<WorkspaceInfo> {
+    let expanded_path = expand_path(&path);
+
+    if !expanded_path.exists() {
+        return Err(AppError::FileError(format!("Path does not exist: {}", path)));
+    }
+
+    if !expanded_path.is_dir() {
+        return Err(AppError::FileError(format!("Path is not a directory: {}", path)));
+    }
+
+    let mut files = Vec::new();
+    let mut subdirs = Vec::new();
+
+    let entries = fs::read_dir(&expanded_path)
+        .map_err(|e| AppError::FileError(e.to_string()))?;
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let file_path = entry.path();
+        let is_dir = file_path.is_dir();
+
+        let file_info = FileInfo {
+            name: file_name,
+            path: file_path.to_string_lossy().to_string(),
+            is_directory: is_dir,
+        };
+
+        if is_dir {
+            // Skip hidden directories like .git, .pipi-shrimp
+            if !file_info.name.starts_with('.') {
+                subdirs.push(file_info);
+            }
+        } else {
+            files.push(file_info);
+        }
+    }
+
+    // Sort: alphabetically, case-insensitive
+    files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    subdirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    let total_files = files.len();
+    let total_dirs = subdirs.len();
+
+    Ok(WorkspaceInfo {
+        work_dir: expanded_path.to_string_lossy().to_string(),
+        files,
+        subdirs,
+        total_files,
+        total_dirs,
+    })
 }

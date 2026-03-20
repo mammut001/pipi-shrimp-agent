@@ -205,7 +205,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
 
     try {
-      const { invoke } = await import('@tauri-apps/api/tauri');
+      const { invoke } = await import('@tauri-apps/api/core');
       const models = await invoke<string[]>('fetch_available_models', {
         provider,
         apiKey,

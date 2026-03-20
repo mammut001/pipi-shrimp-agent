@@ -4,17 +4,17 @@
  * Opens a separate Tauri window to load target URLs, then injects
  * PageAgent JavaScript for real browser automation control.
  *
- * Uses Tauri v1.5 API (WindowBuilder, not WebviewWindowBuilder)
+ * Uses Tauri v2 API (WebviewWindowBuilder)
  */
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tauri::{Window, WindowBuilder, WindowUrl, Url};
+use tauri::{WebviewWindow, WebviewWindowBuilder, WebviewUrl, Url};
 use crate::utils::{AppError, AppResult};
 
 /// Browser window state management
 pub struct BrowserState {
-    pub browser_window: Option<Window>,
+    pub browser_window: Option<WebviewWindow>,
     pub is_busy: bool,
 }
 
@@ -58,11 +58,11 @@ pub async fn open_browser_window(
         let _ = window.close();
     }
 
-    // Create new browser window using Tauri v1.5 WindowBuilder API
-    let window = WindowBuilder::new(
+    // Create new browser window using Tauri v2 WebviewWindowBuilder API
+    let window = WebviewWindowBuilder::new(
         &app,
         "browser-window",
-        WindowUrl::External(parsed_url),
+        WebviewUrl::External(parsed_url),
     )
     .title("Browser Agent")
     .inner_size(1200.0, 800.0)
@@ -96,14 +96,17 @@ pub async fn close_browser_window(
 #[tauri::command]
 pub async fn execute_agent_task(
     task: String,
-    base_url: Option<String>,
-    api_key: String,
+    #[allow(non_snake_case)]
+    baseUrl: Option<String>,
+    #[allow(non_snake_case)]
+    apiKey: String,
     model: String,
-    system_prompt: Option<String>,
+    #[allow(non_snake_case)]
+    systemPrompt: Option<String>,
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
     // Build the script before locking state to avoid borrow issues
-    let page_agent_script = build_page_agent_script(&task, base_url, &api_key, &model, system_prompt);
+    let page_agent_script = build_page_agent_script(&task, baseUrl, &apiKey, &model, systemPrompt);
 
     let browser_window = {
         let mut state = state.lock().await;
@@ -138,13 +141,17 @@ pub async fn execute_agent_task(
 
 /// Build the JavaScript code to inject into the browser window
 /// This script loads the PageAgent SDK from CDN and executes the task
+#[allow(non_snake_case)]
 fn build_page_agent_script(
     task: &str,
-    base_url: Option<String>,
-    api_key: &str,
+    baseUrl: Option<String>,
+    apiKey: &str,
     model: &str,
-    system_prompt: Option<String>,
+    systemPrompt: Option<String>,
 ) -> String {
+    let base_url = baseUrl;
+    let api_key = apiKey;
+    let system_prompt = systemPrompt;
     let base_url_js = match base_url {
         Some(url) => format!("\"{}\"", url),
         None => "undefined".to_string(),
@@ -279,7 +286,9 @@ pub async fn get_browser_url(
         .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?;
 
     // tauri::Url has a to_string method
-    Ok(browser_window.url().to_string())
+    let url = browser_window.url()
+        .map_err(|e| AppError::InternalError(format!("Failed to get URL: {}", e)))?;
+    Ok(url.to_string())
 }
 
 /// Inject arbitrary JavaScript into the browser window

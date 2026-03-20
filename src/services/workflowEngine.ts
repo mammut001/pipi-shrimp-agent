@@ -10,8 +10,8 @@
  * - Prompt injection protection
  */
 
-import { invoke } from '@tauri-apps/api/tauri';
-import { appWindow } from '@tauri-apps/api/window';
+import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { useUIStore } from '@/store/uiStore';
@@ -197,7 +197,7 @@ class WorkflowEngine {
 
     try {
       // Register token listener
-      unlistenFn = await appWindow.listen<string>('claude-token', (event) => {
+      unlistenFn = await getCurrentWindow().listen<string>('claude-token', (event) => {
         if (this.stopRequested) return;
         fullContent += event.payload;
         // Callback to UI for real-time display

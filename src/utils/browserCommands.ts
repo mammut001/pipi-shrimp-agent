@@ -5,7 +5,7 @@
  * using the second WebviewWindow approach.
  */
 
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface AgentLog {
   timestamp: string;
