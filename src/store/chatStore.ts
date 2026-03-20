@@ -425,11 +425,23 @@ export const useChatStore = create<ChatState>()(
       try {
         addNotification('info', `Executing tool: ${toolName}...`);
 
-        // Call Rust backend to execute the tool
-        const result = await invoke<string>('execute_tool', {
-          toolName: toolName,   // Tauri v1: TS sends camelCase → Rust receives tool_name
-          arguments: toolInput,
-        });
+        // get_current_workspace is handled on the TS side — no Rust round-trip needed.
+        // The session's workDir is already in memory; returning it avoids the paradox of
+        // asking the AI to supply the path it is trying to discover.
+        let result: string;
+        if (toolName === 'get_current_workspace') {
+          const session = get().sessions.find(s => s.id === get().currentSessionId);
+          const workDir = session?.workDir;
+          result = workDir
+            ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
+            : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session. Ask the user to bind a folder first.' });
+        } else {
+          // Call Rust backend to execute the tool
+          result = await invoke<string>('execute_tool', {
+            toolName: toolName,   // Tauri auto-converts camelCase → snake_case for Rust
+            arguments: toolInput,
+          });
+        }
 
         console.log(`Tool ${toolName} executed successfully:`, result);
 
