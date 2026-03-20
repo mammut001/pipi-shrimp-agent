@@ -155,10 +155,47 @@ impl World for TypstWorld {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Initialize font database with system fonts.
+/// Initialize font database with only Times New Roman (for faster startup).
+/// TODO: In the future, add a font selection feature to allow users to choose their preferred fonts.
 pub fn init_font_database() -> FontDatabase {
     let mut db = FontDatabase::new();
-    db.load_system_fonts();
+    
+    // Try to load Times New Roman from common macOS locations
+    let times_new_roman_paths = [
+        "/Library/Fonts/Times New Roman.ttf",
+        "/System/Library/Fonts/Times New Roman.ttf",
+        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+        "~/Library/Fonts/Times New Roman.ttf",
+    ];
+    
+    let mut loaded = false;
+    for path in &times_new_roman_paths {
+        let expanded_path = if path.starts_with("~") {
+            if let Some(home) = std::env::var_os("HOME") {
+                let home_path = std::path::Path::new(&home);
+                let relative = path.strip_prefix("~/").unwrap_or(path);
+                home_path.join(relative)
+            } else {
+                continue;
+            }
+        } else {
+            std::path::PathBuf::from(path)
+        };
+        
+        if expanded_path.exists() {
+            if db.load_font_file(&expanded_path).is_ok() {
+                println!("✅ Loaded Times New Roman from: {}", expanded_path.display());
+                loaded = true;
+                break;
+            }
+        }
+    }
+    
+    if !loaded {
+        println!("⚠️ Times New Roman not found, falling back to system fonts");
+        db.load_system_fonts();
+    }
+    
     db
 }
 
