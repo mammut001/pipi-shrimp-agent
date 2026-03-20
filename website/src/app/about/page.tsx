@@ -82,7 +82,7 @@ export default function AboutPage() {
             Built with modern technologies
           </h2>
           <div className="flex flex-wrap gap-4">
-            {["Swift", "SwiftUI", "AppKit", "Core ML", "Python", "FastAPI", "TypeScript", "React"].map((tech) => (
+            {["Tauri", "Rust", "React", "TypeScript", "Tailwind CSS", "Claude SDK", "SQLite", "Typst"].map((tech) => (
               <span
                 key={tech}
                 className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] bg-white border border-[var(--border)] rounded-lg"

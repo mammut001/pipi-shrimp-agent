@@ -6,6 +6,7 @@
  */
 
 import { useEffect } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
 import { Chat, Settings, Workflow, Skill } from '@/pages';
 import { BrowserPanel } from '@/components/BrowserPanel';
@@ -18,7 +19,9 @@ export default function App() {
   const { init: initChat } = useChatStore();
   const { settingsOpen, currentView } = useUIStore();
 
-  // Load settings on mount
+  // Load settings on mount, then show window once fully initialized.
+  // Window starts hidden (visible: false in tauri.conf.json) to avoid the
+  // white-screen flash while the JS bundle is parsing and React is mounting.
   useEffect(() => {
     const init = async () => {
       try {
@@ -26,6 +29,10 @@ export default function App() {
         await initChat();
       } catch (error) {
         console.error('Failed to initialize:', error);
+      } finally {
+        // Always show the window — even if init partially failed, a blank/error
+        // UI is better than a window that never appears.
+        await getCurrentWindow().show();
       }
     };
 

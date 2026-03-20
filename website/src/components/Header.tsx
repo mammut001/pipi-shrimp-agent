@@ -41,13 +41,16 @@ export function Header() {
 
         {/* Logo */}
         <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-          <Image
-            src="/shrimp-avatar.png"
-            alt="PiPi Shrimp"
-            width={32}
-            height={32}
-            style={{ borderRadius: "50%", objectFit: "cover" }}
-          />
+          <picture>
+            <source srcSet="/shrimp-avatar.webp" type="image/webp" />
+            <Image
+              src="/shrimp-avatar-256.png"
+              alt="PiPi Shrimp"
+              width={32}
+              height={32}
+              style={{ borderRadius: "50%", objectFit: "cover" }}
+            />
+          </picture>
           <span style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>
             Pipi Shrimp
           </span>

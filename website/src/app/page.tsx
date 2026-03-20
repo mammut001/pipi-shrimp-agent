@@ -104,13 +104,16 @@ export default function HomePage() {
             {/* Shrimp Image */}
             <div style={{ flexShrink: 0, position: "relative", width: 280, height: 280 }}>
               <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "var(--accent)", opacity: 0.08, filter: "blur(40px)", transform: "scale(1.2)" }} />
-              <Image
-                src="/shrimp-avatar.png"
-                alt="PiPi Shrimp"
-                fill
-                style={{ objectFit: "contain", filter: "drop-shadow(0 20px 40px rgba(0,0,0,0.15))" }}
-                priority
-              />
+              <picture>
+                <source srcSet="/shrimp-avatar.webp" type="image/webp" />
+                <Image
+                  src="/shrimp-avatar-256.png"
+                  alt="PiPi Shrimp"
+                  fill
+                  style={{ objectFit: "contain", filter: "drop-shadow(0 20px 40px rgba(0,0,0,0.15))" }}
+                  priority
+                />
+              </picture>
             </div>
 
           </div>
@@ -170,7 +173,10 @@ export default function HomePage() {
             <div style={{ position: "absolute", inset: 0, opacity: 0.05, backgroundImage: "radial-gradient(circle, white 1px, transparent 1px)", backgroundSize: "24px 24px" }} />
 
             <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <Image src="/shrimp-avatar.png" alt="PiPi Shrimp" width={80} height={80} style={{ marginBottom: 24, filter: "drop-shadow(0 8px 16px rgba(0,0,0,0.3))" }} />
+              <picture>
+                <source srcSet="/shrimp-avatar-128.webp" type="image/webp" />
+                <Image src="/shrimp-avatar-128.webp" alt="PiPi Shrimp" width={80} height={80} style={{ marginBottom: 24, filter: "drop-shadow(0 8px 16px rgba(0,0,0,0.3))" }} />
+              </picture>
               <h2 style={{ fontSize: "2rem", fontWeight: 700, color: "white", marginBottom: 16 }}>
                 Ready to get started?
               </h2>

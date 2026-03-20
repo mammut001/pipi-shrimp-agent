@@ -103,28 +103,28 @@ export const translations: Record<Language, TranslationKeys> = {
       subtitle: "Everything you need to boost your productivity",
       list: [
         {
-          title: "Reasoning UI (Thinking)",
-          description: "Real-time AI 'Thinking' process visualization. See the logic behind every answer with collapsible reasoning blocks.",
-        },
-        {
-          title: "Advanced Search (Ripgrep)",
-          description: "High-speed codebase search using integrated ripgrep. Support for regex, glob patterns, and recursive filtering.",
-        },
-        {
-          title: "Claude-Style Sidebar",
-          description: "Redesigned premium sidebar with collapsible sections for Progress, Working Folders, and Context.",
-        },
-        {
-          title: "Chrome Connector",
-          description: "Direct browser integration allowing the agent to interact with web pages and automate workflows.",
+          title: "AI Chat with Claude SDK",
+          description: "Real-time streaming AI chat powered by Claude SDK. Supports tool calls for executing code, managing files, and web automation.",
         },
         {
           title: "Local Code Execution",
-          description: "Execute Bash, Python, and Node.js scripts locally directly from the AI prompt.",
+          description: "Execute Bash, Python, and Node.js scripts locally directly from the AI prompt with full output streaming.",
         },
         {
-          title: "Advanced Document Rendering",
-          description: "Integrates the Typst engine for real-time rendering of high-quality SVG/PDF layouts.",
+          title: "File System Operations",
+          description: "Read, write, search, and manage files and directories. Supports regex and glob patterns for advanced filtering.",
+        },
+        {
+          title: "Web Automation",
+          description: "Browse the web and automate browser interactions. Let the agent navigate pages, extract information, and complete web tasks.",
+        },
+        {
+          title: "Typst Document Rendering",
+          description: "Integrates the Typst engine for real-time rendering of high-quality SVG/PDF document layouts.",
+        },
+        {
+          title: "Skills Plugin System",
+          description: "Built-in utilities for PDF analysis, Excel processing, Word document extraction, and email management.",
         },
       ],
     },
@@ -183,28 +183,28 @@ export const translations: Record<Language, TranslationKeys> = {
       subtitle: "Tout ce dont vous avez besoin pour booster votre productivité",
       list: [
         {
+          title: "Chat IA avec Claude SDK",
+          description: "Chat IA en streaming en temps réel alimenté par Claude SDK. Supporte les appels d'outils pour exécuter du code, gérer des fichiers et automatiser le web.",
+        },
+        {
           title: "Exécution de code local",
-          description: "Exécutez des scripts Bash, Python et Node.js localement directement depuis l'invite IA.",
+          description: "Exécutez des scripts Bash, Python et Node.js localement directement depuis l'invite IA avec un streaming de sortie complet.",
         },
         {
-          title: "Rendu de document avancé",
-          description: "Intègre exclusivement le moteur Typst pour le rendu en temps réel de mises en page SVG/PDF de haute qualité.",
+          title: "Opérations système de fichiers",
+          description: "Lire, écrire, rechercher et gérer des fichiers et répertoires. Supporte les regex et les motifs glob pour un filtrage avancé.",
         },
         {
-          title: "Système de flux de travail",
-          description: "Gestion flexible des tâches pour automatiser les opérations complexes en plusieurs étapes.",
+          title: "Automatisation Web",
+          description: "Naviguez sur le web et automatisez les interactions avec le navigateur. Laissez l'agent naviguer sur les pages, extraire des informations et accomplir des tâches web.",
         },
         {
-          title: "Contexte au niveau du projet",
-          description: "Gère intelligemment l'historique des conversations pour différents projets soutenu par une base de données SQLite locale.",
+          title: "Rendu de document Typst",
+          description: "Intègre le moteur Typst pour le rendu en temps réel de mises en page SVG/PDF de haute qualité.",
         },
         {
-          title: "Opérations de fichiers et web",
-          description: "Puissantes capacités de gestion de fichiers locaux et navigation web intégrée.",
-        },
-        {
-          title: "Plugins de compétences riches",
-          description: "Composants utilitaires intégrés et prêts à l'emploi tels que l'analyse PDF, le traitement Excel et l'extraction Docx.",
+          title: "Système de plugins de compétences",
+          description: "Utilitaires intégrés pour l'analyse PDF, le traitement Excel, l'extraction de documents Word et la gestion des e-mails.",
         },
       ],
     },
@@ -263,28 +263,28 @@ export const translations: Record<Language, TranslationKeys> = {
       subtitle: "提升生产力所需的一切",
       list: [
         {
-          title: "推理 UI (Thinking)",
-          description: "实时的 AI “思考”过程可视化。通过可折叠的推理块，查看每个回答背后的逻辑。",
-        },
-        {
-          title: "高级搜索 (Ripgrep)",
-          description: "集成 ripgrep 的高速代码库搜索。支持正则表达式、Glob 模式和递归过滤。",
-        },
-        {
-          title: "Claude 风格侧边栏",
-          description: "重新设计的高级侧边栏，包含进度、工作文件夹和上下文的可折叠部分。",
-        },
-        {
-          title: "Chrome 插件连接器",
-          description: "直接的浏览器集成，允许 Agent 与网页交互并自动执行工作流。",
+          title: "Claude SDK AI 聊天",
+          description: "基于 Claude SDK 的实时流式 AI 对话。支持工具调用，可执行代码、管理文件和自动化 Web 操作。",
         },
         {
           title: "本地代码执行",
-          description: "在本地直接执行 Bash, Python, 和 Node.js 脚本。",
+          description: "在本地直接执行 Bash、Python 和 Node.js 脚本，配合完整输出流。",
         },
         {
-          title: "高级文档渲染",
-          description: "集成 Typst 引擎，支持实时渲染高质量 SVG/PDF 排版。",
+          title: "文件系统操作",
+          description: "读取、写入、搜索和管理文件与目录。支持正则表达式和 Glob 模式进行高级过滤。",
+        },
+        {
+          title: "Web 自动化",
+          description: "浏览网页并自动化浏览器交互。让 Agent 导航页面、提取信息并完成 Web 任务。",
+        },
+        {
+          title: "Typst 文档渲染",
+          description: "集成 Typst 引擎，支持实时渲染高质量 SVG/PDF 文档排版。",
+        },
+        {
+          title: "技能插件系统",
+          description: "内置 PDF 分析、Excel 处理、Word 文档提取和邮件管理等实用工具。",
         },
       ],
     },
@@ -343,28 +343,28 @@ export const translations: Record<Language, TranslationKeys> = {
       subtitle: "생산성을 높이기 위해 필요한 모든 것",
       list: [
         {
+          title: "Claude SDK AI 채팅",
+          description: "Claude SDK로 구동되는 실시간 스트리밍 AI 채팅. 코드 실행, 파일 관리 및 웹 자동화를 위한 도구 호출을 지원합니다.",
+        },
+        {
           title: "로컬 코드 실행",
-          description: "AI 프롬프트에서 직접 Bash, Python 및 Node.js 스크립트를 로컬에서 실행합니다.",
+          description: "AI 프롬프트에서 직접 Bash, Python 및 Node.js 스크립트를 전체 출력 스트리밍과 함께 로컬에서 실행합니다.",
         },
         {
-          title: "고급 문서 렌더링",
-          description: "고품질 SVG/PDF 레이아웃의 실시간 렌더링을 위해 Typst 엔진을 독점적으로 통합합니다.",
+          title: "파일 시스템 작업",
+          description: "파일 및 디렉토리 읽기, 쓰기, 검색 및 관리. 고급 필터링을 위한 정규식 및 glob 패턴을 지원합니다.",
         },
         {
-          title: "워크플로 시스템",
-          description: "다단계 복잡한 작업을 자동화하기 위한 유연한 스트림 기반 작업 관리.",
+          title: "웹 자동화",
+          description: "웹을 탐색하고 브라우저 상호작용을 자동화합니다. 에이전트가 페이지를 탐색하고 정보를 추출하며 웹 작업을 완료하도록 하세요.",
         },
         {
-          title: "프로젝트 수준 컨텍스트",
-          description: "로컬 SQLite 데이터베이스를 기반으로 다양한 프로젝트의 대화 기록을 지능적으로 관리합니다.",
+          title: "Typst 문서 렌더링",
+          description: "고품질 SVG/PDF 문서 레이아웃의 실시간 렌더링을 위한 Typst 엔진 통합.",
         },
         {
-          title: "파일 및 웹 작업",
-          description: "강력한 로컬 파일 관리 기능과 통합된 웹 브라우징 및 자동화.",
-        },
-        {
-          title: "풍부한 기술 플러그인",
-          description: "PDF 분석, Excel 처리 및 Docx 추출과 같은 기본 유틸리티 구성 요소 내장.",
+          title: "스킬 플러그인 시스템",
+          description: "PDF 분석, Excel 처리, Word 문서 추출 및 이메일 관리를 위한 내장 유틸리티.",
         },
       ],
     },
@@ -423,28 +423,28 @@ export const translations: Record<Language, TranslationKeys> = {
       subtitle: "Mọi thứ bạn cần để tăng năng suất",
       list: [
         {
+          title: "Trò chuyện AI với Claude SDK",
+          description: "Trò chuyện AI streaming thời gian thực được cung cấp bởi Claude SDK. Hỗ trợ gọi công cụ để thực thi mã, quản lý tệp và tự động hóa web.",
+        },
+        {
           title: "Thực thi mã cục bộ",
-          description: "Thực thi các tệp lệnh Bash, Python và Node.js cục bộ trực tiếp từ lời nhắc AI.",
+          description: "Thực thi các tệp lệnh Bash, Python và Node.js cục bộ trực tiếp từ lời nhắc AI với streaming đầu ra đầy đủ.",
         },
         {
-          title: "Kết xuất tài liệu nâng cao",
-          description: "Tích hợp độc quyền công cụ Typst để kết xuất bố cục SVG/PDF chất lượng cao theo thời gian thực.",
+          title: "Thao tác hệ thống tệp",
+          description: "Đọc, ghi, tìm kiếm và quản lý tệp và thư mục. Hỗ trợ regex và mẫu glob để lọc nâng cao.",
         },
         {
-          title: "Hệ thống quy trình làm việc",
-          description: "Quản lý tác vụ dựa trên luồng linh hoạt để tự động hóa các thao tác phức tạp nhiều bước.",
+          title: "Tự động hóa Web",
+          description: "Duyệt web và tự động hóa tương tác trình duyệt. Để agent điều hướng trang, trích xuất thông tin và hoàn thành tác vụ web.",
         },
         {
-          title: "Bối cảnh cấp dự án",
-          description: "Quản lý thông minh lịch sử cuộc trò chuyện cho các dự án khác nhau được hỗ trợ bởi cơ sở dữ liệu SQLite cục bộ.",
+          title: "Kết xuất tài liệu Typst",
+          description: "Tích hợp công cụ Typst để kết xuất bố cục SVG/PDF chất lượng cao theo thời gian thực.",
         },
         {
-          title: "Hoạt động tệp & web",
-          description: "Khả năng quản lý tệp cục bộ mạnh mẽ và duyệt web và tự động hóa tích hợp.",
-        },
-        {
-          title: "Plugin kỹ năng phong phú",
-          description: "Các thành phần tiện ích tích hợp, sẵn sàng sử dụng như phân tích PDF, xử lý Excel và trích xuất Docx.",
+          title: "Hệ thống plugin kỹ năng",
+          description: "Tiện ích tích hợp cho phân tích PDF, xử lý Excel, trích xuất tài liệu Word và quản lý email.",
         },
       ],
     },
