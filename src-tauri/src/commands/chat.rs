@@ -382,12 +382,14 @@ pub async fn execute_tool(
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for grep_files".to_string()))?;
             crate::commands::search::grep_files(pattern.to_string(), path.to_string()).await?
         }
+        // get_current_workspace 由 TS 侧拦截（chatStore.ts executeTool），
+        // 直接从内存中的 session.workDir 返回，不会走到 Rust 这里。
+        // 这个分支是安全兜底：万一绕过 TS 直接调用 execute_tool，返回提示而不是崩溃。
         "get_current_workspace" => {
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for get_current_workspace. This tool requires a 'path' parameter pointing to the working directory.".to_string()))?;
-            let result = crate::commands::file::get_workspace_info(path.to_string()).await?;
-            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
+            serde_json::json!({
+                "error": false,
+                "message": "get_current_workspace is handled by the frontend. The workspace path is injected into the system prompt automatically."
+            }).to_string()
         }
         // 第一层防御：unknown tool 返回合法 JSON，让 Claude 自己 fallback 到文本回复
         _ => {
