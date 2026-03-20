@@ -94,8 +94,9 @@ export function Chat() {
     addNotification('info', 'Permission denied');
     clearPermissionRequest();
 
-    // Decrement the counter and, if it hits 0, flush whatever results we have
-    const { pendingToolCalls, sendAllToolResults } = useChatStore.getState();
+    // Decrement the counter atomically, then READ the new value to decide whether to flush.
+    // (Reading pendingToolCalls BEFORE setState would give the old value and cause off-by-one.)
+    const { sendAllToolResults } = useChatStore.getState();
     useChatStore.setState((state) => ({
       pendingToolCalls: state.pendingToolCalls - 1,
       // Inject a "denied" placeholder so the AI gets a tool result for this call
@@ -104,7 +105,8 @@ export function Chat() {
         { toolCallId: pendingPermission.id, result: 'Permission denied by user.' },
       ],
     }));
-    if (pendingToolCalls - 1 <= 0) {
+    // Read the updated value AFTER the setState has been applied
+    if (useChatStore.getState().pendingToolCalls <= 0) {
       sendAllToolResults();
     }
   };
