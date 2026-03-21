@@ -226,6 +226,30 @@ export function ChatMessage({ message, isLatest = false, isStreaming = false, on
                 <span className="text-sm">Thinking...</span>
               </div>
             )}
+
+            {/* Token usage display for assistant messages */}
+            {!isUser && message.token_usage && (
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-3 text-xs text-gray-400">
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  <span>输入: {message.token_usage.input_tokens.toLocaleString()}</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                  <span>输出: {message.token_usage.output_tokens.toLocaleString()}</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                  </svg>
+                  <span>总计: {(message.token_usage.input_tokens + message.token_usage.output_tokens).toLocaleString()}</span>
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>

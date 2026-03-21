@@ -719,6 +719,14 @@ export const useChatStore = create<ChatState>()(
           // Strip <think>...</think> tags before persisting (MiniMax embeds think inline).
           const rawFinal = finalContent || response.content || '';
           const { content: cleanFinal, reasoning: parsedFinalReasoning } = parseThinkContent(rawFinal);
+          
+          // Prepare token usage for message
+          const tokenUsage = response.usage ? {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            model: response.model || apiConfig?.model,
+          } : undefined;
+          
           await updateLastMessage(
             cleanFinal,
             response.artifacts?.map((a) => ({
@@ -728,7 +736,8 @@ export const useChatStore = create<ChatState>()(
               title: a.title,
               language: a.language,
             })),
-            streamingReasoning || parsedFinalReasoning
+            streamingReasoning || parsedFinalReasoning,
+            tokenUsage
           );
           
           // Save token usage to database
@@ -995,6 +1004,14 @@ export const useChatStore = create<ChatState>()(
           // Strip <think>...</think> tags before persisting (MiniMax embeds think inline).
           const rawContent = finalContent || response.content || '';
           const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(rawContent);
+          
+          // Prepare token usage for message
+          const tokenUsage = response.usage ? {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            model: response.model || apiConfig.model,
+          } : undefined;
+          
           await updateLastMessage(
             cleanContent,
             response.artifacts?.map((a) => ({
@@ -1004,7 +1021,8 @@ export const useChatStore = create<ChatState>()(
               title: a.title,
               language: a.language,
             })),
-            streamingReasoning || parsedReasoning
+            streamingReasoning || parsedReasoning,
+            tokenUsage
           );
           
           // Save token usage to database
@@ -1152,7 +1170,7 @@ export const useChatStore = create<ChatState>()(
     /**
      * Update last message content (for streaming updates) and persist to database
      */
-    updateLastMessage: async (content: string, artifacts?: Message['artifacts'], reasoning?: string) => {
+    updateLastMessage: async (content: string, artifacts?: Message['artifacts'], reasoning?: string, tokenUsage?: Message['token_usage']) => {
       const { currentSessionId } = get();
       if (!currentSessionId) return;
 
@@ -1172,6 +1190,7 @@ export const useChatStore = create<ChatState>()(
             content,
             reasoning: reasoning !== undefined ? reasoning : lastMessage.reasoning,
             artifacts: artifacts !== undefined ? artifacts : lastMessage.artifacts,
+            token_usage: tokenUsage !== undefined ? tokenUsage : lastMessage.token_usage,
             updatedAt: Date.now(),
           };
 
