@@ -730,6 +730,24 @@ export const useChatStore = create<ChatState>()(
             })),
             streamingReasoning || parsedFinalReasoning
           );
+          
+          // Save token usage to database
+          if (response.usage) {
+            const now = new Date();
+            const date = now.toISOString().split('T')[0];  // YYYY-MM-DD
+            await invoke('db_save_token_usage', {
+              usage: {
+                id: crypto.randomUUID(),
+                session_id: currentSessionId,
+                date,
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+                model: response.model || apiConfig?.model || 'unknown',
+                created_at: Math.floor(now.getTime() / 1000),
+              },
+            }).catch((e: unknown) => console.error('Failed to save token usage:', e));
+          }
+          
           // Clear all streaming + pending state
           set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '' });
           setStreaming(false);
@@ -988,6 +1006,24 @@ export const useChatStore = create<ChatState>()(
             })),
             streamingReasoning || parsedReasoning
           );
+          
+          // Save token usage to database
+          if (response.usage) {
+            const now = new Date();
+            const date = now.toISOString().split('T')[0];  // YYYY-MM-DD
+            await invoke('db_save_token_usage', {
+              usage: {
+                id: crypto.randomUUID(),
+                session_id: currentSessionId,
+                date,
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+                model: response.model || apiConfig.model,
+                created_at: Math.floor(now.getTime() / 1000),
+              },
+            }).catch((e: unknown) => console.error('Failed to save token usage:', e));
+          }
+          
           setStreaming(false);
           set({ streamingContent: '', streamingReasoning: '' });
         }
@@ -1536,6 +1572,52 @@ export const useChatStore = create<ChatState>()(
       } catch (error) {
         console.error('Failed to get work dir index:', error);
         return [];
+      }
+    },
+
+    // ========== Token Stats ==========
+
+    getDailyTokenStats: async (yearMonth: string) => {
+      try {
+        return await invoke<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>(
+          'db_get_daily_token_stats',
+          { yearMonth }
+        );
+      } catch (error) {
+        console.error('Failed to get daily token stats:', error);
+        return [];
+      }
+    },
+
+    getMonthlyTokenStats: async () => {
+      try {
+        return await invoke<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>(
+          'db_get_monthly_token_stats'
+        );
+      } catch (error) {
+        console.error('Failed to get monthly token stats:', error);
+        return [];
+      }
+    },
+
+    getModelTokenStats: async () => {
+      try {
+        return await invoke<{ model: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>(
+          'db_get_model_token_stats'
+        );
+      } catch (error) {
+        console.error('Failed to get model token stats:', error);
+        return [];
+      }
+    },
+
+    getTotalTokenStats: async () => {
+      try {
+        const [input, output, total] = await invoke<[number, number, number]>('db_get_total_token_stats');
+        return { input, output, total };
+      } catch (error) {
+        console.error('Failed to get total token stats:', error);
+        return { input: 0, output: 0, total: 0 };
       }
     },
 
