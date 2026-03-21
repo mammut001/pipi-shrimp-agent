@@ -43,14 +43,35 @@ const GLOBAL_SECURITY_CONSTRAINT: &str = r#"You are a helpful AI assistant opera
 4. **Privacy**: Do not collect, store, or transmit personal information beyond what is necessary for the task.
 "#;
 
+/// Tool efficiency optimization guide
+/// Encourages batching multiple independent tool calls in a single response
+const TOOL_EFFICIENCY_GUIDE: &str = r#"
+## Tool Use Efficiency (IMPORTANT)
+
+When you need to use multiple tools, **batch them together** rather than calling one tool at a time. This reduces round-trips and improves response speed.
+
+### Rules:
+1. **Batch Independent Calls**: If you need to call multiple tools that don't depend on each other's results, call them all at once in the same response.
+2. **Plan Ahead**: Before calling tools, briefly state your plan (e.g., "I need to: list files, read README, then read main.rs").
+3. **Dependency Order**: Only call dependent tools sequentially (e.g., read_file after list_files reveals the paths).
+4. **Avoid Iterative Calls**: Don't call a tool just to decide what to do next - plan all needed operations upfront.
+
+### Examples:
+- ✅ Good: "I'll explore the project: list files, read package.json, read src/main.rs" → calls 3 tools at once
+- ❌ Bad: Call list_files → wait → see files → call read_file → wait → see content → call another tool
+
+Following these guidelines will make interactions faster and more efficient.
+"#;
+
 /// Helper function to merge user system prompt with global security constraints
 fn merge_system_prompt(user_prompt: Option<&str>) -> String {
+    let base_prompt = format!("{}\n\n{}", GLOBAL_SECURITY_CONSTRAINT.trim(), TOOL_EFFICIENCY_GUIDE.trim());
     match user_prompt {
         Some(user) if !user.is_empty() => {
             format!("{}\n\n---\n\n## User-Provided Instructions\n\n{}",
-                GLOBAL_SECURITY_CONSTRAINT.trim(), user.trim())
+                base_prompt, user.trim())
         }
-        _ => GLOBAL_SECURITY_CONSTRAINT.to_string(),
+        _ => base_prompt,
     }
 }
 
