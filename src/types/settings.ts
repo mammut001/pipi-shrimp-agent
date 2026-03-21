@@ -166,3 +166,30 @@ export interface ImportedFile {
   path: string;
   addedAt: number;
 }
+
+/** Token usage record */
+export interface TokenUsage {
+  id: string;
+  session_id: string | null;
+  date: string;  // YYYY-MM-DD format
+  input_tokens: number;
+  output_tokens: number;
+  model: string;
+  created_at: number;
+}
+
+/** Daily token statistics */
+export interface DailyTokenStats {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+/** Model token statistics */
+export interface ModelTokenStats {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}

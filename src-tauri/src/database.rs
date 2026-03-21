@@ -58,6 +58,21 @@ fn row_to_project(row: &Row) -> SqliteResult<DbProject> {
 }
 
 /**
+ * Helper to map a row to DbTokenUsage
+ */
+fn row_to_token_usage(row: &Row) -> SqliteResult<DbTokenUsage> {
+    Ok(DbTokenUsage {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        date: row.get(2)?,
+        input_tokens: row.get(3)?,
+        output_tokens: row.get(4)?,
+        model: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+/**
  * Global database connection
  */
 static DATABASE: Lazy<Mutex<Option<Connection>>> = Lazy::new(|| Mutex::new(None));
@@ -106,6 +121,20 @@ pub struct DbProject {
     pub work_dir: Option<String>,   // NEW: path to local work directory
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/**
+ * Token usage model for database
+ */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTokenUsage {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub date: String,  // YYYY-MM-DD format
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub model: String,
+    pub created_at: i64,
 }
 
 /**
@@ -358,6 +387,34 @@ pub fn init_database() -> SqliteResult<()> {
         [],
     )?;
 
+    // Create token_usage table for tracking token consumption
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS token_usage (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            date TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            model TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
+    // Create indexes for faster token stats queries
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage(date)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_usage_model ON token_usage(model)",
+        [],
+    )?;
+
     println!("✅ Database initialized successfully");
 
     // Store connection globally
@@ -559,4 +616,184 @@ pub fn update_project(project: &DbProject) -> SqliteResult<()> {
         )?;
     }
     Ok(())
+}
+
+/**
+ * Save token usage record
+ */
+pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute(
+            "INSERT INTO token_usage (id, session_id, date, input_tokens, output_tokens, model, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                usage.id,
+                usage.session_id,
+                usage.date,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.model,
+                usage.created_at
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/**
+ * Token stats for a single day
+ */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyTokenStats {
+    pub date: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+}
+
+/**
+ * Token stats for a single model
+ */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelTokenStats {
+    pub model: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+}
+
+/**
+ * Get daily token stats for a specific month
+ */
+pub fn get_daily_token_stats(year_month: &str) -> SqliteResult<Vec<DailyTokenStats>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let mut stats = Vec::new();
+
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT date, 
+                    SUM(input_tokens) as total_input, 
+                    SUM(output_tokens) as total_output,
+                    SUM(input_tokens + output_tokens) as total
+             FROM token_usage 
+             WHERE date LIKE ?1 
+             GROUP BY date 
+             ORDER BY date DESC"
+        )?;
+
+        let pattern = format!("{}%", year_month);
+        let rows = stmt.query_map(params![pattern], |row| {
+            Ok(DailyTokenStats {
+                date: row.get(0)?,
+                input_tokens: row.get(1)?,
+                output_tokens: row.get(2)?,
+                total_tokens: row.get(3)?,
+            })
+        })?;
+
+        for row in rows {
+            stats.push(row?);
+        }
+    }
+
+    Ok(stats)
+}
+
+/**
+ * Get monthly token stats
+ */
+pub fn get_monthly_token_stats() -> SqliteResult<Vec<DailyTokenStats>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let mut stats = Vec::new();
+
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT SUBSTR(date, 1, 7) as month,
+                    SUM(input_tokens) as total_input,
+                    SUM(output_tokens) as total_output,
+                    SUM(input_tokens + output_tokens) as total
+             FROM token_usage
+             GROUP BY month
+             ORDER BY month DESC"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(DailyTokenStats {
+                date: row.get(0)?,
+                input_tokens: row.get(1)?,
+                output_tokens: row.get(2)?,
+                total_tokens: row.get(3)?,
+            })
+        })?;
+
+        for row in rows {
+            stats.push(row?);
+        }
+    }
+
+    Ok(stats)
+}
+
+/**
+ * Get token stats by model
+ */
+pub fn get_model_token_stats() -> SqliteResult<Vec<ModelTokenStats>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let mut stats = Vec::new();
+
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT model,
+                    SUM(input_tokens) as total_input,
+                    SUM(output_tokens) as total_output,
+                    SUM(input_tokens + output_tokens) as total
+             FROM token_usage
+             GROUP BY model
+             ORDER BY total DESC"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(ModelTokenStats {
+                model: row.get(0)?,
+                input_tokens: row.get(1)?,
+                output_tokens: row.get(2)?,
+                total_tokens: row.get(3)?,
+            })
+        })?;
+
+        for row in rows {
+            stats.push(row?);
+        }
+    }
+
+    Ok(stats)
+}
+
+/**
+ * Get total token stats
+ */
+pub fn get_total_token_stats() -> SqliteResult<(i64, i64, i64)> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(input_tokens + output_tokens), 0)
+             FROM token_usage"
+        )?;
+
+        let row = stmt.query_row([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+
+        return Ok(row);
+    }
+
+    Ok((0, 0, 0))
 }

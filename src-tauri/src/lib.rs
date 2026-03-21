@@ -20,7 +20,11 @@ use tauri_plugin_fs::FsExt;
 
 use claude::{ClaudeClient, ChatResponse, Message};
 use commands::browser::BrowserState;
-use database::{DbSession, DbMessage, DbProject, init_database, get_all_sessions, save_session, delete_session, save_message, get_messages_for_session, save_project, get_all_projects, delete_project, update_project};
+use database::{DbSession, DbMessage, DbProject, DbTokenUsage, DailyTokenStats, ModelTokenStats,
+               init_database, get_all_sessions, save_session, delete_session, save_message, 
+               get_messages_for_session, save_project, get_all_projects, delete_project, 
+               update_project, save_token_usage, get_daily_token_stats, get_monthly_token_stats,
+               get_model_token_stats, get_total_token_stats};
 use utils::{PrebuiltFonts, init_font_database, build_fonts, compile_typst_to_svg_with_prebuilt, compile_typst_to_pdf_with_prebuilt};
 
 /**
@@ -182,6 +186,46 @@ fn db_update_project(project: DbProject) -> Result<(), String> {
 }
 
 /**
+ * Save token usage record
+ */
+#[tauri::command]
+fn db_save_token_usage(usage: DbTokenUsage) -> Result<(), String> {
+    save_token_usage(&usage).map_err(|e| e.to_string())
+}
+
+/**
+ * Get daily token stats for a specific month (YYYY-MM format)
+ */
+#[tauri::command]
+fn db_get_daily_token_stats(year_month: String) -> Result<Vec<DailyTokenStats>, String> {
+    get_daily_token_stats(&year_month).map_err(|e| e.to_string())
+}
+
+/**
+ * Get monthly token stats
+ */
+#[tauri::command]
+fn db_get_monthly_token_stats() -> Result<Vec<DailyTokenStats>, String> {
+    get_monthly_token_stats().map_err(|e| e.to_string())
+}
+
+/**
+ * Get token stats by model
+ */
+#[tauri::command]
+fn db_get_model_token_stats() -> Result<Vec<ModelTokenStats>, String> {
+    get_model_token_stats().map_err(|e| e.to_string())
+}
+
+/**
+ * Get total token stats (input, output, total)
+ */
+#[tauri::command]
+fn db_get_total_token_stats() -> Result<(i64, i64, i64), String> {
+    get_total_token_stats().map_err(|e| e.to_string())
+}
+
+/**
  * Render Typst source to SVG.
  *
  * Uses pre-built fonts from State (no disk I/O per render).
@@ -330,6 +374,12 @@ pub fn run() {
             db_get_all_projects,
             db_delete_project,
             db_update_project,
+            // Token usage commands
+            db_save_token_usage,
+            db_get_daily_token_stats,
+            db_get_monthly_token_stats,
+            db_get_model_token_stats,
+            db_get_total_token_stats,
             // Typst rendering commands
             render_typst_to_svg,
             render_typst_to_pdf,

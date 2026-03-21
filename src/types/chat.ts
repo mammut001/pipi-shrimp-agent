@@ -251,6 +251,28 @@ export interface ChatState {
    */
   updateSessionPermissionMode: (sessionId: string, permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only') => Promise<void>;
 
+  // ========== Token Stats ==========
+  
+  /**
+   * Get daily token stats for a specific month (YYYY-MM format)
+   */
+  getDailyTokenStats: (yearMonth: string) => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+
+  /**
+   * Get monthly token stats
+   */
+  getMonthlyTokenStats: () => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+
+  /**
+   * Get token stats by model
+   */
+  getModelTokenStats: () => Promise<{ model: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+
+  /**
+   * Get total token stats (input, output, total)
+   */
+  getTotalTokenStats: () => Promise<{ input: number; output: number; total: number }>;
+
   // ========== Internal State ==========
   _eventListeners: Array<() => void>;  // Cleanup functions for event listeners
 

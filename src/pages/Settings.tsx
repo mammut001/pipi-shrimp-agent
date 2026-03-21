@@ -15,6 +15,7 @@ import { useSettingsStore, useUIStore } from '@/store';
 import { invoke } from '@tauri-apps/api/core';
 import type { ApiConfig } from '@/types/settings';
 import { API_PROVIDERS, PROVIDER_MODELS } from '@/types/settings';
+import { TokenStats } from '@/components/TokenStats';
 
 /** Minimax API base URL */
 const MINIMAX_BASE_URL = 'https://api.minimaxi.com/v1';
@@ -743,6 +744,14 @@ export function Settings() {
             >
               Save Settings
             </button>
+          </div>
+        </div>
+
+        {/* ====== Token Stats Section ====== */}
+        <div className="border-t border-gray-200 pt-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">📊 Token 使用统计</h2>
+          <div className="h-96 border border-gray-200 rounded-lg overflow-hidden">
+            <TokenStats />
           </div>
         </div>
       </div>

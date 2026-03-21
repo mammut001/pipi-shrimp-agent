@@ -21,6 +21,9 @@ export type {
 export type {
   SettingsState,
   ApiConfig,
+  TokenUsage,
+  DailyTokenStats,
+  ModelTokenStats,
 } from '../types/settings';
 
 export {
