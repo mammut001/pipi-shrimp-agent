@@ -6,7 +6,7 @@
  * Extract all Typst code blocks from markdown content
  * Matches ```typst ... ``` blocks
  */
-export function extractTypstBlocks(content: string): string[] {
+function extractTypstBlocks(content: string): string[] {
   const regex = /```typst\n([\s\S]*?)```/g;
   const blocks: string[] = [];
   let match;
@@ -38,7 +38,7 @@ export function getLatestTypstBlock(
 /**
  * Get all unique Typst code blocks from messages
  */
-export function getAllTypstBlocks(
+function getAllTypstBlocks(
   messages: { content: string }[]
 ): { block: string; messageIndex: number }[] {
   const results: { block: string; messageIndex: number }[] = [];

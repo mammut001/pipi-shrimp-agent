@@ -8,7 +8,7 @@ import type { ApiConfig } from '../store/settingsStore';
 /**
  * Get default base URL for each provider
  */
-export function getDefaultBaseUrl(provider: ApiConfig['provider']): string {
+function getDefaultBaseUrl(provider: ApiConfig['provider']): string {
   switch (provider) {
     case 'minimax':
       return 'https://api.minimaxi.com/v1';
