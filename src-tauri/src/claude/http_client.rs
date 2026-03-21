@@ -54,6 +54,52 @@ fn merge_system_prompt(user_prompt: Option<&str>) -> String {
     }
 }
 
+/// Rough token estimator — no tiktoken / external crate needed.
+///
+/// Rules (mirrors how most modern tokenizers treat Unicode):
+///   • CJK, Hangul, Hiragana/Katakana, Arabic → 1 token per character
+///   • Emoji / supplementary-plane characters   → 1 token per character
+///   • Everything else (ASCII + Latin)          → ~4 chars per token (ceiling)
+///
+/// Per-message overhead (~4 tokens: role + separators) is added by
+/// `estimate_messages_tokens`, not here.
+fn estimate_tokens(text: &str) -> i32 {
+    let mut tokens = 0i32;
+    let mut ascii_run = 0i32;
+    for ch in text.chars() {
+        let cp = ch as u32;
+        let is_cjk_or_wide =
+            (0x4E00..=0x9FFF).contains(&cp)   // CJK Unified Ideographs
+            || (0x3400..=0x4DBF).contains(&cp) // CJK Extension A
+            || (0xF900..=0xFAFF).contains(&cp) // CJK Compatibility
+            || (0x3040..=0x30FF).contains(&cp) // Hiragana + Katakana
+            || (0xAC00..=0xD7AF).contains(&cp) // Hangul Syllables
+            || (0x0600..=0x06FF).contains(&cp) // Arabic
+            || cp > 0xFFFF;                    // Emoji / supplementary planes
+        if is_cjk_or_wide {
+            // Flush any accumulated ASCII run first
+            tokens += (ascii_run + 3) / 4;
+            ascii_run = 0;
+            tokens += 1;
+        } else {
+            ascii_run += 1;
+        }
+    }
+    // Flush remaining ASCII chars
+    tokens + (ascii_run + 3) / 4
+}
+
+/// Estimate total input tokens for a messages array.
+/// Each message adds ~4 overhead tokens (role, delimiters) plus its content.
+/// The whole request adds ~2 framing tokens.
+fn estimate_messages_tokens(messages: &[serde_json::Value]) -> i32 {
+    let per_message: i32 = messages.iter().map(|msg| {
+        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        estimate_tokens(content) + 4
+    }).sum();
+    per_message + 2
+}
+
 /// Claude HTTP client using reqwest
 pub struct ClaudeClient {
     client: reqwest::Client,
@@ -72,7 +118,6 @@ impl ClaudeClient {
 
 /**
  * Tool definitions for Anthropic Function Calling
- * Matches the 9 tools from claude-sdk.js
  */
 pub fn get_tools() -> Vec<serde_json::Value> {
     vec![
@@ -850,6 +895,11 @@ impl ClaudeClient {
             headers.insert("anthropic-beta", "interleaved-thinking-2025-05-14".parse().unwrap());
         }
 
+        // Estimate input tokens from the formatted messages (used as fallback if API returns 0)
+        let anthropic_msgs = format_messages_for_anthropic(messages);
+        let estimated_input = estimate_messages_tokens(&anthropic_msgs)
+            + estimate_tokens(&merge_system_prompt(system_prompt));
+
         // Send request
         let mut request = self.client
             .post("https://api.anthropic.com/v1/messages")
@@ -868,7 +918,7 @@ impl ClaudeClient {
                 return Err(AppError::ProcessError(format!("Anthropic API error ({}): {}", status, error_text)));
             }
 
-            self.stream_anthropic_response(response, window).await
+            self.stream_anthropic_response(response, window, estimated_input).await
         } else {
             let response = request.send().await.map_err(|e| {
                 AppError::ProcessError(format!("Failed to send request: {}", e))
@@ -937,6 +987,7 @@ impl ClaudeClient {
         &self,
         response: reqwest::Response,
         window: Option<Window>,
+        estimated_input_tokens: i32,
     ) -> AppResult<ChatResponse> {
         let mut full_content = String::new();
         let mut full_reasoning = String::new();
@@ -1066,6 +1117,14 @@ impl ClaudeClient {
         // Detect artifacts from final content
         artifacts = detect_artifacts(&message_str);
 
+        // Fallback: if API didn't return usage (edge case), fill in with estimates
+        if usage.input_tokens == 0 {
+            usage.input_tokens = estimated_input_tokens;
+        }
+        if usage.output_tokens == 0 {
+            usage.output_tokens = estimate_tokens(&message_str) + estimate_tokens(&full_reasoning);
+        }
+
         Ok(ChatResponse {
             content: message_str,
             artifacts,
@@ -1116,6 +1175,10 @@ impl ClaudeClient {
             }
         }
 
+        // NOTE: We don't add stream_options here because not all OpenAI-compatible APIs support it.
+        // Some APIs (like MiniMax) will return 400 if this parameter is present but not supported.
+        // Token usage will be estimated from response content length if not available in the response.
+
         // Debug: log the request body
         #[cfg(debug_assertions)]
         {
@@ -1128,6 +1191,9 @@ impl ClaudeClient {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("Authorization", format!("Bearer {}", api_key).parse().unwrap());
         headers.insert("Content-Type", "application/json".parse().unwrap());
+
+        // Estimate input tokens before the request (used as fallback if API returns 0)
+        let estimated_input = estimate_messages_tokens(&openai_messages);
 
         // Send request
         let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -1148,7 +1214,7 @@ impl ClaudeClient {
         }
 
         if streaming {
-            self.stream_openai_response(response, window).await
+            self.stream_openai_response(response, window, estimated_input).await
         } else {
             // Non-streaming response
             let value: serde_json::Value = response.json().await.map_err(|e| {
@@ -1191,6 +1257,7 @@ impl ClaudeClient {
         &self,
         response: reqwest::Response,
         window: Option<Window>,
+        estimated_input_tokens: i32,
     ) -> AppResult<ChatResponse> {
         let mut full_content = String::new();
         let mut full_reasoning = String::new();
@@ -1406,6 +1473,15 @@ impl ClaudeClient {
 
         let artifacts = detect_artifacts(&full_content);
 
+        // Fallback: most OpenAI-compatible providers don't return usage in streaming mode.
+        // Use the pre-computed estimate so token stats are always non-zero.
+        if usage.input_tokens == 0 {
+            usage.input_tokens = estimated_input_tokens;
+        }
+        if usage.output_tokens == 0 {
+            usage.output_tokens = estimate_tokens(&full_content) + estimate_tokens(&full_reasoning);
+        }
+
         Ok(ChatResponse {
             content: full_content,
             artifacts,
@@ -1488,6 +1564,34 @@ mod tests {
         let client = ClaudeClient::new();
         // Just ensure it doesn't panic
         assert!(true);
+    }
+
+    #[test]
+    fn test_estimate_tokens_ascii() {
+        // "hello world" = 11 chars → ceil(11/4) = 3 tokens
+        assert_eq!(estimate_tokens("hello world"), 3);
+        // 4 chars = exactly 1 token
+        assert_eq!(estimate_tokens("test"), 1);
+        // 8 chars = 2 tokens
+        assert_eq!(estimate_tokens("abcdefgh"), 2);
+    }
+
+    #[test]
+    fn test_estimate_tokens_cjk() {
+        // Each CJK character = 1 token
+        assert_eq!(estimate_tokens("你好世界"), 4);
+        assert_eq!(estimate_tokens("日本語"), 3);
+    }
+
+    #[test]
+    fn test_estimate_tokens_mixed() {
+        // "Hello 你好" → "Hello " (6 ascii → ceil(6/4)=2) + "你好" (2 cjk → 2) = 4
+        assert_eq!(estimate_tokens("Hello 你好"), 4);
+    }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
     }
 
     #[test]

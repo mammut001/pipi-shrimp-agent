@@ -107,7 +107,6 @@ pub async fn start_session(_app: AppHandle) -> AppResult<String> {
  * Send a message to the chat
  *
  * Saves message to database and returns assistant's response
- * Note: The actual Claude API call happens in the frontend via node-scripts
  */
 #[tauri::command]
 pub async fn send_message(_app: AppHandle, req: SendMessageRequest) -> AppResult<SendMessageResponse> {
