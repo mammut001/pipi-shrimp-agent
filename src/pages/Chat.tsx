@@ -29,7 +29,6 @@ export function Chat() {
     error,
     clearError,
     retryLastMessage,
-    init,
   } = useChatStore();
 
   // Use precise selectors so each field has its own subscription, guaranteeing
@@ -47,11 +46,6 @@ export function Chat() {
     (m) => !(m.role === 'user' && m.content.startsWith('__TOOL_RESULT__:'))
   );
   const hasMessages = messages.length > 0;
-
-  // Initialize chat store on mount
-  useEffect(() => {
-    init();
-  }, [init]);
 
   // Detect if user has scrolled up (away from bottom)
   const handleScroll = useCallback(() => {
@@ -89,7 +83,7 @@ export function Chat() {
    * Must also decrement pendingToolCalls so sendAllToolResults can still fire
    * when all other tool calls complete.
    */
-  const handleDenyPermission = () => {
+   const handleDenyPermission = () => {
     if (!pendingPermission) return;
     addNotification('info', 'Permission denied');
     clearPermissionRequest();
@@ -98,7 +92,7 @@ export function Chat() {
     // (Reading pendingToolCalls BEFORE setState would give the old value and cause off-by-one.)
     const { sendAllToolResults } = useChatStore.getState();
     useChatStore.setState((state) => ({
-      pendingToolCalls: state.pendingToolCalls - 1,
+      pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),  // Prevent negative
       // Inject a "denied" placeholder so the AI gets a tool result for this call
       pendingToolResults: [
         ...state.pendingToolResults,
@@ -106,7 +100,7 @@ export function Chat() {
       ],
     }));
     // Read the updated value AFTER the setState has been applied
-    if (useChatStore.getState().pendingToolCalls <= 0) {
+    if (useChatStore.getState().pendingToolCalls === 0) {
       sendAllToolResults();
     }
   };

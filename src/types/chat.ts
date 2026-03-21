@@ -250,6 +250,14 @@ export interface ChatState {
    * Update session's permission mode (execution mode: standard, auto-edits, bypass, plan-only)
    */
   updateSessionPermissionMode: (sessionId: string, permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only') => Promise<void>;
+
+  // ========== Internal State ==========
+  _eventListeners: Array<() => void>;  // Cleanup functions for event listeners
+
+  /**
+   * Cleanup all event listeners (call on app unmount or before re-init)
+   */
+  cleanup: () => void;
 }
 
 // ============= Helper Functions =============

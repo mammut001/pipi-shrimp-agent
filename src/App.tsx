@@ -16,7 +16,7 @@ import { BrowserPanel } from '@/components/BrowserPanel';
  */
 export default function App() {
   const { getApiConfig } = useSettingsStore();
-  const { init: initChat } = useChatStore();
+  const { init: initChat, cleanup: cleanupChat } = useChatStore();
   const { settingsOpen, currentView } = useUIStore();
 
   // Load settings on mount, then show window once fully initialized.
@@ -37,7 +37,12 @@ export default function App() {
     };
 
     init();
-  }, [getApiConfig, initChat]);
+
+    // Cleanup event listeners on unmount
+    return () => {
+      cleanupChat();
+    };
+  }, [getApiConfig, initChat, cleanupChat]);
 
   // Render active page (each page includes MainLayout with Sidebar)
   return (

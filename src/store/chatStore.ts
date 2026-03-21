@@ -56,6 +56,19 @@ interface DbProject {
 }
 
 /**
+ * Safely parse JSON with fallback
+ */
+function safeJsonParse<T>(json: string | null, fallback: T): T {
+  if (!json) return fallback;
+  try {
+    return JSON.parse(json);
+  } catch (e) {
+    console.warn('Failed to parse JSON:', e);
+    return fallback;
+  }
+}
+
+/**
  * Convert database session to frontend session
  */
 const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => ({
@@ -67,7 +80,7 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
   projectId: dbSession.project_id || undefined,
   model: dbSession.model || undefined,
   workDir: dbSession.work_dir || undefined,
-  workingFiles: dbSession.working_files ? JSON.parse(dbSession.working_files) : undefined,
+  workingFiles: safeJsonParse(dbSession.working_files, undefined),
   permissionMode: (dbSession.permission_mode as Session['permissionMode']) || undefined,
   messages: dbMessages.map((m) => ({
     id: m.id,
@@ -75,8 +88,8 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
     content: m.content,
     reasoning: m.reasoning || undefined,
     timestamp: m.created_at,
-    artifacts: m.artifacts ? JSON.parse(m.artifacts) : undefined,
-    tool_calls: m.tool_calls ? JSON.parse(m.tool_calls) : undefined,
+    artifacts: safeJsonParse(m.artifacts, undefined),
+    tool_calls: safeJsonParse(m.tool_calls, undefined),
   })),
 });
 
@@ -185,6 +198,7 @@ export const useChatStore = create<ChatState>()(
     lastUiUpdateTime: 0,
     pendingToolCalls: 0,  // Counter for pending parallel tool executions
     pendingToolResults: [] as { toolCallId: string; result: string }[],  // Accumulated tool results
+    _eventListeners: [] as Array<() => void>,  // Cleanup functions for event listeners
 
     // ========== Computed Properties ==========
     currentSession: () => {
@@ -214,8 +228,21 @@ export const useChatStore = create<ChatState>()(
      */
     init: async () => {
       if (get().isInitialized) return;
+      
+      // Cleanup any existing event listeners before re-initializing
+      const { _eventListeners } = get();
+      if (_eventListeners.length > 0) {
+        _eventListeners.forEach((unlisten) => {
+          try {
+            unlisten();
+          } catch (e) {
+            console.warn('Failed to unlisten event during re-init:', e);
+          }
+        });
+      }
+      
       // 立即设置，防止并发调用（App.tsx 和 Chat.tsx 都会调用 init）
-      set({ isInitialized: true });
+      set({ isInitialized: true, _eventListeners: [] });
 
       try {
         // Load Projects from database (preserve existing if fails)
@@ -351,10 +378,8 @@ export const useChatStore = create<ChatState>()(
           }
         });
 
-        // Store unlisten functions for cleanup
-        (window as unknown as { __claudeTokenUnlisten: () => void }).__claudeTokenUnlisten = unlistenToken;
-        (window as unknown as { __claudeReasoningUnlisten: () => void }).__claudeReasoningUnlisten = unlistenReasoning;
-        (window as unknown as { __claudeToolUseUnlisten: () => void }).__claudeToolUseUnlisten = unlistenToolUse;
+        // Store unlisten functions in store state for proper cleanup
+        set({ _eventListeners: [unlistenToken, unlistenReasoning, unlistenToolUse] });
 
         console.log('✅ Store initialization completed successfully');
         set({ isInitialized: true, error: null });
@@ -452,7 +477,7 @@ export const useChatStore = create<ChatState>()(
         // Collect the result instead of sending immediately (for batching)
         set((state) => ({
           pendingToolResults: [...state.pendingToolResults, { toolCallId, result }],
-          pendingToolCalls: state.pendingToolCalls - 1,
+          pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),  // Prevent negative
         }));
 
         // Check if all tool calls are complete, then send all results at once
@@ -469,12 +494,17 @@ export const useChatStore = create<ChatState>()(
           updateTaskStep(currentStep.id, 'failed');
         }
 
-        // Still decrement counter on error
+        // Decrement counter on error and add error result so AI can see what happened
+        const errorMessage = error instanceof Error ? error.message : String(error);
         set((state) => ({
-          pendingToolCalls: state.pendingToolCalls - 1,
+          pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),  // Prevent negative
+          pendingToolResults: [
+            ...state.pendingToolResults,
+            { toolCallId, result: `Error: ${errorMessage}` },
+          ],
         }));
 
-        setError(`Tool ${toolName} failed: ${error instanceof Error ? error.message : String(error)}`);
+        setError(`Tool ${toolName} failed: ${errorMessage}`);
         useUIStore.getState().addNotification('error', `Execution failed: ${toolName}`);
 
         // Check if all tools are done (even with errors)
@@ -620,8 +650,14 @@ export const useChatStore = create<ChatState>()(
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
-          // Pass tool_calls as-is; Rust ToolCall accepts both 'id' and 'tool_call_id' via serde alias
-          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          // Rename 'id' to 'tool_call_id' for Rust compatibility
+          ...(msg.tool_calls && {
+            tool_calls: msg.tool_calls.map((tc) => ({
+              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
+              name: tc.name,
+              arguments: tc.arguments,
+            })),
+          }),
           ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
@@ -757,8 +793,14 @@ export const useChatStore = create<ChatState>()(
         const messages = currentMessages().map((msg) => ({
           role: msg.role as 'user' | 'assistant' | 'system',
           content: msg.content,
-          // Pass tool_calls as-is; Rust ToolCall accepts both 'id' and 'tool_call_id' via serde alias
-          ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+          // Rename 'id' to 'tool_call_id' for Rust compatibility
+          ...(msg.tool_calls && {
+            tool_calls: msg.tool_calls.map((tc) => ({
+              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
+              name: tc.name,
+              arguments: tc.arguments,
+            })),
+          }),
           ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
         }));
 
@@ -830,13 +872,13 @@ export const useChatStore = create<ChatState>()(
         setStreaming(true);
         set({ streamingContent: '' });
 
-        // Set timeout protection - if no response in 30 seconds, force stop
+        // Set timeout protection - use the same timeout as setStreaming (300s)
         timeoutId = setTimeout(() => {
-          console.warn('⏱️ Streaming timeout after 30s, force stopping...');
+          console.warn(`⏱️ Streaming timeout after ${STREAMING_TIMEOUT_MS / 1000}s, force stopping...`);
           if (get().isStreaming) {
             setStreaming(false);
             set({ streamingContent: '', streamingReasoning: '' });
-            setError('Response timeout (30s exceeded). Please try again.');
+            setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded). Please try again.`);
             // Try to stop the subprocess
             invoke('stop_subprocess').catch(console.error);
           }
@@ -983,7 +1025,7 @@ export const useChatStore = create<ChatState>()(
      * Stop/cancel the current generation (kill subprocess)
      */
     stopGeneration: async () => {
-      const { isStreaming, streamingContent, streamingReasoning, setStreaming, currentSessionId } = get();
+      const { isStreaming, streamingContent, streamingReasoning, setStreaming, currentSessionId, setError } = get();
       if (!isStreaming) return;
 
       try {
@@ -991,6 +1033,7 @@ export const useChatStore = create<ChatState>()(
         await invoke('stop_subprocess');
       } catch (error) {
         console.error('Failed to stop subprocess:', error);
+        setError(`Failed to stop generation: ${error instanceof Error ? error.message : String(error)}`);
       }
 
       // Parse any <think> tags from streamingContent
@@ -1229,11 +1272,21 @@ export const useChatStore = create<ChatState>()(
     selectSession: (sessionId: string) => {
       const exists = get().sessions.some((s) => s.id === sessionId);
       if (exists) {
+        // Clear any pending timeout
+        const { streamingTimeoutId } = get();
+        if (streamingTimeoutId) {
+          clearTimeout(streamingTimeoutId);
+        }
+        
         set({
           currentSessionId: sessionId,
-          error: null, // ✅ 清理错误
-          isStreaming: false, // ✅ 清理流式状态
-          streamingContent: '', // ✅ 清理内容
+          error: null,
+          isStreaming: false,
+          streamingContent: '',
+          streamingReasoning: '',
+          streamingTimeoutId: null,
+          pendingToolCalls: 0,
+          pendingToolResults: [],
         });
       }
     },
@@ -1484,6 +1537,21 @@ export const useChatStore = create<ChatState>()(
         console.error('Failed to get work dir index:', error);
         return [];
       }
+    },
+
+    /**
+     * Cleanup all event listeners (call on app unmount or before re-init)
+     */
+    cleanup: () => {
+      const { _eventListeners } = get();
+      _eventListeners.forEach((unlisten) => {
+        try {
+          unlisten();
+        } catch (e) {
+          console.warn('Failed to unlisten event:', e);
+        }
+      });
+      set({ _eventListeners: [], isInitialized: false });
     },
   }))
 );
