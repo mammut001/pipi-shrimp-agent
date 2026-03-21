@@ -159,12 +159,31 @@ export function Chat() {
           >
             {hasMessages ? (
               <div className="divide-y divide-gray-100">
-                {messages.map((message, index) => (
+                {/* Filter out intermediate tool-dispatch assistant messages:
+                    these are rounds where the AI called tools but wrote no visible text.
+                    They show up as "(N chars) thinking" bubbles with no final content.
+                    Only the final answer (or the actively-streaming last message) is shown. */}
+                {messages
+                  .filter((message, index) => {
+                    const isLastMessage = index === messages.length - 1;
+                    // Always show the last message (could be actively streaming)
+                    if (isLastMessage) return true;
+                    // Hide intermediate assistant messages that dispatched tools but have no visible text
+                    if (
+                      message.role === 'assistant' &&
+                      message.content === '' &&
+                      message.tool_calls && message.tool_calls.length > 0
+                    ) {
+                      return false;
+                    }
+                    return true;
+                  })
+                  .map((message, index, filtered) => (
                   <ChatMessage
                     key={message.id}
                     message={message}
-                    isLatest={index === messages.length - 1}
-                    isStreaming={isStreaming && index === messages.length - 1}
+                    isLatest={index === filtered.length - 1}
+                    isStreaming={isStreaming && index === filtered.length - 1}
                   />
                 ))}
                 <div ref={messagesEndRef} />

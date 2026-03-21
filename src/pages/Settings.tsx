@@ -748,9 +748,8 @@ export function Settings() {
         </div>
 
         {/* ====== Token Stats Section ====== */}
-        <div className="border-t border-gray-200 pt-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">📊 Token 使用统计</h2>
-          <div className="h-96 border border-gray-200 rounded-lg overflow-hidden">
+        <div className="border-t border-gray-200 pt-6 px-4 pb-6">
+          <div className="h-96 bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
             <TokenStats />
           </div>
         </div>

@@ -35,6 +35,20 @@ export type TranslationKeys = {
         description: string;
       };
     };
+    thanks: {
+      title: string;
+      lobsterai: {
+        description: string;
+      };
+      sponsor: {
+        badge: string;
+      };
+      minimax: {
+        description: string;
+      };
+      github: string;
+      visitWebsite: string;
+    };
   };
   features: {
     title: string;
@@ -96,6 +110,20 @@ export const translations: Record<Language, TranslationKeys> = {
           title: "Lightning Fast",
           description: "Powered by a Rust and Tauri backend, it boasts instantaneous startup times and minimal memory footprint.",
         },
+      },
+      thanks: {
+        title: "Thanks & Acknowledgments",
+        lobsterai: {
+          description: "LobsterAI PageAgent by Alibaba provides the inspiration and architecture reference for our agent system.",
+        },
+        sponsor: {
+          badge: "Sponsor",
+        },
+        minimax: {
+          description: "MiniMax generously sponsors this project with API credits and technical support for AI capabilities.",
+        },
+        github: "View on GitHub",
+        visitWebsite: "Visit Website",
       },
     },
     features: {
@@ -177,6 +205,20 @@ export const translations: Record<Language, TranslationKeys> = {
           description: "Propulsé par un backend Rust et Tauri, il offre des temps de démarrage instantanés et une empreinte mémoire minimale.",
         },
       },
+      thanks: {
+        title: "Remerciements",
+        lobsterai: {
+          description: "LobsterAI PageAgent d'Alibaba fournit l'inspiration et la référence architecturale pour notre système d'agent.",
+        },
+        sponsor: {
+          badge: "Sponsor",
+        },
+        minimax: {
+          description: "MiniMax sponsorise généreusement ce projet avec des crédits API et un support technique pour les capacités IA.",
+        },
+        github: "Voir sur GitHub",
+        visitWebsite: "Visiter le site",
+      },
     },
     features: {
       title: "Fonctionnalités",
@@ -246,7 +288,7 @@ export const translations: Record<Language, TranslationKeys> = {
         title: "核心功能",
         ai: {
           title: "强大的大模型集成",
-          description: "深度集成 Claude SDK，支持实时的 DeepSeek 风格“思考”过程 (Reasoning) 和强大的工具调用能力。",
+          description: "深度集成 Claude SDK，支持实时的 DeepSeek 风格"思考"过程 (Reasoning) 和强大的工具调用能力。",
         },
         privacy: {
           title: "丰富的本地化工具链",
@@ -256,6 +298,20 @@ export const translations: Record<Language, TranslationKeys> = {
           title: "极致轻量与原生性能",
           description: "基于 Rust 和 Tauri 构建后端，极速启动，内存占用极低。",
         },
+      },
+      thanks: {
+        title: "感谢与致谢",
+        lobsterai: {
+          description: "阿里巴巴的 LobsterAI PageAgent 为我们的 Agent 系统提供了架构参考和灵感启发。",
+        },
+        sponsor: {
+          badge: "赞助商",
+        },
+        minimax: {
+          description: "MiniMax 慷慨地为该项目提供 API 额度和技术支持，助力 AI 能力的实现。",
+        },
+        github: "在 GitHub 上查看",
+        visitWebsite: "访问官网",
       },
     },
     features: {
