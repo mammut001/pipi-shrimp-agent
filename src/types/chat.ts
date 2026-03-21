@@ -25,6 +25,11 @@ export interface Message {
   tool_calls?: ToolCall[];       // Tool calls made by assistant
   tool_call_id?: string;         // ID of tool result (for tool role messages)
   metadata?: Record<string, unknown>;  // Additional metadata
+  token_usage?: {                // Token usage for this message (assistant only)
+    input_tokens: number;
+    output_tokens: number;
+    model?: string;
+  };
 }
 
 /** Artifact (code blocks, diagrams, etc) */

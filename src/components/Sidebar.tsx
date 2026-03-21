@@ -24,6 +24,32 @@ const truncatePath = (path: string, maxLength: number = 20): string => {
 };
 
 /**
+ * Calculate total token usage for a session
+ */
+const getSessionTokenUsage = (session: Session): { input: number; output: number; total: number } => {
+  let input = 0;
+  let output = 0;
+  
+  for (const message of session.messages) {
+    if (message.token_usage) {
+      input += message.token_usage.input_tokens;
+      output += message.token_usage.output_tokens;
+    }
+  }
+  
+  return { input, output, total: input + output };
+};
+
+/**
+ * Format token count for display (compact format)
+ */
+const formatTokenCount = (count: number): string => {
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
+  return count.toString();
+};
+
+/**
  * Sidebar component
  */
 export function Sidebar() {
@@ -505,6 +531,15 @@ export function Sidebar() {
                             <p className="text-xs text-gray-500 truncate mt-0.5">
                               {getSessionPreview(session)}
                             </p>
+                            {/* Token usage display */}
+                            {getSessionTokenUsage(session).total > 0 && (
+                              <p className="text-[10px] text-gray-400 truncate mt-0.5 flex items-center gap-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+                                </svg>
+                                <span>{formatTokenCount(getSessionTokenUsage(session).total)} tokens</span>
+                              </p>
+                            )}
                             {session.cwd && (
                               <p className="text-[10px] text-blue-600 truncate mt-0.5 flex items-center gap-1" title={session.cwd}>
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
