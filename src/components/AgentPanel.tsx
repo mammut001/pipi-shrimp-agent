@@ -127,7 +127,7 @@ export const AgentPanel: React.FC = () => {
     setAgentPanelTab: setActiveTab,
   } = useUIStore();
   const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
-  const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode } = useChatStore();
+  const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode, isStreaming, pendingToolCalls } = useChatStore();
   const { status: browserStatus } = useBrowserAgentStore();
 
   // Get session-level working files and permissionMode for current session
@@ -143,8 +143,10 @@ export const AgentPanel: React.FC = () => {
   ];
 
   const [showBypassConfirm, setShowBypassConfirm] = useState(false);
+  const [showPermissionWarning, setShowPermissionWarning] = useState(false);
   const [localInstructions, setLocalInstructions] = useState(agentInstructions);
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingModeChange, setPendingModeChange] = useState<string | null>(null);
 
   // activeTab / setActiveTab come from global useUIStore (agentPanelTab / setAgentPanelTab)
   const [previewContent, setPreviewContent] = useState<string>('');
@@ -196,6 +198,13 @@ export const AgentPanel: React.FC = () => {
   }, [agentInstructions]);
 
   const handleModeChange = (mode: string) => {
+    // Check if there are pending tool operations
+    if (isStreaming || pendingToolCalls > 0) {
+      setPendingModeChange(mode);
+      setShowPermissionWarning(true);
+      return;
+    }
+
     if (mode === 'bypass' && permissionMode !== 'bypass') {
       setShowBypassConfirm(true);
     } else {
@@ -204,6 +213,14 @@ export const AgentPanel: React.FC = () => {
       }
       setShowBypassConfirm(false);
     }
+  };
+
+  const confirmPermissionSwitch = () => {
+    if (currentSessionId && pendingModeChange) {
+      updateSessionPermissionMode(currentSessionId, pendingModeChange as 'standard' | 'auto-edits' | 'bypass' | 'plan-only');
+    }
+    setShowPermissionWarning(false);
+    setPendingModeChange(null);
   };
 
   const confirmBypass = () => {
@@ -390,6 +407,31 @@ export const AgentPanel: React.FC = () => {
             <div className="flex gap-2">
               <button onClick={confirmBypass} className="flex-1 py-1.5 bg-red-600 text-white text-[9px] font-bold rounded-lg uppercase">Confirm</button>
               <button onClick={() => setShowBypassConfirm(false)} className="flex-1 py-1.5 bg-white text-gray-600 text-[9px] font-bold rounded-lg border border-gray-200 uppercase">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {/* Permission Switch Warning - when there are pending tool calls */}
+        {showPermissionWarning && (
+          <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl animate-in slide-in-from-top-2">
+            <div className="flex items-start gap-2 mb-2">
+              <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <p className="text-[10px] text-amber-800 font-bold uppercase leading-snug">Cannot switch permissions now</p>
+                <p className="text-[9px] text-amber-700 mt-1 leading-relaxed">
+                  {isStreaming && 'AI is still generating a response. '}
+                  {pendingToolCalls > 0 && `There ${pendingToolCalls === 1 ? 'is' : 'are'} ${pendingToolCalls} pending tool call${pendingToolCalls === 1 ? '' : 's'} waiting for results.`}
+                </p>
+                <p className="text-[9px] text-amber-600 mt-1 leading-relaxed">
+                  Switching permissions now may cause API errors with in-progress tool calls.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={confirmPermissionSwitch} className="flex-1 py-1.5 bg-amber-600 text-white text-[9px] font-bold rounded-lg uppercase">Switch Anyway</button>
+              <button onClick={() => { setShowPermissionWarning(false); setPendingModeChange(null); }} className="flex-1 py-1.5 bg-white text-gray-600 text-[9px] font-bold rounded-lg border border-gray-200 uppercase">Wait</button>
             </div>
           </div>
         )}

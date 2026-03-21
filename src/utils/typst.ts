@@ -35,20 +35,3 @@ export function getLatestTypstBlock(
   return null;
 }
 
-/**
- * Get all unique Typst code blocks from messages
- */
-function getAllTypstBlocks(
-  messages: { content: string }[]
-): { block: string; messageIndex: number }[] {
-  const results: { block: string; messageIndex: number }[] = [];
-
-  messages.forEach((msg, index) => {
-    const blocks = extractTypstBlocks(msg.content);
-    blocks.forEach((block) => {
-      results.push({ block, messageIndex: index });
-    });
-  });
-
-  return results;
-}

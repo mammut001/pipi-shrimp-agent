@@ -58,7 +58,7 @@ interface DbProject {
 /**
  * Safely parse JSON with fallback
  */
-function safeJsonParse<T>(json: string | null, fallback: T): T {
+function safeJsonParse<T>(json: string | null | undefined, fallback: T): T {
   if (!json) return fallback;
   try {
     return JSON.parse(json);
@@ -174,9 +174,11 @@ const parseThinkContent = (rawContent: string): { content: string; reasoning?: s
   // but a stray </think> token arrives in a subsequent chunk.
   cleanContent = cleanContent.replace(/<\/think>/g, '').trim();
 
+  // For MiniMax/其他厂商：每个 chunk 包含完整的 <think> 块，不是增量
+  // 因此只需要返回最后一个 <think> 块，而不是累积所有块
   return {
     content: cleanContent,
-    reasoning: thinkingParts.length > 0 ? thinkingParts.join('\n') : undefined,
+    reasoning: thinkingParts.length > 0 ? thinkingParts[thinkingParts.length - 1] : undefined,
   };
 };
 
@@ -198,6 +200,7 @@ export const useChatStore = create<ChatState>()(
     lastUiUpdateTime: 0,
     pendingToolCalls: 0,  // Counter for pending parallel tool executions
     pendingToolResults: [] as { toolCallId: string; result: string }[],  // Accumulated tool results
+    streamingSessionId: null as string | null,  // Session that owns the current streaming request — guards against cross-session event contamination
     _eventListeners: [] as Array<() => void>,  // Cleanup functions for event listeners
 
     // ========== Computed Properties ==========
@@ -310,6 +313,21 @@ export const useChatStore = create<ChatState>()(
         }>('claude-tool-use', async (event) => {
           console.log('Tool use requested:', event.payload);
 
+          // CROSS-SESSION GUARD: only process tool events that belong to the session
+          // that started the current streaming request. If the user switched sessions
+          // mid-stream, stale events from the previous session must be discarded —
+          // otherwise a tool_result would be injected into a session that has no
+          // matching tool_use block, causing a 400 from the API.
+          const { streamingSessionId } = get();
+          const currentSessId = get().currentSessionId;
+          if (streamingSessionId && streamingSessionId !== currentSessId) {
+            console.warn(
+              `[cross-session guard] Discarding tool-use event for session ${streamingSessionId} ` +
+              `(current: ${currentSessId}). Switching sessions mid-stream is not supported.`
+            );
+            return;
+          }
+
           // Increment pending tool calls counter for batching
           set((state) => ({ pendingToolCalls: state.pendingToolCalls + 1 }));
 
@@ -322,7 +340,6 @@ export const useChatStore = create<ChatState>()(
 
           // Update the last assistant message to include tool_calls
           // This is needed so when we send tool result, the API knows which tool_call we're responding to
-          const currentSessId = get().currentSessionId;
           const msgs = currentMessages();
           if (msgs.length > 0) {
             const lastMsg = msgs[msgs.length - 1];
@@ -694,6 +711,8 @@ export const useChatStore = create<ChatState>()(
             title?: string;
             language?: string;
           }>;
+          model: string;
+          usage?: { input_tokens: number; output_tokens: number };
           tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
         }>('send_claude_sdk_chat_streaming', {
           messages,
@@ -757,8 +776,8 @@ export const useChatStore = create<ChatState>()(
             }).catch((e: unknown) => console.error('Failed to save token usage:', e));
           }
           
-          // Clear all streaming + pending state
-          set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '' });
+          // Clear all streaming + pending state (including cross-session guard)
+          set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '', streamingSessionId: null });
           setStreaming(false);
         }
 
@@ -771,7 +790,7 @@ export const useChatStore = create<ChatState>()(
           : (error instanceof Error ? error.message : String(error));
         setError(`Failed to send tool results: ${errMsg}`);
         setStreaming(false);
-        set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '' });
+        set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '', streamingSessionId: null });
 
         // Remove empty assistant placeholder to prevent "Thinking..." stuck state
         const sid = get().currentSessionId;
@@ -844,6 +863,7 @@ export const useChatStore = create<ChatState>()(
         await invoke<{
           content: string;
           artifacts: any[];
+          usage?: { input_tokens: number; output_tokens: number };
         }>('send_claude_sdk_chat_streaming', {
           messages,
           apiKey: apiConfig?.apiKey,
@@ -895,9 +915,10 @@ export const useChatStore = create<ChatState>()(
         const userMessage = createMessage('user', content);
         await addMessage(userMessage);
 
-        // Set streaming state
+        // Set streaming state — record which session owns this request so the
+        // claude-tool-use listener can discard stale events if the user switches sessions.
         setStreaming(true);
-        set({ streamingContent: '' });
+        set({ streamingContent: '', streamingSessionId: currentSessionId });
 
         // Set timeout protection - use the same timeout as setStreaming (300s)
         timeoutId = setTimeout(() => {
@@ -1043,7 +1064,7 @@ export const useChatStore = create<ChatState>()(
           }
           
           setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '' });
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
         }
       } catch (error) {
         // Clear timeout on error
@@ -1056,7 +1077,7 @@ export const useChatStore = create<ChatState>()(
         const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to send message');
         setError(errorMsg);
         setStreaming(false);
-        set({ streamingContent: '', streamingReasoning: '' });
+        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
 
         // Remove empty assistant placeholder to prevent "Thinking..." stuck state
         const sid = get().currentSessionId;
@@ -1342,6 +1363,7 @@ export const useChatStore = create<ChatState>()(
           streamingTimeoutId: null,
           pendingToolCalls: 0,
           pendingToolResults: [],
+          streamingSessionId: null,
         });
       }
     },

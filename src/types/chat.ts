@@ -89,6 +89,7 @@ export interface ChatState {
   lastUiUpdateTime: number;     // Last UI update timestamp for throttling
   pendingToolCalls: number;     // Counter for pending parallel tool executions
   pendingToolResults: { toolCallId: string; result: string }[];  // Accumulated tool results for batching
+  streamingSessionId: string | null;  // Session that owns the current streaming request (cross-session guard)
 
   // ========== Computed Properties ==========
   currentSession: () => Session | null;  // Get current session
@@ -130,7 +131,7 @@ export interface ChatState {
   /**
    * Update last message (for streaming updates) and persist to database
    */
-  updateLastMessage: (content: string, artifacts?: Artifact[], reasoning?: string) => Promise<void>;
+  updateLastMessage: (content: string, artifacts?: Artifact[], reasoning?: string, tokenUsage?: Message['token_usage']) => Promise<void>;
 
   /**
    * Append streaming content to current buffer
