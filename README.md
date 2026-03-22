@@ -20,7 +20,7 @@
 
 ---
 
-<h2 id="english">🇺🇸 English</h2>
+<h2 id="english">🇨🇦 English</h2>
 
 ### ✨ Core Features
 
