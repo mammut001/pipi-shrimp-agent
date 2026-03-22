@@ -15,6 +15,7 @@ import { useChatStore, useUIStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal } from '@/components';
 import type { Session } from '@/types/chat';
+import { t } from '@/i18n';
 
 /**
  * Calculate total token usage for a session
@@ -51,6 +52,8 @@ export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
+  const [showNewSessionModal, setShowNewSessionModal] = useState(false);
+  const [selectedProjectForNewChat, setSelectedProjectForNewChat] = useState<string | null>(null);
 
   const {
     currentMessages,
@@ -59,6 +62,8 @@ export function Chat() {
     error,
     clearError,
     retryLastMessage,
+    startSession,
+    projects,
   } = useChatStore();
 
   // Get current session for token stats
@@ -140,6 +145,25 @@ export function Chat() {
   };
 
   /**
+   * Handle new session required - show project selection modal
+   */
+  const handleNewSessionRequired = (_message: string) => {
+    setSelectedProjectForNewChat(null);
+    setShowNewSessionModal(true);
+  };
+
+  /**
+   * Handle creating new session with selected project
+   */
+  const handleCreateNewSession = async () => {
+    // Create session with selected project
+    await startSession(selectedProjectForNewChat || undefined);
+    setShowNewSessionModal(false);
+    setSelectedProjectForNewChat(null);
+    // The message will be sent by ChatInput after session is created
+  };
+
+  /**
    * Handle error dismissal
    */
   const handleDismissError = () => {
@@ -189,30 +213,21 @@ export function Chat() {
                 <div ref={messagesEndRef} />
               </div>
             ) : (
-              /* Empty State */
-              <div className="flex-1 flex items-center justify-center pt-64 pb-20 select-none pointer-events-none">
+              /* Empty State - PiPi Shrimp Welcome Screen */
+              <div className="flex-1 flex items-center justify-center pb-32 select-none pointer-events-none">
                 <div className="text-center">
-                  <div className="mb-4 opacity-40">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-16 w-16 mx-auto text-gray-500"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={1.5}
-                        d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                      />
-                    </svg>
+                  <div className="mb-6">
+                    <img
+                      src="/shrimp-avatar.png"
+                      alt="PiPi Shrimp"
+                      className="h-32 w-32 mx-auto rounded-full shadow-lg object-cover"
+                    />
                   </div>
-                  <h2 className="text-xl font-black text-gray-600 mb-2 uppercase tracking-[0.2em]">
-                    Start a conversation
+                  <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                    PiPi Shrimp Agent
                   </h2>
-                  <p className="text-gray-700 max-w-sm text-xs font-bold uppercase tracking-widest leading-loose">
-                    Send a message to begin chatting with AI Agent. <br /> Your conversations will be saved here.
+                  <p className="text-gray-500 text-sm">
+                    What can I help you with today?
                   </p>
                 </div>
               </div>
@@ -266,7 +281,7 @@ export function Chat() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                <span className="text-sm">AI is thinking...</span>
+                <span className="text-sm">{t('chat.aiThinking')}</span>
               </div>
             </div>
           )}
@@ -279,18 +294,57 @@ export function Chat() {
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
-                  <span>本次会话: <strong className="text-gray-700">{formatTokenCount(sessionTokenUsage.total)}</strong> tokens</span>
+                  <span>{t('chat.sessionTokenUsage')}: <strong className="text-gray-700">{formatTokenCount(sessionTokenUsage.total)}</strong> tokens</span>
                 </span>
                 <span className="text-gray-300">|</span>
-                <span>输入: {formatTokenCount(sessionTokenUsage.input)}</span>
-                <span>输出: {formatTokenCount(sessionTokenUsage.output)}</span>
+                <span>{t('chat.input')}: {formatTokenCount(sessionTokenUsage.input)}</span>
+                <span>{t('chat.output')}: {formatTokenCount(sessionTokenUsage.output)}</span>
               </div>
             </div>
           )}
 
           {/* Chat Input */}
-          <ChatInput />
+          <ChatInput onNewSessionRequired={handleNewSessionRequired} />
         </div>
+
+        {/* New Session Modal - Select Project */}
+        {showNewSessionModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowNewSessionModal(false)}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('chat.newSession')}</h3>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Select Project</label>
+                <select
+                  value={selectedProjectForNewChat || ''}
+                  onChange={(e) => setSelectedProjectForNewChat(e.target.value || null)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
+                >
+                  <option value="">None (No Project)</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowNewSessionModal(false);
+                    setSelectedProjectForNewChat(null);
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  onClick={handleCreateNewSession}
+                  className="px-4 py-2 text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors"
+                >
+                  {t('common.confirm')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Permission Modal */}
         {pendingPermission && (

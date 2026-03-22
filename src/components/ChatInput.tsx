@@ -11,6 +11,7 @@
 
 import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from 'react';
 import { useChatStore } from '@/store';
+import { t } from '@/i18n';
 
 /**
  * Props for ChatInput component
@@ -18,12 +19,14 @@ import { useChatStore } from '@/store';
 interface ChatInputProps {
   /** Optional callback when message is sent */
   onSend?: (message: string) => void;
+  /** Optional callback when user sends message but no session exists */
+  onNewSessionRequired?: (message: string) => void;
 }
 
 /**
  * Chat input component
  */
-export function ChatInput({ onSend }: ChatInputProps) {
+export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [references, setReferences] = useState<string[]>([]);
   const [isBindingFolder, setIsBindingFolder] = useState(false);
@@ -102,6 +105,14 @@ export function ChatInput({ onSend }: ChatInputProps) {
 
     // Ensure session exists before sending
     if (!currentSessionId) {
+      // 如果有回调函数，调用它来显示 project 选择模态框
+      if (onNewSessionRequired) {
+        onNewSessionRequired(finalMessage);
+        setInput('');
+        setReferences([]);
+        return;
+      }
+      // 否则直接创建 session（向后兼容）
       await startSession();
     }
 
@@ -259,7 +270,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={references.length > 0 ? "Ask about the attached files..." : "Type a message..."}
+            placeholder={references.length > 0 ? t('chat.inputPlaceholder') : t('chat.inputPlaceholder')}
             disabled={isDisabled}
             rows={1}
             className="flex-1 bg-transparent px-0 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
@@ -304,7 +315,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
               <button
                 onClick={handleStop}
                 className="p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors"
-                title="Stop generation"
+                title={t('chat.stop')}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -324,7 +335,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
                 onClick={handleSubmit}
                 disabled={isDisabled || (!input.trim() && references.length === 0)}
                 className="p-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Send message"
+                title={t('chat.send')}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"

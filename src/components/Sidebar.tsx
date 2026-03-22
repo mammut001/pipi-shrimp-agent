@@ -11,6 +11,7 @@
 import React, { useState } from 'react';
 import { useChatStore, useUIStore, useWorkflowStore } from '@/store';
 import type { Session } from '@/types/chat';
+import { t } from '@/i18n';
 
 
 /**
@@ -327,7 +328,7 @@ export function Sidebar() {
           >
             <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
           </svg>
-          New Chat
+          {t('nav.newChat')}
         </button>
 
         {/* Skill Button - Opens Skill Market */}
@@ -343,7 +344,7 @@ export function Sidebar() {
           >
             <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
           </svg>
-          Skill
+          {t('nav.skill')}
         </button>
 
         {/* View Toggle - Modern Pill Style with Better Spacing */}
@@ -355,7 +356,7 @@ export function Sidebar() {
                 : 'text-gray-600 hover:text-gray-900'
               }`}
           >
-            Chat
+            {t('nav.chat')}
           </button>
           <button
             onClick={() => setCurrentView('workflow')}
@@ -364,7 +365,7 @@ export function Sidebar() {
                 : 'text-gray-600 hover:text-gray-900'
               }`}
           >
-            Workflow
+            {t('nav.workflow')}
           </button>
           {/* Multi-select Button - Integrated in Tab Container */}
           {currentView === 'chat' && sessions.length > 0 && (
@@ -966,7 +967,7 @@ export function Sidebar() {
           <button
             onClick={toggleSettings}
             className="p-2 rounded-xl hover:bg-white hover:shadow-md text-gray-500 hover:text-gray-900 transition-all active:scale-95"
-            title="Settings"
+            title={t('nav.settings')}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"

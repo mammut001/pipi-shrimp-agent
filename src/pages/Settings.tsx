@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ApiConfig } from '@/types/settings';
 import { API_PROVIDERS, PROVIDER_MODELS } from '@/types/settings';
 import { TokenStats } from '@/components/TokenStats';
+import { t, getSupportedLocales, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
 
 /** Minimax API base URL */
 const MINIMAX_BASE_URL = 'https://api.minimaxi.com/v1';
@@ -30,7 +31,6 @@ export function Settings() {
     workingDirectory,
     telegramToken,
     theme,
-    language,
     availableModels,
     addApiConfig,
     updateApiConfig,
@@ -68,7 +68,7 @@ export function Settings() {
     workingDirectory: '',
     telegramToken: '',
     theme: 'light' as 'light' | 'dark',
-    language: 'en' as 'en' | 'zh',
+    language: getCurrentLocale(),
   });
 
   // Combine static fallback models with dynamically fetched models
@@ -91,7 +91,7 @@ export function Settings() {
       workingDirectory: workingDirectory || '',
       telegramToken: telegramToken || '',
       theme,
-      language,
+      language: getCurrentLocale(),
     });
 
     // If there are configs, select the active one for editing
@@ -359,8 +359,15 @@ export function Settings() {
       if (otherSettings.theme !== theme) {
         setTheme(otherSettings.theme);
       }
-      if (otherSettings.language !== language) {
-        setLanguage(otherSettings.language);
+      // 检查语言是否变更
+      const currentLocale = getCurrentLocale();
+      if (otherSettings.language !== currentLocale) {
+        // 直接使用 i18n 系统设置语言
+        setLocale(otherSettings.language as 'zh-CN' | 'en-US');
+        // 同时更新 settingsStore 中的语言（向后兼容）
+        setLanguage(convertToOldLanguageCode(otherSettings.language as 'zh-CN' | 'en-US'));
+        // 强制重新加载页面以应用新语言
+        window.location.reload();
       }
       addNotification('success', 'Settings saved');
     } catch (error) {
@@ -707,30 +714,21 @@ export function Settings() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Language</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('settings.language')}</label>
               <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="language"
-                    value="en"
-                    checked={otherSettings.language === 'en'}
-                    onChange={() => setOtherSettings((prev) => ({ ...prev, language: 'en' }))}
-                    className="text-gray-900 focus:ring-gray-900"
-                  />
-                  <span className="text-sm text-gray-700">English</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="language"
-                    value="zh"
-                    checked={otherSettings.language === 'zh'}
-                    onChange={() => setOtherSettings((prev) => ({ ...prev, language: 'zh' }))}
-                    className="text-gray-900 focus:ring-gray-900"
-                  />
-                  <span className="text-sm text-gray-700">中文</span>
-                </label>
+                {getSupportedLocales().map((locale) => (
+                  <label key={locale.value} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="language"
+                      value={locale.value}
+                      checked={otherSettings.language === locale.value}
+                      onChange={() => setOtherSettings((prev) => ({ ...prev, language: locale.value }))}
+                      className="text-gray-900 focus:ring-gray-900"
+                    />
+                    <span className="text-sm text-gray-700">{locale.flag} {locale.label}</span>
+                  </label>
+                ))}
               </div>
             </div>
           </div>

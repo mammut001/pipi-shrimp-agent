@@ -28,3 +28,4 @@ doc/
 node-scripts/.env
 /docs
 .pipi-shrimp/
+RELEASE_0.0.2.md
