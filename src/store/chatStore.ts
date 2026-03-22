@@ -314,16 +314,20 @@ export const useChatStore = create<ChatState>()(
           console.log('Tool use requested:', event.payload);
 
           // CROSS-SESSION GUARD: only process tool events that belong to the session
-          // that started the current streaming request. If the user switched sessions
-          // mid-stream, stale events from the previous session must be discarded —
-          // otherwise a tool_result would be injected into a session that has no
-          // matching tool_use block, causing a 400 from the API.
+          // that started the current streaming request.
+          //
+          // IMPORTANT: use (!A || A !== B) not (A && A !== B).
+          // The weaker (&&) form only fires when streamingSessionId is non-null, so stale
+          // events that arrive *after* streaming has already completed (streamingSessionId
+          // was cleared to null) would slip through and be executed in the wrong session.
+          // The correct rule is: ONLY allow events when streamingSessionId is set AND
+          // matches the current session. Discard everything else.
           const { streamingSessionId } = get();
           const currentSessId = get().currentSessionId;
-          if (streamingSessionId && streamingSessionId !== currentSessId) {
+          if (!streamingSessionId || streamingSessionId !== currentSessId) {
             console.warn(
-              `[cross-session guard] Discarding tool-use event for session ${streamingSessionId} ` +
-              `(current: ${currentSessId}). Switching sessions mid-stream is not supported.`
+              `[cross-session guard] Discarding stale tool-use event. ` +
+              `streamingSessionId=${streamingSessionId ?? 'null'}, currentSessId=${currentSessId}`
             );
             return;
           }
