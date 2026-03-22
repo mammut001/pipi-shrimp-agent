@@ -288,7 +288,7 @@ export const translations: Record<Language, TranslationKeys> = {
         title: "核心功能",
         ai: {
           title: "强大的大模型集成",
-          description: "深度集成 Claude SDK，支持实时的 DeepSeek 风格"思考"过程 (Reasoning) 和强大的工具调用能力。",
+          description: "深度集成 Claude SDK，支持实时的 DeepSeek 风格\"思考\"过程 (Reasoning) 和强大的工具调用能力。",
         },
         privacy: {
           title: "丰富的本地化工具链",
@@ -393,6 +393,20 @@ export const translations: Record<Language, TranslationKeys> = {
           description: "Rust 및 Tauri 백엔드로 구동되어 즉각적인 시작 시간과 최소한의 메모리 사용 공간을 자랑합니다.",
         },
       },
+      thanks: {
+        title: "감사 및 표창",
+        lobsterai: {
+          description: "Alibaba의 LobsterAI PageAgent는 에이전트 시스템에 대한 영감과 아키텍처 레퍼런스를 제공합니다.",
+        },
+        sponsor: {
+          badge: "스폰서",
+        },
+        minimax: {
+          description: "MiniMax는 이 프로젝트에 AI 기능을 위한 API 크레딧과 기술 지원을 아낌없이 후원합니다.",
+        },
+        github: "GitHub에서 보기",
+        visitWebsite: "웹사이트 방문",
+      },
     },
     features: {
       title: "기능",
@@ -472,6 +486,20 @@ export const translations: Record<Language, TranslationKeys> = {
           title: "Nhanh như chớp",
           description: "Được cung cấp bởi backend Rust và Tauri, nó có thời gian khởi động tức thì và dung lượng bộ nhớ tối thiểu.",
         },
+      },
+      thanks: {
+        title: "Lời Cảm Ơn",
+        lobsterai: {
+          description: "LobsterAI PageAgent của Alibaba cung cấp nguồn cảm hứng và tài liệu tham khảo kiến trúc cho hệ thống agent của chúng tôi.",
+        },
+        sponsor: {
+          badge: "Nhà tài trợ",
+        },
+        minimax: {
+          description: "MiniMax hào phóng tài trợ dự án này với credit API và hỗ trợ kỹ thuật cho các khả năng AI.",
+        },
+        github: "Xem trên GitHub",
+        visitWebsite: "Truy cập trang web",
       },
     },
     features: {
