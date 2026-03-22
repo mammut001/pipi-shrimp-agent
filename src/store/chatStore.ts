@@ -618,6 +618,9 @@ export const useChatStore = create<ChatState>()(
       // Update local state
       set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
+        // Clear pending state when switching permission mode to prevent stale tool calls
+        pendingToolCalls: 0,
+        pendingToolResults: [],
       }));
 
       // Persist to database
@@ -1105,11 +1108,17 @@ export const useChatStore = create<ChatState>()(
      */
     stopGeneration: async () => {
       const { isStreaming, streamingContent, streamingReasoning, setStreaming, currentSessionId, setError } = get();
-      if (!isStreaming) return;
+      if (!isStreaming) {
+        console.log('stopGeneration: not streaming, returning');
+        return;
+      }
+      console.log('stopGeneration: stopping...');
 
       try {
         // Call the Rust backend to kill the subprocess
+        console.log('stopGeneration: calling stop_subprocess');
         await invoke('stop_subprocess');
+        console.log('stopGeneration: stop_subprocess completed');
       } catch (error) {
         console.error('Failed to stop subprocess:', error);
         setError(`Failed to stop generation: ${error instanceof Error ? error.message : String(error)}`);
@@ -1121,10 +1130,12 @@ export const useChatStore = create<ChatState>()(
       const finalReasoning = streamingReasoning || parsed.reasoning;
 
       // Clear streaming content BEFORE updating message to prevent setStreaming from re-updating
+      console.log('stopGeneration: clearing streaming content');
       set({ streamingContent: '', streamingReasoning: '' });
 
       // Update the last message with final content and reasoning
       if (currentSessionId && (finalContent || finalReasoning)) {
+        console.log('stopGeneration: updating last message');
         set((state) => ({
           sessions: state.sessions.map((s) => {
             if (s.id !== currentSessionId || s.messages.length === 0) return s;
@@ -1147,7 +1158,9 @@ export const useChatStore = create<ChatState>()(
       }
 
       // Now call setStreaming(false) - it won't re-update since streamingContent is now empty
+      console.log('stopGeneration: calling setStreaming(false)');
       setStreaming(false);
+      console.log('stopGeneration: done');
     },
 
     /**

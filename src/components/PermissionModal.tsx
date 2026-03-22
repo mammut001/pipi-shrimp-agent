@@ -9,6 +9,7 @@
  */
 
 import type { PermissionRequest } from '@/types/ui';
+import { t } from '@/i18n';
 
 /**
  * Props for PermissionModal component
@@ -117,13 +118,13 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
             onClick={onDeny}
             className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
           >
-            Deny
+            {t('tool.deny')}
           </button>
           <button
             onClick={onApprove}
             className="px-4 py-2 text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors font-medium"
           >
-            Approve
+            {t('tool.allow')}
           </button>
         </div>
       </div>

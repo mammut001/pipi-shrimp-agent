@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import type { SettingsState, ApiConfig, ImportedFile } from '../types/settings';
 import { DEFAULT_WORKING_DIRECTORY } from '../types/settings';
+import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
 
 /**
  * Storage keys for persisting settings
@@ -268,6 +269,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
    * Set language
    */
   setLanguage: (language: 'en' | 'zh') => {
+    const locale = convertOldLanguageCode(language);
+    setLocale(locale);
     set({ language });
     try {
       localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
@@ -349,6 +352,14 @@ const initializeSettings = () => {
     const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
     if (storedLanguage === 'en' || storedLanguage === 'zh') {
       useSettingsStore.setState({ language: storedLanguage });
+      // 同时更新 i18n 系统的语言
+      const locale = convertOldLanguageCode(storedLanguage);
+      setLocale(locale);
+    } else {
+      // 尝试从新的 locale 存储加载
+      const currentLocale = getCurrentLocale();
+      const oldLanguage = convertToOldLanguageCode(currentLocale);
+      useSettingsStore.setState({ language: oldLanguage });
     }
 
     // Load working directory
