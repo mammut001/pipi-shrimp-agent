@@ -244,15 +244,10 @@ pipi-shrimp-agent/
 
 ### Open Source Inspiration
 
-- **[LobsterAI PageAgent](https://github.com/alibaba/page-agent)** by Alibaba - Provides architectural inspiration and reference for our agent system
-
+- **[LobsterAI](https://lobsterai.youdao.com/#/en/index)** - Provides architectural inspiration and reference for our agent system
+- **[PageAgent](https://github.com/alibaba/page-agent)** by Alibaba
 ### Sponsors
 
-<p align="center">
-  <a href="https://www.minimax.io/">
-    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/MiniMax_logo.svg/200px-MiniMax_logo.svg.png" alt="MiniMax" width="120" />
-  </a>
-</p>
 
 **MiniMax** generously sponsors this project with API credits and technical support for AI capabilities.
 
