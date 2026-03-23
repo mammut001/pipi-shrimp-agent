@@ -54,6 +54,7 @@ export function Chat() {
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
   const [selectedProjectForNewChat, setSelectedProjectForNewChat] = useState<string | null>(null);
+  const [pendingFirstMessage, setPendingFirstMessage] = useState<string | null>(null);
 
   const {
     currentMessages,
@@ -63,6 +64,7 @@ export function Chat() {
     clearError,
     retryLastMessage,
     startSession,
+    sendMessage,
     projects,
   } = useChatStore();
 
@@ -147,8 +149,9 @@ export function Chat() {
   /**
    * Handle new session required - show project selection modal
    */
-  const handleNewSessionRequired = (_message: string) => {
+  const handleNewSessionRequired = (message: string) => {
     setSelectedProjectForNewChat(null);
+    setPendingFirstMessage(message);
     setShowNewSessionModal(true);
   };
 
@@ -156,11 +159,15 @@ export function Chat() {
    * Handle creating new session with selected project
    */
   const handleCreateNewSession = async () => {
-    // Create session with selected project
     await startSession(selectedProjectForNewChat || undefined);
     setShowNewSessionModal(false);
     setSelectedProjectForNewChat(null);
-    // The message will be sent by ChatInput after session is created
+
+    const message = pendingFirstMessage;
+    setPendingFirstMessage(null);
+    if (message) {
+      await sendMessage(message);
+    }
   };
 
   /**
