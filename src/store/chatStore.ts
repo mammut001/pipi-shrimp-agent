@@ -713,6 +713,17 @@ export const useChatStore = create<ChatState>()(
           return;
         }
 
+        // Diagnostic: log messages being sent to help debug tool_call_id issues
+        console.log('[sendAllToolResults] pendingToolResults:', JSON.stringify(pendingToolResults));
+        console.log('[sendAllToolResults] messages being sent to API:', JSON.stringify(
+          messages.map(m => ({
+            role: m.role,
+            content: typeof m.content === 'string' ? m.content.slice(0, 80) : m.content,
+            tool_calls: m.tool_calls ? m.tool_calls.map((tc: {tool_call_id: string; name: string}) => ({ id: tc.tool_call_id, name: tc.name })) : undefined,
+            tool_call_id: m.tool_call_id,
+          }))
+        ));
+
         // Create placeholder for AI's next thought
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
