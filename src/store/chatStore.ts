@@ -441,6 +441,9 @@ export const useChatStore = create<ChatState>()(
         console.error('Failed to save session to database:', error);
       }
 
+      // Clear stale permission dialogs before switching to the new session
+      useUIStore.getState().clearAllPermissions();
+
       set((state) => ({
         sessions: [...state.sessions, newSession],
         currentSessionId: newSession.id,
@@ -451,6 +454,7 @@ export const useChatStore = create<ChatState>()(
         streamingReasoning: '',
         pendingToolCalls: 0,
         pendingToolResults: [],
+        streamingSessionId: null,
       }));
     },
 
@@ -1370,7 +1374,13 @@ export const useChatStore = create<ChatState>()(
         if (streamingTimeoutId) {
           clearTimeout(streamingTimeoutId);
         }
-        
+
+        // Clear any stale ASK-mode permission dialogs from the previous session.
+        // If a dialog is left open when the user switches sessions and they later
+        // approve it, the tool_result gets injected into the WRONG session's message
+        // history (no matching tool_use), causing a permanent 400 on every future call.
+        useUIStore.getState().clearAllPermissions();
+
         set({
           currentSessionId: sessionId,
           error: null,

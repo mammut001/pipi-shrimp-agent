@@ -90,6 +90,11 @@ export interface UIState {
   clearPermissionRequest: () => void;
 
   /**
+   * Clear ALL pending permission requests (used when switching sessions)
+   */
+  clearAllPermissions: () => void;
+
+  /**
    * Add notification
    */
   addNotification: (type: Notification['type'], message: string) => void;
