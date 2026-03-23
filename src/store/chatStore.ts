@@ -466,6 +466,11 @@ export const useChatStore = create<ChatState>()(
       const { setError } = get();
       const { addNotification, taskProgress, updateTaskStep } = useUIStore.getState();
 
+      // Capture the owning session at call-time. If the user switches sessions while
+      // this async tool is running, we discard the result rather than injecting an
+      // orphaned tool_result into the wrong session (which causes a 400 on next call).
+      const owningSessionId = get().currentSessionId;
+
       // Find the task step by toolCallId (exact match — avoids wrong step when same tool runs multiple times)
       const currentStep = taskProgress.find(s => s.id === toolCallId);
       if (currentStep) {
@@ -480,7 +485,7 @@ export const useChatStore = create<ChatState>()(
         // asking the AI to supply the path it is trying to discover.
         let result: string;
         if (toolName === 'get_current_workspace') {
-          const session = get().sessions.find(s => s.id === get().currentSessionId);
+          const session = get().sessions.find(s => s.id === owningSessionId);
           const workDir = session?.workDir;
           result = workDir
             ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
@@ -491,6 +496,18 @@ export const useChatStore = create<ChatState>()(
             toolName: toolName,   // Tauri auto-converts camelCase → snake_case for Rust
             arguments: toolInput,
           });
+        }
+
+        // Session-consistency check: if the user switched sessions while the tool was
+        // running, discard this result. Injecting it would corrupt the new session's
+        // message history (orphaned tool_result → 400 on every subsequent API call).
+        if (get().currentSessionId !== owningSessionId) {
+          console.warn(
+            `[executeTool] Session changed during execution of ${toolName} ` +
+            `(was ${owningSessionId}, now ${get().currentSessionId}). Discarding result.`
+          );
+          set((state) => ({ pendingToolCalls: Math.max(0, state.pendingToolCalls - 1) }));
+          return;
         }
 
         console.log(`Tool ${toolName} executed successfully:`, result);
