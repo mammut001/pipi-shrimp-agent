@@ -521,8 +521,10 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<serde_json::Value
             let tool_calls = msg.tool_calls.as_ref().unwrap();
             formatted.push(serde_json::json!({
                 "role": "assistant",
-                // OpenAI/MiniMax generally expect Null for content when ONLY tool calls are present
-                "content": if msg.content.is_empty() { serde_json::Value::Null } else { serde_json::json!(msg.content) },
+                // MiniMax (and many OpenAI-compatible APIs) REQUIRE content=null when tool_calls
+                // are present. Sending a non-null string alongside tool_calls triggers error 2013
+                // "tool call id is invalid". Always force null here regardless of msg.content.
+                "content": serde_json::Value::Null,
                 "tool_calls": tool_calls.iter().map(|tc| {
                     serde_json::json!({
                         "id": tc.tool_call_id,
