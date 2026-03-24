@@ -10,11 +10,11 @@
  * - Permission dialog integration
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal } from '@/components';
-import type { Session } from '@/types/chat';
+import type { Message, Session } from '@/types/chat';
 import { t } from '@/i18n';
 
 /**
@@ -45,6 +45,32 @@ const formatTokenCount = (count: number): string => {
   return count.toLocaleString();
 };
 
+const mergeReasoningParts = (...parts: Array<string | undefined | null>): string | undefined => {
+  const merged: string[] = [];
+
+  for (const part of parts) {
+    const normalized = part?.trim();
+    if (!normalized) continue;
+    if (!merged.includes(normalized)) {
+      merged.push(normalized);
+    }
+  }
+
+  return merged.length > 0 ? merged.join('\n\n') : undefined;
+};
+
+const isRenderableMessage = (message: Message, index: number, allMessages: Message[]) => {
+  const isLastMessage = index === allMessages.length - 1;
+  if (isLastMessage) return true;
+
+  return !(
+    message.role === 'assistant' &&
+    message.content === '' &&
+    message.tool_calls &&
+    message.tool_calls.length > 0
+  );
+};
+
 /**
  * Chat page component
  */
@@ -68,9 +94,9 @@ export function Chat() {
     projects,
   } = useChatStore();
 
-  // Get current session for token stats
+  // Memoized token usage (recalculates only when messages change)
   const currentSessionData = currentSession();
-  const sessionTokenUsage = getSessionTokenUsage(currentSessionData);
+  const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
 
   // Use precise selectors so each field has its own subscription, guaranteeing
   // the modal renders as soon as the queue changes (avoids stale-ref issues).
@@ -80,13 +106,61 @@ export function Chat() {
   const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
 
-  // Filter out internal tool-result messages — these are user messages with the
-  // __TOOL_RESULT__:{id}:{content} prefix used by the Rust backend. They carry
-  // tool output back to the AI but should never be shown as chat bubbles.
-  const messages = currentMessages().filter(
-    (m) => !(m.role === 'user' && m.content.startsWith('__TOOL_RESULT__:'))
+  // Memoized: filter out internal tool-result messages
+  const rawMessages = currentMessages();
+  const messages = useMemo(() =>
+    rawMessages.filter(
+      (m) => !(m.role === 'user' && m.content.startsWith('__TOOL_RESULT__:'))
+    ),
+    [rawMessages]
   );
-  const hasMessages = messages.length > 0;
+  const displayMessages = useMemo(() => {
+    const reasoningByIndex = new Map<number, string>();
+    let assistantGroupIndices: number[] = [];
+    let assistantReasoningParts: Array<string | undefined> = [];
+
+    const finalizeAssistantGroup = () => {
+      if (assistantGroupIndices.length === 0) return;
+
+      const combinedReasoning = mergeReasoningParts(...assistantReasoningParts);
+      if (combinedReasoning) {
+        const visibleIndex =
+          [...assistantGroupIndices]
+            .reverse()
+            .find((idx) => isRenderableMessage(messages[idx], idx, messages)) ??
+          assistantGroupIndices[assistantGroupIndices.length - 1];
+
+        reasoningByIndex.set(visibleIndex, combinedReasoning);
+      }
+
+      assistantGroupIndices = [];
+      assistantReasoningParts = [];
+    };
+
+    messages.forEach((message, index) => {
+      if (message.role === 'assistant') {
+        assistantGroupIndices.push(index);
+        if (message.reasoning) {
+          assistantReasoningParts.push(message.reasoning);
+        }
+        return;
+      }
+
+      finalizeAssistantGroup();
+    });
+
+    finalizeAssistantGroup();
+
+    return messages
+      .map((message, index) => ({ message, index }))
+      .filter(({ message, index }) => isRenderableMessage(message, index, messages))
+      .map(({ message, index }) =>
+        message.role === 'assistant'
+          ? { ...message, reasoning: reasoningByIndex.get(index) }
+          : message
+      );
+  }, [messages]);
+  const hasMessages = displayMessages.length > 0;
 
   // Detect if user has scrolled up (away from bottom)
   const handleScroll = useCallback(() => {
@@ -101,7 +175,7 @@ export function Chat() {
     if (!userScrolledUp) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, userScrolledUp]);
+  }, [displayMessages, userScrolledUp]);
 
   /**
    * Handle permission approval
@@ -159,14 +233,14 @@ export function Chat() {
    * Handle creating new session with selected project
    */
   const handleCreateNewSession = async () => {
-    await startSession(selectedProjectForNewChat || undefined);
+    const sessionId = await startSession(selectedProjectForNewChat || undefined);
     setShowNewSessionModal(false);
     setSelectedProjectForNewChat(null);
 
     const message = pendingFirstMessage;
     setPendingFirstMessage(null);
     if (message) {
-      await sendMessage(message);
+      await sendMessage(message, sessionId);
     }
   };
 
@@ -194,22 +268,7 @@ export function Chat() {
                     these are rounds where the AI called tools but wrote no visible text.
                     They show up as "(N chars) thinking" bubbles with no final content.
                     Only the final answer (or the actively-streaming last message) is shown. */}
-                {messages
-                  .filter((message, index) => {
-                    const isLastMessage = index === messages.length - 1;
-                    // Always show the last message (could be actively streaming)
-                    if (isLastMessage) return true;
-                    // Hide intermediate assistant messages that dispatched tools but have no visible text
-                    if (
-                      message.role === 'assistant' &&
-                      message.content === '' &&
-                      message.tool_calls && message.tool_calls.length > 0
-                    ) {
-                      return false;
-                    }
-                    return true;
-                  })
-                  .map((message, index, filtered) => (
+                {displayMessages.map((message, index, filtered) => (
                   <ChatMessage
                     key={message.id}
                     message={message}

@@ -4,7 +4,7 @@
  * High-performance text searching using ripgrep (rg)
  */
 
-use crate::models::response::FileResponse;
+use crate::commands::file::resolve_path;
 use crate::utils::{AppError, AppResult};
 use std::process::Command;
 
@@ -33,18 +33,6 @@ fn check_ripgrep() -> AppResult<String> {
 }
 
 /**
- * Expand ~ to home directory
- */
-fn expand_path(path: &str) -> String {
-    if path.starts_with("~") {
-        if let Ok(home) = std::env::var("HOME") {
-            return path.replacen("~", &home, 1);
-        }
-    }
-    path.to_string()
-}
-
-/**
  * Search for a pattern in files using ripgrep
  *
  * # Arguments
@@ -60,11 +48,12 @@ pub async fn search_files(
     pattern: String,
     path: String,
     extensions: Option<Vec<String>>,
+    work_dir: Option<String>,
 ) -> AppResult<String> {
     // Check for ripgrep and get the executable path
     let rg_path = check_ripgrep()?;
 
-    let expanded_path = expand_path(&path);
+    let expanded_path = resolve_path(&path, work_dir.as_deref())?;
 
     // Build rg command
     let mut cmd = Command::new(rg_path);
@@ -131,9 +120,9 @@ pub async fn search_files(
  * A JSON string with list of matching file paths
  */
 #[tauri::command]
-pub async fn glob_search(pattern: String, path: String) -> AppResult<String> {
-    let expanded_path = expand_path(&path);
-    let full_pattern = format!("{}/{}", expanded_path, pattern);
+pub async fn glob_search(pattern: String, path: String, work_dir: Option<String>) -> AppResult<String> {
+    let expanded_path = resolve_path(&path, work_dir.as_deref())?;
+    let full_pattern = format!("{}/{}", expanded_path.to_string_lossy(), pattern);
 
     let mut files = Vec::new();
     
@@ -165,8 +154,8 @@ pub async fn glob_search(pattern: String, path: String) -> AppResult<String> {
  * A JSON string with search results
  */
 #[tauri::command]
-pub async fn grep_files(pattern: String, path: String) -> AppResult<String> {
-    let expanded_path = expand_path(&path);
+pub async fn grep_files(pattern: String, path: String, work_dir: Option<String>) -> AppResult<String> {
+    let expanded_path = resolve_path(&path, work_dir.as_deref())?;
 
     let output = Command::new("grep")
         .arg("-n")

@@ -4,11 +4,12 @@
  * Inspired by Claude Code's sidebar layout.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useUIStore, useSettingsStore, useChatStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { TypstPreview } from './TypstPreview';
 import { BrowserPanel } from './BrowserPanel';
+import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { getLatestTypstBlock } from '@/utils/typst';
 
 /**
@@ -125,6 +126,7 @@ export const AgentPanel: React.FC = () => {
     addNotification,
     agentPanelTab: activeTab,
     setAgentPanelTab: setActiveTab,
+    browserDockMode,
   } = useUIStore();
   const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
   const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode, isStreaming, pendingToolCalls } = useChatStore();
@@ -136,11 +138,11 @@ export const AgentPanel: React.FC = () => {
   // Get permissionMode from current session (defaults to 'standard')
   const permissionMode = currentSession?.permissionMode || 'standard';
 
-  // Combine session files and global files (deduplicated by path)
-  const allWorkingFiles = [
+  // Combine session files and global files (deduplicated by path) - memoized
+  const allWorkingFiles = useMemo(() => [
     ...sessionWorkingFiles,
     ...globalImportedFiles.filter(f => !sessionWorkingFiles.some(sf => sf.path === f.path))
-  ];
+  ], [sessionWorkingFiles, globalImportedFiles]);
 
   const [showBypassConfirm, setShowBypassConfirm] = useState(false);
   const [showPermissionWarning, setShowPermissionWarning] = useState(false);
@@ -335,7 +337,7 @@ export const AgentPanel: React.FC = () => {
       {/* Tab content: Browser */}
       {activeTab === 'browser' && (
         <div className="flex-1 overflow-hidden">
-          <BrowserPanel />
+          {browserDockMode === 'panel' ? <BrowserMiniPreview /> : <BrowserPanel />}
         </div>
       )}
 

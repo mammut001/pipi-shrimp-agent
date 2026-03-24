@@ -106,12 +106,12 @@ export interface ChatState {
   /**
    * Create a new session (optionally in a project and with a specific model)
    */
-  startSession: (projectId?: string, model?: string) => Promise<void>;
+  startSession: (projectId?: string, model?: string) => Promise<string>;
 
   /**
    * Send message (call API)
    */
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, sessionId?: string) => Promise<void>;
 
   /**
    * Stop/cancel the current generation (kill subprocess)
@@ -257,6 +257,11 @@ export interface ChatState {
    */
   updateSessionPermissionMode: (sessionId: string, permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only') => Promise<void>;
 
+  /**
+   * Rename a session (update title)
+   */
+  renameSession: (sessionId: string, newTitle: string) => Promise<void>;
+
   // ========== Token Stats ==========
   
   /**
@@ -310,7 +315,7 @@ export const createMessage = (
  */
 export const createSession = (title?: string, projectId?: string, model?: string): Session => ({
   id: crypto.randomUUID(),
-  title: title || 'New Conversation',
+  title: title || 'Chat',
   messages: [],
   createdAt: Date.now(),
   updatedAt: Date.now(),

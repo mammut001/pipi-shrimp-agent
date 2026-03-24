@@ -5,6 +5,16 @@
 
 // ============= Type Definitions =============
 
+/** Browser dock mode - defines how browser is displayed in the app */
+export type BrowserDockMode =
+  | 'hidden'    // no in-app browser visible
+  | 'panel'     // browser represented only inside right panel browser tab
+  | 'split'     // browser occupies a dedicated workspace pane next to chat
+  | 'external'; // actual browser lives in separate window
+
+/** Split focus - determines which split pane is visually emphasized */
+export type SplitFocus = 'browser' | 'chat';
+
 /** Permission request dialog */
 export interface PermissionRequest {
   id: string;
@@ -33,6 +43,7 @@ export interface UIState {
   // ========== Data State ==========
   sidebarVisible: boolean;
   settingsOpen: boolean;
+  // NOTE: 'browser' as a view is deprecated - use browserDockMode instead
   currentView: 'chat' | 'workflow' | 'skill' | 'browser';
   currentArtifactId?: string;
   permissionQueue: PermissionRequest[];  // FIFO queue — supports multiple concurrent tool calls
@@ -46,6 +57,12 @@ export interface UIState {
 
   // Right panel active tab (global so external triggers like browser intent can switch it)
   agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code';
+
+  // Browser Dock State (see browser-docked-layout-design.md)
+  browserDockMode: BrowserDockMode;
+  browserSplitFocus: SplitFocus;
+  browserPaneWidth: number;
+  browserPaneVisible: boolean;
 
   // ========== Action Methods ==========
 
@@ -116,6 +133,16 @@ export interface UIState {
   updateTaskStep: (id: string, status: TaskStep['status']) => void;
   clearTaskProgress: () => void;
   setAgentPanelTab: (tab: UIState['agentPanelTab']) => void;
+
+  // Browser Dock Actions (see browser-docked-layout-design.md)
+  setBrowserDockMode: (mode: BrowserDockMode) => void;
+  expandBrowserToSplit: () => void;
+  collapseBrowserToPanel: () => void;
+  focusBrowserPane: () => void;
+  focusChatPane: () => void;
+  openBrowserExternal: () => void;
+  closeBrowserDock: () => void;
+  setBrowserPaneWidth: (width: number) => void;
 }
 
 // ============= Constants =============

@@ -291,6 +291,7 @@ pub async fn update_session_cwd(
 pub async fn execute_tool(
     tool_name: String,
     arguments: String,
+    work_dir: Option<String>,
 ) -> AppResult<String> {
     println!("🔧 Executing tool: {} with args: {}", tool_name, arguments);
 
@@ -304,7 +305,7 @@ pub async fn execute_tool(
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for read_file".to_string()))?;
-            let result = crate::commands::file::read_file(path.to_string()).await?;
+            let result = crate::commands::file::read_file(path.to_string(), work_dir.clone()).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
         "write_file" => {
@@ -314,7 +315,7 @@ pub async fn execute_tool(
             let content = args.get("content")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'content' argument for write_file".to_string()))?;
-            let result = crate::commands::file::write_file(path.to_string(), content.to_string()).await?;
+            let result = crate::commands::file::write_file(path.to_string(), content.to_string(), work_dir.clone()).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
         "execute_command" => {
@@ -324,21 +325,21 @@ pub async fn execute_tool(
             let cwd = args.get("cwd")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            let result = crate::commands::code::execute_bash(command.to_string(), cwd).await?;
+            let result = crate::commands::code::execute_bash(command.to_string(), cwd, work_dir.clone()).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
         "create_directory" => {
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for create_directory".to_string()))?;
-            let result = crate::commands::file::create_directory(path.to_string()).await?;
+            let result = crate::commands::file::create_directory(path.to_string(), work_dir.clone()).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
         "path_exists" => {
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for path_exists".to_string()))?;
-            let result = crate::commands::file::path_exists(path.to_string()).await?;
+            let result = crate::commands::file::path_exists(path.to_string(), work_dir.clone()).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
         "list_files" => {
@@ -348,7 +349,7 @@ pub async fn execute_tool(
             let pattern = args.get("pattern")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            let result = crate::commands::file::list_files(path.to_string(), pattern).await?;
+            let result = crate::commands::file::list_files(path.to_string(), pattern, work_dir.clone()).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
         "search_files" => {
@@ -361,7 +362,7 @@ pub async fn execute_tool(
             let extensions = args.get("extensions")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect());
-            crate::commands::search::search_files(pattern.to_string(), path.to_string(), extensions).await?
+            crate::commands::search::search_files(pattern.to_string(), path.to_string(), extensions, work_dir.clone()).await?
         }
         "glob_search" => {
             let pattern = args.get("pattern")
@@ -370,7 +371,7 @@ pub async fn execute_tool(
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for glob_search".to_string()))?;
-            crate::commands::search::glob_search(pattern.to_string(), path.to_string()).await?
+            crate::commands::search::glob_search(pattern.to_string(), path.to_string(), work_dir.clone()).await?
         }
         "grep_files" => {
             let pattern = args.get("pattern")
@@ -379,7 +380,7 @@ pub async fn execute_tool(
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for grep_files".to_string()))?;
-            crate::commands::search::grep_files(pattern.to_string(), path.to_string()).await?
+            crate::commands::search::grep_files(pattern.to_string(), path.to_string(), work_dir.clone()).await?
         }
         // get_current_workspace 由 TS 侧拦截（chatStore.ts executeTool），
         // 直接从内存中的 session.workDir 返回，不会走到 Rust 这里。

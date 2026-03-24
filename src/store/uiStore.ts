@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { UIState, PermissionRequest, Notification } from '../types/ui';
+import type { UIState, PermissionRequest, Notification, BrowserDockMode, SplitFocus } from '../types/ui';
 import { NOTIFICATION_TIMEOUT } from '../types/ui';
 
 /**
@@ -29,6 +29,12 @@ export const useUIStore = create<UIState>((set) => ({
   agentPanelTab: 'main' as const,
   agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || 'You are a powerful AI Agent designed by the Google Deepmind team.',
   taskProgress: [],
+
+  // Browser Dock State (see browser-docked-layout-design.md)
+  browserDockMode: 'hidden' as BrowserDockMode,
+  browserSplitFocus: 'chat' as SplitFocus,
+  browserPaneWidth: 400,
+  browserPaneVisible: false,
 
   // ========== Action Methods ==========
 
@@ -137,6 +143,48 @@ export const useUIStore = create<UIState>((set) => ({
   })),
   clearTaskProgress: () => set({ taskProgress: [] }),
   setAgentPanelTab: (tab) => set({ agentPanelTab: tab }),
+
+  // Browser Dock Actions (see browser-docked-layout-design.md)
+  setBrowserDockMode: (mode: BrowserDockMode) =>
+    set({
+      browserDockMode: mode,
+      browserPaneVisible: mode !== 'hidden',
+    }),
+
+  expandBrowserToSplit: () =>
+    set({
+      browserDockMode: 'split' as BrowserDockMode,
+      browserPaneVisible: true,
+      browserSplitFocus: 'browser' as SplitFocus,
+    }),
+
+  collapseBrowserToPanel: () =>
+    set({
+      browserDockMode: 'panel' as BrowserDockMode,
+      browserPaneVisible: false,
+    }),
+
+  focusBrowserPane: () =>
+    set({ browserSplitFocus: 'browser' as SplitFocus }),
+
+  focusChatPane: () =>
+    set({ browserSplitFocus: 'chat' as SplitFocus }),
+
+  openBrowserExternal: () =>
+    set({
+      browserDockMode: 'external' as BrowserDockMode,
+      browserPaneVisible: false,
+    }),
+
+  closeBrowserDock: () =>
+    set({
+      browserDockMode: 'hidden' as BrowserDockMode,
+      browserPaneVisible: false,
+      browserSplitFocus: 'chat' as SplitFocus,
+    }),
+
+  setBrowserPaneWidth: (width: number) =>
+    set({ browserPaneWidth: Math.max(200, Math.min(800, width)) }),
 }));
 
-export type { PermissionRequest, Notification, TaskStep } from '../types/ui';
+export type { PermissionRequest, Notification, TaskStep, BrowserDockMode, SplitFocus } from '../types/ui';

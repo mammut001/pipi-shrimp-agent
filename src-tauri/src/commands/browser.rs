@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tauri::{WebviewWindow, WebviewWindowBuilder, WebviewUrl, Url};
+use tauri::{Listener, WebviewWindow, WebviewWindowBuilder, WebviewUrl, Url};
 use crate::utils::{AppError, AppResult};
 
 /// Browser window state management
@@ -336,4 +336,237 @@ pub async fn browser_go_back(
         .map_err(|e| AppError::InternalError(format!("Failed to go back: {}", e)))?;
 
     Ok("Navigated back".to_string())
+}
+
+/// Raw inspection data returned from browser
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct RawBrowserInspection {
+    pub url: String,
+    pub title: String,
+    pub has_password_input: bool,
+    pub has_login_form: bool,
+    pub has_qr_auth: bool,
+    pub has_captcha: bool,
+    pub text_markers: Vec<String>,
+    pub dom_markers: Vec<String>,
+}
+
+/// Inspect the current browser page state
+/// Returns raw DOM and text information for auth detection
+/// Since Tauri v2's eval doesn't return values, we use a two-step approach:
+/// 1. Inject JS that stores result in a global variable and emits an event
+/// 2. Get URL from window as fallback, use event for detailed data
+#[tauri::command]
+pub async fn inspect_browser_state(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<RawBrowserInspection> {
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+
+    let browser_window = {
+        let state = state.lock().await;
+        state.browser_window.as_ref()
+            .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
+            .clone()
+    };
+
+    let (tx, rx) = oneshot::channel::<Result<RawBrowserInspection, String>>();
+    let tx = StdArc::new(StdMutex::new(Some(tx)));
+
+    let success_tx = tx.clone();
+    let success_listener = app.once("browser_inspection_result", move |event| {
+        let payload = event.payload().to_string();
+        if let Ok(mut sender) = success_tx.lock() {
+            if let Some(tx) = sender.take() {
+                let parsed = serde_json::from_str::<RawBrowserInspection>(&payload)
+                    .map_err(|e| format!("Failed to parse inspection payload: {}", e));
+                let _ = tx.send(parsed);
+            }
+        }
+    });
+
+    let error_tx = tx.clone();
+    let error_listener = app.once("browser_inspection_error", move |event| {
+        let payload = event.payload().to_string();
+        let message = serde_json::from_str::<serde_json::Value>(&payload)
+            .ok()
+            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+            .unwrap_or_else(|| format!("Browser inspection failed: {}", payload));
+
+        if let Ok(mut sender) = error_tx.lock() {
+            if let Some(tx) = sender.take() {
+                let _ = tx.send(Err(message));
+            }
+        }
+    });
+
+    // Inject JavaScript that computes the inspection and stores it globally
+    let inspection_script = r#"
+(function() {
+    try {
+        // Get basic info
+        const url = window.location.href;
+        const title = document.title;
+
+        // Check for password inputs
+        const hasPasswordInput = document.querySelectorAll('input[type="password"]').length > 0;
+
+        // Check for login forms
+        const hasLoginForm = document.querySelectorAll('form[action*="login"], form[action*="signin"], form[action*="auth"]').length > 0;
+
+        // Check for QR code (common patterns)
+        const hasQrAuth = !!(
+            document.querySelector('[data-testid="qr-code"]') ||
+            document.querySelector('img[alt*="QR"]') ||
+            document.querySelector('img[src*="qr"]') ||
+            document.body.innerText.toLowerCase().includes('scan qr')
+        );
+
+        // Check for captcha
+        const hasCaptcha = !!(
+            document.querySelector('[class*="captcha"]') ||
+            document.querySelector('[id*="captcha"]') ||
+            document.body.innerText.toLowerCase().includes('captcha') ||
+            document.body.innerText.toLowerCase().includes('verify you\'re human') ||
+            document.body.innerText.toLowerCase().includes('i\'m not a robot')
+        );
+
+        // Collect text markers
+        const bodyText = document.body.innerText;
+        const textMarkers = [];
+        const authTexts = [
+            'sign in', 'sign in to', 'log in', 'log in to', 'login',
+            'password', 'username', 'email', 'authentication',
+            'two-factor', '2fa', 'verification code', 'security code',
+            'dashboard', 'my apps', 'account', 'profile', 'settings',
+            'chats', 'messages', 'contacts', 'whatsapp', 'telegram',
+        ];
+
+        for (const text of authTexts) {
+            if (bodyText.toLowerCase().includes(text)) {
+                textMarkers.push(text);
+            }
+        }
+
+        // Collect DOM markers
+        const domMarkers = [];
+        const passwordInputs = document.querySelectorAll('input[type="password"]');
+        for (const input of passwordInputs) {
+            domMarkers.push('input[type="password"]');
+            if (input.id) domMarkers.push('input#' + input.id);
+            if (input.name) domMarkers.push('input[name="' + input.name + '"]');
+        }
+
+        const forms = document.querySelectorAll('form');
+        for (const form of forms) {
+            if (form.action && (form.action.includes('login') || form.action.includes('signin'))) {
+                domMarkers.push('form[action*="login"]');
+            }
+        }
+
+        const uniqueTextMarkers = [...new Set(textMarkers)];
+        const uniqueDomMarkers = [...new Set(domMarkers)];
+
+        const result = {
+            url: url,
+            title: title,
+            has_password_input: hasPasswordInput,
+            has_login_form: hasLoginForm,
+            has_qr_auth: hasQrAuth,
+            has_captcha: hasCaptcha,
+            text_markers: uniqueTextMarkers,
+            dom_markers: uniqueDomMarkers
+        };
+
+        // Store in global for Rust to read via second eval
+        window.__inspection_result = JSON.stringify(result);
+
+        // Emit event with result to Rust (for async listeners)
+        if (window.__TAURI__) {
+            window.__TAURI__.event.emit('browser_inspection_result', result);
+        }
+
+        console.log('[Browser] Inspection complete:', result.url);
+    } catch (e) {
+        console.error('Inspection error:', e);
+        if (window.__TAURI__) {
+            window.__TAURI__.event.emit('browser_inspection_error', { message: e.message });
+        }
+    }
+})();
+"#;
+
+    // Inject the inspection script
+    browser_window.eval(inspection_script)
+        .map_err(|e| AppError::InternalError(format!("Failed to inject inspection script: {}", e)))?;
+
+    let inspection = tokio::time::timeout(Duration::from_secs(2), rx)
+        .await
+        .map_err(|_| AppError::InternalError("Timed out waiting for browser inspection result".to_string()))?
+        .map_err(|_| AppError::InternalError("Browser inspection channel closed unexpectedly".to_string()))?
+        .map_err(AppError::InternalError)?;
+
+    app.unlisten(success_listener);
+    app.unlisten(error_listener);
+
+    println!(
+        "[Browser] Inspection result: {} - markers: {:?}",
+        inspection.url,
+        inspection.text_markers
+    );
+    Ok(inspection)
+}
+
+/// Navigate to a specific URL in the browser window
+#[tauri::command]
+pub async fn browser_navigate(
+    url: String,
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    let browser_window = {
+        let state = state.lock().await;
+        state.browser_window.as_ref()
+            .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
+            .clone()
+    };
+
+    // Validate URL
+    if url.is_empty() {
+        return Err(AppError::InvalidInput("URL cannot be empty".to_string()));
+    }
+
+    let normalized_url = if url.starts_with("http://") || url.starts_with("https://") {
+        url
+    } else {
+        format!("https://{}", url)
+    };
+
+    // Use eval to navigate
+    let script = format!("window.location.href = '{}';", normalized_url.replace('\'', "\\'"));
+    browser_window.eval(&script)
+        .map_err(|e| AppError::InternalError(format!("Failed to navigate: {}", e)))?;
+
+    println!("[Browser] Navigating to: {}", normalized_url);
+    Ok(format!("Navigated to: {}", normalized_url))
+}
+
+/// Reload the current page in the browser window
+#[tauri::command]
+pub async fn browser_reload(
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<String> {
+    let browser_window = {
+        let state = state.lock().await;
+        state.browser_window.as_ref()
+            .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
+            .clone()
+    };
+
+    browser_window.eval("window.location.reload();")
+        .map_err(|e| AppError::InternalError(format!("Failed to reload: {}", e)))?;
+
+    println!("[Browser] Page reloaded");
+    Ok("Page reloaded".to_string())
 }

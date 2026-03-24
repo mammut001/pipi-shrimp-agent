@@ -9,6 +9,7 @@
  * - Timestamp display
  */
 
+import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
@@ -41,7 +42,7 @@ const formatTimestamp = (timestamp: number): string => {
 /**
  * Single chat message component
  */
-export function ChatMessage({ message, isLatest = false, isStreaming = false, onTypstPreview }: ChatMessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, isLatest = false, isStreaming = false, onTypstPreview }: ChatMessageProps) {
   const isUser = message.role === 'user';
 
   return (
@@ -256,33 +257,154 @@ export function ChatMessage({ message, isLatest = false, isStreaming = false, on
       </div>
     </div>
   );
-}
+});
 /**
- * ReasoningBlock - Vercel style collapsible reasoning display
- * Features: Native <details> element, smooth animations, dark mode support
+ * ReasoningBlock - Redesigned think bubble component
+ *
+ * Features (per design doc):
+ * - Default collapsed (idle state), auto-expand when streaming
+ * - Provider badge and status indicator
+ * - Collapsible content with max-height + scroll
+ * - Copy button for reasoning content
+ * - Clean visual hierarchy that doesn't compete with main answer
  */
-function ReasoningBlock({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
-  // Use native <details> for built-in expand/collapse
-  // Default to expanded when streaming
+
+/** Provider badge component */
+function ProviderBadge({ source }: { source?: string }) {
+  if (!source) return null;
+
+  const label = source === 'anthropic' ? 'Anthropic' :
+                source === 'minimax' ? 'MiniMax' :
+                source === 'openai' ? 'OpenAI' :
+                source === 'gemini' ? 'Gemini' : source;
 
   return (
-    <details className="mt-3 cursor-pointer group" open={isStreaming ? true : undefined}>
-      <summary className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors py-2 list-none marker:hidden">
-        {isStreaming ? (
-          <span className="flex gap-1">
-            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" />
-            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-          </span>
-        ) : (
-          <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-        )}
-        <span>{t('chat.aiThinking')}</span>
-        <span className="text-xs opacity-50">({content.length} chars)</span>
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500">
+      {label}
+    </span>
+  );
+}
+
+/** Reasoning header - shows status, provider, char count, and expand arrow */
+function ReasoningHeader({
+  isStreaming,
+  charCount,
+  provider
+}: {
+  isStreaming: boolean;
+  charCount: number;
+  provider?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {/* Status indicator */}
+      {isStreaming ? (
+        <span className="flex gap-1">
+          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" />
+          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+        </span>
+      ) : (
+        <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+      )}
+
+      {/* Label */}
+      <span className="text-sm text-gray-500">
+        {isStreaming ? t('chat.aiThinking') : t('chat.thinking')}
+      </span>
+
+      {/* Provider badge */}
+      <ProviderBadge source={provider} />
+
+      {/* Char count */}
+      <span className="text-xs text-gray-400">
+        {charCount > 1000 ? `${(charCount / 1000).toFixed(1)}K` : charCount} chars
+      </span>
+    </div>
+  );
+}
+
+/** Reasoning body - scrollable content with copy button */
+function ReasoningBody({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  return (
+    <div className="relative mt-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 overflow-hidden">
+      {/* Header with copy button */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800">
+        <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+          Reasoning
+        </span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 px-2 py-1 text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors"
+          title="Copy reasoning"
+        >
+          {copied ? (
+            <>
+              <svg className="w-3 h-3 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Copied
+            </>
+          ) : (
+            <>
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Copy
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Content area */}
+      <div className="max-h-64 overflow-y-auto">
+        <pre className="p-3 text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
+          {content}
+          {isStreaming && <span className="inline-block w-1.5 h-4 ml-1 bg-blue-400 animate-pulse align-middle" />}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/** Main ReasoningBlock component */
+function ReasoningBlock({
+  content,
+  isStreaming,
+  provider
+}: {
+  content: string;
+  isStreaming?: boolean;
+  provider?: string;
+}) {
+  // Default to collapsed, expand when streaming
+  return (
+    <details
+      className="mt-3 cursor-pointer group"
+      open={isStreaming ? true : undefined}
+    >
+      <summary className="flex items-center justify-between gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors py-2 list-none marker:hidden rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50">
+        <ReasoningHeader
+          isStreaming={!!isStreaming}
+          charCount={content.length}
+          provider={provider}
+        />
         <svg
-          className="w-4 h-4 transform transition-transform duration-200 ml-auto group-open:rotate-180"
+          className="w-4 h-4 transform transition-transform duration-200 text-gray-400 group-open:rotate-180 flex-shrink-0"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -290,12 +412,7 @@ function ReasoningBlock({ content, isStreaming }: { content: string; isStreaming
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </summary>
-      <div className="mt-2 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-        <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono overflow-x-auto leading-relaxed">
-          {content}
-          {isStreaming && <span className="inline-block w-1.5 h-4 ml-1 bg-blue-400 animate-pulse align-middle" />}
-        </pre>
-      </div>
+      <ReasoningBody content={content} isStreaming={!!isStreaming} />
     </details>
   );
 }

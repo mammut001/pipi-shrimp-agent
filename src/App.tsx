@@ -1,15 +1,22 @@
 /**
  * App - Main application component
  *
- * Handles routing between Chat and Workflow pages via uiStore.currentView.
- * Settings is shown as a modal overlay when triggered from sidebar.
+ * Handles routing between Chat, Workflow, and Skill pages via uiStore.currentView.
+ * Browser is no longer a full-page route - it's now a dockable workspace surface.
+ * See browser-docked-layout-design.md for details.
+ *
+ * Layout model:
+ * - 'workflow' -> renders Workflow page
+ * - 'skill' -> renders Skill page
+ * - 'chat' -> renders ChatBrowserWorkspaceShell (handles split layout)
+ * - 'browser' -> DEPRECATED, redirects to 'chat' with dock mode
  */
 
 import { useEffect } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
-import { Chat, Settings, Workflow, Skill } from '@/pages';
-import { BrowserPanel } from '@/components/BrowserPanel';
+import { Settings, Workflow, Skill } from '@/pages';
+import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 
 /**
  * Main application component
@@ -44,10 +51,26 @@ export default function App() {
     };
   }, [getApiConfig, initChat, cleanupChat]);
 
-  // Render active page (each page includes MainLayout with Sidebar)
+  // Render active page based on currentView
+  // Note: 'browser' view is deprecated - browser is now a dock mode in chat view
+  const renderMainContent = () => {
+    switch (currentView) {
+      case 'workflow':
+        return <Workflow />;
+      case 'skill':
+        return <Skill />;
+      case 'browser':
+        // Deprecated: redirect to chat with browser visible
+        return <ChatBrowserWorkspaceShell />;
+      case 'chat':
+      default:
+        return <ChatBrowserWorkspaceShell />;
+    }
+  };
+
   return (
     <>
-      {currentView === 'chat' ? <Chat /> : currentView === 'workflow' ? <Workflow /> : currentView === 'browser' ? <BrowserPanel /> : <Skill />}
+      {renderMainContent()}
       {settingsOpen && <Settings />}
     </>
   );
