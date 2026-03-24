@@ -1,16 +1,24 @@
 /**
  * BrowserPanel - PageAgent UI for controlling web pages
  *
- * Uses the second WebviewWindow approach:
- * - Browser window opens separately via Tauri commands
- * - Task execution happens in the browser window
- * - Events are emitted back to this panel for display
+ * Extended with auth handoff support:
+ * - Shows current control mode (manual/agent)
+ * - Displays authentication state
+ * - Manual login handoff with "I Have Logged In" button
+ * - Blocked state handling
  */
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useBrowserAgentStore } from '../store/browserAgentStore';
 import { useUIStore } from '../store/uiStore';
 import { goBack } from '../utils/browserCommands';
+import {
+  getAuthStateText,
+  getBlockReasonText,
+  getRecommendation,
+  getAuthStateColor,
+  getAuthStateBgColor,
+} from '../utils/browserInspection';
 
 /**
  * Quick access website definitions
@@ -23,7 +31,7 @@ const QUICK_SITES = [
   { name: 'HN', url: 'https://news.ycombinator.com', icon: '🔥' },
   { name: 'Twitter', url: 'https://x.com', icon: '🐦' },
   { name: 'YouTube', url: 'https://www.youtube.com', icon: '▶️' },
-  { name: 'Wikipedia', url: 'https://www.wikipedia.org', icon: '📖' },
+  { name: 'WhatsApp', url: 'https://web.whatsapp.com', icon: '💬' },
 ];
 
 /**
@@ -75,6 +83,14 @@ const getQuickTasks = (url: string): string[] => {
     ];
   }
 
+  if (lowerUrl.includes('whatsapp')) {
+    return [
+      '搜索联系人',
+      '发送测试消息',
+      '获取最近对话',
+    ];
+  }
+
   if (lowerUrl.includes('amazon') || lowerUrl.includes('shopping')) {
     return [
       '搜索产品',
@@ -98,6 +114,7 @@ export const BrowserPanel: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const activeTaskIdRef = useRef<string | null>(null);
 
   const {
     status,
@@ -105,11 +122,19 @@ export const BrowserPanel: React.FC = () => {
     logs,
     currentUrl,
     error,
+    mode,
+    authState,
+    blockReason,
+    inspection,
+    lastCompletedTaskId,
     openWindow,
     closeWindow,
     executeTask,
     stopTask,
     clearLogs,
+    inspectCurrentPage,
+    confirmLoginAndResume,
+    switchToManualMode,
     setupEventListeners,
   } = useBrowserAgentStore();
 
@@ -130,6 +155,30 @@ export const BrowserPanel: React.FC = () => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
+  useEffect(() => {
+    const activeTaskId = activeTaskIdRef.current;
+    if (!activeTaskId) return;
+
+    if (status === 'completed') {
+      setTaskHistory((prev) =>
+        prev.map((item) =>
+          item.id === activeTaskId ? { ...item, status: 'completed' as const } : item
+        )
+      );
+      activeTaskIdRef.current = null;
+      return;
+    }
+
+    if (status === 'error') {
+      setTaskHistory((prev) =>
+        prev.map((item) =>
+          item.id === activeTaskId ? { ...item, status: 'failed' as const } : item
+        )
+      );
+      activeTaskIdRef.current = null;
+    }
+  }, [status, lastCompletedTaskId]);
+
   const handleOpenWindow = async () => {
     if (urlInput.trim()) {
       await openWindow(urlInput.trim());
@@ -148,25 +197,19 @@ export const BrowserPanel: React.FC = () => {
       timestamp: new Date(),
       status: 'pending' as const,
     };
-    setTaskHistory((prev) => [historyItem, ...prev].slice(0, 20)); // Keep last 20
+    setTaskHistory((prev) => [historyItem, ...prev].slice(0, 20));
+    activeTaskIdRef.current = taskId;
 
     const taskToRun = taskInput.trim();
     setTaskInput('');
 
     try {
       await executeTask(taskToRun);
-      // Update history with final status based on store status
-      setTaskHistory((prev) =>
-        prev.map((item) =>
-          item.id === taskId
-            ? { ...item, status: useBrowserAgentStore.getState().status === 'error' ? 'failed' : 'completed' }
-            : item
-        )
-      );
     } catch {
       setTaskHistory((prev) =>
         prev.map((item) => (item.id === taskId ? { ...item, status: 'failed' as const } : item))
       );
+      activeTaskIdRef.current = null;
     }
   };
 
@@ -185,15 +228,38 @@ export const BrowserPanel: React.FC = () => {
   };
 
   const handleReturnToChat = async () => {
-    const { setCurrentView } = useUIStore.getState();
+    // Use dock actions instead of route changes
+    const { focusChatPane, browserDockMode } = useUIStore.getState();
+
+    // If browser is not in a visible mode, close the dock
+    if (browserDockMode === 'hidden') {
+      return;
+    }
+
+    // Focus the chat pane (works in split and external modes)
+    focusChatPane();
+  };
+
+  const handleExpandToSplit = () => {
+    const { expandBrowserToSplit } = useUIStore.getState();
+    expandBrowserToSplit();
+  };
+
+  const handleOpenInWindow = () => {
+    const { openBrowserExternal } = useUIStore.getState();
+    openBrowserExternal();
+  };
+
+  const handleCloseBrowser = async () => {
+    // Use dock action to close browser
+    const { closeBrowserDock } = useUIStore.getState();
     await closeWindow();
-    setCurrentView('chat');
+    closeBrowserDock();
   };
 
   const handleGoBack = async () => {
     try {
       await goBack();
-      // Update current URL after navigation
       setTimeout(async () => {
         const { getBrowserUrl } = await import('../utils/browserCommands');
         const url = await getBrowserUrl();
@@ -204,6 +270,10 @@ export const BrowserPanel: React.FC = () => {
     }
   };
 
+  const handleInspect = async () => {
+    await inspectCurrentPage();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -211,11 +281,21 @@ export const BrowserPanel: React.FC = () => {
     }
   };
 
+  // Get status display
   const getStatusColor = () => {
     switch (status) {
       case 'running': return 'text-blue-500';
       case 'completed': return 'text-green-500';
       case 'error': return 'text-red-500';
+      case 'needs_login':
+      case 'waiting_user_resume':
+        return 'text-yellow-500';
+      case 'blocked_auth':
+      case 'blocked_captcha':
+      case 'blocked_manual_step':
+        return 'text-orange-500';
+      case 'ready_for_agent':
+        return 'text-green-500';
       default: return 'text-gray-500';
     }
   };
@@ -223,18 +303,54 @@ export const BrowserPanel: React.FC = () => {
   const getStatusText = () => {
     switch (status) {
       case 'uninitialized': return '未初始化';
+      case 'opening': return '正在打开';
       case 'idle': return '空闲';
+      case 'inspecting': return '检查中';
+      case 'needs_login': return '需要登录';
+      case 'waiting_user_resume': return '等待确认';
+      case 'ready_for_agent': return '可执行任务';
       case 'running': return '执行中';
+      case 'blocked_auth': return '认证被阻止';
+      case 'blocked_captcha': return '需要验证码';
+      case 'blocked_manual_step': return '需要手动确认';
       case 'completed': return '已完成';
       case 'error': return '错误';
       default: return '未知';
     }
   };
 
+  // Get control mode display
+  const getModeBadge = () => {
+    if (mode === 'manual_handoff') {
+      return (
+        <span className="px-2 py-0.5 text-[10px] font-medium bg-yellow-100 text-yellow-700 rounded-full">
+          手动控制
+        </span>
+      );
+    }
+    return (
+      <span className="px-2 py-0.5 text-[10px] font-medium bg-green-100 text-green-700 rounded-full">
+        Agent 控制
+      </span>
+    );
+  };
+
+  // Get auth state display
+  const getAuthStateBadge = () => {
+    const color = getAuthStateColor(authState);
+    const bgColor = getAuthStateBgColor(authState);
+    return (
+      <span className={`px-2 py-0.5 text-[10px] font-medium rounded-full ${bgColor} ${color}`}>
+        {getAuthStateText(authState)}
+      </span>
+    );
+  };
+
   const getLogColor = (level: string) => {
     switch (level) {
       case 'success': return 'text-green-400';
       case 'error': return 'text-red-400';
+      case 'warning': return 'text-yellow-400';
       case 'thinking': return 'text-yellow-400';
       case 'info': return 'text-blue-400';
       default: return 'text-gray-300';
@@ -245,11 +361,18 @@ export const BrowserPanel: React.FC = () => {
     switch (level) {
       case 'success': return '✅';
       case 'error': return '❌';
+      case 'warning': return '⚠️';
       case 'thinking': return '🤔';
       case 'info': return 'ℹ️';
       default: return '';
     }
   };
+
+  // Check if should show login prompt
+  const showLoginPrompt = status === 'waiting_user_resume';
+  const showBlockedState = status.startsWith('blocked_');
+  // Execution is ONLY allowed when explicitly ready_for_agent
+  const canExecute = status === 'ready_for_agent';
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
@@ -269,6 +392,10 @@ export const BrowserPanel: React.FC = () => {
             <h2 className="text-sm font-bold text-gray-800 uppercase tracking-tight">浏览器控制</h2>
           </div>
           <div className="flex items-center gap-2">
+            {/* Control Mode Badge */}
+            {isWindowOpen && getModeBadge()}
+            {/* Auth State Badge */}
+            {isWindowOpen && getAuthStateBadge()}
             {isWindowOpen && (
               <button
                 onClick={handleGoBack}
@@ -302,12 +429,35 @@ export const BrowserPanel: React.FC = () => {
             className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
           {isWindowOpen ? (
-            <button
-              onClick={closeWindow}
-              className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
-            >
-              关闭
-            </button>
+            <>
+              {/* Expand to Split */}
+              <button
+                onClick={handleExpandToSplit}
+                className="px-2 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                title="展开到分屏"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+              </button>
+              {/* Open in Window */}
+              <button
+                onClick={handleOpenInWindow}
+                className="px-2 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                title="打开新窗口"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </button>
+              {/* Close */}
+              <button
+                onClick={handleCloseBrowser}
+                className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+              >
+                关闭
+              </button>
+            </>
           ) : (
             <button
               onClick={handleOpenWindow}
@@ -344,6 +494,104 @@ export const BrowserPanel: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* Login / Blocked State Banner */}
+      {showLoginPrompt && (
+        <div className="px-4 py-3 bg-yellow-50 border-b border-yellow-200">
+          <div className="flex items-start gap-2">
+            <span className="text-lg">🔐</span>
+            <div className="flex-1">
+              <p className="text-xs font-medium text-yellow-800">
+                {getRecommendation(inspection || { authState, safeForAgent: false } as any)}
+              </p>
+              <p className="text-[10px] text-yellow-600 mt-1">
+                请在浏览器窗口中完成登录后，点击下方按钮验证登录状态
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={inspectCurrentPage}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-yellow-600 rounded-lg hover:bg-yellow-700 transition-colors"
+                >
+                  刷新检查
+                </button>
+                <button
+                  onClick={confirmLoginAndResume}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  我已登录
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Blocked State Banner */}
+      {showBlockedState && (
+        <div className="px-4 py-3 bg-orange-50 border-b border-orange-200">
+          <div className="flex items-start gap-2">
+            <span className="text-lg">⚠️</span>
+            <div className="flex-1">
+              <p className="text-xs font-medium text-orange-800">
+                操作被阻止: {getBlockReasonText(blockReason || undefined)}
+              </p>
+              <p className="text-[10px] text-orange-600 mt-1">
+                请在浏览器窗口中完成必要的操作，然后重试。
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={inspectCurrentPage}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
+                >
+                  重新检查
+                </button>
+                <button
+                  onClick={switchToManualMode}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-gray-600 rounded-lg hover:bg-gray-700 transition-colors"
+                >
+                  手动控制
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ready for Agent Banner */}
+      {status === 'ready_for_agent' && (
+        <div className="px-4 py-2 bg-green-50 border-b border-green-200 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-green-500">✓</span>
+            <span className="text-xs text-green-700">页面已就绪，可以执行自动化任务</span>
+          </div>
+          <button
+            onClick={switchToManualMode}
+            className="text-[10px] text-green-600 hover:text-green-700"
+          >
+            切换到手动
+          </button>
+        </div>
+      )}
+
+      {/* Inspect Button Row */}
+      {isWindowOpen && !showLoginPrompt && !showBlockedState && (
+        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+          <button
+            onClick={handleInspect}
+            className="text-[10px] text-blue-500 hover:text-blue-600 flex items-center gap-1"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            检查页面状态
+          </button>
+          {inspection && (
+            <span className="text-[10px] text-gray-500">
+              匹配站点: {inspection.matchedProfileId || '未知'}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Quick Task Suggestions */}
       {isWindowOpen && (
@@ -403,7 +651,7 @@ export const BrowserPanel: React.FC = () => {
             onChange={(e) => setTaskInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={isWindowOpen ? "输入任务指令 (例如: 点击登录按钮)" : "请先打开浏览器窗口"}
-            disabled={status === 'running' || !isWindowOpen}
+            disabled={status === 'running' || !isWindowOpen || showLoginPrompt}
             className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
           />
           {status === 'running' ? (
@@ -416,7 +664,7 @@ export const BrowserPanel: React.FC = () => {
           ) : (
             <button
               onClick={handleExecute}
-              disabled={!taskInput.trim() || !isWindowOpen}
+              disabled={!taskInput.trim() || !isWindowOpen || showLoginPrompt || !canExecute}
               className="px-3 py-2 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               执行

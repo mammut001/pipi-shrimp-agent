@@ -5,6 +5,7 @@
  */
 
 use crate::models::ExecuteCodeResponse;
+use crate::commands::file::resolve_path;
 use crate::utils::{AppError, AppResult};
 use std::process::Command;
 
@@ -17,6 +18,24 @@ fn command_exists(command: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult<String> {
+    let base = cwd.unwrap_or_else(|| ".".to_string());
+    let resolved = resolve_path(&base, work_dir)?;
+    if !resolved.exists() {
+        return Err(AppError::ProcessError(format!(
+            "Working directory does not exist: {}",
+            resolved.display()
+        )));
+    }
+    if !resolved.is_dir() {
+        return Err(AppError::ProcessError(format!(
+            "Working directory is not a directory: {}",
+            resolved.display()
+        )));
+    }
+    Ok(resolved.to_string_lossy().to_string())
+}
+
 /**
  * Execute a bash command
  *
@@ -26,8 +45,9 @@ fn command_exists(command: &str) -> bool {
 pub async fn execute_bash(
     command: String,
     cwd: Option<String>,
+    work_dir: Option<String>,
 ) -> AppResult<ExecuteCodeResponse> {
-    let work_dir = cwd.unwrap_or_else(|| ".".to_string());
+    let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
 
     // Check if bash exists
     if !command_exists("bash") {
@@ -59,8 +79,9 @@ pub async fn execute_bash(
 pub async fn execute_python(
     code: String,
     cwd: Option<String>,
+    work_dir: Option<String>,
 ) -> AppResult<ExecuteCodeResponse> {
-    let work_dir = cwd.unwrap_or_else(|| ".".to_string());
+    let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
 
     // Check if python3 is installed
     if !command_exists("python3") {
@@ -92,8 +113,9 @@ pub async fn execute_python(
 pub async fn execute_node(
     code: String,
     cwd: Option<String>,
+    work_dir: Option<String>,
 ) -> AppResult<ExecuteCodeResponse> {
-    let work_dir = cwd.unwrap_or_else(|| ".".to_string());
+    let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
 
     // Check if node is installed
     if !command_exists("node") {

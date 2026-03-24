@@ -19,6 +19,18 @@ export interface AgentTaskComplete {
   result: string;
 }
 
+/** Raw inspection data from backend */
+export interface RawBrowserInspection {
+  url: string;
+  title: string;
+  has_password_input: boolean;
+  has_login_form: boolean;
+  has_qr_auth: boolean;
+  has_captcha: boolean;
+  text_markers: string[];
+  dom_markers: string[];
+}
+
 /**
  * Open a new browser window with the given URL
  */
@@ -80,4 +92,28 @@ export async function isAgentBusy(): Promise<boolean> {
  */
 export async function goBack(): Promise<string> {
   return invoke<string>('browser_go_back');
+}
+
+/**
+ * Inspect the current browser page state
+ * Returns raw DOM and text information for auth detection
+ * Uses the backend inspect_browser_state command which injects JS and returns results
+ */
+export async function inspectBrowserState(): Promise<RawBrowserInspection> {
+  // Use the backend command - it handles script injection and returns real data
+  return invoke<RawBrowserInspection>('inspect_browser_state');
+}
+
+/**
+ * Navigate to a specific URL in the browser window
+ */
+export async function browserNavigate(url: string): Promise<string> {
+  return invoke<string>('browser_navigate', { url });
+}
+
+/**
+ * Reload the current page in the browser window
+ */
+export async function browserReload(): Promise<string> {
+  return invoke<string>('browser_reload');
 }

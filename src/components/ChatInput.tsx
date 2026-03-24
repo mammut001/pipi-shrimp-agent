@@ -12,6 +12,7 @@
 import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from 'react';
 import { useChatStore } from '@/store';
 import { t } from '@/i18n';
+import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 
 /**
  * Props for ChatInput component
@@ -31,6 +32,7 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
   const [references, setReferences] = useState<string[]>([]);
   const [isBindingFolder, setIsBindingFolder] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
 
   const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
 
@@ -103,6 +105,22 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
       finalMessage = `${refText}\n\n${trimmedInput}`;
     }
 
+    // Quick check for browser intent before creating session
+    const mightBeBrowser = quickCheckBrowserIntent(finalMessage);
+
+    // Browser workflow should be able to start from the empty-chat entry flow.
+    // Route browser intents before the new-session modal early-return path.
+    if (mightBeBrowser) {
+      // Clear input state first so browser workflows feel the same as normal sends
+      setInput('');
+      setReferences([]);
+
+      const handled = await handleChatBrowserWorkflow(finalMessage);
+      if (handled) {
+        return;
+      }
+    }
+
     // Ensure session exists before sending
     if (!currentSessionId) {
       // 如果有回调函数，调用它来显示 project 选择模态框
@@ -136,7 +154,7 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
    * Handle keyboard shortcuts
    */
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
       e.preventDefault();
       handleSubmit();
     }
@@ -270,6 +288,8 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { isComposingRef.current = true; }}
+            onCompositionEnd={() => { isComposingRef.current = false; }}
             placeholder={references.length > 0 ? t('chat.inputPlaceholder') : t('chat.inputPlaceholder')}
             disabled={isDisabled}
             rows={1}

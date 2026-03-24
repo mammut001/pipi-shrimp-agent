@@ -8,7 +8,7 @@
  * - Delete sessions
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useChatStore, useUIStore, useWorkflowStore } from '@/store';
 import type { Session } from '@/types/chat';
 import { t } from '@/i18n';
@@ -54,9 +54,14 @@ const formatTokenCount = (count: number): string => {
  * Sidebar component
  */
 export function Sidebar() {
-  const { sessions, projects, currentSessionId, selectSession, deleteSession, deleteSessions, createProject, deleteProject, getSessionsByProject, updateSessionProject, startSession } = useChatStore();
+  // Zustand selectors for data (prevents re-renders on unrelated state changes)
+  const sessions = useChatStore((s) => s.sessions);
+  const projects = useChatStore((s) => s.projects);
+  const currentSessionId = useChatStore((s) => s.currentSessionId);
+  // Functions are stable references, safe to destructure
+  const { selectSession, deleteSession, deleteSessions, createProject, deleteProject, getSessionsByProject, updateSessionProject, startSession, renameSession } = useChatStore();
   const { toggleSettings, currentView, setCurrentView } = useUIStore();
-  const { workflowRuns } = useWorkflowStore();
+  const workflowRuns = useWorkflowStore((s) => s.workflowRuns);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   // Projects state
@@ -73,6 +78,11 @@ export function Sidebar() {
   // Delete session confirm state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+
+  // Rename session state
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameInput, setRenameInput] = useState('');
 
   // New Chat modal state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -84,6 +94,15 @@ export function Sidebar() {
 
   // Get sessions without a project
   const ungroupedSessions = getSessionsByProject(null);
+
+  // Memoized token usage map for all sessions
+  const tokenUsageMap = useMemo(() => {
+    const map = new Map<string, { input: number; output: number; total: number }>();
+    for (const session of sessions) {
+      map.set(session.id, getSessionTokenUsage(session));
+    }
+    return map;
+  }, [sessions]);
 
   /**
    * Handle creating a new project
@@ -224,12 +243,20 @@ export function Sidebar() {
   /**
    * Handle batch delete selected sessions
    */
-  const handleBatchDelete = async () => {
-    if (selectedSessions.size > 0 && confirm(`Are you sure you want to delete ${selectedSessions.size} conversation(s)? This action cannot be undone.`)) {
-      await deleteSessions(Array.from(selectedSessions));
-      setSelectedSessions(new Set());
-      setIsMultiSelectMode(false);
+  const handleBatchDelete = () => {
+    if (selectedSessions.size > 0) {
+      setShowBatchDeleteConfirm(true);
     }
+  };
+
+  /**
+   * Confirm batch delete
+   */
+  const handleConfirmBatchDelete = async () => {
+    await deleteSessions(Array.from(selectedSessions));
+    setSelectedSessions(new Set());
+    setIsMultiSelectMode(false);
+    setShowBatchDeleteConfirm(false);
   };
 
   /**
@@ -245,6 +272,37 @@ export function Sidebar() {
    */
   const closeContextMenu = () => {
     setContextMenu(null);
+  };
+
+  /**
+   * Start renaming a session
+   */
+  const handleStartRename = (sessionId: string) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (session) {
+      setRenamingSessionId(sessionId);
+      setRenameInput(session.title);
+      setContextMenu(null);
+    }
+  };
+
+  /**
+   * Confirm rename
+   */
+  const handleConfirmRename = async () => {
+    if (renamingSessionId && renameInput.trim()) {
+      await renameSession(renamingSessionId, renameInput.trim());
+    }
+    setRenamingSessionId(null);
+    setRenameInput('');
+  };
+
+  /**
+   * Cancel rename
+   */
+  const handleCancelRename = () => {
+    setRenamingSessionId(null);
+    setRenameInput('');
   };
 
   /**
@@ -297,7 +355,7 @@ export function Sidebar() {
    */
   const getSessionPreview = (session: Session): string => {
     if (session.messages.length === 0) {
-      return 'New conversation';
+      return 'Chat';
     }
     const lastMessage = session.messages[session.messages.length - 1];
     const preview = lastMessage.content.substring(0, 50);
@@ -515,30 +573,49 @@ export function Sidebar() {
                             </div>
                           )}
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-gray-900 truncate text-sm">
-                              {session.title || 'New Conversation'}
-                              {session.workDir && (
-                                <span title={session.workDir} className="inline-flex">
-                                  <svg
-                                    className="w-3 h-3 text-gray-400 flex-shrink-0 inline ml-1"
-                                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                  >
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                      d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                                  </svg>
-                                </span>
-                              )}
-                            </h3>
+                            {renamingSessionId === session.id ? (
+                              <input
+                                type="text"
+                                value={renameInput}
+                                onChange={(e) => setRenameInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') { e.preventDefault(); handleConfirmRename(); }
+                                  if (e.key === 'Escape') handleCancelRename();
+                                }}
+                                onBlur={handleConfirmRename}
+                                autoFocus
+                                className="w-full text-sm font-semibold text-gray-900 bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            ) : (
+                              <h3
+                                className="font-semibold text-gray-900 truncate text-sm cursor-text hover:bg-gray-100 rounded px-1 -mx-1 transition-colors"
+                                onDoubleClick={() => handleStartRename(session.id)}
+                                title="Double-click to rename"
+                              >
+                                {session.title || 'Chat'}
+                                {session.workDir && (
+                                  <span title={session.workDir} className="inline-flex">
+                                    <svg
+                                      className="w-3 h-3 text-gray-400 flex-shrink-0 inline ml-1"
+                                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                    >
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                        d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                                    </svg>
+                                  </span>
+                                )}
+                              </h3>
+                            )}
                             <p className="text-xs text-gray-500 truncate mt-0.5">
                               {getSessionPreview(session)}
                             </p>
                             {/* Token usage display */}
-                            {getSessionTokenUsage(session).total > 0 && (
+                            {(tokenUsageMap.get(session.id)?.total ?? 0) > 0 && (
                               <p className="text-[10px] text-gray-400 truncate mt-0.5 flex items-center gap-1">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                                   <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
                                 </svg>
-                                <span>{formatTokenCount(getSessionTokenUsage(session).total)} tokens</span>
+                                <span>{formatTokenCount(tokenUsageMap.get(session.id)?.total ?? 0)} tokens</span>
                               </p>
                             )}
                             {session.cwd && (
@@ -677,8 +754,12 @@ export function Sidebar() {
                                     </div>
                                   )}
                                   <div className="flex-1 min-w-0">
-                                    <h3 className="font-semibold text-gray-900 truncate text-sm">
-                                      {session.title || 'New Conversation'}
+                                    <h3
+                                      className="font-semibold text-gray-900 truncate text-sm cursor-text hover:bg-gray-100 rounded px-1 -mx-1 transition-colors"
+                                      onDoubleClick={() => handleStartRename(session.id)}
+                                      title="Double-click to rename"
+                                    >
+                                      {session.title || 'Chat'}
                                     </h3>
                                     <p className="text-xs text-gray-500 truncate mt-0.5">
                                       {getSessionPreview(session)}
@@ -866,7 +947,7 @@ export function Sidebar() {
                 <option value="">Select a chat...</option>
                 {sessions.map((session) => (
                   <option key={session.id} value={session.id}>
-                    {session.title || 'New Conversation'}
+                    {session.title || 'Chat'}
                   </option>
                 ))}
               </select>
@@ -925,6 +1006,32 @@ export function Sidebar() {
               </button>
               <button
                 onClick={handleConfirmDelete}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Delete Confirmation Modal */}
+      {showBatchDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowBatchDeleteConfirm(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Chats</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete {selectedSessions.size} conversation(s)? This action cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowBatchDeleteConfirm(false)}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmBatchDelete}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
               >
                 Delete

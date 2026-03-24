@@ -369,6 +369,7 @@ pub fn run() {
             db_delete_session,
             db_save_message,
             db_get_messages,
+            commands::update_session_title,
             // Project commands
             db_save_project,
             db_get_all_projects,
@@ -397,6 +398,9 @@ pub fn run() {
             commands::inject_script,
             commands::is_agent_busy,
             commands::browser_go_back,
+            commands::inspect_browser_state,
+            commands::browser_navigate,
+            commands::browser_reload,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -174,13 +174,184 @@ const parseThinkContent = (rawContent: string): { content: string; reasoning?: s
   // but a stray </think> token arrives in a subsequent chunk.
   cleanContent = cleanContent.replace(/<\/think>/g, '').trim();
 
-  // For MiniMax/其他厂商：每个 chunk 包含完整的 <think> 块，不是增量
-  // 因此只需要返回最后一个 <think> 块，而不是累积所有块
+  // For MiniMax/other providers, a chunk can contain one or more complete <think>
+  // blocks. Preserve them in order so the UI can collapse them into one bubble.
   return {
     content: cleanContent,
-    reasoning: thinkingParts.length > 0 ? thinkingParts[thinkingParts.length - 1] : undefined,
+    reasoning: mergeReasoningParts(...thinkingParts),
   };
 };
+
+/**
+ * Merge multiple reasoning fragments into a single display string.
+ *
+ * This keeps the fragments in arrival order, removes empty entries, and de-dupes
+ * identical blocks so repeated finalization doesn't duplicate the bubble text.
+ */
+const mergeReasoningParts = (...parts: Array<string | undefined | null>): string | undefined => {
+  const merged: string[] = [];
+
+  for (const part of parts) {
+    const normalized = part?.trim();
+    if (!normalized) continue;
+    if (!merged.includes(normalized)) {
+      merged.push(normalized);
+    }
+  }
+
+  return merged.length > 0 ? merged.join('\n\n') : undefined;
+};
+
+/**
+ * Remove unresolved tool_calls from the last assistant message of a session.
+ *
+ * Why this exists:
+ * In Ask mode, the model can emit assistant.tool_calls and then wait for user approval.
+ * If the user switches chat or force-switches permission mode before those tool calls
+ * are completed, the conversation history becomes structurally invalid for OpenAI-
+ * compatible endpoints such as MiniMax: it contains an assistant message with
+ * `tool_calls` but no corresponding tool result messages. The next request then fails
+ * with HTTP 400.
+ *
+ * To prevent that permanent corruption, we scrub dangling tool_calls from the last
+ * assistant message when the pending ASK flow is abandoned.
+ */
+async function scrubDanglingToolCalls(
+  sessionId: string,
+  set: (updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+  get: () => ChatState
+): Promise<void> {
+  const session = get().sessions.find((s) => s.id === sessionId);
+  if (!session || session.messages.length === 0) return;
+
+  const lastMessage = session.messages[session.messages.length - 1];
+  if (lastMessage.role !== 'assistant' || !lastMessage.tool_calls || lastMessage.tool_calls.length === 0) {
+    return;
+  }
+
+  const fallbackContent = lastMessage.content.trim() || '[Tool execution cancelled before completion.]';
+  const cleanedMessage: Message = {
+    ...lastMessage,
+    content: fallbackContent,
+    tool_calls: undefined,
+  };
+
+  set((state) => ({
+    sessions: state.sessions.map((s) =>
+      s.id === sessionId
+        ? {
+            ...s,
+            updatedAt: Date.now(),
+            messages: s.messages.map((m, i) =>
+              i === s.messages.length - 1 ? cleanedMessage : m
+            ),
+          }
+        : s
+    ),
+  }));
+
+  try {
+    await invoke('db_save_message', { message: messageToDb(cleanedMessage, sessionId) });
+  } catch (error) {
+    console.error('Failed to scrub dangling tool_calls from database:', error);
+  }
+}
+
+const parseToolResultMessage = (message: Message): { toolCallId: string; result: string } | null => {
+  if (message.role !== 'user' || !message.content.startsWith('__TOOL_RESULT__:')) {
+    return null;
+  }
+
+  const match = message.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
+  if (!match) return null;
+
+  return {
+    toolCallId: match[1],
+    result: match[2],
+  };
+};
+
+/**
+ * Build API-safe messages for Rust.
+ *
+ * OpenAI-compatible providers are strict: if an assistant message contains
+ * `tool_calls`, it must be followed immediately by matching tool result messages.
+ * If the history is malformed, drop the entire broken block rather than sending
+ * orphaned `tool_result` messages that trigger 400 errors.
+ */
+function buildApiMessages(messages: Message[]) {
+  const apiMessages: Array<{
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    tool_calls?: Array<{ tool_call_id: string; name: string; arguments: string }>;
+    tool_call_id?: string;
+  }> = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      const resultMessages: Array<{ message: Message; parsed: { toolCallId: string; result: string } }> = [];
+      let cursor = i + 1;
+
+      while (cursor < messages.length) {
+        const parsed = parseToolResultMessage(messages[cursor]);
+        if (!parsed) break;
+        resultMessages.push({ message: messages[cursor], parsed });
+        cursor += 1;
+      }
+
+      const resultById = new Map(resultMessages.map(({ parsed }) => [parsed.toolCallId, parsed.result]));
+      const expectedIds = msg.tool_calls.map((tc) => tc.id);
+      const allExpectedPresent = expectedIds.every((id) => resultById.has(id));
+      const noExtraResults = resultMessages.length === expectedIds.length
+        && resultMessages.every(({ parsed }) => expectedIds.includes(parsed.toolCallId));
+
+      if (!allExpectedPresent || !noExtraResults) {
+        console.warn('[buildApiMessages] Dropping malformed tool-call block before API request:', {
+          assistantToolCallIds: expectedIds,
+          toolResultIds: resultMessages.map(({ parsed }) => parsed.toolCallId),
+        });
+        i = cursor - 1;
+        continue;
+      }
+
+      apiMessages.push({
+        role: 'assistant',
+        content: msg.content || '',
+        tool_calls: msg.tool_calls.map((tc) => ({
+          tool_call_id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+        })),
+      });
+
+      for (const toolCall of msg.tool_calls) {
+        apiMessages.push({
+          role: 'user',
+          content: `__TOOL_RESULT__:${toolCall.id}:${resultById.get(toolCall.id) ?? ''}`,
+        });
+      }
+
+      i = cursor - 1;
+      continue;
+    }
+
+    const parsedToolResult = parseToolResultMessage(msg);
+    if (parsedToolResult) {
+      console.warn('[buildApiMessages] Skipping orphan tool result before API request:', parsedToolResult.toolCallId);
+      continue;
+    }
+
+    apiMessages.push({
+      role: msg.role as 'user' | 'assistant' | 'system',
+      content: msg.content,
+      ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
+    });
+  }
+
+  return apiMessages;
+}
 
 /**
  * Chat store using Zustand
@@ -432,7 +603,9 @@ export const useChatStore = create<ChatState>()(
      * Create a new session (optionally in a project and with a specific model)
      */
     startSession: async (projectId?: string, model?: string) => {
-      const newSession = createSession(undefined, projectId, model);
+      const sessionCount = get().sessions.length;
+      const title = `Chat ${sessionCount + 1}`;
+      const newSession = createSession(title, projectId, model);
 
       // Save to database
       try {
@@ -456,6 +629,8 @@ export const useChatStore = create<ChatState>()(
         pendingToolResults: [],
         streamingSessionId: null,
       }));
+
+      return newSession.id;
     },
 
     /**
@@ -491,10 +666,13 @@ export const useChatStore = create<ChatState>()(
             ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
             : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session. Ask the user to bind a folder first.' });
         } else {
+          const session = get().sessions.find(s => s.id === owningSessionId);
+          const workDir = session?.workDir ?? null;
           // Call Rust backend to execute the tool
           result = await invoke<string>('execute_tool', {
             toolName: toolName,   // Tauri auto-converts camelCase → snake_case for Rust
             arguments: toolInput,
+            workDir,
           });
         }
 
@@ -630,6 +808,12 @@ export const useChatStore = create<ChatState>()(
       const session = get().sessions.find(s => s.id === sessionId);
       if (!session) return;
 
+      const isCurrentSession = get().currentSessionId === sessionId;
+      const pendingPermissions = isCurrentSession ? [...useUIStore.getState().permissionQueue] : [];
+      const hasPendingAskFlow =
+        isCurrentSession &&
+        (pendingPermissions.length > 0 || get().pendingToolCalls > 0 || get().pendingToolResults.length > 0);
+
       const updatedSession = {
         ...session,
         permissionMode,
@@ -639,13 +823,61 @@ export const useChatStore = create<ChatState>()(
       // Update local state
       set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
-        // Clear pending state when switching permission mode to prevent stale tool calls
-        pendingToolCalls: 0,
-        pendingToolResults: [],
+        // Keep in-flight tool state intact when switching to auto modes for the active session.
+        // Ask -> bypass/auto should continue the existing tool loop, not corrupt it.
+        ...(hasPendingAskFlow && (permissionMode === 'bypass' || permissionMode === 'auto-edits')
+          ? {}
+          : {
+              pendingToolCalls: 0,
+              pendingToolResults: [],
+            }),
       }));
 
       // Persist to database
       await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+
+      if (!hasPendingAskFlow) return;
+
+      if (permissionMode === 'bypass' || permissionMode === 'auto-edits') {
+        // Drain queued ASK permissions into immediate execution.
+        useUIStore.getState().clearAllPermissions();
+        for (const req of pendingPermissions) {
+          await get().executeTool(req.toolName, req.toolInput, req.id);
+        }
+        return;
+      }
+
+      // Switching away from Ask while tool calls are unresolved would leave the
+      // session history malformed (assistant.tool_calls with no tool_result).
+      useUIStore.getState().clearAllPermissions();
+      await scrubDanglingToolCalls(sessionId, set, get);
+      set({
+        pendingToolCalls: 0,
+        pendingToolResults: [],
+        streamingSessionId: null,
+      });
+    },
+
+    /**
+     * Rename a session (update title)
+     */
+    renameSession: async (sessionId: string, newTitle: string) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return;
+
+      const updatedSession = {
+        ...session,
+        title: newTitle,
+        updatedAt: Date.now(),
+      };
+
+      // Update local state
+      set((state) => ({
+        sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
+      }));
+
+      // Persist to database
+      await invoke('update_session_title', { sessionId, title: newTitle });
     },
 
     /**
@@ -692,19 +924,7 @@ export const useChatStore = create<ChatState>()(
 
         // Prepare all messages for next turn - include tool_calls when present
         // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
-        const messages = currentMessages().map((msg) => ({
-          role: msg.role as 'user' | 'assistant' | 'system',
-          content: msg.content,
-          // Rename 'id' to 'tool_call_id' for Rust compatibility
-          ...(msg.tool_calls && {
-            tool_calls: msg.tool_calls.map((tc) => ({
-              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
-              name: tc.name,
-              arguments: tc.arguments,
-            })),
-          }),
-          ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
-        }));
+        const messages = buildApiMessages(currentMessages());
 
         if (messages.length === 0) {
           setError('Message history is empty. Cannot continue conversation.');
@@ -769,7 +989,9 @@ export const useChatStore = create<ChatState>()(
         if (usedMoreTools) {
           // AI called another tool in this turn - save reasoning, let the next
           // sendAllToolResults handle finalization (the event handler already fired)
-          await updateLastMessage('', undefined, streamingReasoning);
+          const rawPrefix = finalContent || response.content || '';
+          const { reasoning: parsedPrefixReasoning } = parseThinkContent(rawPrefix);
+          await updateLastMessage('', undefined, mergeReasoningParts(streamingReasoning, parsedPrefixReasoning));
           // Clear pending list (already processed) but leave streaming active
           set({ pendingToolResults: [], streamingContent: '', streamingReasoning: '' });
         } else {
@@ -794,7 +1016,7 @@ export const useChatStore = create<ChatState>()(
               title: a.title,
               language: a.language,
             })),
-            streamingReasoning || parsedFinalReasoning,
+            mergeReasoningParts(streamingReasoning, parsedFinalReasoning),
             tokenUsage
           );
           
@@ -875,19 +1097,7 @@ export const useChatStore = create<ChatState>()(
 
         // Prepare all messages for next turn - include tool_calls when present
         // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
-        const messages = currentMessages().map((msg) => ({
-          role: msg.role as 'user' | 'assistant' | 'system',
-          content: msg.content,
-          // Rename 'id' to 'tool_call_id' for Rust compatibility
-          ...(msg.tool_calls && {
-            tool_calls: msg.tool_calls.map((tc) => ({
-              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
-              name: tc.name,
-              arguments: tc.arguments,
-            })),
-          }),
-          ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
-        }));
+        const messages = buildApiMessages(currentMessages());
 
         if (messages.length === 0) {
           setError('Message history is empty. Cannot continue conversation.');
@@ -922,7 +1132,7 @@ export const useChatStore = create<ChatState>()(
     /**
      * Send message - call API (with streaming)
      */
-    sendMessage: async (content: string) => {
+    sendMessage: async (content: string, targetSessionId?: string) => {
       const {
         currentSessionId,
         currentMessages,
@@ -931,7 +1141,9 @@ export const useChatStore = create<ChatState>()(
         setError,
       } = get();
 
-      if (!currentSessionId) {
+      const activeSessionId = targetSessionId || currentSessionId;
+
+      if (!activeSessionId) {
         setError('No active session');
         return;
       }
@@ -952,12 +1164,15 @@ export const useChatStore = create<ChatState>()(
       try {
         // Add user message
         const userMessage = createMessage('user', content);
+        if (targetSessionId && targetSessionId !== get().currentSessionId) {
+          get().selectSession(targetSessionId);
+        }
         await addMessage(userMessage);
 
         // Set streaming state — record which session owns this request so the
         // claude-tool-use listener can discard stale events if the user switches sessions.
         setStreaming(true);
-        set({ streamingContent: '', streamingSessionId: currentSessionId });
+        set({ streamingContent: '', streamingSessionId: activeSessionId });
 
         // Set timeout protection - use the same timeout as setStreaming (300s)
         timeoutId = setTimeout(() => {
@@ -973,18 +1188,7 @@ export const useChatStore = create<ChatState>()(
 
         // Convert frontend messages to Rust format
         // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
-        const messages = currentMessages().map((msg) => ({
-          role: msg.role as 'user' | 'assistant' | 'system',
-          content: msg.content,
-          ...(msg.tool_calls && {
-            tool_calls: msg.tool_calls.map((tc) => ({
-              tool_call_id: tc.id,  // rename: TS 'id' → Rust 'tool_call_id'
-              name: tc.name,
-              arguments: tc.arguments,
-            })),
-          }),
-          ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
-        }));
+        const messages = buildApiMessages(currentMessages());
 
         if (messages.length === 0) {
           setError('Message content is empty. Cannot send.');
@@ -1001,7 +1205,7 @@ export const useChatStore = create<ChatState>()(
         // contaminate every conversation. Each session's context is self-contained.
         let systemPrompt = useUIStore.getState().agentInstructions;
 
-        const currentSession = get().sessions.find(s => s.id === currentSessionId);
+        const currentSession = get().sessions.find(s => s.id === activeSessionId);
         const sessionWorkingFiles = currentSession?.workingFiles ?? [];
         const sessionWorkDir = currentSession?.workDir;
 
@@ -1056,7 +1260,7 @@ export const useChatStore = create<ChatState>()(
           // Strip <think>...</think> so DB doesn't store raw think tags.
           const rawPrefix = finalContent || response.content || '';
           const { content: cleanPrefix, reasoning: parsedPrefixReasoning } = parseThinkContent(rawPrefix);
-          await updateLastMessage(cleanPrefix, undefined, streamingReasoning || parsedPrefixReasoning);
+          await updateLastMessage(cleanPrefix, undefined, mergeReasoningParts(streamingReasoning, parsedPrefixReasoning));
           // Do NOT call setStreaming(false) or clear streamingContent here —
           // that would race with sendAllToolResults' second streaming invoke.
         } else {
@@ -1081,7 +1285,7 @@ export const useChatStore = create<ChatState>()(
               title: a.title,
               language: a.language,
             })),
-            streamingReasoning || parsedReasoning,
+            mergeReasoningParts(streamingReasoning, parsedReasoning),
             tokenUsage
           );
           
@@ -1092,7 +1296,7 @@ export const useChatStore = create<ChatState>()(
             await invoke('db_save_token_usage', {
               usage: {
                 id: crypto.randomUUID(),
-                session_id: currentSessionId,
+                session_id: activeSessionId,
                 date,
                 input_tokens: response.usage.input_tokens,
                 output_tokens: response.usage.output_tokens,
@@ -1159,7 +1363,7 @@ export const useChatStore = create<ChatState>()(
       // Parse any <think> tags from streamingContent
       const parsed = parseThinkContent(streamingContent);
       const finalContent = parsed.content;
-      const finalReasoning = streamingReasoning || parsed.reasoning;
+      const finalReasoning = mergeReasoningParts(streamingReasoning, parsed.reasoning);
 
       // Clear streaming content BEFORE updating message to prevent setStreaming from re-updating
       console.log('stopGeneration: clearing streaming content');
@@ -1258,7 +1462,7 @@ export const useChatStore = create<ChatState>()(
           const updatedMessage = {
             ...lastMessage,
             content,
-            reasoning: reasoning !== undefined ? reasoning : lastMessage.reasoning,
+            reasoning: mergeReasoningParts(reasoning, lastMessage.reasoning),
             artifacts: artifacts !== undefined ? artifacts : lastMessage.artifacts,
             token_usage: tokenUsage !== undefined ? tokenUsage : lastMessage.token_usage,
             updatedAt: Date.now(),
@@ -1312,7 +1516,7 @@ export const useChatStore = create<ChatState>()(
             messages[messages.length - 1] = {
               ...lastMessage,
               content: displayContent,
-              reasoning: parsedReasoning || streamingReasoning || lastMessage.reasoning,
+              reasoning: mergeReasoningParts(parsedReasoning, streamingReasoning, lastMessage.reasoning),
             };
             return { ...s, messages, updatedAt: Date.now() };
           }),
@@ -1348,7 +1552,7 @@ export const useChatStore = create<ChatState>()(
               messages[messages.length - 1] = {
                 ...lastMessage,
                 content: finalContent,
-                reasoning: finalReasoning || streamingReasoning || lastMessage.reasoning,
+                reasoning: mergeReasoningParts(finalReasoning, streamingReasoning, lastMessage.reasoning),
               };
               return { ...s, messages, updatedAt: Date.now() };
             }),
@@ -1397,6 +1601,7 @@ export const useChatStore = create<ChatState>()(
     selectSession: (sessionId: string) => {
       const exists = get().sessions.some((s) => s.id === sessionId);
       if (exists) {
+        const previousSessionId = get().currentSessionId;
         // Clear any pending timeout
         const { streamingTimeoutId } = get();
         if (streamingTimeoutId) {
@@ -1408,6 +1613,20 @@ export const useChatStore = create<ChatState>()(
         // approve it, the tool_result gets injected into the WRONG session's message
         // history (no matching tool_use), causing a permanent 400 on every future call.
         useUIStore.getState().clearAllPermissions();
+
+        // If we're leaving a session mid-ASK-flow, scrub its dangling tool_calls so
+        // the next request to that session won't hit OpenAI-compatible 400 errors.
+        if (
+          previousSessionId &&
+          previousSessionId !== sessionId &&
+          (
+            get().pendingToolCalls > 0 ||
+            get().pendingToolResults.length > 0 ||
+            useUIStore.getState().permissionQueue.length > 0
+          )
+        ) {
+          void scrubDanglingToolCalls(previousSessionId, set, get);
+        }
 
         set({
           currentSessionId: sessionId,

@@ -64,7 +64,7 @@ Following these guidelines will make interactions faster and more efficient.
 "#;
 
 /// Helper function to merge user system prompt with global security constraints
-fn merge_system_prompt(user_prompt: Option<&str>) -> String {
+pub fn merge_system_prompt(user_prompt: Option<&str>) -> String {
     let base_prompt = format!("{}\n\n{}", GLOBAL_SECURITY_CONSTRAINT.trim(), TOOL_EFFICIENCY_GUIDE.trim());
     match user_prompt {
         Some(user) if !user.is_empty() => {
