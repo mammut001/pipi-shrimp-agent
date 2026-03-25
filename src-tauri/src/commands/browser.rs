@@ -429,24 +429,13 @@ pub async fn inspect_embedded_surface(
 
         window.__inspection_result = JSON.stringify(result);
 
-        // Try multiple IPC mechanisms - external webviews may not have window.__TAURI__
         function emitInspectionResult(payload) {
-            // Method 1: Tauri 2 internals (works in external child webviews)
             if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
                 window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
                     event: 'browser_inspection_result',
-                    payload: JSON.stringify(payload)
+                    windowLabel: null,
+                    payload: payload
                 }).catch(function() {});
-                return;
-            }
-            // Method 2: Standard Tauri 2 global (works when withGlobalTauri: true)
-            if (window.__TAURI__ && window.__TAURI__.event) {
-                window.__TAURI__.event.emit('browser_inspection_result', payload);
-                return;
-            }
-            // Method 3: Tauri 1 style IPC
-            if (window.__TAURI_IPC__) {
-                window.__TAURI_IPC__({ cmd: 'emit', event: 'browser_inspection_result', payload: payload });
                 return;
             }
             console.warn('[Browser] No Tauri IPC available for inspection result');
@@ -460,10 +449,9 @@ pub async fn inspect_embedded_surface(
             if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
                 window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
                     event: 'browser_inspection_error',
-                    payload: JSON.stringify({ message: msg })
+                    windowLabel: null,
+                    payload: { message: msg }
                 }).catch(function() {});
-            } else if (window.__TAURI__ && window.__TAURI__.event) {
-                window.__TAURI__.event.emit('browser_inspection_error', { message: msg });
             }
         }
         emitInspectionError(e.message || String(e));
@@ -710,6 +698,7 @@ fn build_page_agent_script(
         'api.openai.com',
         'api.anthropic.com',
         'api-biz.alibaba.com',
+        'api.minimaxi.com',      // MiniMax (Chinese LLM)
         'page-ag-testing',
         'api.minimax.chat',
         'localhost',
@@ -719,9 +708,34 @@ fn build_page_agent_script(
 
     function shouldProxy(url) {{
         var urlStr = String(url).toLowerCase();
-        return LLM_API_PATTERNS.some(function(pattern) {{
+
+        // Check whitelist patterns
+        var matchesPattern = LLM_API_PATTERNS.some(function(pattern) {{
             return urlStr.indexOf(pattern) !== -1;
         }});
+
+        if (matchesPattern) return true;
+
+        // Also proxy if URL matches the configured baseURL
+        var baseUrl = {base_url_js};
+        if (baseUrl && baseUrl !== 'undefined') {{
+            var baseUrlStr = String(baseUrl).toLowerCase();
+            if (urlStr.startsWith(baseUrlStr)) return true;
+        }}
+
+        return false;
+    }}
+
+    // Convert headers to plain object (handles both Headers instance and plain object)
+    function toPlainHeaders(h) {{
+        var obj = {{}};
+        if (!h) return obj;
+        if (typeof h.forEach === 'function') {{
+            h.forEach(function(v, k) {{ obj[k] = v; }});
+        }} else if (typeof h === 'object') {{
+            for (var k in h) {{ if (Object.prototype.hasOwnProperty.call(h, k)) obj[k] = h[k]; }}
+        }}
+        return obj;
     }}
 
     window.fetch = async function(url, options) {{
@@ -731,11 +745,11 @@ fn build_page_agent_script(
         }}
 
         try {{
-            var method = (options && options.method) || 'GET';
-            var headers = (options && options.headers) || {{}};
+            var method = (options && options.method) || 'POST';
+            var headers = toPlainHeaders(options && options.headers);
             var body = options && options.body;
 
-            // Convert body if needed
+            // Convert body to string if needed
             if (body && typeof body !== 'string') {{
                 body = JSON.stringify(body);
             }}
@@ -743,44 +757,37 @@ fn build_page_agent_script(
             console.log('[FetchProxy] Intercepted:', String(url).substring(0, 80));
             console.log('[FetchProxy] __TAURI_INTERNALS__:', !!window.__TAURI_INTERNALS__);
 
-            // Try Tauri IPC proxy first
+            // Use Tauri IPC proxy to bypass CSP connect-src restrictions.
+            // NOTE: proxy_http_request takes a named `request` parameter (struct).
+            // JS must wrap args under the param name: {{ request: {{ url, method, ... }} }}
             if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
                 try {{
                     console.log('[FetchProxy] Calling proxy_http_request via IPC...');
                     var result = await window.__TAURI_INTERNALS__.invoke('proxy_http_request', {{
-                        url: String(url),
-                        method: method,
-                        headers: headers,
-                        body: body
+                        request: {{
+                            url: String(url),
+                            method: method,
+                            headers: headers,
+                            body: body || null
+                        }}
                     }});
                     console.log('[FetchProxy] IPC success, status:', result && result.status);
 
                     return new Response(result.body, {{
                         status: result.status,
-                        statusText: result.statusText || 'OK',
+                        statusText: result.status_text || 'OK',
                         headers: new Headers(result.headers || {{}})
                     }});
                 }} catch(tauri_error) {{
-                    console.warn('[Fetch Proxy] Tauri IPC unavailable:', tauri_error.message);
+                    console.warn('[FetchProxy] Tauri IPC failed:', tauri_error && (tauri_error.message || String(tauri_error)));
                 }}
             }}
 
-            // Fallback: use CORS proxy for LLM API calls
-            // This bypasses CSP by routing through a public CORS service
-            // AllOrigins 不需要预批准，比较稳定
-            var corsProxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(String(url));
-            console.log('[Fetch Proxy] Using CORS proxy (AllOrigins):', corsProxyUrl);
-
-            var corsOptions = Object.assign({{}}, options || {{}});
-            corsOptions.headers = Object.assign({{}}, corsOptions.headers || {{}});
-            corsOptions.headers['X-Requested-With'] = 'XMLHttpRequest';
-
-            var corsResult = await __origFetch.apply(this, [corsProxyUrl, corsOptions]);
-            return corsResult;
+            // Last resort: try original fetch (will likely fail due to CSP on external pages)
+            console.warn('[FetchProxy] Falling back to native fetch (may fail due to CSP)');
+            return __origFetch.apply(this, [url, options]);
         }} catch (error) {{
-            console.error('[Fetch Proxy] All methods failed:', error.message);
-            // Last resort: try original fetch (will likely fail due to CSP)
-            console.warn('[Fetch Proxy] Attempting native fetch (will likely fail due to CSP)');
+            console.error('[FetchProxy] All methods failed:', error && error.message);
             return __origFetch.apply(this, [url, options]);
         }}
     }};
@@ -802,7 +809,8 @@ fn build_page_agent_script(
             if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
                 window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
                     event: 'agent_log',
-                    payload: JSON.stringify({{ timestamp: new Date().toISOString(), message: message, level: level }})
+                    windowLabel: null,
+                    payload: {{ timestamp: new Date().toISOString(), message: message, level: level }}
                 }}).catch(function(){{}});
             }}
         }} catch(e) {{}}
@@ -814,7 +822,8 @@ fn build_page_agent_script(
             if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
                 window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
                     event: 'agent_task_complete',
-                    payload: JSON.stringify({{ success: success, final_url: window.location.href, result: result }})
+                    windowLabel: null,
+                    payload: {{ success: success, final_url: window.location.href, result: result }}
                 }}).catch(function(){{}});
             }}
         }} catch(e) {{}}

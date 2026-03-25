@@ -44,6 +44,7 @@ export function BrowserMiniPreview() {
     logs,
     pendingTask,
     isWindowOpen,
+    presentationMode,
     executeTaskEnvelope,
     stopTask,
     clearLogs,
@@ -51,6 +52,7 @@ export function BrowserMiniPreview() {
     inspectCurrentPage,
     confirmLoginAndResume,
     expandBrowser,
+    collapseBrowser,
   } = useBrowserAgentStore();
 
   // UI dock state
@@ -219,25 +221,48 @@ export function BrowserMiniPreview() {
   const handleConfirmLogin = async () => {
     await confirmLoginAndResume();
   };
+  const isExpanded = presentationMode === 'expanded';
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
-      {/* 1. Live Browser Surface */}
+      {/* 1. Live Browser Surface / Compact Header */}
       <div className="p-3 space-y-3 flex-shrink-0">
-        {/* Preview Card */}
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden" style={{ position: 'relative' }}>
-          <BrowserSurfaceViewport
-            mode="mini"
-            className="aspect-video bg-gray-100 relative"
-            emptyState={
-              <div className="flex items-center justify-center h-full text-gray-500">
-                <span>No browser surface yet</span>
-              </div>
-            }
-          />
+        {/* Preview Card - only show in mini mode (in expanded, browser is in center pane) */}
+        {!isExpanded ? (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden" style={{ position: 'relative' }}>
+            <BrowserSurfaceViewport
+              mode="mini"
+              className="aspect-video bg-gray-100 relative"
+              emptyState={
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  <span>No browser surface yet</span>
+                </div>
+              }
+            />
 
-          {/* URL/Site Info */}
-          <div className="p-2 border-t border-gray-100">
+            {/* URL/Site Info */}
+            <div className="p-2 border-t border-gray-100">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {getSiteName()}
+                  </p>
+                  <p className="text-xs text-gray-500 truncate">
+                    {currentUrl || 'No URL'}
+                  </p>
+                </div>
+                <span className={`px-1.5 py-0.5 text-xs font-medium text-white rounded ${getStatusBadgeColor()}`}>
+                  {getStatusText()}
+                </span>
+                <span className={`px-1.5 py-0.5 text-xs font-medium rounded ${getAuthBadgeColor()}`}>
+                  {authState === 'authenticated' ? 'Logged In' : authState === 'unauthenticated' ? 'Not Logged In' : 'Unknown'}
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Compact header in expanded mode */
+          <div className="bg-white rounded-lg border border-gray-200 p-2">
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900 truncate">
@@ -255,21 +280,36 @@ export function BrowserMiniPreview() {
               </span>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex gap-2">
-          {/* Expand */}
+          {/* Expand / Collapse */}
           <button
             onClick={() => {
-              expandBrowser();
+              if (presentationMode === 'expanded') {
+                 collapseBrowser();
+              } else {
+                 expandBrowser();
+              }
             }}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-            </svg>
-            Expand
+            {presentationMode === 'expanded' ? (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 14h6v6m10-10h-6V4m0 6l7-7M10 14l-7 7" />
+                </svg>
+                Collapse
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+                Expand
+              </>
+            )}
           </button>
 
           {/* Open Window */}

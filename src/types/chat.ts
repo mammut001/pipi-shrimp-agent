@@ -112,6 +112,7 @@ export interface ChatState {
    * Send message (call API)
    */
   sendMessage: (content: string, sessionId?: string) => Promise<void>;
+  generateBrowserResultResponse: (browserResult: string, originalQuery: string) => Promise<void>;
 
   /**
    * Stop/cancel the current generation (kill subprocess)
@@ -132,6 +133,12 @@ export interface ChatState {
    * Update last message (for streaming updates) and persist to database
    */
   updateLastMessage: (content: string, artifacts?: Artifact[], reasoning?: string, tokenUsage?: Message['token_usage']) => Promise<void>;
+
+  /**
+   * Update a specific message by ID (content + metadata) and persist to database.
+   * Used for consolidating browser progress messages into a single dynamic bubble.
+   */
+  updateMessageContent: (messageId: string, content: string, metadata?: Record<string, unknown>) => Promise<void>;
 
   /**
    * Append streaming content to current buffer
