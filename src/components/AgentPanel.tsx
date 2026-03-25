@@ -158,9 +158,12 @@ export const AgentPanel: React.FC = () => {
   // Auto-switch to browser tab when browser starts running
   useEffect(() => {
     if (browserStatus === 'running' && activeTab !== 'browser') {
-      setActiveTab('browser');
+      const { presentationMode } = useBrowserAgentStore.getState();
+      if (presentationMode !== 'expanded') {
+        setActiveTab('browser');
+      }
     }
-  }, [browserStatus]);
+  }, [browserStatus, activeTab, setActiveTab]);
 
   // Sync on mount (immediate, not debounced)
   useEffect(() => {

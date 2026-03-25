@@ -8,7 +8,7 @@
 import { detectBrowserIntent, mightBeBrowserIntent } from './browserIntentDetector';
 import { createTaskEnvelope, estimateTaskComplexity } from './browserTaskPlanner';
 import type { BrowserTaskEnvelope, BrowserSessionStatus } from '../types/browser';
-import type { Message } from '../types/chat';
+import { createMessage, type Message } from '../types/chat';
 import { useBrowserAgentStore } from '../store/browserAgentStore';
 import { useUIStore } from '../store/uiStore';
 import { useChatStore } from '../store/chatStore';
@@ -17,6 +17,27 @@ import { useChatStore } from '../store/chatStore';
 let unsubscribeBrowserState: (() => void) | null = null;
 let lastBrowserAuthState: string | null = null;
 let lastBrowserAuthPromptKey: string | null = null;
+
+// Active browser progress bubble tracking (for consolidation)
+let activeBrowserMessageId: string | null = null;
+let browserSteps: Array<{ status: string; label: string; done: boolean }> = [];
+
+/**
+ * Status to step label mapping
+ */
+const STATUS_LABELS: Record<string, string> = {
+  opening: '打开浏览器',
+  inspecting: '检查页面状态',
+  needs_login: '等待登录',
+  waiting_user_resume: '等待用户操作',
+  ready_for_agent: '页面就绪',
+  running: '执行任务',
+  completed: '任务完成',
+  error: '任务出错',
+  blocked_auth: '认证被阻止',
+  blocked_captcha: '遇到验证码',
+  blocked_manual_step: '需要手动操作',
+};
 
 /**
  * States that should trigger a chat progress update
@@ -346,7 +367,8 @@ function generateId(): string {
 }
 
 /**
- * Add a progress message to chat
+ * Add a progress message to chat and return the message ID.
+ * Returns null if no current session.
  */
 export function addChatProgressMessage(
   message: string,
@@ -355,13 +377,13 @@ export function addChatProgressMessage(
     browserStatus?: string;
     siteProfileId?: string;
   }
-): void {
+): string | null {
   const chatStore = useChatStore.getState();
   const currentSessionId = chatStore.currentSessionId;
 
   if (!currentSessionId) {
     console.warn('[chatBrowserBridge] No current session to add progress message');
-    return;
+    return null;
   }
 
   // Create assistant message with metadata (add required fields)
@@ -377,6 +399,7 @@ export function addChatProgressMessage(
   };
 
   chatStore.addMessage(newMessage);
+  return newMessage.id;
 }
 
 /**
@@ -426,12 +449,38 @@ export function getBrowserStatusMessage(
 }
 
 /**
- * Start listening to browser state changes and update chat progress
- * Call this when a browser workflow begins
+ * Build the progress content string from the steps array.
+ * Renders a consolidated progress bubble with checkmarks for completed steps.
+ */
+function buildProgressContent(steps: Array<{ status: string; label: string; done: boolean }>, isFinal: boolean): string {
+  const allDone = isFinal || steps.every(s => s.done);
+  const header = allDone
+    ? '🌐 **浏览器任务** · ✅ 已完成'
+    : '🌐 **浏览器任务** · ⏳ 进行中';
+
+  const lastStep = steps[steps.length - 1];
+  const hasInProgressStep = !allDone && lastStep && !lastStep.done;
+
+  const completedSteps = hasInProgressStep ? steps.slice(0, -1) : steps;
+  const inProgressStep = hasInProgressStep ? lastStep : null;
+
+  const completedLines = completedSteps.map(s => `✅ ${s.label}`).join('\n');
+  const inProgressLine = inProgressStep ? `\n\n⏳ ${inProgressStep.label}...` : '';
+
+  return `${header}\n\n${completedLines}${inProgressLine}`;
+}
+
+/**
+ * Start listening to browser state changes and update chat progress.
+ * Consolidates all progress updates into a SINGLE dynamic bubble instead of creating new ones.
+ * Call this when a browser workflow begins.
  */
 function startBrowserStateListener() {
-  // Clean up any existing listener
+  // Clean up any existing listener and reset state
   stopBrowserStateListener();
+  activeBrowserMessageId = null;
+  browserSteps = [];
+
   const store = useBrowserAgentStore;
   let lastStatus = store.getState().status;
   lastBrowserAuthState = store.getState().authState;
@@ -440,18 +489,56 @@ function startBrowserStateListener() {
   const unsubscribe = store.subscribe((currentState) => {
     const currentStatus = currentState.status;
 
-    if (currentStatus !== lastStatus && PROGRESS_TRIGGER_STATES.includes(currentStatus)) {
-      lastStatus = currentStatus;
-      addChatProgressMessage(getBrowserStatusMessage(currentStatus), {
-        browserStatus: currentStatus,
-        siteProfileId: currentState.siteProfileId || undefined,
-      });
+    // Handle completion — finalize bubble and hand result to AI
+    if (currentStatus === 'completed') {
+      stopBrowserStateListener();
+      const taskResult = currentState.lastTaskResult;
+      const chatStore = useChatStore.getState();
 
-      if (currentStatus === 'completed' || currentStatus === 'error') {
-        stopBrowserStateListener();
+      // Finalize the progress bubble
+      if (activeBrowserMessageId) {
+        const finalSteps = browserSteps.map(s => ({ ...s, done: true }));
+        const finalContent = buildProgressContent(finalSteps, true);
+        chatStore.updateMessageContent(activeBrowserMessageId, finalContent, {
+          type: 'browser_progress',
+          browserStatus: 'completed',
+          siteProfileId: currentState.siteProfileId || undefined,
+        });
+        activeBrowserMessageId = null;
       }
+
+      // Find the original user question
+      const allMessages = chatStore.currentMessages();
+      const originalMsg = [...allMessages]
+        .reverse()
+        .find(m => m.role === 'user' && m.metadata?.type !== 'browser_result_context');
+      const originalQuery = originalMsg?.content || '';
+
+      if (taskResult) {
+        chatStore.generateBrowserResultResponse(taskResult, originalQuery);
+      }
+      return;
     }
 
+    // Handle error — update bubble with error state
+    if (currentStatus === 'error') {
+      stopBrowserStateListener();
+      const errorStep = STATUS_LABELS['error'] || '任务出错';
+      browserSteps.push({ status: 'error', label: errorStep, done: false });
+
+      if (activeBrowserMessageId) {
+        const chatStore = useChatStore.getState();
+        const content = buildProgressContent(browserSteps, false);
+        chatStore.updateMessageContent(activeBrowserMessageId, content, {
+          type: 'browser_progress',
+          browserStatus: 'error',
+          siteProfileId: currentState.siteProfileId || undefined,
+        });
+      }
+      return;
+    }
+
+    // Handle auth-gated states — add auth step without creating new bubble
     const authState = currentState.authState;
     const authPromptKey = `${currentState.pendingTask?.id || 'no-task'}:${currentStatus}:${authState}`;
     if (
@@ -461,16 +548,46 @@ function startBrowserStateListener() {
       lastBrowserAuthState = authState;
       if (authPromptKey !== lastBrowserAuthPromptKey) {
         lastBrowserAuthPromptKey = authPromptKey;
-        const authMessage = `请先完成必要的验证步骤：${authState === 'auth_required' ? '需要登录' : authState === 'mfa_required' ? '需要二次验证' : '需要验证码'}。完成后请点击"我已登录"按钮继续。`;
-        addChatProgressMessage(authMessage, {
-          browserStatus: currentState.status,
-          siteProfileId: currentState.siteProfileId || undefined,
-        });
+        // Auth steps are shown as a separate inline message below the progress bubble
+        // (they interrupt the flow and need user action)
       }
     } else if (authState !== lastBrowserAuthState) {
       lastBrowserAuthState = authState;
       if (authState === 'authenticated' || authState === 'unknown' || authState === 'unauthenticated') {
         lastBrowserAuthPromptKey = null;
+      }
+    }
+
+    // Handle normal progress states — consolidate into single bubble
+    if (currentStatus !== lastStatus && PROGRESS_TRIGGER_STATES.includes(currentStatus)) {
+      lastStatus = currentStatus;
+
+      const label = STATUS_LABELS[currentStatus] || getBrowserStatusMessage(currentStatus);
+      const isDone = currentStatus !== 'running';
+
+      // Add/update step in the steps array
+      const existingIdx = browserSteps.findIndex(s => s.status === currentStatus);
+      if (existingIdx === -1) {
+        browserSteps.push({ status: currentStatus, label, done: isDone });
+      } else {
+        browserSteps[existingIdx] = { status: currentStatus, label, done: isDone };
+      }
+
+      const content = buildProgressContent(browserSteps, false);
+      const metadata = {
+        type: 'browser_progress',
+        browserStatus: currentStatus,
+        siteProfileId: currentState.siteProfileId || undefined,
+      };
+
+      const chatStore = useChatStore.getState();
+
+      if (activeBrowserMessageId === null) {
+        // First state change — create the bubble and store its ID
+        activeBrowserMessageId = addChatProgressMessage(content, metadata);
+      } else {
+        // Subsequent changes — update the existing bubble
+        chatStore.updateMessageContent(activeBrowserMessageId, content, metadata);
       }
     }
   });
@@ -480,6 +597,8 @@ function startBrowserStateListener() {
     unsubscribeBrowserState = null;
     lastBrowserAuthState = null;
     lastBrowserAuthPromptKey = null;
+    activeBrowserMessageId = null;
+    browserSteps = [];
   };
 }
 
@@ -514,6 +633,11 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
     await chatStore.startSession();
   }
 
+  // CRITICAL: Add the user's message FIRST so it appears in the chat history.
+  // Without this, the user's input is lost and only assistant bubbles are shown.
+  const chatStoreAfterSession = useChatStore.getState();
+  await chatStoreAfterSession.addMessage(createMessage('user', message));
+
   // Create task envelope
   const envelope = createTaskEnvelopeFromChat(message);
 
@@ -527,23 +651,33 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
   // Get complexity for user feedback
   const complexity = estimateTaskComplexity(envelope);
 
-  // Add initial progress message to chat
-  const complexityText = {
+  // Add initial progress message to chat (this is tracked by the listener for consolidation)
+  const complexityText: Record<string, string> = {
     simple: '简单任务',
     medium: '中等复杂度任务',
     complex: '复杂任务',
-  }[complexity];
+  };
 
-  const initialMessage = `我将打开 ${envelope.metadata?.profileLabel || envelope.siteProfileId} ${complexityText}。\n`;
+  const initialMessage = `我将打开 ${envelope.metadata?.profileLabel || envelope.siteProfileId} ${complexityText[complexity] || '任务'}。`;
 
-  addChatProgressMessage(initialMessage, {
+  // Start listening to browser state changes BEFORE adding the initial message
+  // so the listener can track/consolidate all bubbles from the start
+  startBrowserStateListener();
+
+  // Now add the initial message — it will be the first bubble tracked by the listener
+  const initialMsgId = addChatProgressMessage(initialMessage, {
     browserTaskId: envelope.id,
     browserStatus: 'opening',
     siteProfileId: envelope.siteProfileId,
   });
 
-  // Start listening to browser state changes
-  startBrowserStateListener();
+  // If the browser store hasn't emitted the first state change yet,
+  // track the initial bubble ID so the listener updates it instead of creating a duplicate
+  if (initialMsgId && useBrowserAgentStore.getState().status === 'idle') {
+    activeBrowserMessageId = initialMsgId;
+    // Add 'opening' to steps as done so the bubble starts with context
+    browserSteps.push({ status: 'opening', label: STATUS_LABELS['opening'] || '打开浏览器', done: true });
+  }
 
   // Switch to browser panel
   switchToBrowserPanel();

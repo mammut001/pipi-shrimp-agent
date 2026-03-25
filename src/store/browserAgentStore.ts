@@ -71,6 +71,8 @@ interface BrowserAgentState {
   connectorType: BrowserConnectorType;
   waitingForUserResume: boolean;
   lastCompletedTaskId: string | null;
+  /** Raw result string returned by PageAgent on task completion */
+  lastTaskResult: string | null;
 
   // ========== Execution State ==========
   logs: LogEntry[];
@@ -155,6 +157,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   connectorType: 'browser_web',
   waitingForUserResume: false,
   lastCompletedTaskId: null,
+  lastTaskResult: null,
 
   // Execution
   logs: [],
@@ -203,10 +206,11 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         set((state) => ({
           status: 'completed',
           lastCompletedTaskId: state.pendingTask?.id || null,
+          lastTaskResult: result || null,
         }));
       } else {
         addLog('error', `任务失败: ${result}`);
-        set({ status: 'error', error: result });
+        set({ status: 'error', error: result, lastTaskResult: null });
       }
     });
 
@@ -812,6 +816,8 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
     // Update state — BrowserSurfaceViewport with mode="expanded" will take over positioning
     useUIStore.getState().expandBrowserToSplit();
+    // Keep AgentPanel on browser tab so user sees controls + logs
+    useUIStore.getState().setAgentPanelTab('browser');
     set({ presentationMode: 'expanded' });
     addLog('info', '浏览器已展开到主工作区');
   },
@@ -826,6 +832,8 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
     // Update state — BrowserSurfaceViewport with mode="mini" will take over positioning
     useUIStore.getState().collapseBrowserToPanel();
+    // Re-open browser tab in AgentPanel
+    useUIStore.getState().setAgentPanelTab('browser');
     set({ presentationMode: 'mini' });
     addLog('info', '浏览器已折叠到右侧面板');
   },

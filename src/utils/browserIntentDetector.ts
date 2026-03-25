@@ -98,22 +98,44 @@ export const WEBSITE_MAPPINGS: Record<string, string> = {
  * Regex patterns for detecting browser intents
  */
 const INTENT_PATTERNS = [
+  // =========================================================
+  // Category 1: Website/repo FIRST, then action word
+  // Must split into separate patterns to avoid greedy backtracking:
+  // "github 看看" matches pattern A (no prefix, direct action)
+  // "github 去 看看" matches pattern B (with 去 prefix, requires space before action)
+  // =========================================================
+  // Pattern A: "github 看看" / "github 查查" / "github 找找" (direct action, no prefix word)
+  /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+(?:看看|查查|找找)/i,
+  // Pattern B: "github 去 看看" / "github 去 查查" (with 去 prefix, space required before action)
+  /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+去\s+(?:看看|查查|找找)/i,
+  // Pattern C: "github 帮我看看" / "github 帮我查查" (with 帮我 prefix)
+  /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+帮我(?:看看|查查|找找)/i,
+  // Pattern D: "github 访问" / "github 打开" (standalone actions)
+  /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+(?:访问|打开)/i,
+
+  // =========================================================
+  // Category 2: Action FIRST, then website/repo (original)
+  // =========================================================
   // Chinese patterns - action first
   /去\s*(.+?)\s*(看|查|搜索|访问|打开|找)/,
   /帮我去\s*(.+?)\s*(查看|搜索|找|看看)/,
-  /(访问|打开|去)\s*(.+?)\s*(网站|新闻|内容|看看|查查|找找)/,
-  /上\s*(.+?)\s*(看看|找找|查查)/,
-  /在\s*(.+?)\s*(看看|找找|查查|搜索)/,
-  /到\s*(.+?)\s*(看看|找找|查查|搜索)/,
+  /(?:访问|打开|去)\s*(.+?)\s*(?:网站|新闻|内容|看看|查查|找找)/,
+  /上\s*(.+?)\s*(?:看看|找找|查查)/,
+  /在\s*(.+?)\s*(?:看看|找找|查查|搜索)/,
+  /到\s*(.+?)\s*(?:看看|找找|查查|搜索)/,
 
-  // Chinese patterns - action AFTER website (帮你看看xxx, 查查xxx)
+  // =========================================================
+  // Category 3: Action AFTER website (帮你看看xxx, 查查xxx)
   // NOTE: This pattern intentionally does NOT match arbitrary text like "这个项目"
   // because websiteToUrl() returns null for unknown names, and the URL check in
   // ChatInput prevents browser activation when url is null.
+  // =========================================================
   /(?:帮我)?\s*(?:看看|查查|找找|看看看|查查查)\s*(.+?)(?:\s*$)/i,
   /帮我\s+(.+?)\s+(?:看看|查查|找找)/i,
 
-  // English patterns
+  // =========================================================
+  // Category 4: English patterns
+  // =========================================================
   /go\s+to\s+(.+?)(?:\s|$|\?)/i,
   /visit\s+(.+?)(?:\s|$|\?)/i,
   /open\s+(.+?)(?:\s|$|\?)/i,
@@ -122,7 +144,9 @@ const INTENT_PATTERNS = [
   /search\s+(?:for\s+)?(.+?)\s+on\s+(.+?)(?:\s|$|\?)/i,
   /browse\s+(.+?)(?:\s|$|\?)/i,
 
-  // Direct URL pattern (already a URL)
+  // =========================================================
+  // Category 5: Direct URL (already a URL)
+  // =========================================================
   /https?:\/\/[^\s]+/,
 ];
 
@@ -173,18 +197,27 @@ function websiteToUrl(website: string): string | null {
 /**
  * Extract task description from message
  */
-function extractTask(message: string, _match: RegExpMatchArray): string {
+function extractTask(message: string, match: RegExpMatchArray): string {
   // Remove the matched pattern from the message to get the task
   let task = message;
 
   // Try to remove common patterns
   const patterns = [
-    /去\s*(.+?)\s*(看|查|搜索|访问|打开|找)/,
-    /帮我去\s*(.+?)\s*(查看|搜索|找|看看)/,
-    /(访问|打开|去)\s*(.+?)\s*(网站|新闻|内容|看看|查查|找找)/,
-    /上\s*(.+?)\s*(看看|找找|查查)/,
-    /在\s*(.+?)\s*(看看|找找|查查|搜索)/,
-    /到\s*(.+?)\s*(看看|找找|查查|搜索)/,
+    // Category 1: website/repo first, then action
+    /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+(?:看看|查查|找找)/i,
+    /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+去\s+(?:看看|查查|找找)/i,
+    /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+帮我(?:看看|查查|找找)/i,
+    /(?:^|\s)((?:github\.com\/)?[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)\s+(?:访问|打开)/i,
+    // Category 2: action first, then website
+    /去\s*(.+?)\s*(?:看|查|搜索|访问|打开|找)/,
+    /帮我去\s*(.+?)\s*(?:查看|搜索|找|看看)/,
+    /(?:访问|打开|去)\s*(.+?)\s*(?:网站|新闻|内容|看看|查查|找找)/,
+    /上\s*(.+?)\s*(?:看看|找找|查查)/,
+    /在\s*(.+?)\s*(?:看看|找找|查查|搜索)/,
+    /到\s*(.+?)\s*(?:看看|找找|查查|搜索)/,
+    // Category 3: action after website
+    /(?:帮我)?\s*(?:看看|查查|找找|看看看|查查查)\s*(.+?)(?:\s*$)/i,
+    /帮我\s+(.+?)\s+(?:看看|查查|找找)/i,
   ];
 
   for (const pattern of patterns) {
@@ -194,9 +227,21 @@ function extractTask(message: string, _match: RegExpMatchArray): string {
     }
   }
 
+  // Also try to remove the matched portion if it's still in the task
+  if (match && match[0]) {
+    task = task.replace(match[0], '').trim();
+  }
+
   // Clean up
-  task = task.replace(/^[的得地]+/, '').trim();
+  task = task.replace(/^[的得地\s]+/, '').trim();
   task = task.replace(/[。.。]+$/, '').trim();
+
+  // Post-cleanup: remove residual "去这个github / 去那个twitter" fragments
+  // that can appear when the pre-check matched repo-path first,
+  // but "去这个GitHub 看看" was left in the task text.
+  task = task.replace(/去\s*这\s*个\s*(?:github|github\.com|推特?|twitter|x\.com|youtube|google|百度|淘宝|reddit|cbc|bbc|nyt|wsj|yahoo|amazon|ebay|知乎|stackoverflow|stackoverflow|stackoverflow)/gi, '').trim();
+  task = task.replace(/去\s*那\s*个\s*(?:github|github\.com|推特?|twitter|x\.com|youtube|google|百度|淘宝|reddit|cbc|bbc|nyt|wsj|yahoo|amazon|ebay|知乎|stackoverflow|stackoverflow|stackoverflow)/gi, '').trim();
+  task = task.replace(/^[的得地\s]+/, '').trim();
 
   return task || '浏览网页内容';
 }
@@ -265,6 +310,50 @@ function tryFuzzyMatch(message: string): BrowserIntent | null {
 
     // Try different matching strategies
     // Order matters - more specific patterns first
+
+    // Strategy 1: GitHub repo format {user}/{repo} followed by action word
+    // e.g., "mammut001/pipi-shrimp-agent 去" or "mammut001/pipi-shrimp-agent 帮我看看"
+    const githubRepoPattern = /([a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+)\s+(?:去|帮我去|帮我看看|帮我查查|帮我找找|看看|查查|找找|访问|打开)/i;
+    const repoMatch = message.match(githubRepoPattern);
+    if (repoMatch && key === 'github') {
+      // Extract task from the message
+      const repoPath = repoMatch[1];
+      const taskStart = repoMatch.index + repoMatch[0].length;
+      const task = message.slice(taskStart).trim() || '浏览网页内容';
+      console.log(`[browserIntentDetector] Fuzzy matched GitHub repo: "${repoPath}" -> ${url}`);
+      return {
+        detected: true,
+        website: repoPath,
+        url: `${url}/${repoPath}`,
+        task,
+        confidence: 0.85, // High confidence for explicit repo path
+      };
+    }
+
+    // Strategy 2: Known website name followed by action word
+    // e.g., "github 去看看", "这个github 看看", "twitter 帮我查查"
+    // Also handles "github.com 去看看" (with .com suffix)
+    const siteActionPattern = new RegExp(
+      `(?:^|[\\s，,])((?:这个|那个)?${escapeRegExp(key)}(?:\\.com)?)\\s+(?:去|帮我去|帮我看看|帮我查查|帮我找找|看看|查查|找找|访问|打开)`,
+      'i'
+    );
+    const siteActionMatch = message.match(siteActionPattern);
+    if (siteActionMatch) {
+      const matchedText = siteActionMatch[1];
+      // Extract task from the message (everything after the action word)
+      const actionEndIndex = siteActionMatch.index + siteActionMatch[0].length;
+      const task = message.slice(actionEndIndex).trim() || '浏览网页内容';
+      console.log(`[browserIntentDetector] Fuzzy matched: "${matchedText}" -> ${url}`);
+      return {
+        detected: true,
+        website: key,
+        url: url,
+        task,
+        confidence: 0.8,
+      };
+    }
+
+    // Strategy 3: Original exact match patterns
     if (
       // Exact match with action context (e.g., "帮我看看cbc", "去cbc")
       (lowerMessage.includes('帮我') || lowerMessage.includes('去') || lowerMessage.includes('看看') || lowerMessage.includes('查查')) &&
@@ -281,7 +370,7 @@ function tryFuzzyMatch(message: string): BrowserIntent | null {
        lowerMessage.includes(key + '新闻') ||
        lowerMessage.includes(key + '网站'))
     ) {
-      console.log(`[browserIntentDetector] Fuzzy matched: "${key}" -> ${url}`);
+      console.log(`[browserIntentDetector] Fuzzy matched (original): "${key}" -> ${url}`);
       return {
         detected: true,
         website: key,
@@ -296,10 +385,64 @@ function tryFuzzyMatch(message: string): BrowserIntent | null {
 }
 
 /**
+ * Pre-check for GitHub repo path at the START of the message.
+ * Matches "user/repo 去看看" and extracts the full GitHub URL
+ * before Category 1 patterns can match "github" in the middle of the text.
+ */
+function detectGitHubRepoFirst(message: string): BrowserIntent | null {
+  // Pattern: GitHub repo path (user/repo) at the start, followed by action words
+  // Handles: "mammut001/pipi-shrimp-agent 去看看", "user/repo 帮我看看", etc.
+  const repoActionPattern = /^([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)\s+(?:去|帮我去|帮我看看|帮我查查|帮我找找|看看|查查|找找|访问|打开)/i;
+  const match = message.match(repoActionPattern);
+
+  if (!match) {
+    return null;
+  }
+
+  const repoPath = match[1]; // e.g., "mammut001/pipi-shrimp-agent"
+  const matchEnd = match.index + match[0].length;
+  const task = message.slice(matchEnd).trim() || '浏览网页内容';
+
+  // Clean up task: remove leading "去这个github / 去那个twitter / 帮我" etc.
+  const cleanTask = task
+    .replace(/^(?:去|帮我|请)\s*/i, '')          // Remove leading 去/帮我/请
+    .replace(/^[的得地\s]+/, '')                   // Remove leading particles
+    .replace(/^(?:这|那)\s*个\s*/, '')             // Remove leading 这/那个
+    .replace(/[。.]+$/, '')                        // Remove trailing punctuation
+    .trim() || '浏览网页内容';
+
+  return {
+    detected: true,
+    website: repoPath,
+    url: `https://github.com/${repoPath}`,
+    task: cleanTask,
+    confidence: 0.9,
+  };
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Detect browser intent from user message
  */
 export function detectBrowserIntent(message: string): BrowserIntent {
-  // Try each pattern first
+  // =========================================================
+  // Pre-check: GitHub repo path at START of message
+  // Handles "user/repo 去看看" and "user/repo 帮我看看"
+  // Must run before category patterns to avoid "github" being
+  // matched in the middle of the message instead of the repo path.
+  // =========================================================
+  const githubPreCheck = detectGitHubRepoFirst(message);
+  if (githubPreCheck) {
+    return githubPreCheck;
+  }
+
+  // Try each pattern
   for (const pattern of INTENT_PATTERNS) {
     const match = message.match(pattern);
     if (match) {
@@ -401,16 +544,25 @@ export function getWebsiteDisplayName(url: string): string {
 // Example usage and tests
 if (import.meta.env.DEV) {
   const tests = [
-    // New patterns - action after website (帮/看看/查查/找找 + website)
-    '帮我看看cbc',           // Should: fuzzy match cbc
-    '帮我看看cbc新闻',       // Should: fuzzy match cbc
-    '看看cbc',              // Should: fuzzy match cbc
-    '查查twitter',          // Should: fuzzy match twitter
-    '帮我查查github',        // Should: fuzzy match github
-    '找找youtube',          // Should: fuzzy match youtube
-    '去cbc看看',             // Should: match pattern + fuzzy
+    // =========================================================
+    // NEW: Repo/Website FIRST, then action word
+    // The key fix for "mammut001/pipi-shrimp-agent 去这个GitHub 看看"
+    // =========================================================
+    'mammut001/pipi-shrimp-agent 去这个GitHub 看看有多少个star',  // Should: detect GitHub repo + task
+    'mammut001/pipi-shrimp-agent 帮我看看有多少个star',          // Should: detect GitHub repo + task
+    'mammut001/pipi-shrimp-agent 查查',                         // Should: detect GitHub repo
+    'github.com/mammut001/pipi-shrimp-agent 去看看',             // Should: detect GitHub repo
+    'mammut001/pipi-shrimp-agent 访问',                         // Should: detect GitHub repo
+    'github 去看看',                                             // Should: detect github
+    'github 帮我看看',                                           // Should: detect github
+    '这个github 看看',                                           // Should: detect github
+    '那个github 查查',                                           // Should: detect github
+    'twitter 去看看',                                            // Should: detect twitter
+    'youtube 帮我查查',                                           // Should: detect youtube
 
-    // Original patterns - should still work
+    // =========================================================
+    // Original: action first, then website
+    // =========================================================
     '帮我去 CBC News 看看科技新闻',
     '去 GitHub 搜索 React 项目',
     'open https://google.com',
@@ -419,8 +571,21 @@ if (import.meta.env.DEV) {
     'check out twitter.com',
     '帮我查查最新的 AI 新闻',
 
+    // =========================================================
+    // Original: action AFTER website (帮你看看xxx, 查查xxx)
+    // =========================================================
+    '帮我看看cbc',           // Should: fuzzy match cbc
+    '帮我看看cbc新闻',       // Should: fuzzy match cbc
+    '看看cbc',              // Should: fuzzy match cbc
+    '查查twitter',          // Should: fuzzy match twitter
+    '帮我查查github',        // Should: fuzzy match github
+    '找找youtube',          // Should: fuzzy match youtube
+    '去cbc看看',             // Should: match pattern + fuzzy
+
+    // =========================================================
     // Should NOT match (normal conversation)
-    '我在 github 上看到',
+    // =========================================================
+    '我在 github 上看到',    // No action word
     'cbc 新闻怎么样',        // Missing action word
     'just a normal message',
 
@@ -432,7 +597,7 @@ if (import.meta.env.DEV) {
   for (const test of tests) {
     const intent = detectBrowserIntent(test);
     if (intent.detected) {
-      console.log(`  ✓ "${test}" -> ${intent.website} (${intent.url}) [${Math.round(intent.confidence * 100)}%]`);
+      console.log(`  ✓ "${test}" -> ${intent.website} (${intent.url}) task="${intent.task}" [${Math.round(intent.confidence * 100)}%]`);
     } else {
       console.log(`  ✗ "${test}" -> no intent`);
     }

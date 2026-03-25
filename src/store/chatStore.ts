@@ -1130,6 +1130,124 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
+     * Generate an AI response using browser task result as context.
+     * Does NOT add a visible user message — injects a hidden context message
+     * so the AI can answer based on what the browser agent found.
+     */
+    generateBrowserResultResponse: async (browserResult: string, originalQuery: string) => {
+      const {
+        currentSessionId,
+        currentMessages,
+        addMessage,
+        setStreaming,
+        setError,
+      } = get();
+
+      if (!currentSessionId) return;
+
+      const apiConfig = useSettingsStore.getState().getActiveConfig();
+      if (!apiConfig?.apiKey) {
+        setError('API key not configured.');
+        return;
+      }
+
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      try {
+        // Build context message — hidden from UI but visible to the AI
+        const contextContent = `[浏览器代理已完成任务。用户的问题是："${originalQuery}"。\n\n浏览器代理获取到的数据：\n${browserResult}\n\n请根据以上数据，用自然的语言直接回答用户的问题。不要提及"浏览器代理"或内部流程，直接给出结果即可。]`;
+        const hiddenContext = createMessage('user', contextContent);
+        hiddenContext.metadata = { hidden: true, type: 'browser_result_context' };
+        await addMessage(hiddenContext);
+
+        setStreaming(true);
+        set({ streamingContent: '', streamingSessionId: currentSessionId });
+
+        timeoutId = setTimeout(() => {
+          if (get().isStreaming) {
+            setStreaming(false);
+            set({ streamingContent: '', streamingReasoning: '' });
+          }
+        }, 300_000);
+
+        const messages = buildApiMessages(currentMessages());
+        const assistantMessage = createMessage('assistant', '');
+        await addMessage(assistantMessage);
+
+        let systemPrompt = useUIStore.getState().agentInstructions;
+        const currentSession = get().sessions.find(s => s.id === currentSessionId);
+        const sessionWorkDir = currentSession?.workDir;
+        if (sessionWorkDir) {
+          systemPrompt += `\n\n## Working Directory\n\nYour working directory: \`${sessionWorkDir}\``;
+        }
+
+        const response = await invoke<{
+          content: string;
+          artifacts: Array<{ type: string; content: string; title?: string; language?: string }>;
+          model: string;
+          usage: { input_tokens: number; output_tokens: number };
+          tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
+        }>('send_claude_sdk_chat_streaming', {
+          messages,
+          apiKey: apiConfig.apiKey,
+          model: apiConfig.model,
+          baseUrl: apiConfig.baseUrl || '',
+          systemPrompt,
+        });
+
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+
+        const { streamingContent: finalContent, streamingReasoning } = get();
+        const { updateLastMessage } = get();
+
+        const rawContent = finalContent || response.content || '';
+        const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(rawContent);
+
+        const tokenUsage = response.usage ? {
+          input_tokens: response.usage.input_tokens,
+          output_tokens: response.usage.output_tokens,
+          model: response.model || apiConfig.model,
+        } : undefined;
+
+        await updateLastMessage(
+          cleanContent,
+          response.artifacts?.map((a) => ({
+            id: crypto.randomUUID(),
+            type: a.type as 'html' | 'svg' | 'mermaid' | 'react' | 'code',
+            content: a.content,
+            title: a.title,
+            language: a.language,
+          })),
+          mergeReasoningParts(streamingReasoning, parsedReasoning),
+          tokenUsage
+        );
+
+        setStreaming(false);
+        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+      } catch (error) {
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+        const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to generate response');
+        setError(errorMsg);
+        setStreaming(false);
+        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+        // Remove empty assistant placeholder
+        const sid = get().currentSessionId;
+        if (sid) {
+          set((state) => ({
+            sessions: state.sessions.map((s) => {
+              if (s.id !== sid || s.messages.length === 0) return s;
+              const last = s.messages[s.messages.length - 1];
+              if (last.role === 'assistant' && !last.content && !last.reasoning) {
+                return { ...s, messages: s.messages.slice(0, -1) };
+              }
+              return s;
+            }),
+          }));
+        }
+      }
+    },
+
+    /**
      * Send message - call API (with streaming)
      */
     sendMessage: async (content: string, targetSessionId?: string) => {
@@ -1484,6 +1602,47 @@ export const useChatStore = create<ChatState>()(
           await invoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
         } catch (error) {
           console.error('Failed to persist streaming update to database:', error);
+        }
+      }
+    },
+
+    /**
+     * Update a specific message by ID (content + metadata) and persist to database.
+     * Used for consolidating browser progress messages into a single dynamic bubble.
+     */
+    updateMessageContent: async (messageId: string, content: string, metadata?: Record<string, unknown>) => {
+      const { currentSessionId } = get();
+      if (!currentSessionId) return;
+
+      let messageToUpdate: Message | null = null;
+
+      set((state) => ({
+        sessions: state.sessions.map((s) => {
+          if (s.id !== currentSessionId) return s;
+
+          const msgIndex = s.messages.findIndex((m) => m.id === messageId);
+          if (msgIndex === -1) return s;
+
+          const updatedMessage: Message = {
+            ...s.messages[msgIndex],
+            content,
+            metadata: metadata !== undefined ? { ...s.messages[msgIndex].metadata, ...metadata } : s.messages[msgIndex].metadata,
+          };
+
+          messageToUpdate = updatedMessage;
+
+          const newMessages = [...s.messages];
+          newMessages[msgIndex] = updatedMessage;
+          return { ...s, messages: newMessages, updatedAt: Date.now() };
+        }),
+      }));
+
+      // Persist to database
+      if (messageToUpdate) {
+        try {
+          await invoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
+        } catch (error) {
+          console.error('Failed to persist updateMessageContent to database:', error);
         }
       }
     },

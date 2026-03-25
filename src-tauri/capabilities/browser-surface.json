@@ -1,9 +1,17 @@
 {
   "$schema": "https://schemas.tauri.app/config/2/capability",
   "identifier": "browser-surface",
-  "description": "Minimal capability for the embedded browser surface webview (used for PageAgent LLM proxy)",
-  "windows": ["embedded-browser-surface"],
+  "description": "Capability for the embedded browser surface webview.\nMatches by webview label (not window label) so child webviews work correctly.\nRemote context required because the embedded webview loads external URLs.",
+  "webviews": ["embedded-browser-surface"],
+  "local": true,
+  "remote": {
+    "urls": ["https://**", "http://**"]
+  },
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:event:allow-emit",
+    "notification:allow-is-permission-granted",
+    "notification:allow-notify",
+    "notification:allow-request-permission"
   ]
 }

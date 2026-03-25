@@ -10,13 +10,12 @@
  * - external: Browser in separate window, Chat takes full width
  */
 
-import { useMemo, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
-import { BrowserCompactSummary } from './BrowserCompactSummary';
 import type { Message, Session } from '@/types/chat';
 import { t } from '@/i18n';
 
@@ -93,36 +92,7 @@ export function ChatBrowserWorkspaceShell() {
     };
   }, []);
   // Browser dock state
-  const { browserDockMode, browserPaneWidth, browserSplitFocus, setBrowserPaneWidth } = useUIStore();
-
-  // Resize state
-  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-
-  // Handle resize drag start
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    resizeRef.current = {
-      startX: e.clientX,
-      startWidth: browserPaneWidth,
-    };
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      if (!resizeRef.current) return;
-      const delta = moveEvent.clientX - resizeRef.current.startX;
-      const newWidth = resizeRef.current.startWidth + delta;
-      // Clamp to reasonable min/max
-      setBrowserPaneWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      resizeRef.current = null;
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [browserPaneWidth, setBrowserPaneWidth]);
+  const { browserDockMode } = useUIStore();
 
   // Chat store
   const {
@@ -138,11 +108,12 @@ export function ChatBrowserWorkspaceShell() {
   const currentSessionData = currentSession();
   const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
 
-  // Memoized: filter out internal tool-result messages
+  // Memoized: filter out internal tool-result messages and hidden context messages
   const rawMessages = currentMessages();
   const messages = useMemo(() =>
     rawMessages.filter(
       (m) => !(m.role === 'user' && m.content.startsWith('__TOOL_RESULT__:'))
+            && !(m.metadata?.hidden === true)
     ),
     [rawMessages]
   );
@@ -311,29 +282,11 @@ export function ChatBrowserWorkspaceShell() {
 
   return (
     <MainLayout>
-      {/* Split Mode: Browser + Browser Console (expanded mode per architecture docs) */}
+      {/* Split Mode: Browser takes full center area, right AgentPanel shows controls+logs */}
       {isSplitMode ? (
         <div className="flex-1 flex min-h-0">
-          {/* Browser Pane - Main workspace shows the real browser surface */}
-          <div
-            className="flex-shrink-0 border-r border-gray-200 bg-white"
-            style={{ width: browserPaneWidth }}
-          >
+          <div className="flex-1 min-w-0 bg-white">
             <BrowserWorkspacePane />
-          </div>
-
-          {/* Resize Handle */}
-          <div
-            className="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-colors"
-            onMouseDown={handleResizeStart}
-          />
-
-          {/* Browser Console - Right panel shows compact browser summary, task, and logs */}
-          {/* Per architecture docs: "The right panel remains visible and continues to show: compact browser summary, current task, logs" */}
-          <div
-            className={`flex-1 min-w-0 ${browserSplitFocus === 'browser' ? '' : 'opacity-70'}`}
-          >
-            <BrowserCompactSummary />
           </div>
         </div>
       ) : (
