@@ -543,8 +543,22 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
       addLog('info', `开始执行任务: ${task.substring(0, 50)}${task.length > 50 ? '...' : ''}`);
 
+      const pageAgentSystemPrompt = `You are a browser automation agent. You MUST only use the following actions — do not invent or use any other action names:
+- done: { text: string, success: boolean } — mark the task as complete
+- wait: { seconds: number } — wait briefly (1-10 seconds)
+- ask_user: { question: string } — ask the user a question if stuck
+- click_element_by_index: { index: number } — click an element by its index
+- input_text: { index: number, text: string } — type text into an input field
+- select_dropdown_option: { index: number, text: string } — select dropdown option
+- scroll: { down: boolean, num_pages?: number } — scroll vertically (down=true for down, down=false for up)
+- scroll_horizontally: { right: boolean, pixels: number } — scroll horizontally
+
+IMPORTANT: Do NOT use action names like "navigate", "open_url", "scroll_down", "scroll_up" — they do not exist.
+Complete the task efficiently and call "done" when finished.`;
+
       await executeAgentTask(task, config.apiKey, config.model || 'claude-3-5-sonnet-20241022', {
         baseUrl: config.baseUrl,
+        systemPrompt: pageAgentSystemPrompt,
       });
 
       // The browser window will emit completion events
