@@ -140,6 +140,48 @@ export interface RuntimeConnector {
   stop(): Promise<void>;
 }
 
+// ============= Presentation Mode Types =============
+
+/** Browser presentation modes - where the browser surface is displayed */
+export type BrowserPresentationMode =
+  | 'hidden'       // No browser task active
+  | 'mini'        // Browser in right panel (embedded)
+  | 'expanded'    // Browser in main workspace (embedded)
+  | 'external';   // Browser in separate Tauri window (fallback)
+
+// ============= Browser Session State =============
+
+/** Browser session state - the core session data */
+export interface BrowserSession {
+  sessionId: string;
+  currentUrl: string;
+  pageTitle: string;
+  authState: BrowserAuthState;
+  taskState: BrowserTaskState;
+  activeTask: BrowserTaskEnvelope | null;
+  presentationMode: BrowserPresentationMode;
+  canUserInteract: boolean;
+}
+
+/** Task execution states */
+export type BrowserTaskState =
+  | 'idle'
+  | 'initializing'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed';
+
+// ============= Handoff State Types =============
+
+/** Handoff states for login/auth flows */
+export type BrowserHandoffState =
+  | 'no_handoff'                    // No handoff needed
+  | 'waiting_for_login'             // Waiting for user to login
+  | 'waiting_for_captcha'          // Waiting for user to complete captcha
+  | 'waiting_for_manual_confirmation' // Waiting for user confirmation
+  | 'resuming';                    // Task is being resumed
+
 // ============= Store State Types =============
 
 /** Extended browser agent state for the store */
@@ -167,6 +209,10 @@ export interface BrowserAgentState {
   logs: LogEntry[];
   screenshots: string[];
   _abortController: AbortController | null;
+
+  // ========== Presentation State ==========
+  presentationMode: BrowserPresentationMode;
+  handoffState: BrowserHandoffState;
 }
 
 // ============= Log Entry =============
@@ -208,6 +254,13 @@ export interface BrowserAgentActions {
   clearLogs: () => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   setupEventListeners: () => Promise<() => void>;
+
+  // ========== Presentation Actions ==========
+  setPresentationMode: (mode: BrowserPresentationMode) => void;
+  expandBrowser: () => void;
+  collapseBrowser: () => void;
+  showMiniBrowser: () => void;
+  hideBrowser: () => void;
 }
 
 // ============= Complete Store Type =============

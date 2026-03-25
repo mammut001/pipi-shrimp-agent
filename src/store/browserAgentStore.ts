@@ -11,11 +11,15 @@
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { useSettingsStore } from './settingsStore';
+import { useUIStore } from './uiStore';
 import {
-  openBrowserWindow,
-  closeBrowserWindow,
+  openEmbeddedSurface,
+  closeEmbeddedSurface,
   executeAgentTask,
-  inspectBrowserState,
+  inspectEmbeddedSurface,
+  showBrowserWindow,
+  moveBrowserSurface,
+  captureScreenshot,
   type AgentLog,
   type AgentTaskComplete,
 } from '../utils/browserCommands';
@@ -27,6 +31,8 @@ import type {
   BrowserTaskEnvelope,
   BrowserInspectionResult,
   BrowserConnectorType,
+  BrowserPresentationMode,
+  BrowserHandoffState,
   LogEntry,
 } from '../types/browser';
 import {
@@ -70,6 +76,14 @@ interface BrowserAgentState {
   logs: LogEntry[];
   screenshots: string[];
   _abortController: AbortController | null;
+  _screenshotInterval: ReturnType<typeof setInterval> | null;
+  _isLivePreviewEnabled: boolean;
+
+  // ========== Presentation State ==========
+  presentationMode: BrowserPresentationMode;
+  handoffState: BrowserHandoffState;
+
+  // Removed explicit embedded mode flag; rely on real runtime when available
 }
 
 /**
@@ -102,6 +116,21 @@ interface BrowserAgentActions {
   clearLogs: () => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   setupEventListeners: () => Promise<() => void>;
+
+  // ========== Presentation Actions ==========
+  setPresentationMode: (mode: BrowserPresentationMode) => void;
+  expandBrowser: () => void;
+  collapseBrowser: () => void;
+  showMiniBrowser: () => void;
+  hideBrowser: () => void;
+
+  // Embedded mode actions removed in favor of runtime capability-based embedding
+  refreshScreenshot: (screenshot: string) => void;
+
+  // Live preview actions
+  _startLivePreview: () => void;
+  _stopLivePreview: () => void;
+  _toggleLivePreview: (enabled: boolean) => void;
 }
 
 /**
@@ -131,6 +160,14 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   logs: [],
   screenshots: [],
   _abortController: null,
+  _screenshotInterval: null,
+  _isLivePreviewEnabled: true,
+
+  // Presentation
+  presentationMode: 'hidden',
+  handoffState: 'no_handoff',
+
+  // Embedded Mode: no dedicated toggle flag; embedding is based on runtime capability
 
   // ========== Utility Actions ==========
 
@@ -173,10 +210,25 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       }
     });
 
+    // Listen for screenshot events from the backend (dataUrl)
+    const unlistenScreenshot = await listen<{ dataUrl: string }>('screenshot_captured', (event) => {
+      const url = event.payload?.dataUrl;
+      if (typeof url === 'string' && url.length > 0) {
+        set((state) => ({ screenshots: [...state.screenshots, url].slice(-20) }));
+      }
+    });
+
+    const unlistenScreenshotError = await listen<{ message: string }>('screenshot_error', (event) => {
+      const message = event.payload?.message ?? 'unknown';
+      addLog('error', `截图错误: ${message}`);
+    });
+
     // Return cleanup function
     return () => {
       unlistenLog();
       unlistenComplete();
+      unlistenScreenshot();
+      unlistenScreenshotError();
     };
   },
 
@@ -194,9 +246,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
       // Update status to opening
       set({ status: 'opening' });
-      addLog('info', `正在打开浏览器窗口: ${normalizedUrl}`);
+      addLog('info', `正在打开嵌入式浏览器: ${normalizedUrl}`);
 
-      await openBrowserWindow(normalizedUrl);
+      // Use embedded surface as the primary browser surface
+      await openEmbeddedSurface(normalizedUrl);
 
       // Match profile by URL
       const profile = matchProfileByUrl(normalizedUrl);
@@ -211,9 +264,14 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         authState: 'unknown',
         blockReason: null,
         inspection: null,
+        presentationMode: 'mini',
+        handoffState: 'no_handoff',
       });
 
-      addLog('success', `浏览器窗口已打开 (${profile.label})`);
+      addLog('success', `嵌入式浏览器已打开 (${profile.label})`);
+
+      // Start live preview for real-time screenshot updates
+      get()._startLivePreview();
 
       // Auto-inspect after opening
       try {
@@ -235,8 +293,12 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     const { addLog } = get();
 
     try {
-      addLog('info', '正在关闭浏览器窗口');
-      await closeBrowserWindow();
+      addLog('info', '正在关闭嵌入式浏览器');
+
+      // Stop live preview
+      get()._stopLivePreview();
+
+      await closeEmbeddedSurface();
       set({
         isWindowOpen: false,
         currentUrl: '',
@@ -248,8 +310,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         blockReason: null,
         waitingForUserResume: false,
         mode: 'manual_handoff',
+        presentationMode: 'hidden',
+        handoffState: 'no_handoff',
       });
-      addLog('info', '浏览器窗口已关闭');
+      addLog('info', '嵌入式浏览器已关闭');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       addLog('error', `关闭窗口失败: ${errorMessage}`);
@@ -274,8 +338,8 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       set({ status: 'inspecting' });
       addLog('info', '正在检查页面状态...');
 
-      // Get raw inspection from backend
-      const raw = await inspectBrowserState();
+      // Get raw inspection from backend - use embedded surface inspection
+      const raw = await inspectEmbeddedSurface();
 
       // Parse into structured result
       const result = parseInspectionResult(raw, siteProfileId || undefined);
@@ -329,7 +393,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
    * Transitions from idle/inspecting to waiting for user to complete login
    */
   requestLogin: () => {
-    const { addLog } = get();
+    const { addLog, presentationMode } = get();
 
     // This is called when inspection detects auth is required
     // User needs to manually log in, so we transition to waiting state
@@ -337,9 +401,19 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       status: 'waiting_user_resume',
       mode: 'manual_handoff',
       waitingForUserResume: true,
+      handoffState: 'waiting_for_login',
     });
 
-    addLog('info', '请在浏览器窗口中完成登录');
+    // Ensure browser is visible in mini or expanded mode for login
+    if (presentationMode === 'hidden') {
+      set({ presentationMode: 'mini' });
+    }
+
+    void showBrowserWindow().catch((error) => {
+      console.error('Failed to show browser window for login:', error);
+    });
+
+    addLog('info', '请在浏览器中完成登录');
     addLog('info', '登录完成后，点击"我已登录"按钮继续');
   },
 
@@ -362,6 +436,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         status: 'ready_for_agent',
         waitingForUserResume: false,
         mode: 'agent_controlled',
+        handoffState: 'no_handoff',
       });
 
       addLog('success', '登录验证通过，可以执行任务');
@@ -372,11 +447,12 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         await get().executeTask(pendingTask.executionPrompt);
       }
     } else {
-      // Still not authenticated - transition to waiting_user_resume
+      // Still not authenticated - keep waiting for login
       set({
         status: 'waiting_user_resume',
         waitingForUserResume: true,
         mode: 'manual_handoff',
+        handoffState: 'waiting_for_login',
       });
       addLog('warning', '登录验证失败，请确认已正确登录');
     }
@@ -596,19 +672,31 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
    * Handle blocked state
    */
   handleBlockedState: (reason: BrowserBlockReason) => {
-    const { addLog, pendingTask } = get();
+    const { addLog, pendingTask, presentationMode } = get();
 
     let status: BrowserSessionStatus = 'blocked_auth';
+    let handoff: BrowserHandoffState = 'no_handoff';
+
     if (reason === 'captcha_required') {
       status = 'blocked_captcha';
+      handoff = 'waiting_for_captcha';
     } else if (reason === 'manual_confirmation_required') {
       status = 'blocked_manual_step';
+      handoff = 'waiting_for_manual_confirmation';
+    } else if (reason === 'login_required' || reason === 'mfa_required') {
+      handoff = 'waiting_for_login';
+    }
+
+    // Ensure browser is visible when blocked
+    if (presentationMode === 'hidden') {
+      set({ presentationMode: 'mini' });
     }
 
     set({
       status,
       blockReason: reason,
       mode: 'manual_handoff',
+      handoffState: handoff,
     });
 
     addLog('warning', `任务被阻塞: ${reason}`);
@@ -617,10 +705,169 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     if (pendingTask) {
       addLog('info', '任务已保存，可以在登录后恢复');
     }
+
+    if (reason === 'login_required' || reason === 'captcha_required' || reason === 'mfa_required') {
+      void showBrowserWindow().catch((error) => {
+        console.error('Failed to show browser window for blocked state:', error);
+      });
+    }
   },
 
   clearLogs: () => {
     set({ logs: [] });
+  },
+
+  // ========== Presentation Actions ==========
+
+  setPresentationMode: (mode: BrowserPresentationMode) => {
+    const { addLog } = get();
+    const currentMode = get().presentationMode;
+    const uiStore = useUIStore.getState();
+
+    if (currentMode === mode) return;
+
+    // Sync with UI store for layout changes
+    if (mode === 'hidden') {
+      uiStore.closeBrowserDock();
+    } else if (mode === 'mini') {
+      uiStore.setBrowserDockMode('panel');
+    } else if (mode === 'expanded') {
+      uiStore.expandBrowserToSplit();
+    } else if (mode === 'external') {
+      uiStore.openBrowserExternal();
+    }
+
+    set({ presentationMode: mode });
+    addLog('info', `浏览器切换到 ${mode} 模式`);
+
+    // Handle mode-specific actions
+    if (mode === 'hidden') {
+      // Optionally close window when hiding
+    } else if (mode === 'mini' || mode === 'expanded') {
+      // Ensure browser window is open when entering these modes
+      if (!get().isWindowOpen && get().currentUrl) {
+        get().openWindow(get().currentUrl);
+      }
+    }
+  },
+
+  expandBrowser: async () => {
+    const { addLog, presentationMode } = get();
+
+    if (presentationMode === 'expanded') {
+      addLog('info', '浏览器已在展开模式');
+      return;
+    }
+
+    // Sync with UI store
+    useUIStore.getState().expandBrowserToSplit();
+
+    // Move embedded surface to expanded mode
+    try {
+      await moveBrowserSurface('expanded');
+    } catch (e) {
+      // Ignore errors - fallback to UI-only control
+    }
+
+    set({ presentationMode: 'expanded' });
+    addLog('info', '浏览器已展开到主工作区');
+  },
+
+  collapseBrowser: async () => {
+    const { addLog, presentationMode } = get();
+
+    if (presentationMode === 'mini') {
+      addLog('info', '浏览器已在迷你模式');
+      return;
+    }
+
+    // Move embedded surface to mini mode
+    try {
+      await moveBrowserSurface('mini');
+    } catch (e) {
+      // Ignore errors - fallback to UI-only control
+    }
+
+    // Sync with UI store
+    useUIStore.getState().collapseBrowserToPanel();
+    set({ presentationMode: 'mini' });
+    addLog('info', '浏览器已折叠到右侧面板');
+  },
+
+  showMiniBrowser: () => {
+    const { addLog, isWindowOpen, currentUrl } = get();
+
+    // If no URL, can't show mini browser
+    if (!currentUrl && !isWindowOpen) {
+      addLog('info', '请先打开一个网页');
+      return;
+    }
+
+    // Sync with UI store
+    useUIStore.getState().setBrowserDockMode('panel');
+    set({ presentationMode: 'mini' });
+    addLog('info', '显示迷你浏览器');
+  },
+
+  hideBrowser: () => {
+    const { addLog } = get();
+    // Sync with UI store
+    useUIStore.getState().closeBrowserDock();
+    set({ presentationMode: 'hidden' });
+    addLog('info', '隐藏浏览器');
+  },
+
+  // Embedded mode toggling removed; runtime embedding will be inferred from actual capability
+
+  refreshScreenshot: (screenshot: string) => {
+    const { screenshots } = get();
+    // Add new screenshot and keep only last 10
+    const newScreenshots = [...screenshots, screenshot].slice(-10);
+    set({ screenshots: newScreenshots });
+  },
+
+  // Live preview - periodically capture screenshots for real-time preview
+  _startLivePreview: () => {
+    const { _screenshotInterval, _isLivePreviewEnabled } = get();
+
+    // Don't start if already running or disabled
+    if (_screenshotInterval || !_isLivePreviewEnabled) return;
+
+    // NOTE: captureScreenshot() returns "Screenshot capture initiated" (acknowledgment string),
+    // NOT the actual image data. Screenshot data ONLY arrives via screenshot_captured events.
+    // We trigger capture to request screenshot, then rely on event listener to update screenshots.
+    const interval = setInterval(async () => {
+      try {
+        await captureScreenshot();
+        // Screenshot will be updated via screenshot_captured event listener
+        // DO NOT use return value as image data - it's just an acknowledgment
+      } catch (e) {
+        // Ignore screenshot errors during live preview
+      }
+    }, 2000); // Update every 2 seconds
+
+    set({ _screenshotInterval: interval });
+  },
+
+  _stopLivePreview: () => {
+    const { _screenshotInterval } = get();
+
+    if (_screenshotInterval) {
+      clearInterval(_screenshotInterval);
+      set({ _screenshotInterval: null });
+    }
+  },
+
+  _toggleLivePreview: (enabled: boolean) => {
+    const { _screenshotInterval } = get();
+
+    if (enabled && !_screenshotInterval) {
+      get()._startLivePreview();
+    } else if (!enabled && _screenshotInterval) {
+      get()._stopLivePreview();
+    }
+
+    set({ _isLivePreviewEnabled: enabled });
   },
 }));
 

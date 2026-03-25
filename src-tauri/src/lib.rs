@@ -392,6 +392,7 @@ pub fn run() {
             commands::list_pipi_shrimp_index,
             // Browser window commands (second WebviewWindow for PageAgent)
             commands::open_browser_window,
+            commands::show_browser_window,
             commands::close_browser_window,
             commands::execute_agent_task,
             commands::get_browser_url,
@@ -401,6 +402,21 @@ pub fn run() {
             commands::inspect_browser_state,
             commands::browser_navigate,
             commands::browser_reload,
+            // Embedded webview commands (fallback/legacy)
+            commands::set_embedded_mode,
+            commands::get_embedded_mode,
+            commands::capture_screenshot,
+            commands::get_browser_dimensions,
+            // Embedded surface commands (primary for real-browser-in-app experience)
+            commands::open_embedded_surface,
+            commands::move_browser_surface,
+            commands::set_embedded_surface_visibility,
+            commands::get_embedded_surface_url,
+            commands::execute_on_embedded_surface,
+            commands::inspect_embedded_surface,
+            commands::navigate_embedded_surface,
+            commands::reload_embedded_surface,
+            commands::close_embedded_surface,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

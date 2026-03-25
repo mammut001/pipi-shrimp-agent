@@ -316,14 +316,17 @@ export function createTaskEnvelopeFromChat(
  */
 export function switchToBrowserPanel(): void {
   const uiStore = useUIStore.getState();
+
+  // Ensure right panel is visible
+  if (!uiStore.rightPanelVisible) {
+    uiStore.toggleRightPanel();
+  }
+
   // Set right panel tab to browser
-  if ('setAgentPanelTab' in uiStore) {
-    (uiStore as { setAgentPanelTab: (tab: string) => void }).setAgentPanelTab('browser');
-  }
+  uiStore.setAgentPanelTab('browser');
+
   // Set dock mode to panel (shows mini preview in right panel)
-  if ('setBrowserDockMode' in uiStore) {
-    (uiStore as { setBrowserDockMode: (mode: string) => void }).setBrowserDockMode('panel');
-  }
+  uiStore.setBrowserDockMode('panel');
 }
 
 /**
