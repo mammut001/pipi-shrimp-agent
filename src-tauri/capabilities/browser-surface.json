@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schemas.tauri.app/config/2/capability",
+  "identifier": "browser-surface",
+  "description": "Minimal capability for the embedded browser surface webview (used for PageAgent LLM proxy)",
+  "windows": ["embedded-browser-surface"],
+  "permissions": [
+    "core:default"
+  ]
+}

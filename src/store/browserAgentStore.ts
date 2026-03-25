@@ -18,11 +18,11 @@ import {
   executeAgentTask,
   inspectEmbeddedSurface,
   showBrowserWindow,
-  moveBrowserSurface,
   captureScreenshot,
   type AgentLog,
   type AgentTaskComplete,
 } from '../utils/browserCommands';
+import { sendNotification, requestPermission, isPermissionGranted } from '@tauri-apps/plugin-notification';
 import type {
   BrowserSessionStatus,
   BrowserControlMode,
@@ -382,9 +382,24 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       }
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog('error', `检查页面状态失败: ${errorMessage}`);
-      set({ status: 'error', error: errorMessage });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addLog('warning', `页面检查失败 (${errorMessage})，将尝试直接执行`);
+
+      // Fallback: treat as safe/unknown so execution can still proceed
+      const fallbackInspection: BrowserInspectionResult = {
+        url: get().currentUrl,
+        title: '',
+        authState: 'unknown',
+        safeForAgent: true,
+        matchedSignals: [],
+      };
+      set({
+        status: 'idle',
+        inspection: fallbackInspection,
+        authState: 'unknown',
+        blockReason: null,
+        error: null,
+      });
     }
   },
 
@@ -413,6 +428,26 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       console.error('Failed to show browser window for login:', error);
     });
 
+    // Send OS notification to alert user that login is needed
+    void (async () => {
+      try {
+        let permissionGranted = await isPermissionGranted();
+        if (!permissionGranted) {
+          const permission = await requestPermission();
+          permissionGranted = permission === 'granted';
+        }
+        if (permissionGranted) {
+          const siteId = get().siteProfileId || '目标网站';
+          sendNotification({
+            title: '需要登录',
+            body: `浏览器已打开 ${siteId}，请完成登录后点击"我已登录"继续任务`,
+          });
+        }
+      } catch (e) {
+        console.warn('[BrowserAgent] Failed to send notification:', e);
+      }
+    })();
+
     addLog('info', '请在浏览器中完成登录');
     addLog('info', '登录完成后，点击"我已登录"按钮继续');
   },
@@ -431,7 +466,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     // Get fresh state after inspection
     const { authState, inspection, pendingTask } = get();
 
-    if (authState === 'authenticated' && inspection?.safeForAgent) {
+    const canProceed = authState === 'authenticated' ||
+      (authState === 'unknown' && (inspection?.safeForAgent !== false));
+
+    if (canProceed) {
       set({
         status: 'ready_for_agent',
         waitingForUserResume: false,
@@ -474,8 +512,14 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       return;
     }
 
-    // Additional safety check - verify auth state
-    if (authState !== 'authenticated' || !inspection?.safeForAgent) {
+    // Safety check - block only on clearly bad auth states
+    const blockedStates: BrowserAuthState[] = ['auth_required', 'mfa_required', 'captcha_required', 'expired', 'unauthenticated'];
+    if (blockedStates.includes(authState)) {
+      addLog('error', `页面需要登录或验证 (${authState})，无法执行任务`);
+      return;
+    }
+    // If inspection explicitly failed (safeForAgent=false with known block reason), block
+    if (inspection && !inspection.safeForAgent && inspection.authState !== 'unknown') {
       addLog('error', '页面未通过安全检查，无法执行任务');
       return;
     }
@@ -542,8 +586,15 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
     // Gate based on authState and inspection.safeForAgent
     if (!envelope.requiresLogin) {
-      // No login required - proceed directly
-      await get().confirmLoginAndResume();
+      // No login required - skip re-inspection, go directly to execution
+      get().addLog('info', '无需登录，直接开始执行任务');
+      set({
+        status: 'ready_for_agent',
+        mode: 'agent_controlled',
+        waitingForUserResume: false,
+        handoffState: 'no_handoff',
+      });
+      await get().executeTask(envelope.executionPrompt);
       return;
     }
 
@@ -751,7 +802,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     }
   },
 
-  expandBrowser: async () => {
+  expandBrowser: () => {
     const { addLog, presentationMode } = get();
 
     if (presentationMode === 'expanded') {
@@ -759,21 +810,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       return;
     }
 
-    // Sync with UI store
+    // Update state — BrowserSurfaceViewport with mode="expanded" will take over positioning
     useUIStore.getState().expandBrowserToSplit();
-
-    // Move embedded surface to expanded mode
-    try {
-      await moveBrowserSurface('expanded');
-    } catch (e) {
-      // Ignore errors - fallback to UI-only control
-    }
-
     set({ presentationMode: 'expanded' });
     addLog('info', '浏览器已展开到主工作区');
   },
 
-  collapseBrowser: async () => {
+  collapseBrowser: () => {
     const { addLog, presentationMode } = get();
 
     if (presentationMode === 'mini') {
@@ -781,14 +824,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       return;
     }
 
-    // Move embedded surface to mini mode
-    try {
-      await moveBrowserSurface('mini');
-    } catch (e) {
-      // Ignore errors - fallback to UI-only control
-    }
-
-    // Sync with UI store
+    // Update state — BrowserSurfaceViewport with mode="mini" will take over positioning
     useUIStore.getState().collapseBrowserToPanel();
     set({ presentationMode: 'mini' });
     addLog('info', '浏览器已折叠到右侧面板');

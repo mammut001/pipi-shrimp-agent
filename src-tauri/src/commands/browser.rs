@@ -8,12 +8,19 @@
  */
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::Mutex;
 use tauri::{
     Listener, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, Url,
 };
+use serde::{Deserialize, Serialize};
+use reqwest::Client as ReqwestClient;
 use crate::utils::{AppError, AppResult};
+
+/// Inline page-agent IIFE bundle — embedded at compile time so we never load from CDN.
+/// Tauri's eval() is native-level injection that bypasses any page CSP (unlike <script src>).
+const PAGE_AGENT_IIFE: &str = include_str!("../../../node_modules/page-agent/dist/iife/page-agent.demo.js");
 
 /// Browser window state management
 pub struct BrowserState {
@@ -287,9 +294,14 @@ pub async fn execute_on_embedded_surface(
     };
 
     println!("[Browser] Executing on embedded surface: {}", task);
-
-    target.eval(&page_agent_script)
-        .map_err(|e| AppError::InternalError(format!("Failed to inject script: {}", e)))?;
+    println!("[Browser] Script size: {} bytes", page_agent_script.len());
+    match target.eval(&page_agent_script) {
+        Ok(_) => println!("[Browser] ✅ eval() succeeded"),
+        Err(e) => {
+            println!("[Browser] ❌ eval() FAILED: {}", e);
+            return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
+        }
+    }
 
     {
         let mut state = state.lock().await;
@@ -417,16 +429,44 @@ pub async fn inspect_embedded_surface(
 
         window.__inspection_result = JSON.stringify(result);
 
-        if (window.__TAURI__) {
-            window.__TAURI__.event.emit('browser_inspection_result', result);
+        // Try multiple IPC mechanisms - external webviews may not have window.__TAURI__
+        function emitInspectionResult(payload) {
+            // Method 1: Tauri 2 internals (works in external child webviews)
+            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
+                    event: 'browser_inspection_result',
+                    payload: JSON.stringify(payload)
+                }).catch(function() {});
+                return;
+            }
+            // Method 2: Standard Tauri 2 global (works when withGlobalTauri: true)
+            if (window.__TAURI__ && window.__TAURI__.event) {
+                window.__TAURI__.event.emit('browser_inspection_result', payload);
+                return;
+            }
+            // Method 3: Tauri 1 style IPC
+            if (window.__TAURI_IPC__) {
+                window.__TAURI_IPC__({ cmd: 'emit', event: 'browser_inspection_result', payload: payload });
+                return;
+            }
+            console.warn('[Browser] No Tauri IPC available for inspection result');
         }
 
+        emitInspectionResult(result);
         console.log('[Browser] Inspection complete:', result.url);
     } catch (e) {
         console.error('Inspection error:', e);
-        if (window.__TAURI__) {
-            window.__TAURI__.event.emit('browser_inspection_error', { message: e.message });
+        function emitInspectionError(msg) {
+            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
+                    event: 'browser_inspection_error',
+                    payload: JSON.stringify({ message: msg })
+                }).catch(function() {});
+            } else if (window.__TAURI__ && window.__TAURI__.event) {
+                window.__TAURI__.event.emit('browser_inspection_error', { message: msg });
+            }
         }
+        emitInspectionError(e.message || String(e));
     }
 })();
 "#;
@@ -434,7 +474,7 @@ pub async fn inspect_embedded_surface(
     target.eval(inspection_script)
         .map_err(|e| AppError::InternalError(format!("Failed to inject inspection script: {}", e)))?;
 
-    let inspection = tokio::time::timeout(Duration::from_secs(2), rx)
+    let inspection = tokio::time::timeout(Duration::from_secs(5), rx)
         .await
         .map_err(|_| AppError::InternalError("Timed out waiting for browser inspection result".to_string()))?
         .map_err(|_| AppError::InternalError("Browser inspection channel closed unexpectedly".to_string()))?
@@ -585,11 +625,13 @@ pub async fn execute_agent_task(
         if st.is_busy {
             return Err(AppError::InvalidInput("Agent is already running".to_string()));
         }
-        if let Some(browser_window) = st.browser_window.as_ref() {
-            // Mark busy and reuse this path
-            st.is_busy = true;
-            let window_clone = browser_window.clone();
+        if let Some(window_clone) = st.browser_window.clone() {
+            // Clone first, then drop lock, then mark busy
             drop(st);
+            {
+                let mut st = state.lock().await;
+                st.is_busy = true;
+            }
             println!("[Browser] Executing agent task on external browser window: {}", task);
             window_clone.eval(&page_agent_script)
                 .map_err(|e| AppError::InternalError(format!("Failed to inject script: {}", e)))?;
@@ -606,13 +648,22 @@ pub async fn execute_agent_task(
         if st.is_busy {
             return Err(AppError::InvalidInput("Agent is already running".to_string()));
         }
-        if let Some(webview) = st.embedded_webview.as_ref() {
-            st.is_busy = true;
-            let webview_clone = webview.clone();
+        if let Some(webview_clone) = st.embedded_webview.clone() {
+            // Clone first, then drop lock, then mark busy
             drop(st);
+            {
+                let mut st = state.lock().await;
+                st.is_busy = true;
+            }
             println!("[Browser] Executing agent task on embedded surface: {}", task);
-            webview_clone.eval(&page_agent_script)
-                .map_err(|e| AppError::InternalError(format!("Failed to inject script: {}", e)))?;
+            println!("[Browser] Script size: {} bytes", page_agent_script.len());
+            match webview_clone.eval(&page_agent_script) {
+                Ok(_) => println!("[Browser] ✅ eval() succeeded on embedded surface"),
+                Err(e) => {
+                    println!("[Browser] ❌ eval() FAILED: {}", e);
+                    return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
+                }
+            }
             let mut st2 = state.lock().await;
             st2.is_busy = false;
             return Ok("Task execution started".to_string());
@@ -623,8 +674,8 @@ pub async fn execute_agent_task(
     Err(AppError::InvalidInput("No browser surface open".to_string()))
 }
 
-/// Build the JavaScript code to inject into the browser window
-/// This script loads the PageAgent SDK from CDN and executes the task
+/// Build the JavaScript code to inject into the browser window.
+/// Inlines the page-agent IIFE bundle so it bypasses CSP (Tauri eval is native-level).
 #[allow(non_snake_case)]
 fn build_page_agent_script(
     task: &str,
@@ -633,130 +684,278 @@ fn build_page_agent_script(
     model: &str,
     systemPrompt: Option<String>,
 ) -> String {
-    let base_url = baseUrl;
-    let api_key = apiKey;
-    let system_prompt = systemPrompt;
-    let base_url_js = match base_url {
+    let base_url_js = match baseUrl {
         Some(url) => format!("\"{}\"", url),
         None => "undefined".to_string(),
     };
 
-    let system_prompt_js = match system_prompt {
+    let system_prompt_js = match systemPrompt {
         Some(prompt) => format!("\"{}\"", prompt.replace('"', "\\\"")),
         None => "undefined".to_string(),
     };
 
-    // Escape the task string for JavaScript
     let escaped_task = task.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
-    let escaped_api_key = api_key.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped_api_key = apiKey.replace('\\', "\\\\").replace('"', "\\\"");
     let escaped_model = model.replace('\\', "\\\\").replace('"', "\\\"");
 
-    // PageAgent SDK CDN URLs (in order of preference)
-    let sdk_urls = [
-        "https://cdn.jsdelivr.net/npm/page-agent@latest/dist/page-agent.min.js",
-        "https://unpkg.com/page-agent@latest/dist/page-agent.min.js",
-    ];
-
+    // The IIFE bundle sets window.PageAgent when it runs.
+    // We suppress its demo auto-start by temporarily replacing setTimeout.
+    // We also override fetch() to proxy LLM API calls through Tauri backend (bypass CSP connect-src).
     format!(r#"
 (function() {{
-    // Emit log event helper
-    function emitLog(level, message) {{
-        if (window.__TAURI__) {{
-            window.__TAURI__.event.emit('agent_log', {{
-                timestamp: new Date().toISOString(),
-                message: message,
-                level: level
-            }});
-        }}
-        console.log('[PageAgent ' + level + ']', message);
-    }}
+    console.log('[PageAgent] Script injected. __TAURI_INTERNALS__ exists:', !!window.__TAURI_INTERNALS__);
+    // --- Override fetch to proxy LLM API calls (bypass CSP connect-src) ---
+    var __origFetch = window.fetch;
+    var LLM_API_PATTERNS = [
+        'api.openai.com',
+        'api.anthropic.com',
+        'api-biz.alibaba.com',
+        'page-ag-testing',
+        'api.minimax.chat',
+        'localhost',
+        '127.0.0.1',
+        ':8000', ':8080', ':3000', ':5000'  // Local dev servers
+    ];
 
-    // Emit task complete event
-    function emitComplete(success, result) {{
-        if (window.__TAURI__) {{
-            window.__TAURI__.event.emit('agent_task_complete', {{
-                success: success,
-                final_url: window.location.href,
-                result: result
-            }});
-        }}
-        emitLog(success ? 'success' : 'error', 'Task ' + (success ? 'completed' : 'failed') + ': ' + result);
-    }}
-
-    // SDK load URLs
-    const SDK_URLS = {sdk_urls:?};
-
-    // Load PageAgent SDK from CDN
-    async function loadSDK(urls, index) {{
-        if (index >= urls.length) {{
-            throw new Error('Failed to load PageAgent SDK from all CDN sources');
-        }}
-
-        const url = urls[index];
-        emitLog('info', 'Loading PageAgent SDK from: ' + url);
-
-        return new Promise((resolve, reject) => {{
-            const script = document.createElement('script');
-            script.src = url;
-            script.onload = () => {{
-                emitLog('success', 'PageAgent SDK loaded from: ' + url);
-                resolve();
-            }};
-            script.onerror = () => {{
-                emitLog('error', 'Failed to load from: ' + url);
-                // Try next URL
-                loadSDK(urls, index + 1).then(resolve).catch(reject);
-            }};
-            document.head.appendChild(script);
+    function shouldProxy(url) {{
+        var urlStr = String(url).toLowerCase();
+        return LLM_API_PATTERNS.some(function(pattern) {{
+            return urlStr.indexOf(pattern) !== -1;
         }});
     }}
 
-    async function initAndExecute() {{
+    window.fetch = async function(url, options) {{
+        // Don't proxy non-LLM requests
+        if (!shouldProxy(url)) {{
+            return __origFetch.apply(this, arguments);
+        }}
+
+        try {{
+            var method = (options && options.method) || 'GET';
+            var headers = (options && options.headers) || {{}};
+            var body = options && options.body;
+
+            // Convert body if needed
+            if (body && typeof body !== 'string') {{
+                body = JSON.stringify(body);
+            }}
+
+            console.log('[FetchProxy] Intercepted:', String(url).substring(0, 80));
+            console.log('[FetchProxy] __TAURI_INTERNALS__:', !!window.__TAURI_INTERNALS__);
+
+            // Try Tauri IPC proxy first
+            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
+                try {{
+                    console.log('[FetchProxy] Calling proxy_http_request via IPC...');
+                    var result = await window.__TAURI_INTERNALS__.invoke('proxy_http_request', {{
+                        url: String(url),
+                        method: method,
+                        headers: headers,
+                        body: body
+                    }});
+                    console.log('[FetchProxy] IPC success, status:', result && result.status);
+
+                    return new Response(result.body, {{
+                        status: result.status,
+                        statusText: result.statusText || 'OK',
+                        headers: new Headers(result.headers || {{}})
+                    }});
+                }} catch(tauri_error) {{
+                    console.warn('[Fetch Proxy] Tauri IPC unavailable:', tauri_error.message);
+                }}
+            }}
+
+            // Fallback: use CORS proxy for LLM API calls
+            // This bypasses CSP by routing through a public CORS service
+            // AllOrigins 不需要预批准，比较稳定
+            var corsProxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(String(url));
+            console.log('[Fetch Proxy] Using CORS proxy (AllOrigins):', corsProxyUrl);
+
+            var corsOptions = Object.assign({{}}, options || {{}});
+            corsOptions.headers = Object.assign({{}}, corsOptions.headers || {{}});
+            corsOptions.headers['X-Requested-With'] = 'XMLHttpRequest';
+
+            var corsResult = await __origFetch.apply(this, [corsProxyUrl, corsOptions]);
+            return corsResult;
+        }} catch (error) {{
+            console.error('[Fetch Proxy] All methods failed:', error.message);
+            // Last resort: try original fetch (will likely fail due to CSP)
+            console.warn('[Fetch Proxy] Attempting native fetch (will likely fail due to CSP)');
+            return __origFetch.apply(this, [url, options]);
+        }}
+    }};
+
+    // --- Suppress demo auto-start from the IIFE bundle ---
+    var __origSetTimeout = window.setTimeout;
+    window.setTimeout = function() {{ return 0; }};
+
+    // --- Inline page-agent IIFE (bypasses page CSP via Tauri eval) ---
+    {iife}
+
+    // Restore setTimeout
+    window.setTimeout = __origSetTimeout;
+
+    // --- Helpers ---
+    function emitLog(level, message) {{
+        console.log('[PageAgent ' + level + ']', message);
+        try {{
+            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
+                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                    event: 'agent_log',
+                    payload: JSON.stringify({{ timestamp: new Date().toISOString(), message: message, level: level }})
+                }}).catch(function(){{}});
+            }}
+        }} catch(e) {{}}
+    }}
+
+    function emitComplete(success, result) {{
+        emitLog(success ? 'success' : 'error', 'Task ' + (success ? 'completed' : 'failed') + ': ' + result);
+        try {{
+            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
+                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                    event: 'agent_task_complete',
+                    payload: JSON.stringify({{ success: success, final_url: window.location.href, result: result }})
+                }}).catch(function(){{}});
+            }}
+        }} catch(e) {{}}
+    }}
+
+    // --- Execute ---
+    (async function() {{
         try {{
             emitLog('info', 'Initializing PageAgent...');
 
-            // Load SDK if not already loaded
-            if (typeof PageAgent === 'undefined') {{
-                await loadSDK(SDK_URLS, 0);
-            }} else {{
-                emitLog('info', 'PageAgent SDK already available');
-            }}
-
-            // Verify PageAgent is available
-            if (typeof PageAgent === 'undefined') {{
-                throw new Error('PageAgent not found after loading attempts');
+            if (typeof window.PageAgent === 'undefined') {{
+                throw new Error('PageAgent not available after inline injection');
             }}
 
             emitLog('info', 'Creating PageAgent instance...');
-
-            const agent = new PageAgent({{
+            const agent = new window.PageAgent({{
                 baseURL: {base_url_js},
                 apiKey: "{escaped_api_key}",
                 model: "{escaped_model}",
                 systemPrompt: {system_prompt_js}
             }});
 
-            emitLog('info', 'PageAgent initialized, executing task...');
-            emitLog('info', 'Task: {escaped_task}');
-
-            // Execute the task
-            agent.execute("{escaped_task}").then(result => {{
-                emitLog('success', 'Task completed successfully');
-                emitComplete(true, result);
-            }}).catch(error => {{
-                emitLog('error', 'Task execution error: ' + error.message);
-                emitComplete(false, error.message);
-            }});
+            emitLog('info', 'Executing task: {escaped_task}');
+            const result = await agent.execute("{escaped_task}");
+            emitLog('success', 'Task completed: ' + JSON.stringify(result));
+            emitComplete(true, JSON.stringify(result));
         }} catch (error) {{
-            emitLog('error', 'Initialization error: ' + error.message);
-            emitComplete(false, error.message);
+            emitLog('error', 'Error: ' + (error && error.message ? error.message : String(error)));
+            emitComplete(false, error && error.message ? error.message : String(error));
         }}
-    }}
-
-    // Start execution
-    initAndExecute();
+    }})();
 }})();
-"#)
+"#,
+        iife = PAGE_AGENT_IIFE,
+    )
+}
+
+/// HTTP proxy request/response types (for bypassing CSP connect-src)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HttpProxyRequest {
+    pub url: String,
+    pub method: String,
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HttpProxyResponse {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: HashMap<String, String>,
+    pub body: String,
+}
+
+/// Proxy HTTP requests through the backend (bypasses page CSP connect-src).
+/// Needed because fetch() from within a CSP-restricted page is blocked for external APIs,
+/// but Tauri backend requests are not subject to page CSP.
+#[tauri::command]
+pub async fn proxy_http_request(
+    request: HttpProxyRequest,
+) -> AppResult<HttpProxyResponse> {
+    let client = ReqwestClient::new();
+
+    let method = request.method.to_uppercase();
+    let mut req_builder = match method.as_str() {
+        "GET" => client.get(&request.url),
+        "POST" => client.post(&request.url),
+        "PUT" => client.put(&request.url),
+        "DELETE" => client.delete(&request.url),
+        "PATCH" => client.patch(&request.url),
+        "HEAD" => client.head(&request.url),
+        _ => {
+            return Err(AppError::InvalidInput(format!(
+                "Unsupported HTTP method: {}",
+                method
+            )))
+        }
+    };
+
+    // Add headers
+    for (key, value) in request.headers.iter() {
+        req_builder = req_builder.header(key, value);
+    }
+
+    // Add body if present
+    if let Some(body) = request.body {
+        req_builder = req_builder.body(body);
+    }
+
+    // Execute request with 30-second timeout
+    let response = req_builder
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| AppError::InternalError(format!("HTTP request failed: {}", e)))?;
+
+    let status = response.status().as_u16();
+    let status_text = response.status().canonical_reason().unwrap_or("").to_string();
+
+    // Extract headers
+    let mut headers = HashMap::new();
+    for (key, value) in response.headers().iter() {
+        if let Ok(val_str) = value.to_str() {
+            headers.insert(key.to_string(), val_str.to_string());
+        }
+    }
+
+    // Read response body
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|_| String::new());
+
+    Ok(HttpProxyResponse {
+        status,
+        status_text,
+        headers,
+        body,
+    })
+}
+
+/// Open DevTools for debugging (development only)
+#[tauri::command]
+pub async fn open_devtools(
+    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
+) -> AppResult<()> {
+    let state = state.lock().await;
+
+    if let Some(webview) = &state.embedded_webview {
+        #[cfg(debug_assertions)]
+        {
+            webview.open_devtools();
+            return Ok(());
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            return Err(AppError::InvalidInput("DevTools only available in debug mode".to_string()));
+        }
+    }
+
+    Err(AppError::InvalidInput("No embedded webview open".to_string()))
 }
 
 /// Get current browser window URL

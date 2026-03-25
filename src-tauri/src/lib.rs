@@ -293,6 +293,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Initialize database - CRITICAL, cannot proceed without it
             if let Err(e) = init_database() {
@@ -417,6 +418,10 @@ pub fn run() {
             commands::navigate_embedded_surface,
             commands::reload_embedded_surface,
             commands::close_embedded_surface,
+            // HTTP proxy command (bypass page CSP for LLM API calls)
+            commands::browser::proxy_http_request,
+            // DevTools command (debug only)
+            commands::browser::open_devtools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useCallback } from 'react';
 import { moveBrowserSurface, setEmbeddedSurfaceVisibility } from '@/utils/browserCommands';
 import { useBrowserAgentStore } from '@/store';
 
@@ -14,38 +14,63 @@ export function BrowserSurfaceViewport({
   emptyState,
 }: BrowserSurfaceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { isWindowOpen } = useBrowserAgentStore();
+  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { isWindowOpen, presentationMode } = useBrowserAgentStore();
+
+  // This viewport is "active" only when isWindowOpen AND our mode matches presentationMode
+  const isActive = isWindowOpen && presentationMode === mode;
+
+  const clearRetry = useCallback(() => {
+    if (retryRef.current) {
+      clearTimeout(retryRef.current);
+      retryRef.current = null;
+    }
+  }, []);
+
+  const syncBounds = useCallback(async (): Promise<boolean> => {
+    const element = containerRef.current;
+    if (!element) return false;
+
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) {
+      // Dimensions not ready yet — caller should retry
+      return false;
+    }
+
+    await moveBrowserSurface(mode, {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    }).catch(() => {});
+
+    return true;
+  }, [mode]);
 
   useLayoutEffect(() => {
-    if (!isWindowOpen) {
+    clearRetry();
+
+    if (!isActive) {
+      // This mode is not the active one — hide the native surface
       void setEmbeddedSurfaceVisibility(false).catch(() => {});
       return;
     }
 
     let rafId = 0;
 
-    const syncBounds = async () => {
-      const element = containerRef.current;
-      if (!element) return;
-
-      const rect = element.getBoundingClientRect();
-      if (rect.width < 2 || rect.height < 2) {
-        await setEmbeddedSurfaceVisibility(false).catch(() => {});
-        return;
-      }
-
-      await moveBrowserSurface(mode, {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-      }).catch(() => {});
-    };
-
+    // Schedule sync after RAF (layout settled)
     const scheduleSync = () => {
       cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        void syncBounds();
+      rafId = requestAnimationFrame(async () => {
+        const ok = await syncBounds();
+        if (!ok) {
+          // Div has no size yet — retry after a short delay
+          clearRetry();
+          retryRef.current = setTimeout(() => {
+            retryRef.current = null;
+            scheduleSync();
+          }, 50);
+        }
       });
     };
 
@@ -63,13 +88,17 @@ export function BrowserSurfaceViewport({
     window.addEventListener('scroll', scheduleSync, true);
 
     return () => {
+      clearRetry();
       cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
       window.removeEventListener('resize', scheduleSync);
       window.removeEventListener('scroll', scheduleSync, true);
+      // Hide on unmount / mode-switch
       void setEmbeddedSurfaceVisibility(false).catch(() => {});
     };
-  }, [isWindowOpen, mode]);
+  // Re-run whenever the active state changes (isWindowOpen OR presentationMode changed)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive]);
 
   return (
     <div ref={containerRef} className={className}>

@@ -97,7 +97,16 @@ export function detectChatBrowserIntent(message: string): ChatBrowserIntent {
     lowerMessage.includes('用浏览器') ||
     lowerMessage.includes('open ') ||
     lowerMessage.includes('visit ') ||
-    lowerMessage.includes('browser');
+    lowerMessage.includes('browser') ||
+    lowerMessage.includes('帮我去') ||
+    lowerMessage.includes('去这个') ||
+    lowerMessage.includes('去看看') ||
+    lowerMessage.includes('帮我看看') ||
+    lowerMessage.includes('去查查') ||
+    lowerMessage.includes('看一下') ||
+    lowerMessage.includes('查一下') ||
+    lowerMessage.includes('去一下') ||
+    lowerMessage.includes('帮我查');
 
   if (directDomainMatch && hasExplicitBrowserAction) {
     const rawTarget = directDomainMatch[1].trim();
@@ -560,7 +569,16 @@ export function quickCheckBrowserIntent(message: string): boolean {
     lowerMessage.includes('用浏览器') ||
     lowerMessage.includes('open ') ||
     lowerMessage.includes('visit ') ||
-    lowerMessage.includes('browser');
+    lowerMessage.includes('browser') ||
+    lowerMessage.includes('帮我去') ||
+    lowerMessage.includes('去这个') ||
+    lowerMessage.includes('去看看') ||
+    lowerMessage.includes('帮我看看') ||
+    lowerMessage.includes('去查查') ||
+    lowerMessage.includes('看一下') ||
+    lowerMessage.includes('查一下') ||
+    lowerMessage.includes('去一下') ||
+    lowerMessage.includes('帮我查');
 
   if (hasDomain && hasExplicitBrowserAction) {
     return true;
