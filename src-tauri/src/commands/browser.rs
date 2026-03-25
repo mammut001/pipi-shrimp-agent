@@ -678,7 +678,11 @@ fn build_page_agent_script(
     };
 
     let system_prompt_js = match systemPrompt {
-        Some(prompt) => format!("\"{}\"", prompt.replace('"', "\\\"")),
+        Some(prompt) => format!("\"{}\"", prompt
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")),
         None => "undefined".to_string(),
     };
 
