@@ -11,6 +11,7 @@
 
 import { useBrowserAgentStore, useUIStore } from '@/store';
 import { browserReload, getBrowserUrl } from '@/utils/browserCommands';
+import { BrowserSurfaceHost } from './BrowserSurfaceHost';
 
 /**
  * BrowserWorkspacePane component
@@ -21,16 +22,8 @@ export function BrowserWorkspacePane() {
     currentUrl,
     status,
     authState,
-    inspection,
-    screenshots,
     inspectCurrentPage,
   } = useBrowserAgentStore();
-
-  // Get the latest screenshot
-  const lastScreenshot = screenshots.length > 0 ? screenshots[screenshots.length - 1] : null;
-
-  // Get page title from inspection
-  const pageTitle = inspection?.title || '';
 
   // UI dock state
   const {
@@ -218,57 +211,12 @@ export function BrowserWorkspacePane() {
         </div>
       </div>
 
-      {/* Preview Content Area */}
-      <div className="flex-1 overflow-auto bg-gray-100 p-4">
-        {lastScreenshot ? (
-          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-            <img
-              src={`data:image/png;base64,${lastScreenshot}`}
-              alt="Browser preview"
-              className="w-full h-auto"
-            />
-          </div>
-        ) : (
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center">
-              <svg
-                className="w-16 h-16 mx-auto text-gray-300 mb-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                />
-              </svg>
-              <p className="text-gray-500 text-sm">
-                {currentUrl ? 'Loading preview...' : 'Browser not started'}
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Inspection Result */}
-        {inspection && (
-          <div className="mt-4 p-3 bg-white rounded-lg shadow-sm">
-            <h4 className="text-sm font-semibold text-gray-900 mb-2">
-              {pageTitle || 'Page Analysis'}
-            </h4>
-            {inspection.matchedSignals && inspection.matchedSignals.length > 0 && (
-              <div className="space-y-1">
-                {inspection.matchedSignals.slice(0, 3).map((signal: string, idx: number) => (
-                  <div key={idx} className="text-xs text-gray-600 flex items-start gap-1">
-                    <span className="text-blue-500">•</span>
-                    <span>{signal}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+      {/* Preview Content Area - Use BrowserSurfaceHost for expanded view */}
+      <div className="flex-1 overflow-hidden">
+        <BrowserSurfaceHost onCollapse={() => {
+          const { collapseBrowserToPanel } = useUIStore.getState();
+          collapseBrowserToPanel();
+        }} />
       </div>
     </div>
   );

@@ -10,11 +10,13 @@
  * - external: Browser in separate window, Chat takes full width
  */
 
-import { useMemo, useCallback, useRef } from 'react';
+import { useMemo, useCallback, useRef, useEffect } from 'react';
 import { useChatStore, useUIStore } from '@/store';
+import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
+import { BrowserCompactSummary } from './BrowserCompactSummary';
 import type { Message, Session } from '@/types/chat';
 import { t } from '@/i18n';
 
@@ -76,6 +78,20 @@ const isRenderableMessage = (message: Message, index: number, allMessages: Messa
  * ChatBrowserWorkspaceShell component
  */
 export function ChatBrowserWorkspaceShell() {
+  // Initialize browser event listeners for the new UI entry point
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    (async () => {
+      try {
+        cleanup = await useBrowserAgentStore.getState().setupEventListeners();
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cleanup?.();
+    };
+  }, []);
   // Browser dock state
   const { browserDockMode, browserPaneWidth, browserSplitFocus, setBrowserPaneWidth } = useUIStore();
 
@@ -295,10 +311,10 @@ export function ChatBrowserWorkspaceShell() {
 
   return (
     <MainLayout>
-      {/* Split Mode: Browser + Chat side by side */}
+      {/* Split Mode: Browser + Browser Console (expanded mode per architecture docs) */}
       {isSplitMode ? (
         <div className="flex-1 flex min-h-0">
-          {/* Browser Pane */}
+          {/* Browser Pane - Main workspace shows the real browser surface */}
           <div
             className="flex-shrink-0 border-r border-gray-200 bg-white"
             style={{ width: browserPaneWidth }}
@@ -312,11 +328,12 @@ export function ChatBrowserWorkspaceShell() {
             onMouseDown={handleResizeStart}
           />
 
-          {/* Chat Pane */}
+          {/* Browser Console - Right panel shows compact browser summary, task, and logs */}
+          {/* Per architecture docs: "The right panel remains visible and continues to show: compact browser summary, current task, logs" */}
           <div
-            className={`flex-1 min-w-0 ${browserSplitFocus === 'chat' ? '' : 'opacity-70'}`}
+            className={`flex-1 min-w-0 ${browserSplitFocus === 'browser' ? '' : 'opacity-70'}`}
           >
-            {renderChatPanel()}
+            <BrowserCompactSummary />
           </div>
         </div>
       ) : (

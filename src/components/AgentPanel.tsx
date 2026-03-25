@@ -8,7 +8,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useUIStore, useSettingsStore, useChatStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { TypstPreview } from './TypstPreview';
-import { BrowserPanel } from './BrowserPanel';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { getLatestTypstBlock } from '@/utils/typst';
 
@@ -126,7 +125,6 @@ export const AgentPanel: React.FC = () => {
     addNotification,
     agentPanelTab: activeTab,
     setAgentPanelTab: setActiveTab,
-    browserDockMode,
   } = useUIStore();
   const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
   const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode, isStreaming, pendingToolCalls } = useChatStore();
@@ -334,10 +332,10 @@ export const AgentPanel: React.FC = () => {
         )}
       </div>
 
-      {/* Tab content: Browser */}
+      {/* Tab content: Browser - Always show mini browser + task + logs */}
       {activeTab === 'browser' && (
         <div className="flex-1 overflow-hidden">
-          {browserDockMode === 'panel' ? <BrowserMiniPreview /> : <BrowserPanel />}
+          <BrowserMiniPreview />
         </div>
       )}
 

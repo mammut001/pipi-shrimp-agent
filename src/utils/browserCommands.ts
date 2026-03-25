@@ -1,8 +1,10 @@
 /**
  * Browser commands - Frontend invoke wrappers
  *
- * These functions invoke the Tauri backend commands for browser automation
- * using the second WebviewWindow approach.
+ * These functions invoke the Tauri backend commands for browser automation.
+ * Supports both external window and embedded surface modes.
+ *
+ * The embedded surface is the primary browser surface for the "real browser in-app" experience.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -31,11 +33,22 @@ export interface RawBrowserInspection {
   dom_markers: string[];
 }
 
+// ============================================
+// External Window Commands (Legacy/Fallback)
+// ============================================
+
 /**
- * Open a new browser window with the given URL
+ * Open a new browser window with the given URL (separate window)
  */
 export async function openBrowserWindow(url: string): Promise<string> {
   return invoke<string>('open_browser_window', { url });
+}
+
+/**
+ * Show and focus the existing browser window
+ */
+export async function showBrowserWindow(): Promise<string> {
+  return invoke<string>('show_browser_window');
 }
 
 /**
@@ -95,12 +108,9 @@ export async function goBack(): Promise<string> {
 }
 
 /**
- * Inspect the current browser page state
- * Returns raw DOM and text information for auth detection
- * Uses the backend inspect_browser_state command which injects JS and returns results
+ * Inspect the current browser page state (external window version)
  */
 export async function inspectBrowserState(): Promise<RawBrowserInspection> {
-  // Use the backend command - it handles script injection and returns real data
   return invoke<RawBrowserInspection>('inspect_browser_state');
 }
 
@@ -116,4 +126,120 @@ export async function browserNavigate(url: string): Promise<string> {
  */
 export async function browserReload(): Promise<string> {
   return invoke<string>('browser_reload');
+}
+
+// ============================================
+// Embedded Surface Commands (Primary)
+// ============================================
+
+/**
+ * Open browser in embedded mode - primary command for "real browser in-app" experience
+ * Creates a webview embedded in the main window rather than a separate window
+ */
+export async function openEmbeddedSurface(url: string): Promise<string> {
+  return invoke<string>('open_embedded_surface', { url });
+}
+
+/**
+ * Move browser surface between mini and expanded presentation
+ * Keeps the same session while changing presentation mode
+ */
+export async function moveBrowserSurface(
+  targetMode: 'mini' | 'expanded',
+  bounds?: { x: number; y: number; width: number; height: number }
+): Promise<string> {
+  return invoke<string>('move_browser_surface', {
+    targetMode,
+    x: bounds?.x ?? null,
+    y: bounds?.y ?? null,
+    width: bounds?.width ?? null,
+    height: bounds?.height ?? null,
+  });
+}
+
+/**
+ * Show or hide the embedded browser surface without closing the session.
+ */
+export async function setEmbeddedSurfaceVisibility(visible: boolean): Promise<string> {
+  return invoke<string>('set_embedded_surface_visibility', { visible });
+}
+
+/**
+ * Get the current embedded surface URL
+ */
+export async function getEmbeddedSurfaceUrl(): Promise<string> {
+  return invoke<string>('get_embedded_surface_url');
+}
+
+/**
+ * Execute a PageAgent task on the embedded surface
+ */
+export async function executeOnEmbeddedSurface(
+  task: string,
+  apiKey: string,
+  model: string,
+  options?: {
+    baseUrl?: string;
+    systemPrompt?: string;
+  }
+): Promise<string> {
+  return invoke<string>('execute_on_embedded_surface', {
+    task,
+    apiKey,
+    model,
+    baseUrl: options?.baseUrl ?? null,
+    systemPrompt: options?.systemPrompt ?? null,
+  });
+}
+
+/**
+ * Inspect the embedded surface page state
+ */
+export async function inspectEmbeddedSurface(): Promise<RawBrowserInspection> {
+  return invoke<RawBrowserInspection>('inspect_embedded_surface');
+}
+
+/**
+ * Navigate the embedded surface to a URL
+ */
+export async function navigateEmbeddedSurface(url: string): Promise<string> {
+  return invoke<string>('navigate_embedded_surface', { url });
+}
+
+/**
+ * Reload the embedded surface
+ */
+export async function reloadEmbeddedSurface(): Promise<string> {
+  return invoke<string>('reload_embedded_surface');
+}
+
+/**
+ * Close the embedded surface
+ */
+export async function closeEmbeddedSurface(): Promise<string> {
+  return invoke<string>('close_embedded_surface');
+}
+
+// ============================================
+// Screenshot and Dimensions
+// ============================================
+
+/**
+ * Capture a screenshot from the browser window
+ * Returns an acknowledgement string; the actual image data arrives via event.
+ */
+export async function captureScreenshot(): Promise<string> {
+  return invoke<string>('capture_screenshot');
+}
+
+/**
+ * Get browser window dimensions
+ */
+export interface BrowserDimensions {
+  width: number;
+  height: number;
+}
+
+export async function getBrowserDimensions(): Promise<BrowserDimensions> {
+  return invoke<BrowserDimensions>('get_browser_dimensions');
 }
