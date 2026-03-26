@@ -58,6 +58,7 @@ export interface WorkflowAgent {
   outputRoutes: OutputRoute[];
   execution: AgentExecutionConfig;
   model?: WorkflowAgentModel;   // Optional: overrides global API config
+  inputFrom?: string | null;     // Agent ID of upstream node (null = entry point)
 }
 
 // ============ Connection ============
@@ -91,6 +92,8 @@ export interface WorkflowRun {
   startTime: number;
   endTime?: number;
   agents: WorkflowRunAgentEntry[];
+  runDirectory?: string;       // Isolated workspace directory for this run
+  sessionId?: string;          // Cowork session ID for viewing in chat
 }
 
 // ============ Global State ============

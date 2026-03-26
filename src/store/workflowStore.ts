@@ -67,12 +67,13 @@ const initialStateWithPersistence: WorkflowState = {
 // Store interface includes both state and actions
 export interface WorkflowStore extends WorkflowState {
   // Agent CRUD
-  addAgent: (data: { name: string; soulPrompt?: string; task?: string; execution?: AgentExecutionConfig }) => WorkflowAgent;
+  addAgent: (data: { name: string; soulPrompt?: string; task?: string; execution?: AgentExecutionConfig; inputFrom?: string | null }) => WorkflowAgent;
   updateAgent: (id: string, updates: Partial<Omit<WorkflowAgent, 'id'>>) => void;
   removeAgent: (id: string) => void;
   updateAgentPosition: (id: string, position: { x: number; y: number }) => void;
   updateAgentSize: (id: string, width: number, height: number) => void;
   setAgentStatus: (id: string, status: WorkflowAgent['status']) => void;
+  setAgentInputFrom: (agentId: string, fromId: string | null) => void;
 
   // Connection CRUD
   addConnection: (sourceId: string, targetId: string, condition: string) => WorkflowConnection;
@@ -111,6 +112,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       status: 'idle',
       outputRoutes: [],
       execution: data.execution || DEFAULT_EXECUTION_CONFIG,
+      inputFrom: data.inputFrom ?? null,
     };
 
     set((state) => {
@@ -151,9 +153,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       );
 
       // Remove outputRoutes that target this agent from other agents
+      // Also reset inputFrom for any agent that pointed to the deleted agent
       const newAgentsWithCleanRoutes = newAgents.map((agent) => ({
         ...agent,
         outputRoutes: agent.outputRoutes.filter((r) => r.targetAgentId !== id),
+        inputFrom: agent.inputFrom === id ? null : agent.inputFrom,
       }));
 
       const newState = {
@@ -204,6 +208,72 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }));
   },
 
+  // Set agent's upstream (inputFrom)
+  // This also automatically creates/removes corresponding connection and outputRoute
+  setAgentInputFrom: (agentId, fromId) => {
+    set((state) => {
+      const currentAgent = state.agents.find((a) => a.id === agentId);
+      if (!currentAgent) return state;
+
+      const previousFromId = currentAgent.inputFrom;
+
+      // Remove previous connection and outputRoute if exists
+      let newConnections = state.connections.filter(
+        (c) => !(c.sourceAgentId === previousFromId && c.targetAgentId === agentId)
+      );
+
+      let newAgents = state.agents.map((agent) => {
+        // Remove outputRoute from previous source agent
+        if (agent.id === previousFromId) {
+          return {
+            ...agent,
+            outputRoutes: agent.outputRoutes.filter((r) => r.targetAgentId !== agentId),
+          };
+        }
+        // Update inputFrom for current agent
+        if (agent.id === agentId) {
+          return { ...agent, inputFrom: fromId };
+        }
+        return agent;
+      });
+
+      // Create new connection and outputRoute if fromId is provided
+      if (fromId) {
+        const newConnection: WorkflowConnection = {
+          id: crypto.randomUUID(),
+          sourceAgentId: fromId,
+          targetAgentId: agentId,
+          condition: 'onComplete',
+          type: 'sequential',
+        };
+        newConnections = [...newConnections, newConnection];
+
+        newAgents = newAgents.map((agent) => {
+          if (agent.id === fromId) {
+            const newRoute: OutputRoute = {
+              id: crypto.randomUUID(),
+              condition: 'onComplete',
+              targetAgentId: agentId,
+            };
+            return {
+              ...agent,
+              outputRoutes: [...agent.outputRoutes, newRoute],
+            };
+          }
+          return agent;
+        });
+      }
+
+      const newState = {
+        ...state,
+        agents: newAgents,
+        connections: newConnections,
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
   // Add a connection between agents
   addConnection: (sourceId, targetId, condition) => {
     const newConnection: WorkflowConnection = {
@@ -239,6 +309,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   // Add an output route to an agent
+  // This also automatically sets the target agent's inputFrom and creates a connection
   addOutputRoute: (agentId, route) => {
     const newRoute: OutputRoute = {
       ...route,
@@ -246,13 +317,40 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     };
 
     set((state) => {
+      // Create the connection
+      const newConnection: WorkflowConnection = {
+        id: crypto.randomUUID(),
+        sourceAgentId: agentId,
+        targetAgentId: route.targetAgentId,
+        condition: route.condition,
+        type: 'sequential',
+      };
+
+      // Update agents: add route to source, set inputFrom on target
+      const newAgents = state.agents.map((agent) => {
+        if (agent.id === agentId) {
+          // Add route to source agent
+          return { ...agent, outputRoutes: [...agent.outputRoutes, newRoute] };
+        }
+        if (agent.id === route.targetAgentId) {
+          // Set target agent's inputFrom to this agent
+          return { ...agent, inputFrom: agentId };
+        }
+        return agent;
+      });
+
+      // Remove any existing connection between these two agents
+      const newConnections = [
+        ...state.connections.filter(
+          (c) => !(c.sourceAgentId === agentId && c.targetAgentId === route.targetAgentId)
+        ),
+        newConnection,
+      ];
+
       const newState = {
         ...state,
-        agents: state.agents.map((agent) =>
-          agent.id === agentId
-            ? { ...agent, outputRoutes: [...agent.outputRoutes, newRoute] }
-            : agent
-        ),
+        agents: newAgents,
+        connections: newConnections,
       };
       saveToStorage(newState);
       return newState;
@@ -281,18 +379,41 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   // Remove an output route
+  // This also clears the target agent's inputFrom and removes the connection
   removeOutputRoute: (agentId, routeId) => {
     set((state) => {
+      // Find the route to get the targetAgentId
+      const routeToRemove = state.agents
+        .find((a) => a.id === agentId)
+        ?.outputRoutes.find((r) => r.id === routeId);
+
+      const targetAgentId = routeToRemove?.targetAgentId;
+
+      // Remove connection
+      const newConnections = state.connections.filter(
+        (c) => !(c.sourceAgentId === agentId && c.targetAgentId === targetAgentId)
+      );
+
+      // Update agents
+      const newAgents = state.agents.map((agent) => {
+        if (agent.id === agentId) {
+          // Remove route from source agent
+          return {
+            ...agent,
+            outputRoutes: agent.outputRoutes.filter((r) => r.id !== routeId),
+          };
+        }
+        if (agent.id === targetAgentId && agent.inputFrom === agentId) {
+          // Clear target agent's inputFrom if it was pointing to this agent
+          return { ...agent, inputFrom: null };
+        }
+        return agent;
+      });
+
       const newState = {
         ...state,
-        agents: state.agents.map((agent) =>
-          agent.id === agentId
-            ? {
-                ...agent,
-                outputRoutes: agent.outputRoutes.filter((r) => r.id !== routeId),
-              }
-            : agent
-        ),
+        agents: newAgents,
+        connections: newConnections,
       };
       saveToStorage(newState);
       return newState;

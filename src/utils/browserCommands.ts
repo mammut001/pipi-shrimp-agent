@@ -31,6 +31,8 @@ export interface RawBrowserInspection {
   has_captcha: boolean;
   text_markers: string[];
   dom_markers: string[];
+  has_login_modal: boolean;
+  content_word_count: number;
 }
 
 // ============================================

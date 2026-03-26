@@ -318,7 +318,7 @@ function tryFuzzyMatch(message: string): BrowserIntent | null {
     if (repoMatch && key === 'github') {
       // Extract task from the message
       const repoPath = repoMatch[1];
-      const taskStart = repoMatch.index + repoMatch[0].length;
+      const taskStart = (repoMatch.index ?? 0) + repoMatch[0].length;
       const task = message.slice(taskStart).trim() || '浏览网页内容';
       console.log(`[browserIntentDetector] Fuzzy matched GitHub repo: "${repoPath}" -> ${url}`);
       return {
@@ -341,7 +341,7 @@ function tryFuzzyMatch(message: string): BrowserIntent | null {
     if (siteActionMatch) {
       const matchedText = siteActionMatch[1];
       // Extract task from the message (everything after the action word)
-      const actionEndIndex = siteActionMatch.index + siteActionMatch[0].length;
+      const actionEndIndex = (siteActionMatch.index ?? 0) + siteActionMatch[0].length;
       const task = message.slice(actionEndIndex).trim() || '浏览网页内容';
       console.log(`[browserIntentDetector] Fuzzy matched: "${matchedText}" -> ${url}`);
       return {
@@ -400,7 +400,7 @@ function detectGitHubRepoFirst(message: string): BrowserIntent | null {
   }
 
   const repoPath = match[1]; // e.g., "mammut001/pipi-shrimp-agent"
-  const matchEnd = match.index + match[0].length;
+  const matchEnd = (match.index ?? 0) + match[0].length;
   const task = message.slice(matchEnd).trim() || '浏览网页内容';
 
   // Clean up task: remove leading "去这个github / 去那个twitter / 帮我" etc.

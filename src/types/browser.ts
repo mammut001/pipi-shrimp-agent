@@ -123,6 +123,10 @@ export interface RawBrowserInspection {
   has_captcha: boolean;
   text_markers: string[];
   dom_markers: string[];
+  /** Login UI is inside a modal/overlay (optional sign-in prompt, content still accessible) */
+  has_login_modal: boolean;
+  /** Word count of body text — high count means content is visible behind any login prompt */
+  content_word_count: number;
 }
 
 // ============= Runtime Connector Interface =============

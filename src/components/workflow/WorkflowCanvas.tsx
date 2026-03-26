@@ -1,276 +1,385 @@
 /**
- * WorkflowCanvas - Interactive drag-and-drop canvas for building workflow graphs
+ * WorkflowCanvas - React Flow powered canvas for building workflow graphs
  *
- * Features:
- * - Pan canvas: middle-click drag or Space+drag
- * - Zoom canvas: mouse wheel (0.3x to 2.5x)
- * - Drag agents: mousedown on agent header, mousemove, mouseup
- * - Connect agents: drag from output port to input port
- * - Delete connection: click connection line then press Delete
+ * Migrated from hand-written SVG+Div canvas to @xyflow/react for:
+ * - Built-in pan/zoom/fit controls
+ * - Background dot pattern
+ * - NodeResizer support
+ * - Automatic edge routing
+ * - Drag-and-drop node positioning
  */
 
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  ReactFlow,
+  Controls,
+  Background,
+  BackgroundVariant,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  Connection,
+  Edge,
+  Node,
+  MarkerType,
+  Panel,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { AgentNode } from './AgentNode';
-import { ConnectionLine, PendingLine } from './ConnectionLine';
-import { DEFAULT_EXECUTION_CONFIG } from '@/types/workflow';
+import { CustomEdge } from './CustomEdge';
+import { AgentTemplateDrawer } from './AgentTemplateDrawer';
+import type { WorkflowAgent, WorkflowConnection, RouteCondition, AgentTemplate } from '@/types/workflow';
+
+const nodeTypes = {
+  agent: AgentNode,
+};
+
+const edgeTypes = {
+  custom: CustomEdge,
+};
 
 interface WorkflowCanvasProps {
   selectedAgentId: string | null;
   onAgentSelect: (id: string | null) => void;
 }
 
-export function WorkflowCanvas({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps) {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
-  const [scale, setScale] = useState(1);
-  const [draggingAgentId, setDraggingAgentId] = useState<string | null>(null);
-  const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
-  const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
-  const [pendingLineEnd, setPendingLineEnd] = useState<{ x: number; y: number } | null>(null);
-  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-
+const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgentSelect }) => {
   const {
     agents,
     connections,
     addAgent,
     removeAgent,
     updateAgentPosition,
-    addConnection,
-    removeConnection,
   } = useWorkflowStore();
 
-  // Convert client coordinates to canvas coordinates
-  const toCanvasCoords = useCallback((clientX: number, clientY: number) => {
-    if (!canvasRef.current) return { x: 0, y: 0 };
-    const rect = canvasRef.current.getBoundingClientRect();
-    return {
-      x: (clientX - rect.left - canvasOffset.x) / scale,
-      y: (clientY - rect.top - canvasOffset.y) / scale,
-    };
-  }, [canvasOffset, scale]);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false);
+  const [templateDrawerPosition, setTemplateDrawerPosition] = useState<{ x: number; y: number } | null>(null);
 
-  // Handle mouse wheel for zooming
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setScale((prev) => Math.min(Math.max(prev + delta, 0.3), 2.5));
+  // Convert store agents to React Flow nodes
+  const initialNodes: Node[] = useMemo(() => {
+    return agents.map((agent: WorkflowAgent) => ({
+      id: agent.id,
+      type: 'agent',
+      position: agent.position,
+      style: {
+        width: agent.width ?? 240,
+        height: agent.height,
+      },
+      selected: agent.id === selectedAgentId,
+      data: {
+        agent,
+        allAgents: agents,
+        onRemove: removeAgent,
+        onRemoveSkill: () => {},
+        onAddSkill: () => {},
+        onUpdateName: (id: string, name: string) => {
+          useWorkflowStore.getState().updateAgent(id, { name });
+        },
+        onUpdateSize: updateAgentPosition,
+        onSetInputFrom: (agentId: string, fromId: string | null) => {
+          useWorkflowStore.getState().setAgentInputFrom(agentId, fromId);
+        },
+        onAddRoute: (agentId: string, condition: RouteCondition, targetAgentId: string, keyword?: string) => {
+          useWorkflowStore.getState().addOutputRoute(agentId, {
+            condition,
+            targetAgentId,
+            keyword: condition === 'outputContains' ? keyword : undefined,
+          });
+        },
+        onRemoveRoute: (agentId: string, routeId: string) => {
+          useWorkflowStore.getState().removeOutputRoute(agentId, routeId);
+        },
+        onUpdateRoute: (agentId: string, routeId: string, updates: { condition?: RouteCondition; keyword?: string; targetAgentId?: string }) => {
+          useWorkflowStore.getState().updateOutputRoute(agentId, routeId, updates);
+        },
+        onSelect: (id: string) => onAgentSelect(id),
+      },
+    }));
+  }, [agents, selectedAgentId, removeAgent, updateAgentPosition, onAgentSelect]);
+
+  // Convert store connections to React Flow edges
+  const initialEdges: Edge[] = useMemo(() => {
+    return connections.map((conn: WorkflowConnection) => ({
+      id: conn.id,
+      source: conn.sourceAgentId,
+      target: conn.targetAgentId,
+      type: 'custom',
+      label: conn.condition,
+      labelBgStyle: { fill: '#f9fafb' },
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: '#9CA3AF', strokeWidth: 2 },
+      animated: false,
+    }));
+  }, [connections]);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  // Sync nodes from store when agents change
+  React.useEffect(() => {
+    setNodes(initialNodes);
+  }, [initialNodes, setNodes]);
+
+  // Sync edges from store when connections change
+  React.useEffect(() => {
+    setEdges(initialEdges);
+  }, [initialEdges, setEdges]);
+
+  // Handle new visual connections (edges)
+  // Note: Connections should be configured in the panel, not by dragging
+  // This only adds visual edges without modifying the store
+  const onConnect = useCallback(
+    (params: Connection) => {
+      if (!params.source || !params.target) return;
+
+      // Check if connection already exists in store
+      const exists = connections.some(
+        (c) => c.sourceAgentId === params.source && c.targetAgentId === params.target
+      );
+
+      if (!exists) {
+        // Don't allow manual connection creation - show a hint instead
+        // The user should configure connections in the agent panel
+        console.info('请在 Agent 配置面板中设置输入/输出连接');
+        return;
+      }
+
+      // If connection exists, add visual edge
+      const conn = connections.find(
+        (c) => c.sourceAgentId === params.source && c.targetAgentId === params.target
+      );
+
+      setEdges((eds) =>
+        addEdge(
+          {
+            ...params,
+            id: conn?.id || crypto.randomUUID(),
+            type: 'custom',
+            label: conn?.condition || 'onComplete',
+            markerEnd: { type: MarkerType.ArrowClosed },
+            style: { stroke: '#9CA3AF', strokeWidth: 2 },
+          },
+          eds
+        )
+      );
+    },
+    [connections, setEdges]
+  );
+
+  // Handle edge deletion - only removes visual edge, not the actual connection
+  // Actual connection removal should be done in the panel
+  const onEdgesDelete = useCallback(
+    (deletedEdges: Edge[]) => {
+      // Just remove visual edges, don't touch the store
+      // Store connections are managed through the panel
+      setEdges((eds) => eds.filter((e) => !deletedEdges.some((de) => de.id === e.id)));
+    },
+    [setEdges]
+  );
+
+  // Handle node selection
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      onAgentSelect(node.id);
+    },
+    [onAgentSelect]
+  );
+
+  // Handle canvas click (deselect)
+  const onPaneClick = useCallback(() => {
+    onAgentSelect(null);
+    setContextMenu(null);
+  }, [onAgentSelect]);
+
+  // Handle right-click context menu
+  const onContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    const bounds = (event.target as HTMLElement).closest('.react-flow')?.getBoundingClientRect();
+    if (bounds) {
+      setContextMenu({
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      });
+    }
   }, []);
 
-  // Handle panning with middle mouse or space+drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    // Middle mouse button or space+left click
-    if (e.button === 1 || (e.button === 0 && e.currentTarget === e.target)) {
-      // Check if space is pressed
-      if (e.button === 0 && e.currentTarget === e.target) {
-        // Left click on canvas background - start panning if space held
-        if (e.altKey || e.metaKey) {
-          setIsPanning(true);
-          setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
+  // Add agent at context menu position (opens template drawer)
+  const handleAddAgent = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const reactFlowBounds = (e.target as HTMLElement).closest('.react-flow')?.getBoundingClientRect();
+      if (!reactFlowBounds) return;
+
+      const position = {
+        x: e.clientX - reactFlowBounds.left,
+        y: e.clientY - reactFlowBounds.top,
+      };
+
+      setTemplateDrawerPosition(position);
+      setTemplateDrawerOpen(true);
+      setContextMenu(null);
+    },
+    []
+  );
+
+  // Add agent from template
+  const handleAddFromTemplate = useCallback(
+    (template: AgentTemplate, position?: { x: number; y: number }) => {
+      const newAgent = addAgent({
+        name: template.name,
+        soulPrompt: template.soulPrompt,
+        task: template.task,
+        execution: template.execution,
+      });
+
+      // Update position if provided
+      if (position) {
+        useWorkflowStore.getState().updateAgentPosition(newAgent.id, position);
+      }
+
+      setTemplateDrawerOpen(false);
+      setTemplateDrawerPosition(null);
+    },
+    [addAgent]
+  );
+
+  // Add agent via button (center of viewport)
+  const handleAddAgentButton = useCallback(() => {
+    setTemplateDrawerOpen(true);
+    setTemplateDrawerPosition(null);
+  }, []);
+
+  // Handle keyboard delete
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAgentId) {
+        // Don't delete if typing in an input
+        if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
           return;
         }
-      }
-      if (e.button === 1) {
-        setIsPanning(true);
-        setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
-      }
-    }
-
-    // Click on background to deselect
-    if (e.currentTarget === e.target) {
-      onAgentSelect(null);
-      setSelectedConnectionId(null);
-    }
-  }, [canvasOffset, onAgentSelect]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isPanning) {
-      setCanvasOffset({
-        x: e.clientX - panStart.x,
-        y: e.clientY - panStart.y,
-      });
-      return;
-    }
-
-    // Dragging an agent
-    if (draggingAgentId) {
-      const { x, y } = toCanvasCoords(e.clientX, e.clientY);
-      updateAgentPosition(draggingAgentId, {
-        x: x - dragStartPos.x,
-        y: y - dragStartPos.y,
-      });
-    }
-
-    // Drawing a connection line
-    if (connectingFrom) {
-      const { x, y } = toCanvasCoords(e.clientX, e.clientY);
-      setPendingLineEnd({ x, y });
-    }
-  }, [isPanning, panStart, draggingAgentId, dragStartPos, connectingFrom, toCanvasCoords, updateAgentPosition]);
-
-  const handleMouseUp = useCallback(() => {
-    setIsPanning(false);
-    setDraggingAgentId(null);
-    setConnectingFrom(null);
-    setPendingLineEnd(null);
-  }, []);
-
-  // Handle agent drag start
-  const handleAgentMouseDown = useCallback((e: React.MouseEvent, agentId: string) => {
-    const agent = agents.find((a) => a.id === agentId);
-    if (!agent) return;
-
-    const { x, y } = toCanvasCoords(e.clientX, e.clientY);
-    setDraggingAgentId(agentId);
-    setDragStartPos({
-      x: x - agent.position.x,
-      y: y - agent.position.y,
-    });
-  }, [agents, toCanvasCoords]);
-
-  // Handle connection start (from output port)
-  const handleOutputPortMouseDown = useCallback((e: React.MouseEvent, agentId: string) => {
-    e.stopPropagation();
-    setConnectingFrom(agentId);
-    const { x, y } = toCanvasCoords(e.clientX, e.clientY);
-    setPendingLineEnd({ x, y });
-  }, [toCanvasCoords]);
-
-  // Handle connection end (at input port)
-  const handleInputPortMouseUp = useCallback((e: React.MouseEvent, targetAgentId: string) => {
-    e.stopPropagation();
-    if (connectingFrom && connectingFrom !== targetAgentId) {
-      addConnection(connectingFrom, targetAgentId, 'onComplete');
-    }
-    setConnectingFrom(null);
-    setPendingLineEnd(null);
-  }, [connectingFrom, addConnection]);
-
-  // Handle keyboard for deleting connection
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedConnectionId) {
-        removeConnection(selectedConnectionId);
-        setSelectedConnectionId(null);
+        removeAgent(selectedAgentId);
+        onAgentSelect(null);
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedConnectionId, removeConnection]);
-
-  // Get connection start position
-  const getConnectionStartPos = () => {
-    if (!connectingFrom) return null;
-    const source = agents.find((a) => a.id === connectingFrom);
-    if (!source) return null;
-    return {
-      x: source.position.x + 256, // Right side of agent
-      y: source.position.y + 60, // Approximate middle
-    };
-  };
-
-  const connectionStart = getConnectionStartPos();
+  }, [selectedAgentId, removeAgent, onAgentSelect]);
 
   return (
-    <div
-      ref={canvasRef}
-      className="w-full h-full overflow-hidden bg-gray-50 relative"
-      style={{ cursor: isPanning ? 'grabbing' : 'default' }}
-      onWheel={handleWheel}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-    >
-      {/* SVG Layer for connections */}
-      <svg
-        className="absolute inset-0 w-full h-full pointer-events-none"
-        style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${scale})` }}
-      >
-        <defs>
-          <marker
-            id="arrowhead"
-            markerWidth="10"
-            markerHeight="7"
-            refX="9"
-            refY="3.5"
-            orient="auto"
-          >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#9CA3AF" />
-          </marker>
-        </defs>
-
-        {/* Existing connections */}
-        {connections.map((conn) => {
-          const source = agents.find((a) => a.id === conn.sourceAgentId);
-          const target = agents.find((a) => a.id === conn.targetAgentId);
-          if (!source || !target) return null;
-
-          return (
-            <ConnectionLine
-              key={conn.id}
-              connection={conn}
-              sourceAgent={source}
-              targetAgent={target}
-              isSelected={selectedConnectionId === conn.id}
-              onSelect={setSelectedConnectionId}
-              onDelete={removeConnection}
-            />
-          );
-        })}
-
-        {/* Pending connection line */}
-        {connectingFrom && pendingLineEnd && connectionStart && (
-          <PendingLine
-            startX={connectionStart.x}
-            startY={connectionStart.y}
-            endX={pendingLineEnd.x}
-            endY={pendingLineEnd.y}
-          />
-        )}
-      </svg>
-
-      {/* Agent nodes layer */}
-      <div
-        className="absolute inset-0"
-        style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${scale})`, transformOrigin: '0 0' }}
-      >
-        {agents.map((agent) => (
-          <AgentNode
-            key={agent.id}
-            agent={agent}
-            isSelected={selectedAgentId === agent.id}
-            onSelect={onAgentSelect}
-            onMouseDown={handleAgentMouseDown}
-            onOutputPortMouseDown={handleOutputPortMouseDown}
-            onInputPortMouseUp={handleInputPortMouseUp}
-            onDelete={removeAgent}
-          />
-        ))}
-      </div>
-
-      {/* Add Agent button */}
-      <button
-        className="absolute bottom-4 right-4 px-4 py-2 bg-gray-900 text-white rounded-lg shadow-lg hover:bg-gray-800 transition-colors flex items-center gap-2"
-        onClick={() => {
-          addAgent({ name: 'New Agent', execution: DEFAULT_EXECUTION_CONFIG });
+    <div className="w-full h-full relative">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onEdgesDelete={onEdgesDelete}
+        onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
+        onContextMenu={onContextMenu}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
+        minZoom={0.3}
+        maxZoom={2.5}
+        defaultEdgeOptions={{
+          type: 'custom',
+          markerEnd: { type: MarkerType.ArrowClosed },
         }}
+        deleteKeyCode={null}
+        selectionKeyCode={null}
+        multiSelectionKeyCode={null}
+        className="bg-gray-50"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-        </svg>
-        Add Agent
-      </button>
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d1d5db" />
+        <Controls showInteractive={false} className="bg-white border border-gray-200 rounded-lg shadow-md" />
 
-      {/* Zoom indicator */}
-      <div className="absolute bottom-4 left-4 px-2 py-1 bg-white rounded shadow text-xs text-gray-500">
-        {Math.round(scale * 100)}%
-      </div>
+        {/* Add Agent Panel */}
+        <Panel position="bottom-right" className="flex flex-col gap-2">
+          <button
+            onClick={handleAddAgentButton}
+            className="px-4 py-2 bg-gray-900 text-white rounded-lg shadow-lg hover:bg-gray-800 transition-colors flex items-center gap-2 text-sm"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add Agent
+          </button>
+          <button
+            onClick={() => setShowClearConfirm(true)}
+            className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg shadow hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Clear All
+          </button>
+        </Panel>
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <div
+            className="absolute z-50 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[140px]"
+            style={{ left: contextMenu.x, top: contextMenu.y, transform: 'translate(-50%, -50%)' }}
+            onMouseLeave={() => setContextMenu(null)}
+          >
+            <button
+              onClick={handleAddAgent}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2 text-gray-700"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Agent Here
+            </button>
+          </div>
+        )}
+      </ReactFlow>
+
+      {/* Agent Template Drawer */}
+      <AgentTemplateDrawer
+        isOpen={templateDrawerOpen}
+        onClose={() => {
+          setTemplateDrawerOpen(false);
+          setTemplateDrawerPosition(null);
+        }}
+        onSelect={(template) => handleAddFromTemplate(template, templateDrawerPosition || undefined)}
+      />
+
+      {/* Clear confirmation dialog */}
+      {showClearConfirm && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/20">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4">
+            <h3 className="font-medium text-gray-900 mb-2">确认清空画布？</h3>
+            <p className="text-sm text-gray-500 mb-4">这将删除所有 Agent 和连接。此操作不可撤销。</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  useWorkflowStore.getState().clearCanvas();
+                  setShowClearConfirm(false);
+                  onAgentSelect(null);
+                }}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                清空
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+};
 
+export { WorkflowCanvas };
 export default WorkflowCanvas;

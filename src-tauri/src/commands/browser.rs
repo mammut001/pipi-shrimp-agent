@@ -416,6 +416,36 @@ pub async fn inspect_embedded_surface(
         const uniqueTextMarkers = [...new Set(textMarkers)];
         const uniqueDomMarkers = [...new Set(domMarkers)];
 
+        // Detect if login UI is inside a modal/overlay (optional sign-in, content still accessible)
+        const modalSelectors = [
+            'dialog',
+            '[role="dialog"]',
+            '[aria-modal="true"]',
+            '[class*="modal"]',
+            '[class*="overlay"]',
+            '[class*="popup"]',
+            '[class*="drawer"]',
+            '[class*="sheet"]',
+        ];
+        let hasLoginModal = false;
+        const loginKeywords = ['sign in', 'log in', 'login', 'sign up', 'create account'];
+        for (const sel of modalSelectors) {
+            try {
+                const modals = document.querySelectorAll(sel);
+                for (const modal of modals) {
+                    const mt = (modal.innerText || '').toLowerCase();
+                    if (loginKeywords.some(kw => mt.includes(kw))) {
+                        hasLoginModal = true;
+                        break;
+                    }
+                }
+            } catch(e) {}
+            if (hasLoginModal) break;
+        }
+
+        // Count words in body (high count = real content accessible behind any login prompt)
+        const contentWordCount = bodyText.trim().split(/\s+/).filter(w => w.length > 0).length;
+
         const result = {
             url: url,
             title: title,
@@ -424,7 +454,9 @@ pub async fn inspect_embedded_surface(
             has_qr_auth: hasQrAuth,
             has_captcha: hasCaptcha,
             text_markers: uniqueTextMarkers,
-            dom_markers: uniqueDomMarkers
+            dom_markers: uniqueDomMarkers,
+            has_login_modal: hasLoginModal,
+            content_word_count: contentWordCount,
         };
 
         window.__inspection_result = JSON.stringify(result);
@@ -614,16 +646,17 @@ pub async fn execute_agent_task(
             return Err(AppError::InvalidInput("Agent is already running".to_string()));
         }
         if let Some(window_clone) = st.browser_window.clone() {
-            // Clone first, then drop lock, then mark busy
+            // Set busy atomically before releasing lock (prevents race condition)
+            st.is_busy = true;
             drop(st);
-            {
-                let mut st = state.lock().await;
-                st.is_busy = true;
-            }
             println!("[Browser] Executing agent task on external browser window: {}", task);
-            window_clone.eval(&page_agent_script)
-                .map_err(|e| AppError::InternalError(format!("Failed to inject script: {}", e)))?;
-            // After script injection, mark not busy
+            if let Err(e) = window_clone.eval(&page_agent_script) {
+                println!("[Browser] ❌ eval() FAILED on external window: {}", e);
+                let mut st2 = state.lock().await;
+                st2.is_busy = false;
+                return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
+            }
+            // Reset busy after script injection (agent runs async; frontend status guards re-entry)
             let mut st2 = state.lock().await;
             st2.is_busy = false;
             return Ok("Task execution started".to_string());
@@ -637,21 +670,21 @@ pub async fn execute_agent_task(
             return Err(AppError::InvalidInput("Agent is already running".to_string()));
         }
         if let Some(webview_clone) = st.embedded_webview.clone() {
-            // Clone first, then drop lock, then mark busy
+            // Set busy atomically before releasing lock (prevents race condition)
+            st.is_busy = true;
             drop(st);
-            {
-                let mut st = state.lock().await;
-                st.is_busy = true;
-            }
             println!("[Browser] Executing agent task on embedded surface: {}", task);
             println!("[Browser] Script size: {} bytes", page_agent_script.len());
             match webview_clone.eval(&page_agent_script) {
                 Ok(_) => println!("[Browser] ✅ eval() succeeded on embedded surface"),
                 Err(e) => {
                     println!("[Browser] ❌ eval() FAILED: {}", e);
+                    let mut st2 = state.lock().await;
+                    st2.is_busy = false;
                     return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
                 }
             }
+            // Reset busy after script injection (agent runs async; frontend status guards re-entry)
             let mut st2 = state.lock().await;
             st2.is_busy = false;
             return Ok("Task execution started".to_string());
@@ -783,7 +816,18 @@ fn build_page_agent_script(
                         headers: new Headers(result.headers || {{}})
                     }});
                 }} catch(tauri_error) {{
-                    console.warn('[FetchProxy] Tauri IPC failed:', tauri_error && (tauri_error.message || String(tauri_error)));
+                    var errMsg = tauri_error && (tauri_error.message || String(tauri_error));
+                    console.warn('[FetchProxy] Tauri IPC failed:', errMsg);
+                    // Surface error to action logs so it's visible in the UI
+                    try {{
+                        if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
+                            window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
+                                event: 'agent_log',
+                                windowLabel: null,
+                                payload: {{ timestamp: Date.now(), message: '[FetchProxy] IPC error: ' + errMsg, level: 'error' }}
+                            }}).catch(function(){{}});
+                        }}
+                    }} catch(e) {{}}
                 }}
             }}
 
@@ -852,8 +896,31 @@ fn build_page_agent_script(
 
             emitLog('info', 'Executing task: {escaped_task}');
             const result = await agent.execute("{escaped_task}");
-            emitLog('success', 'Task completed: ' + JSON.stringify(result));
-            emitComplete(true, JSON.stringify(result));
+            // Extract a clean text summary — PageAgent may return a raw API response object
+            // (with tool schemas, choices arrays, etc.) which is too noisy to send to the AI.
+            let resultText;
+            if (typeof result === 'string') {{
+                resultText = result;
+            }} else if (result && typeof result === 'object') {{
+                // Try common text fields first
+                resultText = result.text || result.message || result.content ||
+                             result.summary || result.output || result.answer || result.result;
+                if (!resultText) {{
+                    // If choices array (OpenAI/MiniMax format), extract content
+                    if (Array.isArray(result.choices) && result.choices[0] && result.choices[0].message) {{
+                        resultText = result.choices[0].message.content || result.choices[0].message.text;
+                    }}
+                }}
+                if (!resultText) {{
+                    // Last resort: JSON, but truncate to avoid sending huge schemas
+                    const raw = JSON.stringify(result);
+                    resultText = raw.length > 2000 ? raw.substring(0, 2000) + '...' : raw;
+                }}
+            }} else {{
+                resultText = String(result);
+            }}
+            emitLog('success', 'Task completed: ' + String(resultText).substring(0, 200));
+            emitComplete(true, String(resultText));
         }} catch (error) {{
             emitLog('error', 'Error: ' + (error && error.message ? error.message : String(error)));
             emitComplete(false, error && error.message ? error.message : String(error));
@@ -880,6 +947,24 @@ pub struct HttpProxyResponse {
     pub status_text: String,
     pub headers: HashMap<String, String>,
     pub body: String,
+}
+
+/// Strip <think>...</think> blocks from LLM response bodies.
+/// Reasoning models (Claude, DeepSeek-R1, MiniMax thinking mode) embed large internal
+/// reasoning traces in responses. PageAgent stores the full response in conversation history,
+/// so these traces accumulate quickly and make subsequent request bodies too large for Tauri IPC.
+fn strip_thinking_content(body: String) -> String {
+    let mut result = body;
+    loop {
+        match (result.find("<think>"), result.find("</think>")) {
+            (Some(start), Some(end_tag_pos)) if end_tag_pos >= start => {
+                let end = end_tag_pos + "</think>".len();
+                result = format!("{}{}", &result[..start], &result[end..]);
+            }
+            _ => break,
+        }
+    }
+    result
 }
 
 /// Proxy HTTP requests through the backend (bypasses page CSP connect-src).
@@ -917,9 +1002,9 @@ pub async fn proxy_http_request(
         req_builder = req_builder.body(body);
     }
 
-    // Execute request with 30-second timeout
+    // 120-second timeout — reasoning models with large context can take >30s
     let response = req_builder
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(120))
         .send()
         .await
         .map_err(|e| AppError::InternalError(format!("HTTP request failed: {}", e)))?;
@@ -935,11 +1020,13 @@ pub async fn proxy_http_request(
         }
     }
 
-    // Read response body
-    let body = response
+    // Read response body and strip thinking traces to keep IPC payload small
+    let raw_body = response
         .text()
         .await
         .unwrap_or_else(|_| String::new());
+
+    let body = strip_thinking_content(raw_body);
 
     Ok(HttpProxyResponse {
         status,
@@ -1047,6 +1134,10 @@ pub struct RawBrowserInspection {
     pub has_captcha: bool,
     pub text_markers: Vec<String>,
     pub dom_markers: Vec<String>,
+    #[serde(default)]
+    pub has_login_modal: bool,
+    #[serde(default)]
+    pub content_word_count: u32,
 }
 
 /// Inspect the current browser page state
@@ -1167,6 +1258,34 @@ pub async fn inspect_browser_state(
         const uniqueTextMarkers = [...new Set(textMarkers)];
         const uniqueDomMarkers = [...new Set(domMarkers)];
 
+        // Detect if login UI is inside a modal/overlay (optional sign-in, content still accessible)
+        const modalSelectors2 = [
+            'dialog',
+            '[role="dialog"]',
+            '[aria-modal="true"]',
+            '[class*="modal"]',
+            '[class*="overlay"]',
+            '[class*="popup"]',
+            '[class*="drawer"]',
+            '[class*="sheet"]',
+        ];
+        let hasLoginModal2 = false;
+        const loginKeywords2 = ['sign in', 'log in', 'login', 'sign up', 'create account'];
+        for (const sel of modalSelectors2) {
+            try {
+                const modals = document.querySelectorAll(sel);
+                for (const modal of modals) {
+                    const mt = (modal.innerText || '').toLowerCase();
+                    if (loginKeywords2.some(kw => mt.includes(kw))) {
+                        hasLoginModal2 = true;
+                        break;
+                    }
+                }
+            } catch(e) {}
+            if (hasLoginModal2) break;
+        }
+        const contentWordCount2 = bodyText.trim().split(/\s+/).filter(w => w.length > 0).length;
+
         const result = {
             url: url,
             title: title,
@@ -1175,7 +1294,9 @@ pub async fn inspect_browser_state(
             has_qr_auth: hasQrAuth,
             has_captcha: hasCaptcha,
             text_markers: uniqueTextMarkers,
-            dom_markers: uniqueDomMarkers
+            dom_markers: uniqueDomMarkers,
+            has_login_modal: hasLoginModal2,
+            content_word_count: contentWordCount2,
         };
 
         // Store in global for Rust to read via second eval
@@ -1334,13 +1455,21 @@ pub async fn capture_screenshot(
                 const encoded = btoa(unescape(encodeURIComponent(svg)));
                 const dataUrl = 'data:image/svg+xml;base64,' + encoded;
 
-                if (window.__TAURI__) {
-                    window.__TAURI__.event.emit('screenshot_captured', { dataUrl: dataUrl });
+                if (window.__TAURI_INTERNALS__) {
+                    window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
+                        event: 'screenshot_captured',
+                        windowLabel: null,
+                        payload: { dataUrl: dataUrl }
+                    });
                 }
             } catch(e) {
                 console.error('Screenshot error:', e);
-                if (window.__TAURI__) {
-                    window.__TAURI__.event.emit('screenshot_error', { message: e.message });
+                if (window.__TAURI_INTERNALS__) {
+                    window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
+                        event: 'screenshot_error',
+                        windowLabel: null,
+                        payload: { message: e.message }
+                    });
                 }
             }
         })();

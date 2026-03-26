@@ -3,7 +3,7 @@
  */
 
 export { AgentNode } from './AgentNode';
-export { ConnectionLine, PendingLine } from './ConnectionLine';
+export { CustomEdge } from './CustomEdge';
 export { WorkflowCanvas } from './WorkflowCanvas';
 export { WorkflowExecutionBar } from './WorkflowExecutionBar';
 export { AgentConfigPanel } from './AgentConfigPanel';

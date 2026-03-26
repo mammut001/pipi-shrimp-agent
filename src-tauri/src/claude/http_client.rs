@@ -141,6 +141,9 @@ impl ClaudeClient {
  * Tool definitions for Anthropic Function Calling
  */
 pub fn get_tools() -> Vec<serde_json::Value> {
+    // NOTE: "additionalProperties": false on every schema is required for MiniMax
+    // and OpenAI strict-mode. Without it, models may generate extra properties
+    // that fail server-side validation ("Tool arguments validation failed").
     vec![
         serde_json::json!({
             "name": "read_file",
@@ -153,7 +156,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "The absolute path to the file to read"
                     }
                 },
-                "required": ["path"]
+                "required": ["path"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -171,7 +175,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "The content to write to the file"
                     }
                 },
-                "required": ["path", "content"]
+                "required": ["path", "content"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -189,7 +194,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "The working directory for the command (optional)"
                     }
                 },
-                "required": ["command"]
+                "required": ["command"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -207,7 +213,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "Optional glob pattern to filter files (e.g., \"*.ts\", \"src/**\")"
                     }
                 },
-                "required": ["path"]
+                "required": ["path"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -221,7 +228,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "The directory path to create"
                     }
                 },
-                "required": ["path"]
+                "required": ["path"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -235,7 +243,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "The path to check"
                     }
                 },
-                "required": ["path"]
+                "required": ["path"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -258,7 +267,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "Optional list of file extensions to filter (e.g., [\"rs\", \"ts\"])"
                     }
                 },
-                "required": ["pattern", "path"]
+                "required": ["pattern", "path"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -276,7 +286,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "The directory path to search in"
                     }
                 },
-                "required": ["pattern", "path"]
+                "required": ["pattern", "path"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -294,7 +305,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                         "description": "The file path or directory to search in"
                     }
                 },
-                "required": ["pattern", "path"]
+                "required": ["pattern", "path"],
+                "additionalProperties": false
             }
         }),
         serde_json::json!({
@@ -303,7 +315,8 @@ pub fn get_tools() -> Vec<serde_json::Value> {
             "input_schema": {
                 "type": "object",
                 "properties": {},
-                "required": []
+                "required": [],
+                "additionalProperties": false
             }
         }),
     ]
@@ -325,7 +338,8 @@ pub fn convert_tools_to_openai_format(tools: &[serde_json::Value]) -> Vec<serde_
             "function": {
                 "name": name,
                 "description": description,
-                "parameters": parameters
+                "parameters": parameters,
+                "strict": true
             }
         })
     }).collect()
@@ -810,9 +824,9 @@ impl ClaudeClient {
         system_prompt: Option<String>,
     ) -> AppResult<ChatResponse> {
         if let Some(url) = base_url {
-            self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), false, None).await
+            self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None).await
         } else {
-            self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), false, None).await
+            self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), false, false, None).await
         }
     }
 
@@ -826,6 +840,7 @@ impl ClaudeClient {
         model: String,
         base_url: Option<String>,
         system_prompt: Option<String>,
+        no_tools: bool,
         window: Window,
     ) -> AppResult<ChatResponse> {
         // Create cancellation token and store globally
@@ -852,9 +867,9 @@ impl ClaudeClient {
             }
             result = async {
                 if let Some(url) = base_url {
-                    self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), true, Some(window)).await
+                    self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window)).await
                 } else {
-                    self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), true, Some(window)).await
+                    self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window)).await
                 }
             } => result
         };
@@ -878,6 +893,7 @@ impl ClaudeClient {
         model: &str,
         system_prompt: Option<&str>,
         streaming: bool,
+        no_tools: bool,
         window: Option<Window>,
     ) -> AppResult<ChatResponse> {
         let thinking = supports_thinking(model);
@@ -894,8 +910,11 @@ impl ClaudeClient {
             "max_tokens": max_tokens,
             "stream": streaming,
             "messages": format_messages_for_anthropic(messages),
-            "tools": get_tools(),
         }).as_object().cloned().unwrap();
+
+        if !no_tools {
+            body.insert("tools".to_string(), serde_json::json!(get_tools()));
+        }
 
         // ALWAYS inject global security constraints (Layer 2 defense)
         let merged_system = merge_system_prompt(system_prompt);
@@ -1168,12 +1187,15 @@ impl ClaudeClient {
         base_url: Option<String>,
         system_prompt: Option<&str>,
         streaming: bool,
+        no_tools: bool,
         window: Option<Window>,
     ) -> AppResult<ChatResponse> {
         let base_url = base_url.unwrap_or_default();
-        // 将 Anthropic 格式的 tools 转换为 OpenAI 兼容格式（MiniMax 等需要此格式）
-        // Both reasoning and non-reasoning models get the full tool set.
-        let tools = Some(convert_tools_to_openai_format(&get_tools()));
+        let tools = if no_tools {
+            None
+        } else {
+            Some(convert_tools_to_openai_format(&get_tools()))
+        };
 
         // Build messages list，system prompt 放到 messages 数组的第一条（OpenAI 兼容格式）
         // ALWAYS inject global security constraints (Layer 2 defense)

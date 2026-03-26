@@ -160,6 +160,11 @@ export function parseInspectionResult(
     // Check if also has post-login markers (might be on settings page requiring re-auth)
     if (detectAuthenticated(raw.text_markers, raw.dom_markers)) {
       authState = 'authenticated';
+    } else if (raw.has_login_modal && (raw.content_word_count ?? 0) > 80) {
+      // Login UI is a modal/overlay AND the page has substantial content behind it.
+      // This is an optional sign-in prompt (e.g. grok.com share links, Medium, etc.).
+      // Content is accessible without logging in — treat as unknown so PageAgent can proceed.
+      authState = 'unknown';
     } else {
       authState = 'auth_required';
     }

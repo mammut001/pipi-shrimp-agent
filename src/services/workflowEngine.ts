@@ -8,6 +8,8 @@
  * - Preventing infinite loops (global step limit + per-edge limit)
  * - Streaming output to UI via callbacks
  * - Prompt injection protection
+ * - Isolated run directory per execution
+ * - Output file saving per agent
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -29,6 +31,8 @@ class WorkflowEngine {
   private iterationCount: Map<string, number> = new Map();   // edge key -> count
   private agentOutputs: Map<string, string> = new Map();     // agentId -> output
   private stopRequested: boolean = false;
+  private workingDirectory: string = '';  // Isolated run directory
+  private currentRunId: string = '';
 
   // Callbacks for UI updates
   private onStreamChunk?: StreamChunkCallback;
@@ -54,28 +58,40 @@ class WorkflowEngine {
     this.totalSteps = 0;
     this.iterationCount.clear();
     this.agentOutputs.clear();
+    this.currentRunId = crypto.randomUUID();
+    this.workingDirectory = '';
     store.resetAllStatuses();
     store.setRunning(true, null);
 
-    // 2. Create WorkflowRun record
-    const runId = crypto.randomUUID();
+    // 2. Create isolated run directory
+    try {
+      this.workingDirectory = await invoke<string>('create_workflow_run_directory', {
+        runId: this.currentRunId,
+      });
+    } catch (e) {
+      console.warn('Failed to create run directory, outputs will not be saved:', e);
+      this.workingDirectory = '';
+    }
+
+    // 3. Create WorkflowRun record
     const run: WorkflowRun = {
-      id: runId,
+      id: this.currentRunId,
       title: userPrompt.substring(0, 60) + (userPrompt.length > 60 ? '...' : ''),
       status: 'running',
       startTime: Date.now(),
       agents: agents.map(a => ({ agentId: a.id, agentName: a.name, status: 'pending' })),
+      runDirectory: this.workingDirectory,
     };
     store.addWorkflowRun(run);
 
     try {
-      // 3. Find entry Agent (no connection pointing to it)
+      // 4. Find entry Agent (no inputFrom pointing to it)
       const entryAgents = this.findEntryAgents(agents, connections);
       if (entryAgents.length === 0) {
         throw new Error('未找到入口 Agent。请确保至少有一个没有上游连接的 Agent。');
       }
 
-      // 4. Main loop
+      // 5. Main loop
       let currentAgent: WorkflowAgent | null = entryAgents[0];
       let currentInput = userPrompt;
       let loopCount = 0;
@@ -91,16 +107,19 @@ class WorkflowEngine {
         // Update UI state
         store.setRunning(true, currentAgent.id);
         store.setAgentStatus(currentAgent.id, 'running');
-        store.updateRunAgent(runId, currentAgent.id, { status: 'running', startTime: Date.now() });
+        store.updateRunAgent(this.currentRunId, currentAgent.id, { status: 'running', startTime: Date.now() });
 
         try {
           // Execute Agent
           const output = await this.executeAgent(currentAgent, currentInput);
           this.agentOutputs.set(currentAgent.id, output);
 
+          // Save output to file in run directory
+          await this.saveOutputToFile(currentAgent, output);
+
           // Update status to completed
           store.setAgentStatus(currentAgent.id, 'completed');
-          store.updateRunAgent(runId, currentAgent.id, {
+          store.updateRunAgent(this.currentRunId, currentAgent.id, {
             status: 'completed',
             endTime: Date.now(),
             output: output.substring(0, 2000),
@@ -130,7 +149,7 @@ class WorkflowEngine {
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : '未知错误';
           store.setAgentStatus(currentAgent.id, 'error');
-          store.updateRunAgent(runId, currentAgent.id, { status: 'error', endTime: Date.now() });
+          store.updateRunAgent(this.currentRunId, currentAgent.id, { status: 'error', endTime: Date.now() });
 
           // Try to find error route
           const errorAgent = this.evaluateNextAgent(currentAgent, errorMsg, connections, agents, 'error');
@@ -145,19 +164,20 @@ class WorkflowEngine {
         }
       }
 
-      // 5. Complete
+      // 6. Complete
       const finalStatus = this.stopRequested ? 'stopped' : 'completed';
-      store.updateWorkflowRun(runId, { status: finalStatus, endTime: Date.now() });
+      store.updateWorkflowRun(this.currentRunId, { status: finalStatus, endTime: Date.now() });
 
       if (finalStatus === 'completed') {
-        useUIStore.getState().addNotification('success', '✅ 工作流执行完成！');
+        const dirMsg = this.workingDirectory ? `\n输出保存在: ${this.workingDirectory}` : '';
+        useUIStore.getState().addNotification('success', `✅ 工作流执行完成！${dirMsg}`);
       } else {
         useUIStore.getState().addNotification('info', '⏹ 工作流已停止');
       }
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '未知错误';
-      store.updateWorkflowRun(runId, { status: 'error', endTime: Date.now() });
+      store.updateWorkflowRun(this.currentRunId, { status: 'error', endTime: Date.now() });
       useUIStore.getState().addNotification('error', `❌ 工作流失败：${errorMsg}`);
     } finally {
       this.isRunning = false;
@@ -177,6 +197,7 @@ class WorkflowEngine {
     this.totalSteps = 0;
     this.iterationCount.clear();
     this.agentOutputs.clear();
+    this.workingDirectory = '';
     useWorkflowStore.getState().resetAllStatuses();
   }
 
@@ -310,6 +331,32 @@ ${lastOutput.length > 4000 ? lastOutput.substring(0, 4000) + '\n... [已截断]'
     }
 
     return lastOutput;
+  }
+
+  private async saveOutputToFile(agent: WorkflowAgent, output: string): Promise<void> {
+    if (!this.workingDirectory) return;
+
+    try {
+      const safeName = agent.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_');
+      const fileName = `${safeName}-output.md`;
+      const filePath = `${this.workingDirectory}/${fileName}`;
+
+      const content = `<!--
+Agent: ${agent.name}
+Executed: ${new Date().toLocaleString()}
+Run ID: ${this.currentRunId}
+-->
+
+${output}
+`;
+      await invoke('write_file', {
+        path: filePath,
+        content,
+        workDir: null,
+      });
+    } catch (e) {
+      console.warn('Failed to save output file:', e);
+    }
   }
 
   private evaluateNextAgent(

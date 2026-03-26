@@ -1154,12 +1154,6 @@ export const useChatStore = create<ChatState>()(
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
       try {
-        // Build context message — hidden from UI but visible to the AI
-        const contextContent = `[浏览器代理已完成任务。用户的问题是："${originalQuery}"。\n\n浏览器代理获取到的数据：\n${browserResult}\n\n请根据以上数据，用自然的语言直接回答用户的问题。不要提及"浏览器代理"或内部流程，直接给出结果即可。]`;
-        const hiddenContext = createMessage('user', contextContent);
-        hiddenContext.metadata = { hidden: true, type: 'browser_result_context' };
-        await addMessage(hiddenContext);
-
         setStreaming(true);
         set({ streamingContent: '', streamingSessionId: currentSessionId });
 
@@ -1170,16 +1164,27 @@ export const useChatStore = create<ChatState>()(
           }
         }, 300_000);
 
-        const messages = buildApiMessages(currentMessages());
+        // Filter out browser_progress and hidden context messages:
+        // - browser_progress: internal UI state cards, create consecutive assistant msgs → API errors
+        // - hidden: transient context messages from prior browser result injections
+        // This ensures clean alternating user/assistant message history for the API.
+        const filteredMessages = currentMessages().filter(
+          m => m.metadata?.type !== 'browser_progress' && !m.metadata?.hidden
+        );
+        const messages = buildApiMessages(filteredMessages);
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
+        // Inject browser result into system prompt instead of as a user message.
+        // Adding it as a user message creates consecutive user messages (original query +
+        // context), which MiniMax and other APIs reject → stuck "思考中..." with 0 output tokens.
         let systemPrompt = useUIStore.getState().agentInstructions;
         const currentSession = get().sessions.find(s => s.id === currentSessionId);
         const sessionWorkDir = currentSession?.workDir;
         if (sessionWorkDir) {
           systemPrompt += `\n\n## Working Directory\n\nYour working directory: \`${sessionWorkDir}\``;
         }
+        systemPrompt += `\n\n---\n## 浏览器代理任务结果\n用户的问题是："${originalQuery}"\n\n浏览器代理获取到的数据：\n${browserResult}\n\n请根据以上数据，用自然的语言直接回答用户的问题。不要提及"浏览器代理"或内部流程，直接给出结果即可。`;
 
         const response = await invoke<{
           content: string;
@@ -1193,6 +1198,7 @@ export const useChatStore = create<ChatState>()(
           model: apiConfig.model,
           baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
+          noTools: true,
         });
 
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
@@ -1543,11 +1549,14 @@ export const useChatStore = create<ChatState>()(
       const { currentSessionId } = get();
       if (!currentSessionId) return;
 
-      // Persist to database
-      try {
-        await invoke('db_save_message', { message: messageToDb(message, currentSessionId) });
-      } catch (error) {
-        console.error('Failed to save message to database:', error);
+      // Persist to database — skip hidden/transient messages (metadata not serialized to DB,
+      // so they'd re-appear without the hidden flag on reload and pass through the UI filter)
+      if (!message.metadata?.hidden) {
+        try {
+          await invoke('db_save_message', { message: messageToDb(message, currentSessionId) });
+        } catch (error) {
+          console.error('Failed to save message to database:', error);
+        }
       }
 
       set((state) => ({
