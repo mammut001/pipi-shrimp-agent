@@ -177,3 +177,15 @@ pub fn list_pipi_shrimp_index(work_dir: String) -> AppResult<Vec<OutputFolder>> 
 
     Ok(folders)
 }
+
+/// Create a workflow run directory at {HOME}/pipi-shrimp-agent/runs/{run_id}.
+/// This is used by the workflow engine to create isolated workspaces per run.
+#[tauri::command]
+pub fn create_workflow_run_directory(run_id: String) -> AppResult<String> {
+    let home = std::env::var("HOME")
+        .map_err(|e| AppError::FileError(format!("Cannot get HOME directory: {}", e)))?;
+    let base_dir = PathBuf::from(&home).join("pipi-shrimp-agent").join("runs").join(&run_id);
+    fs::create_dir_all(&base_dir)
+        .map_err(|e| AppError::FileError(format!("Failed to create run directory: {}", e)))?;
+    Ok(base_dir.to_string_lossy().to_string())
+}

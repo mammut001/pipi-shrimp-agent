@@ -10,6 +10,13 @@
 
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
+
+// Module-level ref-count guard: multiple components call setupEventListeners()
+// (ChatBrowserWorkspaceShell, BrowserPanel, BrowserMiniPreview). We only want ONE
+// set of Tauri event listeners active at a time. Each caller still gets a cleanup
+// function that decrements the count; the last one to clean up actually unlisten()s.
+let _listenerRefCount = 0;
+let _listenerCleanup: (() => void) | null = null;
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 import {
@@ -186,9 +193,21 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   },
 
   /**
-   * Setup event listeners for browser events
+   * Setup event listeners for browser events.
+   * Uses a ref-count so multiple callers (ChatBrowserWorkspaceShell, BrowserPanel,
+   * BrowserMiniPreview) share a single set of Tauri listeners instead of registering
+   * duplicate handlers that fire multiple times per event.
    */
   setupEventListeners: async () => {
+    _listenerRefCount += 1;
+
+    // If listeners are already registered, return a cleanup that just decrements count
+    if (_listenerRefCount > 1 && _listenerCleanup) {
+      return () => {
+        _listenerRefCount = Math.max(0, _listenerRefCount - 1);
+      };
+    }
+
     const { addLog } = get();
 
     // Listen for agent log events from the browser window
@@ -227,12 +246,21 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       addLog('error', `截图错误: ${message}`);
     });
 
-    // Return cleanup function
-    return () => {
+    // Store the real cleanup so subsequent callers can share it
+    _listenerCleanup = () => {
       unlistenLog();
       unlistenComplete();
       unlistenScreenshot();
       unlistenScreenshotError();
+      _listenerCleanup = null;
+    };
+
+    // Return cleanup function — only the last ref actually tears down listeners
+    return () => {
+      _listenerRefCount = Math.max(0, _listenerRefCount - 1);
+      if (_listenerRefCount === 0 && _listenerCleanup) {
+        _listenerCleanup();
+      }
     };
   },
 
@@ -348,29 +376,39 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       // Parse into structured result
       const result = parseInspectionResult(raw, siteProfileId || undefined);
 
-      // Determine new status based on inspection
-      let newStatus: BrowserSessionStatus = 'idle';
+      // Determine new status based on inspection.
+      // IMPORTANT: Don't clobber status if the task is already running or has been explicitly
+      // cleared for execution (ready_for_agent). Inspection fires async (1.5s after open) and
+      // could race with executeTaskEnvelope setting status:'ready_for_agent'.
+      const currentStatus = get().status;
+      const taskIsActive = currentStatus === 'running' || currentStatus === 'ready_for_agent';
+
+      let newStatus: BrowserSessionStatus = taskIsActive ? currentStatus : 'idle';
       let newMode: BrowserControlMode = get().mode;
 
-      if (!result.safeForAgent) {
-        if (result.authState === 'auth_required' || result.authState === 'mfa_required') {
-          // Inspection found auth wall - transition to waiting state
-          newStatus = 'waiting_user_resume';
-          newMode = 'manual_handoff';
-        } else if (result.authState === 'captcha_required') {
-          newStatus = 'blocked_captcha';
-        } else if (result.authState === 'expired') {
-          newStatus = 'blocked_auth';
+      if (!taskIsActive) {
+        if (!result.safeForAgent) {
+          if (result.authState === 'auth_required' || result.authState === 'mfa_required') {
+            // Inspection found auth wall - transition to waiting state
+            newStatus = 'waiting_user_resume';
+            newMode = 'manual_handoff';
+          } else if (result.authState === 'captcha_required') {
+            newStatus = 'blocked_captcha';
+          } else if (result.authState === 'expired') {
+            newStatus = 'blocked_auth';
+          }
+        } else if (result.authState === 'authenticated') {
+          newStatus = 'ready_for_agent';
         }
-      } else if (result.authState === 'authenticated') {
-        newStatus = 'ready_for_agent';
       }
 
       set({
         status: newStatus,
         mode: newMode,
         inspection: result,
-        authState: result.authState,
+        // Don't clobber authState if task is already active — a stale auth signal shouldn't
+        // interrupt an in-progress execution that was explicitly cleared for agent use.
+        authState: taskIsActive ? get().authState : result.authState,
         blockReason: result.blockReason || null,
         currentUrl: result.url,
         waitingForUserResume: newStatus === 'waiting_user_resume',
@@ -507,12 +545,15 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
     if (!isWindowOpen) {
       addLog('error', '请先打开浏览器窗口');
+      // Set error so startBrowserStateListener can finalize the progress bubble
+      set({ status: 'error', error: '浏览器窗口未打开' });
       return;
     }
 
     // Execution is ONLY allowed when explicitly ready_for_agent
     if (status !== 'ready_for_agent') {
       addLog('error', `当前状态 (${status}) 不允许执行任务。请先完成登录检查。`);
+      set({ status: 'error', error: `状态错误: ${status}` });
       return;
     }
 
@@ -520,11 +561,14 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     const blockedStates: BrowserAuthState[] = ['auth_required', 'mfa_required', 'captcha_required', 'expired', 'unauthenticated'];
     if (blockedStates.includes(authState)) {
       addLog('error', `页面需要登录或验证 (${authState})，无法执行任务`);
+      set({ status: 'error', error: `需要登录: ${authState}` });
       return;
     }
     // If inspection explicitly failed (safeForAgent=false with known block reason), block
-    if (inspection && !inspection.safeForAgent && inspection.authState !== 'unknown') {
+    // Use store authState (not inspection.authState) — executeTaskEnvelope may have reset it to 'unknown'
+    if (inspection && !inspection.safeForAgent && authState !== 'unknown') {
       addLog('error', '页面未通过安全检查，无法执行任务');
+      set({ status: 'error', error: '页面安全检查失败' });
       return;
     }
 
@@ -581,8 +625,9 @@ Complete the task efficiently and call "done" when finished.`;
   executeTaskEnvelope: async (envelope: BrowserTaskEnvelope) => {
     const { openWindow, inspectCurrentPage, requestLogin, handleBlockedState } = get();
 
-    // Bind the task
+    // Bind the task and clear stale result from any previous task
     get().bindTask(envelope);
+    set({ lastTaskResult: null });
 
     // If window not open, open it
     if (!get().isWindowOpen) {
@@ -599,18 +644,25 @@ Complete the task efficiently and call "done" when finished.`;
     // If already in a blocked state, don't proceed
     if (status === 'blocked_auth' || status === 'blocked_captcha' || status === 'blocked_manual_step') {
       get().addLog('warning', '当前任务被阻塞，请先解决阻塞问题');
+      // Set error so startBrowserStateListener finalizes the progress bubble
+      set({ status: 'error', error: '任务被阻塞，请先解决登录或验证码问题' });
       return;
     }
 
     // Gate based on authState and inspection.safeForAgent
     if (!envelope.requiresLogin) {
-      // No login required - skip re-inspection, go directly to execution
+      // No login required - skip re-inspection, go directly to execution.
+      // IMPORTANT: also reset authState to 'unknown' here — the page inspection may have
+      // detected an optional sign-in prompt (e.g. grok.com "Sign in to continue") and set
+      // authState:'auth_required', but the content is still accessible without logging in.
+      // Without this reset, executeTask() would see auth_required and block the task.
       get().addLog('info', '无需登录，直接开始执行任务');
       set({
         status: 'ready_for_agent',
         mode: 'agent_controlled',
         waitingForUserResume: false,
         handoffState: 'no_handoff',
+        authState: 'unknown',
       });
       await get().executeTask(envelope.executionPrompt);
       return;

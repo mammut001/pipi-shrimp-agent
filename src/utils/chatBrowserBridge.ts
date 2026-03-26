@@ -491,20 +491,23 @@ function startBrowserStateListener() {
 
     // Handle completion — finalize bubble and hand result to AI
     if (currentStatus === 'completed') {
+      // Capture locals BEFORE stopBrowserStateListener resets the module-level vars
+      const msgId = activeBrowserMessageId;
+      const steps = [...browserSteps];
+
       stopBrowserStateListener();
       const taskResult = currentState.lastTaskResult;
       const chatStore = useChatStore.getState();
 
       // Finalize the progress bubble
-      if (activeBrowserMessageId) {
-        const finalSteps = browserSteps.map(s => ({ ...s, done: true }));
+      if (msgId) {
+        const finalSteps = steps.map(s => ({ ...s, done: true }));
         const finalContent = buildProgressContent(finalSteps, true);
-        chatStore.updateMessageContent(activeBrowserMessageId, finalContent, {
+        chatStore.updateMessageContent(msgId, finalContent, {
           type: 'browser_progress',
           browserStatus: 'completed',
           siteProfileId: currentState.siteProfileId || undefined,
         });
-        activeBrowserMessageId = null;
       }
 
       // Find the original user question
@@ -514,22 +517,29 @@ function startBrowserStateListener() {
         .find(m => m.role === 'user' && m.metadata?.type !== 'browser_result_context');
       const originalQuery = originalMsg?.content || '';
 
-      if (taskResult) {
-        chatStore.generateBrowserResultResponse(taskResult, originalQuery);
-      }
+      // Always generate a response — if result is empty, use a fallback so the user
+      // doesn't see a completed progress bubble with no AI reply.
+      chatStore.generateBrowserResultResponse(
+        taskResult || '（浏览器任务已完成，但未获取到具体内容，可能页面为空或任务未返回数据）',
+        originalQuery
+      );
       return;
     }
 
     // Handle error — update bubble with error state
     if (currentStatus === 'error') {
+      // Capture locals BEFORE stopBrowserStateListener resets the module-level vars
+      const msgId = activeBrowserMessageId;
+      const steps = [...browserSteps];
+
       stopBrowserStateListener();
       const errorStep = STATUS_LABELS['error'] || '任务出错';
-      browserSteps.push({ status: 'error', label: errorStep, done: false });
+      steps.push({ status: 'error', label: errorStep, done: false });
 
-      if (activeBrowserMessageId) {
+      if (msgId) {
         const chatStore = useChatStore.getState();
-        const content = buildProgressContent(browserSteps, false);
-        chatStore.updateMessageContent(activeBrowserMessageId, content, {
+        const content = buildProgressContent(steps, false);
+        chatStore.updateMessageContent(msgId, content, {
           type: 'browser_progress',
           browserStatus: 'error',
           siteProfileId: currentState.siteProfileId || undefined,

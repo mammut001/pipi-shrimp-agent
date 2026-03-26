@@ -26,7 +26,8 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
   const agent = useWorkflowStore((state) =>
     state.agents.find((a) => a.id === agentId)
   );
-  const { updateAgent, addOutputRoute, removeOutputRoute } = useWorkflowStore();
+  const allAgents = useWorkflowStore((state) => state.agents);
+  const { updateAgent, addOutputRoute, removeOutputRoute, setAgentInputFrom } = useWorkflowStore();
 
   const [formData, setFormData] = useState({
     name: '',
@@ -158,6 +159,32 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
             placeholder="描述这个 Agent 的任务..."
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+
+        {/* InputFrom - Upstream Agent Selection */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            输入来源 <span className="text-xs text-gray-400">(上游 Agent)</span>
+          </label>
+          <select
+            value={agent.inputFrom || ''}
+            onChange={(e) => setAgentInputFrom(agentId, e.target.value || null)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">入口节点（无上游）</option>
+            {allAgents
+              .filter((a) => a.id !== agentId)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-400">
+            {agent.inputFrom
+              ? `将接收「${allAgents.find((a) => a.id === agent.inputFrom)?.name}」的输出作为输入`
+              : '此 Agent 将作为入口节点启动'}
+          </p>
         </div>
 
         {/* Soul Prompt */}

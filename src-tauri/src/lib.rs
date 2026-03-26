@@ -76,14 +76,17 @@ async fn send_claude_sdk_chat_streaming(
     baseUrl: Option<String>,
     #[allow(non_snake_case)]
     systemPrompt: Option<String>,
+    #[allow(non_snake_case)]
+    noTools: Option<bool>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, String> {
     // Convert empty string to None for custom API
     let base_url = baseUrl.filter(|s| !s.is_empty());
+    let no_tools = noTools.unwrap_or(false);
     let state = state.lock().await;
     state.client
-        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, window)
+        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window)
         .await
         .map_err(|e| e.to_string())
 }
@@ -391,6 +394,7 @@ pub fn run() {
             commands::init_pipi_shrimp,
             commands::get_next_output_dir,
             commands::list_pipi_shrimp_index,
+            commands::create_workflow_run_directory,
             // Browser window commands (second WebviewWindow for PageAgent)
             commands::open_browser_window,
             commands::show_browser_window,
