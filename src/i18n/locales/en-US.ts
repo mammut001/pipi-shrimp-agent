@@ -16,6 +16,8 @@ const enUS: TranslationKeys = {
   'common.retry': 'Retry',
   'common.close': 'Close',
   'common.or': 'or',
+  'common.preview': 'Preview',
+  'common.copy': 'Copy',
 
   // Navigation
   'nav.chat': 'Chat',

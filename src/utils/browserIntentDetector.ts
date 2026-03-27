@@ -58,6 +58,12 @@ export const WEBSITE_MAPPINGS: Record<string, string> = {
   '知乎': 'https://www.zhihu.com',
   'zhihu': 'https://www.zhihu.com',
 
+  // Apple
+  'app store connect': 'https://appstoreconnect.apple.com',
+  'appstore connect': 'https://appstoreconnect.apple.com',
+  'asc': 'https://appstoreconnect.apple.com',
+
+
   // Video
   'youtube': 'https://www.youtube.com',
   'yt': 'https://www.youtube.com',

@@ -134,8 +134,10 @@ export const BrowserPanel: React.FC = () => {
     clearLogs,
     inspectCurrentPage,
     confirmLoginAndResume,
+    forceResumeWithoutAuth,
     switchToManualMode,
     setupEventListeners,
+    resetToReady,
   } = useBrowserAgentStore();
 
   // Setup event listeners on mount
@@ -507,7 +509,7 @@ export const BrowserPanel: React.FC = () => {
               <p className="text-[10px] text-yellow-600 mt-1">
                 请在浏览器窗口中完成登录后，点击下方按钮验证登录状态
               </p>
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex gap-2 flex-wrap">
                 <button
                   onClick={inspectCurrentPage}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-yellow-600 rounded-lg hover:bg-yellow-700 transition-colors"
@@ -519,6 +521,13 @@ export const BrowserPanel: React.FC = () => {
                   className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
                 >
                   我已登录
+                </button>
+                <button
+                  onClick={forceResumeWithoutAuth}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                  title="跳过验证，直接继续执行"
+                >
+                  强制继续
                 </button>
               </div>
             </div>
@@ -660,6 +669,13 @@ export const BrowserPanel: React.FC = () => {
               className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
             >
               停止
+            </button>
+          ) : status === 'completed' ? (
+            <button
+              onClick={resetToReady}
+              className="px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              重置状态
             </button>
           ) : (
             <button

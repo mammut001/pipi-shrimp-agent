@@ -441,9 +441,21 @@ export const useChatStore = create<ChatState>()(
         const sessions: Session[] = await Promise.all(
           dbSessions.map(async (dbSession) => {
             try {
-              const dbMessages = await invoke<DbMessage[]>('db_get_messages', {
+              let dbMessages = await invoke<DbMessage[]>('db_get_messages', {
                 sessionId: dbSession.id,  // Tauri v1: camelCase → Rust session_id
               });
+              
+              // CLEANUP: If the very last message is an empty assistant placeholder (stuck from crash),
+              // remove it so the session doesn't look broken/stuck in "thinking" on reload.
+              if (dbMessages.length > 0) {
+                const last = dbMessages[dbMessages.length - 1];
+                if (last.role === 'assistant' && (!last.content || last.content.trim() === '') && !last.reasoning && !last.tool_calls) {
+                  console.warn(`🧹 Found dangling assistant placeholder in session ${dbSession.id}, removing...`);
+                  dbMessages = dbMessages.slice(0, -1);
+                  // We don't bother deleting it from DB here, as it will be overwritten/cleaned up on next save
+                }
+              }
+              
               return dbToSession(dbSession, dbMessages);
             } catch (err) {
               // Don't throw - return session with empty messages so other sessions still load
@@ -1336,6 +1348,19 @@ export const useChatStore = create<ChatState>()(
         // Inject bound working directory into system prompt so AI knows where to navigate
         if (sessionWorkDir) {
           systemPrompt += `\n\n## Working Directory\n\nYour working directory for this session is: \`${sessionWorkDir}\`\nUse this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and \`grep\` tools. Resolve all relative paths against this directory.`;
+          
+          try {
+            const coreMdPath = `${sessionWorkDir}/.pipi-shrimp/core.md`;
+            const coreMdRes = await invoke<{ content: string; path: string }>('read_file', { 
+              path: coreMdPath,
+              workDir: sessionWorkDir
+            });
+            if (coreMdRes && coreMdRes.content) {
+              systemPrompt += `\n\n## Project Core Memory (.pipi-shrimp/core.md)\n\n${coreMdRes.content}\n\n**CRITICAL INSTRUCTION**: The user relies on \`.pipi-shrimp/core.md\` to preserve project context between sessions. If the user tells you new persistent information about the project (e.g., what it is, tech stack, architecture, or rules), you MUST use the \`write_file\` tool to update \`.pipi-shrimp/core.md\` immediately so you don't forget it in future sessions. Combine the new knowledge with the existing content gracefully.`;
+            }
+          } catch (e) {
+            console.debug('No core.md found or failed to read:', e);
+          }
         }
 
         // Inject session-level working files (only files explicitly added to this session)
@@ -1524,21 +1549,56 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
-     * Retry the last failed message
+     * Retry the last failed message.
+     * Logic:
+     * 1. Clear the current error
+     * 2. Find the last user message
+     * 3. Remove all messages following that user message (to clean up the failed assistant attempt)
+     * 4. Call sendMessage with the same content
      */
     retryLastMessage: async () => {
-      const { currentSessionId, currentMessages, error } = get();
+      const { currentSessionId, sessions, error } = get();
       if (!currentSessionId || !error) return;
 
-      // Get the last user message
-      const messages = currentMessages();
-      const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+      const session = sessions.find((s) => s.id === currentSessionId);
+      if (!session) return;
 
-      if (lastUserMessage) {
-        // Clear error
+      const messages = session.messages;
+      const lastUserIndex = [...messages].reverse().findIndex((m) => m.role === 'user');
+      
+      if (lastUserIndex !== -1) {
+        const actualIndex = messages.length - 1 - lastUserIndex;
+        const lastUserMessage = messages[actualIndex];
+        const content = lastUserMessage.content;
+
+        // Find messages to delete from DB (everything after the last user message, inclusive)
+        const messagesToDelete = messages.slice(actualIndex);
+        
+        // Strip everything after the last user message (including the failed assistant placeholder)
+        // This ensures the retry doesn't pollute the history with duplicates.
+        set((state) => ({
+          error: null,
+          pendingToolCalls: 0,
+          pendingToolResults: [],
+          sessions: state.sessions.map((s) =>
+            s.id === currentSessionId
+              ? { ...s, messages: s.messages.slice(0, actualIndex) } // Remove user msg + everything after
+              : s
+          ),
+        }));
+
+        // DELETE from database to prevent orphans from reappearing on reload
+        for (const msg of messagesToDelete) {
+          invoke('db_delete_message', { messageId: msg.id }).catch(e => 
+            console.error(`Failed to delete orphaned message ${msg.id} from DB:`, e)
+          );
+        }
+
+        // Resend the message (this will add the user message back cleanly)
+        await get().sendMessage(content);
+      } else {
+        // Fallback: just clear error if no user message found
         set({ error: null });
-        // Resend the message
-        await get().sendMessage(lastUserMessage.content);
       }
     },
 

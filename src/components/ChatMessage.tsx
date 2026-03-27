@@ -11,6 +11,8 @@
 
 import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
 
@@ -46,7 +48,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
   const isUser = message.role === 'user';
 
   return (
-    <div className={`py-4 px-4 ${isUser ? 'bg-gray-50' : 'bg-white'}`}
+    <div className={`py-4 px-4 max-w-full overflow-hidden ${isUser ? 'bg-gray-50' : 'bg-white'}`}
     >
       <div className="max-w-3xl mx-auto">
         <div className="flex gap-4">
@@ -101,10 +103,10 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
             )}
 
             {/* Message Body */}
-            <div className="prose prose-sm max-w-none">
+            <div className="prose prose-sm max-w-none break-words">
               {isUser ? (
                 // User messages: plain text
-                <p className="text-gray-700 whitespace-pre-wrap">{message.content}</p>
+                <p className="text-gray-700 whitespace-pre-wrap break-words">{message.content}</p>
               ) : (
                 // Assistant messages: markdown
                 <ReactMarkdown
@@ -129,37 +131,71 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                       }
 
                       return (
-                        <div className="my-2 rounded-lg overflow-hidden relative group">
+                        <div className="my-4 rounded-xl overflow-hidden border border-gray-200/20 shadow-xl relative group max-w-full">
                           {/* Header with language and preview button */}
-                          <div className="bg-gray-800 text-gray-300 px-4 py-1 text-xs flex items-center justify-between">
-                            <span>{language}</span>
-                            {isTypst && onTypstPreview && (
-                              <button
-                                onClick={() => onTypstPreview(codeContent)}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs flex items-center gap-1"
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  className="h-3 w-3"
-                                  viewBox="0 0 20 20"
-                                  fill="currentColor"
+                          <div className="bg-[#1e1e1e] border-b border-gray-800 text-gray-400 px-4 py-1.5 text-xs flex items-center justify-between">
+                            <span className="font-mono tracking-tighter opacity-70">{language || 'code'}</span>
+                            <div className="flex items-center gap-2">
+                              {isTypst && onTypstPreview && (
+                                <button
+                                  onClick={() => onTypstPreview(codeContent)}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/20 rounded-md text-[10px] flex items-center gap-1.5 backdrop-blur-sm"
                                 >
-                                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                                  <path
-                                    fillRule="evenodd"
-                                    d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
-                                    clipRule="evenodd"
-                                  />
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    className="h-3 w-3"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                  >
+                                    <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                                    <path
+                                      fillRule="evenodd"
+                                      d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+                                      clipRule="evenodd"
+                                    />
+                                  </svg>
+                                  {t('common.preview')}
+                                </button>
+                              )}
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(codeContent);
+                                    // Add a little temporary indicator or notification here if needed
+                                  } catch (err) {
+                                    console.error('Failed to copy code:', err);
+                                  }
+                                }}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-500 hover:text-gray-300"
+                                title={t('common.copy')}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                  <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                  <path d="M6 3a2 2 0 00-2 2v1h11a2 2 0 012 2v1a2 2 0 01-2 2V5a2 2 0 00-2-2H6z" />
+                                  <path d="M3 7a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
                                 </svg>
-                                Preview
                               </button>
-                            )}
+                            </div>
                           </div>
-                          <pre className="bg-gray-800 text-gray-100 p-4 overflow-x-auto">
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          </pre>
+                          
+                          <SyntaxHighlighter
+                            language={language || 'text'}
+                            style={vscDarkPlus}
+                            customStyle={{
+                              margin: 0,
+                              padding: '1rem',
+                              fontSize: '0.85rem',
+                              backgroundColor: '#1e1e1e',
+                              borderRadius: '0 0 0.75rem 0.75rem',
+                              maxWidth: '100%',
+                              overflowX: 'auto',
+                            }}
+                            codeTagProps={{
+                              className: 'break-all'
+                            }}
+                          >
+                            {codeContent}
+                          </SyntaxHighlighter>
                         </div>
                       );
                     },
@@ -168,7 +204,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                       return (
                         <a
                           href={href}
-                          className="text-blue-600 hover:underline"
+                          className="text-blue-600 hover:underline break-all max-w-full inline-block"
                           target="_blank"
                           rel="noopener noreferrer"
                           {...props}
@@ -212,7 +248,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
             </div>
 
             {/* Loading indicator for latest message */}
-            {isLatest && !isUser && message.content === '' && !message.reasoning && (
+            {isLatest && isStreaming && !isUser && message.content === '' && !message.reasoning && (
               <div className="mt-2 flex items-center gap-2 text-gray-400">
                 <div className="flex gap-1">
                   <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
@@ -372,7 +408,7 @@ function ReasoningBody({ content, isStreaming }: { content: string; isStreaming:
 
       {/* Content area */}
       <div className="max-h-64 overflow-y-auto">
-        <pre className="p-3 text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
+        <pre className="p-3 text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap font-mono leading-relaxed break-words max-w-full overflow-x-hidden">
           {content}
           {isStreaming && <span className="inline-block w-1.5 h-4 ml-1 bg-blue-400 animate-pulse align-middle" />}
         </pre>

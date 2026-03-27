@@ -197,7 +197,12 @@ const tests = [
   ['帮我看看cbc', true, 'https://www.cbc.ca/news', null],
   ['查查twitter', true, 'https://x.com', null],
 
+  // App Store Connect
+  ['帮我去 App Store Connect 看看数据', true, 'https://appstoreconnect.apple.com', null],
+  ['去 AppStore Connect 看看', true, 'https://appstoreconnect.apple.com', null],
+
   // Should NOT match
+
   ['我在 github 上看到', false, null, null],
   ['cbc 新闻怎么样', false, null, null],
   ['just a normal message', false, null, null],

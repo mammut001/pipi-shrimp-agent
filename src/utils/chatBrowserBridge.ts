@@ -14,7 +14,7 @@ import { useUIStore } from '../store/uiStore';
 import { useChatStore } from '../store/chatStore';
 
 // Track browser workflow listener lifecycle between tasks
-let unsubscribeBrowserState: (() => void) | null = null;
+let _browserStateUnsubscribe: (() => void) | null = null;
 let lastBrowserAuthState: string | null = null;
 let lastBrowserAuthPromptKey: string | null = null;
 
@@ -602,9 +602,9 @@ function startBrowserStateListener() {
     }
   });
 
-  unsubscribeBrowserState = () => {
+  _browserStateUnsubscribe = () => {
     unsubscribe();
-    unsubscribeBrowserState = null;
+    _browserStateUnsubscribe = null;
     lastBrowserAuthState = null;
     lastBrowserAuthPromptKey = null;
     activeBrowserMessageId = null;
@@ -616,9 +616,9 @@ function startBrowserStateListener() {
  * Stop listening to browser state changes
  */
 function stopBrowserStateListener() {
-  if (unsubscribeBrowserState) {
-    unsubscribeBrowserState();
-    unsubscribeBrowserState = null;
+  if (_browserStateUnsubscribe) {
+    _browserStateUnsubscribe();
+    _browserStateUnsubscribe = null;
   }
   lastBrowserAuthState = null;
   lastBrowserAuthPromptKey = null;
