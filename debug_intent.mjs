@@ -70,7 +70,7 @@ function detectBrowserIntent(message) {
   return { detected: false, website: null, url: null, task: '', confidence: 0 };
 }
 
-const msg = 'mammut001/pipi-shrimp-agent 去这个GitHub 看看有多少个star';
+const msg = '帮我去 App Store Connect 看看数据';
 console.log('Input:', msg);
 console.log('');
 console.log('=== Tracing detectBrowserIntent ===');

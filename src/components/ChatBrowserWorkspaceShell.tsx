@@ -14,7 +14,7 @@ import { useMemo, useEffect } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { ChatMessage, ChatInput } from '@/components';
+import { ChatMessage, ChatInput, PermissionModal } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
 import type { Message, Session } from '@/types/chat';
 import { t } from '@/i18n';
@@ -94,6 +94,37 @@ export function ChatBrowserWorkspaceShell() {
   // Browser dock state
   const { browserDockMode } = useUIStore();
 
+  // Permission modal state (Ask mode)
+  const permissionQueue = useUIStore((s) => s.permissionQueue);
+  const pendingPermission = permissionQueue[0];
+  const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
+  const addNotification = useUIStore((s) => s.addNotification);
+
+  const handleApprovePermission = async () => {
+    if (!pendingPermission) return;
+    const { id, toolName, toolInput } = pendingPermission;
+    clearPermissionRequest();
+    const { executeTool } = useChatStore.getState();
+    await executeTool(toolName, toolInput, id);
+  };
+
+  const handleDenyPermission = () => {
+    if (!pendingPermission) return;
+    addNotification('info', 'Permission denied');
+    clearPermissionRequest();
+    const { sendAllToolResults } = useChatStore.getState();
+    useChatStore.setState((state) => ({
+      pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),
+      pendingToolResults: [
+        ...state.pendingToolResults,
+        { toolCallId: pendingPermission.id, result: 'Permission denied by user.' },
+      ],
+    }));
+    if (useChatStore.getState().pendingToolCalls === 0) {
+      sendAllToolResults();
+    }
+  };
+
   // Chat store
   const {
     currentMessages,
@@ -170,7 +201,7 @@ export function ChatBrowserWorkspaceShell() {
 
   // Render the chat panel content
   const renderChatPanel = () => (
-    <div className="flex flex-col min-h-0 w-full">
+    <div className="flex flex-col min-h-0 w-full min-w-0">
       {/* Messages List */}
       <div className="flex-1 overflow-y-auto">
         {hasMessages ? (
@@ -245,18 +276,6 @@ export function ChatBrowserWorkspaceShell() {
         </div>
       )}
 
-      {/* Loading Indicator */}
-      {isStreaming && (
-        <div className="px-4 py-2 bg-blue-50 border-t border-blue-200">
-          <div className="mx-auto flex items-center gap-2 text-blue-700 max-w-3xl">
-            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-            </svg>
-            <span className="text-sm">{t('chat.aiThinking')}</span>
-          </div>
-        </div>
-      )}
 
       {/* Session Token Stats */}
       {hasMessages && sessionTokenUsage.total > 0 && (
@@ -284,16 +303,25 @@ export function ChatBrowserWorkspaceShell() {
     <MainLayout>
       {/* Split Mode: Browser takes full center area, right AgentPanel shows controls+logs */}
       {isSplitMode ? (
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex min-h-0 min-w-0">
           <div className="flex-1 min-w-0 bg-white">
             <BrowserWorkspacePane />
           </div>
         </div>
       ) : (
         /* Normal Mode: Chat takes full width */
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex min-h-0 min-w-0">
           {renderChatPanel()}
         </div>
+      )}
+
+      {/* Permission Modal — Ask mode tool confirmation (fixed overlay, always on top) */}
+      {pendingPermission && (
+        <PermissionModal
+          permission={pendingPermission}
+          onApprove={handleApprovePermission}
+          onDeny={handleDenyPermission}
+        />
       )}
     </MainLayout>
   );

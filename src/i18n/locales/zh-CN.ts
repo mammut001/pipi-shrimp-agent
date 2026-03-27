@@ -16,6 +16,8 @@ const zhCN: TranslationKeys = {
   'common.retry': '重试',
   'common.close': '关闭',
   'common.or': '或',
+  'common.preview': '预览',
+  'common.copy': '复制',
 
   // 导航
   'nav.chat': '对话',

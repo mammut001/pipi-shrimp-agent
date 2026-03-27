@@ -248,6 +248,7 @@ export interface BrowserAgentActions {
   inspectCurrentPage: () => Promise<void>;
   requestLogin: () => void;
   confirmLoginAndResume: () => Promise<void>;
+  forceResumeWithoutAuth: () => Promise<void>;
 
   // ========== Control Mode Actions ==========
   switchToManualMode: () => void;

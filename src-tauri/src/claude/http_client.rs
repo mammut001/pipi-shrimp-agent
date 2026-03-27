@@ -540,12 +540,26 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<serde_json::Value
                 // "tool call id is invalid". Always force null here regardless of msg.content.
                 "content": serde_json::Value::Null,
                 "tool_calls": tool_calls.iter().map(|tc| {
+                    // Ensure arguments are valid JSON string to avoid (2013) error
+                    let mut args = tc.arguments.clone();
+                    if args.trim().is_empty() {
+                        args = "{}".to_string();
+                    } else if serde_json::from_str::<serde_json::Value>(&args).is_err() {
+                        // Attempt to fix common streaming artifacts (missing closing braces)
+                        if !args.contains('{') && !args.contains('}') {
+                            args = format!("\"{}\"", args.replace("\"", "\\\""));
+                        } else {
+                            // If it's still invalid, default to empty object to keep request valid
+                            args = "{}".to_string();
+                        }
+                    }
+
                     serde_json::json!({
                         "id": tc.tool_call_id,
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": tc.arguments
+                            "arguments": args
                         }
                     })
                 }).collect::<Vec<_>>()
@@ -897,11 +911,21 @@ impl ClaudeClient {
         window: Option<Window>,
     ) -> AppResult<ChatResponse> {
         let thinking = supports_thinking(model);
-        let thinking_budget = 5000;
+        // thinking_budget is the TOTAL thinking token budget across ALL interleaved rounds.
+        // With interleaved-thinking-2025-05-14, each tool call requires a new thinking block.
+        // 5000 was too small — the first planning round exhausted the budget, so the model
+        // couldn't think before subsequent tool calls and emitted end_turn after one sentence.
+        // 16000 allows multiple rounds of deep reasoning across a multi-tool conversation.
+        // thinking_budget: total token budget for ALL thinking blocks (interleaved rounds).
+        // 16000 allows several deep reasoning rounds across a multi-tool conversation.
+        let thinking_budget = 16000;
         let max_tokens = if thinking {
-            std::cmp::max(2048, thinking_budget + 1000)
+            // claude-3-7 supports up to 64k output tokens in extended-thinking mode.
+            // max_tokens must be >= thinking_budget; billing is per token used, not per limit.
+            64000
         } else {
-            2048
+            // Non-thinking models: 16384 covers claude-3-5 (8192 cap) and claude-3-7 (32k).
+            16384
         };
 
         // Build request body
@@ -1045,7 +1069,7 @@ impl ClaudeClient {
         // Stream response body
         use futures::stream::StreamExt;
         let mut stream = response.bytes_stream();
-
+        let mut buffer = String::new();
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
                 Ok(c) => c,
@@ -1055,11 +1079,12 @@ impl ClaudeClient {
             };
 
             let text = String::from_utf8_lossy(&chunk);
-            let lines: Vec<&str> = text.lines().collect();
+            buffer.push_str(&text);
 
-            for line in lines {
-                let line = line.trim();
-                if !line.starts_with("data: ") {
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line_with_newline = buffer.drain(..=newline_pos).collect::<String>();
+                let line = line_with_newline.trim();
+                if line.is_empty() || !line.starts_with("data: ") {
                     continue;
                 }
 
@@ -1152,8 +1177,11 @@ impl ClaudeClient {
 
         // Handle final content
         let message_str = full_content.clone();
-        if !full_reasoning.is_empty() && window.is_some() {
-            // Emit final reasoning
+        if !full_reasoning.is_empty() {
+            // Emit final reasoning content as a single event for clients that need it
+            if let Some(ref w) = window {
+                let _ = w.emit("claude-reasoning", &full_reasoning);
+            }
         }
 
         // Detect artifacts from final content
@@ -1207,10 +1235,13 @@ impl ClaudeClient {
         }));
 
         // Build request body
+        // Use 32768 as default max_tokens for OpenAI-compatible endpoints.
+        // 8192 was too small — models with extended thinking use thousands of tokens for reasoning
+        // alone, leaving barely anything for actual output in complex multi-tool tasks.
         let mut body: serde_json::Map<String, serde_json::Value> = serde_json::json!({
             "model": model,
             "messages": openai_messages,
-            "max_tokens": 8192,
+            "max_tokens": 32768,
             "stream": streaming,
         }).as_object().cloned().unwrap();
 
@@ -1317,6 +1348,9 @@ impl ClaudeClient {
         // We accumulate them here and emit claude-tool-use events once the stream ends.
         let mut tool_call_map: std::collections::HashMap<usize, (String, String, String)> =
             std::collections::HashMap::new();
+        // Track the next expected index for tool calls without explicit indices.
+        // This prevents multiple tool calls without indices from being incorrectly merged.
+        let mut next_tool_call_index: usize = 0;
 
         // State machine for <think>...</think> tag routing.
         // MiniMax (and some other models) embed chain-of-thought reasoning inline in delta.content
@@ -1328,6 +1362,7 @@ impl ClaudeClient {
         // Stream response body
         use futures::stream::StreamExt;
         let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
@@ -1338,15 +1373,12 @@ impl ClaudeClient {
             };
 
             let text = String::from_utf8_lossy(&chunk);
-            // Debug: print raw chunk
-            if !text.is_empty() {
-                println!("📥 Stream chunk: {}", text.trim().chars().take(200).collect::<String>());
-            }
-            let lines: Vec<&str> = text.lines().collect();
+            buffer.push_str(&text);
 
-            for line in lines {
-                let line = line.trim();
-                if !line.starts_with("data: ") {
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line_with_newline = buffer.drain(..=newline_pos).collect::<String>();
+                let line = line_with_newline.trim();
+                if line.is_empty() || !line.starts_with("data: ") {
                     continue;
                 }
 
@@ -1435,7 +1467,14 @@ impl ClaudeClient {
                                 for tc in tc_array {
                                     let idx = tc.get("index")
                                         .and_then(|v| v.as_u64())
-                                        .unwrap_or(0) as usize;
+                                        .map(|v| v as usize)
+                                        .unwrap_or_else(|| {
+                                            // No index provided — use sequential counter to avoid merging
+                                            // multiple unnamed tool calls into the same entry.
+                                            let idx = next_tool_call_index;
+                                            next_tool_call_index += 1;
+                                            idx
+                                        });
 
                                     // Get or create entry for this index
                                     let entry = tool_call_map.entry(idx)

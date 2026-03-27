@@ -18,6 +18,8 @@ export type TranslationKeys = {
   'common.retry': string;
   'common.close': string;
   'common.or': string;
+  'common.preview': string;
+  'common.copy': string;
 
   // 导航
   'nav.chat': string;

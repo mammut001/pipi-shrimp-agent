@@ -20,8 +20,9 @@ use tauri_plugin_fs::FsExt;
 
 use claude::{ClaudeClient, ChatResponse, Message};
 use commands::browser::BrowserState;
+use commands::web::BrowserController;
 use database::{DbSession, DbMessage, DbProject, DbTokenUsage, DailyTokenStats, ModelTokenStats,
-               init_database, get_all_sessions, save_session, delete_session, save_message, 
+               init_database, get_all_sessions, save_session, delete_session, save_message, delete_message,
                get_messages_for_session, save_project, get_all_projects, delete_project, 
                update_project, save_token_usage, get_daily_token_stats, get_monthly_token_stats,
                get_model_token_stats, get_total_token_stats};
@@ -162,6 +163,11 @@ fn db_save_message(message: DbMessage) -> Result<(), String> {
 #[tauri::command]
 fn db_get_messages(session_id: String) -> Result<Vec<DbMessage>, String> {
     get_messages_for_session(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_delete_message(message_id: String) -> Result<(), String> {
+    delete_message(&message_id).map_err(|e| e.to_string())
 }
 
 /**
@@ -325,6 +331,9 @@ pub fn run() {
 
             // Initialize BrowserState for second WebviewWindow approach
             app.manage(Arc::new(Mutex::new(BrowserState::default())));
+            
+            // Initialize BrowserController for CDP execution
+            app.manage(Arc::new(Mutex::new(BrowserController::default())));
             println!("🌐 Browser state initialized");
 
             println!("✅ Main window created successfully");
@@ -352,7 +361,9 @@ pub fn run() {
             commands::set_config,
             commands::delete_config,
             // Web automation commands
-            commands::web_automation,
+            commands::web::connect_browser,
+            commands::web::navigate_and_wait,
+            commands::web::get_semantic_tree,
             commands::open_url,
             // Claude commands (CLI-based)
             claude::check_claude_available,
@@ -373,6 +384,7 @@ pub fn run() {
             db_delete_session,
             db_save_message,
             db_get_messages,
+            db_delete_message,
             commands::update_session_title,
             // Project commands
             db_save_project,

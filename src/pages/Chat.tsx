@@ -260,10 +260,10 @@ export function Chat() {
           <div
             ref={scrollContainerRef}
             onScroll={handleScroll}
-            className="flex-1 overflow-y-auto"
+            className="flex-1 overflow-y-auto max-w-full"
           >
             {hasMessages ? (
-              <div className="divide-y divide-gray-100">
+              <div className="divide-y divide-gray-100 max-w-full overflow-hidden">
                 {/* Filter out intermediate tool-dispatch assistant messages:
                     these are rounds where the AI called tools but wrote no visible text.
                     They show up as "(N chars) thinking" bubbles with no final content.

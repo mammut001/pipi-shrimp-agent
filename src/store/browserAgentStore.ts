@@ -17,6 +17,12 @@ import { listen } from '@tauri-apps/api/event';
 // function that decrements the count; the last one to clean up actually unlisten()s.
 let _listenerRefCount = 0;
 let _listenerCleanup: (() => void) | null = null;
+
+// Timer tracking to prevent race conditions between tasks
+let _completionTimerId: ReturnType<typeof setTimeout> | null = null;
+let _completionTimerTaskId: string | null = null;
+let _errorTimerId: ReturnType<typeof setTimeout> | null = null;
+let _errorTimerTaskId: string | null = null;
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 import {
@@ -42,6 +48,9 @@ import type {
   BrowserHandoffState,
   LogEntry,
 } from '../types/browser';
+// CDP mode: reserved for future tiered dispatch (complex/authenticated tasks).
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { executeNativeBrowserTask as _executeCdpTask } from '../utils/nativeBrowserAgent';
 import {
   parseInspectionResult,
 } from '../utils/browserInspection';
@@ -54,6 +63,28 @@ import {
  */
 const formatTimestamp = (): string => {
   return new Date().toLocaleTimeString('zh-CN', { hour12: false });
+};
+
+/**
+ * Cancel pending auto-reset timers safely.
+ * Also validates the task ID so stale timers don't reset wrong state.
+ */
+const clearPendingTimers = (currentTaskId: string | null) => {
+  if (_completionTimerId !== null) {
+    clearTimeout(_completionTimerId);
+    // Only clear the task ID marker if this timer belongs to the current task
+    if (_completionTimerTaskId === currentTaskId) {
+      _completionTimerTaskId = null;
+    }
+    _completionTimerId = null;
+  }
+  if (_errorTimerId !== null) {
+    clearTimeout(_errorTimerId);
+    if (_errorTimerTaskId === currentTaskId) {
+      _errorTimerTaskId = null;
+    }
+    _errorTimerId = null;
+  }
 };
 
 /**
@@ -93,6 +124,9 @@ interface BrowserAgentState {
   handoffState: BrowserHandoffState;
 
   // Removed explicit embedded mode flag; rely on real runtime when available
+
+  /** Guard against concurrent inspections — only one at a time */
+  _isInspecting: boolean;
 }
 
 /**
@@ -115,11 +149,13 @@ interface BrowserAgentActions {
   inspectCurrentPage: () => Promise<void>;
   requestLogin: () => void;
   confirmLoginAndResume: () => Promise<void>;
+  forceResumeWithoutAuth: () => Promise<void>;
 
   // ========== Control Mode Actions ==========
   switchToManualMode: () => void;
   switchToAgentMode: () => void;
   handleBlockedState: (reason: BrowserBlockReason) => void;
+  resetToReady: () => void;
 
   // ========== Utility Actions ==========
   clearLogs: () => void;
@@ -173,6 +209,9 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   _screenshotInterval: null,
   _isLivePreviewEnabled: true,
 
+  // Inspection guard
+  _isInspecting: false,
+
   // Presentation
   presentationMode: 'hidden',
   handoffState: 'no_handoff',
@@ -202,7 +241,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     _listenerRefCount += 1;
 
     // If listeners are already registered, return a cleanup that just decrements count
-    if (_listenerRefCount > 1 && _listenerCleanup) {
+    if (_listenerCleanup) {
       return () => {
         _listenerRefCount = Math.max(0, _listenerRefCount - 1);
       };
@@ -222,14 +261,40 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       const { success, final_url, result } = event.payload;
       if (success) {
         addLog('success', `任务完成！最终URL: ${final_url}`);
-        set((state) => ({
+        const completedTaskId = get().pendingTask?.id || null;
+        set(() => ({
           status: 'completed',
-          lastCompletedTaskId: state.pendingTask?.id || null,
+          lastCompletedTaskId: completedTaskId,
           lastTaskResult: result || null,
         }));
+        // Auto-reset to idle after 5s so the next task can start cleanly.
+        // 'completed' blocks direct executeTask() calls; resetting ensures
+        // manual Run and any other entry points work without stale state.
+        // Clear any pending timers first to prevent race conditions.
+        clearPendingTimers(completedTaskId);
+        _completionTimerId = setTimeout(() => {
+          // Only reset if still in completed state AND this timer belongs to the current task
+          if (get().status === 'completed' && _completionTimerTaskId === completedTaskId) {
+            set({ status: 'idle', pendingTask: null });
+            _completionTimerTaskId = null;
+          }
+          _completionTimerId = null;
+        }, 5000);
+        _completionTimerTaskId = completedTaskId;
       } else {
         addLog('error', `任务失败: ${result}`);
+        const failedTaskId = get().pendingTask?.id || null;
         set({ status: 'error', error: result, lastTaskResult: null });
+        // Also reset error state after 5s so next task isn't blocked
+        clearPendingTimers(failedTaskId);
+        _errorTimerId = setTimeout(() => {
+          if (get().status === 'error' && _errorTimerTaskId === failedTaskId) {
+            set({ status: 'idle', error: null });
+            _errorTimerTaskId = null;
+          }
+          _errorTimerId = null;
+        }, 5000);
+        _errorTimerTaskId = failedTaskId;
       }
     });
 
@@ -305,15 +370,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       // Start live preview for real-time screenshot updates
       get()._startLivePreview();
 
-      // Auto-inspect after opening
-      try {
-        // We need to wait a bit for the page to load
-        setTimeout(async () => {
-          await get().inspectCurrentPage();
-        }, 1500);
-      } catch {
-        // Ignore errors when getting URL
-      }
+      // NOTE: Do NOT auto-inspect here. executeTaskEnvelope() always calls
+      // inspectCurrentPage() after a 2000ms wait, which is the authoritative
+      // inspection. A second auto-inspection here creates concurrent inspections
+      // that fight over the same app.once() event listener → one always times out.
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       addLog('error', `打开窗口失败: ${errorMessage}`);
@@ -366,12 +426,33 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       return;
     }
 
+    // Guard: if another inspection is already running, skip this call.
+    // Concurrent inspections both register app.once() listeners for the same event;
+    // whichever fires first wins, the other always times out.
+    if (get()._isInspecting) {
+      addLog('info', '检查中，跳过重复请求...');
+      return;
+    }
+
     try {
-      set({ status: 'inspecting' });
+      set({ status: 'inspecting', _isInspecting: true });
       addLog('info', '正在检查页面状态...');
 
-      // Get raw inspection from backend - use embedded surface inspection
-      const raw = await inspectEmbeddedSurface();
+      // Get raw inspection from backend with one retry on timeout.
+      // Heavy SPAs (e.g. Apple ID redirect) may still be loading on first attempt.
+      let raw: Awaited<ReturnType<typeof inspectEmbeddedSurface>>;
+      try {
+        raw = await inspectEmbeddedSurface();
+      } catch (firstErr) {
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (msg.includes('Timed out') || msg.includes('timeout')) {
+          addLog('info', '页面仍在加载，2 秒后重试检查...');
+          await new Promise(r => setTimeout(r, 2000));
+          raw = await inspectEmbeddedSurface();
+        } else {
+          throw firstErr;
+        }
+      }
 
       // Parse into structured result
       const result = parseInspectionResult(raw, siteProfileId || undefined);
@@ -412,6 +493,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         blockReason: result.blockReason || null,
         currentUrl: result.url,
         waitingForUserResume: newStatus === 'waiting_user_resume',
+        _isInspecting: false,
       });
 
       // Log the result
@@ -441,6 +523,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         authState: 'unknown',
         blockReason: null,
         error: null,
+        _isInspecting: false,
       });
     }
   },
@@ -502,8 +585,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
     addLog('info', '正在验证登录状态...');
 
-    // Re-inspect the page
-    await inspectCurrentPage();
+    // Only re-inspect if we have NO inspection result yet (e.g. called directly
+    // without a prior inspectCurrentPage). If inspection already ran (even as a
+    // timeout-fallback), reuse the result to avoid a redundant round-trip that
+    // always times out on sites like Apple/appstoreconnect whose IPC never fires.
+    if (!get().inspection) {
+      await inspectCurrentPage();
+    }
 
     // Get fresh state after inspection
     const { authState, inspection, pendingTask } = get();
@@ -535,6 +623,32 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         handoffState: 'waiting_for_login',
       });
       addLog('warning', '登录验证失败，请确认已正确登录');
+    }
+  },
+
+  /**
+   * Force resume without auth check - bypasses the login detection
+   * Use this when you know you're logged in but detection keeps failing
+   */
+  forceResumeWithoutAuth: async () => {
+    const { addLog, pendingTask } = get();
+
+    addLog('info', '跳过登录验证，直接继续...');
+
+    set({
+      status: 'ready_for_agent',
+      mode: 'agent_controlled',
+      waitingForUserResume: false,
+      handoffState: 'no_handoff',
+      authState: 'unknown', // Treat as unknown to allow execution
+    });
+
+    // If there's a pending task, execute it
+    if (pendingTask) {
+      addLog('info', '正在执行任务...');
+      await get().executeTask(pendingTask.executionPrompt);
+    } else {
+      addLog('success', '已准备好执行新任务');
     }
   },
 
@@ -577,7 +691,6 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     set({ _abortController: controller, status: 'running' });
 
     try {
-      // Get config from settings
       const config = useSettingsStore.getState().getActiveConfig();
       if (!config?.apiKey) {
         addLog('error', '请先配置 API 设置');
@@ -605,8 +718,8 @@ Complete the task efficiently and call "done" when finished.`;
         systemPrompt: pageAgentSystemPrompt,
       });
 
-      // The browser window will emit completion events
-      // Status will be updated by event listener
+      // The browser window will emit completion events via Tauri event listener
+      // Status will be updated by the event listener in setupEventListeners()
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
         addLog('info', '任务已停止');
@@ -620,7 +733,11 @@ Complete the task efficiently and call "done" when finished.`;
   },
 
   /**
-   * Execute a task envelope (with profile and auth policy)
+   * Execute a task envelope (with profile and auth policy).
+   *
+   * Uses the embedded PageAgent (Rust WebView) for simple/standard web tasks.
+   * CDP mode (executeNativeBrowserTask) is imported but reserved for future use —
+   * tiered dispatch (simple → PageAgent, complex → CDP) will be added later.
    */
   executeTaskEnvelope: async (envelope: BrowserTaskEnvelope) => {
     const { openWindow, inspectCurrentPage, requestLogin, handleBlockedState } = get();
@@ -629,14 +746,13 @@ Complete the task efficiently and call "done" when finished.`;
     get().bindTask(envelope);
     set({ lastTaskResult: null });
 
-    // If window not open, open it
+    // If window not open, open it and wait for initial page load
     if (!get().isWindowOpen) {
       await openWindow(envelope.targetUrl);
-      // Wait for page to load
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
-    // Inspect the page
+    // Inspect the page to determine auth state
     await inspectCurrentPage();
 
     const { authState, inspection, status } = get();
@@ -644,18 +760,14 @@ Complete the task efficiently and call "done" when finished.`;
     // If already in a blocked state, don't proceed
     if (status === 'blocked_auth' || status === 'blocked_captcha' || status === 'blocked_manual_step') {
       get().addLog('warning', '当前任务被阻塞，请先解决阻塞问题');
-      // Set error so startBrowserStateListener finalizes the progress bubble
       set({ status: 'error', error: '任务被阻塞，请先解决登录或验证码问题' });
       return;
     }
 
     // Gate based on authState and inspection.safeForAgent
     if (!envelope.requiresLogin) {
-      // No login required - skip re-inspection, go directly to execution.
-      // IMPORTANT: also reset authState to 'unknown' here — the page inspection may have
-      // detected an optional sign-in prompt (e.g. grok.com "Sign in to continue") and set
-      // authState:'auth_required', but the content is still accessible without logging in.
-      // Without this reset, executeTask() would see auth_required and block the task.
+      // No login required — reset authState to 'unknown' so auth walls on optional
+      // sign-in prompts (e.g. grok.com "Sign in to continue") don't block execution.
       get().addLog('info', '无需登录，直接开始执行任务');
       set({
         status: 'ready_for_agent',
@@ -671,34 +783,28 @@ Complete the task efficiently and call "done" when finished.`;
     // Handle different auth states
     switch (authState) {
       case 'authenticated':
-        // Good to go - proceed with execution
         if (inspection?.safeForAgent) {
           await get().confirmLoginAndResume();
         } else {
-          // Authenticated but not safe for agent (edge case)
           handleBlockedState('manual_confirmation_required');
         }
         break;
 
       case 'auth_required':
       case 'mfa_required':
-        // Need login - request manual handoff
         requestLogin();
         break;
 
       case 'captcha_required':
-        // Blocked by captcha
         handleBlockedState('captcha_required');
         break;
 
       case 'expired':
-        // Session expired - need re-auth
         handleBlockedState('login_required');
         break;
 
       case 'unknown':
       default:
-        // Unknown state - be conservative and require confirmation
         if (inspection?.safeForAgent) {
           await get().confirmLoginAndResume();
         } else {
@@ -712,6 +818,8 @@ Complete the task efficiently and call "done" when finished.`;
    * Bind a task to the store
    */
   bindTask: (task: BrowserTaskEnvelope) => {
+    // Clear any pending auto-reset timers from previous tasks
+    clearPendingTimers(task.id);
     set({ pendingTask: task });
   },
 
@@ -832,6 +940,27 @@ Complete the task efficiently and call "done" when finished.`;
         console.error('Failed to show browser window for blocked state:', error);
       });
     }
+  },
+
+  /**
+   * Reset status from 'completed' (or any non-running state) to 'ready_for_agent'
+   * This allows executing a new task after the previous one finished.
+   */
+  resetToReady: () => {
+    const { addLog, status } = get();
+
+    // Only reset if currently in a terminal state that blocks execution
+    if (status === 'running' || status === 'ready_for_agent') {
+      addLog('info', '状态已是可执行状态，无需重置');
+      return;
+    }
+
+    set({
+      status: 'ready_for_agent',
+      lastTaskResult: null,
+      pendingTask: null,
+    });
+    addLog('info', '状态已重置，可以执行新任务');
   },
 
   clearLogs: () => {

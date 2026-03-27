@@ -11,7 +11,7 @@
  *  - logs"
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useBrowserAgentStore, useUIStore } from '@/store';
 
 /**
@@ -26,6 +26,7 @@ export function BrowserCompactSummary() {
     pendingTask,
     clearLogs,
     confirmLoginAndResume,
+    forceResumeWithoutAuth,
     inspectCurrentPage,
     collapseBrowser,
   } = useBrowserAgentStore();
@@ -34,7 +35,40 @@ export function BrowserCompactSummary() {
     focusChatPane,
   } = useUIStore();
 
+  const [copiedLogs, setCopiedLogs] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Copy all logs to clipboard
+  const handleCopyLogs = async () => {
+    if (logs.length === 0) return;
+    const logText = logs
+      .map(log => `[${formatTime(log.timestamp)}] [${log.level.toUpperCase()}] ${log.message}`)
+      .join('\n');
+
+    try {
+      // Try modern clipboard API first
+      await navigator.clipboard.writeText(logText);
+      setCopiedLogs(true);
+      setTimeout(() => setCopiedLogs(false), 2000);
+    } catch (err) {
+      // Fallback for older browsers or secure contexts
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = logText;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        setCopiedLogs(true);
+        setTimeout(() => setCopiedLogs(false), 2000);
+      } catch (fallbackErr) {
+        console.error('Failed to copy logs:', fallbackErr);
+        setCopiedLogs(false);
+      }
+    }
+  };
 
   // Auto-scroll logs
   useEffect(() => {
@@ -203,6 +237,13 @@ export function BrowserCompactSummary() {
             >
               我已登录
             </button>
+            <button
+              onClick={forceResumeWithoutAuth}
+              className="px-3 py-1.5 text-[11px] font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              title="跳过验证，直接继续执行"
+            >
+              强制继续
+            </button>
           </div>
         )}
       </div>
@@ -211,9 +252,24 @@ export function BrowserCompactSummary() {
       <div className="flex-1 flex flex-col min-h-0 border-t border-gray-200">
         <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
           <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Action Logs</span>
-          <button onClick={clearLogs} className="text-[10px] text-gray-400 hover:text-gray-600">
-            Clear
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopyLogs}
+              disabled={logs.length === 0}
+              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                copiedLogs
+                  ? 'text-green-600 bg-green-50'
+                  : logs.length === 0
+                    ? 'text-gray-300 cursor-not-allowed'
+                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {copiedLogs ? '✓ Copied!' : 'Copy All'}
+            </button>
+            <button onClick={clearLogs} className="text-[10px] text-gray-400 hover:text-gray-600">
+              Clear
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-3 bg-gray-900">
           {logs.length === 0 ? (

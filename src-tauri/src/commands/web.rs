@@ -9,103 +9,130 @@ use crate::models::WebAutomationRequest;
 use crate::utils::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
-/// Web automation action result
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WebActionResult {
-    pub action: String,
-    pub success: bool,
-    pub result: String,
+use chromiumoxide::browser::Browser;
+use chromiumoxide::page::Page;
+use tokio::sync::Mutex;
+use futures::StreamExt;
+use std::sync::Arc;
+
+pub struct BrowserController {
+    pub page: Option<Page>,
+    pub browser_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Web automation response with action chain recording
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WebAutomationResponse {
-    pub url: String,
-    pub actions: Vec<WebActionResult>,
-    pub final_html_length: Option<usize>,
+impl Default for BrowserController {
+    fn default() -> Self {
+        Self { page: None, browser_handle: None }
+    }
 }
 
-/**
- * Execute web automation actions
- *
- * Currently returns a mock response simulating successful action chain.
- * TODO: Implement real Page-Agent integration for actual browser automation.
- */
+// 核心命令：开启并接管用户的本地 Chrome
 #[tauri::command]
-pub async fn web_automation(req: WebAutomationRequest) -> AppResult<String> {
-    println!("Web automation requested for URL: {}", req.url);
-    println!("Actions: {:?}", req.actions);
+pub async fn connect_browser(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    // 首先我们要去获取 websocket 的 debugger URL
+    let resp = reqwest::get("http://127.0.0.1:9222/json/version")
+        .await
+        .map_err(|e| format!("无法访问 Chrome 调试端点 (请确保开启了 --remote-debugging-port=9222): {}", e))?;
+        
+    let json: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("无法解析 Chrome 调试数据: {}", e))?;
+        
+    let ws_url = json["webSocketDebuggerUrl"]
+        .as_str()
+        .ok_or_else(|| "未从 Chrome 返回数据中找到 webSocketDebuggerUrl 的字段".to_string())?;
 
-    // Validate URL
-    if req.url.is_empty() {
-        return Err(AppError::InvalidInput("URL cannot be empty".to_string()));
-    }
+    // 连接本地浏览器
+    let (mut browser, mut handler) = Browser::connect(ws_url)
+        .await
+        .map_err(|e| format!("无法连接本地浏览器 WebSocket: {}", e))?;
 
-    if !req.url.starts_with("http://") && !req.url.starts_with("https://") {
-        return Err(AppError::InvalidInput(
-            "Invalid URL: must start with http:// or https://".to_string()
-        ));
-    }
-
-    // Mock action chain - simulate successful actions
-    let mut action_results = Vec::new();
-
-    // Simulate navigation action
-    action_results.push(WebActionResult {
-        action: "navigate".to_string(),
-        success: true,
-        result: format!("Successfully loaded {}", req.url),
+    // 在后台运行事件循环
+    let handle = tokio::spawn(async move {
+        while let Some(h) = handler.next().await {
+            if h.is_err() { break; }
+        }
     });
 
-    // Simulate each requested action
-    for action in &req.actions {
-        let result = match action.as_str() {
-            "click" => WebActionResult {
-                action: action.clone(),
-                success: true,
-                result: "Clicked element successfully".to_string(),
-            },
-            "fill" | "type" => WebActionResult {
-                action: action.clone(),
-                success: true,
-                result: "Filled input successfully".to_string(),
-            },
-            "submit" => WebActionResult {
-                action: action.clone(),
-                success: true,
-                result: "Form submitted successfully".to_string(),
-            },
-            "scroll" => WebActionResult {
-                action: action.clone(),
-                success: true,
-                result: "Scrolled successfully".to_string(),
-            },
-            "screenshot" => WebActionResult {
-                action: action.clone(),
-                success: true,
-                result: "Screenshot captured (mock)".to_string(),
-            },
-            _ => WebActionResult {
-                action: action.clone(),
-                success: true,
-                result: format!("Action '{}' simulated successfully", action),
-            },
-        };
-        action_results.push(result);
-    }
+    let page = browser.new_page("about:blank").await.map_err(|e| e.to_string())?;
 
-    // Create response
-    let response = WebAutomationResponse {
-        url: req.url,
-        actions: action_results,
-        final_html_length: Some(0), // Mock value
+    let mut st = state.lock().await;
+    st.page = Some(page);
+    st.browser_handle = Some(handle);
+
+    Ok("成功接管浏览器！".to_string())
+}
+
+// 高级功能：智能等待导航
+#[tauri::command]
+pub async fn navigate_and_wait(
+    url: String, 
+    wait_selector: Option<String>,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let page = {
+        let st = state.lock().await;
+        st.page.clone().ok_or("浏览器未连接")?
     };
 
-    let json = serde_json::to_string(&response)
-        .map_err(|e| AppError::InternalError(format!("Failed to serialize response: {}", e)))?;
+    // 1. 发起导航
+    page.goto(&url).await.map_err(|e| e.to_string())?;
 
-    println!("Web automation completed: {}", json);
-    Ok(json)
+    // 2. 模拟等待网络空闲
+    page.wait_for_navigation().await.map_err(|e| e.to_string())?;
+
+    // 3. 等待指定节点出现
+    if let Some(selector) = wait_selector {
+        let mut found = false;
+        for _ in 0..10 {
+            if page.find_element(&selector).await.is_ok() {
+                found = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !found {
+            return Err(format!("Timeout waiting for selector: {}", selector));
+        }
+    }
+
+    Ok("页面加载并渲染完全".to_string())
+}
+
+// 核心优化：获取 Semantic Tree
+#[tauri::command]
+pub async fn get_semantic_tree(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let page = {
+        let st = state.lock().await;
+        st.page.clone().ok_or("浏览器未连接")?
+    };
+
+    let parse_script = r#"
+        (() => {
+            const elements = [];
+            let i = 1;
+            document.querySelectorAll('button, a, input, [role="button"], h1, h2, h3').forEach(el => {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                    elements.push({
+                        id: i++,
+                        tag: el.tagName.toLowerCase(),
+                        role: el.getAttribute('role') || '',
+                        text: (el.innerText || el.value || '').trim().substring(0, 100),
+                        ariaLabel: el.getAttribute('aria-label') || ''
+                    });
+                }
+            });
+            return JSON.stringify(elements);
+        })();
+    "#;
+
+    let result = page.evaluate(parse_script).await.map_err(|e| e.to_string())?;
+    Ok(result.into_value::<String>().unwrap_or_else(|_| "[]".to_string()))
 }
 
 /**

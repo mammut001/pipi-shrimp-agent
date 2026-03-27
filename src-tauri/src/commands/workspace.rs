@@ -63,6 +63,31 @@ pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
     fs::create_dir_all(&pipi_dir)
         .map_err(|e| AppError::FileError(format!("Failed to create .pipi-shrimp: {}", e)))?;
 
+    // 1.5 Generate core memory template if it doesn't exist
+    let core_md_path = pipi_dir.join("core.md");
+    if !core_md_path.exists() {
+        let template = r#"# 🦐 PiPi Shrimp Project Core Memory
+> This file is autonomously maintained by PiPi Shrimp Agent. It records the global context, architectural guidelines, and user preferences for this project.
+
+## 📌 Project Overview
+[Not recorded yet - Tell the Agent what this project is about]
+
+## 🛠 Tech Stack
+[Frameworks, languages, core dependencies]
+
+## 📖 Architecture & Structure
+- [Not recorded yet]
+
+## ⚙️ Key Commands
+- Start: `npm run dev`
+- Build: `npm run build`
+
+## 📝 User Rules & Preferences
+- [e.g., Prefer functional components]
+"#;
+        let _ = fs::write(&core_md_path, template);
+    }
+
     // 2. Update .gitignore if this is a git repo
     let git_dir = base.join(".git");
     if git_dir.exists() {

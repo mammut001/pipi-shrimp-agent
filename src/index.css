@@ -6,13 +6,32 @@
   body {
     @apply antialiased text-gray-900;
   }
+
+  /* Prevent horizontal overflow from any element */
+  * {
+    max-width: 100%;
+  }
+
+  /* Ensure prose pre elements don't cause horizontal scroll */
+  .prose pre {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* Ensure code blocks don't overflow */
+  .prose pre code {
+    display: block;
+    max-width: 100%;
+    white-space: pre;
+    overflow-x: auto;
+  }
 }
 
 @layer utilities {
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
-  
+
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
