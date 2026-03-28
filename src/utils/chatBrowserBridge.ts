@@ -12,6 +12,7 @@ import { createMessage, type Message } from '../types/chat';
 import { useBrowserAgentStore } from '../store/browserAgentStore';
 import { useUIStore } from '../store/uiStore';
 import { useChatStore } from '../store/chatStore';
+import { useCdpStore } from '../store/cdpStore';
 
 // Track browser workflow listener lifecycle between tasks
 let _browserStateUnsubscribe: (() => void) | null = null;
@@ -334,11 +335,19 @@ export function createTaskEnvelopeFromChat(
     taskDescription = `${taskDescription}。如果需要登录、MFA或人工审核，请停止并提示用户手动继续。`;
   }
 
-  return createTaskEnvelope(
+  const envelope = createTaskEnvelope(
     intent.targetUrl,
     message,
     taskDescription
   );
+
+  // Auto-inject executionMode based on CDP connection state
+  const cdpStatus = useCdpStore.getState().status;
+  if (cdpStatus === 'connected') {
+    envelope.executionMode = 'cdp';
+  }
+
+  return envelope;
 }
 
 /**
@@ -497,6 +506,7 @@ function startBrowserStateListener() {
 
       stopBrowserStateListener();
       const taskResult = currentState.lastTaskResult;
+      console.log('[chatBrowserBridge] status=completed, taskResult:', taskResult?.substring(0, 80), 'msgId:', msgId);
       const chatStore = useChatStore.getState();
 
       // Finalize the progress bubble

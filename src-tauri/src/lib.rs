@@ -364,6 +364,13 @@ pub fn run() {
             commands::web::connect_browser,
             commands::web::navigate_and_wait,
             commands::web::get_semantic_tree,
+            commands::web::cdp_click,
+            commands::web::cdp_type,
+            commands::web::cdp_scroll,
+            commands::web::launch_chrome_debug,
+            commands::web::disconnect_browser,
+            commands::web::resync_page,
+            commands::web::cdp_execute_script,
             commands::open_url,
             // Claude commands (CLI-based)
             claude::check_claude_available,

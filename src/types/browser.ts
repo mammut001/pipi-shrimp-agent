@@ -94,6 +94,12 @@ export interface BrowserTaskEnvelope {
   executionPrompt: string;
   requiresLogin: boolean;
   authPolicy: 'manual_login_required' | 'login_optional' | 'none';
+  /** Which execution tier to use for this task.
+   *  'pageagent' — embedded Tauri WebView (simple/public pages, works today)
+   *  'cdp'       — external Chrome via remote debugging port (complex/authenticated pages)
+   *  'auto'      — reserved for future smart routing; currently defaults to 'pageagent'
+   */
+  executionMode?: 'pageagent' | 'cdp' | 'auto';
   allowedControlMode: BrowserControlMode;
   metadata?: Record<string, unknown>;
 }
