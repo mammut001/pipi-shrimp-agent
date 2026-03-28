@@ -354,6 +354,11 @@ function buildApiMessages(messages: Message[]) {
 }
 
 /**
+ * Storage key for persisting current session ID (so we can restore it on restart)
+ */
+const CURRENT_SESSION_ID_STORAGE_KEY = 'ai-agent-current-session-id';
+
+/**
  * Chat store using Zustand
  */
 export const useChatStore = create<ChatState>()(
@@ -468,11 +473,23 @@ export const useChatStore = create<ChatState>()(
 
         set({ sessions });
 
-        // Auto-select most recent session so conversation is visible after restart
-        if (sessions.length > 0) {
+        // Restore the previously selected session (from localStorage), or fall back to most recent
+        const savedSessionId = localStorage.getItem(CURRENT_SESSION_ID_STORAGE_KEY);
+        let selectedSessionId: string | null = null;
+
+        if (savedSessionId && sessions.some(s => s.id === savedSessionId)) {
+          // Session exists - restore it
+          selectedSessionId = savedSessionId;
+          console.log('✅ Restored previously selected session:', savedSessionId);
+        } else if (sessions.length > 0) {
+          // No saved session or session was deleted - select most recent
           const mostRecent = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0];
-          set({ currentSessionId: mostRecent.id });
+          selectedSessionId = mostRecent.id;
           console.log('✅ Auto-selected most recent session:', mostRecent.id, mostRecent.title);
+        }
+
+        if (selectedSessionId) {
+          set({ currentSessionId: selectedSessionId });
         }
 
         // Set up streaming event listener
@@ -628,6 +645,9 @@ export const useChatStore = create<ChatState>()(
 
       // Clear stale permission dialogs before switching to the new session
       useUIStore.getState().clearAllPermissions();
+
+      // Persist current session ID so we can restore it on restart
+      localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, newSession.id);
 
       set((state) => ({
         sessions: [...state.sessions, newSession],
@@ -1147,15 +1167,18 @@ export const useChatStore = create<ChatState>()(
      * so the AI can answer based on what the browser agent found.
      */
     generateBrowserResultResponse: async (browserResult: string, originalQuery: string) => {
+      console.log('[generateBrowserResultResponse] called', { browserResult: browserResult?.substring(0, 80), originalQuery });
       const {
         currentSessionId,
-        currentMessages,
         addMessage,
         setStreaming,
         setError,
       } = get();
 
-      if (!currentSessionId) return;
+      if (!currentSessionId) {
+        console.warn('[generateBrowserResultResponse] no currentSessionId, aborting');
+        return;
+      }
 
       const apiConfig = useSettingsStore.getState().getActiveConfig();
       if (!apiConfig?.apiKey) {
@@ -1176,14 +1199,15 @@ export const useChatStore = create<ChatState>()(
           }
         }, 300_000);
 
-        // Filter out browser_progress and hidden context messages:
-        // - browser_progress: internal UI state cards, create consecutive assistant msgs → API errors
-        // - hidden: transient context messages from prior browser result injections
-        // This ensures clean alternating user/assistant message history for the API.
-        const filteredMessages = currentMessages().filter(
-          m => m.metadata?.type !== 'browser_progress' && !m.metadata?.hidden
-        );
-        const messages = buildApiMessages(filteredMessages);
+        // Use ONLY the original query as context — do NOT send full conversation history.
+        // When the conversation has many turns with tool calls, sending all 55+ messages
+        // causes the model to continue the prior task pattern ("我将打开 GitHub...") instead
+        // of simply reporting the browser result that is injected into the system prompt.
+        // A single user message is all the model needs: system prompt has the data.
+        const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
+          { role: 'user', content: originalQuery || '请根据浏览器获取到的数据回答问题。' },
+        ];
+        console.log('[generateBrowserResultResponse] messages to API:', messages.length, messages.map(m => `${m.role}:${m.content?.substring(0,40)}`));
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
@@ -1198,6 +1222,7 @@ export const useChatStore = create<ChatState>()(
         }
         systemPrompt += `\n\n---\n## 浏览器代理任务结果\n用户的问题是："${originalQuery}"\n\n浏览器代理获取到的数据：\n${browserResult}\n\n请根据以上数据，用自然的语言直接回答用户的问题。不要提及"浏览器代理"或内部流程，直接给出结果即可。`;
 
+        console.log('[generateBrowserResultResponse] invoking API with systemPrompt length:', systemPrompt.length);
         const response = await invoke<{
           content: string;
           artifacts: Array<{ type: string; content: string; title?: string; language?: string }>;
@@ -1219,6 +1244,7 @@ export const useChatStore = create<ChatState>()(
         const { updateLastMessage } = get();
 
         const rawContent = finalContent || response.content || '';
+        console.log('[generateBrowserResultResponse] API done. streamingContent len:', finalContent?.length, 'response.content len:', response.content?.length, 'rawContent preview:', rawContent.substring(0, 100));
         const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(rawContent);
 
         const tokenUsage = response.usage ? {
@@ -1855,6 +1881,9 @@ export const useChatStore = create<ChatState>()(
         ) {
           void scrubDanglingToolCalls(previousSessionId, set, get);
         }
+
+        // Persist current session ID so we can restore it on restart
+        localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, sessionId);
 
         set({
           currentSessionId: sessionId,

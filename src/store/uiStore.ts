@@ -12,13 +12,29 @@ import { NOTIFICATION_TIMEOUT } from '../types/ui';
 const AGENT_INSTRUCTIONS_STORAGE_KEY = 'ai-agent-instructions';
 
 /**
+ * Storage key for persisting current view (chat, workflow, skill)
+ */
+const CURRENT_VIEW_STORAGE_KEY = 'ai-agent-current-view';
+
+/**
+ * Get persisted current view, default to 'chat'
+ */
+const getInitialCurrentView = (): 'chat' | 'workflow' | 'skill' | 'browser' => {
+  const saved = localStorage.getItem(CURRENT_VIEW_STORAGE_KEY);
+  if (saved === 'chat' || saved === 'workflow' || saved === 'skill' || saved === 'browser') {
+    return saved;
+  }
+  return 'chat';
+};
+
+/**
  * UI store using Zustand
  */
 export const useUIStore = create<UIState>((set) => ({
   // ========== Initial State ==========
   sidebarVisible: true,
   settingsOpen: false,
-  currentView: 'chat' as 'chat' | 'workflow' | 'skill' | 'browser',
+  currentView: getInitialCurrentView(),
   currentArtifactId: undefined,
   permissionQueue: [],
   notifications: [],
@@ -41,8 +57,10 @@ export const useUIStore = create<UIState>((set) => ({
   /**
    * Set current view (chat, workflow, or skill)
    */
-  setCurrentView: (view: 'chat' | 'workflow' | 'skill' | 'browser') =>
-    set({ currentView: view }),
+  setCurrentView: (view: 'chat' | 'workflow' | 'skill' | 'browser') => {
+    localStorage.setItem(CURRENT_VIEW_STORAGE_KEY, view);
+    set({ currentView: view });
+  },
 
   /**
    * Toggle sidebar visibility

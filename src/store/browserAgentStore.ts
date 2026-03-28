@@ -48,9 +48,8 @@ import type {
   BrowserHandoffState,
   LogEntry,
 } from '../types/browser';
-// CDP mode: reserved for future tiered dispatch (complex/authenticated tasks).
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { executeNativeBrowserTask as _executeCdpTask } from '../utils/nativeBrowserAgent';
+// CDP mode: tiered dispatch for complex/authenticated tasks
+import { executeNativeBrowserTask as executeCdpTask } from '../utils/nativeBrowserAgent';
 import {
   parseInspectionResult,
 } from '../utils/browserInspection';
@@ -671,19 +670,24 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       return;
     }
 
-    // Safety check - block only on clearly bad auth states
-    const blockedStates: BrowserAuthState[] = ['auth_required', 'mfa_required', 'captcha_required', 'expired', 'unauthenticated'];
-    if (blockedStates.includes(authState)) {
-      addLog('error', `页面需要登录或验证 (${authState})，无法执行任务`);
-      set({ status: 'error', error: `需要登录: ${authState}` });
-      return;
-    }
-    // If inspection explicitly failed (safeForAgent=false with known block reason), block
-    // Use store authState (not inspection.authState) — executeTaskEnvelope may have reset it to 'unknown'
-    if (inspection && !inspection.safeForAgent && authState !== 'unknown') {
-      addLog('error', '页面未通过安全检查，无法执行任务');
-      set({ status: 'error', error: '页面安全检查失败' });
-      return;
+    // Safety check - block only on clearly bad auth states (skip for CDP mode)
+    const { pendingTask } = get();
+    const useCdp = pendingTask?.executionMode === 'cdp';
+
+    if (!useCdp) {
+      const blockedStates: BrowserAuthState[] = ['auth_required', 'mfa_required', 'captcha_required', 'expired', 'unauthenticated'];
+      if (blockedStates.includes(authState)) {
+        addLog('error', `页面需要登录或验证 (${authState})，无法执行任务`);
+        set({ status: 'error', error: `需要登录: ${authState}` });
+        return;
+      }
+      // If inspection explicitly failed (safeForAgent=false with known block reason), block
+      // Use store authState (not inspection.authState) — executeTaskEnvelope may have reset it to 'unknown'
+      if (inspection && !inspection.safeForAgent && authState !== 'unknown') {
+        addLog('error', '页面未通过安全检查，无法执行任务');
+        set({ status: 'error', error: '页面安全检查失败' });
+        return;
+      }
     }
 
     // Create abort controller for this task
@@ -698,6 +702,23 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         return;
       }
 
+      // Determine execution engine from current envelope
+      if (useCdp) {
+        // CDP Tier: use external Chrome via nativeBrowserAgent
+        addLog('info', `[CDP 模式] 开始执行: ${task.substring(0, 50)}...`);
+        const targetUrl = get().pendingTask?.targetUrl;
+        const resultText = await executeCdpTask(task, config.apiKey, config.model || 'claude-3-5-sonnet-20241022', {
+          baseUrl: config.baseUrl,
+          onLog: addLog,
+          targetUrl,
+        });
+        addLog('success', `[CDP 模式] 任务完成: ${resultText}`);
+        const completedTaskId = get().pendingTask?.id || null;
+        set({ status: 'completed', lastCompletedTaskId: completedTaskId, lastTaskResult: resultText || null });
+        return;
+      }
+
+      // PageAgent Tier: use embedded WebView (original logic)
       addLog('info', `开始执行任务: ${task.substring(0, 50)}${task.length > 50 ? '...' : ''}`);
 
       const pageAgentSystemPrompt = `You are a browser automation agent. You MUST only use the following actions — do not invent or use any other action names:
@@ -735,16 +756,40 @@ Complete the task efficiently and call "done" when finished.`;
   /**
    * Execute a task envelope (with profile and auth policy).
    *
-   * Uses the embedded PageAgent (Rust WebView) for simple/standard web tasks.
-   * CDP mode (executeNativeBrowserTask) is imported but reserved for future use —
-   * tiered dispatch (simple → PageAgent, complex → CDP) will be added later.
+   * Uses tiered dispatch based on executionMode:
+   * - 'pageagent' (default): embedded Tauri WebView for simple/public pages
+   * - 'cdp': external Chrome via remote debugging port for complex/authenticated pages
+   * - 'auto': reserved for future smart routing (currently defaults to pageagent)
    */
   executeTaskEnvelope: async (envelope: BrowserTaskEnvelope) => {
     const { openWindow, inspectCurrentPage, requestLogin, handleBlockedState } = get();
+    const { addLog } = get();
 
     // Bind the task and clear stale result from any previous task
     get().bindTask(envelope);
     set({ lastTaskResult: null });
+
+    // Tiered dispatch: explicitly select execution engine based on executionMode
+    const mode = envelope.executionMode ?? 'pageagent';
+
+    if (mode === 'cdp') {
+      // CDP Tier: connect to external Chrome, bypass embedded WebView
+      addLog('info', '[CDP 模式] 连接外部 Chrome...');
+      set({
+        isWindowOpen: true,     // mock so executeTask gate passes
+        currentUrl: envelope.targetUrl,
+        status: 'ready_for_agent',
+        mode: 'agent_controlled',
+        waitingForUserResume: false,
+        handoffState: 'no_handoff',
+        authState: 'authenticated',
+      });
+      await get().executeTask(envelope.executionPrompt);
+      return;
+    }
+
+    // mode === 'pageagent' or 'auto' (auto defaults to pageagent for now)
+    // ... existing openWindow → inspectCurrentPage → auth routing logic ...
 
     // If window not open, open it and wait for initial page load
     if (!get().isWindowOpen) {

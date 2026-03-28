@@ -7,6 +7,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useUIStore, useSettingsStore, useChatStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
+import { useCdpStore } from '@/store/cdpStore';
+import { CdpConnectorModal } from './CdpConnectorModal';
 import { TypstPreview } from './TypstPreview';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { getLatestTypstBlock } from '@/utils/typst';
@@ -129,6 +131,8 @@ export const AgentPanel: React.FC = () => {
   const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
   const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode, isStreaming, pendingToolCalls } = useChatStore();
   const { status: browserStatus } = useBrowserAgentStore();
+  const cdpStatus = useCdpStore(s => s.status);
+  const [showCdpModal, setShowCdpModal] = useState(false);
 
   // Get session-level working files and permissionMode for current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -337,7 +341,7 @@ export const AgentPanel: React.FC = () => {
 
       {/* Tab content: Browser - Always show mini browser + task + logs */}
       {activeTab === 'browser' && (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <BrowserMiniPreview />
         </div>
       )}
@@ -579,7 +583,14 @@ export const AgentPanel: React.FC = () => {
             <div>
               <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Connectors</h4>
               <div className="space-y-2">
-                <div className="flex items-center justify-between p-2.5 bg-white border border-gray-200 rounded-xl shadow-sm hover:border-blue-200 transition-all group">
+                <button
+                  onClick={() => {
+                    if (cdpStatus !== 'connected') {
+                      setShowCdpModal(true);
+                    }
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 bg-white border border-gray-200 rounded-xl shadow-sm hover:border-blue-200 transition-all group text-left"
+                >
                   <div className="flex items-center gap-3">
                     <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -587,12 +598,24 @@ export const AgentPanel: React.FC = () => {
                       </svg>
                     </div>
                     <div>
-                      <p className="text-[11px] font-bold text-gray-800">Claude in Chrome</p>
-                      <p className="text-[9px] text-gray-400 font-medium uppercase tracking-tight">Active Connection</p>
+                      <p className="text-[11px] font-bold text-gray-800">
+                        {cdpStatus === 'connected' ? 'Pipi Shrimp in Chrome' : 'Chrome Browser'}
+                      </p>
+                      <p className="text-[9px] text-gray-400 font-medium uppercase tracking-tight">
+                        {cdpStatus === 'connected' && 'Active Connection'}
+                        {cdpStatus === 'connecting' && 'Connecting...'}
+                        {cdpStatus === 'disconnected' && 'Click to Connect'}
+                        {cdpStatus === 'error' && 'Connection Failed — Retry'}
+                      </p>
                     </div>
                   </div>
-                  <div className="h-1.5 w-1.5 rounded-full bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]" />
-                </div>
+                  <div className={`h-1.5 w-1.5 rounded-full shadow-sm ${
+                    cdpStatus === 'connected' ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]' :
+                    cdpStatus === 'connecting' ? 'bg-yellow-400 animate-pulse' :
+                    cdpStatus === 'error' ? 'bg-red-400' :
+                    'bg-gray-300'
+                  }`} />
+                </button>
               </div>
             </div>
 
@@ -627,6 +650,14 @@ export const AgentPanel: React.FC = () => {
         </div>
         <div className="opacity-60">v0.1.0-alpha</div>
       </div>
+
+      {showCdpModal && (
+        <CdpConnectorModal
+          onClose={() => {
+            setShowCdpModal(false);
+          }}
+        />
+      )}
     </div>
   );
 };

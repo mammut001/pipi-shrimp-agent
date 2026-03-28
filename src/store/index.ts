@@ -8,6 +8,7 @@ export { useSettingsStore } from './settingsStore';
 export { useUIStore } from './uiStore';
 export { useWorkflowStore } from './workflowStore';
 export { useBrowserAgentStore } from './browserAgentStore';
+export { useCdpStore } from './cdpStore';
 
 // Export chat types
 export type {

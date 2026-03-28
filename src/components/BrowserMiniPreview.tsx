@@ -14,8 +14,9 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { useBrowserAgentStore, useUIStore } from '@/store';
+import { useBrowserAgentStore, useUIStore, useCdpStore } from '@/store';
 import { showBrowserWindow } from '@/utils/browserCommands';
+import { createTaskEnvelope } from '@/utils/browserTaskPlanner';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
 
 /**
@@ -67,6 +68,10 @@ export function BrowserMiniPreview() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [copiedLogs, setCopiedLogs] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // CDP state for direct task input
+  const cdpConnected = useCdpStore(s => s.status === 'connected');
+  const [cdpUrl, setCdpUrl] = useState('');
 
   // Copy all logs to clipboard
   const handleCopyLogs = async () => {
@@ -209,13 +214,21 @@ export function BrowserMiniPreview() {
           userIntent: taskInput.trim(),
           executionPrompt: taskInput.trim(),
         });
+      } else if (cdpConnected && cdpUrl.trim()) {
+        // No pendingTask but CDP is connected — create envelope directly
+        const url = cdpUrl.trim().startsWith('http')
+          ? cdpUrl.trim()
+          : `https://${cdpUrl.trim()}`;
+        const envelope = createTaskEnvelope(url, taskInput.trim(), taskInput.trim());
+        envelope.executionMode = 'cdp';
+        await executeTaskEnvelope(envelope);
       } else {
         // CRITICAL: No envelope context available - cannot run raw task
         // This would lose: targetUrl, siteProfileId, requiresLogin, authPolicy
         // The user must initiate from chat to create proper envelope context
         setIsExecuting(false);
         // Show inline error in logs instead of browser alert
-        addLog?.('error', '无法运行：缺少任务上下文。请从聊天中发起任务以创建浏览器任务信封。');
+        addLog?.('error', '无法运行：缺少任务上下文。请从聊天中发起任务，或连接 Chrome 后在此输入 URL。');
         return;
       }
     } finally {
@@ -262,9 +275,18 @@ export function BrowserMiniPreview() {
   };
 
   const isExpanded = presentationMode === 'expanded';
+  const isAgentRunning = status === 'running';
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
+      {/* Agent running banner */}
+      {isAgentRunning && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-[11px] font-medium flex-shrink-0">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-white animate-ping" />
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-white absolute" />
+          Agent 正在运行
+        </div>
+      )}
       {/* 1. Live Browser Surface / Compact Header */}
       <div className="p-3 space-y-3 flex-shrink-0">
         {/* Preview Card - only show in mini mode (in expanded, browser is in center pane) */}
@@ -387,32 +409,46 @@ export function BrowserMiniPreview() {
           )}
         </div>
 
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={taskInput}
-            onChange={(e) => setTaskInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={isWindowOpen ? "Enter task (e.g., click login)" : "Open browser first"}
-            disabled={!isWindowOpen || showLoginPrompt}
-            className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
-          />
-          {isExecuting ? (
-            <button
-              onClick={handleStopTask}
-              className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              onClick={handleRunTask}
-              disabled={!taskInput.trim() || !isWindowOpen || showLoginPrompt || !canExecute}
-              className="px-3 py-2 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-            >
-              Run
-            </button>
+        <div className="flex flex-col gap-2">
+          {/* CDP URL input - only show when CDP connected and no pending task */}
+          {cdpConnected && !pendingTask && (
+            <input
+              type="text"
+              value={cdpUrl}
+              onChange={(e) => setCdpUrl(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="输入目标 URL（如 example.com）"
+              className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-blue-400"
+            />
           )}
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={taskInput}
+              onChange={(e) => setTaskInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={isWindowOpen || cdpConnected ? "Enter task (e.g., search trending repos)" : "Open browser first"}
+              disabled={(!isWindowOpen && !cdpConnected) || showLoginPrompt}
+              className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+            />
+            {isExecuting ? (
+              <button
+                onClick={handleStopTask}
+                className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                onClick={handleRunTask}
+                disabled={!taskInput.trim() || (!isWindowOpen && !cdpConnected) || showLoginPrompt || (!cdpConnected && !canExecute)}
+                className="px-3 py-2 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                Run
+              </button>
+            )}
+          </div>
         </div>
 
         {showLoginPrompt && (
