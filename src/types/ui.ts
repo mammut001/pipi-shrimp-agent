@@ -56,13 +56,19 @@ export interface UIState {
   taskProgress: TaskStep[];
 
   // Right panel active tab (global so external triggers like browser intent can switch it)
-  agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code';
+  agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code' | 'roadmap';
 
   // Browser Dock State (see browser-docked-layout-design.md)
   browserDockMode: BrowserDockMode;
   browserSplitFocus: SplitFocus;
   browserPaneWidth: number;
   browserPaneVisible: boolean;
+
+  // Chrome connect prompt (shown when task complexity requires real Chrome)
+  chromePromptVisible: boolean;
+  chromePromptTargetUrl: string | null;
+  showChromePrompt: (targetUrl: string) => Promise<boolean>;
+  resolveChromePrompt: (useCdp: boolean) => void;
 
   // ========== Action Methods ==========
 

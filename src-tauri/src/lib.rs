@@ -53,13 +53,16 @@ async fn send_claude_sdk_chat(
     model: String,
     base_url: Option<String>,
     system_prompt: Option<String>,
+    #[allow(non_snake_case)]
+    browserConnected: Option<bool>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<ChatResponse, String> {
     // Convert empty string to None for custom API
     let base_url = base_url.filter(|s| !s.is_empty());
+    let browser_connected = browserConnected.unwrap_or(false);
     let state = state.lock().await;
     state.client
-        .chat(messages, api_key, model, base_url, system_prompt)
+        .chat(messages, api_key, model, base_url, system_prompt, browser_connected)
         .await
         .map_err(|e| e.to_string())
 }
@@ -79,15 +82,18 @@ async fn send_claude_sdk_chat_streaming(
     systemPrompt: Option<String>,
     #[allow(non_snake_case)]
     noTools: Option<bool>,
+    #[allow(non_snake_case)]
+    browserConnected: Option<bool>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, String> {
     // Convert empty string to None for custom API
     let base_url = baseUrl.filter(|s| !s.is_empty());
     let no_tools = noTools.unwrap_or(false);
+    let browser_connected = browserConnected.unwrap_or(false);
     let state = state.lock().await;
     state.client
-        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window)
+        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window, browser_connected)
         .await
         .map_err(|e| e.to_string())
 }
@@ -128,7 +134,7 @@ async fn test_connection(
     let state = state.lock().await;
     match state
         .client
-        .chat(messages, apiKey, model, base_url, None)
+        .chat(messages, apiKey, model, base_url, None, false) // false = browser not connected for test
         .await
     {
         Ok(_) => Ok(true),
@@ -232,6 +238,36 @@ fn db_get_model_token_stats() -> Result<Vec<ModelTokenStats>, String> {
 #[tauri::command]
 fn db_get_total_token_stats() -> Result<(i64, i64, i64), String> {
     get_total_token_stats().map_err(|e| e.to_string())
+}
+
+/// Resolve the project root: during `tauri dev` cwd is `src-tauri/`,
+/// so we walk up one level if the cwd ends with "src-tauri".
+fn project_root() -> std::path::PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    if cwd.file_name().map(|n| n == "src-tauri").unwrap_or(false) {
+        cwd.parent().unwrap_or(&cwd).to_path_buf()
+    } else {
+        cwd
+    }
+}
+
+/// Read a file relative to the project root.
+/// Works in both `tauri dev` (cwd = src-tauri) and production.
+#[tauri::command]
+fn read_project_file(relative_path: String) -> Result<String, String> {
+    let full = project_root().join(&relative_path);
+    std::fs::read_to_string(&full)
+        .map_err(|e| format!("Cannot read '{}': {}", full.display(), e))
+}
+
+/// Write a file relative to the project root.
+#[tauri::command]
+fn write_project_file(relative_path: String, content: String) -> Result<(), String> {
+    let full = project_root().join(&relative_path);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create dirs: {}", e))?;
+    }
+    std::fs::write(&full, content).map_err(|e| format!("Cannot write '{}': {}", full.display(), e))
 }
 
 /**
@@ -408,6 +444,9 @@ pub fn run() {
             render_typst_to_svg,
             render_typst_to_pdf,
             get_font_count,
+            // Project file helpers (roadmap panel, no workspace required)
+            read_project_file,
+            write_project_file,
             // Workspace / Work Dir commands
             commands::open_folder_dialog,
             commands::init_pipi_shrimp,

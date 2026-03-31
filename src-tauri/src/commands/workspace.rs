@@ -65,25 +65,36 @@ pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
 
     // 1.5 Generate core memory template if it doesn't exist
     let core_md_path = pipi_dir.join("core.md");
-    if !core_md_path.exists() {
+    let core_md_is_new = !core_md_path.exists();
+    if core_md_is_new {
         let template = r#"# 🦐 PiPi Shrimp Project Core Memory
-> This file is autonomously maintained by PiPi Shrimp Agent. It records the global context, architectural guidelines, and user preferences for this project.
+> Maintained by PiPi Shrimp Agent. Records project context, architecture, and AI behavior rules.
+> Auto-populated on first bind. Update freely — AI will read this every message.
 
 ## 📌 Project Overview
-[Not recorded yet - Tell the Agent what this project is about]
+[Auto-detected on bind — see below]
 
 ## 🛠 Tech Stack
-[Frameworks, languages, core dependencies]
+[Auto-detected on bind — see below]
 
 ## 📖 Architecture & Structure
-- [Not recorded yet]
+[Not recorded yet]
 
 ## ⚙️ Key Commands
 - Start: `npm run dev`
 - Build: `npm run build`
 
-## 📝 User Rules & Preferences
-- [e.g., Prefer functional components]
+## 📝 AI Behavior Rules
+- Before modifying any file, create a checkpoint commit: `git add -A && git commit -m "checkpoint: before [description]"`
+- After completing changes, commit: `git add -A && git commit -m "fix/feat: [description]"`
+- New features must be developed on a separate branch: `git checkout -b feat/[name]`
+- Inform the user when a feature is ready — wait for confirmation before merging to main
+- Prefer editing existing files over creating new ones
+- Do not add features, error handling, or abstractions beyond what was asked
+- Only add comments where logic is non-obvious
+
+## 🧠 Project Memory
+[AI will append persistent facts here as the project evolves]
 "#;
         let _ = fs::write(&core_md_path, template);
     }
@@ -114,7 +125,10 @@ pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
         }
     }
 
-    Ok(pipi_dir.to_string_lossy().to_string())
+    // Return pipi_dir path + whether core.md was freshly created
+    // Format: "path|new" or "path|exists" — frontend uses this to trigger auto-scan
+    let suffix = if core_md_is_new { "new" } else { "exists" };
+    Ok(format!("{}|{}", pipi_dir.to_string_lossy(), suffix))
 }
 
 /// Return the path for the **next** output folder for today.

@@ -63,9 +63,44 @@ When you need to use multiple tools, **batch them together** rather than calling
 Following these guidelines will make interactions faster and more efficient.
 "#;
 
+/// Browser tools guide - injected when Chrome CDP is connected
+/// Note: browser tools only appear in the tool list when browser is connected
+const BROWSER_TOOLS_GUIDE: &str = r#"
+## Browser Tools (when Chrome CDP is connected)
+
+You have access to browser tools for web automation. Use these when the user asks you to browse websites, extract information, or interact with web pages.
+
+### Available Browser Tools:
+- **browser_navigate(url)**: Open a URL in the browser
+- **browser_get_page()**: Get all interactive elements on the current page (use after navigating)
+- **browser_click(element_id)**: Click an element by its id from browser_get_page
+- **browser_type(element_id, text)**: Type text into an input field
+- **browser_scroll(direction, pixels)**: Scroll the page up or down (direction: "up" or "down", pixels: scroll amount)
+- **browser_get_text(max_length)**: Get the full visible text content of the page
+
+### Recommended Workflow:
+1. Start with **browser_navigate** to open the target URL
+2. Use **browser_get_page** to see what's on the page
+3. Use **browser_click** to click buttons/links, or **browser_type** to fill forms
+4. Use **browser_get_page** again to see the updated state
+5. Use **browser_get_text** to read article content or data
+
+### Important Notes:
+- Browser tools only work if the user has connected Chrome via CDP (Developer Tools Protocol)
+- If tools return an error about "browser not connected", tell the user to connect Chrome first
+- After clicking, wait a moment and call browser_get_page to see the new page state
+- Use browser_scroll to reveal content below the fold
+"#;
+
 /// Helper function to merge user system prompt with global security constraints
-pub fn merge_system_prompt(user_prompt: Option<&str>) -> String {
-    let base_prompt = format!("{}\n\n{}", GLOBAL_SECURITY_CONSTRAINT.trim(), TOOL_EFFICIENCY_GUIDE.trim());
+pub fn merge_system_prompt(user_prompt: Option<&str>, browser_connected: bool) -> String {
+    let mut base_prompt = format!("{}\n\n{}", GLOBAL_SECURITY_CONSTRAINT.trim(), TOOL_EFFICIENCY_GUIDE.trim());
+
+    // Add browser tools guide if browser is connected
+    if browser_connected {
+        base_prompt.push_str(&format!("\n\n{}", BROWSER_TOOLS_GUIDE.trim()));
+    }
+
     match user_prompt {
         Some(user) if !user.is_empty() => {
             format!("{}\n\n---\n\n## User-Provided Instructions\n\n{}",
@@ -140,11 +175,111 @@ impl ClaudeClient {
 /**
  * Tool definitions for Anthropic Function Calling
  */
-pub fn get_tools() -> Vec<serde_json::Value> {
+/// Browser tools - only available when Chrome CDP is connected
+fn get_browser_tools() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "name": "browser_navigate",
+            "description": "Navigate the browser to a URL. Use this to open websites or move between pages. Returns the page title and current URL after navigation.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Full URL to navigate to, e.g. https://example.com"
+                    }
+                },
+                "required": ["url"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_get_page",
+            "description": "Get the interactive elements on the current browser page as a structured list. Each element has an id (for clicking), tag, text content, and role. Use this after navigating or after user interactions to understand what's on screen.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_click",
+            "description": "Click an element on the current browser page by its id from browser_get_page. After clicking, wait briefly for the page to update, then call browser_get_page again to see the new state.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "element_id": {
+                        "type": "number",
+                        "description": "The id of the element to click, from browser_get_page output"
+                    }
+                },
+                "required": ["element_id"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_type",
+            "description": "Type text into an input element on the current page by its id. Use browser_get_page first to find the correct input element id.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "element_id": {
+                        "type": "number",
+                        "description": "The id of the input element to type into"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The text to type"
+                    }
+                },
+                "required": ["element_id", "text"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_scroll",
+            "description": "Scroll the current browser page up or down to reveal more content.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "enum": ["down", "up"],
+                        "description": "Scroll direction"
+                    },
+                    "pixels": {
+                        "type": "number",
+                        "description": "How many pixels to scroll, default 600"
+                    }
+                },
+                "required": ["direction"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_get_text",
+            "description": "Get the full visible text content of the current page. Use this to read article content, table data, or any text information after navigating to a page.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "max_length": {
+                        "type": "number",
+                        "description": "Maximum characters to return, default 3000"
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
+pub fn get_tools(browser_connected: bool) -> Vec<serde_json::Value> {
     // NOTE: "additionalProperties": false on every schema is required for MiniMax
     // and OpenAI strict-mode. Without it, models may generate extra properties
     // that fail server-side validation ("Tool arguments validation failed").
-    vec![
+    let mut tools = vec![
         serde_json::json!({
             "name": "read_file",
             "description": "Read the contents of a file from the filesystem. Use this when you need to see what is inside a file.",
@@ -319,7 +454,14 @@ pub fn get_tools() -> Vec<serde_json::Value> {
                 "additionalProperties": false
             }
         }),
-    ]
+    ];
+
+    // Add browser tools only when Chrome CDP is connected
+    if browser_connected {
+        tools.extend(get_browser_tools());
+    }
+
+    tools
 }
 
 /**
@@ -836,11 +978,12 @@ impl ClaudeClient {
         model: String,
         base_url: Option<String>,
         system_prompt: Option<String>,
+        browser_connected: bool,
     ) -> AppResult<ChatResponse> {
         if let Some(url) = base_url {
-            self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None).await
+            self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None, browser_connected).await
         } else {
-            self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), false, false, None).await
+            self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), false, false, None, browser_connected).await
         }
     }
 
@@ -856,6 +999,7 @@ impl ClaudeClient {
         system_prompt: Option<String>,
         no_tools: bool,
         window: Window,
+        browser_connected: bool,
     ) -> AppResult<ChatResponse> {
         // Create cancellation token and store globally
         let cancel_token = CancellationToken::new();
@@ -881,9 +1025,9 @@ impl ClaudeClient {
             }
             result = async {
                 if let Some(url) = base_url {
-                    self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window)).await
+                    self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window), browser_connected).await
                 } else {
-                    self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window)).await
+                    self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window), browser_connected).await
                 }
             } => result
         };
@@ -909,6 +1053,7 @@ impl ClaudeClient {
         streaming: bool,
         no_tools: bool,
         window: Option<Window>,
+        browser_connected: bool,
     ) -> AppResult<ChatResponse> {
         let thinking = supports_thinking(model);
         // thinking_budget is the TOTAL thinking token budget across ALL interleaved rounds.
@@ -937,11 +1082,11 @@ impl ClaudeClient {
         }).as_object().cloned().unwrap();
 
         if !no_tools {
-            body.insert("tools".to_string(), serde_json::json!(get_tools()));
+            body.insert("tools".to_string(), serde_json::json!(get_tools(browser_connected)));
         }
 
         // ALWAYS inject global security constraints (Layer 2 defense)
-        let merged_system = merge_system_prompt(system_prompt);
+        let merged_system = merge_system_prompt(system_prompt, browser_connected);
         body.insert("system".to_string(), serde_json::json!(merged_system));
 
         if thinking {
@@ -964,7 +1109,7 @@ impl ClaudeClient {
         // Estimate input tokens from the formatted messages (used as fallback if API returns 0)
         let anthropic_msgs = format_messages_for_anthropic(messages);
         let estimated_input = estimate_messages_tokens(&anthropic_msgs)
-            + estimate_tokens(&merge_system_prompt(system_prompt));
+            + estimate_tokens(&merge_system_prompt(system_prompt, browser_connected));
 
         // Send request
         let mut request = self.client
@@ -1217,18 +1362,19 @@ impl ClaudeClient {
         streaming: bool,
         no_tools: bool,
         window: Option<Window>,
+        browser_connected: bool,
     ) -> AppResult<ChatResponse> {
         let base_url = base_url.unwrap_or_default();
         let tools = if no_tools {
             None
         } else {
-            Some(convert_tools_to_openai_format(&get_tools()))
+            Some(convert_tools_to_openai_format(&get_tools(browser_connected)))
         };
 
         // Build messages list，system prompt 放到 messages 数组的第一条（OpenAI 兼容格式）
         // ALWAYS inject global security constraints (Layer 2 defense)
         let mut openai_messages = format_messages_for_openai(messages);
-        let merged_system = merge_system_prompt(system_prompt);
+        let merged_system = merge_system_prompt(system_prompt, browser_connected);
         openai_messages.insert(0, serde_json::json!({
             "role": "system",
             "content": merged_system
@@ -1581,19 +1727,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_tools_count() {
-        let tools = get_tools();
-        assert_eq!(tools.len(), 10);
+    fn test_get_tools_count_without_browser() {
+        let tools = get_tools(false);
+        assert_eq!(tools.len(), 10); // 10 file/command tools
+    }
+
+    #[test]
+    fn test_get_tools_count_with_browser() {
+        let tools = get_tools(true);
+        assert_eq!(tools.len(), 16); // 10 file/command + 6 browser tools
     }
 
     #[test]
     fn test_get_tools_schema_valid() {
-        let tools = get_tools();
+        let tools = get_tools(false);
         for tool in &tools {
             assert!(tool.get("name").is_some());
             assert!(tool.get("description").is_some());
             assert!(tool.get("input_schema").is_some());
         }
+    }
+
+    #[test]
+    fn test_browser_tools_present_when_connected() {
+        let tools = get_tools(true);
+        let tool_names: Vec<&str> = tools.iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(tool_names.contains(&"browser_navigate"));
+        assert!(tool_names.contains(&"browser_get_page"));
+        assert!(tool_names.contains(&"browser_click"));
+        assert!(tool_names.contains(&"browser_type"));
+        assert!(tool_names.contains(&"browser_scroll"));
+        assert!(tool_names.contains(&"browser_get_text"));
+    }
+
+    #[test]
+    fn test_browser_tools_absent_when_disconnected() {
+        let tools = get_tools(false);
+        let tool_names: Vec<&str> = tools.iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(!tool_names.contains(&"browser_navigate"));
+        assert!(!tool_names.contains(&"browser_get_page"));
+        assert!(!tool_names.contains(&"browser_click"));
     }
 
     #[test]

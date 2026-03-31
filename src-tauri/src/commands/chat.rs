@@ -7,10 +7,13 @@
 use crate::database::{self, DbSession, DbMessage};
 use crate::models::{SendMessageRequest, SendMessageResponse};
 use crate::utils::{AppError, AppResult};
+use crate::commands::web::{self, BrowserController};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use uuid::Uuid;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 /**
  * Session data structure for API responses
@@ -292,6 +295,7 @@ pub async fn execute_tool(
     tool_name: String,
     arguments: String,
     work_dir: Option<String>,
+    browser_state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> AppResult<String> {
     println!("🔧 Executing tool: {} with args: {}", tool_name, arguments);
 
@@ -391,12 +395,194 @@ pub async fn execute_tool(
                 "message": "get_current_workspace is handled by the frontend. The workspace path is injected into the system prompt automatically."
             }).to_string()
         }
+
+        // ==================== Browser Tools ====================
+
+        "browser_navigate" => {
+            let url = args.get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'url' argument for browser_navigate".to_string()))?;
+
+            // Call navigate_and_wait via the browser commands
+            let result = web::navigate_and_wait(url.to_string(), None, browser_state.clone()).await;
+
+            match result {
+                Ok(_) => {
+                    // Resync page reference — navigation may switch the active page
+                    // (new tab, redirect, SPA router). Stale reference would make
+                    // subsequent browser_get_page / browser_click fail silently.
+                    if let Err(e) = web::resync_page(browser_state.clone()).await {
+                        eprintln!("[browser_navigate] resync_page warning: {}", e);
+                        // Non-fatal — continue with current reference
+                    }
+                    // Get page title after navigation
+                    let title_script = r#"(function() { return document.title; })()"#;
+                    let title_result = web::cdp_execute_script(title_script.to_string(), browser_state).await;
+                    let title = title_result.unwrap_or_else(|_| "Unknown".to_string());
+                    format!("已导航到: {}，页面标题: {}", url, title)
+                }
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        format!("ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。")
+                    } else {
+                        format!("ERROR: 导航失败（{}s）。URL: {}。可能是网络问题或页面需要认证。", 30, url)
+                    }
+                }
+            }
+        }
+
+        "browser_get_page" => {
+            // Get semantic tree from the browser
+            let result = web::get_semantic_tree(browser_state).await;
+
+            match result {
+                Ok(elements_json) => {
+                    // Parse and format the elements for readability
+                    let elements: Vec<serde_json::Value> = serde_json::from_str(&elements_json)
+                        .unwrap_or_default();
+
+                    if elements.is_empty() {
+                        "当前页面没有可交互元素".to_string()
+                    } else {
+                        let mut output = format!("当前页面元素（共 {} 个）:\n", elements.len());
+                        for el in elements.iter().take(50) {
+                            let id = el.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let tag = el.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+                            let text = el.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                            let href = el.get("href").and_then(|v| v.as_str()).unwrap_or("");
+                            let aria = el.get("ariaLabel").and_then(|v| v.as_str()).unwrap_or("");
+
+                            if !text.is_empty() || !aria.is_empty() {
+                                let display = if !aria.is_empty() && aria != text {
+                                    format!("{} ({})", text, aria)
+                                } else {
+                                    text.to_string()
+                                };
+                                let href_info = if !href.is_empty() {
+                                    format!(" (href={})", href.chars().take(40).collect::<String>())
+                                } else {
+                                    String::new()
+                                };
+                                output.push_str(&format!("[{}] {}: \"{}\"{}\n", id, tag, display, href_info));
+                            }
+                        }
+                        if elements.len() > 50 {
+                            output.push_str(&format!("\n... 还有 {} 个元素未显示\n", elements.len() - 50));
+                        }
+                        output
+                    }
+                }
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+                    } else {
+                        format!("ERROR: 获取页面元素失败: {}", e)
+                    }
+                }
+            }
+        }
+
+        "browser_click" => {
+            let element_id = args.get("element_id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| AppError::InternalError("Missing 'element_id' argument for browser_click".to_string()))?;
+
+            let result = web::cdp_click(element_id, browser_state).await;
+
+            match result {
+                Ok(_) => {
+                    // Wait briefly for page to update
+                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                    format!("已点击元素 {}，页面可能已更新，请使用 browser_get_page 查看新状态", element_id)
+                }
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+                    } else {
+                        format!("ERROR: 点击元素 {} 失败: {}", element_id, e)
+                    }
+                }
+            }
+        }
+
+        "browser_type" => {
+            let element_id = args.get("element_id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| AppError::InternalError("Missing 'element_id' argument for browser_type".to_string()))?;
+            let text = args.get("text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'text' argument for browser_type".to_string()))?;
+
+            let result = web::cdp_type(element_id, text.to_string(), browser_state).await;
+
+            match result {
+                Ok(msg) => msg,
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+                    } else {
+                        format!("ERROR: 输入失败: {}", e)
+                    }
+                }
+            }
+        }
+
+        "browser_scroll" => {
+            let direction = args.get("direction")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'direction' argument for browser_scroll".to_string()))?;
+            let pixels = args.get("pixels")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(600);
+
+            let result = web::cdp_scroll(direction.to_string(), pixels, browser_state).await;
+
+            match result {
+                Ok(_) => format!("已向{}滚动 {}px", direction, pixels),
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+                    } else {
+                        format!("ERROR: 滚动失败: {}", e)
+                    }
+                }
+            }
+        }
+
+        "browser_get_text" => {
+            let max_length = args.get("max_length")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3000) as usize;
+
+            let script = format!(r#"(function() {{ return document.body.innerText.substring(0, {}); }})()"#, max_length);
+            let result = web::cdp_execute_script(script, browser_state).await;
+
+            match result {
+                Ok(text) => {
+                    if text.is_empty() {
+                        "页面没有文本内容".to_string()
+                    } else {
+                        text
+                    }
+                }
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+                    } else {
+                        format!("ERROR: 获取页面文本失败: {}", e)
+                    }
+                }
+            }
+        }
+
         // 第一层防御：unknown tool 返回合法 JSON，让 Claude 自己 fallback 到文本回复
         _ => {
             let supported_tools = vec![
                 "read_file", "write_file", "append_file", "list_files", "path_exists",
                 "create_directory", "code_execution", "search_files", "glob_search",
-                "grep_files", "get_current_workspace"
+                "grep_files", "get_current_workspace",
+                "browser_navigate", "browser_get_page", "browser_click", "browser_type",
+                "browser_scroll", "browser_get_text"
             ];
             return Ok(serde_json::json!({
                 "error": true,

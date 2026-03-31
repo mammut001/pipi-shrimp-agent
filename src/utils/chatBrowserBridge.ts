@@ -284,10 +284,10 @@ function isAuthGatedSite(url: string): boolean {
 /**
  * Create a task envelope from chat message
  */
-export function createTaskEnvelopeFromChat(
+export async function createTaskEnvelopeFromChat(
   message: string,
   _targetUrl?: string
-): BrowserTaskEnvelope | null {
+): Promise<BrowserTaskEnvelope | null> {
   const intent = detectChatBrowserIntent(message);
 
   if (!intent.shouldUseBrowser || !intent.targetUrl) {
@@ -341,10 +341,23 @@ export function createTaskEnvelopeFromChat(
     taskDescription
   );
 
-  // Auto-inject executionMode based on CDP connection state
+  // Route based on complexity and CDP connection state
   const cdpStatus = useCdpStore.getState().status;
+
   if (cdpStatus === 'connected') {
+    // CDP already connected — always use it
     envelope.executionMode = 'cdp';
+  } else {
+    // Evaluate complexity to decide if Chrome is needed
+    const complexity = estimateTaskComplexity(envelope);
+    if (complexity === 'complex') {
+      // Prompt user to connect Chrome; they can also choose to proceed with PageAgent
+      const useCdp = await useUIStore.getState().showChromePrompt(envelope.targetUrl ?? '');
+      if (useCdp) {
+        envelope.executionMode = 'cdp';
+      }
+      // If user dismissed: executionMode stays 'pageagent'
+    }
   }
 
   return envelope;
@@ -658,8 +671,8 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
   const chatStoreAfterSession = useChatStore.getState();
   await chatStoreAfterSession.addMessage(createMessage('user', message));
 
-  // Create task envelope
-  const envelope = createTaskEnvelopeFromChat(message);
+  // Create task envelope (async: may show Chrome connect prompt for complex sites)
+  const envelope = await createTaskEnvelopeFromChat(message);
 
   if (!envelope) {
     console.error('[chatBrowserBridge] Failed to create task envelope');

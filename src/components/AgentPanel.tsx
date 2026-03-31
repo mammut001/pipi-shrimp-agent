@@ -4,7 +4,7 @@
  * Inspired by Claude Code's sidebar layout.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useUIStore, useSettingsStore, useChatStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
@@ -12,6 +12,78 @@ import { CdpConnectorModal } from './CdpConnectorModal';
 import { TypstPreview } from './TypstPreview';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { getLatestTypstBlock } from '@/utils/typst';
+import { invoke } from '@tauri-apps/api/core';
+
+// Default roadmap template used when docs/tracker/roadmap.typ doesn't exist yet.
+// AI will populate it once the file is created.
+const DEFAULT_ROADMAP_TYP = `// ============================================================
+// roadmap.typ — PiPi Shrimp Agent Feature Tracker
+// AI: only edit between == DATA START == and == DATA END ==
+// ============================================================
+
+// ============================================================
+// == DATA START ==
+// ============================================================
+
+#let last_updated = "—"
+
+#let main_milestones = (
+  (title: "Initializing...", date: "", status: "in-progress", desc: "AI will populate this roadmap"),
+)
+
+#let side_tracks = ()
+
+// ============================================================
+// == DATA END ==
+// ============================================================
+
+#let c-done       = rgb("#22c55e")
+#let c-progress   = rgb("#3b82f6")
+#let c-todo       = rgb("#6b7280")
+#let c-blocked    = rgb("#ef4444")
+#let c-bg         = rgb("#111827")
+#let c-surface    = rgb("#1f2937")
+#let c-border     = rgb("#374151")
+#let c-text       = rgb("#f9fafb")
+#let c-muted      = rgb("#9ca3af")
+
+#let status-color(s) = {
+  if s == "done" { c-done }
+  else if s == "in-progress" { c-progress }
+  else if s == "blocked" { c-blocked }
+  else { c-todo }
+}
+
+#set page(width: 860pt, height: auto, margin: (x: 28pt, y: 28pt), fill: c-bg)
+#set text(fill: c-text, size: 9pt, font: ("SF Pro Text", "Helvetica Neue", "Arial"))
+
+#box(width: 100%, fill: c-surface, radius: 6pt, inset: (x: 16pt, y: 12pt))[
+  #grid(
+    columns: (1fr, auto),
+    align(left)[
+      #text(size: 16pt, weight: "bold")[PiPi Shrimp Agent]
+      #h(10pt)
+      #text(size: 10pt, fill: c-muted, style: "italic")[Feature Tracker]
+    ],
+    align(right)[#text(fill: c-muted)[Updated: #last_updated]]
+  )
+]
+
+#v(20pt)
+#text(size: 8pt, fill: c-muted, weight: "bold")[MAIN LINE]
+#v(8pt)
+
+#for m in main_milestones [
+  #box(fill: c-surface, radius: 4pt, inset: (x: 12pt, y: 8pt))[
+    #circle(radius: 6pt, fill: status-color(m.status))
+    #h(8pt)
+    #text(weight: "bold")[#m.title]
+    #h(8pt)
+    #text(fill: c-muted, size: 8pt)[#m.desc]
+  ]
+  #v(6pt)
+]
+`;
 
 /**
  * Section Container Component
@@ -157,7 +229,49 @@ export const AgentPanel: React.FC = () => {
   const [autoSync, setAutoSync] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
+  // Roadmap SVG state
+  const [roadmapSvg, setRoadmapSvg] = useState<string>('');
+  const [roadmapLoading, setRoadmapLoading] = useState(false);
+  const [roadmapError, setRoadmapError] = useState<string | null>(null);
+  const [roadmapZoom, setRoadmapZoom] = useState(1.0);
+  const [roadmapFullscreen, setRoadmapFullscreen] = useState(false);
+
   const messages = currentMessages();
+
+  const loadRoadmap = useCallback(async () => {
+    setRoadmapLoading(true);
+    setRoadmapError(null);
+    try {
+      let typSource: string;
+      try {
+        typSource = await invoke<string>('read_project_file', {
+          relativePath: 'docs/tracker/roadmap.typ',
+        });
+      } catch (readErr: any) {
+        const msg = String(readErr);
+        if (msg.includes('No such file') || msg.includes('Cannot read') || msg.includes('os error 2')) {
+          // Auto-initialize with default template
+          await invoke('write_project_file', {
+            relativePath: 'docs/tracker/roadmap.typ',
+            content: DEFAULT_ROADMAP_TYP,
+          });
+          typSource = DEFAULT_ROADMAP_TYP;
+        } else {
+          throw readErr;
+        }
+      }
+      const svg = await invoke<string>('render_typst_to_svg', { source: typSource });
+      // Make SVG fill container width — replace fixed width with 100%, keep viewBox for aspect ratio
+      const scaledSvg = svg
+        .replace(/(<svg[^>]*)\swidth="[^"]*"/, '$1 width="100%"')
+        .replace(/(<svg[^>]*)\sheight="[^"]*"/, '$1 height="auto"');
+      setRoadmapSvg(scaledSvg);
+    } catch (e: any) {
+      setRoadmapError(String(e));
+    } finally {
+      setRoadmapLoading(false);
+    }
+  }, []);
 
   // Auto-switch to browser tab when browser starts running
   useEffect(() => {
@@ -179,6 +293,14 @@ export const AgentPanel: React.FC = () => {
       }
     }
   }, []); // Only run on mount
+
+  // Load roadmap when switching to roadmap tab
+  useEffect(() => {
+    if (activeTab === 'roadmap') {
+      loadRoadmap();
+    }
+  }, [activeTab]);
+
 
   // Sync immediately when switching to typst-preview tab
   useEffect(() => {
@@ -322,6 +444,22 @@ export const AgentPanel: React.FC = () => {
           </svg>
         </button>
 
+        {/* Roadmap tab */}
+        <button
+          onClick={() => setActiveTab('roadmap')}
+          className={`p-1.5 rounded-lg transition-all ${
+            activeTab === 'roadmap'
+              ? 'bg-gray-100 text-gray-900'
+              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+          }`}
+          title="Feature Roadmap"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+        </button>
+
         {/* Sync toggle (only relevant for Typst tabs) */}
         {(activeTab === 'typst-preview' || activeTab === 'typst-code') && (
           <button
@@ -367,6 +505,140 @@ export const AgentPanel: React.FC = () => {
             spellCheck={false}
           />
         </div>
+      )}
+
+      {/* Tab content: Roadmap */}
+      {activeTab === 'roadmap' && (
+        <>
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {/* Toolbar */}
+            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-200/60 bg-white/70 flex-shrink-0">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mr-auto">Roadmap</span>
+
+              {/* Zoom out */}
+              <button
+                onClick={() => setRoadmapZoom(z => Math.max(0.25, +(z - 0.25).toFixed(2)))}
+                className="p-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
+                title="Zoom out"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                </svg>
+              </button>
+
+              {/* Zoom label (click to reset) */}
+              <button
+                onClick={() => setRoadmapZoom(1.0)}
+                className="text-[9px] font-mono text-gray-500 w-8 text-center hover:text-gray-800 transition-colors"
+                title="Reset zoom"
+              >
+                {Math.round(roadmapZoom * 100)}%
+              </button>
+
+              {/* Zoom in */}
+              <button
+                onClick={() => setRoadmapZoom(z => Math.min(3, +(z + 0.25).toFixed(2)))}
+                className="p-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
+                title="Zoom in"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+
+              {/* Refresh */}
+              <button
+                onClick={loadRoadmap}
+                disabled={roadmapLoading}
+                className="p-1 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-40 transition-colors"
+                title="Refresh"
+              >
+                <svg className={`w-3 h-3 ${roadmapLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+
+              {/* Fullscreen */}
+              <button
+                onClick={() => {
+                  setRoadmapFullscreen(true);
+                  setRoadmapZoom(1.0);
+                }}
+                className="p-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
+                title="Fullscreen"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+              </button>
+            </div>
+
+            {/* SVG content */}
+            <div className="flex-1 overflow-auto">
+              {roadmapLoading && (
+                <div className="flex items-center justify-center h-32 text-gray-400 text-xs gap-2">
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Rendering...
+                </div>
+              )}
+              {roadmapError && !roadmapLoading && (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600">
+                  <div className="font-bold mb-1">Failed to load roadmap</div>
+                  <div className="font-mono text-[10px] whitespace-pre-wrap break-all">{roadmapError}</div>
+                </div>
+              )}
+              {!roadmapLoading && !roadmapError && roadmapSvg && (
+                <div style={{ width: `${Math.max(100, roadmapZoom * 100).toFixed(0)}%`, minWidth: '100%', transition: 'width 0.15s ease' }}>
+                  <div dangerouslySetInnerHTML={{ __html: roadmapSvg }} />
+                </div>
+              )}
+              {!roadmapLoading && !roadmapError && !roadmapSvg && (
+                <div className="flex flex-col items-center justify-center h-32 text-gray-400 text-xs gap-2">
+                  <svg className="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  <span>Click ↻ to load roadmap</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Fullscreen overlay */}
+          {roadmapFullscreen && (
+            <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={() => setRoadmapFullscreen(false)}>
+              <div
+                className="bg-white rounded-2xl shadow-2xl overflow-auto relative"
+                style={{ width: '90vw', maxHeight: '90vh' }}
+                onClick={e => e.stopPropagation()}
+              >
+                {/* Fullscreen toolbar */}
+                <div className="sticky top-0 flex items-center gap-2 px-4 py-3 border-b border-gray-200 bg-white z-10">
+                  <span className="text-sm font-bold text-gray-700 mr-auto">Feature Roadmap</span>
+                  <button onClick={() => setRoadmapZoom(z => Math.max(0.25, +(z - 0.25).toFixed(2)))} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Zoom out">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
+                  </button>
+                  <button onClick={() => setRoadmapZoom(1.0)} className="text-xs font-mono text-gray-500 w-10 text-center hover:text-gray-800">{Math.round(roadmapZoom * 100)}%</button>
+                  <button onClick={() => setRoadmapZoom(z => Math.min(3, +(z + 0.25).toFixed(2)))} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Zoom in">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                  </button>
+                  <div className="w-px h-4 bg-gray-200 mx-1" />
+                  <button onClick={() => setRoadmapFullscreen(false)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Close">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                {/* SVG in fullscreen */}
+                <div className="p-6 overflow-auto">
+                  <div
+                    style={{ transform: `scale(${roadmapZoom})`, transformOrigin: 'top left', transition: 'transform 0.15s ease' }}
+                    dangerouslySetInnerHTML={{ __html: roadmapSvg }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Tab content: Main (original AgentPanel) */}

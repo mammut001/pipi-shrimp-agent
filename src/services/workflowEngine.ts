@@ -17,6 +17,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { useUIStore } from '@/store/uiStore';
+import { useCdpStore } from '@/store/cdpStore';
 import type { WorkflowAgent, WorkflowConnection, WorkflowRun } from '@/types/workflow';
 import { DEFAULT_EXECUTION_CONFIG } from '@/types/workflow';
 
@@ -232,6 +233,7 @@ class WorkflowEngine {
         model,
         baseUrl,
         systemPrompt,
+        browserConnected: useCdpStore.getState().status === 'connected',
       });
 
       return fullContent;

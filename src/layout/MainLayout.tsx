@@ -9,7 +9,7 @@
 
 import React from 'react';
 import { useUIStore } from '@/store';
-import { Sidebar, AgentPanel, NotificationToast, FileDropOverlay } from '@/components';
+import { Sidebar, AgentPanel, NotificationToast, FileDropOverlay, ChromeConnectPrompt } from '@/components';
 
 /**
  * Props for MainLayout component
@@ -35,6 +35,9 @@ export function MainLayout({ children, showSidebar = true }: MainLayoutProps) {
 
       {/* Toast Notifications */}
       <NotificationToast />
+
+      {/* Chrome connect prompt (shown for complex browser tasks) */}
+      <ChromeConnectPrompt />
 
       {/* Left Sidebar */}
       {shouldShowSidebar && (

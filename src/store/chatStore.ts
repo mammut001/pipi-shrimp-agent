@@ -10,6 +10,7 @@ import type { ChatState, Session, Message, Project, OutputFolder } from '../type
 import { createSession, createMessage, createProject } from '../types/chat';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
+import { useCdpStore } from './cdpStore';
 import type { ImportedFile } from '../types/settings';
 
 /**
@@ -1011,6 +1012,7 @@ export const useChatStore = create<ChatState>()(
           model: apiConfig.model,
           baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
+          browserConnected: useCdpStore.getState().status === 'connected',
         });
 
         // Finalize the assistant message with streamed content
@@ -1151,6 +1153,7 @@ export const useChatStore = create<ChatState>()(
           model: apiConfig?.model,
           baseUrl: apiConfig?.baseUrl || '',
           systemPrompt: useUIStore.getState().agentInstructions,
+          browserConnected: useCdpStore.getState().status === 'connected',
         });
 
         // Event listener 'claude-token' will handle UI updates
@@ -1236,6 +1239,7 @@ export const useChatStore = create<ChatState>()(
           baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
           noTools: true,
+          browserConnected: useCdpStore.getState().status === 'connected',
         });
 
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
@@ -1414,6 +1418,7 @@ export const useChatStore = create<ChatState>()(
           model: apiConfig.model,
           baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
+          browserConnected: useCdpStore.getState().status === 'connected',
         });
 
         // Clear timeout on success
@@ -2084,9 +2089,83 @@ export const useChatStore = create<ChatState>()(
       if (!selectedPath) return null;
 
       // 2. Init .pipi-shrimp in selected folder
-      await invoke('init_pipi_shrimp', { workDir: selectedPath });
+      // Returns "pipiDir|new" or "pipiDir|exists"
+      const initResult = await invoke<string>('init_pipi_shrimp', { workDir: selectedPath });
+      const isNewProject = initResult.endsWith('|new');
 
-      // 3. Update session in state and DB
+      // 3. Auto-scan project files if core.md was freshly created
+      if (isNewProject) {
+        try {
+          const lines: string[] = [`## 📌 Project Overview\n`];
+
+          // Read README if present
+          for (const name of ['README.md', 'readme.md', 'README.txt']) {
+            try {
+              const res = await invoke<{ content: string }>('read_file', {
+                path: `${selectedPath}/${name}`,
+                workDir: selectedPath,
+              });
+              if (res?.content) {
+                const preview = res.content.split('\n').slice(0, 20).join('\n');
+                lines.push(`### README\n\`\`\`\n${preview}\n\`\`\`\n`);
+                break;
+              }
+            } catch { /* not found */ }
+          }
+
+          // Detect tech stack from manifest files
+          const techStack: string[] = [];
+          const manifests = [
+            { file: 'package.json', label: 'Node.js / JS/TS' },
+            { file: 'Cargo.toml', label: 'Rust' },
+            { file: 'pyproject.toml', label: 'Python' },
+            { file: 'go.mod', label: 'Go' },
+            { file: 'pom.xml', label: 'Java/Maven' },
+            { file: 'build.gradle', label: 'Java/Gradle' },
+          ];
+          for (const { file, label } of manifests) {
+            try {
+              await invoke('read_file', { path: `${selectedPath}/${file}`, workDir: selectedPath });
+              techStack.push(label);
+            } catch { /* not found */ }
+          }
+          if (techStack.length > 0) {
+            lines.push(`## 🛠 Tech Stack\n${techStack.map(t => `- ${t}`).join('\n')}\n`);
+          }
+
+          // List top-level structure
+          try {
+            const entries = await invoke<{ name: string; is_dir: boolean }[]>('list_files', {
+              path: selectedPath,
+            });
+            const dirs = entries.filter(e => e.is_dir).map(e => `📁 ${e.name}`);
+            const files = entries.filter(e => !e.is_dir).map(e => `📄 ${e.name}`);
+            lines.push(`## 📖 Top-level Structure\n${[...dirs, ...files].join('\n')}\n`);
+          } catch { /* skip */ }
+
+          // Read existing core.md and inject auto-detected sections at the top
+          const coreMdPath = `${selectedPath}/.pipi-shrimp/core.md`;
+          const coreRes = await invoke<{ content: string }>('read_file', {
+            path: coreMdPath,
+            workDir: selectedPath,
+          });
+          const existing = coreRes?.content ?? '';
+          // Replace the placeholder overview section with auto-detected content
+          const updated = existing.replace(
+            '## 📌 Project Overview\n[Auto-detected on bind — see below]\n\n## 🛠 Tech Stack\n[Auto-detected on bind — see below]',
+            lines.join('\n')
+          );
+          await invoke('write_file', {
+            path: coreMdPath,
+            content: updated,
+            workDir: selectedPath,
+          });
+        } catch (e) {
+          console.debug('[setSessionWorkDir] auto-scan failed (non-fatal):', e);
+        }
+      }
+
+      // 4. Update session in state and DB
       const session = get().sessions.find(s => s.id === sessionId);
       if (!session) return null;
 
