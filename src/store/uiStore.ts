@@ -27,6 +27,9 @@ const getInitialCurrentView = (): 'chat' | 'workflow' | 'skill' | 'browser' => {
   return 'chat';
 };
 
+// Promise resolver for the Chrome connect prompt (module-level, one at a time)
+let _chromePromptResolver: ((useCdp: boolean) => void) | null = null;
+
 /**
  * UI store using Zustand
  */
@@ -51,6 +54,10 @@ export const useUIStore = create<UIState>((set) => ({
   browserSplitFocus: 'chat' as SplitFocus,
   browserPaneWidth: 400,
   browserPaneVisible: false,
+
+  // Chrome connect prompt
+  chromePromptVisible: false,
+  chromePromptTargetUrl: null,
 
   // ========== Action Methods ==========
 
@@ -203,6 +210,22 @@ export const useUIStore = create<UIState>((set) => ({
 
   setBrowserPaneWidth: (width: number) =>
     set({ browserPaneWidth: Math.max(200, Math.min(800, width)) }),
+
+  // Chrome prompt: show dialog and return a promise resolved by user's choice
+  showChromePrompt: (targetUrl: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      _chromePromptResolver = resolve;
+      set({ chromePromptVisible: true, chromePromptTargetUrl: targetUrl });
+    });
+  },
+
+  resolveChromePrompt: (useCdp: boolean) => {
+    set({ chromePromptVisible: false, chromePromptTargetUrl: null });
+    if (_chromePromptResolver) {
+      _chromePromptResolver(useCdp);
+      _chromePromptResolver = null;
+    }
+  },
 }));
 
 export type { PermissionRequest, Notification, TaskStep, BrowserDockMode, SplitFocus } from '../types/ui';

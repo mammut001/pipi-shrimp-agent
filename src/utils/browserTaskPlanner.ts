@@ -288,31 +288,90 @@ export function createTaskFromChatIntent(
 }
 
 /**
- * Estimate task complexity for UI feedback
+ * Sites that are known to be complex / require real Chrome.
+ * These sites use heavy SPAs, strict CSP, anti-bot, or require native browser features.
+ */
+const COMPLEX_SITES = [
+  'appstoreconnect.apple.com',
+  'developer.apple.com',
+  'connect.apple.com',
+  'console.aws.amazon.com',
+  'console.cloud.google.com',
+  'portal.azure.com',
+  'salesforce.com',
+  'force.com',
+  'notion.so',
+  'figma.com',
+  'app.slack.com',
+  'web.whatsapp.com',
+  'web.telegram.org',
+  'mail.google.com',
+  'drive.google.com',
+  'docs.google.com',
+  'sheets.google.com',
+  'outlook.live.com',
+  'outlook.office.com',
+  'linear.app',
+  'jira.atlassian.com',
+  'confluence.atlassian.com',
+  'app.asana.com',
+  'trello.com',
+  'monday.com',
+  'airtable.com',
+  'vercel.com',
+  'netlify.app',
+];
+
+/**
+ * Task-level keywords that suggest complexity requiring real Chrome.
+ */
+const COMPLEX_TASK_KEYWORDS = [
+  // Bulk / destructive operations
+  'delete all', 'remove all', '删除所有', '删除全部', '批量删除',
+  'batch delete', 'bulk', '批量',
+  // File operations
+  'upload', 'download', 'file', '上传', '下载',
+  // Multi-step / multi-page
+  'each', 'every', 'iterate', 'loop', 'for each', '每个', '每一个', '循环',
+  // Publishing / deploying
+  'publish', 'deploy', 'release', 'submit', '发布', '提交', '部署',
+  // Complex forms
+  'fill form', 'complete form', '填写表单', 'multi-step form',
+  // Navigation-heavy
+  'navigate to', 'go to each', '逐一', '依次',
+];
+
+/**
+ * Estimate task complexity and whether real Chrome (CDP) would handle it better.
+ * Returns 'simple' | 'medium' | 'complex'.
+ *
+ * Routing:
+ *  - 'simple'  → PageAgent (Tauri embedded webview)
+ *  - 'medium'  → PageAgent with a warning
+ *  - 'complex' → Prompt user to connect Chrome
  */
 export function estimateTaskComplexity(envelope: BrowserTaskEnvelope): 'simple' | 'medium' | 'complex' {
+  const lowerPrompt = envelope.executionPrompt.toLowerCase();
+  const lowerUrl = (envelope.targetUrl ?? '').toLowerCase();
   const promptLength = envelope.executionPrompt.length;
 
-  // Check for complex operations
-  const complexPatterns = [
-    'upload multiple',
-    'batch',
-    'loop',
-    'iterate',
-    'fill form',
-    'multi-step',
-    '流程',
-    '多个',
-    '批量',
-  ];
-
-  const lowerPrompt = envelope.executionPrompt.toLowerCase();
-
-  if (complexPatterns.some(p => lowerPrompt.includes(p)) || promptLength > 200) {
+  // Known-complex site → always complex
+  if (COMPLEX_SITES.some(site => lowerUrl.includes(site))) {
     return 'complex';
   }
 
-  if (promptLength > 100 || envelope.requiresLogin) {
+  // Complex task keywords
+  if (COMPLEX_TASK_KEYWORDS.some(k => lowerPrompt.includes(k))) {
+    return 'complex';
+  }
+
+  // Long prompt usually means multi-step task
+  if (promptLength > 200) {
+    return 'complex';
+  }
+
+  // Medium: login-required or moderately long
+  if (envelope.requiresLogin || promptLength > 80) {
     return 'medium';
   }
 

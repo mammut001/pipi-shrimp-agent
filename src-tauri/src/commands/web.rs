@@ -65,7 +65,17 @@ pub async fn connect_browser(
         while let Some(_) = handler.next().await {}
     });
 
-    let page = browser.new_page("about:blank").await.map_err(|e| e.to_string())?;
+    // Prefer reusing the first existing page (already has session/cookies) rather
+    // than opening a fresh about:blank tab which would lose all logged-in state.
+    let page = {
+        let existing = browser.pages().await.ok().and_then(|pages| {
+            pages.into_iter().find(|_| true) // first page
+        });
+        match existing {
+            Some(p) => p,
+            None => browser.new_page("about:blank").await.map_err(|e| e.to_string())?,
+        }
+    };
 
     let mut st = state.lock().await;
     // Abort old handler if any
@@ -344,18 +354,39 @@ pub async fn cdp_scroll(
 pub async fn launch_chrome_debug() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        // Kill any existing Chrome process first.
-        // NOTE: `open -a "Google Chrome" --args` is unreliable for passing flags —
-        // macOS's open command is designed for documents/URLs, not CLI arguments.
-        // Directly invoking the Chrome binary is the only reliable approach.
-        let _ = std::process::Command::new("pkill")
+        // Strategy: try to reuse the EXISTING Chrome by enabling remote debugging
+        // via AppleScript. If Chrome is not running, launch it fresh with the user's
+        // REAL profile so all cookies / sessions are preserved.
+        //
+        // We intentionally do NOT kill Chrome — killing it would wipe the user's
+        // open tabs and logged-in sessions.
+
+        // Step 1: Check if port 9222 is already open (Chrome already in debug mode).
+        if reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok() {
+            return Ok("Chrome 调试端口已就绪，无需重启。".to_string());
+        }
+
+        // Step 2: Chrome is running but without the debug port — we cannot inject
+        // the flag into a running process. Inform the caller so the UI can show
+        // a manual instruction ("Quit Chrome, then click Connect again").
+        let chrome_running = std::process::Command::new("pgrep")
             .args(["-x", "Google Chrome"])
-            .status();
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
 
-        // Brief pause to let Chrome fully exit
-        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        if chrome_running {
+            // Chrome is open but doesn't have --remote-debugging-port.
+            // We cannot enable CDP without restarting it. Return a specific error
+            // so the frontend can guide the user.
+            return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」，软件会自动以调试模式启动它。".to_string());
+        }
 
-        // Try standard install path, then Chromium as fallback
+        // Step 3: Chrome is not running — launch it with the real user profile.
+        // Using the real profile preserves all logins, cookies and extensions.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let real_profile = format!("{}/Library/Application Support/Google/Chrome", home);
+
         let chrome_paths = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -367,7 +398,7 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
                 std::process::Command::new(path)
                     .args([
                         "--remote-debugging-port=9222",
-                        "--user-data-dir=/tmp/pipi-chrome-debug",
+                        &format!("--user-data-dir={}", real_profile),
                         "--no-first-run",
                         "--no-default-browser-check",
                     ])
@@ -382,17 +413,29 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
             return Err("未找到 Chrome 或 Chromium，请确认已安装在 /Applications 目录下".to_string());
         }
 
-        return Ok("Chrome 正在以调试模式启动...".to_string());
+        return Ok("Chrome 正在以调试模式启动（使用您的真实 Profile）...".to_string());
     }
 
     #[cfg(target_os = "windows")]
     {
-        // Kill existing Chrome on Windows before relaunch
-        let _ = std::process::Command::new("taskkill")
-            .args(["/IM", "chrome.exe", "/F"])
-            .status();
+        // Check if port is already open
+        if reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok() {
+            return Ok("Chrome 调试端口已就绪，无需重启。".to_string());
+        }
 
-        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        // Check if Chrome is running without debug port
+        let chrome_running = std::process::Command::new("tasklist")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("chrome.exe"))
+            .unwrap_or(false);
+
+        if chrome_running {
+            return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」。".to_string());
+        }
+
+        // Launch with real user profile
+        let appdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Users\\User\\AppData\\Local".to_string());
+        let real_profile = format!("{}\\Google\\Chrome\\User Data", appdata);
 
         let chrome_paths = [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -403,7 +446,7 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
                 std::process::Command::new(path)
                     .args([
                         "--remote-debugging-port=9222",
-                        "--user-data-dir=C:\\Temp\\pipi-chrome-debug",
+                        &format!("--user-data-dir={}", real_profile),
                         "--no-first-run",
                         "--no-default-browser-check",
                     ])
@@ -417,16 +460,27 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = std::process::Command::new("pkill")
-            .args(["-x", "google-chrome"])
-            .status();
+        if reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok() {
+            return Ok("Chrome 调试端口已就绪，无需重启。".to_string());
+        }
 
-        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        let chrome_running = std::process::Command::new("pgrep")
+            .args(["-x", "google-chrome"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if chrome_running {
+            return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」。".to_string());
+        }
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let real_profile = format!("{}/.config/google-chrome", home);
 
         std::process::Command::new("google-chrome")
             .args([
                 "--remote-debugging-port=9222",
-                "--user-data-dir=/tmp/pipi-chrome-debug",
+                &format!("--user-data-dir={}", real_profile),
                 "--no-first-run",
                 "--no-default-browser-check",
             ])
