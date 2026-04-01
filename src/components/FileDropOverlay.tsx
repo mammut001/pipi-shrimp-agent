@@ -130,21 +130,21 @@ export function FileDropOverlay() {
   // --- Global window event handlers ---
 
   const handleDragEnter = useCallback((e: DragEvent) => {
+    // Only activate for file drags (not text selection etc.)
+    if (!e.dataTransfer?.types.includes('Files')) return;
     e.preventDefault();
     e.stopPropagation();
-    // Only activate for file drags (not text selection etc.)
-    if (e.dataTransfer?.types.includes('Files')) {
-      dragCounterRef.current++;
-      // Only set dragging if we have files and counter just went from 0 to 1
-      if (dragCounterRef.current === 1) {
-        setIsDragging(true);
-      }
+    dragCounterRef.current++;
+    // Only set dragging if we have files and counter just went from 0 to 1
+    if (dragCounterRef.current === 1) {
+      setIsDragging(true);
     }
   }, []);
 
   const handleDragLeave = useCallback((e: DragEvent) => {
+    // Skip non-file drags to avoid interfering with click events in WKWebView
+    if (!e.dataTransfer?.types.includes('Files') && dragCounterRef.current === 0) return;
     e.preventDefault();
-    e.stopPropagation();
     // Only decrement if we're leaving the outer container
     const relatedTarget = e.relatedTarget as Node | null;
     if (!overlayRef.current?.contains(relatedTarget)) {
@@ -157,8 +157,10 @@ export function FileDropOverlay() {
   }, []);
 
   const handleDragOver = useCallback((e: DragEvent) => {
+    // Only handle file drags; non-file dragover events should pass through
+    // to avoid trapping WKWebView click events misidentified as drags
+    if (!e.dataTransfer?.types.includes('Files')) return;
     e.preventDefault();
-    e.stopPropagation();
     // Required to allow the drop event to fire
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'copy';
