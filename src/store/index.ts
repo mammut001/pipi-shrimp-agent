@@ -9,6 +9,17 @@ export { useUIStore } from './uiStore';
 export { useWorkflowStore } from './workflowStore';
 export { useBrowserAgentStore } from './browserAgentStore';
 export { useCdpStore } from './cdpStore';
+export {
+  useTelegramStore,
+  useTelegramState,
+  useTelegramMessages,
+  useTelegramConnected,
+  useTelegramConnecting,
+  useTelegramBotInfo,
+  useTelegramError,
+  useRecentTelegramMessages,
+  useTelegramChats,
+} from './telegramStore';
 
 // Export chat types
 export type {
@@ -26,13 +37,16 @@ export type {
   TokenUsage,
   DailyTokenStats,
   ModelTokenStats,
+  ModelPricing,
+  BudgetSettings,
 } from '../types/settings';
 
 export {
   DEFAULT_API_CONFIG,
   API_PROVIDERS,
   PROVIDER_MODELS,
-  DEFAULT_WORKING_DIRECTORY,
+  DEFAULT_MODEL_PRICING,
+  DEFAULT_BUDGET_SETTINGS,
 } from '../types/settings';
 
 // Export UI types
@@ -69,3 +83,16 @@ export {
   DEFAULT_EXECUTION_CONFIG,
   AGENT_COLORS,
 } from '../types/workflow';
+
+// Export Telegram types
+export type {
+  TelegramConnectionStatus,
+  TelegramUser,
+  TelegramChat,
+  TelegramMessageEntity,
+  TelegramMessage,
+  TelegramBotInfo,
+  TelegramUpdate,
+  TelegramState,
+  TelegramConfig,
+} from '../types/telegram';

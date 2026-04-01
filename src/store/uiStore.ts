@@ -59,6 +59,11 @@ export const useUIStore = create<UIState>((set) => ({
   chromePromptVisible: false,
   chromePromptTargetUrl: null,
 
+  // Project Analysis State
+  isAnalyzingProject: false,
+  analysisProgress: '',
+  projectFingerprint: null,
+
   // ========== Action Methods ==========
 
   /**
@@ -226,6 +231,13 @@ export const useUIStore = create<UIState>((set) => ({
       _chromePromptResolver = null;
     }
   },
+
+  // Project analysis actions
+  setAnalyzingProject: (analyzing: boolean, progress?: string) =>
+    set({ isAnalyzingProject: analyzing, analysisProgress: progress || '' }),
+
+  setProjectFingerprint: (fingerprint) =>
+    set({ projectFingerprint: fingerprint }),
 }));
 
 export type { PermissionRequest, Notification, TaskStep, BrowserDockMode, SplitFocus } from '../types/ui';

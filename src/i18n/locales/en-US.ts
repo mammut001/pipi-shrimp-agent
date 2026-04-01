@@ -99,6 +99,9 @@ const enUS: TranslationKeys = {
   'token.input': 'Input',
   'token.output': 'Output',
   'token.total': 'Total',
+  'token.cost': 'Cost',
+  'token.estimatedCost': 'Estimated cost',
+  'token.totalCost': 'Total cost',
 
   // Session
   'session.bindWorkDir': 'Bind Work Directory',

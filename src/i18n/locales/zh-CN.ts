@@ -99,6 +99,9 @@ const zhCN: TranslationKeys = {
   'token.input': '输入',
   'token.output': '输出',
   'token.total': '总计',
+  'token.cost': '费用',
+  'token.estimatedCost': '预估费用',
+  'token.totalCost': '总费用',
 
   // Session
   'session.bindWorkDir': '绑定工作目录',

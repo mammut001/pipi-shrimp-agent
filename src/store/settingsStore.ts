@@ -4,8 +4,8 @@
  */
 
 import { create } from 'zustand';
-import type { SettingsState, ApiConfig, ImportedFile } from '../types/settings';
-import { DEFAULT_WORKING_DIRECTORY } from '../types/settings';
+import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings } from '../types/settings';
+import { DEFAULT_BUDGET_SETTINGS, DEFAULT_MODEL_PRICING } from '../types/settings';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
 
 /**
@@ -13,11 +13,11 @@ import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLangua
  */
 const API_CONFIGS_STORAGE_KEY = 'ai-agent-api-configs';
 const ACTIVE_CONFIG_STORAGE_KEY = 'ai-agent-active-config';
-const WORKING_DIR_STORAGE_KEY = 'ai-agent-working-dir';
 const TELEGRAM_TOKEN_STORAGE_KEY = 'ai-agent-telegram-token';
 const THEME_STORAGE_KEY = 'ai-agent-theme';
 const LANGUAGE_STORAGE_KEY = 'ai-agent-language';
 const IMPORTED_FILES_STORAGE_KEY = 'ai-agent-imported-files';
+const BUDGET_SETTINGS_STORAGE_KEY = 'ai-agent-budget-settings';
 
 /** Legacy storage key (for migration) */
 const LEGACY_API_CONFIG_KEY = 'ai-agent-api-config';
@@ -52,11 +52,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   activeConfigId: null,
   apiConfig: null, // Computed from apiConfigs + activeConfigId
   availableModels: {},
-  workingDirectory: DEFAULT_WORKING_DIRECTORY,
   telegramToken: undefined,
   theme: 'dark',
   language: 'en',
   importedFiles: [],
+  budgetSettings: DEFAULT_BUDGET_SETTINGS,
 
   // ========== Imported Files Methods ==========
 
@@ -228,19 +228,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   /**
-   * Set working directory and persist
-   */
-  setWorkingDirectory: async (path: string) => {
-    try {
-      localStorage.setItem(WORKING_DIR_STORAGE_KEY, path);
-      set({ workingDirectory: path });
-    } catch (error) {
-      console.error('Failed to save working directory:', error);
-      throw error;
-    }
-  },
-
-  /**
    * Set Telegram token and persist
    */
   setTelegramToken: async (token: string) => {
@@ -336,6 +323,47 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('Failed to clear imported files:', error);
     }
   },
+
+  /**
+   * Update budget settings
+   */
+  updateBudgetSettings: (settings: Partial<BudgetSettings>) => {
+    const currentSettings = get().budgetSettings;
+    const newSettings = { ...currentSettings, ...settings };
+
+    set({ budgetSettings: newSettings });
+
+    try {
+      localStorage.setItem(BUDGET_SETTINGS_STORAGE_KEY, JSON.stringify(newSettings));
+    } catch (error) {
+      console.error('Failed to persist budget settings:', error);
+    }
+  },
+
+  /**
+   * Get pricing for a specific model (custom or default)
+   */
+  getModelPricing: (model: string, _provider: ApiConfig['provider']) => {
+    const { apiConfigs, activeConfigId } = get();
+
+    // First check if the active config has custom pricing for this model
+    const activeConfig = apiConfigs.find(c => c.id === activeConfigId);
+    if (activeConfig && activeConfig.pricing && activeConfig.model === model) {
+      return {
+        model,
+        provider: activeConfig.provider as 'anthropic' | 'openai' | 'minimax' | 'other',
+        inputPrice: activeConfig.pricing.inputPrice ?? 0,
+        outputPrice: activeConfig.pricing.outputPrice ?? 0,
+        cacheReadPrice: activeConfig.pricing.cacheReadPrice,
+        cacheWritePrice: activeConfig.pricing.cacheWritePrice,
+        maxTokens: activeConfig.pricing.maxTokens,
+        contextWindow: activeConfig.pricing.contextWindow ?? DEFAULT_MODEL_PRICING[model]?.contextWindow ?? 200000,
+      };
+    }
+
+    // Fall back to default pricing
+    return DEFAULT_MODEL_PRICING[model] || null;
+  },
 }));
 
 // ========== Initialize from localStorage ==========
@@ -362,12 +390,6 @@ const initializeSettings = () => {
       useSettingsStore.setState({ language: oldLanguage });
     }
 
-    // Load working directory
-    const storedWorkingDir = localStorage.getItem(WORKING_DIR_STORAGE_KEY);
-    if (storedWorkingDir) {
-      useSettingsStore.setState({ workingDirectory: storedWorkingDir });
-    }
-
     // Load Telegram token
     const storedTelegramToken = localStorage.getItem(TELEGRAM_TOKEN_STORAGE_KEY);
     if (storedTelegramToken) {
@@ -378,6 +400,17 @@ const initializeSettings = () => {
     const storedImportedFiles = localStorage.getItem(IMPORTED_FILES_STORAGE_KEY);
     if (storedImportedFiles) {
       useSettingsStore.setState({ importedFiles: JSON.parse(storedImportedFiles) });
+    }
+
+    // Load budget settings
+    const storedBudgetSettings = localStorage.getItem(BUDGET_SETTINGS_STORAGE_KEY);
+    if (storedBudgetSettings) {
+      try {
+        const budgetSettings = JSON.parse(storedBudgetSettings);
+        useSettingsStore.setState({ budgetSettings: { ...DEFAULT_BUDGET_SETTINGS, ...budgetSettings } });
+      } catch (error) {
+        console.error('Failed to parse budget settings:', error);
+      }
     }
 
     // Load API configs (new format)

@@ -11,11 +11,12 @@
  */
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useChatStore, useUIStore } from '@/store';
+import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal } from '@/components';
 import type { Message, Session } from '@/types/chat';
 import { t } from '@/i18n';
+import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 
 /**
  * Calculate total token usage for a session
@@ -97,6 +98,26 @@ export function Chat() {
   // Memoized token usage (recalculates only when messages change)
   const currentSessionData = currentSession();
   const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
+
+  // Get pricing from settings store
+  const getModelPricing = useSettingsStore((s) => s.getModelPricing);
+  const activeConfigId = useSettingsStore((s) => s.activeConfigId);
+  const apiConfigs = useSettingsStore((s) => s.apiConfigs);
+
+  // Calculate session cost
+  const sessionCost = useMemo(() => {
+    const activeConfig = apiConfigs.find(c => c.id === activeConfigId);
+    if (!activeConfig || sessionTokenUsage.total === 0) return 0;
+
+    const pricing = getModelPricing(activeConfig.model, activeConfig.provider);
+    if (!pricing) return 0;
+
+    return calculateRequestCost(
+      sessionTokenUsage.input,
+      sessionTokenUsage.output,
+      pricing
+    );
+  }, [currentSessionData?.messages, activeConfigId, apiConfigs, getModelPricing, sessionTokenUsage]);
 
   // Use precise selectors so each field has its own subscription, guaranteeing
   // the modal renders as soon as the queue changes (avoids stale-ref issues).
@@ -356,6 +377,17 @@ export function Chat() {
           {hasMessages && sessionTokenUsage.total > 0 && (
             <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
               <div className="mx-auto flex items-center justify-center gap-4 text-xs text-gray-500 max-w-3xl">
+                {sessionCost > 0 && (
+                  <>
+                    <span className="flex items-center gap-1 text-green-600 font-medium">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {formatCostCompact(sessionCost)}
+                    </span>
+                    <span className="text-gray-300">|</span>
+                  </>
+                )}
                 <span className="flex items-center gap-1">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />

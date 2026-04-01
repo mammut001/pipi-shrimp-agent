@@ -1,24 +1,31 @@
 /**
  * AgentPanel - Redesigned Right panel for displaying agent instructions, task progress, and context.
- * 
+ *
  * Inspired by Claude Code's sidebar layout.
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useEffect, useMemo, useCallback, useRef } from 'react';
 import { useUIStore, useSettingsStore, useChatStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
 import { CdpConnectorModal } from './CdpConnectorModal';
-import { TypstPreview } from './TypstPreview';
+import { PermissionModal, TypstPreview } from './index';
+import { ProjectFilesView } from './ProjectFilesView';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { getLatestTypstBlock } from '@/utils/typst';
 import { invoke } from '@tauri-apps/api/core';
+import type { ProjectFingerprint } from '@/types/ui';
 
 // Default roadmap template used when docs/tracker/roadmap.typ doesn't exist yet.
 // AI will populate it once the file is created.
 const DEFAULT_ROADMAP_TYP = `// ============================================================
 // roadmap.typ — PiPi Shrimp Agent Feature Tracker
-// AI: only edit between == DATA START == and == DATA END ==
+//
+// AI 维护规则：
+//   - 只修改 "== DATA START ==" 到 "== DATA END ==" 之间的内容
+//   - 不要修改 DATA END 以下的任何渲染代码
+//   - 每次修改后调用 render_typst_to_svg 重新渲染
+//   - 渲染结果用 write_file 保存到 docs/tracker/roadmap.svg
 // ============================================================
 
 // ============================================================
@@ -27,61 +34,187 @@ const DEFAULT_ROADMAP_TYP = `// ================================================
 
 #let last_updated = "—"
 
+// ---- 主线里程碑 ----
+// status: "done" | "in-progress" | "todo" | "blocked"
 #let main_milestones = (
-  (title: "Initializing...", date: "", status: "in-progress", desc: "AI will populate this roadmap"),
+  (title: "Project Initialization", date: "", status: "done", desc: "Setting up basic structure"),
+  (title: "Feature Implementation", date: "", status: "in-progress", desc: "AI is currently working on core features"),
+  (title: "Future Milestone", date: "", status: "todo", desc: "Planned feature refinement"),
 )
 
-#let side_tracks = ()
+// ---- 功能线 (Side Tracks) ----
+// status: "done" | "in-progress" | "todo" | "blocked"
+#let side_tracks = (
+  (
+    name: "Development",
+    branch: "main",
+    branch_status: "open",
+    changes: (
+      (desc: "Environment setup", status: "done", date: ""),
+      (desc: "Initial commit", status: "done", date: ""),
+      (desc: "Ongoing development", status: "in-progress", date: ""),
+    ),
+  ),
+)
 
 // ============================================================
 // == DATA END ==
 // ============================================================
 
-#let c-done       = rgb("#22c55e")
+// ---- 颜色 ----
+#let c-done       = rgb("#10b981")
 #let c-progress   = rgb("#3b82f6")
 #let c-todo       = rgb("#6b7280")
 #let c-blocked    = rgb("#ef4444")
-#let c-bg         = rgb("#111827")
-#let c-surface    = rgb("#1f2937")
-#let c-border     = rgb("#374151")
-#let c-text       = rgb("#f9fafb")
-#let c-muted      = rgb("#9ca3af")
+#let c-bg         = rgb("#0f172a")
+#let c-surface    = rgb("#1e293b")
+#let c-border     = rgb("#334155")
+#let c-text       = rgb("#f8fafc")
+#let c-muted      = rgb("#94a3b8")
 
 #let status-color(s) = {
-  if s == "done" { c-done }
+  if s == "done"         { c-done }
   else if s == "in-progress" { c-progress }
   else if s == "blocked" { c-blocked }
-  else { c-todo }
+  else                   { c-todo }
 }
 
-#set page(width: 860pt, height: auto, margin: (x: 28pt, y: 28pt), fill: c-bg)
-#set text(fill: c-text, size: 9pt, font: ("SF Pro Text", "Helvetica Neue", "Arial"))
+#let status-icon(s) = {
+  if s == "done"         { "✓" }
+  else if s == "in-progress" { "•" }
+  else if s == "blocked" { "!" }
+  else                   { "○" }
+}
 
-#box(width: 100%, fill: c-surface, radius: 6pt, inset: (x: 16pt, y: 12pt))[
+#let branch-badge(bs) = {
+  if bs == "merged"    { ([merged], rgb("#7c3aed")) }
+  else if bs == "ready"{ ([ready], rgb("#0891b2")) }
+  else if bs == "open" { ([open],  rgb("#059669")) }
+  else if bs == "abandoned" { ([abandoned], rgb("#b91c1c")) }
+  else                 { ([main],  rgb("#475569")) }
+}
+
+// ---- 页面 ----
+#set page(
+  width: 420pt,
+  height: auto,
+  margin: (x: 20pt, y: 20pt),
+  fill: c-bg,
+)
+#set text(fill: c-text, size: 10pt, font: ("SF Pro Text", "Inter", "Helvetica Neue", "Arial"))
+
+// ---- 标题 ----
+#box(width: 100%, inset: (bottom: 12pt))[
   #grid(
     columns: (1fr, auto),
     align(left)[
-      #text(size: 16pt, weight: "bold")[PiPi Shrimp Agent]
-      #h(10pt)
-      #text(size: 10pt, fill: c-muted, style: "italic")[Feature Tracker]
+      #text(size: 18pt, weight: 800, tracking: -0.02em)[ROADMAP]
+      #h(6pt)
+      #text(size: 9pt, fill: c-muted, weight: 500)[Agent Project]
     ],
-    align(right)[#text(fill: c-muted)[Updated: #last_updated]]
+    align(right + bottom)[
+      #text(size: 8pt, fill: c-muted)[Update: #last_updated]
+    ]
+  )
+  #line(length: 100%, stroke: 1.5pt + c-border)
+]
+
+#v(8pt)
+
+// ---- MAIN MILESTONES (Vertical Timeline) ----
+#text(size: 9pt, fill: c-muted, weight: 700, tracking: 0.05em)[MAIN MILESTONES]
+#v(10pt)
+
+#let n-main = main_milestones.len()
+#for (i, m) in main_milestones.enumerate() [
+  #grid(
+    columns: (24pt, 1fr),
+    column-gutter: 12pt,
+    // Timeline connector
+    align(center)[
+      #circle(radius: 6pt, fill: status-color(m.status))
+      #if i < n-main - 1 [
+        #v(4pt)
+        #line(start: (0pt, 0pt), end: (0pt, 24pt), stroke: 1.5pt + c-border)
+      ]
+    ],
+    // Milestone content
+    [
+      #box(width: 100%, fill: c-surface, radius: 8pt, inset: 10pt)[
+        #grid(
+          columns: (1fr, auto),
+          align(left)[
+            #text(size: 11pt, weight: "bold")[#m.title]
+          ],
+          align(right)[
+            #text(size: 8pt, fill: c-muted)[#if m.date != "" { m.date } else { "TBD" }]
+          ]
+        )
+        #v(4pt)
+        #text(size: 9pt, fill: c-muted)[#m.desc]
+      ]
+      #v(12pt)
+    ]
   )
 ]
 
-#v(20pt)
-#text(size: 8pt, fill: c-muted, weight: "bold")[MAIN LINE]
-#v(8pt)
+#v(12pt)
 
-#for m in main_milestones [
-  #box(fill: c-surface, radius: 4pt, inset: (x: 12pt, y: 8pt))[
-    #circle(radius: 6pt, fill: status-color(m.status))
-    #h(8pt)
-    #text(weight: "bold")[#m.title]
-    #h(8pt)
-    #text(fill: c-muted, size: 8pt)[#m.desc]
+// ---- SIDE TRACKS ----
+#text(size: 9pt, fill: c-muted, weight: 700, tracking: 0.05em)[SIDE TRACKS]
+#v(10pt)
+
+#for track in side_tracks [
+  #let (badge-text, badge-color) = branch-badge(track.branch_status)
+  
+  #box(width: 100%, fill: c-surface, radius: 8pt, inset: 12pt, stroke: 1pt + c-border)[
+    #grid(
+      columns: (1fr, auto),
+      align(horizon)[
+        #text(weight: 700, size: 11pt)[#track.name]
+      ],
+      align(right + horizon)[
+        #box(fill: badge-color, radius: 4pt, inset: (x: 6pt, y: 3pt))[
+          #text(size: 7pt, fill: white, weight: 800)[#upper(track.branch)]
+        ]
+      ]
+    )
+    
+    #v(10pt)
+    
+    #for (j, c) in track.changes.enumerate() [
+      #grid(
+        columns: (12pt, 1fr, auto),
+        column-gutter: 8pt,
+        align(horizon)[
+          #circle(radius: 3pt, fill: status-color(c.status))
+        ],
+        align(left + horizon)[
+          #text(size: 9pt, fill: if c.status == "done" { c-muted } else { c-text })[#c.desc]
+        ],
+        align(right + horizon)[
+          #if c.date != "" [
+            #text(size: 7pt, fill: c-muted)[#c.date]
+          ]
+        ]
+      )
+      #if j < track.changes.len() - 1 { v(6pt) }
+    ]
   ]
-  #v(6pt)
+  #v(10pt)
+]
+
+// ---- LEGEND ----
+#v(10pt)
+#align(center)[
+  #grid(
+    columns: (auto, auto, auto, auto),
+    column-gutter: 14pt,
+    align(horizon)[#circle(radius: 4pt, fill: c-done) #h(2pt) #text(size: 8pt, fill: c-muted)[Done]],
+    align(horizon)[#circle(radius: 4pt, fill: c-progress) #h(2pt) #text(size: 8pt, fill: c-muted)[Working]],
+    align(horizon)[#circle(radius: 4pt, fill: c-todo) #h(2pt) #text(size: 8pt, fill: c-muted)[Todo]],
+    align(horizon)[#circle(radius: 4pt, fill: c-blocked) #h(2pt) #text(size: 8pt, fill: c-muted)[Blocked]],
+  )
 ]
 `;
 
@@ -123,6 +256,130 @@ const Section: React.FC<{
       {expanded && (
         <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-1 duration-300">
           {children}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * ProjectScannerOverlay - Shows project analysis progress and results
+ */
+const ProjectScannerOverlay: React.FC<{
+  workDir: string;
+  onComplete: (fingerprint: ProjectFingerprint | null) => void;
+}> = ({ workDir, onComplete }) => {
+  const [step, setStep] = useState(0);
+  const [fingerprint, setFingerprint] = useState<ProjectFingerprint | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { setAnalyzingProject, setProjectFingerprint } = useUIStore();
+
+  const steps = [
+    'Scanning project structure...',
+    'Detecting tech stack...',
+    'Analyzing key files...',
+    'Building summary...',
+  ];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const analyze = async () => {
+      setAnalyzingProject(true, steps[0]);
+
+      // Simulate step progression
+      const stepInterval = setInterval(() => {
+        if (!cancelled) {
+          setStep(s => {
+            if (s < steps.length - 1) return s + 1;
+            return s;
+          });
+        }
+      }, 800);
+
+      try {
+        setAnalyzingProject(true, 'Analyzing project...');
+        const result = await invoke<ProjectFingerprint>('analyze_project_structure', { workDir });
+
+        if (!cancelled) {
+          setStep(steps.length - 1);
+          setFingerprint(result);
+          setProjectFingerprint(result);
+          clearInterval(stepInterval);
+
+          // Brief delay before completing
+          await new Promise(r => setTimeout(r, 500));
+          setAnalyzingProject(false);
+          onComplete(result);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(String(e));
+          setAnalyzingProject(false);
+          clearInterval(stepInterval);
+          onComplete(null);
+        }
+      }
+    };
+
+    analyze();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workDir, onComplete, setAnalyzingProject, setProjectFingerprint]);
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+      <div className="relative mb-6">
+        {/* Animated progress ring */}
+        <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+          <circle
+            cx="40"
+            cy="40"
+            r="36"
+            fill="none"
+            stroke="#e5e7eb"
+            strokeWidth="4"
+          />
+          <circle
+            cx="40"
+            cy="40"
+            r="36"
+            fill="none"
+            stroke="#3b82f6"
+            strokeWidth="4"
+            strokeLinecap="round"
+            strokeDasharray={`${2 * Math.PI * 36}`}
+            strokeDashoffset={`${2 * Math.PI * 36 * (1 - (step + 1) / steps.length)}`}
+            className="transition-all duration-500 ease-out"
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <svg className="w-8 h-8 text-blue-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+      </div>
+
+      <h3 className="text-sm font-bold text-gray-700 mb-2">Understanding Project</h3>
+      <p className="text-xs text-gray-500 mb-4 max-w-[200px]">{steps[step]}</p>
+
+      {/* Tech stack badges */}
+      {fingerprint && (
+        <div className="flex flex-wrap gap-1 justify-center max-w-[240px]">
+          {fingerprint.tech_stack.slice(0, 5).map((tech, i) => (
+            <span key={i} className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full">
+              {tech}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 max-w-[240px]">
+          {error}
         </div>
       )}
     </div>
@@ -224,8 +481,8 @@ export const AgentPanel: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [pendingModeChange, setPendingModeChange] = useState<string | null>(null);
 
-  // activeTab / setActiveTab come from global useUIStore (agentPanelTab / setAgentPanelTab)
-  const [previewContent, setPreviewContent] = useState<string>('');
+  // Preview related state
+  const [previewContent, setPreviewContent] = useState('');
   const [autoSync, setAutoSync] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
@@ -236,16 +493,24 @@ export const AgentPanel: React.FC = () => {
   const [roadmapZoom, setRoadmapZoom] = useState(1.0);
   const [roadmapFullscreen, setRoadmapFullscreen] = useState(false);
 
+  // Project scanner state
+  const [showScanner, setShowScanner] = useState(false);
+  const { isAnalyzingProject } = useUIStore();
+
   const messages = currentMessages();
 
   const loadRoadmap = useCallback(async () => {
     setRoadmapLoading(true);
     setRoadmapError(null);
     try {
+      const session = sessions.find(s => s.id === currentSessionId);
+      const baseDir = session?.workDir || undefined;
+
       let typSource: string;
       try {
         typSource = await invoke<string>('read_project_file', {
           relativePath: 'docs/tracker/roadmap.typ',
+          baseDir,
         });
       } catch (readErr: any) {
         const msg = String(readErr);
@@ -254,6 +519,7 @@ export const AgentPanel: React.FC = () => {
           await invoke('write_project_file', {
             relativePath: 'docs/tracker/roadmap.typ',
             content: DEFAULT_ROADMAP_TYP,
+            baseDir,
           });
           typSource = DEFAULT_ROADMAP_TYP;
         } else {
@@ -271,7 +537,7 @@ export const AgentPanel: React.FC = () => {
     } finally {
       setRoadmapLoading(false);
     }
-  }, []);
+  }, [currentSessionId, sessions]);
 
   // Auto-switch to browser tab when browser starts running
   useEffect(() => {
@@ -294,12 +560,31 @@ export const AgentPanel: React.FC = () => {
     }
   }, []); // Only run on mount
 
-  // Load roadmap when switching to roadmap tab
+  // Load roadmap when switching to roadmap tab OR when project context changes
   useEffect(() => {
     if (activeTab === 'roadmap') {
-      loadRoadmap();
+      if (currentSession?.workDir) {
+        loadRoadmap();
+      } else {
+        // No project bound — clear roadmap state
+        setRoadmapSvg('');
+        setRoadmapError(null);
+      }
     }
-  }, [activeTab]);
+  }, [activeTab, currentSessionId, currentSession?.workDir, loadRoadmap]);
+
+  // Auto-trigger scanner when workDir is first bound (only once per session)
+  const prevWorkDirRef = useRef<string | null>(null);
+  useEffect(() => {
+    const workDir = currentSession?.workDir;
+    if (workDir && workDir !== prevWorkDirRef.current) {
+      prevWorkDirRef.current = workDir;
+      // Auto-start scanner if this is a new workDir binding
+      if (!isAnalyzingProject && !showScanner) {
+        setShowScanner(true);
+      }
+    }
+  }, [currentSession?.workDir, isAnalyzingProject, showScanner]);
 
 
   // Sync immediately when switching to typst-preview tab
@@ -443,6 +728,22 @@ export const AgentPanel: React.FC = () => {
               d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
           </svg>
         </button>
+        
+        {/* Project Files tab */}
+        <button
+          onClick={() => setActiveTab('files')}
+          className={`p-1.5 rounded-lg transition-all ${
+            activeTab === 'files'
+              ? 'bg-gray-100 text-gray-900'
+              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+          }`}
+          title="Project Files"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+          </svg>
+        </button>
 
         {/* Roadmap tab */}
         <button
@@ -515,6 +816,21 @@ export const AgentPanel: React.FC = () => {
             <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-200/60 bg-white/70 flex-shrink-0">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mr-auto">Roadmap</span>
 
+              {/* Understand Project button */}
+              {currentSession?.workDir && !showScanner && (
+                <button
+                  onClick={() => setShowScanner(true)}
+                  disabled={isAnalyzingProject}
+                  className="flex items-center gap-1 px-2 py-1 text-[9px] font-bold rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-50 transition-colors"
+                  title="Understand Project"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  Understand
+                </button>
+              )}
+
               {/* Zoom out */}
               <button
                 onClick={() => setRoadmapZoom(z => Math.max(0.25, +(z - 0.25).toFixed(2)))}
@@ -575,32 +891,62 @@ export const AgentPanel: React.FC = () => {
 
             {/* SVG content */}
             <div className="flex-1 overflow-auto">
-              {roadmapLoading && (
-                <div className="flex items-center justify-center h-32 text-gray-400 text-xs gap-2">
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Rendering...
+              {/* Show scanner overlay when triggered */}
+              {showScanner && currentSession?.workDir ? (
+                <ProjectScannerOverlay
+                  workDir={currentSession.workDir}
+                  onComplete={(fingerprint) => {
+                    setShowScanner(false);
+                    if (fingerprint) {
+                      addNotification('success', `Analyzed ${fingerprint.name}: ${fingerprint.tech_stack.slice(0, 3).join(', ')}`);
+                      // Refresh roadmap after analysis
+                      loadRoadmap();
+                    }
+                  }}
+                />
+              ) : !currentSession?.workDir ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-400 text-xs gap-4 p-8 text-center bg-gray-50/30">
+                  <div className="p-4 bg-white rounded-full shadow-sm border border-gray-100">
+                    <svg className="w-10 h-10 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                        d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                    </svg>
+                  </div>
+                  <div className="max-w-[200px] flex flex-col gap-1">
+                    <span className="font-bold text-gray-500 uppercase tracking-widest text-[10px]">No Project Bound</span>
+                    <span className="leading-relaxed opacity-70">Bind a folder in the message input area below to use the Feature Roadmap.</span>
+                  </div>
                 </div>
-              )}
-              {roadmapError && !roadmapLoading && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600">
-                  <div className="font-bold mb-1">Failed to load roadmap</div>
-                  <div className="font-mono text-[10px] whitespace-pre-wrap break-all">{roadmapError}</div>
-                </div>
-              )}
-              {!roadmapLoading && !roadmapError && roadmapSvg && (
-                <div style={{ width: `${Math.max(100, roadmapZoom * 100).toFixed(0)}%`, minWidth: '100%', transition: 'width 0.15s ease' }}>
-                  <div dangerouslySetInnerHTML={{ __html: roadmapSvg }} />
-                </div>
-              )}
-              {!roadmapLoading && !roadmapError && !roadmapSvg && (
-                <div className="flex flex-col items-center justify-center h-32 text-gray-400 text-xs gap-2">
-                  <svg className="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
-                  <span>Click ↻ to load roadmap</span>
-                </div>
+              ) : (
+                <>
+                  {roadmapLoading && (
+                    <div className="flex items-center justify-center h-32 text-gray-400 text-xs gap-2">
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Rendering...
+                    </div>
+                  )}
+                  {roadmapError && !roadmapLoading && (
+                    <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600">
+                      <div className="font-bold mb-1">Failed to load roadmap</div>
+                      <div className="font-mono text-[10px] whitespace-pre-wrap break-all">{roadmapError}</div>
+                    </div>
+                  )}
+                  {!roadmapLoading && !roadmapError && roadmapSvg && (
+                    <div style={{ width: `${Math.max(100, roadmapZoom * 100).toFixed(0)}%`, minWidth: '100%', transition: 'width 0.15s ease' }}>
+                      <div dangerouslySetInnerHTML={{ __html: roadmapSvg }} />
+                    </div>
+                  )}
+                  {!roadmapLoading && !roadmapError && !roadmapSvg && (
+                    <div className="flex flex-col items-center justify-center h-32 text-gray-400 text-xs gap-2">
+                      <svg className="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                      <span>Click ↻ to load roadmap</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -639,6 +985,17 @@ export const AgentPanel: React.FC = () => {
             </div>
           )}
         </>
+      )}
+
+      {/* Tab content: Files */}
+      {activeTab === 'files' && (
+        <ProjectFilesView 
+          workDir={currentSession?.workDir || null} 
+          onFileSelect={(path: string) => {
+            // Optional: AI actions when clicking file
+            console.log("Selected file:", path);
+          }}
+        />
       )}
 
       {/* Tab content: Main (original AgentPanel) */}
