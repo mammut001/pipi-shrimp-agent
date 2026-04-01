@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand';
-import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings } from '../types/settings';
+import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings, AgentSettings } from '../types/settings';
 import { DEFAULT_BUDGET_SETTINGS, DEFAULT_MODEL_PRICING } from '../types/settings';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
 
@@ -18,6 +18,7 @@ const THEME_STORAGE_KEY = 'ai-agent-theme';
 const LANGUAGE_STORAGE_KEY = 'ai-agent-language';
 const IMPORTED_FILES_STORAGE_KEY = 'ai-agent-imported-files';
 const BUDGET_SETTINGS_STORAGE_KEY = 'ai-agent-budget-settings';
+const AGENT_SETTINGS_STORAGE_KEY = 'ai-agent-agent-settings';
 
 /** Legacy storage key (for migration) */
 const LEGACY_API_CONFIG_KEY = 'ai-agent-api-config';
@@ -57,6 +58,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   language: 'en',
   importedFiles: [],
   budgetSettings: DEFAULT_BUDGET_SETTINGS,
+  agentSettings: { maxToolRounds: 10 },
 
   // ========== Imported Files Methods ==========
 
@@ -340,6 +342,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  updateAgentSettings: (settings: Partial<AgentSettings>) => {
+    const currentSettings = get().agentSettings;
+    const newSettings = { ...currentSettings, ...settings };
+
+    set({ agentSettings: newSettings });
+
+    try {
+      localStorage.setItem(AGENT_SETTINGS_STORAGE_KEY, JSON.stringify(newSettings));
+    } catch (error) {
+      console.error('Failed to persist agent settings:', error);
+    }
+  },
+
   /**
    * Get pricing for a specific model (custom or default)
    */
@@ -410,6 +425,17 @@ const initializeSettings = () => {
         useSettingsStore.setState({ budgetSettings: { ...DEFAULT_BUDGET_SETTINGS, ...budgetSettings } });
       } catch (error) {
         console.error('Failed to parse budget settings:', error);
+      }
+    }
+
+    // Load agent settings
+    const storedAgentSettings = localStorage.getItem(AGENT_SETTINGS_STORAGE_KEY);
+    if (storedAgentSettings) {
+      try {
+        const agentSettings = JSON.parse(storedAgentSettings);
+        useSettingsStore.setState({ agentSettings: { maxToolRounds: 10, ...agentSettings } });
+      } catch (error) {
+        console.error('Failed to parse agent settings:', error);
       }
     }
 

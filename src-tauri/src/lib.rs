@@ -10,6 +10,7 @@ mod models;
 mod utils;
 mod claude;
 mod database;
+mod tools;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -424,6 +425,12 @@ pub fn run() {
             app.manage(Arc::new(Mutex::new(TelegramState::default())));
             println!("📱 Telegram state initialized");
 
+            // Initialize Tool Registry
+            let mut tool_registry = tools::registry::ToolRegistry::new();
+            tools::registry::register_builtin_tools(&mut tool_registry);
+            println!("🔧 Tool registry initialized with {} tools", tool_registry.len());
+            app.manage(commands::tools::ToolRegistryState(Arc::new(Mutex::new(tool_registry))));
+
             println!("✅ Main window created successfully");
 
             Ok(())
@@ -570,6 +577,10 @@ pub fn run() {
             commands::get_session_memory_sections,
             commands::estimate_session_memory_tokens,
             commands::get_session_memory_info,
+            // Tool pipeline commands
+            commands::execute_tool_batch,
+            commands::execute_single_tool,
+            commands::get_available_tools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
