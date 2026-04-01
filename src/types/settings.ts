@@ -37,6 +37,16 @@ export interface BudgetSettings {
   enabled: boolean;             // 是否启用预算告警
 }
 
+/** Agent behavior settings */
+export interface AgentSettings {
+  maxToolRounds: number;  // Maximum tool loop rounds (default: 10)
+}
+
+/** Default agent settings */
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
+  maxToolRounds: 10,
+};
+
 /** Settings store state interface */
 export interface SettingsState {
   // ========== Data State ==========
@@ -50,6 +60,7 @@ export interface SettingsState {
   language: 'en' | 'zh';
   importedFiles: ImportedFile[];
   budgetSettings: BudgetSettings;    // Budget alert settings
+  agentSettings: AgentSettings;      // Agent behavior settings
 
   // ========== Action Methods ==========
 
@@ -134,6 +145,11 @@ export interface SettingsState {
    * Update budget settings
    */
   updateBudgetSettings: (settings: Partial<BudgetSettings>) => void;
+
+  /**
+   * Update agent settings
+   */
+  updateAgentSettings: (settings: Partial<AgentSettings>) => void;
 
   /**
    * Get pricing for a specific model (custom or default)

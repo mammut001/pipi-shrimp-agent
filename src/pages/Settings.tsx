@@ -12,6 +12,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
+import { usePromptStore } from '@/store/promptStore';
 import { invoke } from '@tauri-apps/api/core';
 import type { ApiConfig, ModelPricing } from '@/types/settings';
 import { API_PROVIDERS, PROVIDER_MODELS, DEFAULT_MODEL_PRICING } from '@/types/settings';
@@ -19,6 +20,7 @@ import { formatCost } from '@/utils/pricing';
 import { TokenStats } from '@/components/TokenStats';
 import { TelegramSettings } from '@/components/settings/TelegramSettings';
 import { t, getSupportedLocales, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
+import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuilder';
 
 /** Minimax API base URL */
 const MINIMAX_BASE_URL = 'https://api.minimaxi.com/v1';
@@ -32,6 +34,7 @@ export function Settings() {
     activeConfigId,
     theme,
     availableModels,
+    agentSettings,
     addApiConfig,
     updateApiConfig,
     removeApiConfig,
@@ -39,7 +42,18 @@ export function Settings() {
     setActiveConfig,
     setTheme,
     setLanguage,
+    updateAgentSettings,
   } = useSettingsStore();
+
+  const {
+    getActiveTemplate,
+    updateSection,
+    resetToDefault,
+  } = usePromptStore();
+
+  const activeTemplate = getActiveTemplate();
+  const sectionTokenInfo = activeTemplate ? getSectionTokenInfo(activeTemplate.sections) : [];
+  const [expandedSectionId, setExpandedSectionId] = useState<string | null>(null);
 
   const { addNotification, toggleSettings, showApiKey, toggleShowApiKey } = useUIStore();
 
@@ -825,6 +839,154 @@ export function Settings() {
 
           {/* ====== Telegram Section ====== */}
           <TelegramSettings />
+
+          {/* ====== Agent Settings Section ====== */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">Agent Behavior</h2>
+
+            <div className="mb-1">
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-gray-600">
+                  Max Tool Loop Rounds
+                </label>
+                <span className="text-xs font-mono bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
+                  {agentSettings.maxToolRounds}
+                </span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="20"
+                step="1"
+                value={agentSettings.maxToolRounds}
+                onChange={(e) => updateAgentSettings({ maxToolRounds: parseInt(e.target.value, 10) })}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-gray-900"
+              />
+              <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <span>1</span>
+                <span>10</span>
+                <span>20</span>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">
+                Maximum number of tool-call rounds per message. Higher values allow the AI to chain more tool calls before responding.
+              </p>
+            </div>
+          </div>
+
+          {/* ====== Prompt Templates Section ====== */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-900">Prompt Templates</h2>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!activeTemplate) return;
+                    const json = exportPrompt(activeTemplate.sections);
+                    navigator.clipboard.writeText(json);
+                    addNotification('success', 'Prompt exported to clipboard');
+                  }}
+                  className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+                >
+                  Export JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetToDefault();
+                    addNotification('info', 'Reset to default template');
+                  }}
+                  className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            {/* Section list */}
+            {activeTemplate?.sections.map((section) => (
+              <div key={section.id} className="mb-2 border border-gray-200 rounded-lg overflow-hidden">
+                <div
+                  className="flex items-center justify-between p-3 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                  onClick={() => setExpandedSectionId(expandedSectionId === section.id ? null : section.id)}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={section.enabled}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        updateSection(activeTemplate.id, section.id, { enabled: e.target.checked });
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-xs font-medium text-gray-700">{section.label}</span>
+                    <span className="text-xs text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded">
+                      {section.category}
+                    </span>
+                    {section.cacheable && (
+                      <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">cached</span>
+                    )}
+                    {!section.cacheable && (
+                      <span className="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">dynamic</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">#{section.order}</span>
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform ${expandedSectionId === section.id ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+
+                {expandedSectionId === section.id && (
+                  <div className="p-3 border-t border-gray-200">
+                    {section.description && (
+                      <p className="text-xs text-gray-500 mb-2">{section.description}</p>
+                    )}
+                    <textarea
+                      value={section.content}
+                      onChange={(e) => updateSection(activeTemplate.id, section.id, { content: e.target.value })}
+                      className="w-full px-2 py-1.5 text-xs border border-gray-300 rounded font-mono bg-white"
+                      rows={6}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-xs text-gray-400">
+                        {section.content.length} chars
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {Math.ceil(section.content.length / 4)} tokens (est.)
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Token Analysis */}
+            {sectionTokenInfo.length > 0 && (
+              <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <h3 className="text-xs font-medium text-blue-800 mb-2">Token Analysis</h3>
+                {sectionTokenInfo.map((info) => (
+                  <div key={info.sectionId} className="flex items-center justify-between text-xs text-blue-700 py-0.5">
+                    <span>{info.label}</span>
+                    <span>{info.tokens} tokens ({info.percentage.toFixed(1)}%)</span>
+                  </div>
+                ))}
+                <div className="mt-2 pt-2 border-t border-blue-200 flex items-center justify-between text-xs font-medium text-blue-800">
+                  <span>Total</span>
+                  <span>{sectionTokenInfo.reduce((s, i) => s + i.tokens, 0)} tokens</span>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* ====== Theme & Language Section ====== */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">

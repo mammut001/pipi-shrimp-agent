@@ -11,11 +11,13 @@ import { createSession, createMessage, createProject } from '../types/chat';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 import { useCdpStore } from './cdpStore';
+import { usePromptStore } from './promptStore';
 import type { ImportedFile } from '../types/settings';
 import { runMicrocompactCheck } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
 import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
+import { executeToolLoop } from '../services/toolEngine';
 
 /**
  * Streaming timeout - 300 seconds
@@ -1323,7 +1325,7 @@ export const useChatStore = create<ChatState>()(
         timeoutId = setTimeout(() => {
           if (get().isStreaming) {
             setStreaming(false);
-            set({ streamingContent: '', streamingReasoning: '' });
+            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
             setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded).`);
             invoke('stop_subprocess', { sessionId: currentSessionId }).catch(console.error);
           }
@@ -1551,7 +1553,7 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
-     * Send message - call API (with streaming)
+     * Send message - call API (with streaming + multi-round tool loop)
      */
     sendMessage: async (content: string, targetSessionId?: string) => {
       const {
@@ -1569,190 +1571,155 @@ export const useChatStore = create<ChatState>()(
         return;
       }
 
-      // Clear previous progress
       useUIStore.getState().clearTaskProgress();
 
-      // Get active API config from settings store
       const apiConfig = useSettingsStore.getState().getActiveConfig();
       if (!apiConfig?.apiKey) {
         setError('API key not configured. Please set up your API key in Settings.');
         return;
       }
 
-      // Timeout timer reference
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
       try {
-        // Add user message
         const userMessage = createMessage('user', content);
         if (targetSessionId && targetSessionId !== get().currentSessionId) {
           get().selectSession(targetSessionId);
         }
         await addMessage(userMessage);
 
-        // Set streaming state — record which session owns this request so the
-        // claude-tool-use listener can discard stale events if the user switches sessions.
         setStreaming(true);
         set({ streamingContent: '', streamingSessionId: activeSessionId });
 
-        // Set timeout protection - use the same timeout as setStreaming (300s)
         timeoutId = setTimeout(() => {
           console.warn(`⏱️ Streaming timeout after ${STREAMING_TIMEOUT_MS / 1000}s, force stopping...`);
           if (get().isStreaming) {
             setStreaming(false);
-            set({ streamingContent: '', streamingReasoning: '' });
+            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
             setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded). Please try again.`);
-            // Try to stop the subprocess for this specific session
             invoke('stop_subprocess', { sessionId: activeSessionId }).catch(console.error);
           }
         }, STREAMING_TIMEOUT_MS);
 
-        // Convert frontend messages to Rust format
-        // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
         const messages = buildApiMessages(currentMessages());
-
         if (messages.length === 0) {
           setError('Message content is empty. Cannot send.');
           setStreaming(false);
+          set({ streamingSessionId: null });
           return;
         }
 
-        // Create placeholder assistant message for streaming updates
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
-        // Build system prompt with session-level context only.
-        // IMPORTANT: Global importedFiles are intentionally NOT included here — they would
-        // contaminate every conversation. Each session's context is self-contained.
-        let systemPrompt = useUIStore.getState().agentInstructions;
-
+        // === Build system prompt using prompt template (section caching) ===
+        const template = usePromptStore.getState().getActiveTemplate();
         const currentSession = get().sessions.find(s => s.id === activeSessionId);
         const sessionWorkingFiles = currentSession?.workingFiles ?? [];
         const sessionWorkDir = currentSession?.workDir;
 
-        // Inject bound working directory into system prompt so AI knows where to navigate
+        let coreMdContent = '';
         if (sessionWorkDir) {
-          systemPrompt += `\n\n## Working Directory\n\nYour working directory for this session is: \`${sessionWorkDir}\`\nUse this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and \`grep\` tools. Resolve all relative paths against this directory.`;
-          
           try {
             const coreMdPath = `${sessionWorkDir}/.pipi-shrimp/core.md`;
-            const coreMdRes = await invoke<{ content: string; path: string }>('read_file', { 
+            const coreMdRes = await invoke<{ content: string; path: string }>('read_file', {
               path: coreMdPath,
               workDir: sessionWorkDir
             });
             if (coreMdRes && coreMdRes.content) {
-              systemPrompt += `\n\n## Project Core Memory (.pipi-shrimp/core.md)\n\n${coreMdRes.content}\n\n**CRITICAL INSTRUCTION**: The user relies on \`.pipi-shrimp/core.md\` to preserve project context between sessions. If the user tells you new persistent information about the project (e.g., what it is, tech stack, architecture, or rules), you MUST use the \`write_file\` tool to update \`.pipi-shrimp/core.md\` immediately so you don't forget it in future sessions. Combine the new knowledge with the existing content gracefully.`;
+              coreMdContent = coreMdRes.content;
             }
           } catch (e) {
             console.debug('No core.md found or failed to read:', e);
           }
         }
 
-        // Inject session-level working files (only files explicitly added to this session)
-        if (sessionWorkingFiles.length > 0) {
-          const filesList = sessionWorkingFiles.map((f) => `- ${f.name}: ${f.path}`).join('\n');
-          systemPrompt += `\n\n## Working Files\n\nThe following files have been added to this session's context:\n${filesList}\n\nUse \`read_file\` with the exact paths above to read their contents before editing.`;
-        }
+        const workingFilesList = sessionWorkingFiles.length > 0
+          ? sessionWorkingFiles.map((f) => `- ${f.name}: ${f.path}`).join('\n')
+          : '';
 
-        // Use streaming command
-        // NOTE: response.tool_calls is non-empty when AI used tools this turn
-        const response = await invoke<{
-          content: string;
-          artifacts: Array<{
-            type: string;
-            content: string;
-            title?: string;
-            language?: string;
-          }>;
-          model: string;
-          usage: { input_tokens: number; output_tokens: number };
-          tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
-        }>('send_claude_sdk_chat_streaming', {
-          messages,
-          apiKey: apiConfig.apiKey,
-          model: apiConfig.model,
-          baseUrl: apiConfig.baseUrl || '',
-          systemPrompt,
-          browserConnected: useCdpStore.getState().status === 'connected',
-          sessionId: activeSessionId,
-        });
+        const { buildPrompt } = await import('../services/prompt/promptBuilder');
+        const { systemPrompt } = buildPrompt(
+          template?.sections || [],
+          {
+            agentInstructions: useUIStore.getState().agentInstructions,
+            workDir: sessionWorkDir || '',
+            coreMdContent,
+            workingFilesList,
+            originalQuery: '',
+            browserResult: '',
+          },
+        );
 
-        // Clear timeout on success
+        // === Multi-round tool loop via executeToolLoop ===
+        // This replaces the old single-round pattern:
+        //   invoke → check tool_calls → sendAllToolResults → invoke → done
+        // Now it supports unlimited rounds: API → tools → API → tools → ...
+        const apiMessages = currentMessages();
+        const toolLoopResult = await executeToolLoop(
+          apiMessages,
+          activeSessionId,
+          {
+            apiKey: apiConfig.apiKey,
+            model: apiConfig.model,
+            baseUrl: apiConfig.baseUrl || '',
+            systemPrompt,
+            browserConnected: useCdpStore.getState().status === 'connected',
+            maxRounds: useSettingsStore.getState().agentSettings.maxToolRounds,
+          },
+        );
+
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;
         }
 
-        const { streamingContent: finalContent, streamingReasoning } = get();
-        const { updateLastMessage } = get();
-
-        const usedTools = response.tool_calls && response.tool_calls.length > 0;
-
-        if (usedTools) {
-          // Tools were called this turn. The event handler (claude-tool-use) will call
-          // executeTool → sendAllToolResults which handles the second API call and ALL
-          // final cleanup (setStreaming(false), clearing state).
-          // Save any text the AI wrote before the tool call + reasoning.
-          // Strip <think>...</think> so DB doesn't store raw think tags.
-          const rawPrefix = finalContent || response.content || '';
-          const { content: cleanPrefix, reasoning: parsedPrefixReasoning } = parseThinkContent(rawPrefix);
-          await updateLastMessage(cleanPrefix, undefined, mergeReasoningParts(streamingReasoning, parsedPrefixReasoning));
-          // Do NOT call setStreaming(false) or clear streamingContent here —
-          // that would race with sendAllToolResults' second streaming invoke.
-        } else {
-          // Normal text response — finalize here.
-          // Strip <think>...</think> tags before persisting (MiniMax embeds think inline).
-          const rawContent = finalContent || response.content || '';
-          const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(rawContent);
-          
-          // Prepare token usage for message
-          const tokenUsage = response.usage ? {
-            input_tokens: response.usage.input_tokens,
-            output_tokens: response.usage.output_tokens,
-            model: response.model || apiConfig.model,
-          } : undefined;
-          
-          await updateLastMessage(
-            cleanContent,
-            response.artifacts?.map((a) => ({
-              id: crypto.randomUUID(),
-              type: a.type as 'html' | 'svg' | 'mermaid' | 'react' | 'code',
-              content: a.content,
-              title: a.title,
-              language: a.language,
-            })),
-            mergeReasoningParts(streamingReasoning, parsedReasoning),
-            tokenUsage
-          );
-          
-          // Save token usage to database
-          if (response.usage) {
-            const now = new Date();
-            const date = now.toISOString().split('T')[0];  // YYYY-MM-DD
-            await invoke('db_save_token_usage', {
-              usage: {
-                id: crypto.randomUUID(),
-                session_id: activeSessionId,
-                date,
-                input_tokens: response.usage.input_tokens,
-                output_tokens: response.usage.output_tokens,
-                model: response.model || apiConfig.model,
-                created_at: Math.floor(now.getTime() / 1000),
-              },
-            }).catch((e: unknown) => console.error('Failed to save token usage:', e));
-          }
-          
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-
-          // Layer 1: Run microcompact after streaming completes
-          await runMicrocompactAfterStreaming(activeSessionId, set, get);
-          
-          // Layer 2: Try Session Memory Compact if needed
-          await runSMCompactAfterStreaming(activeSessionId, set, get);
+        // If tool loop reported an error, handle it
+        if (toolLoopResult.error) {
+          console.warn('[ToolLoop] Error:', toolLoopResult.error);
         }
+
+        // Merge accumulated streaming content with tool loop's final content
+        const { streamingContent, streamingReasoning, updateLastMessage } = get();
+        const finalContent = toolLoopResult.finalContent || streamingContent || '';
+
+        const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(finalContent);
+
+        const tokenUsage = toolLoopResult.tokenUsage ? {
+          input_tokens: toolLoopResult.tokenUsage.input_tokens,
+          output_tokens: toolLoopResult.tokenUsage.output_tokens,
+          model: toolLoopResult.tokenUsage.model || apiConfig.model,
+        } : undefined;
+
+        await updateLastMessage(
+          cleanContent,
+          undefined,
+          mergeReasoningParts(streamingReasoning, parsedReasoning),
+          tokenUsage,
+        );
+
+        if (toolLoopResult.tokenUsage) {
+          const now = new Date();
+          const date = now.toISOString().split('T')[0];
+          await invoke('db_save_token_usage', {
+            usage: {
+              id: crypto.randomUUID(),
+              session_id: activeSessionId,
+              date,
+              input_tokens: toolLoopResult.tokenUsage.input_tokens,
+              output_tokens: toolLoopResult.tokenUsage.output_tokens,
+              model: toolLoopResult.tokenUsage.model || apiConfig.model,
+              created_at: Math.floor(now.getTime() / 1000),
+            },
+          }).catch((e: unknown) => console.error('Failed to save token usage:', e));
+        }
+
+        setStreaming(false);
+        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+
+        await runMicrocompactAfterStreaming(activeSessionId, set, get);
+        await runSMCompactAfterStreaming(activeSessionId, set, get);
       } catch (error) {
-        // Clear timeout on error
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;
@@ -1762,7 +1729,6 @@ export const useChatStore = create<ChatState>()(
         const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to send message');
         setError(errorMsg);
 
-        // Save any accumulated content before clearing
         const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
         if (errContent || errReasoning) {
           const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
@@ -1772,7 +1738,6 @@ export const useChatStore = create<ChatState>()(
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
 
-        // Remove empty assistant placeholder to prevent "Thinking..." stuck state
         const sid = get().currentSessionId;
         if (sid) {
           set((state) => ({
