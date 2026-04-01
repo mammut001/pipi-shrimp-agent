@@ -27,8 +27,6 @@ export { ChromeConnectPrompt } from './ChromeConnectPrompt';
 // Typst Preview
 export { TypstPreview } from './TypstPreview';
 
-// Project Files Browser
-export { ProjectFilesView } from './ProjectFilesView';
 
 // Browser Panel (PageAgent)
 export { BrowserPanel } from './BrowserPanel';

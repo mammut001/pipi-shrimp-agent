@@ -12,6 +12,13 @@
     max-width: 100%;
   }
 
+  /* Prevent unwanted drag on images/links only.
+     A blanket * { -webkit-user-drag: none } causes macOS WKWebView
+     to enter drag-detection state and swallow subsequent click events. */
+  img, a, svg {
+    -webkit-user-drag: none;
+  }
+
   /* Ensure prose pre elements don't cause horizontal scroll */
   .prose pre {
     max-width: 100%;
