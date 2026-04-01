@@ -169,46 +169,61 @@ pub async fn move_browser_surface(
     height: Option<f64>,
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
-    let webview = {
-        let state = state.lock().await;
-        state.embedded_webview.as_ref()
+    let (webview, browser_window) = {
+        let mut state = state.lock().await;
+        state.embedded_mode = true;
+        let webview = state.embedded_webview.as_ref()
             .ok_or_else(|| AppError::InvalidInput("No embedded browser surface open".to_string()))?
-            .clone()
+            .clone();
+        let browser_window = state.browser_window.clone();
+        (webview, browser_window)
     };
 
     match target_mode.as_str() {
         "mini" | "expanded" => {
-            if let (Some(x), Some(y), Some(width), Some(height)) = (x, y, width, height) {
-                let width = width.max(1.0);
-                let height = height.max(1.0);
+            let (x, y, width, height) = (x, y, width, height);
+            let (x, y, width, height) = match (x, y, width, height) {
+                (Some(x), Some(y), Some(width), Some(height)) => {
+                    (x, y, width.max(1.0), height.max(1.0))
+                }
+                _ => {
+                    return Err(AppError::InvalidInput(
+                        "Bounds are required when moving browser surface to mini or expanded mode".to_string(),
+                    ));
+                }
+            };
 
-                webview
-                    .set_position(LogicalPosition::new(x, y))
-                    .map_err(|e| AppError::InternalError(format!("Failed to move browser surface: {}", e)))?;
-                webview
-                    .set_size(LogicalSize::new(width, height))
-                    .map_err(|e| AppError::InternalError(format!("Failed to resize browser surface: {}", e)))?;
-                webview
-                    .show()
-                    .map_err(|e| AppError::InternalError(format!("Failed to show browser surface: {}", e)))?;
+            webview
+                .set_position(LogicalPosition::new(x, y))
+                .map_err(|e| AppError::InternalError(format!("Failed to move browser surface: {}", e)))?;
+            webview
+                .set_size(LogicalSize::new(width, height))
+                .map_err(|e| AppError::InternalError(format!("Failed to resize browser surface: {}", e)))?;
+            webview
+                .show()
+                .map_err(|e| AppError::InternalError(format!("Failed to show browser surface: {}", e)))?;
 
-                println!(
-                    "[Browser] Browser surface moved to {} at ({:.1}, {:.1}) size {:.1}x{:.1}",
-                    target_mode, x, y, width, height
-                );
-                Ok(format!(
-                    "Browser surface moved to {} at ({:.1}, {:.1}) size {:.1}x{:.1}",
-                    target_mode, x, y, width, height
-                ))
-            } else {
-                println!(
-                    "[Browser] Browser surface mode set to {} (no bounds update provided)",
-                    target_mode
-                );
-                Ok(format!("Browser surface mode set to {} (no bounds update)", target_mode))
+            if let Some(window) = browser_window {
+                let _ = window.hide();
             }
+
+            println!(
+                "[Browser] Browser surface moved to {} at ({:.1}, {:.1}) size {:.1}x{:.1}",
+                target_mode, x, y, width, height
+            );
+            Ok(format!(
+                "Browser surface moved to {} at ({:.1}, {:.1}) size {:.1}x{:.1}",
+                target_mode, x, y, width, height
+            ))
         }
-        _ => Err(AppError::InvalidInput("Invalid mode. Use 'mini' or 'expanded'".to_string()))
+        "hidden" => {
+            webview
+                .hide()
+                .map_err(|e| AppError::InternalError(format!("Failed to hide browser surface: {}", e)))?;
+            println!("[Browser] Browser surface hidden");
+            Ok("Browser surface hidden".to_string())
+        }
+        _ => Err(AppError::InvalidInput("Invalid mode. Use 'mini', 'expanded', or 'hidden'".to_string()))
     }
 }
 

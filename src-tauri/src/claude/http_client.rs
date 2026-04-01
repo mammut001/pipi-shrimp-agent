@@ -15,9 +15,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::message::{Artifact, ChatResponse, ErrorResponse, Message, ToolCall, UsageInfo};
 
-/// Global cancellation token for stopping in-flight requests
-static CANCEL_TOKEN: Lazy<Mutex<Option<CancellationToken>>> =
-    Lazy::new(|| Mutex::new(None));
+/// Per-session cancellation tokens for supporting concurrent requests
+static CANCEL_TOKENS: Lazy<Mutex<std::collections::HashMap<String, CancellationToken>>> =
+    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// Global security constraints injected into ALL system prompts
 /// This is Layer 2 defense - even if user-provided prompts are manipulated,
@@ -738,21 +738,32 @@ pub fn supports_thinking(model: &str) -> bool {
 /**
  * Send a message to stop/kill the current request
  */
-pub async fn stop_current_request() -> AppResult<()> {
-    let mut token_guard = CANCEL_TOKEN.lock().await;
-    if let Some(token) = token_guard.take() {
-        println!("🔴 Cancelling current request");
-        token.cancel();
+pub async fn stop_current_request(session_id: Option<String>) -> AppResult<()> {
+    let mut tokens_guard = CANCEL_TOKENS.lock().await;
+    if let Some(sid) = session_id {
+        if let Some(token) = tokens_guard.remove(&sid) {
+            println!("🔴 Cancelling request for session: {}", sid);
+            token.cancel();
+        }
+    } else {
+        // Stop all requests (legacy behavior)
+        for (sid, token) in tokens_guard.drain() {
+            println!("🔴 Cancelling request for session: {}", sid);
+            token.cancel();
+        }
     }
     Ok(())
 }
 
 /**
- * Check if there's a running request
+ * Check if there's a running request for a session
  */
-pub async fn has_running_request() -> bool {
-    let token_guard = CANCEL_TOKEN.lock().await;
-    token_guard.is_some()
+pub async fn has_running_request(session_id: Option<&str>) -> bool {
+    let tokens_guard = CANCEL_TOKENS.lock().await;
+    match session_id {
+        Some(sid) => tokens_guard.contains_key(sid),
+        None => !tokens_guard.is_empty(),
+    }
 }
 
 // ============ SSE Response Types ============
@@ -981,9 +992,9 @@ impl ClaudeClient {
         browser_connected: bool,
     ) -> AppResult<ChatResponse> {
         if let Some(url) = base_url {
-            self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None, browser_connected).await
+            self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None, browser_connected, "").await
         } else {
-            self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), false, false, None, browser_connected).await
+            self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), false, false, None, browser_connected, "").await
         }
     }
 
@@ -1000,12 +1011,13 @@ impl ClaudeClient {
         no_tools: bool,
         window: Window,
         browser_connected: bool,
+        session_id: String,
     ) -> AppResult<ChatResponse> {
-        // Create cancellation token and store globally
+        // Create cancellation token and store per-session
         let cancel_token = CancellationToken::new();
         {
-            let mut token_guard = CANCEL_TOKEN.lock().await;
-            *token_guard = Some(cancel_token.clone());
+            let mut tokens_guard = CANCEL_TOKENS.lock().await;
+            tokens_guard.insert(session_id.clone(), cancel_token.clone());
         }
 
         // Use tokio::select! to handle cancellation
@@ -1025,17 +1037,17 @@ impl ClaudeClient {
             }
             result = async {
                 if let Some(url) = base_url {
-                    self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window), browser_connected).await
+                    self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
                 } else {
-                    self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window), browser_connected).await
+                    self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
                 }
             } => result
         };
 
         // Clear the cancellation token
         {
-            let mut token_guard = CANCEL_TOKEN.lock().await;
-            *token_guard = None;
+            let mut tokens_guard = CANCEL_TOKENS.lock().await;
+            tokens_guard.remove(&session_id);
         }
 
         result
@@ -1054,6 +1066,7 @@ impl ClaudeClient {
         no_tools: bool,
         window: Option<Window>,
         browser_connected: bool,
+        session_id: &str,
     ) -> AppResult<ChatResponse> {
         let thinking = supports_thinking(model);
         // thinking_budget is the TOTAL thinking token budget across ALL interleaved rounds.
@@ -1129,7 +1142,7 @@ impl ClaudeClient {
                 return Err(AppError::ProcessError(format!("Anthropic API error ({}): {}", status, error_text)));
             }
 
-            self.stream_anthropic_response(response, window, estimated_input).await
+            self.stream_anthropic_response(response, window, estimated_input, session_id).await
         } else {
             let response = request.send().await.map_err(|e| {
                 AppError::ProcessError(format!("Failed to send request: {}", e))
@@ -1199,6 +1212,7 @@ impl ClaudeClient {
         response: reqwest::Response,
         window: Option<Window>,
         estimated_input_tokens: i32,
+        session_id: &str,
     ) -> AppResult<ChatResponse> {
         let mut full_content = String::new();
         let mut full_reasoning = String::new();
@@ -1253,7 +1267,10 @@ impl ClaudeClient {
                             if let Some(text) = delta_obj.get("text").and_then(|v| v.as_str()) {
                                 full_content.push_str(text);
                                 if let Some(ref w) = window {
-                                    let _ = w.emit("claude-token", text);
+                                    let _ = w.emit("claude-token", serde_json::json!({
+                                        "session_id": session_id,
+                                        "content": text,
+                                    }));
                                 }
                             }
 
@@ -1261,7 +1278,10 @@ impl ClaudeClient {
                             if let Some(thinking) = delta_obj.get("thinking").and_then(|v| v.as_str()) {
                                 full_reasoning.push_str(thinking);
                                 if let Some(ref w) = window {
-                                    let _ = w.emit("claude-reasoning", thinking);
+                                    let _ = w.emit("claude-reasoning", serde_json::json!({
+                                        "session_id": session_id,
+                                        "content": thinking,
+                                    }));
                                 }
                             }
 
@@ -1293,7 +1313,12 @@ impl ClaudeClient {
                             };
                             tool_calls.push(tool_call.clone());
                             if let Some(ref w) = window {
-                                let _ = w.emit("claude-tool-use", tool_call);
+                                let _ = w.emit("claude-tool-use", serde_json::json!({
+                                    "session_id": session_id,
+                                    "tool_call_id": tool_call.tool_call_id,
+                                    "name": tool_call.name,
+                                    "arguments": tool_call.arguments,
+                                }));
                             }
                         }
                     }
@@ -1322,10 +1347,14 @@ impl ClaudeClient {
 
         // Handle final content
         let message_str = full_content.clone();
+
+        // Emit final reasoning content as a single event for clients that need it
         if !full_reasoning.is_empty() {
-            // Emit final reasoning content as a single event for clients that need it
             if let Some(ref w) = window {
-                let _ = w.emit("claude-reasoning", &full_reasoning);
+                let _ = w.emit("claude-reasoning", serde_json::json!({
+                    "session_id": session_id,
+                    "content": &full_reasoning,
+                }));
             }
         }
 
@@ -1363,6 +1392,7 @@ impl ClaudeClient {
         no_tools: bool,
         window: Option<Window>,
         browser_connected: bool,
+        session_id: &str,
     ) -> AppResult<ChatResponse> {
         let base_url = base_url.unwrap_or_default();
         let tools = if no_tools {
@@ -1436,7 +1466,7 @@ impl ClaudeClient {
         }
 
         if streaming {
-            self.stream_openai_response(response, window, estimated_input).await
+            self.stream_openai_response(response, window, estimated_input, session_id).await
         } else {
             // Non-streaming response
             let value: serde_json::Value = response.json().await.map_err(|e| {
@@ -1480,6 +1510,7 @@ impl ClaudeClient {
         response: reqwest::Response,
         window: Option<Window>,
         estimated_input_tokens: i32,
+        session_id: &str,
     ) -> AppResult<ChatResponse> {
         let mut full_content = String::new();
         let mut full_reasoning = String::new();
@@ -1560,7 +1591,10 @@ impl ClaudeClient {
                                 if !thinking.is_empty() {
                                     full_reasoning.push_str(thinking);
                                     if let Some(ref w) = window {
-                                        let _ = w.emit("claude-reasoning", thinking);
+                                        let _ = w.emit("claude-reasoning", serde_json::json!({
+                                            "session_id": session_id,
+                                            "content": thinking,
+                                        }));
                                     }
                                 }
                             }
@@ -1570,7 +1604,10 @@ impl ClaudeClient {
                                 if !reasoning.is_empty() {
                                     full_reasoning.push_str(reasoning);
                                     if let Some(ref w) = window {
-                                        let _ = w.emit("claude-reasoning", reasoning);
+                                        let _ = w.emit("claude-reasoning", serde_json::json!({
+                                            "session_id": session_id,
+                                            "content": reasoning,
+                                        }));
                                     }
                                 }
                             }
@@ -1593,12 +1630,18 @@ impl ClaudeClient {
                                     if is_reasoning {
                                         full_reasoning.push_str(&segment);
                                         if let Some(ref w) = window {
-                                            let _ = w.emit("claude-reasoning", segment);
+                                            let _ = w.emit("claude-reasoning", serde_json::json!({
+                                                "session_id": session_id,
+                                                "content": segment,
+                                            }));
                                         }
                                     } else {
                                         full_content.push_str(&segment);
                                         if let Some(ref w) = window {
-                                            let _ = w.emit("claude-token", segment);
+                                            let _ = w.emit("claude-token", serde_json::json!({
+                                                "session_id": session_id,
+                                                "content": segment,
+                                            }));
                                         }
                                     }
                                 }
@@ -1671,7 +1714,12 @@ impl ClaudeClient {
                     };
                     tool_calls.push(tool_call.clone());
                     if let Some(ref w) = window {
-                        let _ = w.emit("claude-tool-use", tool_call);
+                        let _ = w.emit("claude-tool-use", serde_json::json!({
+                            "session_id": session_id,
+                            "tool_call_id": tool_call.tool_call_id,
+                            "name": tool_call.name,
+                            "arguments": tool_call.arguments,
+                        }));
                     }
                 }
             }

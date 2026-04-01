@@ -12,7 +12,6 @@
     "tauri:build": "cargo-tauri build"
   },
   "dependencies": {
-    "@rollup/rollup-darwin-x64": "4.59.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-fs": "^2.0.0",
