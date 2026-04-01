@@ -14,10 +14,12 @@
 pub mod browser;    // NEW - Browser window commands for PageAgent
 pub mod chat;
 pub mod code;
+pub mod compact;     // Context compression system - Layer 1: Microcompact
 pub mod config;
 pub mod file;
 pub mod models;
 pub mod search;
+pub mod session_memory; // Layer 2: Session Memory
 pub mod telegram;    // Telegram Bot API commands
 pub mod web;
 pub mod workspace;
@@ -25,10 +27,12 @@ pub mod workspace;
 pub use browser::*;  // NEW
 pub use chat::*;
 pub use code::*;
+pub use compact::*;
 pub use config::*;
 pub use file::*;
 pub use models::*;
 pub use search::*;
+pub use session_memory::*;
 pub use telegram::*;
 pub use web::*;
 pub use workspace::*;
