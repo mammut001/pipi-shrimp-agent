@@ -97,8 +97,11 @@ export function Sidebar() {
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
 
-  // Get sessions without a project (reversed to show newest first)
-  const ungroupedSessions = [...getSessionsByProject(null)].reverse();
+  // Get sessions without a project (show in original store order, which is typically newest first)
+  const ungroupedSessions = useMemo(
+    () => [...getSessionsByProject(null)].sort((a, b) => b.updatedAt - a.updatedAt),
+    [sessions, getSessionsByProject]
+  );
 
   // Memoized token usage map for all sessions
   const tokenUsageMap = useMemo(() => {
@@ -732,7 +735,7 @@ export function Sidebar() {
                       {/* Project Sessions */}
                       {expandedProjects.has(project.id) && (
                         <ul className="ml-6 space-y-1 mt-1">
-                          {[...getSessionsByProject(project.id)].reverse().map((session) => (
+                          {[...getSessionsByProject(project.id)].map((session) => (
                             <li key={session.id}>
                               <button
                                 onClick={() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id)}

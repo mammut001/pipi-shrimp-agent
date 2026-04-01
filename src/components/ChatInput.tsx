@@ -9,7 +9,7 @@
  * - Auto focus
  */
 
-import { useState, useRef, useEffect, type KeyboardEvent, type ChangeEvent } from 'react';
+import { useState, useRef, useEffect, type ChangeEvent } from 'react';
 import { useChatStore } from '@/store';
 import { t } from '@/i18n';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
@@ -150,15 +150,6 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
     await stopGeneration();
   };
 
-  /**
-   * Handle keyboard shortcuts
-   */
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
 
   const isDisabled = isStreaming;
 
@@ -287,9 +278,21 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                // If we're composing (IME), prevent the Enter key from submitting
+                if (isComposingRef.current || e.nativeEvent.isComposing) {
+                  return;
+                }
+                e.preventDefault();
+                handleSubmit();
+              }
+            }}
             onCompositionStart={() => { isComposingRef.current = true; }}
-            onCompositionEnd={() => { isComposingRef.current = false; }}
+            onCompositionEnd={() => { 
+              // Delay resetting to false so the KeyDown event for the same Enter key still sees true
+              setTimeout(() => { isComposingRef.current = false; }, 100); 
+            }}
             placeholder={references.length > 0 ? t('chat.inputPlaceholder') : t('chat.inputPlaceholder')}
             disabled={isDisabled}
             rows={1}
