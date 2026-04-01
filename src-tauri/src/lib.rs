@@ -177,6 +177,44 @@ fn db_delete_message(message_id: String) -> Result<(), String> {
     delete_message(&message_id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+#[allow(non_snake_case)]
+fn delete_messages_by_ids(messageIds: Vec<String>) -> Result<(), String> {
+    database::delete_messages_by_ids(&messageIds).map_err(|e| e.to_string())
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CompactBoundaryPayload {
+    id: String,
+    content: String,
+    subtype: String,
+    compact_type: String,
+    pre_compact_token_count: i32,
+    post_compact_token_count: i32,
+    summary_version: i64,
+    created_at: i64,
+    session_memory_path: Option<String>,
+    preserved_segment: Option<serde_json::Value>,
+    pre_compact_discovered_tools: Option<serde_json::Value>,
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+fn save_compact_boundary(sessionId: String, boundary: CompactBoundaryPayload) -> Result<(), String> {
+    let artifacts = serde_json::to_string(&boundary).ok();
+    let message = database::DbMessage {
+        id: boundary.id,
+        session_id: sessionId,
+        role: "system".to_string(), // boundaries are system messages
+        content: boundary.content,
+        reasoning: None,
+        artifacts,
+        tool_calls: None,
+        created_at: boundary.created_at,
+    };
+    database::save_message(&message).map_err(|e| e.to_string())
+}
+
 /**
  * Database commands for projects
  */
@@ -441,6 +479,8 @@ pub fn run() {
             db_save_message,
             db_get_messages,
             db_delete_message,
+            delete_messages_by_ids,
+            save_compact_boundary,
             commands::update_session_title,
             // Project commands
             db_save_project,
@@ -510,6 +550,24 @@ pub fn run() {
             commands::telegram_answer_callback_query,
             commands::telegram_get_file_url,
             commands::telegram_get_updates,
+            // Compact commands (Layer 1: Microcompact)
+            commands::estimate_tokens,
+            commands::estimate_messages_tokens,
+            commands::microcompact_clear_old_tool_results,
+            commands::microcompact_by_count,
+            commands::get_session_token_stats,
+            commands::get_recent_tool_results,
+            // Session Memory commands (Layer 2)
+            commands::init_session_memory,
+            commands::get_session_memory,
+            commands::write_session_memory,
+            commands::is_session_memory_empty,
+            commands::session_memory_exists,
+            commands::get_session_memory_dir,
+            commands::get_session_memory_path,
+            commands::get_session_memory_sections,
+            commands::estimate_session_memory_tokens,
+            commands::get_session_memory_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

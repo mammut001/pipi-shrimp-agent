@@ -17,7 +17,6 @@ export const ProjectFilesView: React.FC<ProjectFilesViewProps> = ({ workDir, onF
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
 
   const loadFiles = async (dirPath: string) => {
     setLoading(true);

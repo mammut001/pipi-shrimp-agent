@@ -516,6 +516,20 @@ pub fn delete_message(message_id: &str) -> SqliteResult<()> {
 }
 
 /**
+ * Delete multiple messages by IDs
+ */
+pub fn delete_messages_by_ids(message_ids: &[String]) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare("DELETE FROM messages WHERE id = ?1")?;
+        for id in message_ids {
+            stmt.execute(params![id])?;
+        }
+    }
+    Ok(())
+}
+
+/**
  * Get all messages for a session
  */
 pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>> {

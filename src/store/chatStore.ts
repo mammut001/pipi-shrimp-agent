@@ -12,12 +12,185 @@ import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 import { useCdpStore } from './cdpStore';
 import type { ImportedFile } from '../types/settings';
+import { runMicrocompactCheck } from '../services/compact/microCompact';
+import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
+import { triggerLegacyCompact } from '../services/compact/compact';
+import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
 
 /**
  * Streaming timeout - 300 seconds
  * If the API doesn't respond within this time, we'll force stop the streaming
  */
 const STREAMING_TIMEOUT_MS = 300000;
+
+/**
+ * Run microcompact check after streaming completes.
+ * 
+ * Layer 1: Microcompact — 每轮自动清理旧工具结果
+ * 源码参考: microcompactMessages() 在 microCompact.ts
+ * 
+ * 调用时机: streaming 完成后立即调用
+ * - 调用 Rust microcompact 命令（清除工具结果）
+ * - 更新本地消息状态
+ */
+/**
+ * Run Session Memory Compact (Layer 2) after streaming completes.
+ * 
+ * 触发条件:
+ * - 当前 token 数 > sm_auto_threshold_tokens (默认 80K)
+ * - Session Memory 文件存在且非空
+ * 
+ * 流程:
+ * 1. 检查 token 阈值
+ * 2. 调用 trySessionMemoryCompact
+ * 3. 如果成功，替换 Zustand store 中的 messages
+ */
+/**
+ * Run Layer 2 (SM Compact) and Layer 3 (Legacy Compact) after streaming completes.
+ * 
+ * Layer 2: Session Memory Compact
+ * - 触发: token > sm_auto_threshold_tokens (80K) 且 SM 文件存在非空
+ * 
+ * Layer 3: Legacy Compact
+ * - 触发: token > legacy_auto_threshold_tokens (120K) 且 SM compact 不可用
+ * - 调用 LLM 生成完整摘要
+ */
+async function runSMCompactAfterStreaming(
+  sessionId: string,
+  set: (updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+  _get: () => ChatState,
+): Promise<void> {
+  try {
+    const config = getCompactConfig();
+    
+    // 获取当前 session
+    const state = _get();
+    const session = state.sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    
+    const messages = session.messages;
+    const workDir = session.workDir ?? undefined;
+    
+    // 获取 token 统计
+    const stats = await getContextTokenStats(sessionId);
+    
+    // ===== Layer 2: Session Memory Compact =====
+    if (stats.current >= config.sm_auto_threshold_tokens) {
+      const smResult = await trySessionMemoryCompact(sessionId, messages, workDir);
+      
+      if (smResult.did_compact && smResult.boundary_message && smResult.summary_message) {
+        console.log('[SM Compact] Success:', smResult.deleted_count, 'messages removed');
+        
+        set((state) => ({
+          sessions: state.sessions.map(s => {
+            if (s.id !== sessionId) return s;
+            return {
+              ...s,
+              messages: [
+                {
+                  id: smResult.boundary_message!.id,
+                  role: 'system' as const,
+                  content: smResult.boundary_message!.content,
+                  timestamp: smResult.boundary_message!.created_at * 1000,
+                  metadata: {
+                    subtype: 'compact_boundary',
+                    compact_type: smResult.boundary_message!.compact_type,
+                  },
+                } as any,
+                smResult.summary_message!,
+                ...s.messages.slice(smResult.deleted_count!),
+              ],
+            };
+          }),
+        }));
+        return; // SM Compact 成功，不需要继续
+      }
+    }
+    
+    // ===== Layer 3: Legacy Compact =====
+    // SM 不可用或未触发，且达到 legacy 阈值
+    if (stats.current >= config.legacy_auto_threshold_tokens) {
+      console.log('[Legacy Compact] Triggering...');
+      
+      const legacyResult = await triggerLegacyCompact(sessionId, messages);
+      
+      if (legacyResult.success && legacyResult.boundary_message && legacyResult.summary_message) {
+        console.log('[Legacy Compact] Success:', legacyResult.deleted_count, 'messages removed');
+        
+        set((state) => ({
+          sessions: state.sessions.map(s => {
+            if (s.id !== sessionId) return s;
+            return {
+              ...s,
+              messages: [
+                {
+                  id: legacyResult.boundary_message!.id,
+                  role: 'system' as const,
+                  content: legacyResult.boundary_message!.content,
+                  timestamp: legacyResult.boundary_message!.created_at * 1000,
+                  metadata: {
+                    subtype: 'compact_boundary',
+                    compact_type: legacyResult.boundary_message!.compact_type,
+                  },
+                } as any,
+                legacyResult.summary_message!,
+                ...(legacyResult.messages_to_keep ?? []),
+              ],
+            };
+          }),
+        }));
+      } else if (legacyResult.error) {
+        console.warn('[Legacy Compact] Failed:', legacyResult.error);
+      }
+    }
+  } catch (e) {
+    console.warn('[Compact] Check failed:', e);
+  }
+}
+
+async function runMicrocompactAfterStreaming(
+  sessionId: string,
+  set: (updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+  _get: () => ChatState,
+): Promise<void> {
+  try {
+    const result = await runMicrocompactCheck(sessionId);
+    if (result.did_compact && result.updates && result.updates.length > 0) {
+      console.log('[Microcompact] Cleared', result.updates.length, 'tool results');
+      
+      // 应用更新到 Zustand store
+      for (const update of result.updates) {
+        // 更新消息 content
+        set((state) => ({
+          sessions: state.sessions.map((s) => {
+            if (s.id !== sessionId) return s;
+            return {
+              ...s,
+              messages: s.messages.map((m) => {
+                if (m.id !== update.message_id) return m;
+                return {
+                  ...m,
+                  content: update.new_content,
+                  metadata: {
+                    ...m.metadata,
+                    compact_metadata: {
+                      tool_result_cleared: true,
+                      tool_result_cleared_at: update.cleared_at,
+                      estimated_tokens: 5,
+                    },
+                  },
+                };
+              }),
+            };
+          }),
+        }));
+      }
+    }
+  } catch (e) {
+    // Microcompact 失败不影响主流程，只记录日志
+    console.warn('[Microcompact] Check failed:', e);
+  }
+}
 
 /**
  * Database types matching Rust backend
@@ -1074,6 +1247,12 @@ export const useChatStore = create<ChatState>()(
           // Clear all streaming + pending state (including cross-session guard)
           set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '', streamingSessionId: null });
           setStreaming(false);
+
+          // Layer 1: Run microcompact after streaming completes
+          await runMicrocompactAfterStreaming(currentSessionId, set, get);
+          
+          // Layer 2: Try Session Memory Compact if needed
+          await runSMCompactAfterStreaming(currentSessionId, set, get);
         }
 
       } catch (error) {
@@ -1488,6 +1667,12 @@ export const useChatStore = create<ChatState>()(
           
           setStreaming(false);
           set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+
+          // Layer 1: Run microcompact after streaming completes
+          await runMicrocompactAfterStreaming(activeSessionId, set, get);
+          
+          // Layer 2: Try Session Memory Compact if needed
+          await runSMCompactAfterStreaming(activeSessionId, set, get);
         }
       } catch (error) {
         // Clear timeout on error

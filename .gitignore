@@ -32,3 +32,13 @@ RELEASE_0.0.2.md
 check_browser.cjs
 check_browser.js
 package-lock.json
+
+# AI Agent memory and config files
+AGENTS.md
+SOUL.md
+USER.md
+TOOLS.md
+HEARTBEAT.md
+MEMORY.md
+IDENTITY.md
+memory/

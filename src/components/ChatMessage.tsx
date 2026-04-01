@@ -105,10 +105,10 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
             {/* Message Body */}
             <div className="prose prose-sm max-w-none break-words">
               {isUser ? (
-                // User messages: plain text
-                <p className="text-gray-700 whitespace-pre-wrap break-words">{message.content}</p>
+                /* User messages: plain text or Tool Results */
+                <MessageContent content={message.content} />
               ) : (
-                // Assistant messages: markdown
+                /* Assistant messages: markdown */
                 <ReactMarkdown
                   components={{
                     // Custom code block rendering
@@ -451,6 +451,40 @@ function ReasoningBlock({
       <ReasoningBody content={content} isStreaming={!!isStreaming} />
     </details>
   );
+}
+
+/**
+ * MessageContent - Handles specialized rendering of user messages
+ * (e.g. tool results, cleared results, or normal text)
+ */
+function MessageContent({ content }: { content: string }) {
+  // Check for tool result
+  if (content.startsWith('__TOOL_RESULT__:')) {
+    const isCleared = content.includes('[旧工具结果已清除]');
+    const match = content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
+    const toolCallId = match ? match[1] : 'unknown';
+    const result = match ? match[2] : content;
+
+    return (
+      <div className={`rounded-lg border p-3 my-2 ${isCleared ? 'bg-gray-100 border-gray-200' : 'bg-blue-50/30 border-blue-100'}`}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${isCleared ? 'bg-gray-400' : 'bg-blue-500'}`} />
+            <span className={`text-[10px] font-bold uppercase tracking-wider ${isCleared ? 'text-gray-500' : 'text-blue-700'}`}>
+               Tool Execution {isCleared ? '(Compressed)' : ''}
+            </span>
+          </div>
+          <span className="text-[9px] font-mono text-gray-400">ID: {toolCallId}</span>
+        </div>
+        <p className={`text-[11px] whitespace-pre-wrap break-words ${isCleared ? 'text-gray-400 italic' : 'text-gray-700'}`}>
+          {isCleared ? 'Old tool result content cleared to save context tokens.' : result}
+        </p>
+      </div>
+    );
+  }
+
+  // Normal user text
+  return <p className="text-gray-700 whitespace-pre-wrap break-words">{content}</p>;
 }
 
 export default ChatMessage;

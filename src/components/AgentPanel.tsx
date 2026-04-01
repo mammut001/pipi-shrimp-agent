@@ -4,7 +4,7 @@
  * Inspired by Claude Code's sidebar layout.
  */
 
-import React, { useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useUIStore, useSettingsStore, useChatStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
@@ -895,10 +895,34 @@ export const AgentPanel: React.FC = () => {
               {showScanner && currentSession?.workDir ? (
                 <ProjectScannerOverlay
                   workDir={currentSession.workDir}
-                  onComplete={(fingerprint) => {
+                  onComplete={async (fingerprint) => {
                     setShowScanner(false);
                     if (fingerprint) {
                       addNotification('success', `Analyzed ${fingerprint.name}: ${fingerprint.tech_stack.slice(0, 3).join(', ')}`);
+                      
+                      // Auto-generate roadmap content if it doesn't exist
+                      const baseDir = currentSession.workDir;
+                      const hasRoadmap = await invoke<boolean>('path_exists', { 
+                        path: 'docs/tracker/roadmap.typ', 
+                        workDir: baseDir 
+                      });
+
+                      if (!hasRoadmap) {
+                        addNotification('info', "Generating smart roadmap...");
+                        // For now, we'll use a basic logic to customize the template
+                        // In the future, this will be a real LLM call to create custom milestones
+                        let customTyp = DEFAULT_ROADMAP_TYP
+                          .replace('Agent Project', fingerprint.name)
+                          .replace('Setting up basic structure', `Initialized ${fingerprint.name} with ${fingerprint.tech_stack.join(', ')}`)
+                          .replace('INITIALIZING...', `AI analyzed project - Found ${Object.keys(fingerprint.language_stats).length} languages`);
+                          
+                        await invoke('write_project_file', {
+                          fileName: 'docs/tracker/roadmap.typ',
+                          content: customTyp,
+                          baseDir: baseDir
+                        });
+                      }
+
                       // Refresh roadmap after analysis
                       loadRoadmap();
                     }
