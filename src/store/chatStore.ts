@@ -670,17 +670,22 @@ export const useChatStore = create<ChatState>()(
         const { appendStreamingContent } = get();
 
         // Listen for streaming tokens from Rust backend
-        const unlistenToken = await listen<string>('claude-token', (event) => {
-          appendStreamingContent(event.payload);
+        const unlistenToken = await listen<{ session_id: string; content: string }>('claude-token', (event) => {
+          // Only process tokens for the active session
+          if (event.payload.session_id !== get().currentSessionId) return;
+          appendStreamingContent(event.payload.content);
         });
 
         // Listen for token events from Rust backend (Reasoning)
-        const unlistenReasoning = await listen<string>('claude-reasoning', (event) => {
-          set((state) => ({ streamingReasoning: state.streamingReasoning + event.payload }));
+        const unlistenReasoning = await listen<{ session_id: string; content: string }>('claude-reasoning', (event) => {
+          // Only process reasoning for the active session
+          if (event.payload.session_id !== get().currentSessionId) return;
+          set((state) => ({ streamingReasoning: state.streamingReasoning + event.payload.content }));
         });
 
         // Listen for tool_use events from Rust backend
         const unlistenToolUse = await listen<{
+          session_id: string;
           tool_call_id: string;
           name: string;
           arguments: string;
@@ -689,19 +694,21 @@ export const useChatStore = create<ChatState>()(
 
           // CROSS-SESSION GUARD: only process tool events that belong to the session
           // that started the current streaming request.
-          //
-          // IMPORTANT: use (!A || A !== B) not (A && A !== B).
-          // The weaker (&&) form only fires when streamingSessionId is non-null, so stale
-          // events that arrive *after* streaming has already completed (streamingSessionId
-          // was cleared to null) would slip through and be executed in the wrong session.
-          // The correct rule is: ONLY allow events when streamingSessionId is set AND
-          // matches the current session. Discard everything else.
           const { streamingSessionId } = get();
           const currentSessId = get().currentSessionId;
           if (!streamingSessionId || streamingSessionId !== currentSessId) {
             console.warn(
               `[cross-session guard] Discarding stale tool-use event. ` +
               `streamingSessionId=${streamingSessionId ?? 'null'}, currentSessId=${currentSessId}`
+            );
+            return;
+          }
+
+          // Additional guard: event must match the session that emitted it
+          if (event.payload.session_id !== currentSessId) {
+            console.warn(
+              `[cross-session guard] Discarding tool-use event from wrong session. ` +
+              `event.session_id=${event.payload.session_id}, currentSessId=${currentSessId}`
             );
             return;
           }
@@ -1109,7 +1116,7 @@ export const useChatStore = create<ChatState>()(
       try {
         setStreaming(true);
         // Reset both streaming buffers before the second API call
-        set({ streamingContent: '', streamingReasoning: '' });
+        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: currentSessionId });
 
         // Add all tool results as user messages (Claude SDK bridge will convert to 'tool' role)
         // NOTE: Do NOT set tool_call_id on the message — the __TOOL_RESULT__: prefix in content
@@ -1121,7 +1128,7 @@ export const useChatStore = create<ChatState>()(
         }
 
         const apiConfig = useSettingsStore.getState().getActiveConfig();
-        if (!apiConfig) {
+        if (!apiConfig?.apiKey) {
           setError('No API configuration found. Please add an API key in Settings.');
           setStreaming(false);
           set({ pendingToolResults: [], pendingToolCalls: 0 });
@@ -1186,6 +1193,7 @@ export const useChatStore = create<ChatState>()(
           baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
           browserConnected: useCdpStore.getState().status === 'connected',
+          sessionId: currentSessionId,
         });
 
         // Finalize the assistant message with streamed content
@@ -1257,12 +1265,19 @@ export const useChatStore = create<ChatState>()(
 
       } catch (error) {
         console.error('Failed to send tool results:', error);
-        // Surface the actual error message so the user can diagnose the problem
-        // (e.g. API error, context-length exceeded, network failure, etc.)
         const errMsg = typeof error === 'string'
           ? error
           : (error instanceof Error ? error.message : String(error));
         setError(`Failed to send tool results: ${errMsg}`);
+
+        // Save any accumulated content before clearing
+        const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
+        if (errContent || errReasoning) {
+          const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
+          saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning))
+            .catch((e: unknown) => console.error('Failed to persist tool-result error content:', e));
+        }
+
         setStreaming(false);
         set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '', streamingSessionId: null });
 
@@ -1292,54 +1307,104 @@ export const useChatStore = create<ChatState>()(
         addMessage,
         setStreaming,
         setError,
-        currentMessages
+        currentMessages,
+        updateLastMessage,
       } = get();
 
       if (!currentSessionId) return;
 
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
       try {
         setStreaming(true);
-        set({ streamingContent: '' });
+        set({ streamingContent: '', streamingSessionId: currentSessionId });
 
-        // Add tool result as a "user" message (Claude SDK bridge will convert to 'tool' role)
-        // NOTE: Do NOT set tool_call_id — use __TOOL_RESULT__: prefix only (see sendAllToolResults)
+        // Set timeout protection (same as sendMessage)
+        timeoutId = setTimeout(() => {
+          if (get().isStreaming) {
+            setStreaming(false);
+            set({ streamingContent: '', streamingReasoning: '' });
+            setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded).`);
+            invoke('stop_subprocess', { sessionId: currentSessionId }).catch(console.error);
+          }
+        }, STREAMING_TIMEOUT_MS);
+
+        // Add tool result as a "user" message
         const resultMessage = createMessage('user', `__TOOL_RESULT__:${toolCallId}:${result}`);
         await addMessage(resultMessage);
 
         const apiConfig = useSettingsStore.getState().getActiveConfig();
+        if (!apiConfig?.apiKey) {
+          setError('No API configuration found. Please add an API key in Settings.');
+          setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+          return;
+        }
 
-        // Prepare all messages for next turn - include tool_calls when present
-        // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
         const messages = buildApiMessages(currentMessages());
 
         if (messages.length === 0) {
           setError('Message history is empty. Cannot continue conversation.');
           setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
           return;
         }
 
-        // Create placeholder for AI's next thought
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
-        await invoke<{
+        const response = await invoke<{
           content: string;
           artifacts: any[];
           usage?: { input_tokens: number; output_tokens: number };
+          tool_calls?: Array<{ tool_call_id: string; name: string; arguments: string }>;
         }>('send_claude_sdk_chat_streaming', {
           messages,
-          apiKey: apiConfig?.apiKey,
-          model: apiConfig?.model,
-          baseUrl: apiConfig?.baseUrl || '',
+          apiKey: apiConfig.apiKey,
+          model: apiConfig.model,
+          baseUrl: apiConfig.baseUrl || '',
           systemPrompt: useUIStore.getState().agentInstructions,
           browserConnected: useCdpStore.getState().status === 'connected',
+          sessionId: currentSessionId,
         });
 
-        // Event listener 'claude-token' will handle UI updates
+        // Finalize: save accumulated streaming content to DB
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+        const { streamingContent: finalContent, streamingReasoning: finalReasoning } = get();
+
+        const usedTools = response.tool_calls && response.tool_calls.length > 0;
+        if (usedTools) {
+          // AI called another tool — don't finalize, let the event handler take over
+          const { content: cleanPrefix } = parseThinkContent(finalContent || '');
+          await updateLastMessage(cleanPrefix, undefined, finalReasoning);
+          set({ streamingContent: '', streamingReasoning: '' });
+        } else {
+          if (finalContent || finalReasoning) {
+            const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(finalContent || '');
+            await updateLastMessage(cleanContent, undefined, mergeReasoningParts(finalReasoning, parsedReasoning));
+          }
+          setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+        }
+
       } catch (error) {
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
         console.error('Failed to send tool result:', error);
+
+        // Save any accumulated content before clearing
+        const { streamingContent: errContent, streamingReasoning: errReasoning } = get();
+        if (errContent || errReasoning) {
+          const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
+          try {
+            await updateLastMessage(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning));
+          } catch (e) {
+            console.error('Failed to persist sendToolResult error content:', e);
+          }
+        }
+
         setError('Failed to send tool result back to AI');
         setStreaming(false);
+        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
       }
     },
 
@@ -1377,7 +1442,8 @@ export const useChatStore = create<ChatState>()(
         timeoutId = setTimeout(() => {
           if (get().isStreaming) {
             setStreaming(false);
-            set({ streamingContent: '', streamingReasoning: '' });
+            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+            invoke('stop_subprocess', { sessionId: currentSessionId }).catch(console.error);
           }
         }, 300_000);
 
@@ -1419,6 +1485,7 @@ export const useChatStore = create<ChatState>()(
           systemPrompt,
           noTools: true,
           browserConnected: useCdpStore.getState().status === 'connected',
+          sessionId: currentSessionId,
         });
 
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
@@ -1455,6 +1522,15 @@ export const useChatStore = create<ChatState>()(
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
         const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to generate response');
         setError(errorMsg);
+
+        // Save any accumulated content before clearing
+        const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
+        if (errContent || errReasoning) {
+          const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
+          saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning))
+            .catch((e: unknown) => console.error('Failed to persist sendMessage error content:', e));
+        }
+
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
         // Remove empty assistant placeholder
@@ -1526,8 +1602,8 @@ export const useChatStore = create<ChatState>()(
             setStreaming(false);
             set({ streamingContent: '', streamingReasoning: '' });
             setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded). Please try again.`);
-            // Try to stop the subprocess
-            invoke('stop_subprocess').catch(console.error);
+            // Try to stop the subprocess for this specific session
+            invoke('stop_subprocess', { sessionId: activeSessionId }).catch(console.error);
           }
         }, STREAMING_TIMEOUT_MS);
 
@@ -1598,6 +1674,7 @@ export const useChatStore = create<ChatState>()(
           baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
           browserConnected: useCdpStore.getState().status === 'connected',
+          sessionId: activeSessionId,
         });
 
         // Clear timeout on success
@@ -1684,6 +1761,14 @@ export const useChatStore = create<ChatState>()(
         console.error('Failed to send message:', error);
         const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to send message');
         setError(errorMsg);
+
+        // Save any accumulated content before clearing
+        const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
+        if (errContent || errReasoning) {
+          const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
+          saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning)).catch(() => {});
+        }
+
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
 
@@ -1715,50 +1800,37 @@ export const useChatStore = create<ChatState>()(
       }
       console.log('stopGeneration: stopping...');
 
+      // Capture content BEFORE clearing — this is the text the user has seen so far
+      const capturedContent = streamingContent;
+      const capturedReasoning = streamingReasoning;
+
       try {
         // Call the Rust backend to kill the subprocess
         console.log('stopGeneration: calling stop_subprocess');
-        await invoke('stop_subprocess');
+        await invoke('stop_subprocess', { sessionId: currentSessionId });
         console.log('stopGeneration: stop_subprocess completed');
       } catch (error) {
         console.error('Failed to stop subprocess:', error);
         setError(`Failed to stop generation: ${error instanceof Error ? error.message : String(error)}`);
       }
 
-      // Parse any <think> tags from streamingContent
-      const parsed = parseThinkContent(streamingContent);
+      // Parse <think> tags from captured content
+      const parsed = parseThinkContent(capturedContent);
       const finalContent = parsed.content;
-      const finalReasoning = mergeReasoningParts(streamingReasoning, parsed.reasoning);
+      const finalReasoning = mergeReasoningParts(capturedReasoning, parsed.reasoning);
 
       // Clear streaming content BEFORE updating message to prevent setStreaming from re-updating
       console.log('stopGeneration: clearing streaming content');
       set({ streamingContent: '', streamingReasoning: '' });
 
-      // Update the last message with final content and reasoning
+      // Update the last message with final content AND persist to database
       if (currentSessionId && (finalContent || finalReasoning)) {
-        console.log('stopGeneration: updating last message');
-        set((state) => ({
-          sessions: state.sessions.map((s) => {
-            if (s.id !== currentSessionId || s.messages.length === 0) return s;
-            const lastMessage = s.messages[s.messages.length - 1];
-            if (lastMessage.role !== 'assistant') return s;
-            return {
-              ...s,
-              messages: [
-                ...s.messages.slice(0, -1),
-                {
-                  ...lastMessage,
-                  content: finalContent,
-                  reasoning: finalReasoning || lastMessage.reasoning,
-                },
-              ],
-              updatedAt: Date.now(),
-            };
-          }),
-        }));
+        console.log('stopGeneration: updating and persisting last message');
+        const { updateLastMessage } = get();
+        await updateLastMessage(finalContent, undefined, finalReasoning);
       }
 
-      // Now call setStreaming(false) - it won't re-update since streamingContent is now empty
+      // Now call setStreaming(false) — it won't re-update since streamingContent is now empty
       console.log('stopGeneration: calling setStreaming(false)');
       setStreaming(false);
       console.log('stopGeneration: done');
@@ -1978,9 +2050,8 @@ export const useChatStore = create<ChatState>()(
       if (!streaming && streamingTimeoutId) {
         clearTimeout(streamingTimeoutId);
 
-        // Final UI update to ensure content is fully displayed
+        // Final UI update to ensure content is fully displayed in the session
         if (currentSessionId && streamingContent) {
-          // Parse <think> tags from final content
           const parsed = parseThinkContent(streamingContent);
           const finalContent = parsed.content;
           const finalReasoning = parsed.reasoning;
@@ -2011,8 +2082,15 @@ export const useChatStore = create<ChatState>()(
       if (streaming) {
         const timeoutId = setTimeout(() => {
           console.warn('Streaming timeout (300s) reached, stopping...');
-          const { setStreaming } = get();
+          const { setStreaming, currentSessionId, streamingSessionId } = get();
+          const owningSessionId = streamingSessionId || currentSessionId;
+          if (owningSessionId) {
+            invoke('stop_subprocess', { sessionId: owningSessionId }).catch((e: unknown) =>
+              console.error('Failed to stop subprocess after generic streaming timeout:', e)
+            );
+          }
           setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
         }, 300000);
         set({ isStreaming: true, streamingTimeoutId: timeoutId });
       }

@@ -218,12 +218,14 @@ class WorkflowEngine {
     let unlistenFn: (() => void) | null = null;
 
     try {
-      // Register token listener
-      unlistenFn = await getCurrentWindow().listen<string>('claude-token', (event) => {
+      // Register token listener (scoped to this agent's session)
+      const sessionId = `workflow-${this.currentRunId}-${agent.id}`;
+      unlistenFn = await getCurrentWindow().listen<{ session_id: string; content: string }>('claude-token', (event) => {
         if (this.stopRequested) return;
-        fullContent += event.payload;
+        if (event.payload.session_id !== sessionId) return;
+        fullContent += event.payload.content;
         // Callback to UI for real-time display
-        this.onStreamChunk?.(agent.id, event.payload, fullContent);
+        this.onStreamChunk?.(agent.id, event.payload.content, fullContent);
       });
 
       // Invoke (blocking until complete)
@@ -234,6 +236,7 @@ class WorkflowEngine {
         baseUrl,
         systemPrompt,
         browserConnected: useCdpStore.getState().status === 'connected',
+        sessionId,
       });
 
       return fullContent;

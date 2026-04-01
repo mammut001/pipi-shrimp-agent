@@ -85,6 +85,8 @@ async fn send_claude_sdk_chat_streaming(
     noTools: Option<bool>,
     #[allow(non_snake_case)]
     browserConnected: Option<bool>,
+    #[allow(non_snake_case)]
+    sessionId: String,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, String> {
@@ -94,7 +96,7 @@ async fn send_claude_sdk_chat_streaming(
     let browser_connected = browserConnected.unwrap_or(false);
     let state = state.lock().await;
     state.client
-        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window, browser_connected)
+        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window, browser_connected, sessionId)
         .await
         .map_err(|e| e.to_string())
 }
@@ -103,8 +105,8 @@ async fn send_claude_sdk_chat_streaming(
  * Stop the current running request (cancel generation)
  */
 #[tauri::command]
-async fn stop_subprocess() -> Result<(), String> {
-    claude::stop_current_request()
+async fn stop_subprocess(sessionId: Option<String>) -> Result<(), String> {
+    claude::stop_current_request(sessionId)
         .await
         .map_err(|e| e.to_string())
 }
