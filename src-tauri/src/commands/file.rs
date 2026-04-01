@@ -252,6 +252,163 @@ pub struct WorkspaceInfo {
     pub total_dirs: usize,
 }
 
+/// Project fingerprint - analysis result for AI auto-onboarding
+#[derive(serde::Serialize)]
+pub struct ProjectFingerprint {
+    pub name: String,
+    pub description: String,
+    pub tech_stack: Vec<String>,
+    pub key_files: Vec<FileInfo>,
+    pub structure_summary: String,
+    pub language_stats: std::collections::HashMap<String, usize>,
+}
+
+/// Analyze a project folder and generate a fingerprint for AI auto-onboarding
+#[tauri::command]
+pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFingerprint> {
+    use std::collections::HashMap;
+
+    let base = std::path::PathBuf::from(&work_dir);
+    if !base.exists() {
+        return Err(AppError::FileError(format!("Work dir does not exist: {}", work_dir)));
+    }
+
+    let mut tech_stack = Vec::new();
+    let mut key_files = Vec::new();
+    let mut language_stats: HashMap<String, usize> = HashMap::new();
+    let mut structure_summary_parts = Vec::new();
+
+    // Key files to detect tech stack
+    let key_file_patterns = vec![
+        ("package.json", "Node.js"),
+        ("Cargo.toml", "Rust"),
+        ("go.mod", "Go"),
+        ("requirements.txt", "Python"),
+        ("pyproject.toml", "Python"),
+        ("pom.xml", "Java"),
+        ("build.gradle", "Java/Kotlin"),
+        ("Gemfile", "Ruby"),
+        ("composer.json", "PHP"),
+        ("Cargo.lock", "Rust"),
+        ("yarn.lock", "Node.js"),
+        ("pnpm-lock.yaml", "Node.js"),
+        ("package-lock.json", "Node.js"),
+        ("tsconfig.json", "TypeScript"),
+        ("vite.config.ts", "Vite"),
+        ("webpack.config.js", "Webpack"),
+        ("next.config.js", "Next.js"),
+        ("Cargo.toml", "Tauri"),
+        ("tauri.conf.json", "Tauri"),
+        ("tauri.conf.toml", "Tauri"),
+    ];
+
+    // Detect tech stack from key files
+    let entries = fs::read_dir(&base)
+        .map_err(|e| AppError::FileError(e.to_string()))?;
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let file_path = entry.path();
+
+        // Skip hidden files and common ignore patterns
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        // Check for key files
+        for (pattern, tech) in &key_file_patterns {
+            if file_name == *pattern {
+                tech_stack.push(tech.to_string());
+                key_files.push(FileInfo {
+                    name: file_name.clone(),
+                    path: file_path.to_string_lossy().to_string(),
+                    is_directory: false,
+                });
+            }
+        }
+
+        // Count file extensions for language stats
+        if let Some(ext) = file_path.extension() {
+            let ext_str = ext.to_string_lossy().to_string().to_lowercase();
+            if !ext_str.is_empty() && ext_str.len() <= 5 {
+                *language_stats.entry(ext_str).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // Build tech stack description
+    if !tech_stack.is_empty() {
+        structure_summary_parts.push(format!("Tech stack: {}", tech_stack.join(", ")));
+    }
+
+    // Detect project type from structure
+    let subdirs: Vec<_> = fs::read_dir(&base)
+        .map_err(|e| AppError::FileError(e.to_string()))?
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+
+    if subdirs.contains(&"src".to_string()) {
+        structure_summary_parts.push("Source code in 'src/' directory".to_string());
+    }
+    if subdirs.contains(&"src-tauri".to_string()) {
+        structure_summary_parts.push("Tauri application with Rust backend".to_string());
+    }
+    if subdirs.contains(&"public".to_string()) || subdirs.contains(&"static".to_string()) {
+        structure_summary_parts.push("Has static assets".to_string());
+    }
+    if subdirs.contains(&"docs".to_string()) {
+        structure_summary_parts.push("Documentation directory present".to_string());
+    }
+    if subdirs.contains(&"tests".to_string()) || subdirs.contains(&"test".to_string()) {
+        structure_summary_parts.push("Test directory present".to_string());
+    }
+    if subdirs.contains(&"node_modules".to_string()) {
+        structure_summary_parts.push("Node.js dependencies installed".to_string());
+    }
+    if subdirs.contains(&"target".to_string()) {
+        structure_summary_parts.push("Rust build artifacts present".to_string());
+    }
+
+    // Read README if exists
+    let mut description = String::new();
+    for readme_name in ["README.md", "README.txt", "README"] {
+        let readme_path = base.join(readme_name);
+        if readme_path.exists() {
+            if let Ok(content) = fs::read_to_string(&readme_path) {
+                // Get first 500 chars as description
+                let first_lines: String = content.lines()
+                    .take(10)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                description = first_lines.chars().take(500).collect();
+                key_files.push(FileInfo {
+                    name: readme_name.to_string(),
+                    path: readme_path.to_string_lossy().to_string(),
+                    is_directory: false,
+                });
+                break;
+            }
+        }
+    }
+
+    // Project name from directory
+    let name = base.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Unknown Project".to_string());
+
+    Ok(ProjectFingerprint {
+        name,
+        description,
+        tech_stack,
+        key_files,
+        structure_summary: structure_summary_parts.join("; "),
+        language_stats,
+    })
+}
+
 /// Get workspace information including all files and subdirectories
 /// in the specified working directory
 #[tauri::command]

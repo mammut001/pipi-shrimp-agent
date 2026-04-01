@@ -38,6 +38,16 @@ export interface TaskStep {
   status: 'pending' | 'running' | 'done' | 'failed';
 }
 
+/** Project fingerprint - result from project analysis */
+export interface ProjectFingerprint {
+  name: string;
+  description: string;
+  tech_stack: string[];
+  key_files: Array<{ name: string; path: string; is_directory: boolean }>;
+  structure_summary: string;
+  language_stats: Record<string, number>;
+}
+
 /** UI store state interface */
 export interface UIState {
   // ========== Data State ==========
@@ -56,7 +66,7 @@ export interface UIState {
   taskProgress: TaskStep[];
 
   // Right panel active tab (global so external triggers like browser intent can switch it)
-  agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code' | 'roadmap';
+  agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code' | 'roadmap' | 'files';
 
   // Browser Dock State (see browser-docked-layout-design.md)
   browserDockMode: BrowserDockMode;
@@ -69,6 +79,13 @@ export interface UIState {
   chromePromptTargetUrl: string | null;
   showChromePrompt: (targetUrl: string) => Promise<boolean>;
   resolveChromePrompt: (useCdp: boolean) => void;
+
+  // Project Analysis State
+  isAnalyzingProject: boolean;
+  analysisProgress: string;
+  projectFingerprint: ProjectFingerprint | null;
+  setAnalyzingProject: (analyzing: boolean, progress?: string) => void;
+  setProjectFingerprint: (fingerprint: ProjectFingerprint | null) => void;
 
   // ========== Action Methods ==========
 

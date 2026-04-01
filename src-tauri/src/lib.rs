@@ -21,9 +21,10 @@ use tauri_plugin_fs::FsExt;
 use claude::{ClaudeClient, ChatResponse, Message};
 use commands::browser::BrowserState;
 use commands::web::BrowserController;
+use commands::telegram::TelegramState;
 use database::{DbSession, DbMessage, DbProject, DbTokenUsage, DailyTokenStats, ModelTokenStats,
                init_database, get_all_sessions, save_session, delete_session, save_message, delete_message,
-               get_messages_for_session, save_project, get_all_projects, delete_project, 
+               get_messages_for_session, save_project, get_all_projects, delete_project,
                update_project, save_token_usage, get_daily_token_stats, get_monthly_token_stats,
                get_model_token_stats, get_total_token_stats};
 use utils::{PrebuiltFonts, init_font_database, build_fonts, compile_typst_to_svg_with_prebuilt, compile_typst_to_pdf_with_prebuilt};
@@ -251,19 +252,26 @@ fn project_root() -> std::path::PathBuf {
     }
 }
 
-/// Read a file relative to the project root.
-/// Works in both `tauri dev` (cwd = src-tauri) and production.
+/// Read a file relative to a base directory (or project root if None).
 #[tauri::command]
-fn read_project_file(relative_path: String) -> Result<String, String> {
-    let full = project_root().join(&relative_path);
+fn read_project_file(relative_path: String, base_dir: Option<String>) -> Result<String, String> {
+    let root = match base_dir {
+        Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
+        _ => project_root(),
+    };
+    let full = root.join(&relative_path);
     std::fs::read_to_string(&full)
         .map_err(|e| format!("Cannot read '{}': {}", full.display(), e))
 }
 
-/// Write a file relative to the project root.
+/// Write a file relative to a base directory (or project root if None).
 #[tauri::command]
-fn write_project_file(relative_path: String, content: String) -> Result<(), String> {
-    let full = project_root().join(&relative_path);
+fn write_project_file(relative_path: String, content: String, base_dir: Option<String>) -> Result<(), String> {
+    let root = match base_dir {
+        Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
+        _ => project_root(),
+    };
+    let full = root.join(&relative_path);
     if let Some(parent) = full.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create dirs: {}", e))?;
     }
@@ -372,6 +380,10 @@ pub fn run() {
             app.manage(Arc::new(Mutex::new(BrowserController::default())));
             println!("🌐 Browser state initialized");
 
+            // Initialize Telegram state
+            app.manage(Arc::new(Mutex::new(TelegramState::default())));
+            println!("📱 Telegram state initialized");
+
             println!("✅ Main window created successfully");
 
             Ok(())
@@ -392,6 +404,7 @@ pub fn run() {
             commands::path_exists,
             commands::create_directory,
             commands::list_files,
+            commands::analyze_project_structure,
             // Config commands
             commands::get_config,
             commands::set_config,
@@ -484,6 +497,19 @@ pub fn run() {
             commands::browser::proxy_http_request,
             // DevTools command (debug only)
             commands::browser::open_devtools,
+            // Telegram commands
+            commands::telegram_connect,
+            commands::telegram_disconnect,
+            commands::telegram_send_message,
+            commands::telegram_get_status,
+            commands::telegram_get_bot_info,
+            commands::telegram_validate_token,
+            commands::telegram_get_pending_count,
+            commands::telegram_send_typing,
+            commands::telegram_send_chat_action,
+            commands::telegram_answer_callback_query,
+            commands::telegram_get_file_url,
+            commands::telegram_get_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

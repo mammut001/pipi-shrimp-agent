@@ -9,9 +9,10 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { useChatStore, useUIStore, useWorkflowStore } from '@/store';
+import { useChatStore, useUIStore, useWorkflowStore, useSettingsStore } from '@/store';
 import type { Session } from '@/types/chat';
 import { t } from '@/i18n';
+import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 
 
 /**
@@ -64,6 +65,10 @@ export function Sidebar() {
   const workflowRuns = useWorkflowStore((s) => s.workflowRuns);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
+  // Pricing helpers
+  const getModelPricing = useSettingsStore((s) => s.getModelPricing);
+  const apiConfigs = useSettingsStore((s) => s.apiConfigs);
+
   // Projects state
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
@@ -103,6 +108,28 @@ export function Sidebar() {
     }
     return map;
   }, [sessions]);
+
+  // Memoized cost map for all sessions
+  const sessionCostMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const session of sessions) {
+      const usage = tokenUsageMap.get(session.id);
+      if (!usage || usage.total === 0) continue;
+
+      // Get pricing for session's model (fall back to first available config if session doesn't have model)
+      const model = session.model || apiConfigs[0]?.model;
+      const provider = session.model ? apiConfigs.find(c => c.model === session.model)?.provider : apiConfigs[0]?.provider;
+
+      if (model && provider) {
+        const pricing = getModelPricing(model, provider);
+        if (pricing) {
+          const cost = calculateRequestCost(usage.input, usage.output, pricing);
+          map.set(session.id, cost);
+        }
+      }
+    }
+    return map;
+  }, [sessions, tokenUsageMap, apiConfigs, getModelPricing]);
 
   /**
    * Handle creating a new project
@@ -589,6 +616,11 @@ export function Sidebar() {
                             {/* Token usage display */}
                             {(tokenUsageMap.get(session.id)?.total ?? 0) > 0 && (
                               <p className="text-[10px] text-gray-400 truncate mt-0.5 flex items-center gap-1">
+                                {sessionCostMap.get(session.id) ? (
+                                  <span className="text-green-600 font-medium">
+                                    {formatCostCompact(sessionCostMap.get(session.id) ?? 0)}
+                                  </span>
+                                ) : null}
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                                   <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
                                 </svg>

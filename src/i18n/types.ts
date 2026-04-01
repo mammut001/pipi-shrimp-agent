@@ -101,6 +101,9 @@ export type TranslationKeys = {
   'token.input': string;
   'token.output': string;
   'token.total': string;
+  'token.cost': string;
+  'token.estimatedCost': string;
+  'token.totalCost': string;
 
   // Session
   'session.bindWorkDir': string;

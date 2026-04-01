@@ -18,6 +18,7 @@ pub mod config;
 pub mod file;
 pub mod models;
 pub mod search;
+pub mod telegram;    // Telegram Bot API commands
 pub mod web;
 pub mod workspace;
 
@@ -28,5 +29,6 @@ pub use config::*;
 pub use file::*;
 pub use models::*;
 pub use search::*;
+pub use telegram::*;
 pub use web::*;
 pub use workspace::*;
