@@ -44,7 +44,7 @@ export interface AgentSettings {
 
 /** Default agent settings */
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
-  maxToolRounds: 10,
+  maxToolRounds: 50,
 };
 
 /** Settings store state interface */

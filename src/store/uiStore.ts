@@ -117,12 +117,30 @@ export const useUIStore = create<UIState>((set) => ({
     set((state) => ({ permissionQueue: state.permissionQueue.slice(1) })),
 
   /**
-   * Clear the entire permission queue — called when switching sessions so that
-   * stale ASK-mode dialogs from a previous session can never be approved in the
-   * context of a different session (which would inject orphaned tool_results).
+   * Clear ALL pending permission requests (used when switching sessions)
    */
   clearAllPermissions: () =>
     set({ permissionQueue: [] }),
+
+  /**
+   * Block and wait for user's permission (used by QueryEngine's generator)
+   */
+  waitForPermission: (tool: { id: string; name: string; arguments: string }) => {
+    return new Promise<boolean>((resolve) => {
+      set((state) => ({
+        permissionQueue: [
+          ...state.permissionQueue,
+          {
+            id: tool.id,
+            toolName: tool.name,
+            toolInput: tool.arguments,
+            description: `Execute ${tool.name}?`,
+            _resolve: resolve, // Stores the promise resolver
+          },
+        ],
+      }));
+    });
+  },
 
   /**
    * Add notification with auto-dismiss

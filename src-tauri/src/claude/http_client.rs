@@ -1228,7 +1228,7 @@ impl ClaudeClient {
         // Stream response body
         use futures::stream::StreamExt;
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
                 Ok(c) => c,
@@ -1237,12 +1237,12 @@ impl ClaudeClient {
                 }
             };
 
-            let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
+            buffer.extend_from_slice(&chunk);
 
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line_with_newline = buffer.drain(..=newline_pos).collect::<String>();
-                let line = line_with_newline.trim();
+            while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
+                let line_bytes = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
+                let line_str = String::from_utf8_lossy(&line_bytes);
+                let line = line_str.trim();
                 if line.is_empty() || !line.starts_with("data: ") {
                     continue;
                 }
@@ -1539,7 +1539,7 @@ impl ClaudeClient {
         // Stream response body
         use futures::stream::StreamExt;
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        let mut buffer = Vec::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
@@ -1549,12 +1549,12 @@ impl ClaudeClient {
                 }
             };
 
-            let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
+            buffer.extend_from_slice(&chunk);
 
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line_with_newline = buffer.drain(..=newline_pos).collect::<String>();
-                let line = line_with_newline.trim();
+            while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
+                let line_bytes = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
+                let line_str = String::from_utf8_lossy(&line_bytes);
+                let line = line_str.trim();
                 if line.is_empty() || !line.starts_with("data: ") {
                     continue;
                 }

@@ -201,44 +201,23 @@ export function Chat() {
   /**
    * Handle permission approval
    */
+  /**
+   * Handle permission approval
+   */
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
-
-    const { id, toolName, toolInput } = pendingPermission;
-
-    // Clear request first to close modal
+    pendingPermission._resolve?.(true);
     clearPermissionRequest();
-
-    // Call central execution logic in chatStore
-    const { executeTool } = useChatStore.getState();
-    await executeTool(toolName, toolInput, id);
   };
 
   /**
    * Handle permission denial
-   * Must also decrement pendingToolCalls so sendAllToolResults can still fire
-   * when all other tool calls complete.
    */
-   const handleDenyPermission = () => {
+  const handleDenyPermission = () => {
     if (!pendingPermission) return;
     addNotification('info', 'Permission denied');
+    pendingPermission._resolve?.(false);
     clearPermissionRequest();
-
-    // Decrement the counter atomically, then READ the new value to decide whether to flush.
-    // (Reading pendingToolCalls BEFORE setState would give the old value and cause off-by-one.)
-    const { sendAllToolResults } = useChatStore.getState();
-    useChatStore.setState((state) => ({
-      pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),  // Prevent negative
-      // Inject a "denied" placeholder so the AI gets a tool result for this call
-      pendingToolResults: [
-        ...state.pendingToolResults,
-        { toolCallId: pendingPermission.id, result: 'Permission denied by user.' },
-      ],
-    }));
-    // Read the updated value AFTER the setState has been applied
-    if (useChatStore.getState().pendingToolCalls === 0) {
-      sendAllToolResults();
-    }
   };
 
   /**

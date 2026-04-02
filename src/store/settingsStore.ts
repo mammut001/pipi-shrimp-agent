@@ -58,7 +58,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   language: 'en',
   importedFiles: [],
   budgetSettings: DEFAULT_BUDGET_SETTINGS,
-  agentSettings: { maxToolRounds: 10 },
+  agentSettings: { maxToolRounds: 50 },
 
   // ========== Imported Files Methods ==========
 
@@ -433,7 +433,11 @@ const initializeSettings = () => {
     if (storedAgentSettings) {
       try {
         const agentSettings = JSON.parse(storedAgentSettings);
-        useSettingsStore.setState({ agentSettings: { maxToolRounds: 10, ...agentSettings } });
+        // If the user hasn't explicitly changed it from the old default of 10, implicitly bump it to 50
+        if (agentSettings.maxToolRounds === 10) {
+          agentSettings.maxToolRounds = 50;
+        }
+        useSettingsStore.setState({ agentSettings: { maxToolRounds: 50, ...agentSettings } });
       } catch (error) {
         console.error('Failed to parse agent settings:', error);
       }
