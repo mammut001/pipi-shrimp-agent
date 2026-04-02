@@ -431,6 +431,12 @@ pub fn run() {
             println!("🔧 Tool registry initialized with {} tools", tool_registry.len());
             app.manage(commands::tools::ToolRegistryState(Arc::new(Mutex::new(tool_registry))));
 
+            // Initialize Agent State
+            app.manage(commands::agent::AgentState {
+                agents: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            });
+            println!("🤖 Agent state initialized");
+
             println!("✅ Main window created successfully");
 
             Ok(())
@@ -581,6 +587,9 @@ pub fn run() {
             commands::execute_tool_batch,
             commands::execute_single_tool,
             commands::get_available_tools,
+            // Multi-agent commands
+            commands::run_agent,
+            commands::get_agent_result,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

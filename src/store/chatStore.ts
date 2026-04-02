@@ -11,6 +11,9 @@ import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 import { useCdpStore } from './cdpStore';
 import { usePromptStore } from './promptStore';
+import { runPreToolUseHooks } from '../services/tools/preToolUseHooks';
+import { runPostToolUseHooks } from '../services/tools/postToolUseHooks';
+import type { PostHookContext } from '../services/tools/postToolUseHooks';
 import type { ImportedFile } from '../types/settings';
 import { runMicrocompactCheck } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
@@ -656,6 +659,33 @@ export const useChatStore = create<ChatState>()(
 
         console.log('✅ Store initialization completed successfully');
         set({ isInitialized: true, error: null });
+
+        // === Subagent event listeners ===
+        const { listen } = await import('@tauri-apps/api/event');
+
+        // Listen for subagent completion events
+        await listen<{ agentId: string; sessionId: string; content: string; success: boolean; error?: string }>(
+          'subagent-complete',
+          (event) => {
+            console.log(`[Subagent] Complete: ${event.payload.agentId}`, event.payload.success ? '✅' : '❌');
+            // Update task step if visible
+            const uiStore = useUIStore.getState();
+            uiStore.addNotification(
+              event.payload.success ? 'success' : 'error',
+              `Agent ${event.payload.agentId.slice(0, 12)}... completed`,
+            );
+          },
+        );
+
+        // Listen for subagent error events
+        await listen<{ agentId: string; sessionId: string; error: string }>(
+          'subagent-error',
+          (event) => {
+            console.error(`[Subagent] Error: ${event.payload.agentId}`, event.payload.error);
+            const uiStore = useUIStore.getState();
+            uiStore.addNotification('error', `Agent ${event.payload.agentId.slice(0, 12)}... failed: ${event.payload.error}`);
+          },
+        );
       } catch (error) {
         console.error('❌ Failed to load sessions:', error);
         console.error('Error details:', {
@@ -1076,6 +1106,23 @@ export const useChatStore = create<ChatState>()(
           ? sessionWorkingFiles.map((f) => `- ${f.name}: ${f.path}`).join('\n')
           : '';
 
+        // === Relevant Memory Recall ===
+        let memoryContext = '';
+        if (sessionWorkDir) {
+          try {
+            const { getMemoryDir, getTopicMemoriesDir } = await import('../services/memory/memoryPaths');
+            const { findRelevantMemories, buildMemoryContext } = await import('../services/memory/relevantRecall');
+            const memoryDir = await getMemoryDir(sessionWorkDir);
+            const topicDir = getTopicMemoriesDir(memoryDir);
+            const relevantMemories = await findRelevantMemories(topicDir, content);
+            if (relevantMemories.length > 0) {
+              memoryContext = await buildMemoryContext(relevantMemories);
+            }
+          } catch (e) {
+            console.debug('Memory recall failed:', e);
+          }
+        }
+
         const { buildPrompt } = await import('../services/prompt/promptBuilder');
         const { systemPrompt } = buildPrompt(
           template?.sections || [],
@@ -1084,6 +1131,7 @@ export const useChatStore = create<ChatState>()(
             workDir: sessionWorkDir || '',
             coreMdContent,
             workingFilesList,
+            memoryContext,
             originalQuery: '',
             browserResult: '',
           },
@@ -1114,37 +1162,138 @@ export const useChatStore = create<ChatState>()(
 
             const currentSess = get().sessions.find(s => s.id === activeSessionId);
             const permissionMode = currentSess?.permissionMode || 'standard';
-            const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
 
-            const approved = shouldBypass ? true : await uiStore.waitForPermission(tool);
+            // === PreToolUse Hooks (dangerous commands, path validation, permission mode) ===
+            const hookResult = await runPreToolUseHooks({
+              toolName: tool.name,
+              toolArgs: tool.arguments,
+              workDir: currentSess?.workDir,
+              permissionMode,
+              sessionId: activeSessionId,
+            });
 
             let toolResultContent = '';
-            if (!approved) {
+            if (!hookResult.approved) {
+              // Hooks blocked the tool execution
               uiStore.updateTaskStep(tool.id, 'failed');
-              toolResultContent = 'Permission denied by user.';
+              uiStore.addNotification('error', hookResult.error || 'Tool execution blocked');
+              toolResultContent = `Error: ${hookResult.error || 'Tool execution blocked'}`;
+              chunk._resolve(toolResultContent);
             } else {
-              uiStore.updateTaskStep(tool.id, 'running');
-              try {
-                const workDir = currentSess?.workDir ?? null;
-                if (tool.name === 'get_current_workspace') {
-                  toolResultContent = workDir
-                    ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
-                    : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
-                } else {
-                  toolResultContent = await invoke<string>('execute_tool', {
-                    toolName: tool.name,
-                    arguments: tool.arguments,
-                    workDir,
-                  });
-                }
-                uiStore.updateTaskStep(tool.id, 'done');
-              } catch (err) {
+              // Hooks approved — now check permission mode for UI flow
+              const effectiveArgs = hookResult.modifiedArgs || tool.arguments;
+              const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
+
+              const approved = shouldBypass ? true : await uiStore.waitForPermission(tool);
+
+              if (!approved) {
                 uiStore.updateTaskStep(tool.id, 'failed');
-                toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+                toolResultContent = 'Permission denied by user.';
+              } else {
+                uiStore.updateTaskStep(tool.id, 'running');
+                try {
+                  const workDir = currentSess?.workDir ?? null;
+                  if (tool.name === 'get_current_workspace') {
+                    toolResultContent = workDir
+                      ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
+                      : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
+                  } else if (tool.name === 'agent_tool') {
+                    // === Multi-Agent: AgentTool execution ===
+                    const args = JSON.parse(effectiveArgs);
+                    if (args.team_name && args.name) {
+                      // Swarm teammate path
+                      const { spawnTeammate, createTeam, getTeamStatus } = await import('../services/multiagent/swarm');
+                      const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                      const parentCtx = getCurrentAgentContext() || {
+                        agentId: 'main',
+                        sessionId: activeSessionId,
+                        workDir: workDir || undefined,
+                        toolPool: [],
+                        metadata: {},
+                      };
+
+                      let team = getTeamStatus(args.team_name);
+                      if (!team) {
+                        team = createTeam(args.team_name, parentCtx, [args.name]);
+                      }
+
+                      const agentId = await spawnTeammate(
+                        args.team_name,
+                        args.name,
+                        args.prompt,
+                        args.description || `Teammate ${args.name}`,
+                        parentCtx,
+                      );
+                      toolResultContent = `Teammate ${args.name} spawned in team ${args.team_name} with ID: ${agentId}`;
+                    } else if (args.run_in_background) {
+                      // Background subagent path
+                      const { runAgentBackground } = await import('../services/multiagent/subagent');
+                      const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                      const parentCtx = getCurrentAgentContext() || {
+                        agentId: 'main',
+                        sessionId: activeSessionId,
+                        workDir: workDir || undefined,
+                        toolPool: [],
+                        metadata: {},
+                      };
+                      const agentId = await runAgentBackground({
+                        name: args.name || 'background-agent',
+                        prompt: args.prompt,
+                        description: args.description || 'Background agent task',
+                        sessionId: activeSessionId,
+                        parentContext: parentCtx,
+                        runInBackground: true,
+                        model: args.model,
+                      });
+                      toolResultContent = `Background agent started with ID: ${agentId}. Results will be delivered via task notification.`;
+                    } else {
+                      // Sync subagent path
+                      const { runAgentSync } = await import('../services/multiagent/subagent');
+                      const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                      const parentCtx = getCurrentAgentContext() || {
+                        agentId: 'main',
+                        sessionId: activeSessionId,
+                        workDir: workDir || undefined,
+                        toolPool: [],
+                        metadata: {},
+                      };
+                      const result = await runAgentSync({
+                        name: args.name || 'subagent',
+                        prompt: args.prompt,
+                        description: args.description || 'Subagent task',
+                        sessionId: activeSessionId,
+                        parentContext: parentCtx,
+                        model: args.model,
+                      });
+                      toolResultContent = result.success
+                        ? result.content
+                        : `Error: ${result.error}`;
+                    }
+                  } else {
+                    toolResultContent = await invoke<string>('execute_tool', {
+                      toolName: tool.name,
+                      arguments: effectiveArgs,
+                      workDir,
+                    });
+                  }
+                  uiStore.updateTaskStep(tool.id, 'done');
+                } catch (err) {
+                  uiStore.updateTaskStep(tool.id, 'failed');
+                  toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+                }
+
+                // === PostToolUse Hooks (audit logging, side effects) ===
+                const postCtx: PostHookContext = {
+                  toolName: tool.name,
+                  toolArgs: effectiveArgs,
+                  result: toolResultContent,
+                  isError: toolResultContent.startsWith('Error:'),
+                  sessionId: activeSessionId,
+                };
+                runPostToolUseHooks(postCtx).catch((e: unknown) => console.warn('[PostToolUseHooks] Error:', e));
               }
+              chunk._resolve(toolResultContent);
             }
-            
-            chunk._resolve(toolResultContent);
           } else if (chunk.type === 'error') {
             throw chunk.error;
           } else if (chunk.type === 'turn_complete') {
@@ -1196,6 +1345,18 @@ export const useChatStore = create<ChatState>()(
 
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+
+        // === Auto Memory Extraction (fire-and-forget) ===
+        try {
+          const { shouldExtractMemory, extractMemories } = await import('../services/memory/autoExtraction');
+          const currentMsgs = currentMessages();
+          // Simple heuristic: extract if session has 10+ messages and no tool calls in last turn
+          if (currentMsgs.length >= 10 && shouldExtractMemory(currentMsgs, 0, false)) {
+            extractMemories(currentMsgs, sessionWorkDir).catch((e: unknown) => console.warn('[Auto Memory] Extraction failed:', e));
+          }
+        } catch (e) {
+          console.debug('Auto memory extraction setup failed:', e);
+        }
 
         await runMicrocompactAfterStreaming(activeSessionId, set, get);
         await runSMCompactAfterStreaming(activeSessionId, set, get);

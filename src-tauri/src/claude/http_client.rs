@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::message::{Artifact, ChatResponse, ErrorResponse, Message, ToolCall, UsageInfo};
+use super::composer::{normalize_messages, validate_sequence};
 
 /// Per-session cancellation tokens for supporting concurrent requests
 static CANCEL_TOKENS: Lazy<Mutex<std::collections::HashMap<String, CancellationToken>>> =
@@ -991,10 +992,22 @@ impl ClaudeClient {
         system_prompt: Option<String>,
         browser_connected: bool,
     ) -> AppResult<ChatResponse> {
+        // Validate message sequence before sending to API
+        let (normalized, validation) = normalize_messages(&messages);
+        if !validation.errors.is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "Message validation failed: {}",
+                validation.errors.join(", ")
+            )));
+        }
+        if !validation.warnings.is_empty() {
+            eprintln!("[chat] Validation warnings: {:?}", validation.warnings);
+        }
+
         if let Some(url) = base_url {
-            self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None, browser_connected, "").await
+            self.chat_openai(&normalized, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None, browser_connected, "").await
         } else {
-            self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), false, false, None, browser_connected, "").await
+            self.chat_anthropic(&normalized, &api_key, &model, system_prompt.as_deref(), false, false, None, browser_connected, "").await
         }
     }
 
@@ -1013,6 +1026,18 @@ impl ClaudeClient {
         browser_connected: bool,
         session_id: String,
     ) -> AppResult<ChatResponse> {
+        // Validate message sequence before sending to API
+        let (normalized, validation) = normalize_messages(&messages);
+        if !validation.errors.is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "Message validation failed: {}",
+                validation.errors.join(", ")
+            )));
+        }
+        if !validation.warnings.is_empty() {
+            eprintln!("[chat_streaming] Validation warnings: {:?}", validation.warnings);
+        }
+
         // Create cancellation token and store per-session
         let cancel_token = CancellationToken::new();
         {
@@ -1037,9 +1062,9 @@ impl ClaudeClient {
             }
             result = async {
                 if let Some(url) = base_url {
-                    self.chat_openai(&messages, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
+                    self.chat_openai(&normalized, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
                 } else {
-                    self.chat_anthropic(&messages, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
+                    self.chat_anthropic(&normalized, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
                 }
             } => result
         };

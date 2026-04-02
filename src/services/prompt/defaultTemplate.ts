@@ -106,6 +106,18 @@ The following files have been added to this session's context:
 Use \`read_file\` with the exact paths above to read their contents before editing.`,
       },
 
+      // Layer 4: Session - Relevant Memories (cached until memory context changes)
+      {
+        id: 'session-memory-context',
+        label: 'Relevant Memories',
+        order: 43,
+        cacheable: true,
+        enabled: true,
+        category: 'session',
+        description: 'Relevant project memories recalled for this query',
+        content: `{{memoryContext}}`,
+      },
+
       // Layer 5: Append - Browser Result (never cached, dynamic)
       {
         id: 'append-browser-result',
