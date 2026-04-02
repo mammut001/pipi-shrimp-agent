@@ -37,6 +37,7 @@ comemo = "0.4"
 glob = "0.3"
 chromiumoxide = { version = "0.5", features = ["tokio"] }
 urlencoding = "2.1"
+jsonschema = "0.18"
 
 [features]
 default = ["custom-protocol"]

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::{ToolCallRequest, ToolCallResult, ToolMetadata};
+use jsonschema::{JSONSchema, ValidationError};
 
 /// Tool handler: receives parsed JSON arguments, returns result string
 pub type ToolHandler = Arc<dyn Fn(serde_json::Value) -> anyhow::Result<String> + Send + Sync>;
@@ -19,6 +20,7 @@ pub type ToolHandler = Arc<dyn Fn(serde_json::Value) -> anyhow::Result<String> +
 struct ToolEntry {
     handler: ToolHandler,
     metadata: ToolMetadata,
+    compiled_schema: Option<JSONSchema>,
 }
 
 pub struct ToolRegistry {
@@ -34,8 +36,15 @@ impl ToolRegistry {
 
     /// Register a tool with its handler and metadata
     pub fn register(&mut self, name: &str, handler: ToolHandler, metadata: ToolMetadata) {
-        self.tools
-            .insert(name.to_string(), ToolEntry { handler, metadata });
+        let compiled_schema = JSONSchema::compile(&metadata.input_schema).ok();
+        self.tools.insert(
+            name.to_string(),
+            ToolEntry {
+                handler,
+                metadata,
+                compiled_schema,
+            },
+        );
     }
 
     /// Execute a single tool call request
@@ -48,6 +57,24 @@ impl ToolRegistry {
         let args: serde_json::Value = serde_json::from_str(&req.arguments).map_err(|e| {
             anyhow::anyhow!("Invalid JSON arguments for tool '{}': {}", req.name, e)
         })?;
+
+        // Schema validation
+        if let Some(schema) = &entry.compiled_schema {
+            if let Err(errors) = schema.validate(&args) {
+                let error_msgs: Vec<String> =
+                    errors.map(|e: ValidationError| format!("{}", e)).collect();
+                return Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content: format!(
+                        "Schema validation failed for tool '{}': {}",
+                        req.name,
+                        error_msgs.join("; ")
+                    ),
+                    is_error: true,
+                });
+            }
+        }
 
         match (entry.handler)(args) {
             Ok(content) => Ok(ToolCallResult {

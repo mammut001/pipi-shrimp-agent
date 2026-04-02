@@ -22,6 +22,7 @@ pub mod search;
 pub mod session_memory; // Layer 2: Session Memory
 pub mod telegram;    // Telegram Bot API commands
 pub mod tools;       // Tool pipeline: unified tool execution
+pub mod agent;       // Multi-agent: subagent/coordinator/swarm
 pub mod web;
 pub mod workspace;
 
@@ -36,5 +37,6 @@ pub use search::*;
 pub use session_memory::*;
 pub use telegram::*;
 pub use tools::*;
+pub use agent::*;
 pub use web::*;
 pub use workspace::*;
