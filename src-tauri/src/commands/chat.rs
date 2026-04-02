@@ -303,6 +303,35 @@ pub async fn execute_tool(
     let args: serde_json::Value = serde_json::from_str(&arguments)
         .map_err(|e| AppError::InternalError(format!("Invalid tool arguments: {}", e)))?;
 
+    // === Phase 6: Rust-side path/command validation (defense-in-depth) ===
+    // This is a backup to the TypeScript-side preToolUseHooks validation
+    use crate::commands::path_security;
+
+    match tool_name.as_str() {
+        "read_file" | "write_file" | "create_directory" | "path_exists" | "list_files" => {
+            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
+                    return Err(AppError::SecurityError(e.message.clone()));
+                }
+            }
+        }
+        "search_files" | "glob_search" | "grep_files" => {
+            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
+                    return Err(AppError::SecurityError(e.message.clone()));
+                }
+            }
+        }
+        "execute_command" => {
+            if let Some(command) = args.get("command").and_then(|v| v.as_str()) {
+                if let Err(e) = path_security::validate_command(command) {
+                    return Err(AppError::SecurityError(e.message.clone()));
+                }
+            }
+        }
+        _ => {}
+    }
+
     // Execute tool and convert result to JSON
     let result_json = match tool_name.as_str() {
         "read_file" => {

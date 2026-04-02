@@ -11,6 +11,7 @@
  * - workspace: Work directory management
  */
 
+pub mod agent;       // Multi-agent: subagent/coordinator/swarm
 pub mod browser;    // NEW - Browser window commands for PageAgent
 pub mod chat;
 pub mod code;
@@ -18,11 +19,13 @@ pub mod compact;     // Context compression system - Layer 1: Microcompact
 pub mod config;
 pub mod file;
 pub mod models;
+pub mod path_security; // Path validation - defense in depth
+#[cfg(test)]
+mod path_security_test; // Tests for path_security
 pub mod search;
 pub mod session_memory; // Layer 2: Session Memory
 pub mod telegram;    // Telegram Bot API commands
 pub mod tools;       // Tool pipeline: unified tool execution
-pub mod agent;       // Multi-agent: subagent/coordinator/swarm
 pub mod web;
 pub mod workspace;
 
