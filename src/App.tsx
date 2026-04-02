@@ -23,7 +23,7 @@ import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShel
  */
 export default function App() {
   const { getApiConfig } = useSettingsStore();
-  const { init: initChat, cleanup: cleanupChat } = useChatStore();
+  const { init: initChat } = useChatStore();
   const { settingsOpen, currentView } = useUIStore();
 
   // Load settings on mount, then show window once fully initialized.
@@ -44,12 +44,7 @@ export default function App() {
     };
 
     init();
-
-    // Cleanup event listeners on unmount
-    return () => {
-      cleanupChat();
-    };
-  }, [getApiConfig, initChat, cleanupChat]);
+  }, [getApiConfig, initChat]);
 
   // Render active page based on currentView
   // Note: 'browser' view is deprecated - browser is now a dock mode in chat view

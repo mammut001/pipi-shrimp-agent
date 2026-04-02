@@ -5,7 +5,6 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import type { ChatState, Session, Message, Project, OutputFolder } from '../types/chat';
 import { createSession, createMessage, createProject } from '../types/chat';
 import { useSettingsStore } from './settingsStore';
@@ -17,7 +16,7 @@ import { runMicrocompactCheck } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
 import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
-import { executeToolLoop } from '../services/toolEngine';
+
 
 /**
  * Streaming timeout - 300 seconds
@@ -553,7 +552,6 @@ export const useChatStore = create<ChatState>()(
     pendingToolCalls: 0,  // Counter for pending parallel tool executions
     pendingToolResults: [] as { toolCallId: string; result: string }[],  // Accumulated tool results
     streamingSessionId: null as string | null,  // Session that owns the current streaming request — guards against cross-session event contamination
-    _eventListeners: [] as Array<() => void>,  // Cleanup functions for event listeners
 
     // ========== Computed Properties ==========
     currentSession: () => {
@@ -584,20 +582,8 @@ export const useChatStore = create<ChatState>()(
     init: async () => {
       if (get().isInitialized) return;
       
-      // Cleanup any existing event listeners before re-initializing
-      const { _eventListeners } = get();
-      if (_eventListeners.length > 0) {
-        _eventListeners.forEach((unlisten) => {
-          try {
-            unlisten();
-          } catch (e) {
-            console.warn('Failed to unlisten event during re-init:', e);
-          }
-        });
-      }
-      
       // 立即设置，防止并发调用（App.tsx 和 Chat.tsx 都会调用 init）
-      set({ isInitialized: true, _eventListeners: [] });
+      set({ isInitialized: true });
 
       try {
         // Load Projects from database (preserve existing if fails)
@@ -668,123 +654,6 @@ export const useChatStore = create<ChatState>()(
           set({ currentSessionId: selectedSessionId });
         }
 
-        // Set up streaming event listener
-        const { appendStreamingContent } = get();
-
-        // Listen for streaming tokens from Rust backend
-        const unlistenToken = await listen<{ session_id: string; content: string }>('claude-token', (event) => {
-          // Only process tokens for the active session
-          if (event.payload.session_id !== get().currentSessionId) return;
-          appendStreamingContent(event.payload.content);
-        });
-
-        // Listen for token events from Rust backend (Reasoning)
-        const unlistenReasoning = await listen<{ session_id: string; content: string }>('claude-reasoning', (event) => {
-          // Only process reasoning for the active session
-          if (event.payload.session_id !== get().currentSessionId) return;
-          set((state) => ({ streamingReasoning: state.streamingReasoning + event.payload.content }));
-        });
-
-        // Listen for tool_use events from Rust backend
-        const unlistenToolUse = await listen<{
-          session_id: string;
-          tool_call_id: string;
-          name: string;
-          arguments: string;
-        }>('claude-tool-use', async (event) => {
-          console.log('Tool use requested:', event.payload);
-
-          // CROSS-SESSION GUARD: only process tool events that belong to the session
-          // that started the current streaming request.
-          const { streamingSessionId } = get();
-          const currentSessId = get().currentSessionId;
-          if (!streamingSessionId || streamingSessionId !== currentSessId) {
-            console.warn(
-              `[cross-session guard] Discarding stale tool-use event. ` +
-              `streamingSessionId=${streamingSessionId ?? 'null'}, currentSessId=${currentSessId}`
-            );
-            return;
-          }
-
-          // Additional guard: event must match the session that emitted it
-          if (event.payload.session_id !== currentSessId) {
-            console.warn(
-              `[cross-session guard] Discarding tool-use event from wrong session. ` +
-              `event.session_id=${event.payload.session_id}, currentSessId=${currentSessId}`
-            );
-            return;
-          }
-
-          // Increment pending tool calls counter for batching
-          set((state) => ({ pendingToolCalls: state.pendingToolCalls + 1 }));
-
-          const { setPermissionRequest, addTaskStep } = useUIStore.getState();
-          const { executeTool, currentMessages, currentSession } = get();
-
-          // Get permissionMode from current session (per-session setting)
-          const session = currentSession();
-          const permissionMode = session?.permissionMode || 'standard';
-
-          // Update the last assistant message to include tool_calls
-          // This is needed so when we send tool result, the API knows which tool_call we're responding to
-          const msgs = currentMessages();
-          if (msgs.length > 0) {
-            const lastMsg = msgs[msgs.length - 1];
-            if (lastMsg.role === 'assistant') {
-              const updatedToolCalls = [
-                ...(lastMsg.tool_calls || []),
-                {
-                  id: event.payload.tool_call_id,
-                  name: event.payload.name,
-                  arguments: event.payload.arguments,
-                },
-              ];
-              // Add tool_calls to the last assistant message in memory
-              set((state) => ({
-                sessions: state.sessions.map((s) =>
-                  s.id === currentSessId
-                    ? {
-                        ...s,
-                        messages: s.messages.map((m, i) =>
-                          i === s.messages.length - 1 && m.role === 'assistant'
-                            ? { ...m, tool_calls: updatedToolCalls }
-                            : m
-                        ),
-                      }
-                    : s
-                ),
-              }));
-              // CRITICAL: persist to database so tool_calls survive across message rebuilds
-              const updatedMsg = { ...lastMsg, tool_calls: updatedToolCalls };
-              invoke('db_save_message', { message: messageToDb(updatedMsg, currentSessId!) })
-                .catch((e: unknown) => console.error('Failed to persist tool_calls:', e));
-            }
-          }
-
-          // Add to task progress UI — use tool_call_id as step id for precise lookup later
-          addTaskStep(
-            `${event.payload.name}: ${event.payload.arguments.slice(0, 50)}${event.payload.arguments.length > 50 ? '...' : ''}`,
-            event.payload.tool_call_id
-          );
-
-          if (permissionMode === 'bypass' || permissionMode === 'auto-edits') {
-            // Auto mode and bypass mode: execute without asking
-            console.log(`${permissionMode} mode active, auto-executing tool...`);
-            await executeTool(event.payload.name, event.payload.arguments, event.payload.tool_call_id);
-          } else {
-            // ASK mode: show permission modal
-            setPermissionRequest({
-              id: event.payload.tool_call_id,
-              toolName: event.payload.name,
-              toolInput: event.payload.arguments,
-              description: `Execute ${event.payload.name}?`,
-            });
-          }
-        });
-
-        // Store unlisten functions in store state for proper cleanup
-        set({ _eventListeners: [unlistenToken, unlistenReasoning, unlistenToolUse] });
-
         console.log('✅ Store initialization completed successfully');
         set({ isInitialized: true, error: null });
       } catch (error) {
@@ -846,108 +715,6 @@ export const useChatStore = create<ChatState>()(
       }));
 
       return newSession.id;
-    },
-
-    /**
-     * Execute a tool and handle the result (permission-aware)
-     * Modified to batch tool results - collects results and sends all at once
-     */
-    executeTool: async (toolName: string, toolInput: string, toolCallId: string) => {
-      const { setError } = get();
-      const { addNotification, taskProgress, updateTaskStep } = useUIStore.getState();
-
-      // Capture the owning session at call-time. If the user switches sessions while
-      // this async tool is running, we discard the result rather than injecting an
-      // orphaned tool_result into the wrong session (which causes a 400 on next call).
-      const owningSessionId = get().currentSessionId;
-
-      // Find the task step by toolCallId (exact match — avoids wrong step when same tool runs multiple times)
-      const currentStep = taskProgress.find(s => s.id === toolCallId);
-      if (currentStep) {
-        updateTaskStep(currentStep.id, 'running');
-      }
-
-      try {
-        addNotification('info', `Executing tool: ${toolName}...`);
-
-        // get_current_workspace is handled on the TS side — no Rust round-trip needed.
-        // The session's workDir is already in memory; returning it avoids the paradox of
-        // asking the AI to supply the path it is trying to discover.
-        let result: string;
-        if (toolName === 'get_current_workspace') {
-          const session = get().sessions.find(s => s.id === owningSessionId);
-          const workDir = session?.workDir;
-          result = workDir
-            ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
-            : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session. Ask the user to bind a folder first.' });
-        } else {
-          const session = get().sessions.find(s => s.id === owningSessionId);
-          const workDir = session?.workDir ?? null;
-          // Call Rust backend to execute the tool
-          result = await invoke<string>('execute_tool', {
-            toolName: toolName,   // Tauri auto-converts camelCase → snake_case for Rust
-            arguments: toolInput,
-            workDir,
-          });
-        }
-
-        // Session-consistency check: if the user switched sessions while the tool was
-        // running, discard this result. Injecting it would corrupt the new session's
-        // message history (orphaned tool_result → 400 on every subsequent API call).
-        if (get().currentSessionId !== owningSessionId) {
-          console.warn(
-            `[executeTool] Session changed during execution of ${toolName} ` +
-            `(was ${owningSessionId}, now ${get().currentSessionId}). Discarding result.`
-          );
-          set((state) => ({ pendingToolCalls: Math.max(0, state.pendingToolCalls - 1) }));
-          return;
-        }
-
-        console.log(`Tool ${toolName} executed successfully:`, result);
-
-        if (currentStep) {
-          updateTaskStep(currentStep.id, 'done');
-        }
-
-        // Collect the result instead of sending immediately (for batching)
-        set((state) => ({
-          pendingToolResults: [...state.pendingToolResults, { toolCallId, result }],
-          pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),  // Prevent negative
-        }));
-
-        // Check if all tool calls are complete, then send all results at once
-        const { pendingToolCalls: remaining, sendAllToolResults } = get();
-        if (remaining === 0) {
-          console.log('All tool calls complete, sending batched results...');
-          await sendAllToolResults();
-        }
-
-      } catch (error) {
-        console.error(`Tool ${toolName} execution failed:`, error);
-
-        if (currentStep) {
-          updateTaskStep(currentStep.id, 'failed');
-        }
-
-        // Decrement counter on error and add error result so AI can see what happened
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        set((state) => ({
-          pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),  // Prevent negative
-          pendingToolResults: [
-            ...state.pendingToolResults,
-            { toolCallId, result: `Error: ${errorMessage}` },
-          ],
-        }));
-
-        setError(`Tool ${toolName} failed: ${errorMessage}`);
-        useUIStore.getState().addNotification('error', `Execution failed: ${toolName}`);
-
-        // Check if all tools are done (even with errors)
-        const { pendingToolCalls: remaining, sendAllToolResults } = get();
-        if (remaining === 0) {
-          await sendAllToolResults();
-        }
-      }
     },
 
     /**
@@ -1025,9 +792,7 @@ export const useChatStore = create<ChatState>()(
 
       const isCurrentSession = get().currentSessionId === sessionId;
       const pendingPermissions = isCurrentSession ? [...useUIStore.getState().permissionQueue] : [];
-      const hasPendingAskFlow =
-        isCurrentSession &&
-        (pendingPermissions.length > 0 || get().pendingToolCalls > 0 || get().pendingToolResults.length > 0);
+      const hasPendingAskFlow = isCurrentSession && pendingPermissions.length > 0;
 
       const updatedSession = {
         ...session,
@@ -1038,14 +803,6 @@ export const useChatStore = create<ChatState>()(
       // Update local state
       set((state) => ({
         sessions: state.sessions.map(s => s.id === sessionId ? updatedSession : s),
-        // Keep in-flight tool state intact when switching to auto modes for the active session.
-        // Ask -> bypass/auto should continue the existing tool loop, not corrupt it.
-        ...(hasPendingAskFlow && (permissionMode === 'bypass' || permissionMode === 'auto-edits')
-          ? {}
-          : {
-              pendingToolCalls: 0,
-              pendingToolResults: [],
-            }),
       }));
 
       // Persist to database
@@ -1057,20 +814,16 @@ export const useChatStore = create<ChatState>()(
         // Drain queued ASK permissions into immediate execution.
         useUIStore.getState().clearAllPermissions();
         for (const req of pendingPermissions) {
-          await get().executeTool(req.toolName, req.toolInput, req.id);
+          req._resolve?.(true);
         }
         return;
       }
 
-      // Switching away from Ask while tool calls are unresolved would leave the
-      // session history malformed (assistant.tool_calls with no tool_result).
+      // Switching away from Ask while tool calls are unresolved
       useUIStore.getState().clearAllPermissions();
-      await scrubDanglingToolCalls(sessionId, set, get);
-      set({
-        pendingToolCalls: 0,
-        pendingToolResults: [],
-        streamingSessionId: null,
-      });
+      for (const req of pendingPermissions) {
+        req._resolve?.(false);
+      }
     },
 
     /**
@@ -1093,321 +846,6 @@ export const useChatStore = create<ChatState>()(
 
       // Persist to database
       await invoke('update_session_title', { sessionId, title: newTitle });
-    },
-
-    /**
-     * Send all accumulated tool results to AI in a single batch
-     */
-    sendAllToolResults: async () => {
-      const {
-        currentSessionId,
-        pendingToolResults,
-        addMessage,
-        setStreaming,
-        setError,
-        currentMessages,
-        updateLastMessage,
-      } = get();
-
-      if (!currentSessionId || pendingToolResults.length === 0) {
-        // Clear pending state
-        set({ pendingToolResults: [], pendingToolCalls: 0 });
-        return;
-      }
-
-      try {
-        setStreaming(true);
-        // Reset both streaming buffers before the second API call
-        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: currentSessionId });
-
-        // Add all tool results as user messages (Claude SDK bridge will convert to 'tool' role)
-        // NOTE: Do NOT set tool_call_id on the message — the __TOOL_RESULT__: prefix in content
-        // is the sole source of truth for Rust's format_messages_for_anthropic().
-        // Setting tool_call_id causes Rust's branch-1 to use the raw content (still prefixed).
-        for (const { toolCallId, result } of pendingToolResults) {
-          const resultMessage = createMessage('user', `__TOOL_RESULT__:${toolCallId}:${result}`);
-          await addMessage(resultMessage);
-        }
-
-        const apiConfig = useSettingsStore.getState().getActiveConfig();
-        if (!apiConfig?.apiKey) {
-          setError('No API configuration found. Please add an API key in Settings.');
-          setStreaming(false);
-          set({ pendingToolResults: [], pendingToolCalls: 0 });
-          return;
-        }
-
-        // Prepare all messages for next turn - include tool_calls when present
-        // IMPORTANT: TypeScript ToolCall uses 'id' but Rust ToolCall expects 'tool_call_id'
-        const messages = buildApiMessages(currentMessages());
-
-        if (messages.length === 0) {
-          setError('Message history is empty. Cannot continue conversation.');
-          setStreaming(false);
-          set({ pendingToolResults: [], pendingToolCalls: 0 });
-          return;
-        }
-
-        // Diagnostic: log messages being sent to help debug tool_call_id issues
-        console.log('[sendAllToolResults] pendingToolResults:', JSON.stringify(pendingToolResults));
-        console.log('[sendAllToolResults] messages being sent to API:', JSON.stringify(
-          messages.map(m => ({
-            role: m.role,
-            content: typeof m.content === 'string' ? m.content.slice(0, 80) : m.content,
-            tool_calls: m.tool_calls ? m.tool_calls.map((tc: {tool_call_id: string; name: string}) => ({ id: tc.tool_call_id, name: tc.name })) : undefined,
-            tool_call_id: m.tool_call_id,
-          }))
-        ));
-
-        // Create placeholder for AI's next thought
-        const assistantMessage = createMessage('assistant', '');
-        await addMessage(assistantMessage);
-
-        // Build full system prompt — mirror sendMessage: session-level only, no global files
-        let systemPrompt = useUIStore.getState().agentInstructions;
-        const toolResultSession = get().sessions.find(s => s.id === currentSessionId);
-        const sessionWorkingFilesForTool = toolResultSession?.workingFiles ?? [];
-        const sessionWorkDirForTool = toolResultSession?.workDir;
-
-        if (sessionWorkDirForTool) {
-          systemPrompt += `\n\n## Working Directory\n\nYour working directory for this session is: \`${sessionWorkDirForTool}\`\nUse this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and \`grep\` tools.`;
-        }
-        if (sessionWorkingFilesForTool.length > 0) {
-          const filesList = sessionWorkingFilesForTool.map(f => `- ${f.name}: ${f.path}`).join('\n');
-          systemPrompt += `\n\n## Working Files\n\nThe following files have been added to this session's context:\n${filesList}\n\nUse \`read_file\` with the exact paths above to read their contents before editing.`;
-        }
-
-        const response = await invoke<{
-          content: string;
-          artifacts: Array<{
-            type: string;
-            content: string;
-            title?: string;
-            language?: string;
-          }>;
-          model: string;
-          usage?: { input_tokens: number; output_tokens: number };
-          tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
-        }>('send_claude_sdk_chat_streaming', {
-          messages,
-          apiKey: apiConfig.apiKey,
-          model: apiConfig.model,
-          baseUrl: apiConfig.baseUrl || '',
-          systemPrompt,
-          browserConnected: useCdpStore.getState().status === 'connected',
-          sessionId: currentSessionId,
-        });
-
-        // Finalize the assistant message with streamed content
-        const { streamingContent: finalContent, streamingReasoning } = get();
-
-        const usedMoreTools = response.tool_calls && response.tool_calls.length > 0;
-
-        if (usedMoreTools) {
-          // AI called another tool in this turn - save reasoning, let the next
-          // sendAllToolResults handle finalization (the event handler already fired)
-          const rawPrefix = finalContent || response.content || '';
-          const { reasoning: parsedPrefixReasoning } = parseThinkContent(rawPrefix);
-          await updateLastMessage('', undefined, mergeReasoningParts(streamingReasoning, parsedPrefixReasoning));
-          // Clear pending list (already processed) but leave streaming active
-          set({ pendingToolResults: [], streamingContent: '', streamingReasoning: '' });
-        } else {
-          // Final response - no more tools
-          // Strip <think>...</think> tags before persisting (MiniMax embeds think inline).
-          const rawFinal = finalContent || response.content || '';
-          const { content: cleanFinal, reasoning: parsedFinalReasoning } = parseThinkContent(rawFinal);
-          
-          // Prepare token usage for message
-          const tokenUsage = response.usage ? {
-            input_tokens: response.usage.input_tokens,
-            output_tokens: response.usage.output_tokens,
-            model: response.model || apiConfig?.model,
-          } : undefined;
-          
-          await updateLastMessage(
-            cleanFinal,
-            response.artifacts?.map((a) => ({
-              id: crypto.randomUUID(),
-              type: a.type as 'html' | 'svg' | 'mermaid' | 'react' | 'code',
-              content: a.content,
-              title: a.title,
-              language: a.language,
-            })),
-            mergeReasoningParts(streamingReasoning, parsedFinalReasoning),
-            tokenUsage
-          );
-          
-          // Save token usage to database
-          if (response.usage) {
-            const now = new Date();
-            const date = now.toISOString().split('T')[0];  // YYYY-MM-DD
-            await invoke('db_save_token_usage', {
-              usage: {
-                id: crypto.randomUUID(),
-                session_id: currentSessionId,
-                date,
-                input_tokens: response.usage.input_tokens,
-                output_tokens: response.usage.output_tokens,
-                model: response.model || apiConfig?.model || 'unknown',
-                created_at: Math.floor(now.getTime() / 1000),
-              },
-            }).catch((e: unknown) => console.error('Failed to save token usage:', e));
-          }
-          
-          // Clear all streaming + pending state (including cross-session guard)
-          set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-          setStreaming(false);
-
-          // Layer 1: Run microcompact after streaming completes
-          await runMicrocompactAfterStreaming(currentSessionId, set, get);
-          
-          // Layer 2: Try Session Memory Compact if needed
-          await runSMCompactAfterStreaming(currentSessionId, set, get);
-        }
-
-      } catch (error) {
-        console.error('Failed to send tool results:', error);
-        const errMsg = typeof error === 'string'
-          ? error
-          : (error instanceof Error ? error.message : String(error));
-        setError(`Failed to send tool results: ${errMsg}`);
-
-        // Save any accumulated content before clearing
-        const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
-        if (errContent || errReasoning) {
-          const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
-          saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning))
-            .catch((e: unknown) => console.error('Failed to persist tool-result error content:', e));
-        }
-
-        setStreaming(false);
-        set({ pendingToolResults: [], pendingToolCalls: 0, streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-
-        // Remove empty assistant placeholder to prevent "Thinking..." stuck state
-        const sid = get().currentSessionId;
-        if (sid) {
-          set((state) => ({
-            sessions: state.sessions.map((s) => {
-              if (s.id !== sid || s.messages.length === 0) return s;
-              const last = s.messages[s.messages.length - 1];
-              if (last.role === 'assistant' && !last.content && !last.reasoning) {
-                return { ...s, messages: s.messages.slice(0, -1) };
-              }
-              return s;
-            }),
-          }));
-        }
-      }
-    },
-
-    /**
-     * Send tool execution result back to AI
-     */
-    sendToolResult: async (toolCallId: string, result: string) => {
-      const {
-        currentSessionId,
-        addMessage,
-        setStreaming,
-        setError,
-        currentMessages,
-        updateLastMessage,
-      } = get();
-
-      if (!currentSessionId) return;
-
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-      try {
-        setStreaming(true);
-        set({ streamingContent: '', streamingSessionId: currentSessionId });
-
-        // Set timeout protection (same as sendMessage)
-        timeoutId = setTimeout(() => {
-          if (get().isStreaming) {
-            setStreaming(false);
-            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-            setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded).`);
-            invoke('stop_subprocess', { sessionId: currentSessionId }).catch(console.error);
-          }
-        }, STREAMING_TIMEOUT_MS);
-
-        // Add tool result as a "user" message
-        const resultMessage = createMessage('user', `__TOOL_RESULT__:${toolCallId}:${result}`);
-        await addMessage(resultMessage);
-
-        const apiConfig = useSettingsStore.getState().getActiveConfig();
-        if (!apiConfig?.apiKey) {
-          setError('No API configuration found. Please add an API key in Settings.');
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-          return;
-        }
-
-        const messages = buildApiMessages(currentMessages());
-
-        if (messages.length === 0) {
-          setError('Message history is empty. Cannot continue conversation.');
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-          return;
-        }
-
-        const assistantMessage = createMessage('assistant', '');
-        await addMessage(assistantMessage);
-
-        const response = await invoke<{
-          content: string;
-          artifacts: any[];
-          usage?: { input_tokens: number; output_tokens: number };
-          tool_calls?: Array<{ tool_call_id: string; name: string; arguments: string }>;
-        }>('send_claude_sdk_chat_streaming', {
-          messages,
-          apiKey: apiConfig.apiKey,
-          model: apiConfig.model,
-          baseUrl: apiConfig.baseUrl || '',
-          systemPrompt: useUIStore.getState().agentInstructions,
-          browserConnected: useCdpStore.getState().status === 'connected',
-          sessionId: currentSessionId,
-        });
-
-        // Finalize: save accumulated streaming content to DB
-        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-        const { streamingContent: finalContent, streamingReasoning: finalReasoning } = get();
-
-        const usedTools = response.tool_calls && response.tool_calls.length > 0;
-        if (usedTools) {
-          // AI called another tool — don't finalize, let the event handler take over
-          const { content: cleanPrefix } = parseThinkContent(finalContent || '');
-          await updateLastMessage(cleanPrefix, undefined, finalReasoning);
-          set({ streamingContent: '', streamingReasoning: '' });
-        } else {
-          if (finalContent || finalReasoning) {
-            const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(finalContent || '');
-            await updateLastMessage(cleanContent, undefined, mergeReasoningParts(finalReasoning, parsedReasoning));
-          }
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-        }
-
-      } catch (error) {
-        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-        console.error('Failed to send tool result:', error);
-
-        // Save any accumulated content before clearing
-        const { streamingContent: errContent, streamingReasoning: errReasoning } = get();
-        if (errContent || errReasoning) {
-          const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
-          try {
-            await updateLastMessage(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning));
-          } catch (e) {
-            console.error('Failed to persist sendToolResult error content:', e);
-          }
-        }
-
-        setError('Failed to send tool result back to AI');
-        setStreaming(false);
-        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-      }
     },
 
     /**
@@ -1651,44 +1089,86 @@ export const useChatStore = create<ChatState>()(
           },
         );
 
-        // === Multi-round tool loop via executeToolLoop ===
-        // This replaces the old single-round pattern:
-        //   invoke → check tool_calls → sendAllToolResults → invoke → done
-        // Now it supports unlimited rounds: API → tools → API → tools → ...
+        // === Multi-round tool loop via Core Query Engine ===
+        const { runChatTurn } = await import('../core/QueryEngine');
         const apiMessages = currentMessages();
-        const toolLoopResult = await executeToolLoop(
-          apiMessages,
-          activeSessionId,
-          {
-            apiKey: apiConfig.apiKey,
-            model: apiConfig.model,
-            baseUrl: apiConfig.baseUrl || '',
-            systemPrompt,
-            browserConnected: useCdpStore.getState().status === 'connected',
-            maxRounds: useSettingsStore.getState().agentSettings.maxToolRounds,
-          },
-        );
+        const engine = runChatTurn(activeSessionId, apiMessages, systemPrompt);
+        
+        const uiStore = useUIStore.getState();
+        let tokenUsageResult: any = undefined;
+
+        for await (const chunk of engine) {
+          if (chunk.type === 'text_delta') {
+            get().appendStreamingContent(chunk.content);
+          } else if (chunk.type === 'reasoning_delta') {
+            set((state) => ({ streamingReasoning: state.streamingReasoning + chunk.content }));
+          } else if (chunk.type === 'status_update') {
+            uiStore.addNotification('info', chunk.message);
+          } else if (chunk.type === 'tool_call_request') {
+            const tool = chunk.tool;
+            uiStore.addTaskStep(
+              `${tool.name}: ${tool.arguments.slice(0, 50)}${tool.arguments.length > 50 ? '...' : ''}`,
+              tool.id
+            );
+            uiStore.updateTaskStep(tool.id, 'pending');
+
+            const currentSess = get().sessions.find(s => s.id === activeSessionId);
+            const permissionMode = currentSess?.permissionMode || 'standard';
+            const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
+
+            const approved = shouldBypass ? true : await uiStore.waitForPermission(tool);
+
+            let toolResultContent = '';
+            if (!approved) {
+              uiStore.updateTaskStep(tool.id, 'failed');
+              toolResultContent = 'Permission denied by user.';
+            } else {
+              uiStore.updateTaskStep(tool.id, 'running');
+              try {
+                const workDir = currentSess?.workDir ?? null;
+                if (tool.name === 'get_current_workspace') {
+                  toolResultContent = workDir
+                    ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
+                    : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
+                } else {
+                  toolResultContent = await invoke<string>('execute_tool', {
+                    toolName: tool.name,
+                    arguments: tool.arguments,
+                    workDir,
+                  });
+                }
+                uiStore.updateTaskStep(tool.id, 'done');
+              } catch (err) {
+                uiStore.updateTaskStep(tool.id, 'failed');
+                toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+              }
+            }
+            
+            chunk._resolve(toolResultContent);
+          } else if (chunk.type === 'error') {
+            throw chunk.error;
+          } else if (chunk.type === 'turn_complete') {
+            if (chunk.tokenUsage) {
+              tokenUsageResult = chunk.tokenUsage;
+            }
+          }
+        }
 
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;
         }
 
-        // If tool loop reported an error, handle it
-        if (toolLoopResult.error) {
-          console.warn('[ToolLoop] Error:', toolLoopResult.error);
-        }
-
         // Merge accumulated streaming content with tool loop's final content
         const { streamingContent, streamingReasoning, updateLastMessage } = get();
-        const finalContent = toolLoopResult.finalContent || streamingContent || '';
+        const finalContent = streamingContent || '';
 
         const { content: cleanContent, reasoning: parsedReasoning } = parseThinkContent(finalContent);
 
-        const tokenUsage = toolLoopResult.tokenUsage ? {
-          input_tokens: toolLoopResult.tokenUsage.input_tokens,
-          output_tokens: toolLoopResult.tokenUsage.output_tokens,
-          model: toolLoopResult.tokenUsage.model || apiConfig.model,
+        const tokenUsage = tokenUsageResult ? {
+          input_tokens: tokenUsageResult.input_tokens,
+          output_tokens: tokenUsageResult.output_tokens,
+          model: tokenUsageResult.model || apiConfig.model,
         } : undefined;
 
         await updateLastMessage(
@@ -1698,7 +1178,7 @@ export const useChatStore = create<ChatState>()(
           tokenUsage,
         );
 
-        if (toolLoopResult.tokenUsage) {
+        if (tokenUsage) {
           const now = new Date();
           const date = now.toISOString().split('T')[0];
           await invoke('db_save_token_usage', {
@@ -1706,9 +1186,9 @@ export const useChatStore = create<ChatState>()(
               id: crypto.randomUUID(),
               session_id: activeSessionId,
               date,
-              input_tokens: toolLoopResult.tokenUsage.input_tokens,
-              output_tokens: toolLoopResult.tokenUsage.output_tokens,
-              model: toolLoopResult.tokenUsage.model || apiConfig.model,
+              input_tokens: tokenUsage.input_tokens,
+              output_tokens: tokenUsage.output_tokens,
+              model: tokenUsage.model || apiConfig.model,
               created_at: Math.floor(now.getTime() / 1000),
             },
           }).catch((e: unknown) => console.error('Failed to save token usage:', e));
@@ -2498,21 +1978,6 @@ export const useChatStore = create<ChatState>()(
         console.error('Failed to get total token stats:', error);
         return { input: 0, output: 0, total: 0 };
       }
-    },
-
-    /**
-     * Cleanup all event listeners (call on app unmount or before re-init)
-     */
-    cleanup: () => {
-      const { _eventListeners } = get();
-      _eventListeners.forEach((unlisten) => {
-        try {
-          unlisten();
-        } catch (e) {
-          console.warn('Failed to unlisten event:', e);
-        }
-      });
-      set({ _eventListeners: [], isInitialized: false });
     },
   }))
 );

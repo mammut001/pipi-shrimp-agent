@@ -11,6 +11,9 @@
 
 import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import DOMPurify from 'dompurify';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '@/types/chat';
@@ -110,6 +113,8 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
               ) : (
                 /* Assistant messages: markdown */
                 <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw]}
                   components={{
                     // Custom code block rendering
                     code({ className, children, ...props }) {
@@ -215,7 +220,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                     },
                   }}
                 >
-                  {message.content}
+                  {DOMPurify.sanitize(message.content)}
                 </ReactMarkdown>
               )}
 

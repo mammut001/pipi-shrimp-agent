@@ -230,21 +230,6 @@ export interface ChatState {
   getWorkDirIndex: (sessionId: string) => Promise<OutputFolder[]>;
 
   /**
-   * Send tool execution result back to AI
-   */
-  sendToolResult: (toolCallId: string, result: string) => Promise<void>;
-
-  /**
-   * Send all accumulated tool results to AI in a single batch
-   */
-  sendAllToolResults: () => Promise<void>;
-
-  /**
-   * Execute a tool and handle the result (permission-aware)
-   */
-  executeTool: (toolName: string, toolInput: string, toolCallId: string) => Promise<void>;
-
-  /**
    * Add working files to a session (session-level)
    */
   addSessionWorkingFiles: (sessionId: string, files: ImportedFile[]) => Promise<void>;
@@ -291,13 +276,7 @@ export interface ChatState {
    */
   getTotalTokenStats: () => Promise<{ input: number; output: number; total: number }>;
 
-  // ========== Internal State ==========
-  _eventListeners: Array<() => void>;  // Cleanup functions for event listeners
-
-  /**
-   * Cleanup all event listeners (call on app unmount or before re-init)
-   */
-  cleanup: () => void;
+  // ========== Token Stats ==========
 }
 
 // ============= Helper Functions =============

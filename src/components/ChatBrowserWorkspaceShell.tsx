@@ -103,27 +103,15 @@ export function ChatBrowserWorkspaceShell() {
 
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
-    const { id, toolName, toolInput } = pendingPermission;
+    pendingPermission._resolve?.(true);
     clearPermissionRequest();
-    const { executeTool } = useChatStore.getState();
-    await executeTool(toolName, toolInput, id);
   };
 
   const handleDenyPermission = () => {
     if (!pendingPermission) return;
     addNotification('info', 'Permission denied');
+    pendingPermission._resolve?.(false);
     clearPermissionRequest();
-    const { sendAllToolResults } = useChatStore.getState();
-    useChatStore.setState((state) => ({
-      pendingToolCalls: Math.max(0, state.pendingToolCalls - 1),
-      pendingToolResults: [
-        ...state.pendingToolResults,
-        { toolCallId: pendingPermission.id, result: 'Permission denied by user.' },
-      ],
-    }));
-    if (useChatStore.getState().pendingToolCalls === 0) {
-      sendAllToolResults();
-    }
   };
 
   // Chat store

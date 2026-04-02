@@ -21,6 +21,7 @@ export interface PermissionRequest {
   toolName: string;        // Tool name (e.g., "execute_code")
   toolInput: string;       // Tool input (JSON string)
   description?: string;    // User-friendly description
+  _resolve?: (approved: boolean) => void; // Used by QueryEngine to wait for user decision
 }
 
 /** Notification item */
@@ -133,6 +134,11 @@ export interface UIState {
    * Clear ALL pending permission requests (used when switching sessions)
    */
   clearAllPermissions: () => void;
+
+  /**
+   * Wait for user permission for a specific tool call. Resolves with true if approved.
+   */
+  waitForPermission: (tool: { id: string; name: string; arguments: string }) => Promise<boolean>;
 
   /**
    * Add notification
