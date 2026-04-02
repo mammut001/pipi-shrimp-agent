@@ -4,6 +4,7 @@
  * Layer 1: Microcompact
  * Layer 2: Session Memory Compact
  * Layer 3: Legacy Compact
+ * Reactive: Event-driven compaction
  */
 
 export { runMicrocompactCheck, resetMicrocompactState, resetMicrocompactForNewTurn } from './microCompact';
@@ -22,3 +23,13 @@ export {
   POST_COMPACT_TOKEN_BUDGET,
   POST_COMPACT_MAX_TOKENS_PER_FILE,
 } from './compact';
+
+// Reactive Compact (event-driven)
+export { 
+  checkReactiveCompact, 
+  recordToolForReactiveCompact,
+  emitReactiveEvent,
+  type ReactiveEvent,
+  type ReactiveEventType,
+  type ReactiveCompactResult,
+} from './reactiveCompact';

@@ -15,6 +15,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { Message, ToolCall } from '../types/chat'
+import { StreamingToolExecutor, type ToolRequest } from './StreamingToolExecutor'
 
 export interface ToolLoopOptions {
   apiKey: string
@@ -23,6 +24,8 @@ export interface ToolLoopOptions {
   systemPrompt?: string
   browserConnected?: boolean
   maxRounds?: number
+  enableConcurrency?: boolean
+  onToolProgress?: (completed: number, total: number, currentTool?: string) => void
 }
 
 export interface ToolLoopResult {
@@ -91,17 +94,41 @@ export async function executeToolLoop(
 
     totalToolCalls += toolCalls.length
 
-    // 3. Execute tools via Rust scheduler (handles concurrency)
-    const toolRequests = toolCalls.map(tc => ({
-      id: tc.id,
-      name: tc.name,
-      arguments: tc.arguments,
-    }))
+    // 3. Execute tools with concurrency control
+    const toolRequests: ToolRequest[] = toolCalls.map(tc => {
+      let parsedArgs: Record<string, any> = {};
+      try {
+        parsedArgs = JSON.parse(tc.arguments);
+      } catch {
+        // If not valid JSON, treat as command string
+        parsedArgs = { command: tc.arguments };
+      }
+      return {
+        id: tc.id,
+        name: tc.name,
+        arguments: parsedArgs,
+      };
+    });
 
-    const results = await invoke<any[]>('execute_tool_batch', {
-      toolCalls: toolRequests,
-      sessionId,
-    })
+    let results: any[];
+
+    if (options.enableConcurrency ?? true) {
+      // Use streaming executor with concurrency
+      const executor = new StreamingToolExecutor();
+      const batchResult = await executor.executeBatch(toolRequests, {
+        sessionId,
+        onProgress: options.onToolProgress,
+        concurrencyLimit: 5, // Allow up to 5 concurrent read-only tools
+        timeoutMs: 30000,
+      });
+      results = batchResult.results;
+    } else {
+      // Fallback to legacy batch execution
+      results = await invoke<any[]>('execute_tool_batch', {
+        toolCalls: toolRequests,
+        sessionId,
+      })
+    }
 
     // 4. Append tool_results to messages
     for (const result of results) {

@@ -19,6 +19,7 @@ import { runMicrocompactCheck } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
 import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
+import { checkReactiveCompact, recordToolForReactiveCompact } from '../services/compact/reactiveCompact';
 
 
 /**
@@ -1291,6 +1292,9 @@ export const useChatStore = create<ChatState>()(
                   sessionId: activeSessionId,
                 };
                 runPostToolUseHooks(postCtx).catch((e: unknown) => console.warn('[PostToolUseHooks] Error:', e));
+
+                // === Reactive Compact - Long Tool Output Detection ===
+                recordToolForReactiveCompact(activeSessionId, tool.id, tool.name, toolResultContent);
               }
               chunk._resolve(toolResultContent);
             }
@@ -1360,6 +1364,12 @@ export const useChatStore = create<ChatState>()(
 
         await runMicrocompactAfterStreaming(activeSessionId, set, get);
         await runSMCompactAfterStreaming(activeSessionId, set, get);
+
+        // === Reactive Compact (event-driven) ===
+        // Check for topic changes, task completion, long idle, long tool output
+        checkReactiveCompact(activeSessionId, currentMessages()).catch((e: unknown) =>
+          console.debug('[ReactiveCompact] Check failed:', e)
+        );
       } catch (error) {
         if (timeoutId) {
           clearTimeout(timeoutId);

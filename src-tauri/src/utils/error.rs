@@ -21,6 +21,8 @@ pub enum AppError {
     FileError(String),
     /// Configuration error
     ConfigError(String),
+    /// Security error (path validation, dangerous commands)
+    SecurityError(String),
     /// Internal error
     InternalError(String),
 }
@@ -33,6 +35,7 @@ impl fmt::Display for AppError {
             AppError::ProcessError(msg) => write!(f, "Process error: {}", msg),
             AppError::FileError(msg) => write!(f, "File error: {}", msg),
             AppError::ConfigError(msg) => write!(f, "Config error: {}", msg),
+            AppError::SecurityError(msg) => write!(f, "Security error: {}", msg),
             AppError::InternalError(msg) => write!(f, "Internal error: {}", msg),
         }
     }

@@ -15,6 +15,10 @@
 
 import { checkToolCallForDangerPatterns } from './dangerousPatterns';
 import { validateToolCallPaths } from './pathValidation';
+import { defaultClassifier, type PermissionRequest } from '../../utils/permissions/classifierDecision';
+import { classifyBashCommand } from '../../utils/permissions/bashClassifier';
+import { defaultTelemetry } from '../../utils/permissions/permissionLogging';
+import { defaultDenialTracker } from '../../utils/permissions/denialTracking';
 
 export type PermissionMode = 'standard' | 'auto-edits' | 'bypass' | 'plan-only';
 
@@ -24,6 +28,8 @@ export interface HookContext {
   workDir?: string;
   permissionMode: PermissionMode;
   sessionId: string;
+  conversationHistory?: string[];
+  previousToolCalls?: Array<{ toolName: string; approved: boolean }>;
 }
 
 export interface HookResult {
@@ -109,6 +115,143 @@ export async function autoEditsRestriction(ctx: HookContext): Promise<HookResult
 }
 
 /**
+ * Hook 5: ML-based permission classifier.
+ * Uses machine learning model to assess risk and make intelligent decisions.
+ */
+export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
+  try {
+    // Parse arguments
+    let parsedArgs: Record<string, any> = {};
+    try {
+      parsedArgs = JSON.parse(ctx.toolArgs);
+    } catch {
+      // If not JSON, treat as string
+      parsedArgs = { command: ctx.toolArgs };
+    }
+
+    const request: PermissionRequest = {
+      toolName: ctx.toolName,
+      arguments: parsedArgs,
+      context: {
+        previousRequests: ctx.previousToolCalls?.map(call => ({
+          toolName: call.toolName,
+          arguments: {}, // Simplified
+        })),
+        userIntent: ctx.conversationHistory?.slice(-1)[0],
+        conversationHistory: ctx.conversationHistory,
+      },
+    };
+
+    const decision = await defaultClassifier.classifyPermission(request);
+
+    // Log the decision
+    defaultTelemetry.logPermissionDecision(
+      ctx.sessionId,
+      ctx.toolName,
+      parsedArgs,
+      decision
+    );
+
+    // Check denial history
+    const denialCheck = defaultDenialTracker.shouldDenyBasedOnHistory(request);
+    if (denialCheck.shouldDeny) {
+      defaultDenialTracker.recordDenial(
+        ctx.sessionId,
+        request,
+        decision,
+        denialCheck.reason || 'suspicious_pattern'
+      );
+      return {
+        approved: false,
+        error: `Blocked by denial tracking: ${denialCheck.reason}`,
+        blockedBy: 'hook',
+        severity: 'high',
+      };
+    }
+
+    // Handle decision
+    if (!decision.approved) {
+      defaultDenialTracker.recordDenial(
+        ctx.sessionId,
+        request,
+        decision,
+        decision.riskLevel === 'critical' ? 'critical_risk' : 'high_risk'
+      );
+      return {
+        approved: false,
+        error: decision.reasoning,
+        blockedBy: 'hook',
+        severity: decision.riskLevel === 'critical' ? 'critical' : 'high',
+      };
+    }
+
+    return { approved: true };
+  } catch (error) {
+    console.warn('ML classifier check failed:', error);
+    // Fail open - allow if classifier fails
+    return { approved: true };
+  }
+}
+
+/**
+ * Hook 6: Bash command classification for terminal commands.
+ * Analyzes shell commands for safety and risk assessment.
+ */
+export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult> {
+  if (ctx.toolName !== 'run_in_terminal') {
+    return { approved: true };
+  }
+
+  try {
+    // Extract command from arguments
+    let command = '';
+    try {
+      const args = JSON.parse(ctx.toolArgs);
+      command = args.command || args.cmd || ctx.toolArgs;
+    } catch {
+      command = ctx.toolArgs;
+    }
+
+    if (!command.trim()) {
+      return { approved: true };
+    }
+
+    const classification = classifyBashCommand(command);
+
+    // Log bash classification
+    const parsedArgs = { command };
+    defaultTelemetry.logPermissionDecision(
+      ctx.sessionId,
+      ctx.toolName,
+      parsedArgs,
+      {
+        approved: !classification.requiresApproval,
+        confidence: classification.riskLevel === 'safe' ? 0.9 :
+                   classification.riskLevel === 'moderate' ? 0.6 : 0.3,
+        riskLevel: classification.riskLevel as 'low' | 'medium' | 'high' | 'critical',
+        reasoning: classification.reasoning,
+      },
+      classification
+    );
+
+    if (classification.requiresApproval) {
+      return {
+        approved: false,
+        error: `Shell command blocked: ${classification.reasoning}`,
+        blockedBy: 'hook',
+        severity: classification.riskLevel === 'critical' ? 'critical' :
+                 classification.riskLevel === 'high' ? 'high' : 'medium',
+      };
+    }
+
+    return { approved: true };
+  } catch (error) {
+    console.warn('Bash classifier check failed:', error);
+    return { approved: true };
+  }
+}
+
+/**
  * Run all PreToolUse hooks in order.
  * Returns the first blocking result, or { approved: true } if all pass.
  */
@@ -118,6 +261,8 @@ export async function runPreToolUseHooks(ctx: HookContext): Promise<HookResult> 
     pathValidationCheck,
     permissionModeCheck,
     autoEditsRestriction,
+    mlClassifierCheck,
+    bashClassifierCheck,
   ];
 
   for (const hook of hooks) {
