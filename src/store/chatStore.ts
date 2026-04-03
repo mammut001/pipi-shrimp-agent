@@ -1141,7 +1141,7 @@ export const useChatStore = create<ChatState>()(
         // === Multi-round tool loop via Core Query Engine ===
         const { runChatTurn } = await import('../core/QueryEngine');
         const apiMessages = currentMessages();
-        const engine = runChatTurn(activeSessionId, apiMessages, systemPrompt);
+        const engine = runChatTurn(activeSessionId, apiMessages, systemPrompt, sessionWorkDir);
         
         const uiStore = useUIStore.getState();
         let tokenUsageResult: any = undefined;
@@ -1200,7 +1200,16 @@ export const useChatStore = create<ChatState>()(
                       : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
                   } else if (tool.name === 'agent_tool') {
                     // === Multi-Agent: AgentTool execution ===
-                    const args = JSON.parse(effectiveArgs);
+                    let args: Record<string, any>;
+                    try {
+                      args = JSON.parse(effectiveArgs);
+                    } catch (parseErr) {
+                      toolResultContent = `Error: Failed to parse agent_tool arguments: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`;
+                      uiStore.updateTaskStep(tool.id, 'failed');
+                      uiStore.addNotification('error', 'Invalid agent tool arguments');
+                      chunk._resolve(toolResultContent);
+                      break;
+                    }
                     if (args.team_name && args.name) {
                       // Swarm teammate path
                       const { spawnTeammate, createTeam, getTeamStatus } = await import('../services/multiagent/swarm');
@@ -1383,17 +1392,19 @@ export const useChatStore = create<ChatState>()(
         const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
         if (errContent || errReasoning) {
           const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
-          saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning)).catch(() => {});
+          saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning))
+            .catch((e: unknown) => console.error('Failed to persist sendMessage error content:', e));
         }
 
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
 
-        const sid = get().currentSessionId;
-        if (sid) {
+        // Use activeSessionId (captured before the try block) to target the correct session
+        // even if the user switched sessions during the failed request.
+        if (activeSessionId) {
           set((state) => ({
             sessions: state.sessions.map((s) => {
-              if (s.id !== sid || s.messages.length === 0) return s;
+              if (s.id !== activeSessionId || s.messages.length === 0) return s;
               const last = s.messages[s.messages.length - 1];
               if (last.role === 'assistant' && !last.content && !last.reasoning) {
                 return { ...s, messages: s.messages.slice(0, -1) };
@@ -1491,12 +1502,15 @@ export const useChatStore = create<ChatState>()(
           ),
         }));
 
-        // DELETE from database to prevent orphans from reappearing on reload
-        for (const msg of messagesToDelete) {
-          invoke('db_delete_message', { messageId: msg.id }).catch(e => 
-            console.error(`Failed to delete orphaned message ${msg.id} from DB:`, e)
-          );
-        }
+        // DELETE from database to prevent orphans from reappearing on reload.
+        // Await all deletes before resending to avoid duplicate user messages in DB.
+        await Promise.allSettled(
+          messagesToDelete.map(msg =>
+            invoke('db_delete_message', { messageId: msg.id }).catch(e =>
+              console.error(`Failed to delete orphaned message ${msg.id} from DB:`, e)
+            )
+          )
+        );
 
         // Resend the message (this will add the user message back cleanly)
         await get().sendMessage(content);
@@ -1744,6 +1758,12 @@ export const useChatStore = create<ChatState>()(
         const { streamingTimeoutId } = get();
         if (streamingTimeoutId) {
           clearTimeout(streamingTimeoutId);
+        }
+
+        // Stop any in-progress streaming request for the previous session
+        // to avoid wasting API tokens and receiving orphaned events
+        if (previousSessionId && previousSessionId !== sessionId && get().isStreaming) {
+          invoke('stop_subprocess', { sessionId: previousSessionId }).catch(() => {});
         }
 
         // Clear any stale ASK-mode permission dialogs from the previous session.
