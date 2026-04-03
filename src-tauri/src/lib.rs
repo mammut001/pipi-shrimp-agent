@@ -106,6 +106,7 @@ async fn send_claude_sdk_chat_streaming(
  * Stop the current running request (cancel generation)
  */
 #[tauri::command]
+#[allow(non_snake_case)]
 async fn stop_subprocess(sessionId: Option<String>) -> Result<(), String> {
     claude::stop_current_request(sessionId)
         .await
@@ -450,6 +451,8 @@ pub fn run() {
             // Code execution commands
             commands::execute_bash,
             commands::execute_python,
+            commands::execute_python_session,
+            commands::close_python_session,
             commands::execute_node,
             // File operation commands
             commands::read_file,
@@ -458,6 +461,7 @@ pub fn run() {
             commands::create_directory,
             commands::list_files,
             commands::analyze_project_structure,
+            commands::scan_memory_files,
             // Config commands
             commands::get_config,
             commands::set_config,
@@ -590,6 +594,18 @@ pub fn run() {
             // Multi-agent commands
             commands::run_agent,
             commands::get_agent_result,
+            // Skill execution commands
+            commands::execute_skill,
+            // Search commands
+            commands::search_files,
+            commands::glob_search,
+            // File commands
+            commands::read_binary_file,
+            // Code commands
+            commands::lsp_operation,
+            // Web commands
+            commands::web_search,
+            commands::web_fetch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

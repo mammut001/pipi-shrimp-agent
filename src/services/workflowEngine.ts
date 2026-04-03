@@ -317,6 +317,10 @@ class WorkflowEngine {
         case 'fixed':
           shouldContinue = rounds < maxRounds;
           break;
+        default:
+          console.warn(`[WorkflowEngine] Unknown roundCondition "${roundCondition}", stopping loop.`);
+          shouldContinue = false;
+          break;
       }
 
       if (shouldContinue && rounds < maxRounds) {

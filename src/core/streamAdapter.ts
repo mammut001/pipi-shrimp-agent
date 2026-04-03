@@ -55,7 +55,7 @@ export async function* invokeRustAPIStream(
     }
   });
 
-  const unlistenToolUs = await listen<{ session_id: string; tool_call_id: string; name: string; arguments: string }>('claude-tool-use', (e) => {
+  const unlistenToolUse = await listen<{ session_id: string; tool_call_id: string; name: string; arguments: string }>('claude-tool-use', (e) => {
     if (e.payload.session_id === sessionId) {
       pushEvent({
         type: 'tool_call',
@@ -100,6 +100,6 @@ export async function* invokeRustAPIStream(
     // Critical: Clean up listeners regardless of success/fail/abort so they don't leak
     unlistenToken();
     unlistenReasoning();
-    unlistenToolUs();
+    unlistenToolUse();
   }
 }

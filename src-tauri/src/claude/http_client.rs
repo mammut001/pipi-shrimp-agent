@@ -488,6 +488,11 @@ pub fn convert_tools_to_openai_format(tools: &[serde_json::Value]) -> Vec<serde_
     }).collect()
 }
 
+/// Pre-compiled regexes for artifact detection (compiled once at startup)
+static ARTIFACT_CODE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"```(\w+)?\n([\s\S]*?)\n```").unwrap());
+static ARTIFACT_HTML_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"<html[\s\S]*?</html>").unwrap());
+static ARTIFACT_MERMAID_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"```mermaid\n([\s\S]*?)\n```").unwrap());
+
 /**
  * Detect artifacts from response content
  * - Code blocks > 200 chars
@@ -498,8 +503,7 @@ pub fn detect_artifacts(content: &str) -> Vec<Artifact> {
     let mut artifacts = Vec::new();
 
     // Code blocks: ```language\ncode\n```
-    let code_block_regex = Regex::new(r"```(\w+)?\n([\s\S]*?)\n```").unwrap();
-    for cap in code_block_regex.captures_iter(content) {
+    for cap in ARTIFACT_CODE_REGEX.captures_iter(content) {
         let language = cap.get(1).map_or("plaintext", |m| m.as_str());
         let code = cap.get(2).map_or("", |m| m.as_str());
 
@@ -516,7 +520,7 @@ pub fn detect_artifacts(content: &str) -> Vec<Artifact> {
 
     // HTML: <!DOCTYPE or <html>...</html>
     if content.contains("<!DOCTYPE") || content.contains("<html") {
-        if let Some(html_match) = Regex::new(r"<html[\s\S]*?</html>").unwrap().find(content) {
+        if let Some(html_match) = ARTIFACT_HTML_REGEX.find(content) {
             artifacts.push(Artifact {
                 artifact_type: "html".to_string(),
                 content: html_match.as_str().to_string(),
@@ -527,8 +531,7 @@ pub fn detect_artifacts(content: &str) -> Vec<Artifact> {
     }
 
     // Mermaid: ```mermaid\ndiagram\n```
-    let mermaid_regex = Regex::new(r"```mermaid\n([\s\S]*?)\n```").unwrap();
-    for cap in mermaid_regex.captures_iter(content) {
+    for cap in ARTIFACT_MERMAID_REGEX.captures_iter(content) {
         if let Some(diagram) = cap.get(1) {
             artifacts.push(Artifact {
                 artifact_type: "mermaid".to_string(),
@@ -1069,7 +1072,7 @@ impl ClaudeClient {
             } => result
         };
 
-        // Clear the cancellation token
+        // Always clear the cancellation token, even on panic/error
         {
             let mut tokens_guard = CANCEL_TOKENS.lock().await;
             tokens_guard.remove(&session_id);
@@ -1136,7 +1139,9 @@ impl ClaudeClient {
 
         // Build headers
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-api-key", api_key.parse().unwrap());
+        headers.insert("x-api-key", api_key.parse().map_err(|_| AppError::ProcessError(
+            "Invalid API key: contains characters not allowed in HTTP headers".to_string()
+        ))?);
         headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
         headers.insert("content-type", "application/json".parse().unwrap());
 
@@ -1466,7 +1471,10 @@ impl ClaudeClient {
 
         // Build headers
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("Authorization", format!("Bearer {}", api_key).parse().unwrap());
+        let bearer_token = format!("Bearer {}", api_key);
+        headers.insert("Authorization", bearer_token.parse().map_err(|_| AppError::ProcessError(
+            "Invalid API key: contains characters not allowed in HTTP headers".to_string()
+        ))?);
         headers.insert("Content-Type", "application/json".parse().unwrap());
 
         // Estimate input tokens before the request (used as fallback if API returns 0)
@@ -1751,26 +1759,31 @@ impl ClaudeClient {
         }
 
         // Handle MiniMax-style <think>...</think> tags in content
-        if full_reasoning.is_empty() && !full_content.is_empty() {
+        // Always run this cleanup regardless of whether full_reasoning was populated
+        // during streaming — some models may send reasoning inline even when a separate
+        // reasoning field was also used.
+        if !full_content.is_empty() && (full_content.contains("<think>") || full_content.contains("</think>")) {
             let think_regex = regex::Regex::new(r"<think>([\s\S]*?)<\/think>").unwrap();
-            for cap in think_regex.captures_iter(&full_content) {
-                if let Some(thinking) = cap.get(1) {
-                    let thinking_text = thinking.as_str().trim();
-                    if !thinking_text.is_empty() {
-                        full_reasoning.push_str(thinking_text);
-                        full_reasoning.push('\n');
+            // Extract any reasoning we might have missed during streaming
+            if full_reasoning.is_empty() {
+                for cap in think_regex.captures_iter(&full_content) {
+                    if let Some(thinking) = cap.get(1) {
+                        let thinking_text = thinking.as_str().trim();
+                        if !thinking_text.is_empty() {
+                            full_reasoning.push_str(thinking_text);
+                            full_reasoning.push('\n');
+                        }
                     }
                 }
             }
-            if full_reasoning.contains("<think>") || full_content.contains("<think>") {
-                let clean_content = full_content
-                    .replace(r"<think>", "")
-                    .replace(r"</think>", "")
-                    .trim()
-                    .to_string();
-                if !clean_content.is_empty() {
-                    full_content = clean_content;
-                }
+            // Strip all <think> tags from visible content
+            let clean_content = full_content
+                .replace("<think>", "")
+                .replace("</think>", "")
+                .trim()
+                .to_string();
+            if !clean_content.is_empty() {
+                full_content = clean_content;
             }
         }
 

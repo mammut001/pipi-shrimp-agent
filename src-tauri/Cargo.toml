@@ -38,7 +38,7 @@ glob = "0.3"
 chromiumoxide = { version = "0.5", features = ["tokio"] }
 urlencoding = "2.1"
 jsonschema = "0.18"
-
+base64 = "0.22"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

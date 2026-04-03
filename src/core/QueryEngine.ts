@@ -1,11 +1,13 @@
 import { invokeRustAPIStream } from './streamAdapter';
 import type { EngineEvent, ToolCallParams } from './types';
 import { useSettingsStore, useCdpStore } from '@/store';
+import { createMemoryHook } from '@/services/memory/memoryHooks';
 
 export async function* runChatTurn(
   sessionId: string,
   initialMessages: any[],
-  systemPrompt: string
+  systemPrompt: string,
+  projectRoot?: string,
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
   const maxRounds = settings?.maxToolRounds ?? 10;
@@ -14,6 +16,9 @@ export async function* runChatTurn(
   let currentMessages = [...initialMessages];
   let round = 0;
   let isTurnComplete = false;
+
+  // Memory hook — fires after each final (no-tool-call) response
+  const memoryHook = createMemoryHook({ projectRoot });
   
   while (!isTurnComplete && round < maxRounds) {
     round++;
@@ -94,6 +99,8 @@ export async function* runChatTurn(
     if (!hasToolCalls) {
       isTurnComplete = true;
       yield { type: 'turn_complete', tokenUsage };
+      // Trigger background memory extraction (fire-and-forget)
+      memoryHook.onTurnComplete(currentMessages);
       break; 
     }
 
@@ -104,12 +111,17 @@ export async function* runChatTurn(
       yield { type: 'status_update', message: `Executing tool: ${tool.name}` };
       
       let resolvePromise: ((value: string) => void) | undefined;
+      let resolved = false;
       const promise = new Promise<string>(r => resolvePromise = r);
       
       yield {
         type: 'tool_call_request',
         tool,
-        _resolve: (res: string) => resolvePromise!(res)
+        _resolve: (res: string) => {
+          if (resolved) return;
+          resolved = true;
+          resolvePromise!(res);
+        }
       } as EngineEvent;
       
       const toolResultContent = await promise;

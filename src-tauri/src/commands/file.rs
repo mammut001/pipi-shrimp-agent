@@ -125,6 +125,28 @@ pub async fn read_file(path: String, work_dir: Option<String>) -> AppResult<File
 }
 
 /**
+ * Read a binary file and return as base64
+ *
+ * Used for images and other binary content
+ */
+#[tauri::command]
+pub async fn read_binary_file(path: String, work_dir: Option<String>) -> AppResult<FileResponse> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+
+    let expanded_path = resolve_path(&path, work_dir.as_deref())?;
+    let bytes = fs::read(&expanded_path)
+        .map_err(|e| AppError::FileError(e.to_string()))?;
+
+    let base64_content = BASE64.encode(&bytes);
+
+    Ok(FileResponse {
+        content: base64_content,
+        path: expanded_path.to_string_lossy().to_string(),
+    })
+}
+
+/**
  * Write content to a file
  *
  * Creates the file if it doesn't exist, overwrites if it does
@@ -157,6 +179,72 @@ pub async fn create_directory(path: String, work_dir: Option<String>) -> AppResu
         .map_err(|e| AppError::FileError(e.to_string()))?;
 
     Ok("Directory created successfully".to_string())
+}
+
+/// A single memory file entry, returned by scan_memory_files.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct MemoryFileMeta {
+    pub filename: String,
+    pub path: String,
+    pub preview: String,
+}
+
+/**
+ * Scan a memory directory and return all .md files (excluding MEMORY.md).
+ *
+ * Returns a list of MemoryFileMeta with filename, path, and a ~300-char
+ * preview of each file's content (after frontmatter).
+ */
+#[tauri::command]
+pub async fn scan_memory_files(memory_dir: String) -> AppResult<Vec<MemoryFileMeta>> {
+    let base = expand_home(&memory_dir);
+
+    if !base.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut results: Vec<MemoryFileMeta> = Vec::new();
+
+    for entry in fs::read_dir(&base).map_err(|e| AppError::FileError(e.to_string()))? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if !file_name.ends_with(".md") || file_name == "MEMORY.md" {
+            continue;
+        }
+
+        let file_path = entry.path();
+        let content = match fs::read_to_string(&file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Strip frontmatter (--- ... ---) for preview
+        let body = if content.starts_with("---") {
+            match content[3..].find("\n---") {
+                Some(end) => content[3 + end + 4..].trim_start().to_string(),
+                None => content.clone(),
+            }
+        } else {
+            content.clone()
+        };
+
+        let preview: String = body.chars().take(300).collect();
+
+        results.push(MemoryFileMeta {
+            filename: file_name,
+            path: file_path.to_string_lossy().to_string(),
+            preview,
+        });
+    }
+
+    // Sort by filename for deterministic ordering
+    results.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    Ok(results)
 }
 
 /**

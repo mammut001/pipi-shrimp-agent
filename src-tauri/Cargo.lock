@@ -5791,6 +5791,7 @@ name = "tauri-ai-agent"
 version = "0.0.2"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chromiumoxide",
  "chrono",
  "comemo",
