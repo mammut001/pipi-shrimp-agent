@@ -22,6 +22,19 @@ use crate::utils::{AppError, AppResult};
 /// Tauri's eval() is native-level injection that bypasses any page CSP (unlike <script src>).
 const PAGE_AGENT_IIFE: &str = include_str!("../../../node_modules/page-agent/dist/iife/page-agent.demo.js");
 
+/// Represents which browser surface is currently active.
+/// This eliminates ambiguity in dual-track execution environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActiveSurface {
+    /// No browser surface is currently active
+    #[default]
+    None,
+    /// Standalone window mode (created via open_browser_window)
+    StandaloneWindow,
+    /// Embedded mode (created via open_embedded_surface)
+    Embedded,
+}
+
 /// Browser window state management
 pub struct BrowserState {
     pub browser_window: Option<WebviewWindow>,
@@ -31,6 +44,69 @@ pub struct BrowserState {
     pub embedded_mode: bool,
     /// The main window label for embedding
     pub main_window_label: String,
+    /// Current active surface type - authoritative source for routing decisions
+    pub active_surface: ActiveSurface,
+}
+
+impl BrowserState {
+    /// Check if any browser surface is currently open
+    pub fn has_active_surface(&self) -> bool {
+        self.embedded_webview.is_some() || self.browser_window.is_some()
+    }
+
+    /// Get the target webview and surface type for execution.
+    /// This is the unified entry point for all browser operations,
+    /// ensuring consistent routing across all commands.
+    ///
+    /// Returns: (Webview, ActiveSurface) or error if no surface is available
+    pub fn get_target(&self) -> Result<(Webview, ActiveSurface), AppError> {
+        // Priority: Embedded > StandaloneWindow (consistent with get_embedded_surface_url)
+        if let Some(ref webview) = self.embedded_webview {
+            return Ok((webview.clone(), ActiveSurface::Embedded));
+        }
+
+        if let Some(ref window) = self.browser_window {
+            // WebviewWindow.webviews() returns Vec<(label, Webview)> in Tauri v2
+            let webviews = window.webviews();
+            let (_, webview) = webviews.into_iter().next()
+                .ok_or_else(|| AppError::InternalError("No webview in window".to_string()))?;
+            return Ok((webview, ActiveSurface::StandaloneWindow));
+        }
+
+        Err(AppError::InvalidInput("No browser surface open".to_string()))
+    }
+
+    /// Activate embedded surface mode
+    pub fn activate_embedded(&mut self, webview: Webview) {
+        self.embedded_webview = Some(webview);
+        self.active_surface = ActiveSurface::Embedded;
+    }
+
+    /// Activate standalone window mode
+    pub fn activate_standalone(&mut self, window: WebviewWindow) {
+        self.browser_window = Some(window);
+        self.active_surface = ActiveSurface::StandaloneWindow;
+    }
+
+    /// Deactivate all surfaces and reset state
+    pub fn deactivate_all(&mut self) {
+        if let Some(w) = self.browser_window.take() {
+            let _ = w.close();
+        }
+        if let Some(w) = self.embedded_webview.take() {
+            let _ = w.close();
+        }
+        self.active_surface = ActiveSurface::None;
+    }
+
+    /// Get description of current surface for logging/debugging
+    pub fn surface_description(&self) -> &'static str {
+        match self.active_surface {
+            ActiveSurface::Embedded => "embedded",
+            ActiveSurface::StandaloneWindow => "standalone_window",
+            ActiveSurface::None => "none",
+        }
+    }
 }
 
 impl Default for BrowserState {
@@ -41,6 +117,7 @@ impl Default for BrowserState {
             is_busy: false,
             embedded_mode: false,
             main_window_label: "main".to_string(),
+            active_surface: ActiveSurface::None,
         }
     }
 }
@@ -91,7 +168,7 @@ pub async fn open_browser_window(
     .build()
     .map_err(|e| AppError::InternalError(format!("Failed to create browser window: {}", e)))?;
 
-    state.browser_window = Some(window);
+    state.activate_standalone(window);
 
     println!("[Browser] Window created successfully");
     Ok("Browser window opened".to_string())
@@ -129,12 +206,7 @@ pub async fn open_embedded_surface(
     let mut state = state.lock().await;
 
     // Close any existing webviews to avoid conflicts
-    if let Some(window) = state.browser_window.take() {
-        let _ = window.close();
-    }
-    if let Some(webview) = state.embedded_webview.take() {
-        let _ = webview.close();
-    }
+    state.deactivate_all();
 
     // Get the main window
     let main_window = app.get_window(&state.main_window_label)
@@ -153,8 +225,7 @@ pub async fn open_embedded_surface(
         .hide()
         .map_err(|e| AppError::InternalError(format!("Failed to hide embedded surface initially: {}", e)))?;
 
-    state.embedded_webview = Some(webview);
-    state.embedded_mode = true;
+    state.activate_embedded(webview);
 
     println!("[Browser] Embedded surface created successfully");
     Ok("Embedded surface opened".to_string())
@@ -233,11 +304,9 @@ pub async fn set_embedded_surface_visibility(
     visible: bool,
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
-    let webview = {
+    let (webview, surface_type) = {
         let state = state.lock().await;
-        state.embedded_webview.as_ref()
-            .ok_or_else(|| AppError::InvalidInput("No embedded browser surface open".to_string()))?
-            .clone()
+        state.get_target()?
     };
 
     if visible {
@@ -250,34 +319,28 @@ pub async fn set_embedded_surface_visibility(
             .map_err(|e| AppError::InternalError(format!("Failed to hide browser surface: {}", e)))?;
     }
 
-    Ok(format!("Embedded surface visibility set to {}", visible))
+    Ok(format!("Browser surface ({:?}) visibility set to {}", surface_type, visible))
 }
 
-/// Get the current embedded surface URL - checks both embedded webview and browser window
+/// Get the current browser surface URL using unified routing.
+/// Uses embedded_webview first, then falls back to browser_window.
 #[tauri::command]
 pub async fn get_embedded_surface_url(
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
-    let state = state.lock().await;
+    let (webview, surface_type) = {
+        let state = state.lock().await;
+        state.get_target()?
+    };
 
-    // Try embedded webview first
-    if let Some(webview) = &state.embedded_webview {
-        let url = webview.url()
-            .map_err(|e| AppError::InternalError(format!("Failed to get URL: {}", e)))?;
-        return Ok(url.to_string());
-    }
-
-    // Fall back to browser window
-    if let Some(window) = &state.browser_window {
-        let url = window.url()
-            .map_err(|e| AppError::InternalError(format!("Failed to get URL: {}", e)))?;
-        return Ok(url.to_string());
-    }
-
-    Err(AppError::InvalidInput("No browser surface open".to_string()))
+    let url = webview.url()
+        .map_err(|e| AppError::InternalError(format!("Failed to get URL: {}", e)))?;
+    
+    println!("[Browser] get_embedded_surface_url: surface={:?}, url={}", surface_type, url);
+    Ok(url.to_string())
 }
 
-/// Execute task on the embedded surface.
+/// Execute task on the current active surface using unified routing.
 #[tauri::command]
 pub async fn execute_on_embedded_surface(
     task: String,
@@ -292,41 +355,40 @@ pub async fn execute_on_embedded_surface(
 ) -> AppResult<String> {
     let page_agent_script = build_page_agent_script(&task, baseUrl, &apiKey, &model, systemPrompt);
 
-    let target = {
-        let mut state = state.lock().await;
+    let (webview, surface_type) = {
+        let mut st = state.lock().await;
 
-        if state.is_busy {
+        if st.is_busy {
             return Err(AppError::InvalidInput("Agent is already running".to_string()));
         }
 
-        let webview = state
-            .embedded_webview
-            .as_ref()
-            .ok_or_else(|| AppError::InvalidInput("No embedded browser surface open".to_string()))?
-            .clone();
-        state.is_busy = true;
-        webview
+        let result = st.get_target()?;
+        st.is_busy = true;
+        result
     };
 
-    println!("[Browser] Executing on embedded surface: {}", task);
+    println!("[Browser] Executing on {:?} surface: {}", surface_type, task);
     println!("[Browser] Script size: {} bytes", page_agent_script.len());
-    match target.eval(&page_agent_script) {
-        Ok(_) => println!("[Browser] ✅ eval() succeeded"),
+    
+    match webview.eval(&page_agent_script) {
+        Ok(_) => println!("[Browser] ✅ eval() succeeded on {:?}", surface_type),
         Err(e) => {
             println!("[Browser] ❌ eval() FAILED: {}", e);
+            let mut st = state.lock().await;
+            st.is_busy = false;
             return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
         }
     }
 
     {
-        let mut state = state.lock().await;
-        state.is_busy = false;
+        let mut st = state.lock().await;
+        st.is_busy = false;
     }
 
-    Ok("Task execution started on embedded surface".to_string())
+    Ok(format!("Task execution started on {:?} surface", surface_type))
 }
 
-/// Inspect browser state on the embedded surface.
+/// Inspect browser state on the current active surface using unified routing.
 #[tauri::command]
 pub async fn inspect_embedded_surface(
     app: tauri::AppHandle,
@@ -336,14 +398,12 @@ pub async fn inspect_embedded_surface(
     use std::time::Duration;
     use tokio::sync::oneshot;
 
-    let target = {
-        let state = state.lock().await;
-        state
-            .embedded_webview
-            .as_ref()
-            .ok_or_else(|| AppError::InvalidInput("No embedded browser surface open".to_string()))?
-            .clone()
+    let (webview, surface_type) = {
+        let st = state.lock().await;
+        st.get_target()?
     };
+    
+    println!("[Browser] Inspecting {:?} surface", surface_type);
 
     let (tx, rx) = oneshot::channel::<Result<RawBrowserInspection, String>>();
     let tx = StdArc::new(StdMutex::new(Some(tx)));
@@ -506,7 +566,7 @@ pub async fn inspect_embedded_surface(
 })();
 "#;
 
-    target.eval(inspection_script)
+    webview.eval(inspection_script)
         .map_err(|e| AppError::InternalError(format!("Failed to inject inspection script: {}", e)))?;
 
     let inspection = tokio::time::timeout(Duration::from_secs(5), rx)
@@ -526,19 +586,15 @@ pub async fn inspect_embedded_surface(
     Ok(inspection)
 }
 
-/// Navigate embedded surface to a URL
+/// Navigate using unified routing.
 #[tauri::command]
 pub async fn navigate_embedded_surface(
     url: String,
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
-    let target = {
+    let (webview, surface_type) = {
         let state = state.lock().await;
-        state
-            .embedded_webview
-            .as_ref()
-            .ok_or_else(|| AppError::InvalidInput("No embedded browser surface open".to_string()))?
-            .clone()
+        state.get_target()?
     };
 
     let normalized_url = if url.starts_with("http://") || url.starts_with("https://") {
@@ -548,35 +604,31 @@ pub async fn navigate_embedded_surface(
     };
 
     let script = format!("window.location.href = '{}';", normalized_url.replace('\'', "\\'"));
-    target.eval(&script)
+    webview.eval(&script)
         .map_err(|e| AppError::InternalError(format!("Failed to navigate: {}", e)))?;
 
-    println!("[Browser] Navigating embedded surface to: {}", normalized_url);
-    Ok(format!("Navigated to: {}", normalized_url))
+    println!("[Browser] Navigating {:?} surface to: {}", surface_type, normalized_url);
+    Ok(format!("Navigated to: {} (via {:?})", normalized_url, surface_type))
 }
 
-/// Reload the embedded surface
+/// Reload using unified routing.
 #[tauri::command]
 pub async fn reload_embedded_surface(
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
-    let target = {
+    let (webview, surface_type) = {
         let state = state.lock().await;
-        state
-            .embedded_webview
-            .as_ref()
-            .ok_or_else(|| AppError::InvalidInput("No embedded browser surface open".to_string()))?
-            .clone()
+        state.get_target()?
     };
 
-    target.eval("window.location.reload();")
+    webview.eval("window.location.reload();")
         .map_err(|e| AppError::InternalError(format!("Failed to reload: {}", e)))?;
 
-    println!("[Browser] Embedded surface reloaded");
-    Ok("Page reloaded".to_string())
+    println!("[Browser] {:?} surface reloaded", surface_type);
+    Ok(format!("Page reloaded (via {:?})", surface_type))
 }
 
-/// Close the embedded surface
+/// Close the embedded surface and clear its state.
 #[tauri::command]
 pub async fn close_embedded_surface(
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
@@ -589,6 +641,9 @@ pub async fn close_embedded_surface(
     }
 
     state.embedded_mode = false;
+    if state.active_surface == ActiveSurface::Embedded {
+        state.active_surface = ActiveSurface::None;
+    }
     Ok("Embedded surface closed".to_string())
 }
 
@@ -621,22 +676,25 @@ pub async fn show_browser_window(
     }
 }
 
-/// Close the browser window
+/// Close all browser surfaces and reset state using unified deactivation
 #[tauri::command]
 pub async fn close_browser_window(
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
-    let mut state = state.lock().await;
-
-    if let Some(window) = state.browser_window.take() {
-        window.close().map_err(|e| AppError::InternalError(format!("Failed to close window: {}", e)))?;
-        println!("[Browser] Window closed");
-    }
-
-    Ok("Browser window closed".to_string())
+    let surface_type = {
+        let mut st = state.lock().await;
+        let desc = st.surface_description().to_string();
+        st.deactivate_all();
+        desc
+    };
+    
+    println!("[Browser] All surfaces closed (was: {})", surface_type);
+    Ok(format!("Browser surface closed (type: {})", surface_type))
 }
 
-/// Execute PageAgent task in the browser window
+/// Execute PageAgent task using unified routing.
+/// Routes to embedded surface first, then falls back to standalone window.
+/// This ensures consistent behavior with get_embedded_surface_url.
 #[tauri::command]
 pub async fn execute_agent_task(
     task: String,
@@ -652,62 +710,39 @@ pub async fn execute_agent_task(
     // Build the script before locking state to avoid borrow issues
     let page_agent_script = build_page_agent_script(&task, baseUrl, &apiKey, &model, systemPrompt);
 
-    // Determine target surface: external browser window OR embedded surface
-    // We avoid holding a long-lived borrow across await by selecting target upfront.
-    // First, try external browser window
-    {
+    // Unified routing: get target webview using consistent priority
+    let (webview, surface_type) = {
         let mut st = state.lock().await;
+
         if st.is_busy {
             return Err(AppError::InvalidInput("Agent is already running".to_string()));
         }
-        if let Some(window_clone) = st.browser_window.clone() {
-            // Set busy atomically before releasing lock (prevents race condition)
-            st.is_busy = true;
-            drop(st);
-            println!("[Browser] Executing agent task on external browser window: {}", task);
-            if let Err(e) = window_clone.eval(&page_agent_script) {
-                println!("[Browser] ❌ eval() FAILED on external window: {}", e);
-                let mut st2 = state.lock().await;
-                st2.is_busy = false;
-                return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
-            }
-            // Reset busy after script injection (agent runs async; frontend status guards re-entry)
-            let mut st2 = state.lock().await;
-            st2.is_busy = false;
-            return Ok("Task execution started".to_string());
+
+        // Use unified get_target() - Embedded first, then StandaloneWindow
+        let target = st.get_target()?;
+        st.is_busy = true;
+        target
+    };
+
+    println!("[Browser] Executing agent task on {:?} surface: {}", surface_type, task);
+    println!("[Browser] Script size: {} bytes", page_agent_script.len());
+
+    match webview.eval(&page_agent_script) {
+        Ok(_) => println!("[Browser] ✅ eval() succeeded on {:?}", surface_type),
+        Err(e) => {
+            println!("[Browser] ❌ eval() FAILED: {}", e);
+            let mut st = state.lock().await;
+            st.is_busy = false;
+            return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
         }
     }
 
-    // Next, try embedded surface
     {
         let mut st = state.lock().await;
-        if st.is_busy {
-            return Err(AppError::InvalidInput("Agent is already running".to_string()));
-        }
-        if let Some(webview_clone) = st.embedded_webview.clone() {
-            // Set busy atomically before releasing lock (prevents race condition)
-            st.is_busy = true;
-            drop(st);
-            println!("[Browser] Executing agent task on embedded surface: {}", task);
-            println!("[Browser] Script size: {} bytes", page_agent_script.len());
-            match webview_clone.eval(&page_agent_script) {
-                Ok(_) => println!("[Browser] ✅ eval() succeeded on embedded surface"),
-                Err(e) => {
-                    println!("[Browser] ❌ eval() FAILED: {}", e);
-                    let mut st2 = state.lock().await;
-                    st2.is_busy = false;
-                    return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
-                }
-            }
-            // Reset busy after script injection (agent runs async; frontend status guards re-entry)
-            let mut st2 = state.lock().await;
-            st2.is_busy = false;
-            return Ok("Task execution started".to_string());
-        }
+        st.is_busy = false;
     }
 
-    // If neither surface is available
-    Err(AppError::InvalidInput("No browser surface open".to_string()))
+    Ok(format!("Task execution started on {:?}", surface_type))
 }
 
 /// Build the JavaScript code to inject into the browser window.
