@@ -283,10 +283,18 @@ pub async fn list_files(
             {
                 if let Ok(path_buf) = entry {
                     if let Some(file_name) = path_buf.file_name() {
+                        let metadata = path_buf.metadata().ok();
+                        let modified = metadata.as_ref()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
                         files.push(FileInfo {
                             name: file_name.to_string_lossy().to_string(),
                             path: path_buf.to_string_lossy().to_string(),
                             is_directory: path_buf.is_dir(),
+                            size: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
+                            modified,
                         });
                     }
                 }
@@ -300,10 +308,18 @@ pub async fn list_files(
                 if let Ok(entry) = entry {
                     let file_name = entry.file_name().to_string_lossy().to_string();
                     let file_path = entry.path();
+                    let metadata = entry.metadata().ok();
+                    let modified = metadata.as_ref()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
                     files.push(FileInfo {
                         name: file_name,
                         path: file_path.to_string_lossy().to_string(),
                         is_directory: file_path.is_dir(),
+                        size: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
+                        modified,
                     });
                 }
             }
@@ -328,6 +344,8 @@ pub struct FileInfo {
     pub name: String,
     pub path: String,
     pub is_directory: bool,
+    pub size: u64,
+    pub modified: u64,
 }
 
 /// Workspace information returned by get_workspace_info
@@ -407,10 +425,18 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
         for (pattern, tech) in &key_file_patterns {
             if file_name == *pattern {
                 tech_stack.push(tech.to_string());
+                let meta = file_path.metadata().ok();
+                let modified = meta.as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 key_files.push(FileInfo {
                     name: file_name.clone(),
                     path: file_path.to_string_lossy().to_string(),
                     is_directory: false,
+                    size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                    modified,
                 });
             }
         }
@@ -472,10 +498,18 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
                     .collect::<Vec<_>>()
                     .join(" ");
                 description = first_lines.chars().take(500).collect();
+                let meta = readme_path.metadata().ok();
+                let modified = meta.as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 key_files.push(FileInfo {
                     name: readme_name.to_string(),
                     path: readme_path.to_string_lossy().to_string(),
                     is_directory: false,
+                    size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                    modified,
                 });
                 break;
             }
@@ -522,10 +556,18 @@ pub async fn get_workspace_info(path: String, work_dir: Option<String>) -> AppRe
         let file_path = entry.path();
         let is_dir = file_path.is_dir();
 
+        let meta = file_path.metadata().ok();
+        let modified = meta.as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let file_info = FileInfo {
             name: file_name,
             path: file_path.to_string_lossy().to_string(),
             is_directory: is_dir,
+            size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            modified,
         };
 
         if is_dir {

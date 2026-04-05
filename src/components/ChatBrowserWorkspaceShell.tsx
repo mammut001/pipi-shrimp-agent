@@ -16,63 +16,9 @@ import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
-import type { Message, Session } from '@/types/chat';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
-
-/**
- * Calculate total token usage for a session
- */
-const getSessionTokenUsage = (session: Session | null): { input: number; output: number; total: number } => {
-  if (!session) return { input: 0, output: 0, total: 0 };
-
-  let input = 0;
-  let output = 0;
-
-  for (const message of session.messages) {
-    if (message.token_usage) {
-      input += message.token_usage.input_tokens;
-      output += message.token_usage.output_tokens;
-    }
-  }
-
-  return { input, output, total: input + output };
-};
-
-/**
- * Format token count for display
- */
-const formatTokenCount = (count: number): string => {
-  if (count >= 1000000) return `${(count / 1000000).toFixed(2)}M`;
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
-  return count.toLocaleString();
-};
-
-const mergeReasoningParts = (...parts: Array<string | undefined | null>): string | undefined => {
-  const merged: string[] = [];
-
-  for (const part of parts) {
-    const normalized = part?.trim();
-    if (!normalized) continue;
-    if (!merged.includes(normalized)) {
-      merged.push(normalized);
-    }
-  }
-
-  return merged.length > 0 ? merged.join('\n\n') : undefined;
-};
-
-const isRenderableMessage = (message: Message, index: number, allMessages: Message[]) => {
-  const isLastMessage = index === allMessages.length - 1;
-  if (isLastMessage) return true;
-
-  return !(
-    message.role === 'assistant' &&
-    message.content === '' &&
-    message.tool_calls &&
-    message.tool_calls.length > 0
-  );
-};
+import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
 
 /**
  * ChatBrowserWorkspaceShell component
@@ -84,8 +30,8 @@ export function ChatBrowserWorkspaceShell() {
     (async () => {
       try {
         cleanup = await useBrowserAgentStore.getState().setupEventListeners();
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn('Failed to setup browser event listeners:', err);
       }
     })();
     return () => {

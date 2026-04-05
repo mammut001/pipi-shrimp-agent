@@ -12,112 +12,11 @@ import { CdpConnectorModal } from './CdpConnectorModal';
 import { TypstPreview } from './index';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { getLatestTypstBlock } from '@/utils/typst';
+import { Section } from './ui/Section';
+import { FileIcon } from './ui/FileIcon';
 
 // TODO: Roadmap feature removed due to UI freeze bug (infinite re-render loop).
 // Re-implement with proper state management when ready.
-
-/**
- * Section Container Component
- */
-const Section: React.FC<{
-  title: string;
-  subtitle?: string;
-  count?: string;
-  defaultExpanded?: boolean;
-  children: React.ReactNode;
-}> = ({ title, subtitle, count, defaultExpanded = true, children }) => {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-
-  return (
-    <div className="mx-3 mb-2 bg-white rounded-xl border border-gray-200/60 shadow-sm overflow-hidden transition-all duration-300">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50/50 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-gray-800 uppercase tracking-tight">{title}</h3>
-          {subtitle && <span className="text-[10px] text-gray-400 font-medium">{subtitle}</span>}
-        </div>
-        <div className="flex items-center gap-3">
-          {count && <span className="text-[10px] text-gray-500 font-bold bg-gray-100 px-2 py-0.5 rounded-full">{count}</span>}
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className={`h-4 w-4 text-gray-400 transition-transform duration-300 ${expanded ? '' : '-rotate-90'}`}
-            viewBox="0 0 20 20"
-            fill="currentColor"
-          >
-            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-          </svg>
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-1 duration-300">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-};
-
-/**
- * File Icon Helper - Supports multiple file types with type-specific icons
- */
-const FileIcon: React.FC<{ filename: string }> = ({ filename }) => {
-  const ext = filename.split('.').pop()?.toLowerCase();
-
-  // TypeScript / TSX
-  if (ext === 'ts' || ext === 'tsx') return (
-    <div className="p-1 px-1.5 bg-blue-50 rounded text-blue-600 font-bold text-[8px] uppercase ring-1 ring-blue-100 flex-shrink-0">TS</div>
-  );
-  // Rust
-  if (ext === 'rs') return (
-    <div className="p-1 px-1.5 bg-orange-50 rounded text-orange-600 font-bold text-[8px] uppercase ring-1 ring-orange-100 flex-shrink-0">RS</div>
-  );
-  // Markdown
-  if (ext === 'md' || ext === 'mdx') return (
-    <div className="p-1 px-1.5 bg-gray-100 rounded text-gray-600 font-bold text-[8px] uppercase ring-1 ring-gray-200 flex-shrink-0">MD</div>
-  );
-  // JSON
-  if (ext === 'json') return (
-    <div className="p-1 px-1.5 bg-yellow-50 rounded text-yellow-600 font-bold text-[8px] uppercase ring-1 ring-yellow-100 flex-shrink-0">{'{}'}</div>
-  );
-  // Python
-  if (ext === 'py') return (
-    <div className="p-1 px-1.5 bg-yellow-100 rounded text-yellow-700 font-bold text-[8px] uppercase ring-1 ring-yellow-200 flex-shrink-0">PY</div>
-  );
-  // Go
-  if (ext === 'go') return (
-    <div className="p-1 px-1.5 bg-cyan-50 rounded text-cyan-600 font-bold text-[8px] uppercase ring-1 ring-cyan-100 flex-shrink-0">GO</div>
-  );
-  // Java
-  if (ext === 'java') return (
-    <div className="p-1 px-1.5 bg-red-50 rounded text-red-600 font-bold text-[8px] uppercase ring-1 ring-red-100 flex-shrink-0">JV</div>
-  );
-  // CSS
-  if (ext === 'css') return (
-    <div className="p-1 px-1.5 bg-blue-100 rounded text-blue-700 font-bold text-[8px] uppercase ring-1 ring-blue-200 flex-shrink-0">CSS</div>
-  );
-  // HTML
-  if (ext === 'html' || ext === 'htm') return (
-    <div className="p-1 px-1.5 bg-orange-100 rounded text-orange-700 font-bold text-[8px] uppercase ring-1 ring-orange-200 flex-shrink-0">HTML</div>
-  );
-  // Image files
-  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext || '')) return (
-    <div className="p-1 px-1.5 bg-purple-50 rounded text-purple-600 font-bold text-[8px] uppercase ring-1 ring-purple-100 flex-shrink-0">IMG</div>
-  );
-  // Config files
-  if (['yaml', 'yml', 'toml', 'ini', 'conf'].includes(ext || '')) return (
-    <div className="p-1 px-1.5 bg-gray-100 rounded text-gray-600 font-bold text-[8px] uppercase ring-1 ring-gray-200 flex-shrink-0">CFG</div>
-  );
-
-  // Default file icon
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-    </svg>
-  );
-};
 
 /**
  * AgentPanel component

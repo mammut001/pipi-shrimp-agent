@@ -20,6 +20,7 @@ import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompac
 import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
 import { checkReactiveCompact, recordToolForReactiveCompact } from '../services/compact/reactiveCompact';
+import { triggerContextAnalysis } from '../services/contextAnalysis/hooks/contextAnalysisTrigger';
 
 
 /**
@@ -1373,6 +1374,11 @@ export const useChatStore = create<ChatState>()(
 
         await runMicrocompactAfterStreaming(activeSessionId, set, get);
         await runSMCompactAfterStreaming(activeSessionId, set, get);
+
+        // === Context Analysis (smart compression trigger) ===
+        triggerContextAnalysis(activeSessionId, currentMessages()).catch((e: unknown) =>
+          console.debug('[ContextAnalysis] Trigger failed:', e)
+        );
 
         // === Reactive Compact (event-driven) ===
         // Check for topic changes, task completion, long idle, long tool output

@@ -24,13 +24,16 @@ import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
  */
 export function BrowserMiniPreview() {
   // Initialize event listeners for browser events (new UI path)
+  // NOTE: setupEventListeners may be called multiple times if this component
+  // is mounted alongside other components that also initialize (e.g., BrowserPanel, ChatBrowserWorkspaceShell).
+  // The store should handle idempotency internally.
   useEffect(() => {
     let cleanup: (() => void) | undefined;
     (async () => {
       try {
         cleanup = await useBrowserAgentStore.getState().setupEventListeners();
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn('Failed to setup browser event listeners in BrowserMiniPreview:', err);
       }
     })();
     return () => {

@@ -8,11 +8,12 @@
  * - Delete sessions
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useChatStore, useUIStore, useWorkflowStore, useSettingsStore } from '@/store';
 import type { Session } from '@/types/chat';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
+import { getSessionTokenUsage, formatTokenCount } from '@/utils/chat';
 
 
 /**
@@ -23,32 +24,6 @@ const truncatePath = (path: string, maxLength: number = 20): string => {
   const parts = path.split('/');
   if (parts.length <= 2) return '...' + path.slice(-maxLength + 3);
   return '.../' + parts.slice(-2).join('/');
-};
-
-/**
- * Calculate total token usage for a session
- */
-const getSessionTokenUsage = (session: Session): { input: number; output: number; total: number } => {
-  let input = 0;
-  let output = 0;
-  
-  for (const message of session.messages) {
-    if (message.token_usage) {
-      input += message.token_usage.input_tokens;
-      output += message.token_usage.output_tokens;
-    }
-  }
-  
-  return { input, output, total: input + output };
-};
-
-/**
- * Format token count for display (compact format)
- */
-const formatTokenCount = (count: number): string => {
-  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
-  return count.toString();
 };
 
 /**
@@ -70,10 +45,20 @@ export function Sidebar() {
   const apiConfigs = useSettingsStore((s) => s.apiConfigs);
 
   // Projects state
-  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('sidebar_expanded_projects');
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [contextMenu, setContextMenu] = useState<{ type: 'session' | 'project'; id: string; x: number; y: number } | null>(null);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Move session modal state
   const [showMoveChatModal, setShowMoveChatModal] = useState(false);
@@ -102,6 +87,17 @@ export function Sidebar() {
     () => [...getSessionsByProject(null)].sort((a, b) => b.updatedAt - a.updatedAt),
     [sessions, getSessionsByProject]
   );
+
+  // Filtered sessions (all sessions) for search results
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return null; // null = no filter active
+    const q = searchQuery.toLowerCase();
+    return sessions.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.messages.some((m) => m.content.toLowerCase().includes(q)),
+    );
+  }, [sessions, searchQuery]);
 
   // Memoized token usage map for all sessions
   const tokenUsageMap = useMemo(() => {
@@ -157,15 +153,15 @@ export function Sidebar() {
   /**
    * Open new chat modal
    */
-  const openNewChatModal = () => {
+  const openNewChatModal = useCallback(() => {
     setSelectedProjectForNewChat(null);
     setShowNewChatModal(true);
-  };
+  }, []);
 
   /**
    * Toggle project expansion
    */
-  const toggleProject = (projectId: string) => {
+  const toggleProject = useCallback((projectId: string) => {
     setExpandedProjects(prev => {
       const newSet = new Set(prev);
       if (newSet.has(projectId)) {
@@ -173,64 +169,69 @@ export function Sidebar() {
       } else {
         newSet.add(projectId);
       }
+      try {
+        localStorage.setItem('sidebar_expanded_projects', JSON.stringify([...newSet]));
+      } catch (err) {
+        console.warn('Failed to persist sidebar expanded projects:', err);
+      }
       return newSet;
     });
-  };
+  }, []);
 
   /**
    * Handle delete project
    */
-  const handleDeleteProject = async (projectId: string) => {
+  const handleDeleteProject = useCallback(async (projectId: string) => {
     if (confirm('Are you sure you want to delete this project and all its conversations?')) {
       await deleteProject(projectId);
     }
     setContextMenu(null);
-  };
+  }, [deleteProject]);
 
   /**
    * Handle opening move chat modal
    */
-  const handleOpenMoveChatModal = (sessionId: string) => {
+  const handleOpenMoveChatModal = useCallback((sessionId: string) => {
     setSessionToMove(sessionId);
     setTargetProjectForMove(null);
     setShowMoveChatModal(true);
-  };
+  }, []);
 
   /**
    * Handle moving session to a project
    */
-  const handleMoveSession = async () => {
+  const handleMoveSession = useCallback(async () => {
     if (sessionToMove) {
       await updateSessionProject(sessionToMove, targetProjectForMove || null);
       setShowMoveChatModal(false);
       setSessionToMove(null);
       setTargetProjectForMove(null);
     }
-  };
+  }, [sessionToMove, targetProjectForMove, updateSessionProject]);
 
   /**
    * Handle opening delete confirmation
    */
-  const handleOpenDeleteConfirm = (sessionId: string) => {
+  const handleOpenDeleteConfirm = useCallback((sessionId: string) => {
     setSessionToDelete(sessionId);
     setShowDeleteConfirm(true);
-  };
+  }, []);
 
   /**
    * Handle confirming delete
    */
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = useCallback(async () => {
     if (sessionToDelete) {
       await deleteSession(sessionToDelete);
       setShowDeleteConfirm(false);
       setSessionToDelete(null);
     }
-  };
+  }, [sessionToDelete, deleteSession]);
 
   /**
    * Handle toggle session selection in multi-select mode
    */
-  const handleToggleSessionSelection = (sessionId: string) => {
+  const handleToggleSessionSelection = useCallback((sessionId: string) => {
     setSelectedSessions(prev => {
       const newSet = new Set(prev);
       if (newSet.has(sessionId)) {
@@ -240,12 +241,12 @@ export function Sidebar() {
       }
       return newSet;
     });
-  };
+  }, []);
 
   /**
    * Handle select all sessions - only selects ungrouped sessions (not in any project)
    */
-  const handleSelectAll = () => {
+  const handleSelectAll = useCallback(() => {
     const ungroupedIds = ungroupedSessions.map(s => s.id);
     const allUngroupedSelected = ungroupedIds.every(id => selectedSessions.has(id));
     if (allUngroupedSelected && selectedSessions.size > 0) {
@@ -253,79 +254,79 @@ export function Sidebar() {
     } else {
       setSelectedSessions(new Set(ungroupedIds));
     }
-  };
+  }, [ungroupedSessions, selectedSessions]);
 
   /**
    * Handle batch delete selected sessions
    */
-  const handleBatchDelete = () => {
+  const handleBatchDelete = useCallback(() => {
     if (selectedSessions.size > 0) {
       setShowBatchDeleteConfirm(true);
     }
-  };
+  }, [selectedSessions]);
 
   /**
    * Confirm batch delete
    */
-  const handleConfirmBatchDelete = async () => {
+  const handleConfirmBatchDelete = useCallback(async () => {
     await deleteSessions(Array.from(selectedSessions));
     setSelectedSessions(new Set());
     setIsMultiSelectMode(false);
     setShowBatchDeleteConfirm(false);
-  };
+  }, [selectedSessions, deleteSessions]);
 
   /**
    * Handle context menu
    */
-  const handleContextMenu = (e: React.MouseEvent, type: 'session' | 'project', id: string) => {
+  const handleContextMenu = useCallback((e: React.MouseEvent, type: 'session' | 'project', id: string) => {
     e.preventDefault();
     setContextMenu({ type, id, x: e.clientX, y: e.clientY });
-  };
+  }, []);
 
   /**
    * Close context menu
    */
-  const closeContextMenu = () => {
+  const closeContextMenu = useCallback(() => {
     setContextMenu(null);
-  };
+  }, []);
 
   /**
    * Start renaming a session
    */
-  const handleStartRename = (sessionId: string) => {
+  const handleStartRename = useCallback((sessionId: string) => {
     const session = sessions.find(s => s.id === sessionId);
     if (session) {
       setRenamingSessionId(sessionId);
       setRenameInput(session.title);
       setContextMenu(null);
     }
-  };
+  }, [sessions]);
 
   /**
    * Confirm rename
    */
-  const handleConfirmRename = async () => {
+  const handleConfirmRename = useCallback(async () => {
     if (renamingSessionId && renameInput.trim()) {
       await renameSession(renamingSessionId, renameInput.trim());
     }
     setRenamingSessionId(null);
     setRenameInput('');
-  };
+  }, [renamingSessionId, renameInput, renameSession]);
 
   /**
    * Cancel rename
    */
-  const handleCancelRename = () => {
+  const handleCancelRename = useCallback(() => {
     setRenamingSessionId(null);
     setRenameInput('');
-  };
+  }, []);
 
   /**
    * Handle workflow run selection
    */
-  const handleSelectRun = (runId: string) => {
+  const handleSelectRun = useCallback((runId: string) => {
     setSelectedRunId(runId);
-  };
+  }, []);
 
   /**
    * Format date for display
@@ -535,8 +536,69 @@ export function Sidebar() {
         {currentView === 'chat' ? (
           // Chat Sessions - wrap everything in Fragment
           <div className="flex flex-col h-full">
-            {/* Sessions List - show empty state OR sessions */}
-            {sessions.length === 0 ? (
+            {/* Search */}
+            {sessions.length > 0 && (
+              <div className="px-4 pb-2 pt-1">
+                <div className="relative">
+                  <svg
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search chats..."
+                    className="w-full pl-8 pr-8 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300 focus:border-gray-300 placeholder-gray-400"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Search results panel */}
+            {filteredSessions !== null && (
+              <ul className="py-2 space-y-1 px-2">
+                {filteredSessions.length === 0 ? (
+                  <li className="px-3 py-4 text-xs text-gray-400 text-center">No results</li>
+                ) : (
+                  filteredSessions.map((session) => (
+                    <li key={session.id}>
+                      <button
+                        onClick={() => { handleSelectSession(session.id); setSearchQuery(''); }}
+                        className={`w-full px-3 py-2 text-left rounded-xl transition-all group relative ${
+                          session.id === currentSessionId ? 'bg-gray-100 shadow-sm' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold text-gray-900 truncate text-sm">
+                              {session.title || 'Chat'}
+                            </h3>
+                            <p className="text-xs text-gray-500 truncate mt-0.5">
+                              {getSessionPreview(session)}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
+            {/* Sessions List - show empty state OR sessions (hidden when search is active) */}
+            {filteredSessions === null && (sessions.length === 0 ? (
               <div className="p-8 text-center text-gray-400 text-sm">
                 <div className="mb-2 opacity-50">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -686,7 +748,7 @@ export function Sidebar() {
                 </>
               )}
               </ul>
-            )}
+            ))}
 
             {/* Projects Section - always show, even when no sessions */}
             <ul className="py-2 space-y-1 px-2 mt-auto">
