@@ -9,7 +9,7 @@
  * - Auto focus
  */
 
-import { useState, useRef, useEffect, type ChangeEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react';
 import { useChatStore } from '@/store';
 import { t } from '@/i18n';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
@@ -22,15 +22,18 @@ interface ChatInputProps {
   onSend?: (message: string) => void;
   /** Optional callback when user sends message but no session exists */
   onNewSessionRequired?: (message: string) => void;
+  /** Key used to namespace the draft in localStorage (default: 'default') */
+  draftKey?: string;
 }
 
 /**
  * Chat input component
  */
-export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
+export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [references, setReferences] = useState<string[]>([]);
   const [isBindingFolder, setIsBindingFolder] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isComposingRef = useRef(false);
 
@@ -39,6 +42,22 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
   // Get current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
   const workDir = currentSession?.workDir;
+
+  // Restore draft from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(`chat_draft_${draftKey}`);
+    if (saved) setInput(saved);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  // Persist draft to localStorage whenever input changes
+  useEffect(() => {
+    if (input) {
+      localStorage.setItem(`chat_draft_${draftKey}`, input);
+    } else {
+      localStorage.removeItem(`chat_draft_${draftKey}`);
+    }
+  }, [input, draftKey]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -60,14 +79,14 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
   /**
    * Handle file attachment - trigger hidden file input
    */
-  const handleAttachFile = () => {
+  const handleAttachFile = useCallback(() => {
     fileInputRef.current?.click();
-  };
+  }, []);
 
   /**
    * Handle file selection from native file input
    */
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
@@ -82,19 +101,19 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
 
     // Reset input so same file can be selected again
     e.target.value = '';
-  };
+  }, []);
 
   /**
    * Remove a file reference
    */
-  const removeReference = (path: string) => {
+  const removeReference = useCallback((path: string) => {
     setReferences(prev => prev.filter(p => p !== path));
-  };
+  }, []);
 
   /**
    * Handle message submission
    */
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     const trimmedInput = input.trim();
     if ((!trimmedInput && references.length === 0) || isStreaming) return;
 
@@ -134,21 +153,22 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
       await startSession();
     }
 
-    // Clear input state first
+    // Clear input state and draft
     setInput('');
     setReferences([]);
+    localStorage.removeItem(`chat_draft_${draftKey}`);
 
     // Send to AI (browser is controlled manually or via AI tools, not by client-side regex)
     onSend?.(finalMessage);
     await sendMessage(finalMessage);
-  };
+  }, [input, references, isStreaming, currentSessionId, onNewSessionRequired, startSession, draftKey, onSend, sendMessage]);
 
   /**
    * Handle stop generation
    */
-  const handleStop = async () => {
+  const handleStop = useCallback(async () => {
     await stopGeneration();
-  };
+  }, [stopGeneration]);
 
 
   const isDisabled = isStreaming;
@@ -272,12 +292,18 @@ export function ChatInput({ onSend, onNewSessionRequired }: ChatInputProps) {
           </div>
         )}
 
-        <div className="relative flex items-end gap-2 bg-gray-50 rounded-xl border border-gray-200 focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-gray-100 transition-all px-4">
+        <div className={`relative flex items-end gap-2 bg-gray-50 rounded-xl border transition-all px-4 ${
+          isFocused
+            ? 'border-gray-400 ring-2 ring-gray-200 shadow-sm'
+            : 'border-gray-200'
+        }`}>
           {/* Text Input */}
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 // If we're composing (IME), prevent the Enter key from submitting

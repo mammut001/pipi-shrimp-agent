@@ -399,6 +399,20 @@ ${output}
       }
     }
 
+    // Special handling for QA rejection subtypes (<REJECT:CODE>, <REJECT:DOC>)
+    if (output.includes('<REJECT:CODE>')) {
+      const developer = agents.find(
+        (a) => a.name.toLowerCase().includes('developer') || a.name.toLowerCase().includes('dev')
+      );
+      if (developer) return developer;
+    }
+    if (output.includes('<REJECT:DOC>')) {
+      const writer = agents.find(
+        (a) => a.name.toLowerCase().includes('writer') || a.name.toLowerCase().includes('文档')
+      );
+      if (writer) return writer;
+    }
+
     // If agent has no outputRoutes configured, check connections (backward compatibility)
     const outgoingConn = connections.find(c => c.sourceAgentId === currentAgent.id);
     if (outgoingConn) {
@@ -410,7 +424,7 @@ ${output}
 
   private constructNextPrompt(
     previousAgent: WorkflowAgent,
-    _nextAgent: WorkflowAgent,
+    nextAgent: WorkflowAgent,
     previousOutput: string,
     iterationCount: number,
     originalPrompt: string,
@@ -420,6 +434,39 @@ ${output}
       ? previousOutput.substring(0, 8000) + '\n... [输出已截断]'
       : previousOutput;
 
+    const nextAgentName = nextAgent.name.toLowerCase();
+
+    // QA → Developer: 包含测试失败详情
+    if (nextAgentName.includes('developer') || nextAgentName.includes('dev')) {
+      if (previousOutput.includes('<REJECT:CODE>')) {
+        return `[Workflow Context — QA 发现代码问题，需要修复
+
+来自 QA 工程师的反馈如下：
+
+${safeOutput}
+
+请根据上述 QA 反馈修复代码。修复完成后，QA 将重新运行测试验证。
+
+原始任务：${originalPrompt}]`;
+      }
+    }
+
+    // QA → Writer: 包含需求澄清请求
+    if (nextAgentName.includes('writer') || nextAgentName.includes('文档')) {
+      if (previousOutput.includes('<REJECT:DOC>')) {
+        return `[Workflow Context — QA 发现需求不清晰，需要澄清
+
+来自 QA 工程师的反馈如下：
+
+${safeOutput}
+
+请澄清或更新需求文档，然后 Developer 将根据更新后的需求重新实现。
+
+原始任务：${originalPrompt}]`;
+      }
+    }
+
+    // Default: iteration context
     if (iterationCount > 0) {
       return `[Workflow Context — 第 ${iterationCount + 1} 次迭代]
 你正在反馈循环的第 ${iterationCount + 1} 次迭代中。
@@ -436,6 +483,7 @@ ${safeOutput}
 原始任务：${originalPrompt}`;
     }
 
+    // Default: normal pass-through
     return `[Workflow Context]
 你是多 Agent 工作流流水线的一部分。
 

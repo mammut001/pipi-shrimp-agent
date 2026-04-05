@@ -54,7 +54,15 @@ export function WorkflowExecutionBar() {
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
-      {/* Prompt input */}
+      {/* Task description label */}
+      <div className="flex items-center gap-1 text-gray-400 flex-shrink-0">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+        </svg>
+        <span className="text-xs font-medium">任务:</span>
+      </div>
+
+      {/* Task description input */}
       <input
         type="text"
         placeholder="输入工作流任务描述..."
@@ -101,15 +109,46 @@ export function WorkflowExecutionBar() {
         Mock
       </button>
 
-      {/* Status display */}
-      <div className="flex items-center gap-1.5 text-sm text-gray-500">
+      {/* Status display with step progress */}
+      <div className="flex items-center gap-2 text-sm text-gray-500">
         <span
-          className={`w-2 h-2 rounded-full ${
+          className={`w-2 h-2 rounded-full flex-shrink-0 ${
             isRunning ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
           }`}
         />
-        {isRunning ? `运行中: ${currentAgentName}` : '就绪'}
+        {isRunning ? (
+          <span className="flex items-center gap-1.5">
+            <span className="font-medium text-blue-600">
+              {(() => {
+                const idx = agents.findIndex((a) => a.id === currentRunningAgentId);
+                return idx >= 0 ? `${idx + 1}/${agents.length}` : '';
+              })()}
+            </span>
+            <span className="truncate max-w-[120px]">{currentAgentName}</span>
+          </span>
+        ) : '就绪'}
       </div>
+
+      {/* Mini step indicators */}
+      {agents.length > 1 && (
+        <div className="flex items-center gap-0.5">
+          {agents.map((agent) => (
+            <div
+              key={agent.id}
+              title={agent.name}
+              className={`w-4 h-1 rounded-full transition-colors ${
+                agent.status === 'completed'
+                  ? 'bg-green-400'
+                  : agent.status === 'running'
+                  ? 'bg-blue-500 animate-pulse'
+                  : agent.status === 'error'
+                  ? 'bg-red-400'
+                  : 'bg-gray-200'
+              }`}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Clear canvas */}
       <button

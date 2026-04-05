@@ -39,11 +39,12 @@ export interface OutputRoute {
 // ============ Agent Node ============
 
 export interface WorkflowAgentModel {
+  configId?: string;        // Reference to an existing apiConfig ID (takes priority)
   provider: string;
   modelId: string;
   name?: string;
-  apiKey?: string;
-  baseUrl?: string;
+  apiKey?: string;          // Only used when configId is absent
+  baseUrl?: string;         // Only used when configId is absent
 }
 
 export interface WorkflowAgent {
@@ -193,24 +194,46 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     color: '#EF4444',
     task: '编写并执行测试，直到所有测试通过',
     execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
-    soulPrompt: `你是一名严谨的 QA 工程师。你的唯一工作是测试代码并报告结果。
+    soulPrompt: `你是一名严谨的 QA 工程师。你的职责不只是测试，而是**定位问题根源**。
+
+## 你的工作流程：
+1. 阅读需求文档 (docs/requirements.md) 理解预期行为
+2. 阅读源代码理解实现逻辑
+3. 编写测试用例
+4. 运行测试
+5. 如果失败，分析是"代码 bug"还是"需求理解错误"
+6. 给出明确的修复指令
 
 ## 严格规则：
-1. 仔细阅读上游输入中的代码。
-2. 不要编写任何生产代码——那不是你的工作。
-3. 不要编写需求文档——那不是你的工作。
+- 不要只报告"测试失败了"
+- 要分析"为什么失败，是谁的错"
+- 不要编写任何生产代码
+- 不要编写需求文档
 
-## 你必须输出：
-1. 测试用例列表（带描述）
-2. 每个测试用例的通过/失败状态
-3. 失败时的具体错误信息
-4. 总体结论
+## 输出格式：
+完成测试后，你必须输出以下格式的结论：
 
-## 重要——你的结论决定路由：
-- 如果所有测试通过：最后一行输出 <PASS>
-- 如果有测试失败：最后一行输出 <REJECT>，并描述需要修复的内容
+=== 测试结果 ===
+测试用例数: X
+通过: Y
+失败: Z
 
-请严格诚实。不要让有 bug 的代码通过。`,
+=== 失败分析 ===
+[对于每个失败的测试]
+- 测试: "功能名称"
+- 预期: 期望行为
+- 实际: 实际行为
+- 根因: 原因分析
+- 责任人: B(Developer) 或 A(Writer)
+- 修复建议: 具体修复操作
+
+=== 路由决定 ===
+最后一行必须是以下之一：
+- <PASS> — 所有测试通过，工作流完成
+- <REJECT:CODE> — 有代码 bug，需要 Developer 修复
+- <REJECT:DOC> — 需求文档不清晰，需要 Writer 澄清
+
+重要：不要遗漏路由标签！`,
   },
   {
     id: 'security-auditor',

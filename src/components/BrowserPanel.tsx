@@ -8,7 +8,7 @@
  * - Blocked state handling
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useBrowserAgentStore } from '../store/browserAgentStore';
 import { useUIStore } from '../store/uiStore';
 import { goBack } from '../utils/browserCommands';
@@ -181,13 +181,13 @@ export const BrowserPanel: React.FC = () => {
     }
   }, [status, lastCompletedTaskId]);
 
-  const handleOpenWindow = async () => {
+  const handleOpenWindow = useCallback(async () => {
     if (urlInput.trim()) {
       await openWindow(urlInput.trim());
     }
-  };
+  }, [urlInput, openWindow]);
 
-  const handleExecute = async () => {
+  const handleExecute = useCallback(async () => {
     if (!taskInput.trim()) return;
 
     // Add to history with pending status
@@ -213,23 +213,23 @@ export const BrowserPanel: React.FC = () => {
       );
       activeTaskIdRef.current = null;
     }
-  };
+  }, [taskInput, currentUrl, executeTask]);
 
-  const handleQuickSite = async (url: string) => {
+  const handleQuickSite = useCallback(async (url: string) => {
     setUrlInput(url);
     await openWindow(url);
-  };
+  }, [openWindow]);
 
-  const handleQuickTask = (task: string) => {
+  const handleQuickTask = useCallback((task: string) => {
     setTaskInput(task);
-  };
+  }, []);
 
-  const handleHistoryItem = (item: TaskHistoryItem) => {
+  const handleHistoryItem = useCallback((item: TaskHistoryItem) => {
     setUrlInput(item.url);
     setTaskInput(item.task);
-  };
+  }, []);
 
-  const handleReturnToChat = async () => {
+  const handleReturnToChat = useCallback(async () => {
     // Use dock actions instead of route changes
     const { focusChatPane, browserDockMode } = useUIStore.getState();
 
@@ -240,26 +240,26 @@ export const BrowserPanel: React.FC = () => {
 
     // Focus the chat pane (works in split and external modes)
     focusChatPane();
-  };
+  }, []);
 
-  const handleExpandToSplit = () => {
+  const handleExpandToSplit = useCallback(() => {
     const { expandBrowserToSplit } = useUIStore.getState();
     expandBrowserToSplit();
-  };
+  }, []);
 
-  const handleOpenInWindow = () => {
+  const handleOpenInWindow = useCallback(() => {
     const { openBrowserExternal } = useUIStore.getState();
     openBrowserExternal();
-  };
+  }, []);
 
-  const handleCloseBrowser = async () => {
+  const handleCloseBrowser = useCallback(async () => {
     // Use dock action to close browser
     const { closeBrowserDock } = useUIStore.getState();
     await closeWindow();
     closeBrowserDock();
-  };
+  }, [closeWindow]);
 
-  const handleGoBack = async () => {
+  const handleGoBack = useCallback(async () => {
     try {
       await goBack();
       setTimeout(async () => {
@@ -270,18 +270,18 @@ export const BrowserPanel: React.FC = () => {
     } catch (error) {
       console.error('Failed to go back:', error);
     }
-  };
+  }, []);
 
-  const handleInspect = async () => {
+  const handleInspect = useCallback(async () => {
     await inspectCurrentPage();
-  };
+  }, [inspectCurrentPage]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleExecute();
     }
-  };
+  }, [handleExecute]);
 
   // Get status display
   const getStatusColor = () => {

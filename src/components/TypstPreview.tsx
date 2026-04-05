@@ -60,8 +60,8 @@ export function TypstPreview({ rawContent, className = '' }: TypstPreviewProps) 
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
-  // Debounce the content to avoid excessive compiles
-  const debouncedContent = useDebounce(rawContent, 150);
+  // Debounce the content to avoid excessive compiles (300ms for better performance)
+  const debouncedContent = useDebounce(rawContent, 300);
 
   // Track the current render request to handle race conditions
   const renderIdRef = useRef(0);

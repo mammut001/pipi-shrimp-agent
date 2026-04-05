@@ -12,11 +12,15 @@
  * - 'browser' -> DEPRECATED, redirects to 'chat' with dock mode
  */
 
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
-import { Settings, Workflow, Skill } from '@/pages';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
+
+// Lazy-load heavy pages so they don't bloat the initial bundle
+const Settings = lazy(() => import('@/pages/Settings'));
+const Workflow = lazy(() => import('@/pages/Workflow'));
+const Skill = lazy(() => import('@/pages/Skill'));
 
 /**
  * Main application component
@@ -65,8 +69,10 @@ export default function App() {
 
   return (
     <>
-      {renderMainContent()}
-      {settingsOpen && <Settings />}
+      <Suspense fallback={null}>
+        {renderMainContent()}
+        {settingsOpen && <Settings />}
+      </Suspense>
     </>
   );
 }

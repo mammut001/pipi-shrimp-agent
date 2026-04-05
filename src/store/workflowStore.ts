@@ -15,7 +15,7 @@ import type {
   WorkflowRun, WorkflowRunAgentEntry, AgentExecutionConfig,
   OutputRoute
 } from '../types/workflow';
-import { DEFAULT_EXECUTION_CONFIG } from '../types/workflow';
+import { DEFAULT_EXECUTION_CONFIG, AGENT_TEMPLATES } from '../types/workflow';
 
 const STORAGE_KEY = 'pipi-workflow-v1';
 
@@ -95,6 +95,9 @@ export interface WorkflowStore extends WorkflowState {
 
   // Canvas operations
   clearCanvas: () => void;
+
+  // Preset workflows
+  createA_B_C_Workflow: () => { agentA: WorkflowAgent; agentB: WorkflowAgent; agentC: WorkflowAgent };
 }
 
 export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
@@ -495,5 +498,51 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       saveToStorage(newState);
       return newState;
     });
+  },
+
+  // Preset workflow: A (Writer) → B (Developer) → C (QA with feedback loop)
+  createA_B_C_Workflow: () => {
+    const { addAgent, addConnection } = get();
+
+    // Find templates
+    const writerTemplate = AGENT_TEMPLATES.find(t => t.id === 'tech-writer');
+    const devTemplate = AGENT_TEMPLATES.find(t => t.id === 'fullstack-dev');
+    const qaTemplate = AGENT_TEMPLATES.find(t => t.id === 'qa-engineer');
+
+    // Create Agent A (Writer) - entry node
+    const agentA = addAgent({
+      name: 'A - Technical Writer',
+      task: writerTemplate?.task || '编写需求文档',
+      soulPrompt: writerTemplate?.soulPrompt || '',
+      execution: { mode: 'single' },
+      inputFrom: null,
+    });
+
+    // Create Agent B (Developer)
+    const agentB = addAgent({
+      name: 'B - Full Stack Developer',
+      task: devTemplate?.task || '编写代码',
+      soulPrompt: devTemplate?.soulPrompt || '',
+      execution: { mode: 'single' },
+      inputFrom: agentA.id,
+    });
+
+    // Create Agent C (QA) - multi-round execution
+    const agentC = addAgent({
+      name: 'C - QA Engineer',
+      task: qaTemplate?.task || '执行测试',
+      soulPrompt: qaTemplate?.soulPrompt || '',
+      execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
+      inputFrom: agentB.id,
+    });
+
+    // Add sequential connections
+    addConnection(agentA.id, agentB.id, 'A → B');
+    addConnection(agentB.id, agentC.id, 'B → C');
+
+    // Note: <REJECT:CODE> and <REJECT:DOC> routing is handled by evaluateNextAgent fallback
+    // No need to add explicit outputRoutes since fallback finds agents by name
+
+    return { agentA, agentB, agentC };
   },
 }));
