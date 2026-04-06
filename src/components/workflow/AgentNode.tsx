@@ -12,8 +12,11 @@
  */
 
 import React, { memo, useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import type { WorkflowAgent, RouteCondition } from '@/types/workflow';
+import { useSettingsStore } from '@/store/settingsStore';
+import { PROVIDER_MODELS } from '@/types/settings';
 
 interface AgentNodeData {
   agent: WorkflowAgent;
@@ -27,6 +30,7 @@ interface AgentNodeData {
   onAddRoute: (agentId: string, condition: RouteCondition, targetAgentId: string, keyword?: string) => void;
   onRemoveRoute: (agentId: string, routeId: string) => void;
   onUpdateRoute: (agentId: string, routeId: string, updates: { condition?: RouteCondition; keyword?: string; targetAgentId?: string }) => void;
+  onUpdateModel: (agentId: string, provider: string, modelId: string) => void;
   onSelect: (id: string) => void;
 }
 
@@ -62,15 +66,51 @@ const CONDITION_CONFIG: Record<RouteCondition, { label: string; icon: string }> 
 
 const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
   const d = data as unknown as AgentNodeData;
-  const { agent, allAgents, onRemove, onUpdateName, onAddRoute, onRemoveRoute, onSelect } = d;
+  const { agent, allAgents, onRemove, onUpdateName, onAddRoute, onRemoveRoute, onUpdateModel, onSelect } = d;
 
+  // Settings store
+  const apiConfigs = useSettingsStore((s) => s.apiConfigs);
+  const availableModels = useSettingsStore((s) => s.availableModels);
+
+  // Local state
   const [isEditingName, setIsEditingName] = useState(false);
   const [editName, setEditName] = useState(agent.name);
   const [showAddRoute, setShowAddRoute] = useState(false);
   const [newRouteCondition, setNewRouteCondition] = useState<RouteCondition>('onComplete');
   const [newRouteKeyword, setNewRouteKeyword] = useState('');
   const [newRouteTarget, setNewRouteTarget] = useState('');
+  const [showModelSelector, setShowModelSelector] = useState(false);
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const modelSelectorRef = useRef<HTMLDivElement>(null);
+
+  // Get configured providers (those that have an apiConfig)
+  const configuredProviders = apiConfigs.map((c) => c.provider);
+
+  // Current agent model info
+  const currentProvider = agent.model?.provider || '';
+  const currentModelId = agent.model?.modelId || '';
+
+  // Get display name for provider
+  const getProviderDisplayName = (provider: string) => {
+    const config = apiConfigs.find((c) => c.provider === provider);
+    return config ? `${config.name} (${provider})` : provider;
+  };
+
+  // Group models by provider
+  const modelsByProvider = configuredProviders.map((provider) => {
+    const fetchedModels = availableModels[provider];
+    const models = fetchedModels && fetchedModels.length > 0 
+      ? fetchedModels 
+      : (PROVIDER_MODELS[provider as keyof typeof PROVIDER_MODELS] || []);
+    return [provider, models] as [string, string[]];
+  }).filter(([, models]) => models.length > 0);
+
+  const handleSelectModel = (provider: string, modelId: string) => {
+    onUpdateModel(agent.id, provider as 'anthropic' | 'openai' | 'minimax' | 'custom', modelId);
+    setShowModelSelector(false);
+    setExpandedProvider(null);
+  };
 
   const color = getAgentColor(agent.id);
   const initials = getInitials(agent.name);
@@ -156,10 +196,13 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
 
       {/* Node card */}
       <div
-        className={`w-full h-full bg-white rounded-xl border-2 shadow-sm transition-all duration-200 flex flex-col overflow-hidden ${
+        className={`w-full h-full bg-white rounded-xl border-2 shadow-sm transition-all duration-200 flex flex-col ${
           selected ? 'ring-2 ring-blue-500 ring-offset-2' : ''
         } ${agent.status === 'running' ? 'animate-pulse' : ''}`}
-        style={{ borderColor: selected ? '#3B82F6' : statusBorderMap[agent.status] }}
+        style={{ 
+          borderColor: selected ? '#3B82F6' : statusBorderMap[agent.status],
+          position: 'relative'
+        }}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(agent.id);
@@ -239,6 +282,85 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
               {agent.execution.mode === 'single' ? '单次' : `${agent.execution.maxRounds || 3}轮`}
             </span>
           </div>
+
+          {/* Model Selector */}
+          <div ref={modelSelectorRef} className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowModelSelector(!showModelSelector);
+                  if (!showModelSelector) {
+                    // Auto-expand current provider
+                    setExpandedProvider(currentProvider || modelsByProvider[0]?.[0] || null);
+                  }
+                }}
+                className="w-full flex items-center gap-1 text-[10px] px-1.5 py-1 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200 transition-colors"
+              >
+                <span className="text-gray-500">Model:</span>
+                <span className="text-gray-700 font-medium truncate flex-1 text-left">
+                  {currentProvider ? `${currentProvider}/${currentModelId || 'default'}` : '使用全局配置'}
+                </span>
+                <span className="text-gray-400 shrink-0">▼</span>
+              </button>
+
+              {/* Dropdown - using portal to escape overflow clipping */}
+              {showModelSelector && createPortal(
+                <div
+                  className="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto"
+                  style={{
+                    top: modelSelectorRef.current 
+                      ? modelSelectorRef.current.getBoundingClientRect().bottom + 4 
+                      : 0,
+                    left: modelSelectorRef.current 
+                      ? modelSelectorRef.current.getBoundingClientRect().left 
+                      : 0,
+                    width: modelSelectorRef.current 
+                      ? modelSelectorRef.current.offsetWidth 
+                      : 200,
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {modelsByProvider.length === 0 ? (
+                    <div className="px-3 py-2 text-[10px] text-gray-500 text-center">
+                      {configuredProviders.length === 0 
+                        ? '请先在设置中添加 API 配置' 
+                        : '请先获取模型列表'}
+                    </div>
+                  ) : modelsByProvider.map(([provider, models]) => (
+                    <div key={provider}>
+                      {/* Provider header */}
+                      <button
+                        onClick={() => setExpandedProvider(expandedProvider === provider ? null : provider)}
+                        className="w-full flex items-center gap-1 px-2 py-1 text-[10px] hover:bg-gray-50 text-left"
+                      >
+                        <span className="text-gray-400">{expandedProvider === provider ? '▼' : '▶'}</span>
+                        <span className="font-medium text-gray-700">{getProviderDisplayName(provider)}</span>
+                        <span className="text-gray-400">(+{models.length} models)</span>
+                      </button>
+
+                      {/* Models list */}
+                      {expandedProvider === provider && (
+                        <div className="bg-gray-50">
+                          {models.map((model) => (
+                            <button
+                              key={model}
+                              onClick={() => handleSelectModel(provider, model)}
+                              className={`w-full flex items-center gap-1 px-4 py-0.5 text-[10px] hover:bg-gray-100 text-left ${
+                                currentProvider === provider && currentModelId === model ? 'bg-blue-50 text-blue-600' : 'text-gray-600'
+                              }`}
+                            >
+                              <span className="w-3">{currentProvider === provider && currentModelId === model ? '✓' : ''}</span>
+                              <span className="font-mono">{model}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>,
+                document.body
+              )}
+            </div>
 
           {/* Output Routes */}
           {agent.outputRoutes.length > 0 && (

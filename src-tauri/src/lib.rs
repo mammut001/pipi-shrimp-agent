@@ -525,6 +525,7 @@ pub fn run() {
             commands::get_next_output_dir,
             commands::list_pipi_shrimp_index,
             commands::create_workflow_run_directory,
+            commands::reveal_in_finder,
             // Browser window commands (second WebviewWindow for PageAgent)
             commands::open_browser_window,
             commands::show_browser_window,

@@ -179,6 +179,11 @@ export function WorkflowOutputPanel() {
                   {/* Agent output */}
                   {isExpanded && (
                     <div className="px-4 pb-3">
+                      {agent.task && (
+                        <div className="mb-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded text-xs text-blue-700">
+                          任务: {agent.task}
+                        </div>
+                      )}
                       <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 font-mono whitespace-pre-wrap max-h-80 overflow-y-auto">
                         {output || (running ? '等待输出...' : '无输出')}
                       </div>

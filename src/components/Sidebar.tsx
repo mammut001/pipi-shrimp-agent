@@ -14,6 +14,8 @@ import type { Session } from '@/types/chat';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount } from '@/utils/chat';
+import { invoke } from '@tauri-apps/api/core';
+import { workflowEngine } from '@/services/workflowEngine';
 
 
 /**
@@ -156,6 +158,32 @@ export function Sidebar() {
   const openNewChatModal = useCallback(() => {
     setSelectedProjectForNewChat(null);
     setShowNewChatModal(true);
+  }, []);
+
+  /**
+   * Create a new blank workflow with a pre-assigned working directory
+   */
+  const handleNewWorkflow = useCallback(async () => {
+    const { clearCanvas, addWorkflowRun } = useWorkflowStore.getState();
+    clearCanvas();
+    const runId = crypto.randomUUID();
+    try {
+      const dir = await invoke<string>('create_workflow_run_directory', { runId });
+      workflowEngine.setWorkingDirectory(dir);
+      // Add an idle run entry so it appears in the history list
+      addWorkflowRun({
+        id: runId,
+        title: '新工作流',
+        projectGoal: '',
+        status: 'idle',
+        startTime: Date.now(),
+        agents: [],
+        runDirectory: dir,
+      });
+      useUIStore.getState().addNotification('success', `新工作流已创建`);
+    } catch (e) {
+      console.warn('Failed to create workflow directory:', e);
+    }
   }, []);
 
   /**
@@ -355,6 +383,7 @@ export function Sidebar() {
       case 'error': return 'text-red-600';
       case 'running': return 'text-blue-600';
       case 'stopped': return 'text-gray-500';
+      case 'idle': return 'text-gray-400';
       default: return 'text-gray-400';
     }
   };
@@ -389,9 +418,9 @@ export function Sidebar() {
           </div>
         </div>
 
-        {/* New Chat Button */}
+        {/* New Chat / New Workflow Button (context-aware) */}
         <button
-          onClick={openNewChatModal}
+          onClick={currentView === 'workflow' ? handleNewWorkflow : openNewChatModal}
           className="w-full px-4 py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-xl transition-all flex items-center justify-center gap-2 font-medium shadow-sm active:scale-[0.98]"
         >
           <svg
@@ -402,7 +431,7 @@ export function Sidebar() {
           >
             <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
           </svg>
-          {t('nav.newChat')}
+          {currentView === 'workflow' ? '新工作流' : t('nav.newChat')}
         </button>
 
         {/* Skill Button - Opens Skill Market */}

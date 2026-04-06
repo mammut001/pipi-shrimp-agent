@@ -217,14 +217,58 @@ pub fn list_pipi_shrimp_index(work_dir: String) -> AppResult<Vec<OutputFolder>> 
     Ok(folders)
 }
 
-/// Create a workflow run directory at {HOME}/pipi-shrimp-agent/runs/{run_id}.
+/// Create a workflow run directory at {HOME}/pipi-shrimp-agent/workflows/{run_id}.
 /// This is used by the workflow engine to create isolated workspaces per run.
 #[tauri::command]
 pub fn create_workflow_run_directory(run_id: String) -> AppResult<String> {
     let home = std::env::var("HOME")
         .map_err(|e| AppError::FileError(format!("Cannot get HOME directory: {}", e)))?;
-    let base_dir = PathBuf::from(&home).join("pipi-shrimp-agent").join("runs").join(&run_id);
+    let base_dir = PathBuf::from(&home).join("pipi-shrimp-agent").join("workflows").join(&run_id);
     fs::create_dir_all(&base_dir)
         .map_err(|e| AppError::FileError(format!("Failed to create run directory: {}", e)))?;
     Ok(base_dir.to_string_lossy().to_string())
+}
+
+/// Reveal a path in the system file explorer (Finder on macOS, Explorer on Windows, etc.)
+#[tauri::command]
+pub fn reveal_in_finder(path: String) -> AppResult<()> {
+    let path_buf = PathBuf::from(&path);
+    if !path_buf.exists() {
+        return Err(AppError::FileError(format!("Path does not exist: {}", path)));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| AppError::FileError(format!("Failed to open Finder: {}", e)))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try xdg-open first, fallback to dbus-send for file managers
+        let result = std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn();
+
+        if result.is_err() {
+            std::process::Command::new("dbus-send")
+                .args(["--session", "--dest=org.freedesktop.FileManager1", "--type=method_call",
+                    "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems",
+                    format!("array:string:file://{}", path).as_str()])
+                .spawn()
+                .map_err(|e| AppError::FileError(format!("Failed to open file manager: {}", e)))?;
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .args(["/select,", &path])
+            .spawn()
+            .map_err(|e| AppError::FileError(format!("Failed to open Explorer: {}", e)))?;
+    }
+
+    Ok(())
 }
