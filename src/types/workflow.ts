@@ -89,7 +89,8 @@ export interface WorkflowRunAgentEntry {
 export interface WorkflowRun {
   id: string;
   title: string;
-  status: 'running' | 'completed' | 'error' | 'stopped';
+  projectGoal: string;         // Full original user goal
+  status: 'idle' | 'running' | 'completed' | 'error' | 'stopped';
   startTime: number;
   endTime?: number;
   agents: WorkflowRunAgentEntry[];

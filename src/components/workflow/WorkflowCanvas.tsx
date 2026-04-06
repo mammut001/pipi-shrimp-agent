@@ -10,6 +10,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   ReactFlow,
   Controls,
@@ -26,6 +27,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '@/store/workflowStore';
+import { useUIStore } from '@/store/uiStore';
+import { workflowEngine } from '@/services/workflowEngine';
 import { AgentNode } from './AgentNode';
 import { CustomEdge } from './CustomEdge';
 import { AgentTemplateDrawer } from './AgentTemplateDrawer';
@@ -94,6 +97,11 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         },
         onUpdateRoute: (agentId: string, routeId: string, updates: { condition?: RouteCondition; keyword?: string; targetAgentId?: string }) => {
           useWorkflowStore.getState().updateOutputRoute(agentId, routeId, updates);
+        },
+        onUpdateModel: (agentId: string, provider: string, modelId: string) => {
+          useWorkflowStore.getState().updateAgent(agentId, {
+            model: { provider, modelId },
+          });
         },
         onSelect: (id: string) => onAgentSelect(id),
       },
@@ -252,6 +260,21 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
     setTemplateDrawerPosition(null);
   }, []);
 
+  // Open working directory in Finder
+  const handleOpenWorkingDirectory = useCallback(async () => {
+    const workDir = workflowEngine.getWorkingDirectory();
+    if (!workDir) {
+      useUIStore.getState().addNotification('warning', '当前没有正在运行的工作流，无法打开工作目录');
+      return;
+    }
+    try {
+      await invoke('reveal_in_finder', { path: workDir });
+    } catch (e) {
+      console.error('Failed to reveal in finder:', e);
+      useUIStore.getState().addNotification('error', `无法打开目录: ${e}`);
+    }
+  }, []);
+
   // Handle keyboard delete
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -326,6 +349,15 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
             A→B→C 预设
+          </button>
+          <button
+            onClick={handleOpenWorkingDirectory}
+            className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg shadow hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            打开工作目录
           </button>
         </Panel>
 

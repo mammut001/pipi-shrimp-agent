@@ -30,19 +30,11 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
   const allAgents = useWorkflowStore((state) => state.agents);
   const { updateAgent, addOutputRoute, removeOutputRoute, setAgentInputFrom } = useWorkflowStore();
 
-  const apiConfigs = useSettingsStore((state) => state.apiConfigs);
-
   const [formData, setFormData] = useState({
     name: '',
     task: '',
     soulPrompt: '',
     execution: DEFAULT_EXECUTION_CONFIG,
-    selectedConfigId: '' as string,
-    isCustomMode: false,
-    modelProvider: '',
-    modelId: '',
-    modelApiKey: '',
-    modelBaseUrl: '',
   });
 
   const [newRoute, setNewRoute] = useState({
@@ -53,35 +45,14 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
 
   useEffect(() => {
     if (agent) {
-      let selectedConfigId = '';
-      let isCustomMode = false;
-
-      if (agent.model?.configId) {
-        selectedConfigId = agent.model.configId;
-      } else if (agent.model?.apiKey) {
-        selectedConfigId = '__custom__';
-        isCustomMode = true;
-      } else if (agent.model?.modelId) {
-        const matched = apiConfigs.find(
-          (c) => c.provider === agent.model?.provider && c.model === agent.model?.modelId
-        );
-        if (matched) selectedConfigId = matched.id;
-      }
-
       setFormData({
         name: agent.name,
         task: agent.task || '',
         soulPrompt: agent.soulPrompt || '',
         execution: agent.execution || DEFAULT_EXECUTION_CONFIG,
-        selectedConfigId,
-        isCustomMode,
-        modelProvider: agent.model?.provider || '',
-        modelId: agent.model?.modelId || '',
-        modelApiKey: agent.model?.apiKey || '',
-        modelBaseUrl: agent.model?.baseUrl || '',
       });
     }
-  }, [agent, apiConfigs]);
+  }, [agent]);
 
   if (!agent) return null;
 
@@ -92,25 +63,6 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
       soulPrompt: formData.soulPrompt,
       execution: formData.execution,
     };
-
-    // Only add model override if a config is selected or custom fields are filled
-    if (formData.selectedConfigId && formData.selectedConfigId !== '__custom__') {
-      const config = apiConfigs.find((c) => c.id === formData.selectedConfigId);
-      if (config) {
-        updates.model = {
-          configId: config.id,
-          provider: config.provider,
-          modelId: config.model,
-        };
-      }
-    } else if (formData.isCustomMode && (formData.modelProvider || formData.modelId)) {
-      updates.model = {
-        provider: formData.modelProvider,
-        modelId: formData.modelId,
-        apiKey: formData.modelApiKey || undefined,
-        baseUrl: formData.modelBaseUrl || undefined,
-      };
-    }
 
     updateAgent(agentId, updates);
   };
@@ -300,88 +252,6 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
                   <option value="fixed">固定轮数</option>
                 </select>
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* Model Selection */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Model 选择
-          </label>
-
-          <select
-            value={formData.selectedConfigId || ''}
-            onChange={(e) => {
-              const configId = e.target.value;
-              if (configId === '__custom__') {
-                setFormData({ ...formData, selectedConfigId: '__custom__', isCustomMode: true });
-              } else if (configId) {
-                const config = apiConfigs.find((c) => c.id === configId);
-                if (config) {
-                  setFormData({
-                    ...formData,
-                    selectedConfigId: configId,
-                    isCustomMode: false,
-                    modelProvider: config.provider,
-                    modelId: config.model,
-                    modelApiKey: '',
-                    modelBaseUrl: config.baseUrl || '',
-                  });
-                }
-              } else {
-                setFormData({
-                  ...formData,
-                  selectedConfigId: '',
-                  isCustomMode: false,
-                  modelProvider: '',
-                  modelId: '',
-                  modelApiKey: '',
-                  modelBaseUrl: '',
-                });
-              }
-            }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">使用全局默认配置</option>
-            {apiConfigs.map((config) => (
-              <option key={config.id} value={config.id}>
-                {config.name} ({config.provider} / {config.model})
-              </option>
-            ))}
-            <option value="__custom__">+ 自定义配置...</option>
-          </select>
-
-          {formData.isCustomMode && (
-            <div className="mt-3 space-y-2 pl-4 border-l-2 border-blue-200">
-              <input
-                type="text"
-                value={formData.modelProvider}
-                onChange={(e) => setFormData({ ...formData, modelProvider: e.target.value })}
-                placeholder="Provider (如 minimax)"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                value={formData.modelId}
-                onChange={(e) => setFormData({ ...formData, modelId: e.target.value })}
-                placeholder="Model ID"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="password"
-                value={formData.modelApiKey}
-                onChange={(e) => setFormData({ ...formData, modelApiKey: e.target.value })}
-                placeholder="API Key"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                value={formData.modelBaseUrl}
-                onChange={(e) => setFormData({ ...formData, modelBaseUrl: e.target.value })}
-                placeholder="Base URL (可选)"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
             </div>
           )}
         </div>
