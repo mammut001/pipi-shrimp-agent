@@ -310,3 +310,30 @@ pub fn reveal_in_finder(path: String) -> AppResult<()> {
 
     Ok(())
 }
+
+/// Open a file with the system's default application
+#[tauri::command]
+pub fn open_file_external(path: String) -> AppResult<()> {
+    open::that(&path)
+        .map_err(|e| AppError::FileError(format!("Failed to open file: {}", e)))?;
+    Ok(())
+}
+
+/// Open a file with a specific application (macOS only)
+#[tauri::command]
+pub fn open_file_with_app(path: String, app_name: String) -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-a", &app_name, &path])
+            .spawn()
+            .map_err(|e| AppError::FileError(format!("Failed to open with app: {}", e)))?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        return Err(AppError::FileError("open_file_with_app is only supported on macOS".to_string()));
+    }
+
+    Ok(())
+}

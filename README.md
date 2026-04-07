@@ -27,15 +27,18 @@
 Pipi-Shrimp Agent aims to provide individuals with a fast, responsive, and powerful local AI client, fully unlocking the tool-calling potential of large language models.
 
 - **⚡ Extremely Lightweight & Native Performance**: Powered by a Rust and Tauri backend, it boasts instantaneous startup times and minimal memory footprint, while retaining full system-level execution capabilities.
-- **🧠 Powerful LLM Integration (Claude-First)**: Deeply integrated with the Claude SDK, supporting real-time streaming output and robust `tool_calls` functionality.
+- **🧠 Powerful LLM Integration (Multi-Provider)**: Deeply integrated with Claude SDK, supporting **MiniMax**, **OpenAI-compatible**, **Gemini** and **Anthropic** APIs with real-time streaming output and robust `tool_calls` functionality.
 - **🛠️ Rich Local Toolchain (Function Calling)**:
   - **Code Execution Engine**: Execute Bash, Python, and Node.js scripts locally directly from the AI prompt.
   - **File System Operations**: Powerful local file reading, writing, searching, and management capabilities.
   - **Web Automation**: Integrated web browsing, scraping, and automated browser control powered by high-performance CDP (Chrome DevTools Protocol) implementations.
   - **Advanced Document Rendering**: Exclusively integrates the **Typst** engine, supporting real-time rendering of text to high-quality SVG/PDF layouts with complete font management.
-- **🔄 Workflow System**: Flexible stream-based task management, allowing multi-step complex operations to be executed automatically.
+- **🔄 Workflow System**: Flexible stream-based task management with visual graph editor, allowing multi-step complex operations to be executed automatically with sequential/parallel execution and conditional routing.
 - **📂 Project-Level Context Management**: Intelligently manages conversation history for different projects and sessions (backed by a local SQLite database), keeping your thoughts organized and isolating contexts for different tasks. It also features a **Long-term Project Memory System** that autonomously manages and injects a `.pipi-shrimp/core.md` context file for each workspace, ensuring the AI persistently remembers the project's unique tech stack, architecture, and developer preferences across sessions.
-- **🧩 Rich Skill Plugins (Skill Market)**: Built-in, out-of-the-box utility components (PDF analysis, Excel processing, Docx extraction, etc.).
+- **🤖 Multi-Agent Collaboration (Swarm)**: Team-based autonomous agents with async inbox messaging, task distribution, permission delegation, and full transcript logging for complex collaborative tasks.
+- **📦 3-Layer Context Compression**: Intelligent conversation management with microcompact (per-turn tool cleanup), session memory, and full LLM summary compression to handle long conversations efficiently.
+- **💬 Telegram Bot Integration**: Connect your agent to Telegram for remote control and notifications through a bot API.
+- **🧩 Rich Skill Plugins (Skill Market)**: Built-in, out-of-the-box utility components (PDF analysis, Excel processing, Docx extraction, Email, etc.).
 
 ### 🚀 Getting Started
 
@@ -74,36 +77,48 @@ This project adopts a typical frontend-backend separation architecture (based on
 
 ```text
 pipi-shrimp-agent/
-├── src/                    # ⚛️ React Frontend (UI Interactions)
-│   ├── components/         # Reusable UI components
-│   ├── pages/              # Core pages (Chat, Workflow, Settings, Skill)
-│   ├── store/              # Zustand state management (ChatStore, UIStore, Settings)
-│   ├── skills/             # Pre-built feature modules (PDF/Docx/Email/Xlsx processing)
-│   └── types/              # TypeScript type definitions
-├── src-tauri/              # 🦀 Rust Backend (Core Logic)
-│   ├── src/                #
-│   │   ├── commands/       # Tauri command registration (exposed to frontend)
-│   │   │   ├── chat.rs     # Session logic
-│   │   │   ├── code.rs     # Script execution logic (Bash/Python/Node)
-│   │   │   ├── file.rs     # Local file operations
-│   │   │   └── web.rs      # Web automation
-│   │   ├── claude/         # Claude API client implementation
-│   │   ├── models/         # Data models and serialization
-│   │   ├── utils/          # Utilities (Typst rendering, font management)
-│   │   ├── database.rs     # SQLite local persistence logic
-│   │   └── main.rs         # Tauri application entry point
-│   ├── Cargo.toml          # Rust dependencies configuration
-│   └── tauri.conf.json     # Tauri application configuration
-├── node-scripts/           # 🟢 Node scripts called by the Rust backend (e.g., claude-sdk.js)
-├── public/                 # Static assets (e.g., icons)
-└── package.json            # Frontend and project-level dependencies
+├── src/                         # ⚛️ React Frontend (UI + Business Logic)
+│   ├── components/               # Reusable UI components
+│   │   ├── workflow/            # Workflow canvas, agent nodes, execution bar
+│   │   └── ...
+│   ├── core/                    # QueryEngine, stream adapter, core types
+│   ├── hooks/                   # Custom React hooks
+│   ├── layout/                  # App layout with sidebar navigation
+│   ├── pages/                   # Main pages (Chat, Workflow, Skill, Settings)
+│   ├── services/                # Core services
+│   │   ├── swarm/              # Multi-agent collaboration system
+│   │   ├── compact/             # 3-layer context compression
+│   │   ├── memory/              # Long-term memory & auto-extraction
+│   │   ├── toolEngine.ts        # Tool execution orchestration
+│   │   ├── workflowEngine.ts    # Visual workflow orchestration
+│   │   └── telegramService.ts   # Telegram Bot integration
+│   ├── skills/                  # Skill plugins (PDF, DOCX, XLSX, Email)
+│   ├── store/                   # Zustand state management
+│   ├── tools/                   # Tool implementations (Bash, File, Browser, etc.)
+│   ├── types/                   # TypeScript type definitions
+│   └── utils/                   # Utilities (pricing, permissions, browser utils)
+├── src-tauri/                   # 🦀 Rust Backend (Native Core)
+│   ├── src/
+│   │   ├── lib.rs               # Main library with 60+ Tauri commands
+│   │   ├── database.rs          # SQLite persistence layer
+│   │   ├── claude/              # Claude API HTTP client (multi-provider)
+│   │   ├── models/              # IPC request/response types
+│   │   ├── tools/                # Tool pipeline registry & scheduler
+│   │   └── utils/                # Typst rendering, error handling
+│   ├── skills/                  # Skill metadata (skills.config.json)
+│   ├── capabilities/            # Tauri permission configurations
+│   ├── Cargo.toml               # Rust dependencies
+│   └── tauri.conf.json          # Tauri application config
+├── docs/                        # Documentation
+├── public/                      # Static assets
+└── package.json                 # Frontend dependencies
 ```
 
 ### 🛠️ Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, Zustand, Vite
-- **Backend**: Rust, Tauri, Tokio (Async Runtime), Rusqlite (SQLite Driver), Typst (Document Rendering)
-- **AI Engine**: Anthropic API / Claude SDK
+- **Backend**: Rust, Tauri 2, Tokio (Async Runtime), Rusqlite (SQLite Driver), Typst (Document Rendering), Chromiumoxide (CDP)
+- **AI Engine**: Anthropic API / Claude SDK (multi-provider: MiniMax, OpenAI-compatible, Gemini)
 - **Tools**: pnpm, Cargo
 
 ### 📝 Roadmap
@@ -117,8 +132,11 @@ pipi-shrimp-agent/
 - [x] Task 7: Core local system operation commands (Bash/Node/Python/File System)
 - [x] Task 8: **Agent Long-term Project Memory System** (`.pipi-shrimp/core.md`)
 - [x] Task 9: **High-performance CDP-based Browser Automation Agent**
-- [ ] Task 10: Knowledge base (RAG) retrieval augmentation integration
-- [ ] Task 11: Font selection feature for Typst rendering (allow users to choose preferred fonts)
+- [x] Task 10: **Multi-Agent Collaboration System (Swarm)**
+- [x] Task 11: **3-Layer Context Compression** (microcompact, session memory, full compact)
+- [x] Task 12: **Telegram Bot Integration**
+- [ ] Task 13: Knowledge base (RAG) retrieval augmentation integration
+- [ ] Task 14: Font selection feature for Typst rendering
 
 ### 🔧 Recommended IDE Setup
 
@@ -138,15 +156,18 @@ We highly recommend using **VS Code** for development and installing the followi
 Pipi-Shrimp Agent 旨在为个人提供一个快速、响应迅速且功能强大的本地 AI 客户端，彻底释放大语言模型的工具调用潜力。
 
 - **⚡ 极致轻量与原生性能**: 基于 Rust 和 Tauri 构建后端，极速启动，内存占用极低，同时提供系统底层调用权限。
-- **🧠 强大的大模型集成 (Claude 优先)**: 深度集成 Claude SDK，支持流式输出 (Streaming) 和强大的 `tool_calls` 工具调用能力。
+- **🧠 强大的大模型集成 (多 Provider)**: 深度集成 Claude SDK，支持 **MiniMax**、**OpenAI-compatible**、**Gemini** 及 **Anthropic** API，流式输出与 `tool_calls` 工具调用能力。
 - **🛠️ 丰富的本地化工具链 (Function Calling)**:
   - **代码执行引擎**: 本地执行 Bash, Python, 和 Node.js 脚本。
   - **文件系统操作**: 强大的本地文件读写、搜索与管理能力。
   - **Web 自动化**: 集成网页浏览、抓取和基于 CDP 的高性能端到端浏览器自动化智能控制方案。
   - **高级文档渲染**: 独家集成 **Typst** 引擎，支持从文本到高质量 SVG/PDF 排版的实时渲染与字体管理。
-- **🔄 Workflow 工作流系统**: 灵活的流式任务管理，让多步骤的复杂操作自动化执行。
+- **🔄 Workflow 工作流系统**: 灵活的可视化图形编排任务管理，支持顺序/并行执行与条件路由，让多步骤复杂操作自动化执行。
 - **📂 项目级上下文管理**: 智能管理不同项目和会话的对话历史 (基于本地 SQLite 数据库)，保持思路清晰，隔离不同任务的上下文。独创 **项目级核心长效记忆系统**，自动维护 `.pipi-shrimp/core.md` 文件，使 AI 能跨会话持久地记住项目的技术栈、架构背景及你的私人开发偏好。
-- **🧩 丰富的技能插件 (Skill Market)**: 内置多种开箱即用的实用工具组件（PDF 分析、Excel 处理、Docx 提取等）。
+- **🤖 多智能体协作 (Swarm)**: 基于团队协作的自主智能体系统，支持异步消息传递、任务分发、权限委托和完整 transcript 日志记录。
+- **📦 三层上下文压缩**: 智能对话管理，包含 microcompact（每轮工具清理）、session memory 和完整 LLM 摘要压缩，高效处理长对话。
+- **💬 Telegram 机器人集成**: 通过 Bot API 连接你的智能体，实现远程控制和消息通知。
+- **🧩 丰富的技能插件 (Skill Market)**: 内置多种开箱即用的实用工具组件（PDF 分析、Excel 处理、Docx 提取、Email 等）。
 
 ### 🚀 快速开始
 
@@ -185,36 +206,48 @@ pnpm run tauri:build
 
 ```text
 pipi-shrimp-agent/
-├── src/                    # ⚛️ React 前端代码 (UI 交互)
-│   ├── components/         # 可复用的 UI 组件
-│   ├── pages/              # 核心页面 (Chat, Workflow, Settings, Skill)
-│   ├── store/              # Zustand 状态管理 (ChatStore, UIStore, Settings)
-│   ├── skills/             # 预置的特色功能模块 (PDF/Docx/Email/Xlsx 处理)
-│   └── types/              # TypeScript 类型定义
-├── src-tauri/              # 🦀 Rust 后端代码 (核心逻辑层)
-│   ├── src/                #
-│   │   ├── commands/       # Tauri 命令注册 (暴露给前端调用的接口)
-│   │   │   ├── chat.rs     # 会话逻辑
-│   │   │   ├── code.rs     # 脚本执行逻辑 (Bash/Python/Node)
-│   │   │   ├── file.rs     # 本地文件操作
-│   │   │   └── web.rs      # Web 自动化相关
-│   │   ├── claude/         # Claude API 客户端实现与通信层
-│   │   ├── models/         # 数据模型与序列化定义
-│   │   ├── utils/          # 工具类 (Typst 渲染与字体库管理等)
-│   │   ├── database.rs     # SQLite 本地持久化逻辑
-│   │   └── main.rs         # Tauri 应用入口
-│   ├── Cargo.toml          # Rust 依赖配置
-│   └── tauri.conf.json     # Tauri 应用程序配置
-├── node-scripts/           # 🟢 供 Rust 后端调用的辅助 Node 脚本 (如 claude-sdk.js)
-├── public/                 # 静态资源 (如图标)
-└── package.json            # 前端与项目级依赖
+├── src/                         # ⚛️ React 前端代码 (UI + 业务逻辑)
+│   ├── components/               # 可复用 UI 组件
+│   │   ├── workflow/            # 工作流画布、节点、执行栏
+│   │   └── ...
+│   ├── core/                    # QueryEngine, 流适配器, 核心类型
+│   ├── hooks/                   # 自定义 React hooks
+│   ├── layout/                  # 带侧边栏导航的布局
+│   ├── pages/                   # 核心页面 (Chat, Workflow, Skill, Settings)
+│   ├── services/                # 核心服务
+│   │   ├── swarm/              # 多智能体协作系统
+│   │   ├── compact/             # 三层上下文压缩
+│   │   ├── memory/              # 长期记忆与自动提取
+│   │   ├── toolEngine.ts        # 工具执行编排
+│   │   ├── workflowEngine.ts     # 可视化工作流编排
+│   │   └── telegramService.ts    # Telegram 机器人集成
+│   ├── skills/                  # 技能插件 (PDF, DOCX, XLSX, Email)
+│   ├── store/                   # Zustand 状态管理
+│   ├── tools/                   # 工具实现 (Bash, File, Browser 等)
+│   ├── types/                   # TypeScript 类型定义
+│   └── utils/                   # 工具函数 (定价, 权限, 浏览器工具)
+├── src-tauri/                   # 🦀 Rust 后端代码 (原生核心)
+│   ├── src/
+│   │   ├── lib.rs               # 主库，包含 60+ 个 Tauri 命令
+│   │   ├── database.rs          # SQLite 持久化层
+│   │   ├── claude/              # Claude API HTTP 客户端 (多 provider)
+│   │   ├── models/              # IPC 请求/响应类型
+│   │   ├── tools/                # 工具管道注册与调度
+│   │   └── utils/                # Typst 渲染, 错误处理
+│   ├── skills/                  # 技能元数据 (skills.config.json)
+│   ├── capabilities/            # Tauri 权限配置
+│   ├── Cargo.toml               # Rust 依赖
+│   └── tauri.conf.json          # Tauri 应用配置
+├── docs/                        # 文档
+├── public/                      # 静态资源
+└── package.json                  # 前端依赖
 ```
 
 ### 🛠️ 技术栈
 
 - **前端 (Frontend)**: React 18, TypeScript, Tailwind CSS, Zustand, Vite
-- **后端 (Backend)**: Rust, Tauri, Tokio (异步运行时), Rusqlite (SQLite 驱动), Typst (文档渲染)
-- **AI 引擎 (AI)**: Anthropic API / Claude SDK
+- **后端 (Backend)**: Rust, Tauri 2, Tokio (异步运行时), Rusqlite (SQLite 驱动), Typst (文档渲染), Chromiumoxide (CDP)
+- **AI 引擎 (AI)**: Anthropic API / Claude SDK (多 provider: MiniMax, OpenAI-compatible, Gemini)
 - **工具 (Tools)**: pnpm, Cargo
 
 ### 📝 开发进度
@@ -228,8 +261,11 @@ pipi-shrimp-agent/
 - [x] Task 7: 核心本地系统操作指令集 (Bash/Node/Python/文件系统)
 - [x] Task 8: ** Agent 项目级长效记忆体系** (`.pipi-shrimp/core.md`)
 - [x] Task 9: **基于 CDP 的高性能浏览器智能控制能力**
-- [ ] Task 10: 知识库 (RAG) 检索增强集成
-- [ ] Task 11: 字体选择功能 (允许用户为 Typst 渲染选择首选字体)
+- [x] Task 10: **多智能体协作系统 (Swarm)**
+- [x] Task 11: **三层上下文压缩系统** (microcompact, session memory, full compact)
+- [x] Task 12: **Telegram 机器人集成**
+- [ ] Task 13: 知识库 (RAG) 检索增强集成
+- [ ] Task 14: 字体选择功能 (允许用户为 Typst 渲染选择首选字体)
 
 ### 🔧 IDE 推荐配置
 

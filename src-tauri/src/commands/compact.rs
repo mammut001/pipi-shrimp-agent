@@ -26,36 +26,7 @@ use tauri::command;
  */
 #[command]
 pub fn estimate_tokens(text: &str) -> usize {
-    let mut cjk_chars = 0usize;
-    let mut other_chars = 0usize;
-    
-    for c in text.chars() {
-        if c.is_whitespace() {
-            continue;
-        }
-        let code = c as u32;
-        // CJK Unified Ideographs (4E00-9FFF)
-        // CJK Extension A (3400-4DBF)
-        // CJK Compatibility (F900-FAFF)
-        // CJK Extension B+ (20000-2A6DF)
-        // Hiragana/Katakana (3040-30FF)
-        // Hangul (AC00-D7AF)
-        // Full-width (FF00-FFEF)
-        let is_cjk = (0x4E00 <= code && code <= 0x9FFF)
-            || (0x3400 <= code && code <= 0x4DBF)
-            || (0xF900 <= code && code <= 0xFAFF)
-            || (0x3040 <= code && code <= 0x30FF)
-            || (0xAC00 <= code && code <= 0xD7AF)
-            || (0x20000 <= code && code <= 0x2A6DF)
-            || (0xFF00 <= code && code <= 0xFFEF);
-        if is_cjk {
-            cjk_chars += 1;
-        } else {
-            other_chars += 1;
-        }
-    }
-    
-    (other_chars / 4) + (cjk_chars / 2)
+    crate::utils::token::estimate_tokens(text).max(0) as usize
 }
 
 /**

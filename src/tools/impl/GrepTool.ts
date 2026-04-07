@@ -84,7 +84,7 @@ export const GrepInputSchema = z.object({
   pattern: z.string().describe('Regex pattern to search for'),
   path: z.string().optional().describe('Path to search in'),
   glob: z.string().optional().describe('Filter files by glob pattern'),
-  output_mode: z.enum(['content', 'files_with_matches', 'count']).optional().default('content'),
+  output_mode: z.enum(['content', 'files_with_matches', 'count']),
   '-B': z.number().optional().describe('Lines before match'),
   '-A': z.number().optional().describe('Lines after match'),
   '-C': z.number().optional().describe('Context lines around match'),

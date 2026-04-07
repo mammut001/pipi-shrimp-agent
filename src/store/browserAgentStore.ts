@@ -30,7 +30,6 @@ import {
   closeEmbeddedSurface,
   executeAgentTask,
   inspectEmbeddedSurface,
-  showBrowserWindow,
   captureScreenshot,
   type AgentLog,
   type AgentTaskComplete,
@@ -544,13 +543,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     });
 
     // Ensure browser is visible in mini or expanded mode for login
+    // Use setPresentationMode so uiStore is also updated (dock becomes visible)
     if (presentationMode === 'hidden') {
-      set({ presentationMode: 'mini' });
+      get().setPresentationMode('mini');
     }
-
-    void showBrowserWindow().catch((error) => {
-      console.error('Failed to show browser window for login:', error);
-    });
 
     // Send OS notification to alert user that login is needed
     void (async () => {
@@ -979,12 +975,8 @@ Complete the task efficiently and call "done" when finished.`;
     if (pendingTask) {
       addLog('info', '任务已保存，可以在登录后恢复');
     }
-
-    if (reason === 'login_required' || reason === 'captcha_required' || reason === 'mfa_required') {
-      void showBrowserWindow().catch((error) => {
-        console.error('Failed to show browser window for blocked state:', error);
-      });
-    }
+    // Note: Browser surface visibility is handled by BrowserSurfaceViewport based on presentationMode.
+    // If presentationMode was 'hidden', it was set to 'mini' above, which will show the embedded surface.
   },
 
   /**

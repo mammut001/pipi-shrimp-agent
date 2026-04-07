@@ -11,6 +11,7 @@ import { useCdpStore } from '@/store/cdpStore';
 import { CdpConnectorModal } from './CdpConnectorModal';
 import { TypstPreview } from './index';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
+import { DocPanel } from './DocPanel';
 import { getLatestTypstBlock } from '@/utils/typst';
 import { Section } from './ui/Section';
 import { FileIcon } from './ui/FileIcon';
@@ -471,6 +472,11 @@ export const AgentPanel: React.FC = () => {
             )}
           </div>
         </Section>
+
+        {/* Docs Section */}
+        {currentSession?.workDir && (
+          <DocPanel workDir={currentSession.workDir} />
+        )}
 
         {/* Context / Skills Section */}
         <Section title="Context">

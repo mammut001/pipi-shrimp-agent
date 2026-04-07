@@ -40,8 +40,9 @@ export function Sidebar() {
   const { selectSession, deleteSession, deleteSessions, createProject, deleteProject, getSessionsByProject, updateSessionProject, startSession, renameSession } = useChatStore();
   const { toggleSettings, currentView, setCurrentView } = useUIStore();
   const workflowRuns = useWorkflowStore((s) => s.workflowRuns);
-  const { renameWorkflowRun, deleteWorkflowRun } = useWorkflowStore();
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const { renameWorkflowRun, deleteWorkflowRun, selectRun } = useWorkflowStore();
+  // Read selectedRunId inline to avoid a subscription (we only need it in click handlers and JSX class logic)
+  const selectedRunId = useWorkflowStore.getState().selectedRunId;
 
   // Pricing helpers
   const getModelPricing = useSettingsStore((s) => s.getModelPricing);
@@ -166,11 +167,18 @@ export function Sidebar() {
   }, []);
 
   /**
-   * Create a new blank workflow with a pre-assigned working directory
+   * Create a new blank workflow with a pre-assigned working directory.
+   * Stops any in-progress execution first to avoid stale state.
    */
   const handleNewWorkflow = useCallback(async () => {
-    const { clearCanvas, addWorkflowRun } = useWorkflowStore.getState();
+    const { clearCanvas, addWorkflowRun, setRunning } = useWorkflowStore.getState();
+    // Stop any in-progress run first so we don't leave isRunning/currentRunningAgentId stale
+    if (workflowEngine.getIsRunning()) {
+      await workflowEngine.stop();
+    }
     clearCanvas();
+    setRunning(false, null);
+    workflowEngine.reset();
     const runId = crypto.randomUUID();
     try {
       const dir = await invoke<string>('create_workflow_run_directory', { runId });
@@ -358,8 +366,8 @@ export function Sidebar() {
    * Handle workflow run selection
    */
   const handleSelectRun = useCallback((runId: string) => {
-    setSelectedRunId(runId);
-  }, []);
+    selectRun(runId);
+  }, [selectRun]);
 
   const handleStartWorkflowRename = useCallback((runId: string) => {
     const run = workflowRuns.find((r) => r.id === runId);
@@ -396,17 +404,15 @@ export function Sidebar() {
         await invoke('delete_workflow_run_directory', { path: run.runDirectory });
       } catch (error) {
         console.error('Failed to delete workflow run directory:', error);
+        useUIStore.getState().addNotification('warning', `运行目录删除失败（${error}），记录已清除`);
       }
     }
 
+    // Store's deleteWorkflowRun handles selectedRunId cleanup automatically
     deleteWorkflowRun(workflowRunToDelete);
-    if (selectedRunId === workflowRunToDelete) {
-      const nextRun = workflowRuns.find((item) => item.id !== workflowRunToDelete);
-      setSelectedRunId(nextRun?.id ?? null);
-    }
     setShowWorkflowDeleteConfirm(false);
     setWorkflowRunToDelete(null);
-  }, [deleteWorkflowRun, selectedRunId, workflowRunToDelete, workflowRuns]);
+  }, [deleteWorkflowRun, workflowRunToDelete, workflowRuns]);
 
   /**
    * Format date for display

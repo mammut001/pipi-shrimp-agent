@@ -152,6 +152,7 @@ pub async fn send_message(_app: AppHandle, req: SendMessageRequest) -> AppResult
 /**
  * Save a message to database (called from frontend after streaming)
  */
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn save_message_to_db(
     _app: AppHandle,
@@ -208,6 +209,7 @@ pub async fn get_session(_app: AppHandle, session_id: String) -> AppResult<Strin
  *
  * Returns all session IDs and their basic info (without messages)
  */
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn list_sessions(_app: AppHandle) -> AppResult<Vec<SessionData>> {
     let sessions = database::get_all_sessions()
@@ -234,6 +236,7 @@ pub async fn list_sessions(_app: AppHandle) -> AppResult<Vec<SessionData>> {
 /**
  * Delete a session
  */
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn delete_session(_app: AppHandle, session_id: String) -> AppResult<()> {
     database::delete_session(&session_id)
@@ -268,6 +271,7 @@ pub async fn update_session_title(
 /**
  * Update session working directory
  */
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn update_session_cwd(
     _app: AppHandle,

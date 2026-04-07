@@ -166,6 +166,19 @@ export function failTask(taskId: string, error?: string): SwarmTask | undefined 
       eventType: 'agent_failed',
       taskId,
     });
+
+    // Notify team leader so the result appears in the conversation
+    const team = repo.getTeam(task.teamId);
+    if (team) {
+      sendMessage({
+        teamId: task.teamId,
+        fromAgentId: task.assignedAgentId,
+        toAgentId: team.leaderId,
+        messageType: 'task_result',
+        content: `FAILED: ${error || 'Unknown error'} (task: "${task.description}")`,
+        taskId,
+      });
+    }
   }
 
   return updated;

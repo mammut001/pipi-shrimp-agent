@@ -35,12 +35,48 @@ export function startRun(chatSessionId: string): SwarmRun {
   });
 }
 
+export function getActiveRunForChatSession(chatSessionId: string): SwarmRun | undefined {
+  return repo.getAllRuns().find(
+    (run) => run.chatSessionId === chatSessionId && run.status === 'active'
+  );
+}
+
 export function completeRun(runId: string): SwarmRun | undefined {
   return repo.updateRun(runId, { status: 'completed' });
 }
 
 export function failRun(runId: string): SwarmRun | undefined {
   return repo.updateRun(runId, { status: 'failed' });
+}
+
+/**
+ * Reconcile a run's terminal state based on current runtime entities for a chat session.
+ * - If any agents are still working, or tasks are still pending/claimed/in_progress, keep the run active.
+ * - Otherwise mark the run completed or failed depending on whether any terminal failures occurred.
+ */
+export function reconcileRunForChatSession(chatSessionId: string): SwarmRun | undefined {
+  const run = getActiveRunForChatSession(chatSessionId);
+  if (!run) return undefined;
+
+  const teams = repo.getTeamsForSession(chatSessionId);
+  const teamIds = new Set(teams.map((team) => team.id));
+  const agents = repo.getAllAgents().filter((agent) => agent.sessionId === chatSessionId);
+  const tasks = repo.getAllTasks().filter((task) => teamIds.has(task.teamId));
+
+  const hasActiveAgents = agents.some((agent) => agent.status === 'working');
+  const hasOpenTasks = tasks.some((task) =>
+    task.status === 'pending' || task.status === 'claimed' || task.status === 'in_progress'
+  );
+
+  if (hasActiveAgents || hasOpenTasks) {
+    return run;
+  }
+
+  const hasFailures =
+    agents.some((agent) => agent.status === 'failed') ||
+    tasks.some((task) => task.status === 'failed');
+
+  return hasFailures ? failRun(run.id) : completeRun(run.id);
 }
 
 // =============================================================================

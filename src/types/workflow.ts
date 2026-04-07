@@ -106,6 +106,8 @@ export interface WorkflowState {
   isRunning: boolean;
   currentRunningAgentId: string | null;
   workflowRuns: WorkflowRun[];
+  /** Which run's output is shown in the output panel (null = latest) */
+  selectedRunId: string | null;
 }
 
 // ============ Agent Templates ============

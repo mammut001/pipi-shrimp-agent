@@ -94,15 +94,24 @@ function TaskRow({ task }: { task: SwarmTask }) {
 
 function MessageRow({ msg, agents }: { msg: SwarmMessage; agents: SwarmAgent[] }) {
   const from = agents.find(a => a.id === msg.fromAgentId);
+  const to = agents.find(a => a.id === msg.toAgentId);
   const isUnread = !msg.readAt;
 
   return (
-    <div className={`px-2 py-1 text-xs ${isUnread ? 'bg-blue-500/10' : ''}`}>
+    <div className={`px-2 py-1 text-xs ${isUnread ? 'bg-blue-500/10 border-l-2 border-blue-400' : 'border-l-2 border-transparent'}`}>
       <div className="flex items-center gap-1">
         <span className="text-white/60">{from?.name || 'unknown'}</span>
         <span className="text-[10px] text-white/30">→</span>
-        <span className="text-white/40">{msg.messageType}</span>
-        {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />}
+        <span className="text-white/60">{to?.name || 'unknown'}</span>
+        <span className={`text-[10px] px-1 rounded ${
+          isUnread ? 'bg-blue-500/20 text-blue-300' : 'bg-white/5 text-white/30'
+        }`}>{msg.messageType}</span>
+        {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />}
+        {msg.readAt && (
+          <span className="text-[10px] text-white/20 ml-auto" title={`Read at ${new Date(msg.readAt).toLocaleTimeString()}`}>
+            ✓ read
+          </span>
+        )}
       </div>
       <div className="text-white/50 truncate mt-0.5">{msg.content}</div>
     </div>
@@ -192,16 +201,36 @@ function AgentDetail({ agentId }: { agentId: string }) {
         ))}
       </div>
 
-      {/* Transcript summary */}
-      <div className="px-2">
-        <div className="text-[10px] text-white/50 uppercase mb-1">
-          Transcript ({summary.totalEntries} entries)
-        </div>
-      </div>
+      {/* Transcript — show last 8 by default with expand toggle */}
+      <TranscriptSection transcript={transcript} totalEntries={summary.totalEntries} />
+    </div>
+  );
+}
 
-      {/* Recent transcript entries */}
+/** Collapsible transcript section — shows last N entries with expand toggle */
+function TranscriptSection({ transcript, totalEntries }: { transcript: TranscriptEntry[]; totalEntries: number }) {
+  const COLLAPSED_COUNT = 8;
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? transcript : transcript.slice(-COLLAPSED_COUNT);
+  const hiddenCount = transcript.length - shown.length;
+
+  return (
+    <div>
+      <div className="px-2 flex items-center gap-2">
+        <div className="text-[10px] text-white/50 uppercase">
+          Transcript ({totalEntries} entries)
+        </div>
+        {hiddenCount > 0 && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-[10px] text-blue-400 hover:text-blue-300"
+          >
+            {expanded ? 'Show less' : `Show ${hiddenCount} more`}
+          </button>
+        )}
+      </div>
       <div className="max-h-[300px] overflow-y-auto">
-        {transcript.slice(-20).map(entry => (
+        {shown.map(entry => (
           <TranscriptRow key={entry.id} entry={entry} />
         ))}
         {transcript.length === 0 && (
@@ -221,6 +250,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
   const teamMessages = store.getSelectedTeamMessages();
   const taskSummary = store.getTeamTaskSummary(teamId);
   const pendingPerms = store.pendingPermissions.filter(p => p.teamId === teamId);
+  const unreadMessages = teamMessages.filter(m => !m.readAt);
 
   const [tab, setTab] = useState<'tasks' | 'messages'>('tasks');
 
@@ -253,7 +283,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
           onClick={() => setTab('messages')}
           className={`text-[10px] px-2 py-0.5 rounded ${tab === 'messages' ? 'bg-white/15 text-white' : 'text-white/40 hover:text-white/60'}`}
         >
-          Messages ({teamMessages.length})
+          Messages ({teamMessages.length}{unreadMessages.length > 0 ? ` · ${unreadMessages.length} unread` : ''})
         </button>
       </div>
 
@@ -352,24 +382,34 @@ export function SwarmPanel() {
           <div className="flex">
             {/* Left: team/agent list */}
             <div className="w-[180px] border-r border-white/10 max-h-[500px] overflow-y-auto">
-              {/* Teams */}
-              {teams.map(team => (
-                <div key={team.id}>
-                  <button
-                    onClick={() => store.selectTeam(team.id)}
-                    className={`w-full text-left px-2 py-1.5 text-xs font-medium hover:bg-white/5 flex items-center gap-1 ${
-                      selectedTeamId === team.id ? 'bg-white/10' : ''
-                    }`}
-                  >
-                    <StatusBadge status={team.status} />
-                    <span className="truncate">{team.name}</span>
-                  </button>
+              {/* Teams — active first, completed collapsed */}
+              {teams.map(team => {
+                const teamAgents = agents.filter(a => a.teamId === team.id);
+                const activeAgents = teamAgents.filter(a => a.status === 'idle' || a.status === 'working');
+                const completedAgents = teamAgents.filter(a => a.status !== 'idle' && a.status !== 'working');
+                const isTeamDone = team.status === 'disbanded' || team.status === 'completed';
+                const isExpanded = selectedTeamId === team.id;
 
-                  {/* Team agents */}
-                  <div className="pl-2">
-                    {agents
-                      .filter(a => a.teamId === team.id)
-                      .map(agent => (
+                return (
+                  <div key={team.id}>
+                    <button
+                      onClick={() => store.selectTeam(team.id)}
+                      className={`w-full text-left px-2 py-1.5 text-xs font-medium hover:bg-white/5 flex items-center gap-1 ${
+                        selectedTeamId === team.id ? 'bg-white/10' : ''
+                      } ${isTeamDone ? 'opacity-60' : ''}`}
+                    >
+                      <StatusBadge status={team.status} />
+                      <span className="truncate flex-1">{team.name}</span>
+                      {!isExpanded && teamAgents.length > 0 && (
+                        <span className="text-[10px] text-white/30">
+                          {activeAgents.length > 0 ? `${activeAgents.length} active` : `${teamAgents.length} done`}
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Show agents: always show active, show completed only when team is selected */}
+                    <div className="pl-2">
+                      {activeAgents.map(agent => (
                         <AgentRow
                           key={agent.id}
                           agent={agent}
@@ -381,9 +421,27 @@ export function SwarmPanel() {
                           }}
                         />
                       ))}
+                      {isExpanded && completedAgents.map(agent => (
+                        <AgentRow
+                          key={agent.id}
+                          agent={agent}
+                          isSelected={selectedAgentId === agent.id}
+                          unreadCount={store.getAgentInboxSummary(agent.id).totalUnread}
+                          onClick={() => {
+                            store.selectTeam(team.id);
+                            store.selectAgent(agent.id);
+                          }}
+                        />
+                      ))}
+                      {!isExpanded && completedAgents.length > 0 && activeAgents.length > 0 && (
+                        <div className="text-[10px] text-white/30 px-2 py-0.5">
+                          +{completedAgents.length} completed
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {teams.length === 0 && (
                 <div className="p-3 text-xs text-white/30 text-center">

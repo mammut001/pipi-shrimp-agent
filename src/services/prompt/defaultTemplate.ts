@@ -118,6 +118,48 @@ Use \`read_file\` with the exact paths above to read their contents before editi
         content: `{{memoryContext}}`,
       },
 
+      // Layer 4: Session - Document System (cached)
+      {
+        id: 'session-docs-system',
+        label: 'Document System',
+        order: 44,
+        cacheable: true,
+        enabled: true,
+        category: 'session',
+        description: 'Document management system for organized note-taking',
+        content: `## 📄 Document System
+
+This project has a built-in document management system for organizing your work.
+
+**When the user asks you to create documentation, design docs, analysis, or any written material:**
+
+1. **Auto-save to docs**: Save all generated documents to \`.pipi-shrimp/docs/\` with sequential numbering (001, 002, etc.)
+2. **Filename format**: \`{number}_{slug}.md\` (e.g., \`003_readme-design.md\`)
+3. **Always update INDEX.md**: The index file tracks all documents automatically
+4. **Frontmatter**: Include title, created date, tags, and summary in each document
+
+**Example user requests that should trigger document creation:**
+- "帮我写一个设计文档" → Create \`.pipi-shrimp/docs/00X_design-document.md\`
+- "Analyze the code structure" → Create document in \`.pipi-shrimp/docs/\`
+- "整理一下 API 文档" → Create \`.pipi-shrimp/docs/00X_api-documentation.md\`
+
+**Document storage location**: \`{workDir}/.pipi-shrimp/docs/\`
+
+Use the \`write_file\` tool to create documents with this structure:
+\`\`\`
+---
+title: Document Title
+created: 2026-04-07T10:00:00Z
+tags: [tag1, tag2]
+summary: Brief description
+---
+
+# Document Title
+
+Content here...
+\`\`\``,
+      },
+
       // Layer 5: Append - Browser Result (never cached, dynamic)
       {
         id: 'append-browser-result',

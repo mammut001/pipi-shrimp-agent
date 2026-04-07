@@ -28,6 +28,7 @@ import {
 import {
   getInboxSummary,
 } from '../services/swarm/messageService';
+import { stopAllPolling } from '../services/swarm/inboxCoordinator';
 import {
   getTranscriptSummary,
 } from '../services/swarm/transcript';
@@ -112,11 +113,11 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
   activeAgentCount: 0,
   initialized: false,
 
-  init: () => {
+  init: async () => {
     if (get().initialized) return;
 
-    // Restore persisted state
-    repo.restoreFromStorage();
+    // Restore persisted state (now async via persistence bridge)
+    await repo.restoreFromStorage();
 
     // Subscribe to repository events for live sync
     unsubscribe = repo.subscribe(() => {
@@ -158,6 +159,8 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       unsubscribe();
       unsubscribe = null;
     }
+    // Stop all inbox pollers to prevent memory leaks
+    stopAllPolling();
     set({ initialized: false });
   },
 

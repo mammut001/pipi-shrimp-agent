@@ -19,12 +19,14 @@ export class BriefTool extends BaseTool<BriefInput, BriefOutput> {
   readonly outputSchema = BriefOutputSchema;
 
   async execute(input: BriefInput, _context: ToolContext): Promise<ToolResult<BriefOutput>> {
+    const status = input.status ?? 'normal';
     // In a Tauri context, this would emit an event to the UI to display the brief
     return {
       success: true,
       data: {
         success: true,
-        message: input.message
+        message: input.message,
+        status
       }
     };
   }
@@ -41,12 +43,13 @@ export class BriefTool extends BaseTool<BriefInput, BriefOutput> {
 
 export const BriefInputSchema = z.object({
   message: z.string().describe('Status message to send to the user'),
-  status: z.enum(['normal', 'warning', 'error', 'success']).optional().default('normal')
+  status: z.enum(['normal', 'warning', 'error', 'success'])
 });
 
 export const BriefOutputSchema = z.object({
   success: z.boolean(),
-  message: z.string()
+  message: z.string(),
+  status: z.enum(['normal', 'warning', 'error', 'success'])
 });
 
 export type BriefInput = z.infer<typeof BriefInputSchema>;

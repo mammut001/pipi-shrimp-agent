@@ -1,12 +1,11 @@
+use once_cell::sync::Lazy;
 /**
  * Database module - SQLite persistence for sessions and messages
  */
-
-use rusqlite::{Connection, Result as SqliteResult, params, Row};
+use rusqlite::{params, Connection, Result as SqliteResult, Row};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
 
 /**
  * Helper to map a row to DbSession
@@ -22,7 +21,7 @@ fn row_to_session(row: &Row) -> SqliteResult<DbSession> {
         model: row.get(6)?,
         work_dir: row.get(7)?,
         working_files: row.get(8)?,
-        permission_mode: row.get(9)?,  // NEW: session permission mode
+        permission_mode: row.get(9)?, // NEW: session permission mode
     })
 }
 
@@ -60,6 +59,7 @@ fn row_to_project(row: &Row) -> SqliteResult<DbProject> {
 /**
  * Helper to map a row to DbTokenUsage
  */
+#[allow(dead_code)]
 fn row_to_token_usage(row: &Row) -> SqliteResult<DbTokenUsage> {
     Ok(DbTokenUsage {
         id: row.get(0)?,
@@ -89,8 +89,8 @@ pub struct DbSession {
     pub cwd: Option<String>,
     pub project_id: Option<String>,
     pub model: Option<String>,
-    pub work_dir: Option<String>,    // each session's work directory
-    pub working_files: Option<String>, // JSON serialized ImportedFile[]
+    pub work_dir: Option<String>,        // each session's work directory
+    pub working_files: Option<String>,   // JSON serialized ImportedFile[]
     pub permission_mode: Option<String>, // NEW: session permission mode ('standard', 'auto-edits', 'bypass', 'plan-only')
 }
 
@@ -105,7 +105,7 @@ pub struct DbMessage {
     pub content: String,
     pub reasoning: Option<String>,
     pub artifacts: Option<String>,
-    pub tool_calls: Option<String>,  // JSON-serialized Vec<ToolCall>
+    pub tool_calls: Option<String>, // JSON-serialized Vec<ToolCall>
     pub created_at: i64,
 }
 
@@ -118,7 +118,7 @@ pub struct DbProject {
     pub name: String,
     pub description: Option<String>,
     pub color: Option<String>,
-    pub work_dir: Option<String>,   // NEW: path to local work directory
+    pub work_dir: Option<String>, // NEW: path to local work directory
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -130,7 +130,7 @@ pub struct DbProject {
 pub struct DbTokenUsage {
     pub id: String,
     pub session_id: Option<String>,
-    pub date: String,  // YYYY-MM-DD format
+    pub date: String, // YYYY-MM-DD format
     pub input_tokens: i32,
     pub output_tokens: i32,
     pub model: String,
@@ -150,272 +150,164 @@ fn get_db_path() -> PathBuf {
 }
 
 /**
- * Initialize the database connection and create tables
+ * Apply a versioned migration to the database.
+ *
+ * All DDL for version N is applied inside a single transaction so either
+ * every statement in a version succeeds or none do.
+ */
+fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
+    match version {
+        1 => {
+            conn.execute_batch(
+                "
+                BEGIN;
+
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    cwd TEXT,
+                    project_id TEXT,
+                    model TEXT,
+                    work_dir TEXT,
+                    working_files TEXT,
+                    permission_mode TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS messages (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    reasoning TEXT,
+                    artifacts TEXT,
+                    tool_calls TEXT,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    color TEXT,
+                    work_dir TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
+
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    date TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    model TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_token_usage_date    ON token_usage(date);
+                CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+                CREATE INDEX IF NOT EXISTS idx_token_usage_model   ON token_usage(model);
+
+                -- Idempotent column additions for databases created before version 1
+                -- was formalised (SQLite ignores duplicate column errors when wrapped
+                -- in the IGNORE keyword; we use a separate execute for each so a
+                -- pre-existing column doesn't abort the whole transaction).
+                COMMIT;
+            ",
+            )?;
+
+            // ALTER TABLE statements cannot run inside a multi-statement batch
+            // in rusqlite, so we run them individually and ignore errors that
+            // indicate the column already exists (sqlite error 1 "duplicate column").
+            let alters = [
+                "ALTER TABLE messages  ADD COLUMN reasoning TEXT",
+                "ALTER TABLE messages  ADD COLUMN tool_calls TEXT",
+                "ALTER TABLE sessions  ADD COLUMN project_id TEXT",
+                "ALTER TABLE sessions  ADD COLUMN model TEXT",
+                "ALTER TABLE sessions  ADD COLUMN work_dir TEXT",
+                "ALTER TABLE sessions  ADD COLUMN working_files TEXT",
+                "ALTER TABLE sessions  ADD COLUMN permission_mode TEXT",
+                "ALTER TABLE projects  ADD COLUMN work_dir TEXT",
+            ];
+            for sql in &alters {
+                let _ = conn.execute(sql, []);
+            }
+
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (1, strftime('%s','now'))",
+                [],
+            )?;
+        }
+        2 => {
+            conn.execute_batch("
+                BEGIN;
+                CREATE TABLE IF NOT EXISTS swarm_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_json TEXT NOT NULL,
+                    saved_at INTEGER NOT NULL
+                );
+                COMMIT;
+            ")?;
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (2, strftime('%s','now'))",
+                [],
+            )?;
+        }
+        _ => {
+            eprintln!("⚠️  Unknown migration version {}", version);
+        }
+    }
+    Ok(())
+}
+
+/**
+ * Initialize the database connection and run pending migrations.
+ *
+ * Uses a `schema_version` table as the single source of truth for which
+ * migrations have been applied.  Adding a new migration is a matter of
+ * adding a new `version =>` arm to `apply_migration` and bumping
+ * `LATEST_VERSION`.
  */
 pub fn init_database() -> SqliteResult<()> {
+    const LATEST_VERSION: i64 = 2;
+
     let db_path = get_db_path();
     println!("📂 Database path: {:?}", db_path);
 
     let conn = Connection::open(&db_path)?;
 
-    // Create sessions table
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            cwd TEXT,
-            project_id TEXT,
-            model TEXT,
-            work_dir TEXT,
-            working_files TEXT
-        )",
-        [],
-    )?;
+    // Bootstrap the version-tracking table on first run
+    conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version    INTEGER PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        );
+    ")?;
 
-    // Create messages table
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            reasoning TEXT,
-            artifacts TEXT,
-            created_at INTEGER NOT NULL,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        )",
-        [],
-    )?;
+    let current_version: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
 
-    // Handle migration: add reasoning column if it doesn't exist
-    // Use pragmas for better compatibility
-    let column_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(messages)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "reasoning" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
-
-    if !column_exists {
-        println!("🚀 Migrating database: adding 'reasoning' column to 'messages' table");
-        // Ignore error if it somehow exists (e.g. race condition)
-        let _ = conn.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT", []);
+    for v in (current_version + 1)..=(LATEST_VERSION) {
+        println!("🚀 Applying database migration v{}", v);
+        apply_migration(&conn, v)?;
     }
 
-    // Migration: add tool_calls column to messages table
-    let tool_calls_col_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(messages)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "tool_calls" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
+    // Initialize swarm snapshot table (always, regardless of version)
+    init_swarm_table(&conn)?;
 
-    if !tool_calls_col_exists {
-        println!("🚀 Migrating database: adding 'tool_calls' column to 'messages' table");
-        let _ = conn.execute("ALTER TABLE messages ADD COLUMN tool_calls TEXT", []);
-    }
-
-    // Create index for faster message lookups
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
-        [],
-    )?;
-
-    // Check if project_id column exists in sessions table
-    let project_id_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "project_id" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
-
-    if !project_id_exists {
-        println!("🚀 Migrating database: adding 'project_id' column to 'sessions' table");
-        // Ignore error if it somehow exists (e.g. race condition)
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN project_id TEXT", []);
-    }
-
-    // Check if model column exists in sessions table
-    let model_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "model" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
-
-    if !model_exists {
-        println!("🚀 Migrating database: adding 'model' column to 'sessions' table");
-        // Ignore error if it somehow exists (e.g. race condition)
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN model TEXT", []);
-    }
-
-    // Migration: add work_dir column to sessions table for existing installs
-    let sessions_work_dir_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "work_dir" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
-
-    if !sessions_work_dir_exists {
-        println!("🚀 Migrating database: adding 'work_dir' column to 'sessions' table");
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN work_dir TEXT", []);
-    }
-
-    // Migration: add working_files column to sessions table
-    let sessions_working_files_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "working_files" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
-
-    if !sessions_working_files_exists {
-        println!("🚀 Migrating database: adding 'working_files' column to 'sessions' table");
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN working_files TEXT", []);
-    }
-
-    // Migration: add permission_mode column to sessions table
-    let sessions_permission_mode_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "permission_mode" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
-
-    if !sessions_permission_mode_exists {
-        println!("🚀 Migrating database: adding 'permission_mode' column to 'sessions' table");
-        let _ = conn.execute("ALTER TABLE sessions ADD COLUMN permission_mode TEXT", []);
-    }
-
-    // Create projects table (work_dir included from the start for new installs)
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS projects (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            color TEXT,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
-        )",
-        [],
-    )?;
-
-    // Migration: add work_dir column for existing installs that pre-date this column.
-    // Must run AFTER the CREATE TABLE above so the table is guaranteed to exist.
-    let work_dir_exists = {
-        let mut stmt = conn.prepare("PRAGMA table_info(projects)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut found = false;
-        for name in rows {
-            if let Ok(name) = name {
-                if name == "work_dir" {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        found
-    };
-
-    if !work_dir_exists {
-        println!("🚀 Migrating database: adding 'work_dir' column to 'projects' table");
-        let _ = conn.execute("ALTER TABLE projects ADD COLUMN work_dir TEXT", []);
-    }
-
-    // Create index for faster lookups
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name)",
-        [],
-    )?;
-
-    // Create token_usage table for tracking token consumption
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS token_usage (
-            id TEXT PRIMARY KEY,
-            session_id TEXT,
-            date TEXT NOT NULL,
-            input_tokens INTEGER NOT NULL,
-            output_tokens INTEGER NOT NULL,
-            model TEXT NOT NULL,
-            created_at INTEGER NOT NULL
-        )",
-        [],
-    )?;
-
-    // Create indexes for faster token stats queries
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage(date)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_token_usage_model ON token_usage(model)",
-        [],
-    )?;
-
-    println!("✅ Database initialized successfully");
+    println!("✅ Database initialized successfully (schema v{})", LATEST_VERSION);
 
     // Store connection globally
     let mut db = DATABASE.lock().unwrap();
@@ -427,6 +319,7 @@ pub fn init_database() -> SqliteResult<()> {
 /**
  * Get the database connection
  */
+#[allow(dead_code)]
 pub fn get_connection() -> std::sync::MutexGuard<'static, Option<Connection>> {
     DATABASE.lock().unwrap()
 }
@@ -474,7 +367,10 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
 pub fn delete_session(session_id: &str) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
-        conn.execute("DELETE FROM messages WHERE session_id = ?1", params![session_id])?;
+        conn.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            params![session_id],
+        )?;
         conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
     }
     Ok(())
@@ -539,7 +435,7 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, role, content, reasoning, artifacts, tool_calls, created_at
-             FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"
+             FROM messages WHERE session_id = ?1 ORDER BY created_at ASC",
         )?;
 
         let message_iter = stmt.query_map(params![session_id], row_to_message)?;
@@ -555,10 +451,14 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
 /**
  * Delete all messages for a session
  */
+#[allow(dead_code)]
 pub fn clear_messages_for_session(session_id: &str) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
-        conn.execute("DELETE FROM messages WHERE session_id = ?1", params![session_id])?;
+        conn.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            params![session_id],
+        )?;
     }
     Ok(())
 }
@@ -615,7 +515,10 @@ pub fn delete_project(project_id: &str) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         // Delete all sessions in this project first
-        conn.execute("UPDATE sessions SET project_id = NULL WHERE project_id = ?1", params![project_id])?;
+        conn.execute(
+            "UPDATE sessions SET project_id = NULL WHERE project_id = ?1",
+            params![project_id],
+        )?;
         // Delete the project
         conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
     }
@@ -704,7 +607,7 @@ pub fn get_daily_token_stats(year_month: &str) -> SqliteResult<Vec<DailyTokenSta
              FROM token_usage 
              WHERE date LIKE ?1 
              GROUP BY date 
-             ORDER BY date DESC"
+             ORDER BY date DESC",
         )?;
 
         let pattern = format!("{}%", year_month);
@@ -740,7 +643,7 @@ pub fn get_monthly_token_stats() -> SqliteResult<Vec<DailyTokenStats>> {
                     SUM(input_tokens + output_tokens) as total
              FROM token_usage
              GROUP BY month
-             ORDER BY month DESC"
+             ORDER BY month DESC",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -775,7 +678,7 @@ pub fn get_model_token_stats() -> SqliteResult<Vec<ModelTokenStats>> {
                     SUM(input_tokens + output_tokens) as total
              FROM token_usage
              GROUP BY model
-             ORDER BY total DESC"
+             ORDER BY total DESC",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -806,7 +709,7 @@ pub fn get_total_token_stats() -> SqliteResult<(i64, i64, i64)> {
             "SELECT COALESCE(SUM(input_tokens), 0),
                     COALESCE(SUM(output_tokens), 0),
                     COALESCE(SUM(input_tokens + output_tokens), 0)
-             FROM token_usage"
+             FROM token_usage",
         )?;
 
         let row = stmt.query_row([], |row| {
@@ -821,4 +724,84 @@ pub fn get_total_token_stats() -> SqliteResult<(i64, i64, i64)> {
     }
 
     Ok((0, 0, 0))
+}
+
+// =============================================================================
+// Swarm Snapshot Persistence (minimal SQLite support)
+// =============================================================================
+
+/**
+ * Swarm snapshot stored as a single JSON blob.
+ * This is the simplest possible approach — the entire swarm state
+ * is serialized as JSON and stored in one row.
+ *
+ * Future: normalize into separate tables (runs, teams, agents, etc.)
+ */
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbSwarmSnapshot {
+    pub id: i64,
+    pub snapshot_json: String,
+    pub saved_at: i64,
+}
+
+/**
+ * Initialize the swarm_snapshots table if it doesn't exist.
+ * Called during database init.
+ */
+pub fn init_swarm_table(conn: &Connection) -> SqliteResult<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS swarm_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_json TEXT NOT NULL,
+            saved_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
+/**
+ * Save a swarm snapshot.
+ * Replaces the existing snapshot (only one is kept).
+ */
+pub fn save_swarm_snapshot(snapshot_json: &str, saved_at: i64) -> SqliteResult<()> {
+    let guard = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        // Delete any existing snapshot first (we only keep the latest)
+        conn.execute("DELETE FROM swarm_snapshots", [])?;
+        conn.execute(
+            "INSERT INTO swarm_snapshots (snapshot_json, saved_at) VALUES (?1, ?2)",
+            params![snapshot_json, saved_at],
+        )?;
+    }
+    Ok(())
+}
+
+/**
+ * Load the latest swarm snapshot.
+ * Returns None if no snapshot exists.
+ */
+pub fn load_swarm_snapshot() -> SqliteResult<Option<String>> {
+    let guard = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        let result = conn.query_row(
+            "SELECT snapshot_json FROM swarm_snapshots ORDER BY saved_at DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        );
+        return Ok(result.ok());
+    }
+    Ok(None)
+}
+
+/**
+ * Clear all swarm snapshots.
+ */
+pub fn clear_swarm_snapshots() -> SqliteResult<()> {
+    let guard = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute("DELETE FROM swarm_snapshots", [])?;
+    }
+    Ok(())
 }

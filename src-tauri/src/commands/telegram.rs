@@ -91,6 +91,7 @@ pub struct TelegramUser {
 }
 
 /// Telegram API error response
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct TelegramApiError {
     ok: bool,
@@ -98,6 +99,7 @@ struct TelegramApiError {
 }
 
 /// Telegram getUpdates response
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetUpdatesResponse {
@@ -106,6 +108,7 @@ struct GetUpdatesResponse {
 }
 
 /// Telegram update
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Update {
@@ -136,6 +139,7 @@ impl Default for TelegramState {
 }
 
 /// Make HTTP request to Telegram API
+#[allow(dead_code)]
 async fn telegram_api_request<T: for<'de> Deserialize<'de>>(
     token: &str,
     method: &str,
@@ -308,6 +312,7 @@ pub async fn telegram_send_message(
         return Err(format!("Failed to send message: {}", body));
     }
 
+    #[allow(dead_code)]
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct SendMessageResponse {
@@ -514,6 +519,7 @@ pub async fn telegram_get_file_url(
 
     drop(s);
 
+    #[allow(dead_code)]
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct GetFileResponse {

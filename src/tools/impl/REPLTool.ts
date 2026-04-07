@@ -105,7 +105,7 @@ export class REPLTool extends BaseTool<REPLInput, REPLOutput> {
 
 export const REPLInputSchema = z.object({
   code: z.string().describe('Code to execute'),
-  language: z.enum(['javascript', 'python', 'node', 'bash']).optional().default('javascript'),
+  language: z.enum(['javascript', 'python', 'node', 'bash']),
   sessionId: z.string().optional().describe('REPL session ID for persistence')
 });
 

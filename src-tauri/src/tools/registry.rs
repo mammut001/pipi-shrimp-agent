@@ -101,6 +101,7 @@ impl ToolRegistry {
     }
 
     /// Check if a tool is read-only
+    #[allow(dead_code)]
     pub fn is_read_only(&self, name: &str) -> bool {
         self.tools
             .get(name)
@@ -123,6 +124,7 @@ impl ToolRegistry {
     }
 
     /// Generate OpenAI-compatible tools schema
+    #[allow(dead_code)]
     pub fn get_openai_tools_schema(&self) -> Vec<serde_json::Value> {
         self.tools
             .values()
@@ -140,6 +142,7 @@ impl ToolRegistry {
     }
 
     /// Get all registered tool names
+    #[allow(dead_code)]
     pub fn tool_names(&self) -> Vec<&String> {
         self.tools.keys().collect()
     }
@@ -149,6 +152,7 @@ impl ToolRegistry {
         self.tools.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }

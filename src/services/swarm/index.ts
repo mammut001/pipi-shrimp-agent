@@ -47,6 +47,8 @@ export {
 // Lifecycle
 export {
   startRun,
+  getActiveRunForChatSession,
+  reconcileRunForChatSession,
   completeRun,
   failRun,
   createTeam,
@@ -95,6 +97,22 @@ export {
   enqueuePermissionInUI,
   classifyRisk,
 } from './permissionBridge';
+
+// Inbox Coordinator (lifecycle-aware polling + message consumption)
+export {
+  onTeamCreated,
+  onAgentStarted,
+  onAgentFinished,
+  onTeamDisbanded,
+  startLeaderPolling,
+  startMemberPolling,
+  stopAgentPolling,
+  stopTeamPolling,
+  stopAllPolling,
+  isPollingActive,
+  getActivePollerCount,
+  swarmEvents,
+} from './inboxCoordinator';
 
 // Transcript
 export {

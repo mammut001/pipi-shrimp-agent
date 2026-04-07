@@ -20,6 +20,7 @@ pub struct SkillResult {
 }
 
 /// Frontmatter of a SKILL.md file
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct SkillFrontmatter {
     name: String,

@@ -4,9 +4,24 @@
  * Handles app configuration storage and retrieval
  */
 
-use crate::utils::AppResult;
+use crate::utils::{AppResult, AppError};
 use std::fs;
 use std::path::PathBuf;
+
+/// Validate that a config key only contains safe characters.
+/// Prevents path traversal attacks via key injection (e.g. "../../etc/passwd").
+fn validate_config_key(key: &str) -> AppResult<()> {
+    if key.is_empty() {
+        return Err(AppError::InvalidInput("Config key cannot be empty".to_string()));
+    }
+    if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        return Err(AppError::InvalidInput(format!(
+            "Invalid config key '{}': only alphanumeric characters, underscores, and hyphens are allowed",
+            key
+        )));
+    }
+    Ok(())
+}
 
 /// Get the config directory path
 fn get_config_dir() -> AppResult<PathBuf> {
@@ -29,6 +44,7 @@ fn get_config_dir() -> AppResult<PathBuf> {
  */
 #[tauri::command]
 pub async fn get_config(key: String) -> AppResult<String> {
+    validate_config_key(&key)?;
     let config_dir = get_config_dir()?;
     let config_file = config_dir.join(format!("{}.json", key));
 
@@ -49,6 +65,7 @@ pub async fn get_config(key: String) -> AppResult<String> {
  */
 #[tauri::command]
 pub async fn set_config(key: String, value: String) -> AppResult<String> {
+    validate_config_key(&key)?;
     let config_dir = get_config_dir()?;
     let config_file = config_dir.join(format!("{}.json", key));
 
@@ -63,6 +80,7 @@ pub async fn set_config(key: String, value: String) -> AppResult<String> {
  */
 #[tauri::command]
 pub async fn delete_config(key: String) -> AppResult<String> {
+    validate_config_key(&key)?;
     let config_dir = get_config_dir()?;
     let config_file = config_dir.join(format!("{}.json", key));
 

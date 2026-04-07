@@ -53,6 +53,7 @@ const initialState: WorkflowState = {
   isRunning: false,
   currentRunningAgentId: null,
   workflowRuns: [],
+  selectedRunId: null,
 };
 
 // Load persisted state
@@ -62,6 +63,7 @@ const initialStateWithPersistence: WorkflowState = {
   agents: persistedState.agents || [],
   connections: persistedState.connections || [],
   workflowRuns: persistedState.workflowRuns || [],
+  selectedRunId: null, // always start null (latest) on page load
 };
 
 // Store interface includes both state and actions
@@ -90,6 +92,7 @@ export interface WorkflowStore extends WorkflowState {
   renameWorkflowRun: (id: string, title: string) => void;
   deleteWorkflowRun: (id: string) => void;
   updateRunAgent: (runId: string, agentId: string, updates: Partial<WorkflowRunAgentEntry>) => void;
+  selectRun: (id: string | null) => void;
 
   // Execution state
   setRunning: (running: boolean, agentId?: string | null) => void;
@@ -452,11 +455,13 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   renameWorkflowRun: (id, title) => {
+    const trimmed = title.trim();
+    if (!trimmed) return; // reject empty / whitespace-only titles
     set((state) => {
       const newState = {
         ...state,
         workflowRuns: state.workflowRuns.map((run) =>
-          run.id === id ? { ...run, title } : run
+          run.id === id ? { ...run, title: trimmed } : run
         ),
       };
       saveToStorage(newState);
@@ -466,9 +471,18 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   deleteWorkflowRun: (id) => {
     set((state) => {
+      const wasSelected = state.selectedRunId === id;
+      const runsAfterDelete = state.workflowRuns.filter((run) => run.id !== id);
+      // Auto-select the run that followed the deleted one, or the new last item
+      let nextRunId: string | null = null;
+      if (wasSelected) {
+        const deletedIndex = state.workflowRuns.findIndex((r) => r.id === id);
+        nextRunId = runsAfterDelete[deletedIndex]?.id ?? runsAfterDelete[runsAfterDelete.length - 1]?.id ?? null;
+      }
       const newState = {
         ...state,
-        workflowRuns: state.workflowRuns.filter((run) => run.id !== id),
+        workflowRuns: runsAfterDelete,
+        selectedRunId: nextRunId,
       };
       saveToStorage(newState);
       return newState;
@@ -494,6 +508,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       saveToStorage(newState);
       return newState;
     });
+  },
+
+  // Select a run for output display (null = auto: latest run)
+  selectRun: (id) => {
+    set((state) => ({ ...state, selectedRunId: id }));
   },
 
   // Set running state
