@@ -20,7 +20,7 @@
 
 use tauri::Emitter;
 
-use super::{ToolCallRequest, ToolCallResult, ToolMetadata};
+use super::{ToolCallRequest, ToolCallResult};
 use super::registry::ToolRegistry;
 
 /// A batch of tool calls that share the same concurrency safety property
@@ -161,6 +161,7 @@ pub async fn execute_tool_calls(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::ToolMetadata;
     use std::sync::Arc;
 
     fn make_registry() -> ToolRegistry {

@@ -5,8 +5,7 @@
  * (Placeholder for future Page-Agent integration)
  */
 
-use crate::models::WebAutomationRequest;
-use crate::utils::{AppError, AppResult};
+use crate::utils::AppResult;
 use serde::{Deserialize, Serialize};
 
 use chromiumoxide::browser::Browser;
@@ -54,7 +53,7 @@ pub async fn connect_browser(
         .ok_or_else(|| "未从 Chrome 返回数据中找到 webSocketDebuggerUrl 的字段".to_string())?;
 
     // 连接本地浏览器
-    let (mut browser, mut handler) = Browser::connect(ws_url)
+    let (browser, mut handler) = Browser::connect(ws_url)
         .await
         .map_err(|e| format!("无法连接本地浏览器 WebSocket: {}", e))?;
 

@@ -62,7 +62,7 @@ export class RemoteTriggerTool extends BaseTool<RemoteTriggerInput, RemoteTrigge
 export const RemoteTriggerInputSchema = z.object({
   url: z.string().url().describe('URL to trigger'),
   method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).optional().default('POST'),
-  headers: z.record(z.string()).optional().describe('HTTP headers to include'),
+  headers: z.record(z.string(), z.string()).optional().describe('HTTP headers to include'),
   body: z.unknown().optional().describe('Request body (will be JSON-serialized)')
 });
 

@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::message::{Artifact, ChatResponse, ErrorResponse, Message, ToolCall, UsageInfo};
-use super::composer::{normalize_messages, validate_sequence};
+use super::composer::normalize_messages;
 
 /// Per-session cancellation tokens for supporting concurrent requests
 static CANCEL_TOKENS: Lazy<Mutex<std::collections::HashMap<String, CancellationToken>>> =
@@ -1155,7 +1155,7 @@ impl ClaudeClient {
             + estimate_tokens(&merge_system_prompt(system_prompt, browser_connected));
 
         // Send request
-        let mut request = self.client
+        let request = self.client
             .post("https://api.anthropic.com/v1/messages")
             .headers(headers)
             .json(&body);
@@ -1248,12 +1248,11 @@ impl ClaudeClient {
         let mut full_reasoning = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut current_tool_call: Option<(String, String, String)> = None; // (id, name, arguments)
-        let mut model = String::new();
+        let model = String::new();
         let mut usage = UsageInfo {
             input_tokens: 0,
             output_tokens: 0,
         };
-        let mut artifacts: Vec<Artifact> = Vec::new();
 
         // Stream response body
         use futures::stream::StreamExt;
@@ -1389,7 +1388,7 @@ impl ClaudeClient {
         }
 
         // Detect artifacts from final content
-        artifacts = detect_artifacts(&message_str);
+        let artifacts = detect_artifacts(&message_str);
 
         // Fallback: if API didn't return usage (edge case), fill in with estimates
         if usage.input_tokens == 0 {

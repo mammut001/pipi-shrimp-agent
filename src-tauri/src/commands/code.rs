@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use std::process::Stdio;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 
 // Global session manager for persistent REPL sessions
 // Maps session_id -> Python REPL process
@@ -23,7 +23,6 @@ static PYTHON_SESSIONS: Lazy<Mutex<HashMap<String, PythonSession>>> = Lazy::new(
 
 struct PythonSession {
     process: std::process::Child,
-    buffer: String,
 }
 
 impl Drop for PythonSession {
@@ -178,7 +177,7 @@ interpreter = PersistentInterpreter()
 interpreter.runsource(sys.stdin.read())
 "#;
 
-        let mut child = Command::new("python3")
+        let child = Command::new("python3")
             .arg("-c")
             .arg(python_script)
             .current_dir(&work_dir)
@@ -190,7 +189,6 @@ interpreter.runsource(sys.stdin.read())
 
         sessions.insert(session_id.clone(), PythonSession {
             process: child,
-            buffer: String::new(),
         });
         sessions.get_mut(&session_id).unwrap()
     };
@@ -217,7 +215,7 @@ interpreter.runsource(sys.stdin.read())
     // Read output (with timeout consideration)
     let mut reader = BufReader::new(stdout);
     let mut output = String::new();
-    let mut stderr = String::new();
+    let stderr = String::new();
     
     // Try to read stdout
     use std::io::Read;
@@ -327,7 +325,7 @@ pub async fn lsp_operation(
     character: u64,
     work_dir: Option<String>,
 ) -> AppResult<LSPResponse> {
-    let work_dir = resolve_command_cwd(None, work_dir.as_deref())?;
+    let _work_dir = resolve_command_cwd(None, work_dir.as_deref())?;
 
     // Detect language from file extension
     let ext = std::path::Path::new(&file_path)

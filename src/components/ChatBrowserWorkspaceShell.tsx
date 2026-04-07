@@ -16,6 +16,7 @@ import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
+import { SwarmPanel } from './SwarmPanel';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
@@ -280,6 +281,11 @@ export function ChatBrowserWorkspaceShell() {
           {renderChatPanel()}
         </div>
       )}
+
+      {/* Swarm Runtime Panel — floating overlay for swarm observability */}
+      <div className="fixed bottom-4 right-4 z-40 w-[460px]">
+        <SwarmPanel />
+      </div>
 
       {/* Permission Modal — Ask mode tool confirmation (fixed overlay, always on top) */}
       {pendingPermission && (

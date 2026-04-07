@@ -229,6 +229,44 @@ pub fn create_workflow_run_directory(run_id: String) -> AppResult<String> {
     Ok(base_dir.to_string_lossy().to_string())
 }
 
+/// Delete a workflow run directory previously created under
+/// {HOME}/pipi-shrimp-agent/workflows/{run_id}.
+///
+/// For safety, only deletes directories inside the managed workflows root.
+#[tauri::command]
+pub fn delete_workflow_run_directory(path: String) -> AppResult<()> {
+    let home = std::env::var("HOME")
+        .map_err(|e| AppError::FileError(format!("Cannot get HOME directory: {}", e)))?;
+    let workflows_root = PathBuf::from(&home)
+        .join("pipi-shrimp-agent")
+        .join("workflows");
+
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Ok(());
+    }
+
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|e| AppError::FileError(format!("Failed to resolve workflow run directory: {}", e)))?;
+
+    let canonical_root = workflows_root
+        .canonicalize()
+        .unwrap_or(workflows_root);
+
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(AppError::FileError(format!(
+            "Refusing to delete directory outside managed workflow root: {}",
+            canonical_target.to_string_lossy()
+        )));
+    }
+
+    fs::remove_dir_all(&canonical_target)
+        .map_err(|e| AppError::FileError(format!("Failed to delete run directory: {}", e)))?;
+
+    Ok(())
+}
+
 /// Reveal a path in the system file explorer (Finder on macOS, Explorer on Windows, etc.)
 #[tauri::command]
 pub fn reveal_in_finder(path: String) -> AppResult<()> {

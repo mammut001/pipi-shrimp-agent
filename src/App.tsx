@@ -15,6 +15,7 @@
 import { useEffect, lazy, Suspense } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
+import { useSwarmStore } from '@/store/swarmStore';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 
 // Lazy-load heavy pages so they don't bloat the initial bundle
@@ -29,6 +30,7 @@ export default function App() {
   const { getApiConfig } = useSettingsStore();
   const { init: initChat } = useChatStore();
   const { settingsOpen, currentView } = useUIStore();
+  const initSwarm = useSwarmStore((s) => s.init);
 
   // Load settings on mount, then show window once fully initialized.
   // Window starts hidden (visible: false in tauri.conf.json) to avoid the
@@ -38,6 +40,7 @@ export default function App() {
       try {
         await getApiConfig();
         await initChat();
+        initSwarm();
       } catch (error) {
         console.error('Failed to initialize:', error);
       } finally {

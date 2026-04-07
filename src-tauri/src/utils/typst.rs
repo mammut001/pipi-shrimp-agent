@@ -226,4 +226,5 @@ pub fn compile_typst_to_pdf_with_prebuilt(source: &str, prebuilt: &PrebuiltFonts
 }
 
 /// Re-export for use in State.
+#[allow(unused_imports)]
 pub use fontdb::Database as FontDb;

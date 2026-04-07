@@ -14,7 +14,6 @@
 
 import { useState, useEffect } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
-import { useSettingsStore } from '@/store/settingsStore';
 import { AGENT_TEMPLATES, DEFAULT_EXECUTION_CONFIG } from '@/types/workflow';
 import type { RouteCondition } from '@/types/workflow';
 

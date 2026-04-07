@@ -11,13 +11,14 @@
 
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 // ============================================================================
 // 常量
 // ============================================================================
 
 const SESSION_MEMORY_FILENAME: &str = "session-memory.md";
+#[allow(dead_code)]
 const SESSION_MEMORY_DIR: &str = ".pipi-shrimp";
 
 /// 默认 Session Memory 模板
@@ -115,7 +116,7 @@ pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, Strin
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = PermissionsExt::from_mode(0o700);
+        let perms = PermissionsExt::from_mode(0o700);
         fs::set_permissions(&dir, perms)
             .map_err(|e| format!("Failed to set dir permissions: {}", e))?;
     }
@@ -130,7 +131,7 @@ pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, Strin
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = PermissionsExt::from_mode(0o600);
+            let perms = PermissionsExt::from_mode(0o600);
             fs::set_permissions(&path, perms)
                 .map_err(|e| format!("Failed to set file permissions: {}", e))?;
         }
