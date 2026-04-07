@@ -17,6 +17,7 @@ pub mod chat;
 pub mod code;
 pub mod compact;     // Context compression system - Layer 1: Microcompact
 pub mod config;
+pub mod doc;        // Document management commands
 pub mod file;
 pub mod models;
 pub mod path_security; // Path validation - defense in depth
@@ -35,6 +36,7 @@ pub use chat::*;
 pub use code::*;
 pub use compact::*;
 pub use config::*;
+pub use doc::*;      // Document management
 pub use file::*;
 pub use models::*;
 pub use search::*;

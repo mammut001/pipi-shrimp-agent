@@ -99,7 +99,7 @@ export const FileEditInputSchema = z.object({
   file_path: z.string().describe('Path to the file to edit'),
   old_string: z.string().describe('Exact text to find and replace'),
   new_string: z.string().describe('Replacement text'),
-  replace_all: z.boolean().optional().default(false).describe('Replace all occurrences')
+  replace_all: z.boolean().describe('Replace all occurrences')
 });
 
 export const FileEditOutputSchema = z.object({

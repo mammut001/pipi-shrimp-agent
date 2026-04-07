@@ -24,7 +24,8 @@ use database::{DbSession, DbMessage, DbProject, DbTokenUsage, DailyTokenStats, M
                init_database, get_all_sessions, save_session, delete_session, save_message, delete_message,
                get_messages_for_session, save_project, get_all_projects, delete_project,
                update_project, save_token_usage, get_daily_token_stats, get_monthly_token_stats,
-               get_model_token_stats, get_total_token_stats};
+               get_model_token_stats, get_total_token_stats,
+               save_swarm_snapshot, load_swarm_snapshot, clear_swarm_snapshots};
 use utils::{PrebuiltFonts, init_font_database, build_fonts, compile_typst_to_svg_with_prebuilt, compile_typst_to_pdf_with_prebuilt};
 
 /**
@@ -59,8 +60,13 @@ async fn send_claude_sdk_chat(
     // Convert empty string to None for custom API
     let base_url = base_url.filter(|s| !s.is_empty());
     let browser_connected = browserConnected.unwrap_or(false);
-    let state = state.lock().await;
-    state.client
+    // Clone the client out of the lock so the mutex is released before the
+    // long-running HTTP request (otherwise all concurrent requests serialize).
+    let client = {
+        let state = state.lock().await;
+        state.client.clone()
+    };
+    client
         .chat(messages, api_key, model, base_url, system_prompt, browser_connected)
         .await
         .map_err(|e| e.to_string())
@@ -92,8 +98,12 @@ async fn send_claude_sdk_chat_streaming(
     let base_url = baseUrl.filter(|s| !s.is_empty());
     let no_tools = noTools.unwrap_or(false);
     let browser_connected = browserConnected.unwrap_or(false);
-    let state = state.lock().await;
-    state.client
+    // Clone out of lock before the long-running streaming call.
+    let client = {
+        let state = state.lock().await;
+        state.client.clone()
+    };
+    client
         .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window, browser_connected, sessionId)
         .await
         .map_err(|e| e.to_string())
@@ -133,10 +143,13 @@ async fn test_connection(
         tool_call_id: None,
     }];
 
-    let state = state.lock().await;
-    match state
-        .client
-        .chat(messages, apiKey, model, base_url, None, false) // false = browser not connected for test
+    // Clone out of lock before HTTP call.
+    let client = {
+        let state = state.lock().await;
+        state.client.clone()
+    };
+    match client
+        .chat(messages, apiKey, model, base_url, None, false)
         .await
     {
         Ok(_) => Ok(true),
@@ -278,6 +291,37 @@ fn db_get_model_token_stats() -> Result<Vec<ModelTokenStats>, String> {
 #[tauri::command]
 fn db_get_total_token_stats() -> Result<(i64, i64, i64), String> {
     get_total_token_stats().map_err(|e| e.to_string())
+}
+
+/**
+ * Swarm snapshot persistence commands (minimal SQLite support).
+ *
+ * CURRENT: localStorage is the active backend (see persistence.ts).
+ * These commands are ready for when the bridge switches to 'tauri' mode.
+ */
+
+#[tauri::command]
+fn swarm_save_snapshot(snapshot: serde_json::Value) -> Result<(), String> {
+    let snapshot_json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+    let saved_at = chrono::Utc::now().timestamp();
+    save_swarm_snapshot(&snapshot_json, saved_at).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn swarm_load_snapshot() -> Result<Option<serde_json::Value>, String> {
+    let result = load_swarm_snapshot().map_err(|e| e.to_string())?;
+    match result {
+        Some(json_str) => {
+            let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+            Ok(Some(value))
+        }
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+fn swarm_clear_snapshot() -> Result<(), String> {
+    clear_swarm_snapshots().map_err(|e| e.to_string())
 }
 
 /// Resolve the project root: during `tauri dev` cwd is `src-tauri/`,
@@ -475,13 +519,6 @@ pub fn run() {
             commands::web::resync_page,
             commands::web::cdp_execute_script,
             commands::open_url,
-            // Claude commands (CLI-based)
-            claude::check_claude_available,
-            claude::get_claude_version,
-            claude::execute_claude_command,
-            claude::send_claude_chat,
-            claude::claude_execute,
-            claude::claude_chat,
             // Claude SDK commands (API-based)
             send_claude_sdk_chat,
             send_claude_sdk_chat_streaming,
@@ -509,6 +546,10 @@ pub fn run() {
             db_get_monthly_token_stats,
             db_get_model_token_stats,
             db_get_total_token_stats,
+            // Swarm snapshot persistence commands
+            swarm_save_snapshot,
+            swarm_load_snapshot,
+            swarm_clear_snapshot,
             // Typst rendering commands
             render_typst_to_svg,
             render_typst_to_pdf,
@@ -524,6 +565,16 @@ pub fn run() {
             commands::create_workflow_run_directory,
             commands::delete_workflow_run_directory,
             commands::reveal_in_finder,
+            commands::open_file_external,
+            commands::open_file_with_app,
+            // Document management commands
+            commands::get_next_doc_number,
+            commands::create_doc,
+            commands::list_docs,
+            commands::read_doc,
+            commands::delete_doc,
+            commands::update_doc,
+            commands::update_doc_index,
             // Browser window commands (second WebviewWindow for PageAgent)
             commands::open_browser_window,
             commands::show_browser_window,

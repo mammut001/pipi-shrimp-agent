@@ -4,14 +4,16 @@
  * Central repository for all swarm runtime entities.
  * Provides CRUD operations + reactive event bus for state changes.
  *
- * Persistence: localStorage with explicit save/restore.
- * Future: migrate to SQLite via Tauri invoke.
+ * Persistence: delegated to persistence bridge (persistence.ts).
+ *   CURRENT backend: localStorage (LocalStoragePersistence)
+ *   FUTURE backend:  Tauri/SQLite via invoke (TauriPersistence)
  *
  * Design:
  * - Single source of truth for swarm state
  * - Event-driven: subscribers notified on every mutation
  * - Snapshot-based persistence (save/restore entire state)
  * - Thread-safe for single-threaded JS runtime
+ * - Storage backend is abstracted — no direct localStorage calls here
  */
 
 import type {
@@ -26,8 +28,8 @@ import type {
   SwarmEvent,
   SwarmEventType,
 } from './types';
+import { getPersistence } from './persistence';
 
-const STORAGE_KEY = 'pipi-swarm-runtime-v1';
 const SNAPSHOT_VERSION = 1;
 
 // =============================================================================
@@ -356,7 +358,7 @@ export function getAllPermissionRequests(): SwarmPermissionRequest[] {
 }
 
 // =============================================================================
-// Persistence: save / restore
+// Persistence: save / restore (delegated to persistence bridge)
 // =============================================================================
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -369,7 +371,7 @@ function scheduleSave(): void {
   }, 500);
 }
 
-export function saveToStorage(): void {
+export async function saveToStorage(): Promise<void> {
   try {
     const snapshot: SwarmSnapshot = {
       version: SNAPSHOT_VERSION,
@@ -382,17 +384,16 @@ export function saveToStorage(): void {
       permissionRequests: Array.from(permissionRequests.values()),
       savedAt: Date.now(),
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    await getPersistence().save(snapshot);
   } catch (e) {
     console.error('[SwarmRepo] Failed to save:', e);
   }
 }
 
-export function restoreFromStorage(): boolean {
+export async function restoreFromStorage(): Promise<boolean> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const snapshot: SwarmSnapshot = JSON.parse(raw);
+    const snapshot = await getPersistence().load();
+    if (!snapshot) return false;
     if (snapshot.version !== SNAPSHOT_VERSION) {
       console.warn('[SwarmRepo] Version mismatch, skipping restore');
       return false;
@@ -435,7 +436,7 @@ export function restoreFromStorage(): boolean {
   }
 }
 
-export function clearAll(): void {
+export async function clearAll(): Promise<void> {
   runs.clear();
   teams.clear();
   agents.clear();
@@ -443,7 +444,7 @@ export function clearAll(): void {
   messages.clear();
   transcripts.clear();
   permissionRequests.clear();
-  localStorage.removeItem(STORAGE_KEY);
+  await getPersistence().clear();
 }
 
 // =============================================================================

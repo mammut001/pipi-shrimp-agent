@@ -61,7 +61,7 @@ export class ToolSearchTool extends BaseTool<ToolSearchInput, ToolSearchOutput> 
 
 export const ToolSearchInputSchema = z.object({
   query: z.string().describe('Search query to find tools'),
-  max_results: z.number().int().positive().optional().default(5).describe('Maximum number of results')
+  max_results: z.number().int().positive().describe('Maximum number of results')
 });
 
 export const ToolSearchOutputSchema = z.object({

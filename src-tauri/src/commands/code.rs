@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use std::process::Stdio;
-use std::io::{BufReader, Write};
+use std::io::Write;
 
 // Global session manager for persistent REPL sessions
 // Maps session_id -> Python REPL process
@@ -59,6 +59,36 @@ fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult
     Ok(resolved.to_string_lossy().to_string())
 }
 
+/// Block known-destructive bash command patterns.
+/// This is a defence-in-depth measure — the AI system prompt also restricts these,
+/// but we enforce it at the code level too.
+fn check_command_safety(command: &str) -> AppResult<()> {
+    let blocked_patterns = [
+        "rm -rf /",
+        "rm -rf ~",
+        "mkfs",
+        "dd if=",
+        "> /dev/sda",
+        ":(){ :|:& };",  // fork bomb
+        "chmod -r 777 /",
+        "chown -r",
+        "shutdown",
+        "reboot",
+        "halt",
+        "poweroff",
+    ];
+    let lower = command.to_lowercase();
+    for pattern in &blocked_patterns {
+        if lower.contains(pattern) {
+            return Err(AppError::ProcessError(format!(
+                "Command blocked for safety: contains forbidden pattern '{}'",
+                pattern
+            )));
+        }
+    }
+    Ok(())
+}
+
 /**
  * Execute a bash command
  *
@@ -71,6 +101,8 @@ pub async fn execute_bash(
     work_dir: Option<String>,
 ) -> AppResult<ExecuteCodeResponse> {
     let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
+
+    check_command_safety(&command)?;
 
     // Check if bash exists
     if !command_exists("bash") {
@@ -130,7 +162,8 @@ pub async fn execute_python(
 /**
  * Execute Python code in a persistent REPL session
  *
- * Maintains state (variables, imports) between calls with the same session_id.
+ * Uses a sentinel-based protocol so the session process stays alive across
+ * multiple calls and variables/imports are preserved between invocations.
  */
 #[tauri::command]
 pub async fn execute_python_session(
@@ -141,45 +174,52 @@ pub async fn execute_python_session(
 ) -> AppResult<ExecuteCodeResponse> {
     let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
 
-    // Check if python3 is installed
     if !command_exists("python3") {
         return Err(AppError::ProcessError(
             "Python 3 is not installed on your system".to_string()
         ));
     }
 
+    // Unique per-call sentinel so we know when output is complete
+    let sentinel = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let sentinel_marker = format!("__PIPI_DONE_{}__", sentinel);
+
     let mut sessions = PYTHON_SESSIONS.lock().map_err(|e| {
         AppError::ProcessError(format!("Failed to lock sessions: {}", e))
     })?;
 
-    let session = if let Some(existing) = sessions.get_mut(&session_id) {
-        existing
-    } else {
-        // Create new Python REPL session with persistent state
-        let python_script = r#"
-import sys
-import code
-import json
-import os
+    // Launch persistent REPL process if not already running
+    if !sessions.contains_key(&session_id) {
+        // The REPL reads lines from stdin forever.
+        // Lines prefixed with __EXEC__: carry base64-encoded Python source.
+        // Lines prefixed with __SENTINEL__: are echoed back to stdout so the
+        // caller can detect end-of-output without closing stdin.
+        let repl_script = r#"
+import sys, traceback, base64
 
-# Create interactive interpreter with custom banner
-class PersistentInterpreter(code.InteractiveInterpreter):
-    def __init__(self, locals=None):
-        super().__init__(locals)
-        self.history = []
-    
-    def write(self, data):
-        sys.stdout.write(data)
-        sys.stdout.flush()
+_locals = {}
 
-# Read code to execute from stdin
-interpreter = PersistentInterpreter()
-interpreter.runsource(sys.stdin.read())
+for raw_line in sys.stdin:
+    raw_line = raw_line.rstrip('\n')
+    if raw_line.startswith('__EXEC__:'):
+        src = base64.b64decode(raw_line[9:]).decode('utf-8')
+        try:
+            compiled = compile(src, '<session>', 'exec')
+            exec(compiled, _locals)
+        except SystemExit:
+            break
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+    elif raw_line.startswith('__SENTINEL__:'):
+        print(raw_line, flush=True)
+    sys.stdout.flush()
+    sys.stderr.flush()
 "#;
 
         let child = Command::new("python3")
+            .arg("-u")  // unbuffered stdout/stderr
             .arg("-c")
-            .arg(python_script)
+            .arg(repl_script)
             .current_dir(&work_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -187,63 +227,60 @@ interpreter.runsource(sys.stdin.read())
             .spawn()
             .map_err(|e| AppError::ProcessError(format!("Failed to start Python session: {}", e)))?;
 
-        sessions.insert(session_id.clone(), PythonSession {
-            process: child,
-        });
-        sessions.get_mut(&session_id).unwrap()
-    };
-
-    // Execute code in the session
-    let stdin = session.process.stdin.as_mut().ok_or_else(|| {
-        AppError::ProcessError("Failed to open stdin".to_string())
-    })?;
-
-    let stdout = session.process.stdout.as_mut().ok_or_else(|| {
-        AppError::ProcessError("Failed to open stdout".to_string())
-    })?;
-
-    stdin.write_all(code.as_bytes()).map_err(|e| {
-        AppError::ProcessError(format!("Failed to write code: {}", e))
-    })?;
-    stdin.write_all(b"\n").map_err(|e| {
-        AppError::ProcessError(format!("Failed to write newline: {}", e))
-    })?;
-    stdin.flush().map_err(|e| {
-        AppError::ProcessError(format!("Failed to flush: {}", e))
-    })?;
-
-    // Read output (with timeout consideration)
-    let mut reader = BufReader::new(stdout);
-    let mut output = String::new();
-    let stderr = String::new();
-    
-    // Try to read stdout
-    use std::io::Read;
-    let mut buf = [0u8; 8192];
-    match reader.read(&mut buf) {
-        Ok(n) if n > 0 => {
-            output = String::from_utf8_lossy(&buf[..n]).to_string();
-        }
-        _ => {}
+        sessions.insert(session_id.clone(), PythonSession { process: child });
     }
 
-    // Check if process died
-    match session.process.try_wait() {
-        Ok(Some(status)) => {
-            // Process ended, remove from sessions
-            sessions.remove(&session_id);
-            return Ok(ExecuteCodeResponse {
-                stdout: output,
-                stderr: "Session ended".to_string(),
-                exit_code: status.code().unwrap_or(-1) as i32,
-            });
+    let session = sessions.get_mut(&session_id).unwrap();
+
+    // Check that the process is still alive before writing
+    if let Ok(Some(status)) = session.process.try_wait() {
+        sessions.remove(&session_id);
+        return Err(AppError::ProcessError(format!(
+            "Python session {} has ended (exit code {:?})", session_id, status.code()
+        )));
+    }
+    // Re-borrow after the check (the remove path returned early)
+    let session = sessions.get_mut(&session_id).unwrap();
+
+    // Encode code as base64 to avoid newline/escaping issues in the protocol
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(code.as_bytes());
+    let exec_line = format!("__EXEC__:{}\n", encoded);
+    let sentinel_line = format!("__SENTINEL__:{}\n", sentinel_marker);
+
+    {
+        let stdin = session.process.stdin.as_mut()
+            .ok_or_else(|| AppError::ProcessError("stdin unavailable".to_string()))?;
+        stdin.write_all(exec_line.as_bytes())
+            .map_err(|e| AppError::ProcessError(format!("Write error: {}", e)))?;
+        stdin.write_all(sentinel_line.as_bytes())
+            .map_err(|e| AppError::ProcessError(format!("Write sentinel error: {}", e)))?;
+        stdin.flush()
+            .map_err(|e| AppError::ProcessError(format!("Flush error: {}", e)))?;
+    }
+
+    // Read stdout lines until the sentinel line appears
+    use std::io::BufRead;
+    let stdout = session.process.stdout.as_mut()
+        .ok_or_else(|| AppError::ProcessError("stdout unavailable".to_string()))?;
+    let reader = std::io::BufReader::new(stdout);
+    let mut output_lines: Vec<String> = Vec::new();
+
+    for line in reader.lines() {
+        match line {
+            Ok(l) => {
+                if l == sentinel_marker {
+                    break;
+                }
+                output_lines.push(l);
+            }
+            Err(e) => return Err(AppError::ProcessError(format!("Read error: {}", e))),
         }
-        _ => {}
     }
 
     Ok(ExecuteCodeResponse {
-        stdout: output,
-        stderr,
+        stdout: output_lines.join("\n"),
+        stderr: String::new(),
         exit_code: 0,
     })
 }

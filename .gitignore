@@ -28,6 +28,10 @@ doc/
 node-scripts/.env
 /docs
 .pipi-shrimp/
+
+# Vite build cache files
+vite.config.ts.timestamp-*.mjs
+*.timestamp-*.mjs
 RELEASE_0.0.2.md
 check_browser.cjs
 check_browser.js
@@ -42,3 +46,5 @@ HEARTBEAT.md
 MEMORY.md
 IDENTITY.md
 memory/
+/coverage
+TESTING.md

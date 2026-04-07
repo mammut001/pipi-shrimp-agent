@@ -113,37 +113,9 @@ pub fn merge_system_prompt(user_prompt: Option<&str>, browser_connected: bool) -
 
 /// Rough token estimator — no tiktoken / external crate needed.
 ///
-/// Rules (mirrors how most modern tokenizers treat Unicode):
-///   • CJK, Hangul, Hiragana/Katakana, Arabic → 1 token per character
-///   • Emoji / supplementary-plane characters   → 1 token per character
-///   • Everything else (ASCII + Latin)          → ~4 chars per token (ceiling)
-///
-/// Per-message overhead (~4 tokens: role + separators) is added by
-/// `estimate_messages_tokens`, not here.
+/// Delegates to the shared implementation in `crate::utils::token`.
 fn estimate_tokens(text: &str) -> i32 {
-    let mut tokens = 0i32;
-    let mut ascii_run = 0i32;
-    for ch in text.chars() {
-        let cp = ch as u32;
-        let is_cjk_or_wide =
-            (0x4E00..=0x9FFF).contains(&cp)   // CJK Unified Ideographs
-            || (0x3400..=0x4DBF).contains(&cp) // CJK Extension A
-            || (0xF900..=0xFAFF).contains(&cp) // CJK Compatibility
-            || (0x3040..=0x30FF).contains(&cp) // Hiragana + Katakana
-            || (0xAC00..=0xD7AF).contains(&cp) // Hangul Syllables
-            || (0x0600..=0x06FF).contains(&cp) // Arabic
-            || cp > 0xFFFF;                    // Emoji / supplementary planes
-        if is_cjk_or_wide {
-            // Flush any accumulated ASCII run first
-            tokens += (ascii_run + 3) / 4;
-            ascii_run = 0;
-            tokens += 1;
-        } else {
-            ascii_run += 1;
-        }
-    }
-    // Flush remaining ASCII chars
-    tokens + (ascii_run + 3) / 4
+    crate::utils::token::estimate_tokens(text)
 }
 
 /// Estimate total input tokens for a messages array.
@@ -158,6 +130,7 @@ fn estimate_messages_tokens(messages: &[serde_json::Value]) -> i32 {
 }
 
 /// Claude HTTP client using reqwest
+#[derive(Clone)]
 pub struct ClaudeClient {
     client: reqwest::Client,
 }
@@ -762,6 +735,7 @@ pub async fn stop_current_request(session_id: Option<String>) -> AppResult<()> {
 /**
  * Check if there's a running request for a session
  */
+#[allow(dead_code)]
 pub async fn has_running_request(session_id: Option<&str>) -> bool {
     let tokens_guard = CANCEL_TOKENS.lock().await;
     match session_id {
@@ -771,7 +745,8 @@ pub async fn has_running_request(session_id: Option<&str>) -> bool {
 }
 
 // ============ SSE Response Types ============
-
+// These structs are constructed via serde Deserialize, not direct instantiation.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AnthropicStreamEvent {
     #[serde(rename = "type")]
@@ -786,6 +761,7 @@ struct AnthropicStreamEvent {
     message: Option<AnthropicMessage>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum AnthropicDelta {
@@ -795,6 +771,7 @@ enum AnthropicDelta {
     Other(serde_json::Value),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AnthropicContentBlock {
     #[serde(rename = "type")]
@@ -807,6 +784,7 @@ struct AnthropicContentBlock {
     input: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AnthropicMessage {
     #[serde(default)]
@@ -821,6 +799,7 @@ struct AnthropicMessage {
     content: Vec<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AnthropicUsage {
     #[serde(rename = "input_tokens", default)]

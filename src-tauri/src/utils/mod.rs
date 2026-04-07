@@ -6,6 +6,7 @@
 
 pub mod error;
 pub mod typst;
+pub mod token;
 
 pub use error::{AppError, AppResult};
 pub use typst::{

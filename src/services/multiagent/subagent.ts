@@ -104,20 +104,43 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
       if (swarmAgentId) {
         try {
           const swarm = await import('../swarm');
+          const { onAgentFinished } = await import('../swarm/inboxCoordinator');
           swarm.recordAssistantOutput(swarmAgentId, result.content || '');
+          const agent = swarm.getAgent(swarmAgentId);
           if (result.success) {
             swarm.completeAgent(swarmAgentId);
-            // Complete the agent's current task
-            const agent = swarm.getAgent(swarmAgentId);
             if (agent?.currentTaskId) {
               swarm.completeTask(agent.currentTaskId, result.content?.slice(0, 500));
             }
           } else {
             swarm.failAgent(swarmAgentId, result.error);
-            const agent = swarm.getAgent(swarmAgentId);
             if (agent?.currentTaskId) {
               swarm.failTask(agent.currentTaskId, result.error);
             }
+          }
+
+          // Send task_result message to team leader so inbox polling fires task_result_received
+          if (agent) {
+            const team = swarm.getTeam(agent.teamId);
+            if (team && team.leaderId !== swarmAgentId) {
+              const msgContent = result.success
+                ? (result.content || '')
+                : `FAILED: ${result.error || 'Unknown error'}`;
+              swarm.sendMessage({
+                teamId: agent.teamId,
+                fromAgentId: swarmAgentId,
+                toAgentId: team.leaderId,
+                messageType: 'task_result',
+                content: msgContent,
+                taskId: agent.currentTaskId ?? undefined,
+              });
+            }
+          }
+
+          // Stop inbox polling and process remaining messages
+          onAgentFinished(swarmAgentId);
+          if (agent?.sessionId) {
+            swarm.reconcileRunForChatSession(agent.sessionId);
           }
         } catch (_e) {
           // Swarm runtime recording is best-effort
@@ -139,7 +162,32 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
       if (swarmAgentId) {
         try {
           const swarm = await import('../swarm');
-          swarm.failAgent(swarmAgentId, e instanceof Error ? e.message : String(e));
+          const { onAgentFinished } = await import('../swarm/inboxCoordinator');
+          const errMsg = e instanceof Error ? e.message : String(e);
+          swarm.failAgent(swarmAgentId, errMsg);
+          const agent = swarm.getAgent(swarmAgentId);
+          if (agent?.currentTaskId) {
+            swarm.failTask(agent.currentTaskId, errMsg);
+          }
+          // Send failure task_result to leader so the delegation can resolve
+          if (agent) {
+            const team = swarm.getTeam(agent.teamId);
+            if (team && team.leaderId !== swarmAgentId) {
+              swarm.sendMessage({
+                teamId: agent.teamId,
+                fromAgentId: swarmAgentId,
+                toAgentId: team.leaderId,
+                messageType: 'task_result',
+                content: `FAILED: ${errMsg}`,
+                taskId: agent.currentTaskId ?? undefined,
+              });
+            }
+          }
+          // Stop inbox polling and process remaining messages
+          onAgentFinished(swarmAgentId);
+          if (agent?.sessionId) {
+            swarm.reconcileRunForChatSession(agent.sessionId);
+          }
         } catch (_) { /* best-effort */ }
       }
 

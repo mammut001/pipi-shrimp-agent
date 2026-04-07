@@ -15,7 +15,7 @@ import { workflowService, type FileInfo } from '@/services/workflow';
 type Tab = 'output' | 'files';
 
 export function WorkflowOutputPanel() {
-  const { agents, isRunning, workflowRuns } = useWorkflowStore();
+  const { agents, isRunning, workflowRuns, selectedRunId } = useWorkflowStore();
   const [agentOutputs, setAgentOutputs] = useState<Map<string, string>>(new Map());
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<Tab>('output');
@@ -27,9 +27,11 @@ export function WorkflowOutputPanel() {
   const [fileContent, setFileContent] = useState<string>('');
   const [fileLoading, setFileLoading] = useState(false);
 
-  // Get the latest run's directory
-  const latestRun = workflowRuns[0];
-  const runDirectory = latestRun?.runDirectory || '';
+  // Use the explicitly selected run, or fall back to the latest run
+  const activeRun = selectedRunId
+    ? workflowRuns.find((r) => r.id === selectedRunId) ?? workflowRuns[0]
+    : workflowRuns[0];
+  const runDirectory = activeRun?.runDirectory || '';
 
   // Stream callback
   useEffect(() => {

@@ -688,6 +688,31 @@ export const useChatStore = create<ChatState>()(
             uiStore.addNotification('error', `Agent ${event.payload.agentId.slice(0, 12)}... failed: ${event.payload.error}`);
           },
         );
+
+        // Listen for swarm teammate task_result messages and inject them into the conversation
+        const swarmModule = await import('../services/swarm');
+        swarmModule.swarmEvents.on('task_result_received', async (detail) => {
+          const team = swarmModule.getTeam(detail.teamId);
+          if (!team) return;
+          const sessionId = team.sessionId;
+          if (!sessionId) return;
+
+          const targetSession = get().sessions.find((s) => s.id === sessionId);
+          if (!targetSession) return;
+
+          const fromAgent = swarmModule.getAgent(detail.fromAgentId);
+          const agentName = fromAgent?.name || detail.fromAgentId.slice(-8);
+          const task = detail.taskId ? swarmModule.getTask(detail.taskId) : undefined;
+          const taskDesc = task?.description?.slice(0, 80) ?? 'task';
+
+          const resultMessage = createMessage(
+            'user',
+            `[Swarm] Teammate "${agentName}" completed "${taskDesc}":\n\n${detail.content}`,
+          );
+          await get().addMessageToSession(sessionId, resultMessage);
+
+          useUIStore.getState().addNotification('success', `Teammate "${agentName}" finished: ${taskDesc}`);
+        });
       } catch (error) {
         console.error('❌ Failed to load sessions:', error);
         console.error('Error details:', {
@@ -1058,6 +1083,61 @@ export const useChatStore = create<ChatState>()(
         }
         await addMessage(userMessage);
 
+        // === Auto Orchestration: check if delegation is warranted ===
+        try {
+          const {
+            classifyIntent, buildDelegationPlan, describePlan, runDelegationPlan: execPlan,
+            buildSynthesisPrompt, buildProgressMessage, resolveFollowThrough,
+          } = await import('../services/orchestration');
+
+          const classification = classifyIntent(content);
+
+          if (classification.shouldDelegate) {
+            const plan = buildDelegationPlan(classification, content);
+
+            if (plan.delegate && plan.agents.length > 0) {
+              console.log('[Orchestration] Delegation plan:', plan.planType, plan.agents.map(a => a.name));
+
+              // Announce the plan to the user (one short line — no follow-up edits)
+              const announcement = describePlan(plan);
+              const announcementMsg = createMessage('assistant', announcement);
+              await addMessage(announcementMsg);
+
+              // Run the delegation plan
+              const currentSession = get().sessions.find((s) => s.id === activeSessionId);
+              const sessionWorkDir = currentSession?.workDir;
+
+              const delegationResult = await execPlan(plan, activeSessionId, sessionWorkDir);
+              console.log('[Orchestration] Agents complete:', buildProgressMessage('agents_complete', plan, delegationResult));
+
+              // Determine follow-through mode
+              const followThrough = resolveFollowThrough(plan);
+              console.log('[Orchestration] Follow-through:', followThrough.mode, '—', followThrough.description);
+
+              // Build structured synthesis prompt
+              const synthesisPrompt = buildSynthesisPrompt(plan, delegationResult, followThrough);
+
+              // Inject as a hidden user message for the main-thread synthesis pass
+              // Hidden so the chat UI only shows the announcement + final synthesized answer
+              const synthesisMsg = createMessage('user', synthesisPrompt);
+              synthesisMsg.metadata = {
+                orchestrationPlanId: plan.id,
+                orchestrationPhase: 'synthesis',
+                followThroughMode: followThrough.mode,
+                hidden: true,
+              };
+              await addMessage(synthesisMsg);
+
+              // Fall through to normal query engine flow which will now include
+              // the delegation results + follow-through guidance, producing
+              // a synthesized final answer
+            }
+          }
+        } catch (orchErr) {
+          // Orchestration is best-effort; if it fails, continue with normal single-agent flow
+          console.warn('[Orchestration] Classification/delegation failed, continuing normally:', orchErr);
+        }
+
         setStreaming(true);
         set({ streamingContent: '', streamingSessionId: activeSessionId });
 
@@ -1185,8 +1265,79 @@ export const useChatStore = create<ChatState>()(
               // Hooks approved — now check permission mode for UI flow
               const effectiveArgs = hookResult.modifiedArgs || tool.arguments;
               const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
+              let parsedAgentArgs: Record<string, any> | null = null;
+              let isSwarmTeammateRequest = false;
 
-              const approved = shouldBypass ? true : await uiStore.waitForPermission(tool);
+              if (tool.name === 'agent_tool') {
+                try {
+                  parsedAgentArgs = JSON.parse(effectiveArgs);
+                  isSwarmTeammateRequest = Boolean(
+                    parsedAgentArgs?.team_name && parsedAgentArgs?.name
+                  );
+                } catch {
+                  parsedAgentArgs = null;
+                  isSwarmTeammateRequest = false;
+                }
+              }
+
+              let approved = shouldBypass;
+
+              if (!shouldBypass) {
+                if (isSwarmTeammateRequest && parsedAgentArgs) {
+                  const swarm = await import('../services/swarm');
+                  const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                  const parentCtx = getCurrentAgentContext() || {
+                    agentId: 'main',
+                    sessionId: activeSessionId,
+                    workDir: currentSess?.workDir || undefined,
+                    toolPool: [],
+                    metadata: {},
+                  };
+
+                  // Ensure UI/runtime are initialized before we enqueue a permission request
+                  const { useSwarmStore } = await import('./swarmStore');
+                  useSwarmStore.getState().init();
+
+                  let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
+                  if (!activeRun) {
+                    activeRun = swarm.startRun(activeSessionId);
+                  }
+
+                  let runtimeTeam = swarm.getTeamByName(parsedAgentArgs.team_name);
+                  if (!runtimeTeam) {
+                    runtimeTeam = swarm.createTeam({
+                      name: parsedAgentArgs.team_name,
+                      sessionId: activeSessionId,
+                      description: parsedAgentArgs.description || `Team ${parsedAgentArgs.team_name}`,
+                      leaderName: 'leader',
+                    }).team;
+                  }
+
+                  const runtimeAgent = swarm.spawnAgent({
+                    teamId: runtimeTeam.id,
+                    name: parsedAgentArgs.name,
+                    role: 'member',
+                    sessionId: activeSessionId,
+                    parentAgentId: parentCtx.agentId,
+                    model: parsedAgentArgs.model,
+                  });
+
+                  approved = await swarm.enqueuePermissionInUI({
+                    teamId: runtimeTeam.id,
+                    agentId: runtimeAgent.id,
+                    agentName: parsedAgentArgs.name,
+                    toolName: tool.name,
+                    toolArgs: effectiveArgs,
+                  });
+
+                  if (!approved) {
+                    swarm.failAgent(runtimeAgent.id, 'Permission denied by user');
+                    swarm.reconcileRunForChatSession(activeSessionId);
+                  }
+                } else {
+                  approved = await uiStore.waitForPermission(tool);
+                }
+              }
 
               if (!approved) {
                 uiStore.updateTaskStep(tool.id, 'failed');
@@ -1203,7 +1354,7 @@ export const useChatStore = create<ChatState>()(
                     // === Multi-Agent: AgentTool execution ===
                     let args: Record<string, any>;
                     try {
-                      args = JSON.parse(effectiveArgs);
+                      args = parsedAgentArgs || JSON.parse(effectiveArgs);
                     } catch (parseErr) {
                       toolResultContent = `Error: Failed to parse agent_tool arguments: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`;
                       uiStore.updateTaskStep(tool.id, 'failed');
@@ -1214,6 +1365,7 @@ export const useChatStore = create<ChatState>()(
                     if (args.team_name && args.name) {
                       // Swarm teammate path — uses new swarm runtime as source of truth
                       const swarm = await import('../services/swarm');
+                      const { onTeamCreated, onAgentStarted } = await import('../services/swarm/inboxCoordinator');
                       const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
                       const { runAgentBackground } = await import('../services/multiagent/subagent');
                       const parentCtx = getCurrentAgentContext() || {
@@ -1228,19 +1380,30 @@ export const useChatStore = create<ChatState>()(
                       const { useSwarmStore } = await import('./swarmStore');
                       useSwarmStore.getState().init();
 
+                      // Ensure there is an active run for this chat session
+                      let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
+                      if (!activeRun) {
+                        activeRun = swarm.startRun(activeSessionId);
+                      }
+
                       // Find or create team in new runtime
                       let runtimeTeam = swarm.getTeamByName(args.team_name);
                       let teamId: string;
+                      let leaderId: string;
                       if (!runtimeTeam) {
-                        const { team } = swarm.createTeam({
+                        const { team, leader } = swarm.createTeam({
                           name: args.team_name,
                           sessionId: activeSessionId,
                           description: args.description || `Team ${args.team_name}`,
                           leaderName: 'leader',
                         });
                         teamId = team.id;
+                        leaderId = leader.id;
+                        // Start leader inbox polling
+                        onTeamCreated(teamId, leaderId);
                       } else {
                         teamId = runtimeTeam.id;
+                        leaderId = runtimeTeam.leaderId;
                       }
 
                       // Spawn agent in new runtime
@@ -1264,6 +1427,9 @@ export const useChatStore = create<ChatState>()(
                       // Start the agent
                       swarm.startAgent(runtimeAgent.id, runtimeTask.id);
                       swarm.startTask(runtimeTask.id);
+
+                      // Start member inbox polling
+                      onAgentStarted(runtimeAgent.id);
 
                       // Record prompt in transcript
                       swarm.recordUserPrompt(runtimeAgent.id, args.prompt, runtimeTask.id);
@@ -1605,6 +1771,27 @@ export const useChatStore = create<ChatState>()(
       set((state) => ({
         sessions: state.sessions.map((s) =>
           s.id === currentSessionId
+            ? { ...s, messages: [...s.messages, message], updatedAt: Date.now() }
+            : s
+        ),
+      }));
+    },
+
+    /**
+     * Add message to a specific session by ID and persist to database.
+     * Used by the swarm inbox feedback loop to inject teammate results into the parent conversation.
+     */
+    addMessageToSession: async (sessionId: string, message: Message) => {
+      if (!message.metadata?.hidden) {
+        try {
+          await invoke('db_save_message', { message: messageToDb(message, sessionId) });
+        } catch (e) {
+          console.warn('[addMessageToSession] DB persist failed:', e);
+        }
+      }
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId
             ? { ...s, messages: [...s.messages, message], updatedAt: Date.now() }
             : s
         ),

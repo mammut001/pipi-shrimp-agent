@@ -50,6 +50,7 @@ pub struct BrowserState {
 
 impl BrowserState {
     /// Check if any browser surface is currently open
+    #[allow(dead_code)]
     pub fn has_active_surface(&self) -> bool {
         self.embedded_webview.is_some() || self.browser_window.is_some()
     }

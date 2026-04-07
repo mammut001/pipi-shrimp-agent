@@ -1,3 +1,5 @@
+// camelCase field names match legacy JSON protocol to Node.js subprocess
+#![allow(dead_code, non_snake_case)]
 /**
  * Claude API message types
  *

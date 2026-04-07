@@ -41,7 +41,7 @@ export class SyntheticOutputTool extends BaseTool<SyntheticOutputInput, Syntheti
 export const SyntheticOutputInputSchema = z.object({
   toolName: z.string().describe('Name of the tool this output is simulating'),
   output: z.unknown().describe('Synthetic output data'),
-  isError: z.boolean().optional().default(false)
+  isError: z.boolean()
 });
 
 export const SyntheticOutputOutputSchema = z.object({

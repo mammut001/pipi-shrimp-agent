@@ -199,13 +199,17 @@ pub struct MemoryFileMeta {
 pub async fn scan_memory_files(memory_dir: String) -> AppResult<Vec<MemoryFileMeta>> {
     let base = expand_home(&memory_dir);
 
-    if !base.exists() {
+    // Enforce sandbox: only allow paths within HOME or /tmp
+    let (canonical_base, _) = resolve_existing_ancestor(&base).unwrap_or_else(|_| (base.clone(), base.clone()));
+    validate_in_scope(&canonical_base, None, &memory_dir)?;
+
+    if !canonical_base.exists() {
         return Ok(Vec::new());
     }
 
     let mut results: Vec<MemoryFileMeta> = Vec::new();
 
-    for entry in fs::read_dir(&base).map_err(|e| AppError::FileError(e.to_string()))? {
+    for entry in fs::read_dir(&canonical_base).map_err(|e| AppError::FileError(e.to_string()))? {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
@@ -349,6 +353,7 @@ pub struct FileInfo {
 }
 
 /// Workspace information returned by get_workspace_info
+#[allow(dead_code)]
 #[derive(serde::Serialize)]
 pub struct WorkspaceInfo {
     pub work_dir: String,
@@ -533,6 +538,7 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
 
 /// Get workspace information including all files and subdirectories
 /// in the specified working directory
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn get_workspace_info(path: String, work_dir: Option<String>) -> AppResult<WorkspaceInfo> {
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;

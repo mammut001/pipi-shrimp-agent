@@ -130,6 +130,11 @@ export interface ChatState {
   addMessage: (message: Message) => void;
 
   /**
+   * Add message to a specific session by ID (used by swarm inbox feedback loop)
+   */
+  addMessageToSession: (sessionId: string, message: Message) => Promise<void>;
+
+  /**
    * Update last message (for streaming updates) and persist to database
    */
   updateLastMessage: (content: string, artifacts?: Artifact[], reasoning?: string, tokenUsage?: Message['token_usage']) => Promise<void>;

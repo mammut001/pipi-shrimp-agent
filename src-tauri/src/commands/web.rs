@@ -191,45 +191,62 @@ pub async fn cdp_click(
         st.page.clone().ok_or("浏览器未连接，请先调用 connect_browser")?
     };
 
-    // Re-query the element using the same selector as get_semantic_tree
-    // to ensure ID correspondence.
-    // Return "" (empty string) when element not found — avoids the JSON-null
-    // deserialization ambiguity that makes the "null" string check unreachable.
+    // Prefer a direct JS .click() which works even in background/hidden tabs
+    // where getBoundingClientRect() would return all-zeros.
+    // Fall back to CDP mouse events only when .click() throws (e.g. the element
+    // has no default click handler and needs a real pointer event).
     let script = format!(r#"
         (() => {{
             const els = Array.from(document.querySelectorAll(
                 'button, a, input, [role="button"], h1, h2, h3'
-            )).filter(el => {{
-                const r = el.getBoundingClientRect();
-                return r.width > 0 && r.height > 0;
-            }});
+            ));
             const el = els[{} - 1];  // element_id is 1-indexed
-            if (!el) return "";
-            const r = el.getBoundingClientRect();
-            return JSON.stringify({{
-                x: r.left + r.width / 2,
-                y: r.top + r.height / 2,
-                tag: el.tagName
-            }});
+            if (!el) return JSON.stringify({{ ok: false, reason: "not_found" }});
+            el.scrollIntoView({{ block: "center" }});
+            try {{
+                el.click();
+                return JSON.stringify({{ ok: true, method: "js_click", tag: el.tagName }});
+            }} catch (e) {{
+                // Return coordinates so the caller can use CDP mouse events
+                const r = el.getBoundingClientRect();
+                return JSON.stringify({{
+                    ok: false,
+                    method: "need_cdp",
+                    x: r.left + r.width / 2,
+                    y: r.top + r.height / 2,
+                    tag: el.tagName
+                }});
+            }}
         }})();
     "#, element_id);
 
     let result = page.evaluate(script).await.map_err(|e| e.to_string())?;
-    let coord_str = result.into_value::<String>()
-        .map_err(|_| format!("元素 ID {} 未找到或不可见", element_id))?;
+    let resp_str = result.into_value::<String>()
+        .map_err(|_| format!("元素 ID {} 未找到或脚本返回空", element_id))?;
 
-    if coord_str.is_empty() {
-        return Err(format!("元素 ID {} 不存在或已不在视口内", element_id));
+    let resp: serde_json::Value = serde_json::from_str(&resp_str)
+        .map_err(|e| format!("JS 响应解析失败: {}", e))?;
+
+    if resp["ok"].as_bool().unwrap_or(false) {
+        let tag = resp["tag"].as_str().unwrap_or("?");
+        return Ok(format!("点击成功: 元素 ID {} <{}>", element_id, tag));
     }
 
-    let coords: serde_json::Value = serde_json::from_str(&coord_str)
-        .map_err(|e| format!("坐标解析失败: {}", e))?;
+    let reason = resp["reason"].as_str().unwrap_or("");
+    if reason == "not_found" {
+        return Err(format!("元素 ID {} 不存在", element_id));
+    }
 
-    // Keep as f64 — no need for i64 intermediate that loses sub-pixel precision
-    let x = coords["x"].as_f64().ok_or("x 坐标无效")?;
-    let y = coords["y"].as_f64().ok_or("y 坐标无效")?;
+    // JS click threw — fall back to CDP mouse events using the coordinates
+    let x = resp["x"].as_f64().ok_or("x 坐标无效")?;
+    let y = resp["y"].as_f64().ok_or("y 坐标无效")?;
 
-    // Use chromiumoxide CDP Mouse Events to click
+    if x == 0.0 && y == 0.0 {
+        return Err(format!(
+            "元素 ID {} 在后台标签页中不可见，坐标为零，无法点击", element_id
+        ));
+    }
+
     use chromiumoxide::cdp::browser_protocol::input::{
         DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
     };
@@ -256,7 +273,7 @@ pub async fn cdp_click(
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     page.execute(params_up).await.map_err(|e| e.to_string())?;
 
-    Ok(format!("点击成功: 元素 ID {} 坐标 ({}, {})", element_id, x, y))
+    Ok(format!("点击成功(CDP): 元素 ID {} 坐标 ({}, {})", element_id, x, y))
 }
 
 /// Type text into an element by its ID using CDP KeyEvents
@@ -564,12 +581,10 @@ pub struct FetchResult {
 }
 
 /**
- * Web search using DuckDuckGo HTML
+ * Web search using DuckDuckGo Lite
  *
  * Free, no API key required. Returns results with titles and snippets.
- *
- * Note: HTML parsing is inherently fragile as DuckDuckGo may change structure.
- * Consider using a proper search API (SerpAPI, Google Custom Search) for production.
+ * Uses the lite endpoint which has a stable, simpler HTML structure.
  */
 #[tauri::command]
 pub async fn web_search(
@@ -578,7 +593,7 @@ pub async fn web_search(
     blocked_domains: Option<Vec<String>>,
 ) -> Result<Vec<SearchResult>, String> {
     let encoded_query = urlencoding::encode(&query);
-    let search_url = format!("https://html.duckduckgo.com/html/?q={}", encoded_query);
+    let search_url = format!("https://lite.duckduckgo.com/lite/?q={}", encoded_query);
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
@@ -592,49 +607,41 @@ pub async fn web_search(
 
     let html = response.text().await.map_err(|e| e.to_string())?;
 
-    // Use regex to extract result blocks more reliably
-    // Note: Rust regex uses (?i) for case-insensitive
-    let result_pattern = regex::Regex::new("(?i)<a[^>]*class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>([^<]+)</a>")
+    // DuckDuckGo Lite uses <a class="result-link"> for result URLs/titles
+    // and <td class="result-snippet"> for snippets.
+    let result_pattern = regex::Regex::new(r#"(?i)<a[^>]*class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>"#)
         .map_err(|e| format!("Regex error: {}", e))?;
-    let snippet_pattern = regex::Regex::new("(?i)<a[^>]*class=\"result__snippet\"[^>]*>([^<]+)</a>")
+    let snippet_pattern = regex::Regex::new(r#"(?i)<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)</td>"#)
         .map_err(|e| format!("Regex error: {}", e))?;
 
-    // Extract all result blocks
+    let strip_tags = regex::Regex::new(r"<[^>]+>").map_err(|e| format!("Regex error: {}", e))?;
+
     let mut results = Vec::new();
+    let snippets: Vec<String> = snippet_pattern.captures_iter(&html)
+        .map(|c| {
+            let raw = c.get(1).map(|m| m.as_str()).unwrap_or("");
+            strip_tags.replace_all(raw, "").trim().to_string()
+        })
+        .collect();
 
-    // Find all result links with their URLs and titles
-    for cap in result_pattern.captures_iter(&html) {
+    for (i, cap) in result_pattern.captures_iter(&html).enumerate() {
         let url = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
-        let title = cap.get(2).map(|m| m.as_str()).unwrap_or("")
-            .replace("<em>", "").replace("</em>", "")
-            .replace("<b>", "").replace("</b>", "")
-            .trim().to_string();
+        let raw_title = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+        let title = strip_tags.replace_all(raw_title, "").trim().to_string();
 
         if url.is_empty() || title.is_empty() {
             continue;
         }
 
-        // Find corresponding snippet
-        let snippet_start = cap.get(0).map(|m| m.end()).unwrap_or(0);
-        let snippet_end = (snippet_start + 500).min(html.len());
-        let snippet_window = &html[snippet_start..snippet_end];
-
-        let snippet = snippet_pattern.captures(snippet_window)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str()
-                .replace("<em>", "").replace("</em>", "")
-                .replace("<b>", "").replace("</b>", "")
-                .replace("<span class=\"highlight\">", "").replace("</span>", "")
-                .trim().to_string())
-            .unwrap_or_default();
+        let snippet = snippets.get(i).cloned().unwrap_or_default();
 
         // Filter by domain if specified
         let passes_filter = match (&allowed_domains, &blocked_domains) {
             (Some(allowed), _) if !allowed.is_empty() => {
-                allowed.iter().any(|d| url.contains(d))
+                allowed.iter().any(|d| url.contains(d.as_str()))
             },
             (_, Some(blocked)) => {
-                !blocked.iter().any(|d| url.contains(d))
+                !blocked.iter().any(|d| url.contains(d.as_str()))
             },
             _ => true,
         };
