@@ -81,9 +81,16 @@ export async function runAgentSync(options: SubagentOptions): Promise<SubagentRe
 
 /**
  * Run a subagent in background (fire-and-forget with notification).
+ * When invoked with a swarm-aware parentContext (has teamName), lifecycle
+ * events are recorded in the new swarm runtime.
  */
 export async function runAgentBackground(options: SubagentOptions): Promise<string> {
   const agentId = `agent-bg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // Resolve the swarm runtime agent ID if running in a swarm context
+  const swarmAgentId = options.parentContext?.teamName
+    ? options.parentContext.agentId
+    : null;
 
   // Fire-and-forget
   (async () => {
@@ -92,6 +99,31 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
         ...options,
         runInBackground: false,
       });
+
+      // Record result in swarm runtime if applicable
+      if (swarmAgentId) {
+        try {
+          const swarm = await import('../swarm');
+          swarm.recordAssistantOutput(swarmAgentId, result.content || '');
+          if (result.success) {
+            swarm.completeAgent(swarmAgentId);
+            // Complete the agent's current task
+            const agent = swarm.getAgent(swarmAgentId);
+            if (agent?.currentTaskId) {
+              swarm.completeTask(agent.currentTaskId, result.content?.slice(0, 500));
+            }
+          } else {
+            swarm.failAgent(swarmAgentId, result.error);
+            const agent = swarm.getAgent(swarmAgentId);
+            if (agent?.currentTaskId) {
+              swarm.failTask(agent.currentTaskId, result.error);
+            }
+          }
+        } catch (_e) {
+          // Swarm runtime recording is best-effort
+          console.warn('[Subagent] Failed to record swarm lifecycle:', _e);
+        }
+      }
 
       // Emit completion event
       const window = getCurrentWindow();
@@ -103,6 +135,14 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
         error: result.error,
       });
     } catch (e) {
+      // Record failure in swarm runtime if applicable
+      if (swarmAgentId) {
+        try {
+          const swarm = await import('../swarm');
+          swarm.failAgent(swarmAgentId, e instanceof Error ? e.message : String(e));
+        } catch (_) { /* best-effort */ }
+      }
+
       const window = getCurrentWindow();
       await window.emit('subagent-error', {
         agentId,

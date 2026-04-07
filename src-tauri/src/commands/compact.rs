@@ -8,7 +8,7 @@
  * - restored-src/src/services/compact/compact.ts
  */
 
-use crate::database::{self, DbMessage};
+use crate::database;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::command;

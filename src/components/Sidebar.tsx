@@ -40,6 +40,7 @@ export function Sidebar() {
   const { selectSession, deleteSession, deleteSessions, createProject, deleteProject, getSessionsByProject, updateSessionProject, startSession, renameSession } = useChatStore();
   const { toggleSettings, currentView, setCurrentView } = useUIStore();
   const workflowRuns = useWorkflowStore((s) => s.workflowRuns);
+  const { renameWorkflowRun, deleteWorkflowRun } = useWorkflowStore();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   // Pricing helpers
@@ -71,10 +72,14 @@ export function Sidebar() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const [showWorkflowDeleteConfirm, setShowWorkflowDeleteConfirm] = useState(false);
+  const [workflowRunToDelete, setWorkflowRunToDelete] = useState<string | null>(null);
 
   // Rename session state
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState('');
+  const [renamingWorkflowRunId, setRenamingWorkflowRunId] = useState<string | null>(null);
+  const [workflowRenameInput, setWorkflowRenameInput] = useState('');
 
   // New Chat modal state
   const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -355,6 +360,53 @@ export function Sidebar() {
   const handleSelectRun = useCallback((runId: string) => {
     setSelectedRunId(runId);
   }, []);
+
+  const handleStartWorkflowRename = useCallback((runId: string) => {
+    const run = workflowRuns.find((r) => r.id === runId);
+    if (run) {
+      setRenamingWorkflowRunId(runId);
+      setWorkflowRenameInput(run.title || 'Untitled Run');
+    }
+  }, [workflowRuns]);
+
+  const handleConfirmWorkflowRename = useCallback(() => {
+    if (renamingWorkflowRunId && workflowRenameInput.trim()) {
+      renameWorkflowRun(renamingWorkflowRunId, workflowRenameInput.trim());
+    }
+    setRenamingWorkflowRunId(null);
+    setWorkflowRenameInput('');
+  }, [renamingWorkflowRunId, workflowRenameInput, renameWorkflowRun]);
+
+  const handleCancelWorkflowRename = useCallback(() => {
+    setRenamingWorkflowRunId(null);
+    setWorkflowRenameInput('');
+  }, []);
+
+  const handleOpenWorkflowDeleteConfirm = useCallback((runId: string) => {
+    setWorkflowRunToDelete(runId);
+    setShowWorkflowDeleteConfirm(true);
+  }, []);
+
+  const handleConfirmWorkflowDelete = useCallback(async () => {
+    if (!workflowRunToDelete) return;
+
+    const run = workflowRuns.find((r) => r.id === workflowRunToDelete);
+    if (run?.runDirectory) {
+      try {
+        await invoke('delete_workflow_run_directory', { path: run.runDirectory });
+      } catch (error) {
+        console.error('Failed to delete workflow run directory:', error);
+      }
+    }
+
+    deleteWorkflowRun(workflowRunToDelete);
+    if (selectedRunId === workflowRunToDelete) {
+      const nextRun = workflowRuns.find((item) => item.id !== workflowRunToDelete);
+      setSelectedRunId(nextRun?.id ?? null);
+    }
+    setShowWorkflowDeleteConfirm(false);
+    setWorkflowRunToDelete(null);
+  }, [deleteWorkflowRun, selectedRunId, workflowRunToDelete, workflowRuns]);
 
   /**
    * Format date for display
@@ -913,11 +965,33 @@ export function Sidebar() {
                         : 'hover:bg-gray-50'
                       }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-gray-900 truncate text-sm">
-                          {run.title || 'Untitled Run'}
-                        </h3>
+                        {renamingWorkflowRunId === run.id ? (
+                          <input
+                            type="text"
+                            value={workflowRenameInput}
+                            onChange={(e) => setWorkflowRenameInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); handleConfirmWorkflowRename(); }
+                              if (e.key === 'Escape') handleCancelWorkflowRename();
+                            }}
+                            onBlur={handleConfirmWorkflowRename}
+                            autoFocus
+                            className="w-full text-sm font-semibold text-gray-900 bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <h3
+                            className="font-semibold text-gray-900 truncate text-sm cursor-text hover:bg-gray-100 rounded px-1 -mx-1 transition-colors"
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              handleStartWorkflowRename(run.id);
+                            }}
+                            title="Double-click to rename"
+                          >
+                            {run.title || 'Untitled Run'}
+                          </h3>
+                        )}
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className={`text-xs font-medium ${getStatusColor(run.status)}`}>
                             {run.status.charAt(0).toUpperCase() + run.status.slice(1)}
@@ -931,8 +1005,29 @@ export function Sidebar() {
                         </p>
                       </div>
 
-                      {/* Status Icon */}
-                      <div className="flex items-center">
+                      {/* Actions + Status Icon */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenWorkflowDeleteConfirm(run.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-red-500"
+                          title="Delete workflow"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="h-4 w-4"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                          >
+                            <path
+                              fillRule="evenodd"
+                              d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+                              clipRule="evenodd"
+                            />
+                          </svg>
+                        </button>
                         {run.status === 'running' ? (
                           <svg className="h-4 w-4 text-blue-500 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -1135,6 +1230,33 @@ export function Sidebar() {
               </button>
               <button
                 onClick={handleConfirmBatchDelete}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Workflow Delete Confirmation Modal */}
+      {showWorkflowDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowWorkflowDeleteConfirm(false)}>
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Workflow</h3>
+            <p className="text-sm text-gray-600 mb-4">Are you sure you want to delete this workflow run? This action cannot be undone.</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowWorkflowDeleteConfirm(false);
+                  setWorkflowRunToDelete(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmWorkflowDelete}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
               >
                 Delete

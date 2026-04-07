@@ -1,13 +1,14 @@
 /**
- * Swarm Teammates
+ * Swarm Teammates (LEGACY — TRANSITIONAL)
  *
- * Creates a team of agents with:
- * - Team name and roster
- * - Mailbox for inter-agent communication
- * - Shared task list
- * - Leader permission bridge
+ * ⚠️ This module is NO LONGER the primary swarm execution path.
+ * The new runtime at `src/services/swarm/` is now the source of truth.
  *
- * Based on Claude Code's swarm implementation
+ * This file is kept temporarily for compatibility with any code that
+ * still references these functions directly. The main `agent_tool` path
+ * in chatStore now uses the new swarm runtime instead.
+ *
+ * TODO: Remove this file once all callers are migrated.
  */
 
 import { AgentContext, createChildContext } from './agentContext';

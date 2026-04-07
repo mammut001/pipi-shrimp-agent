@@ -55,11 +55,17 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
     removeAgent,
     updateAgentPosition,
   } = useWorkflowStore();
+  const currentView = useUIStore((s) => s.currentView);
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false);
   const [templateDrawerPosition, setTemplateDrawerPosition] = useState<{ x: number; y: number } | null>(null);
+  const isWorkflowActive = currentView === 'workflow';
+
+  const notifyWorkflowLocked = useCallback(() => {
+    useUIStore.getState().addNotification('warning', '请先进入 Workflow 页面，再操作工作流画布');
+  }, []);
 
   // Convert store agents to React Flow nodes
   const initialNodes: Node[] = useMemo(() => {
@@ -141,6 +147,10 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   // This only adds visual edges without modifying the store
   const onConnect = useCallback(
     (params: Connection) => {
+      if (!isWorkflowActive) {
+        notifyWorkflowLocked();
+        return;
+      }
       if (!params.source || !params.target) return;
 
       // Check if connection already exists in store
@@ -174,36 +184,53 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         )
       );
     },
-    [connections, setEdges]
+    [connections, isWorkflowActive, notifyWorkflowLocked, setEdges]
   );
 
   // Handle edge deletion - only removes visual edge, not the actual connection
   // Actual connection removal should be done in the panel
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
+      if (!isWorkflowActive) {
+        notifyWorkflowLocked();
+        return;
+      }
       // Just remove visual edges, don't touch the store
       // Store connections are managed through the panel
       setEdges((eds) => eds.filter((e) => !deletedEdges.some((de) => de.id === e.id)));
     },
-    [setEdges]
+    [isWorkflowActive, notifyWorkflowLocked, setEdges]
   );
 
   // Handle node selection
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
+      if (!isWorkflowActive) {
+        notifyWorkflowLocked();
+        return;
+      }
       onAgentSelect(node.id);
     },
-    [onAgentSelect]
+    [isWorkflowActive, notifyWorkflowLocked, onAgentSelect]
   );
 
   // Handle canvas click (deselect)
   const onPaneClick = useCallback(() => {
+    if (!isWorkflowActive) {
+      setContextMenu(null);
+      return;
+    }
     onAgentSelect(null);
     setContextMenu(null);
-  }, [onAgentSelect]);
+  }, [isWorkflowActive, onAgentSelect]);
 
   // Handle right-click context menu
   const onContextMenu = useCallback((event: React.MouseEvent) => {
+    if (!isWorkflowActive) {
+      event.preventDefault();
+      notifyWorkflowLocked();
+      return;
+    }
     event.preventDefault();
     const bounds = (event.target as HTMLElement).closest('.react-flow')?.getBoundingClientRect();
     if (bounds) {
@@ -212,11 +239,17 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         y: event.clientY - bounds.top,
       });
     }
-  }, []);
+  }, [isWorkflowActive, notifyWorkflowLocked]);
 
   // Add agent at context menu position (opens template drawer)
   const handleAddAgent = useCallback(
     (e: React.MouseEvent) => {
+      if (!isWorkflowActive) {
+        e.preventDefault();
+        e.stopPropagation();
+        notifyWorkflowLocked();
+        return;
+      }
       e.stopPropagation();
       const reactFlowBounds = (e.target as HTMLElement).closest('.react-flow')?.getBoundingClientRect();
       if (!reactFlowBounds) return;
@@ -230,12 +263,16 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
       setTemplateDrawerOpen(true);
       setContextMenu(null);
     },
-    []
+    [isWorkflowActive, notifyWorkflowLocked]
   );
 
   // Add agent from template
   const handleAddFromTemplate = useCallback(
     (template: AgentTemplate, position?: { x: number; y: number }) => {
+      if (!isWorkflowActive) {
+        notifyWorkflowLocked();
+        return;
+      }
       const newAgent = addAgent({
         name: template.name,
         soulPrompt: template.soulPrompt,
@@ -251,14 +288,18 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
       setTemplateDrawerOpen(false);
       setTemplateDrawerPosition(null);
     },
-    [addAgent]
+    [addAgent, isWorkflowActive, notifyWorkflowLocked]
   );
 
   // Add agent via button (center of viewport)
   const handleAddAgentButton = useCallback(() => {
+    if (!isWorkflowActive) {
+      notifyWorkflowLocked();
+      return;
+    }
     setTemplateDrawerOpen(true);
     setTemplateDrawerPosition(null);
-  }, []);
+  }, [isWorkflowActive, notifyWorkflowLocked]);
 
   // Open working directory in Finder
   const handleOpenWorkingDirectory = useCallback(async () => {
@@ -278,6 +319,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   // Handle keyboard delete
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isWorkflowActive) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAgentId) {
         // Don't delete if typing in an input
         if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
@@ -289,7 +331,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAgentId, removeAgent, onAgentSelect]);
+  }, [isWorkflowActive, selectedAgentId, removeAgent, onAgentSelect]);
 
   return (
     <div className="w-full h-full relative">
@@ -316,6 +358,10 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         deleteKeyCode={null}
         selectionKeyCode={null}
         multiSelectionKeyCode={null}
+        nodesDraggable={isWorkflowActive}
+        nodesConnectable={isWorkflowActive}
+        elementsSelectable={isWorkflowActive}
+        panOnDrag={isWorkflowActive}
         className="bg-gray-50"
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d1d5db" />
@@ -325,6 +371,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         <Panel position="bottom-right" className="flex flex-col gap-2">
           <button
             onClick={handleAddAgentButton}
+            disabled={!isWorkflowActive}
             className="px-4 py-2 bg-gray-900 text-white rounded-lg shadow-lg hover:bg-gray-800 transition-colors flex items-center gap-2 text-sm"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -333,8 +380,15 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
             Add Agent
           </button>
           <button
-            onClick={() => setShowClearConfirm(true)}
-            className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg shadow hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm"
+            onClick={() => {
+              if (!isWorkflowActive) {
+                notifyWorkflowLocked();
+                return;
+              }
+              setShowClearConfirm(true);
+            }}
+            disabled={!isWorkflowActive}
+            className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg shadow hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -342,8 +396,15 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
             Clear All
           </button>
           <button
-            onClick={() => useWorkflowStore.getState().createA_B_C_Workflow()}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg shadow-lg hover:bg-purple-700 transition-colors flex items-center gap-2 text-sm"
+            onClick={() => {
+              if (!isWorkflowActive) {
+                notifyWorkflowLocked();
+                return;
+              }
+              useWorkflowStore.getState().createA_B_C_Workflow();
+            }}
+            disabled={!isWorkflowActive}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg shadow-lg hover:bg-purple-700 transition-colors flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -380,6 +441,14 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
           </div>
         )}
       </ReactFlow>
+
+      {!isWorkflowActive && (
+        <div className="absolute inset-0 z-40 cursor-not-allowed bg-white/45 backdrop-blur-[1px] flex items-center justify-center">
+          <div className="px-4 py-2 rounded-xl bg-white/95 border border-gray-200 shadow-sm text-sm text-gray-700">
+            请先进入 Workflow 页面再编辑画布
+          </div>
+        </div>
+      )}
 
       {/* Agent Template Drawer */}
       <AgentTemplateDrawer

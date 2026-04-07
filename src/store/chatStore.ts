@@ -1212,9 +1212,10 @@ export const useChatStore = create<ChatState>()(
                       break;
                     }
                     if (args.team_name && args.name) {
-                      // Swarm teammate path
-                      const { spawnTeammate, createTeam, getTeamStatus } = await import('../services/multiagent/swarm');
+                      // Swarm teammate path — uses new swarm runtime as source of truth
+                      const swarm = await import('../services/swarm');
                       const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                      const { runAgentBackground } = await import('../services/multiagent/subagent');
                       const parentCtx = getCurrentAgentContext() || {
                         agentId: 'main',
                         sessionId: activeSessionId,
@@ -1223,19 +1224,72 @@ export const useChatStore = create<ChatState>()(
                         metadata: {},
                       };
 
-                      let team = getTeamStatus(args.team_name);
-                      if (!team) {
-                        team = createTeam(args.team_name, parentCtx, [args.name]);
+                      // Ensure swarm store is initialized
+                      const { useSwarmStore } = await import('./swarmStore');
+                      useSwarmStore.getState().init();
+
+                      // Find or create team in new runtime
+                      let runtimeTeam = swarm.getTeamByName(args.team_name);
+                      let teamId: string;
+                      if (!runtimeTeam) {
+                        const { team } = swarm.createTeam({
+                          name: args.team_name,
+                          sessionId: activeSessionId,
+                          description: args.description || `Team ${args.team_name}`,
+                          leaderName: 'leader',
+                        });
+                        teamId = team.id;
+                      } else {
+                        teamId = runtimeTeam.id;
                       }
 
-                      const agentId = await spawnTeammate(
-                        args.team_name,
-                        args.name,
-                        args.prompt,
-                        args.description || `Teammate ${args.name}`,
-                        parentCtx,
-                      );
-                      toolResultContent = `Teammate ${args.name} spawned in team ${args.team_name} with ID: ${agentId}`;
+                      // Spawn agent in new runtime
+                      const runtimeAgent = swarm.spawnAgent({
+                        teamId,
+                        name: args.name,
+                        role: 'member',
+                        sessionId: activeSessionId,
+                        parentAgentId: parentCtx.agentId,
+                        model: args.model,
+                      });
+
+                      // Create task in runtime
+                      const runtimeTask = swarm.createTask({
+                        teamId,
+                        type: 'general',
+                        description: args.prompt,
+                        assignedAgentId: runtimeAgent.id,
+                      });
+
+                      // Start the agent
+                      swarm.startAgent(runtimeAgent.id, runtimeTask.id);
+                      swarm.startTask(runtimeTask.id);
+
+                      // Record prompt in transcript
+                      swarm.recordUserPrompt(runtimeAgent.id, args.prompt, runtimeTask.id);
+
+                      // Actually run the agent in the background via existing subagent executor
+                      const bgAgentId = await runAgentBackground({
+                        name: args.name,
+                        prompt: args.prompt,
+                        description: args.description || `Teammate ${args.name}`,
+                        sessionId: activeSessionId,
+                        parentContext: {
+                          ...parentCtx,
+                          agentId: runtimeAgent.id,
+                          teamName: args.team_name,
+                          name: args.name,
+                        },
+                        runInBackground: true,
+                        model: args.model,
+                      });
+
+                      // Store mapping so we can reconcile on completion
+                      // TRANSITIONAL: bgAgentId is the subagent executor ID,
+                      // runtimeAgent.id is the swarm runtime ID
+                      (runtimeAgent as any)._bgAgentId = bgAgentId;
+
+                      toolResultContent = `Teammate ${args.name} spawned in team ${args.team_name} (runtime ID: ${runtimeAgent.id}). Task assigned: ${runtimeTask.id}`;
                     } else if (args.run_in_background) {
                       // Background subagent path
                       const { runAgentBackground } = await import('../services/multiagent/subagent');
@@ -1362,11 +1416,16 @@ export const useChatStore = create<ChatState>()(
 
         // === Auto Memory Extraction (fire-and-forget) ===
         try {
-          const { shouldExtractMemory, extractMemories } = await import('../services/memory/autoExtraction');
+          const { triggerMemoryExtraction } = await import('../services/memory/autoExtraction');
           const currentMsgs = currentMessages();
-          // Simple heuristic: extract if session has 10+ messages and no tool calls in last turn
-          if (currentMsgs.length >= 10 && shouldExtractMemory(currentMsgs, 0, false)) {
-            extractMemories(currentMsgs, sessionWorkDir).catch((e: unknown) => console.warn('[Auto Memory] Extraction failed:', e));
+          if (currentMsgs.length >= 10) {
+            triggerMemoryExtraction({
+              messages: currentMsgs.map((msg) => ({
+                role: msg.role,
+                content: msg.content ?? '',
+              })),
+              projectRoot: sessionWorkDir ?? undefined,
+            });
           }
         } catch (e) {
           console.debug('Auto memory extraction setup failed:', e);

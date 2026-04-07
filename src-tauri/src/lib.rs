@@ -15,9 +15,6 @@ mod tools;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::Manager;
-use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_shell::ShellExt;
-use tauri_plugin_fs::FsExt;
 
 use claude::{ClaudeClient, ChatResponse, Message};
 use commands::browser::BrowserState;
@@ -525,6 +522,7 @@ pub fn run() {
             commands::get_next_output_dir,
             commands::list_pipi_shrimp_index,
             commands::create_workflow_run_directory,
+            commands::delete_workflow_run_directory,
             commands::reveal_in_finder,
             // Browser window commands (second WebviewWindow for PageAgent)
             commands::open_browser_window,

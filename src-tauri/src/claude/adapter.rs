@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Window};
 
 use super::message::{Artifact, ChatResponse, Message, ToolCall, UsageInfo};
-use super::provider::{ApiFormat, ProviderCapabilities, ProviderId, ResolvedProviderConfig};
+use super::provider::{ApiFormat, ProviderId, ResolvedProviderConfig};
 
 /// Unified streaming events emitted to frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,7 +142,7 @@ pub trait ProviderAdapter: Send + Sync {
     fn finalize_stream(
         &self,
         mut ctx: StreamContext,
-        config: &ResolvedProviderConfig,
+        _config: &ResolvedProviderConfig,
     ) -> AppResult<ChatResponse> {
         // Detect artifacts from final content
         let artifacts = detect_artifacts(&ctx.content);
@@ -236,7 +236,7 @@ impl ProviderAdapter for AnthropicAdapter {
         ApiFormat::Anthropic
     }
 
-    fn build_url(&self, config: &ResolvedProviderConfig) -> String {
+    fn build_url(&self, _config: &ResolvedProviderConfig) -> String {
         "https://api.anthropic.com/v1/messages".to_string()
     }
 
@@ -367,6 +367,7 @@ impl ProviderAdapter for AnthropicAdapter {
 
         let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
+        #[allow(unreachable_patterns)]
         match event_type {
             "content_block_delta" => {
                 if let Some(delta) = json.get("delta") {
@@ -442,7 +443,7 @@ impl ProviderAdapter for AnthropicAdapter {
     fn finalize_stream(
         &self,
         ctx: StreamContext,
-        config: &ResolvedProviderConfig,
+        _config: &ResolvedProviderConfig,
     ) -> AppResult<ChatResponse> {
         let artifacts = detect_artifacts(&ctx.content);
 

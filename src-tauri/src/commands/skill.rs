@@ -47,6 +47,7 @@ impl Default for SkillResult {
  * Returns the skill content and metadata for the frontend to process.
  */
 #[tauri::command]
+#[allow(unused_variables)]
 pub async fn execute_skill(
     #[allow(non_snake_case)] skillName: String,
     #[allow(non_snake_case)] workDir: Option<String>,

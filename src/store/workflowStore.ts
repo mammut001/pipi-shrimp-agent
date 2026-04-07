@@ -87,6 +87,8 @@ export interface WorkflowStore extends WorkflowState {
   // Workflow Run (history)
   addWorkflowRun: (run: WorkflowRun) => void;
   updateWorkflowRun: (id: string, updates: Partial<WorkflowRun>) => void;
+  renameWorkflowRun: (id: string, title: string) => void;
+  deleteWorkflowRun: (id: string) => void;
   updateRunAgent: (runId: string, agentId: string, updates: Partial<WorkflowRunAgentEntry>) => void;
 
   // Execution state
@@ -443,6 +445,30 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         workflowRuns: state.workflowRuns.map((run) =>
           run.id === id ? { ...run, ...updates } : run
         ),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
+  renameWorkflowRun: (id, title) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        workflowRuns: state.workflowRuns.map((run) =>
+          run.id === id ? { ...run, title } : run
+        ),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
+  deleteWorkflowRun: (id) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        workflowRuns: state.workflowRuns.filter((run) => run.id !== id),
       };
       saveToStorage(newState);
       return newState;
