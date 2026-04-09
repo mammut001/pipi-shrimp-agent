@@ -20,18 +20,26 @@ import type { RouteCondition } from '@/types/workflow';
 interface AgentConfigPanelProps {
   agentId: string;
   onClose: () => void;
+  hideTaskFields?: boolean;
+  embedded?: boolean;
 }
 
-export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
+export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, embedded = false }: AgentConfigPanelProps) {
   const agent = useWorkflowStore((state) =>
     state.agents.find((a) => a.id === agentId)
   );
   const allAgents = useWorkflowStore((state) => state.agents);
   const { updateAgent, addOutputRoute, removeOutputRoute, setAgentInputFrom } = useWorkflowStore();
 
+  const connections = useWorkflowStore((state) =>
+    state.connections.filter((c) => c.targetAgentId === agentId)
+  );
+
   const [formData, setFormData] = useState({
     name: '',
     task: '',
+    taskPrompt: '',
+    taskInstruction: '',
     soulPrompt: '',
     execution: DEFAULT_EXECUTION_CONFIG,
   });
@@ -47,6 +55,8 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
       setFormData({
         name: agent.name,
         task: agent.task || '',
+        taskPrompt: agent.taskPrompt || '',
+        taskInstruction: agent.taskInstruction || '',
         soulPrompt: agent.soulPrompt || '',
         execution: agent.execution || DEFAULT_EXECUTION_CONFIG,
       });
@@ -58,10 +68,15 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
   const handleSave = () => {
     const updates: any = {
       name: formData.name,
-      task: formData.task,
       soulPrompt: formData.soulPrompt,
       execution: formData.execution,
     };
+
+    if (!hideTaskFields) {
+      updates.task = formData.task;
+      updates.taskPrompt = formData.taskPrompt;
+      updates.taskInstruction = formData.taskInstruction;
+    }
 
     updateAgent(agentId, updates);
   };
@@ -73,6 +88,8 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
         ...prev,
         name: template.name,
         task: template.task,
+        taskPrompt: template.taskPrompt || '',
+        taskInstruction: template.taskInstruction || '',
         soulPrompt: template.soulPrompt,
         execution: template.execution,
       }));
@@ -100,22 +117,36 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
   );
 
   return (
-    <div className="flex flex-col h-full bg-white">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-        <h2 className="font-medium text-gray-900">Agent 配置</h2>
-        <button
-          onClick={onClose}
-          className="p-1 text-gray-400 hover:text-gray-600 rounded"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+    <div className={`bg-white ${embedded ? '' : 'flex flex-col h-full'}`}>
+      {!embedded && (
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+          <h2 className="font-medium text-gray-900">Agent 配置</h2>
+          <button
+            onClick={onClose}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
-      {/* Form */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className={`space-y-4 ${embedded ? 'px-4 py-4' : 'flex-1 overflow-y-auto p-4'}`}>
+        {embedded && (
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-900">Agent 配置</h2>
+            <button
+              onClick={onClose}
+              className="p-1 text-gray-400 hover:text-gray-600 rounded"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+
         {/* Agent Name */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -129,19 +160,75 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
           />
         </div>
 
-        {/* Task Description */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Task 描述
-          </label>
-          <input
-            type="text"
-            value={formData.task}
-            onChange={(e) => setFormData({ ...formData, task: e.target.value })}
-            placeholder="描述这个 Agent 的任务..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
+        {!hideTaskFields && (
+          <>
+            {/* Task label (short, shown on canvas card) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                任务标签 <span className="text-xs text-gray-400">(显示在画布上)</span>
+              </label>
+              <input
+                type="text"
+                value={formData.task}
+                onChange={(e) => setFormData({ ...formData, task: e.target.value })}
+                placeholder="如：撰写需求文档"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Task Instruction (multiline, injected into prompt) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                任务指令 <span className="text-xs text-gray-400">(注入 Agent 提示词)</span>
+              </label>
+              <textarea
+                value={formData.taskInstruction}
+                onChange={(e) => setFormData({ ...formData, taskInstruction: e.target.value })}
+                rows={5}
+                placeholder="详细描述此 Agent 需要做什么，会作为专项任务指令注入到系统提示词中..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                任务 Prompt <span className="text-xs text-gray-400">(这次具体要做的事)</span>
+              </label>
+              <textarea
+                value={formData.taskPrompt}
+                onChange={(e) => setFormData({ ...formData, taskPrompt: e.target.value })}
+                rows={4}
+                placeholder="例如：请写一个关于这个项目的调研报告。"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+            </div>
+          </>
+        )}
+
+        {/* Waits for (read-only, derived from connections) */}
+        {connections.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              等待上游完成
+            </label>
+            <div className="flex flex-wrap gap-1">
+              {connections.map((conn) => {
+                const src = allAgents.find((a) => a.id === conn.sourceAgentId);
+                return src ? (
+                  <span
+                    key={conn.id}
+                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200"
+                  >
+                    {src.name}
+                  </span>
+                ) : null;
+              })}
+            </div>
+            <p className="mt-1 text-xs text-gray-400">
+              此 Agent 将在以上所有上游执行完成后才启动
+            </p>
+          </div>
+        )}
 
         {/* InputFrom - Upstream Agent Selection */}
         <div>
@@ -356,15 +443,16 @@ export function AgentConfigPanel({ agentId, onClose }: AgentConfigPanelProps) {
         </div>
       </div>
 
-      {/* Save button */}
-      <div className="px-4 py-3 border-t border-gray-200">
-        <button
-          onClick={handleSave}
-          className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          保存更改
-        </button>
-      </div>
+      {!embedded && (
+        <div className="px-4 py-3 border-t border-gray-200">
+          <button
+            onClick={handleSave}
+            className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            保存更改
+          </button>
+        </div>
+      )}
     </div>
   );
 }

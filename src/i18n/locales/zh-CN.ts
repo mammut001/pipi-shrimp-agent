@@ -102,6 +102,17 @@ const zhCN: TranslationKeys = {
   'token.cost': '费用',
   'token.estimatedCost': '预估费用',
   'token.totalCost': '总费用',
+  'token.disclaimer': '⚠️ 费用估算仅供参考。实际费用可能因缓存、批量折扣等因素有所不同。请前往设置页面配置您的模型定价以获取更准确的估算。',
+  'token.resetConfirm': '确定要重置所有token使用统计吗？此操作不可撤销。',
+  'token.resetSuccess': 'Token使用统计已重置',
+  'token.resetFailed': '重置失败',
+  'token.usageStats': 'Token 使用统计',
+  'token.viewConsumption': '查看您的 API token 消耗和费用估算',
+  'token.resetStats': '重置统计',
+  'token.totalCostLabel': '总费用估算',
+  'token.totalInput': '总输入',
+  'token.totalOutput': '总输出',
+  'token.loading': '加载中...',
 
   // Session
   'session.bindWorkDir': '绑定工作目录',

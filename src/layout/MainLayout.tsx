@@ -19,14 +19,27 @@ interface MainLayoutProps {
   children: React.ReactNode;
   /** Whether to show the sidebar (default: true) */
   showSidebar?: boolean;
+  /** Override whether the right panel should render */
+  showRightPanel?: boolean;
+  /** Optional custom content for the right panel */
+  rightPanelContent?: React.ReactNode;
+  /** Optional custom width for the right panel */
+  rightPanelWidthClassName?: string;
 }
 
 /**
  * Main application layout with sidebar and content area
  */
-export function MainLayout({ children, showSidebar = true }: MainLayoutProps) {
+export function MainLayout({
+  children,
+  showSidebar = true,
+  showRightPanel,
+  rightPanelContent,
+  rightPanelWidthClassName = 'w-[320px]',
+}: MainLayoutProps) {
   const { sidebarVisible, rightPanelVisible } = useUIStore();
   const shouldShowSidebar = showSidebar && sidebarVisible;
+  const shouldShowRightPanel = showRightPanel ?? rightPanelVisible;
 
   return (
     <div className="h-screen flex overflow-hidden bg-gray-50">
@@ -52,9 +65,9 @@ export function MainLayout({ children, showSidebar = true }: MainLayoutProps) {
       </main>
 
       {/* Right Agent Panel */}
-      {rightPanelVisible && (
-        <aside className="w-[320px] flex-shrink-0 border-l border-gray-200 bg-gray-50 overflow-y-auto">
-          <AgentPanel />
+      {shouldShowRightPanel && (
+        <aside className={`${rightPanelWidthClassName} flex-shrink-0 border-l border-gray-200 bg-gray-50 overflow-y-auto`}>
+          {rightPanelContent ?? <AgentPanel />}
         </aside>
       )}
     </div>
