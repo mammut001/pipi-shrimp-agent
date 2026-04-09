@@ -52,6 +52,11 @@ export type EngineEvent =
   // Tool execution request (UI should call invoke('execute_tool_batch'))
   // _resolve is a callback to pass the tool result back into the generator
   | { type: 'tool_call_request'; tool: ToolCallParams; _resolve: (result: string) => void }
+
+  // Batch tool execution request — replaces multiple individual tool_call_requests.
+  // Consumer should execute concurrent tools in parallel and serial tools sequentially,
+  // then call _resolveAll with results for every tool in the batch.
+  | { type: 'tool_batch_request'; tools: ToolCallParams[]; _resolveAll: (results: { id: string; content: string }[]) => void }
   
   // Tool execution result (emitted after tool completes)
   | { type: 'tool_result'; id: string; content: string; is_error: boolean }

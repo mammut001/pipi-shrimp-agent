@@ -67,6 +67,7 @@ function buildContextHeader(plan: DelegationPlan, result: DelegationResult): str
     `Deduplicate overlapping information. Where multiple agents cover the same file or topic, merge into a single point.`,
     `Write as one expert, in first person. The user should feel they are getting a single authoritative answer, not a committee report.`,
     `Never mention agent names, agent counts, or delegation mechanics in your response.`,
+    `CRITICAL: This is the synthesis pass. Do NOT call any tools or read any files. All the codebase information you need is already contained in the agent findings below. Produce your complete response immediately, without any tool calls.`,
   ].join(' ');
 }
 
@@ -130,6 +131,7 @@ function buildSynthesisInstruction(
     followThrough.promptGuidance,
     '',
     '**Synthesis rules:**',
+    '- Do NOT call any tools or read any files. Synthesize only from the agent findings above.',
     '- Write in first person as one expert. Never mention agents, agent names, or delegation in your response.',
     '- Merge overlapping findings — if two agents covered the same file or topic, combine into one section.',
     '- Organize by topic/theme, not by which agent produced the information.',

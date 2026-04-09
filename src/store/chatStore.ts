@@ -689,9 +689,29 @@ export const useChatStore = create<ChatState>()(
           },
         );
 
-        // Listen for swarm teammate task_result messages and inject them into the conversation
+        // Listen for swarm teammate task_result messages.
+        //
+        // For AUTO-DELEGATION workers (spawned by the orchestration planner), we skip
+        // injecting a raw visible message — the delegation pipeline collects their output
+        // internally and the synthesis pass surfaces it cleanly. Injecting here would cause
+        // duplicate / noisy content in the main chat.
+        //
+        // For MANUAL swarm teammates (spawned by the LLM via agent_tool), we preserve the
+        // original behavior: inject the result as a visible context message so the LLM can
+        // read it in the next turn.
         const swarmModule = await import('../services/swarm');
         swarmModule.swarmEvents.on('task_result_received', async (detail) => {
+          // Check if this agent belongs to an active auto-delegation plan.
+          // If so, its result is already being collected by runDelegationPlan — skip injection.
+          try {
+            const { findDelegationForAgent } = await import('../services/orchestration');
+            if (findDelegationForAgent(detail.fromAgentId)) {
+              return; // Handled by the orchestration pipeline, not the chat injection path
+            }
+          } catch {
+            // Orchestration module unavailable; fall through to normal handling
+          }
+
           const team = swarmModule.getTeam(detail.teamId);
           if (!team) return;
           const sessionId = team.sessionId;
@@ -1234,300 +1254,311 @@ export const useChatStore = create<ChatState>()(
             set((state) => ({ streamingReasoning: state.streamingReasoning + chunk.content }));
           } else if (chunk.type === 'status_update') {
             uiStore.addNotification('info', chunk.message);
-          } else if (chunk.type === 'tool_call_request') {
-            const tool = chunk.tool;
-            uiStore.addTaskStep(
-              `${tool.name}: ${tool.arguments.slice(0, 50)}${tool.arguments.length > 50 ? '...' : ''}`,
-              tool.id
-            );
-            uiStore.updateTaskStep(tool.id, 'pending');
-
+          } else if (chunk.type === 'tool_batch_request') {
             const currentSess = get().sessions.find(s => s.id === activeSessionId);
-            const permissionMode = currentSess?.permissionMode || 'standard';
+            const workDir = currentSess?.workDir ?? null;
 
-            // === PreToolUse Hooks (dangerous commands, path validation, permission mode) ===
-            const hookResult = await runPreToolUseHooks({
-              toolName: tool.name,
-              toolArgs: tool.arguments,
-              workDir: currentSess?.workDir,
-              permissionMode,
-              sessionId: activeSessionId,
+            // Add task steps for all tools upfront
+            for (const tool of chunk.tools) {
+              uiStore.addTaskStep(
+                `${tool.name}: ${tool.arguments.slice(0, 50)}${tool.arguments.length > 50 ? '...' : ''}`,
+                tool.id
+              );
+              uiStore.updateTaskStep(tool.id, 'pending');
+            }
+
+            const allResults: { id: string; content: string }[] = [];
+
+            // Partition tools into concurrent (read-only, auto-approved) and serial (needs permission)
+            const { partitionTools, StreamingToolExecutor } = await import('../services/StreamingToolExecutor');
+            const toolRequests = chunk.tools.map(t => {
+              let parsedArgs: Record<string, any> = {};
+              try { parsedArgs = JSON.parse(t.arguments); } catch { parsedArgs = {}; }
+              return { id: t.id, name: t.name, arguments: parsedArgs };
             });
+            const { concurrent, serial } = partitionTools(toolRequests);
+            const serialIds = new Set(serial.map(r => r.id));
 
-            let toolResultContent = '';
-            if (!hookResult.approved) {
-              // Hooks blocked the tool execution
-              uiStore.updateTaskStep(tool.id, 'failed');
-              uiStore.addNotification('error', hookResult.error || 'Tool execution blocked');
-              toolResultContent = `Error: ${hookResult.error || 'Tool execution blocked'}`;
-              chunk._resolve(toolResultContent);
-            } else {
-              // Hooks approved — now check permission mode for UI flow
-              const effectiveArgs = hookResult.modifiedArgs || tool.arguments;
-              const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
-              let parsedAgentArgs: Record<string, any> | null = null;
-              let isSwarmTeammateRequest = false;
-
-              if (tool.name === 'agent_tool') {
-                try {
-                  parsedAgentArgs = JSON.parse(effectiveArgs);
-                  isSwarmTeammateRequest = Boolean(
-                    parsedAgentArgs?.team_name && parsedAgentArgs?.name
-                  );
-                } catch {
-                  parsedAgentArgs = null;
-                  isSwarmTeammateRequest = false;
-                }
-              }
-
-              let approved = shouldBypass;
-
-              if (!shouldBypass) {
-                if (isSwarmTeammateRequest && parsedAgentArgs) {
-                  const swarm = await import('../services/swarm');
-                  const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
-                  const parentCtx = getCurrentAgentContext() || {
-                    agentId: 'main',
-                    sessionId: activeSessionId,
-                    workDir: currentSess?.workDir || undefined,
-                    toolPool: [],
-                    metadata: {},
-                  };
-
-                  // Ensure UI/runtime are initialized before we enqueue a permission request
-                  const { useSwarmStore } = await import('./swarmStore');
-                  useSwarmStore.getState().init();
-
-                  let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
-                  if (!activeRun) {
-                    activeRun = swarm.startRun(activeSessionId);
-                  }
-
-                  let runtimeTeam = swarm.getTeamByName(parsedAgentArgs.team_name);
-                  if (!runtimeTeam) {
-                    runtimeTeam = swarm.createTeam({
-                      name: parsedAgentArgs.team_name,
+            // === 1. Concurrent read-only tools — execute in parallel (no permission check) ===
+            // Rust-side path validation in execute_tool provides defense-in-depth.
+            if (concurrent.length > 0) {
+              concurrent.forEach(req => uiStore.updateTaskStep(req.id, 'running'));
+              try {
+                const executor = new StreamingToolExecutor();
+                const batchResult = await executor.executeBatch(concurrent, {
+                  sessionId: activeSessionId,
+                  workDir: workDir ?? undefined,
+                });
+                for (const result of batchResult.results) {
+                  uiStore.updateTaskStep(result.id, result.is_error ? 'failed' : 'done');
+                  allResults.push({ id: result.id, content: result.content });
+                  const req = concurrent.find(r => r.id === result.id);
+                  if (req) {
+                    const origTool = chunk.tools.find(t => t.id === result.id);
+                    const postCtx: PostHookContext = {
+                      toolName: req.name,
+                      toolArgs: origTool?.arguments ?? '{}',
+                      result: result.content,
+                      isError: result.is_error,
                       sessionId: activeSessionId,
-                      description: parsedAgentArgs.description || `Team ${parsedAgentArgs.team_name}`,
-                      leaderName: 'leader',
-                    }).team;
+                    };
+                    runPostToolUseHooks(postCtx).catch((e: unknown) => console.warn('[PostToolUseHooks]', e));
+                    recordToolForReactiveCompact(activeSessionId, result.id, req.name, result.content);
                   }
-
-                  const runtimeAgent = swarm.spawnAgent({
-                    teamId: runtimeTeam.id,
-                    name: parsedAgentArgs.name,
-                    role: 'member',
-                    sessionId: activeSessionId,
-                    parentAgentId: parentCtx.agentId,
-                    model: parsedAgentArgs.model,
-                  });
-
-                  approved = await swarm.enqueuePermissionInUI({
-                    teamId: runtimeTeam.id,
-                    agentId: runtimeAgent.id,
-                    agentName: parsedAgentArgs.name,
-                    toolName: tool.name,
-                    toolArgs: effectiveArgs,
-                  });
-
-                  if (!approved) {
-                    swarm.failAgent(runtimeAgent.id, 'Permission denied by user');
-                    swarm.reconcileRunForChatSession(activeSessionId);
-                  }
-                } else {
-                  approved = await uiStore.waitForPermission(tool);
+                }
+              } catch (concurrentErr) {
+                for (const req of concurrent) {
+                  uiStore.updateTaskStep(req.id, 'failed');
+                  allResults.push({ id: req.id, content: `Error: batch execution failed: ${concurrentErr instanceof Error ? concurrentErr.message : String(concurrentErr)}` });
                 }
               }
+            }
 
-              if (!approved) {
+            // === 2. Serial tools — full permission flow, one by one ===
+            for (const tool of chunk.tools) {
+              if (!serialIds.has(tool.id)) continue;
+
+              const permissionMode = currentSess?.permissionMode || 'standard';
+
+              // === PreToolUse Hooks (dangerous commands, path validation, permission mode) ===
+              const hookResult = await runPreToolUseHooks({
+                toolName: tool.name,
+                toolArgs: tool.arguments,
+                workDir: currentSess?.workDir,
+                permissionMode,
+                sessionId: activeSessionId,
+              });
+
+              let toolResultContent = '';
+              if (!hookResult.approved) {
                 uiStore.updateTaskStep(tool.id, 'failed');
-                toolResultContent = 'Permission denied by user.';
+                uiStore.addNotification('error', hookResult.error || 'Tool execution blocked');
+                toolResultContent = `Error: ${hookResult.error || 'Tool execution blocked'}`;
               } else {
-                uiStore.updateTaskStep(tool.id, 'running');
-                try {
-                  const workDir = currentSess?.workDir ?? null;
-                  if (tool.name === 'get_current_workspace') {
-                    toolResultContent = workDir
-                      ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
-                      : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
-                  } else if (tool.name === 'agent_tool') {
-                    // === Multi-Agent: AgentTool execution ===
-                    let args: Record<string, any>;
-                    try {
-                      args = parsedAgentArgs || JSON.parse(effectiveArgs);
-                    } catch (parseErr) {
-                      toolResultContent = `Error: Failed to parse agent_tool arguments: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`;
-                      uiStore.updateTaskStep(tool.id, 'failed');
-                      uiStore.addNotification('error', 'Invalid agent tool arguments');
-                      chunk._resolve(toolResultContent);
-                      break;
+                const effectiveArgs = hookResult.modifiedArgs || tool.arguments;
+                const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
+                let parsedAgentArgs: Record<string, any> | null = null;
+                let isSwarmTeammateRequest = false;
+
+                if (tool.name === 'agent_tool') {
+                  try {
+                    parsedAgentArgs = JSON.parse(effectiveArgs);
+                    isSwarmTeammateRequest = Boolean(parsedAgentArgs?.team_name && parsedAgentArgs?.name);
+                  } catch {
+                    parsedAgentArgs = null;
+                    isSwarmTeammateRequest = false;
+                  }
+                }
+
+                let approved = shouldBypass;
+
+                if (!shouldBypass) {
+                  if (isSwarmTeammateRequest && parsedAgentArgs) {
+                    const swarm = await import('../services/swarm');
+                    const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                    const parentCtx = getCurrentAgentContext() || {
+                      agentId: 'main',
+                      sessionId: activeSessionId,
+                      workDir: currentSess?.workDir || undefined,
+                      toolPool: [],
+                      metadata: {},
+                    };
+                    const { useSwarmStore } = await import('./swarmStore');
+                    useSwarmStore.getState().init();
+                    let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
+                    if (!activeRun) activeRun = swarm.startRun(activeSessionId);
+                    let runtimeTeam = swarm.getTeamByName(parsedAgentArgs.team_name);
+                    if (!runtimeTeam) {
+                      runtimeTeam = swarm.createTeam({
+                        name: parsedAgentArgs.team_name,
+                        sessionId: activeSessionId,
+                        description: parsedAgentArgs.description || `Team ${parsedAgentArgs.team_name}`,
+                        leaderName: 'leader',
+                      }).team;
                     }
-                    if (args.team_name && args.name) {
-                      // Swarm teammate path — uses new swarm runtime as source of truth
-                      const swarm = await import('../services/swarm');
-                      const { onTeamCreated, onAgentStarted } = await import('../services/swarm/inboxCoordinator');
-                      const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
-                      const { runAgentBackground } = await import('../services/multiagent/subagent');
-                      const parentCtx = getCurrentAgentContext() || {
-                        agentId: 'main',
-                        sessionId: activeSessionId,
-                        workDir: workDir || undefined,
-                        toolPool: [],
-                        metadata: {},
-                      };
-
-                      // Ensure swarm store is initialized
-                      const { useSwarmStore } = await import('./swarmStore');
-                      useSwarmStore.getState().init();
-
-                      // Ensure there is an active run for this chat session
-                      let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
-                      if (!activeRun) {
-                        activeRun = swarm.startRun(activeSessionId);
-                      }
-
-                      // Find or create team in new runtime
-                      let runtimeTeam = swarm.getTeamByName(args.team_name);
-                      let teamId: string;
-                      let leaderId: string;
-                      if (!runtimeTeam) {
-                        const { team, leader } = swarm.createTeam({
-                          name: args.team_name,
-                          sessionId: activeSessionId,
-                          description: args.description || `Team ${args.team_name}`,
-                          leaderName: 'leader',
-                        });
-                        teamId = team.id;
-                        leaderId = leader.id;
-                        // Start leader inbox polling
-                        onTeamCreated(teamId, leaderId);
-                      } else {
-                        teamId = runtimeTeam.id;
-                        leaderId = runtimeTeam.leaderId;
-                      }
-
-                      // Spawn agent in new runtime
-                      const runtimeAgent = swarm.spawnAgent({
-                        teamId,
-                        name: args.name,
-                        role: 'member',
-                        sessionId: activeSessionId,
-                        parentAgentId: parentCtx.agentId,
-                        model: args.model,
-                      });
-
-                      // Create task in runtime
-                      const runtimeTask = swarm.createTask({
-                        teamId,
-                        type: 'general',
-                        description: args.prompt,
-                        assignedAgentId: runtimeAgent.id,
-                      });
-
-                      // Start the agent
-                      swarm.startAgent(runtimeAgent.id, runtimeTask.id);
-                      swarm.startTask(runtimeTask.id);
-
-                      // Start member inbox polling
-                      onAgentStarted(runtimeAgent.id);
-
-                      // Record prompt in transcript
-                      swarm.recordUserPrompt(runtimeAgent.id, args.prompt, runtimeTask.id);
-
-                      // Actually run the agent in the background via existing subagent executor
-                      const bgAgentId = await runAgentBackground({
-                        name: args.name,
-                        prompt: args.prompt,
-                        description: args.description || `Teammate ${args.name}`,
-                        sessionId: activeSessionId,
-                        parentContext: {
-                          ...parentCtx,
-                          agentId: runtimeAgent.id,
-                          teamName: args.team_name,
-                          name: args.name,
-                        },
-                        runInBackground: true,
-                        model: args.model,
-                      });
-
-                      // Store mapping so we can reconcile on completion
-                      // TRANSITIONAL: bgAgentId is the subagent executor ID,
-                      // runtimeAgent.id is the swarm runtime ID
-                      (runtimeAgent as any)._bgAgentId = bgAgentId;
-
-                      toolResultContent = `Teammate ${args.name} spawned in team ${args.team_name} (runtime ID: ${runtimeAgent.id}). Task assigned: ${runtimeTask.id}`;
-                    } else if (args.run_in_background) {
-                      // Background subagent path
-                      const { runAgentBackground } = await import('../services/multiagent/subagent');
-                      const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
-                      const parentCtx = getCurrentAgentContext() || {
-                        agentId: 'main',
-                        sessionId: activeSessionId,
-                        workDir: workDir || undefined,
-                        toolPool: [],
-                        metadata: {},
-                      };
-                      const agentId = await runAgentBackground({
-                        name: args.name || 'background-agent',
-                        prompt: args.prompt,
-                        description: args.description || 'Background agent task',
-                        sessionId: activeSessionId,
-                        parentContext: parentCtx,
-                        runInBackground: true,
-                        model: args.model,
-                      });
-                      toolResultContent = `Background agent started with ID: ${agentId}. Results will be delivered via task notification.`;
-                    } else {
-                      // Sync subagent path
-                      const { runAgentSync } = await import('../services/multiagent/subagent');
-                      const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
-                      const parentCtx = getCurrentAgentContext() || {
-                        agentId: 'main',
-                        sessionId: activeSessionId,
-                        workDir: workDir || undefined,
-                        toolPool: [],
-                        metadata: {},
-                      };
-                      const result = await runAgentSync({
-                        name: args.name || 'subagent',
-                        prompt: args.prompt,
-                        description: args.description || 'Subagent task',
-                        sessionId: activeSessionId,
-                        parentContext: parentCtx,
-                        model: args.model,
-                      });
-                      toolResultContent = result.success
-                        ? result.content
-                        : `Error: ${result.error}`;
+                    const runtimeAgent = swarm.spawnAgent({
+                      teamId: runtimeTeam.id,
+                      name: parsedAgentArgs.name,
+                      role: 'member',
+                      sessionId: activeSessionId,
+                      parentAgentId: parentCtx.agentId,
+                      model: parsedAgentArgs.model,
+                    });
+                    approved = await swarm.enqueuePermissionInUI({
+                      teamId: runtimeTeam.id,
+                      agentId: runtimeAgent.id,
+                      agentName: parsedAgentArgs.name,
+                      toolName: tool.name,
+                      toolArgs: effectiveArgs,
+                    });
+                    if (!approved) {
+                      swarm.failAgent(runtimeAgent.id, 'Permission denied by user');
+                      swarm.reconcileRunForChatSession(activeSessionId);
                     }
                   } else {
-                    toolResultContent = await invoke<string>('execute_tool', {
-                      toolName: tool.name,
-                      arguments: effectiveArgs,
-                      workDir,
-                    });
+                    approved = await uiStore.waitForPermission(tool);
                   }
-                  uiStore.updateTaskStep(tool.id, 'done');
-                } catch (err) {
-                  uiStore.updateTaskStep(tool.id, 'failed');
-                  toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
                 }
 
-                // === PostToolUse Hooks (audit logging, side effects) ===
-                const postCtx: PostHookContext = {
-                  toolName: tool.name,
-                  toolArgs: effectiveArgs,
-                  result: toolResultContent,
-                  isError: toolResultContent.startsWith('Error:'),
-                  sessionId: activeSessionId,
-                };
-                runPostToolUseHooks(postCtx).catch((e: unknown) => console.warn('[PostToolUseHooks] Error:', e));
+                if (!approved) {
+                  uiStore.updateTaskStep(tool.id, 'failed');
+                  toolResultContent = 'Permission denied by user.';
+                } else {
+                  uiStore.updateTaskStep(tool.id, 'running');
+                  try {
+                    if (tool.name === 'get_current_workspace') {
+                      toolResultContent = workDir
+                        ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
+                        : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
+                    } else if (tool.name === 'agent_tool') {
+                      // === Multi-Agent: AgentTool execution ===
+                      let args: Record<string, any>;
+                      try {
+                        args = parsedAgentArgs || JSON.parse(effectiveArgs);
+                      } catch (parseErr) {
+                        toolResultContent = `Error: Failed to parse agent_tool arguments: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`;
+                        uiStore.updateTaskStep(tool.id, 'failed');
+                        uiStore.addNotification('error', 'Invalid agent tool arguments');
+                        allResults.push({ id: tool.id, content: toolResultContent });
+                        continue; // skip to next serial tool
+                      }
+                      if (args.team_name && args.name) {
+                        const swarm = await import('../services/swarm');
+                        const { onTeamCreated, onAgentStarted } = await import('../services/swarm/inboxCoordinator');
+                        const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                        const { runAgentBackground } = await import('../services/multiagent/subagent');
+                        const parentCtx = getCurrentAgentContext() || {
+                          agentId: 'main',
+                          sessionId: activeSessionId,
+                          workDir: workDir || undefined,
+                          toolPool: [],
+                          metadata: {},
+                        };
+                        const { useSwarmStore } = await import('./swarmStore');
+                        useSwarmStore.getState().init();
+                        let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
+                        if (!activeRun) activeRun = swarm.startRun(activeSessionId);
+                        let runtimeTeam = swarm.getTeamByName(args.team_name);
+                        let teamId: string;
+                        let leaderId: string;
+                        if (!runtimeTeam) {
+                          const { team, leader } = swarm.createTeam({
+                            name: args.team_name,
+                            sessionId: activeSessionId,
+                            description: args.description || `Team ${args.team_name}`,
+                            leaderName: 'leader',
+                          });
+                          teamId = team.id;
+                          leaderId = leader.id;
+                          onTeamCreated(teamId, leaderId);
+                        } else {
+                          teamId = runtimeTeam.id;
+                          leaderId = runtimeTeam.leaderId;
+                        }
+                        const runtimeAgent = swarm.spawnAgent({
+                          teamId,
+                          name: args.name,
+                          role: 'member',
+                          sessionId: activeSessionId,
+                          parentAgentId: parentCtx.agentId,
+                          model: args.model,
+                        });
+                        const runtimeTask = swarm.createTask({
+                          teamId,
+                          type: 'general',
+                          description: args.prompt,
+                          assignedAgentId: runtimeAgent.id,
+                        });
+                        swarm.startAgent(runtimeAgent.id, runtimeTask.id);
+                        swarm.startTask(runtimeTask.id);
+                        onAgentStarted(runtimeAgent.id);
+                        swarm.recordUserPrompt(runtimeAgent.id, args.prompt, runtimeTask.id);
+                        const bgAgentId = await runAgentBackground({
+                          name: args.name,
+                          prompt: args.prompt,
+                          description: args.description || `Teammate ${args.name}`,
+                          sessionId: activeSessionId,
+                          parentContext: {
+                            ...parentCtx,
+                            agentId: runtimeAgent.id,
+                            teamName: args.team_name,
+                            name: args.name,
+                          },
+                          runInBackground: true,
+                          model: args.model,
+                        });
+                        (runtimeAgent as any)._bgAgentId = bgAgentId;
+                        toolResultContent = `Teammate ${args.name} spawned in team ${args.team_name} (runtime ID: ${runtimeAgent.id}). Task assigned: ${runtimeTask.id}`;
+                      } else if (args.run_in_background) {
+                        const { runAgentBackground } = await import('../services/multiagent/subagent');
+                        const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                        const parentCtx = getCurrentAgentContext() || {
+                          agentId: 'main',
+                          sessionId: activeSessionId,
+                          workDir: workDir || undefined,
+                          toolPool: [],
+                          metadata: {},
+                        };
+                        const agentId = await runAgentBackground({
+                          name: args.name || 'background-agent',
+                          prompt: args.prompt,
+                          description: args.description || 'Background agent task',
+                          sessionId: activeSessionId,
+                          parentContext: parentCtx,
+                          runInBackground: true,
+                          model: args.model,
+                        });
+                        toolResultContent = `Background agent started with ID: ${agentId}. Results will be delivered via task notification.`;
+                      } else {
+                        const { runAgentSync } = await import('../services/multiagent/subagent');
+                        const { getCurrentAgentContext } = await import('../services/multiagent/agentContext');
+                        const parentCtx = getCurrentAgentContext() || {
+                          agentId: 'main',
+                          sessionId: activeSessionId,
+                          workDir: workDir || undefined,
+                          toolPool: [],
+                          metadata: {},
+                        };
+                        const result = await runAgentSync({
+                          name: args.name || 'subagent',
+                          prompt: args.prompt,
+                          description: args.description || 'Subagent task',
+                          sessionId: activeSessionId,
+                          parentContext: parentCtx,
+                          model: args.model,
+                        });
+                        toolResultContent = result.success ? result.content : `Error: ${result.error}`;
+                      }
+                    } else {
+                      toolResultContent = await invoke<string>('execute_tool', {
+                        toolName: tool.name,
+                        arguments: effectiveArgs,
+                        workDir,
+                      });
+                    }
+                    uiStore.updateTaskStep(tool.id, 'done');
+                  } catch (err) {
+                    uiStore.updateTaskStep(tool.id, 'failed');
+                    toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+                  }
 
-                // === Reactive Compact - Long Tool Output Detection ===
-                recordToolForReactiveCompact(activeSessionId, tool.id, tool.name, toolResultContent);
+                  // === PostToolUse Hooks (audit logging, side effects) ===
+                  const postCtx: PostHookContext = {
+                    toolName: tool.name,
+                    toolArgs: effectiveArgs,
+                    result: toolResultContent,
+                    isError: toolResultContent.startsWith('Error:'),
+                    sessionId: activeSessionId,
+                  };
+                  runPostToolUseHooks(postCtx).catch((e: unknown) => console.warn('[PostToolUseHooks] Error:', e));
+                  recordToolForReactiveCompact(activeSessionId, tool.id, tool.name, toolResultContent);
+                }
               }
-              chunk._resolve(toolResultContent);
+
+              allResults.push({ id: tool.id, content: toolResultContent });
             }
+
+            chunk._resolveAll(allResults);
           } else if (chunk.type === 'error') {
             throw chunk.error;
           } else if (chunk.type === 'turn_complete') {
@@ -2420,6 +2451,15 @@ export const useChatStore = create<ChatState>()(
       } catch (error) {
         console.error('Failed to get total token stats:', error);
         return { input: 0, output: 0, total: 0 };
+      }
+    },
+
+    resetTokenEstimate: async () => {
+      try {
+        await invoke('reset_token_estimate');
+      } catch (error) {
+        console.error('Failed to reset token estimate:', error);
+        throw error;
       }
     },
   }))

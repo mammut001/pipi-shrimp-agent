@@ -247,6 +247,18 @@ pub async fn delete_session(_app: AppHandle, session_id: String) -> AppResult<()
 }
 
 /**
+ * Delete all token usage records
+ */
+#[tauri::command]
+pub async fn reset_token_estimate(_app: AppHandle) -> AppResult<()> {
+    database::delete_all_token_usage()
+        .map_err(|e| AppError::InternalError(format!("Failed to reset token estimate: {}", e)))?;
+
+    println!("🔄 Token estimate reset successfully");
+    Ok(())
+}
+
+/**
  * Update session title
  */
 #[tauri::command]

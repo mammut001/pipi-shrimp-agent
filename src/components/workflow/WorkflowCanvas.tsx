@@ -24,6 +24,8 @@ import {
   Node,
   MarkerType,
   Panel,
+  useNodesInitialized,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '@/store/workflowStore';
@@ -41,6 +43,23 @@ const nodeTypes = {
 const edgeTypes = {
   custom: CustomEdge,
 };
+
+function AutoFitView({ nodeCount }: { nodeCount: number }) {
+  const nodesInitialized = useNodesInitialized();
+  const { fitView } = useReactFlow();
+
+  React.useEffect(() => {
+    if (!nodesInitialized || nodeCount === 0) return;
+
+    const timer = window.setTimeout(() => {
+      fitView({ padding: 0.2, duration: 250 });
+    }, 50);
+
+    return () => window.clearTimeout(timer);
+  }, [fitView, nodeCount, nodesInitialized]);
+
+  return null;
+}
 
 interface WorkflowCanvasProps {
   selectedAgentId: string | null;
@@ -277,6 +296,8 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         name: template.name,
         soulPrompt: template.soulPrompt,
         task: template.task,
+        taskPrompt: template.taskPrompt,
+        taskInstruction: template.taskInstruction,
         execution: template.execution,
       });
 
@@ -366,6 +387,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d1d5db" />
         <Controls showInteractive={false} className="bg-white border border-gray-200 rounded-lg shadow-md" />
+        <AutoFitView nodeCount={nodes.length} />
 
         {/* Add Agent Panel */}
         <Panel position="bottom-right" className="flex flex-col gap-2">

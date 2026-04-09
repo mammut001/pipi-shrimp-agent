@@ -117,8 +117,15 @@ export async function autoEditsRestriction(ctx: HookContext): Promise<HookResult
 /**
  * Hook 5: ML-based permission classifier.
  * Uses machine learning model to assess risk and make intelligent decisions.
+ * 
+ * Skipped entirely in bypass mode — bypass means full trust, no checks.
  */
 export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
+  // Bypass mode: skip all ML/denial checks
+  if (ctx.permissionMode === 'bypass') {
+    return { approved: true };
+  }
+
   try {
     // Parse arguments
     let parsedArgs: Record<string, any> = {};

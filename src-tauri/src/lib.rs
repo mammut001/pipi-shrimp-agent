@@ -546,6 +546,8 @@ pub fn run() {
             db_get_monthly_token_stats,
             db_get_model_token_stats,
             db_get_total_token_stats,
+            // Reset token estimate
+            commands::reset_token_estimate,
             // Swarm snapshot persistence commands
             swarm_save_snapshot,
             swarm_load_snapshot,

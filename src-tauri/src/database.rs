@@ -246,7 +246,8 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             )?;
         }
         2 => {
-            conn.execute_batch("
+            conn.execute_batch(
+                "
                 BEGIN;
                 CREATE TABLE IF NOT EXISTS swarm_snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,7 +255,8 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                     saved_at INTEGER NOT NULL
                 );
                 COMMIT;
-            ")?;
+            ",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (2, strftime('%s','now'))",
                 [],
@@ -284,12 +286,14 @@ pub fn init_database() -> SqliteResult<()> {
     let conn = Connection::open(&db_path)?;
 
     // Bootstrap the version-tracking table on first run
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         CREATE TABLE IF NOT EXISTS schema_version (
             version    INTEGER PRIMARY KEY,
             applied_at INTEGER NOT NULL
         );
-    ")?;
+    ",
+    )?;
 
     let current_version: i64 = conn
         .query_row(
@@ -307,7 +311,10 @@ pub fn init_database() -> SqliteResult<()> {
     // Initialize swarm snapshot table (always, regardless of version)
     init_swarm_table(&conn)?;
 
-    println!("✅ Database initialized successfully (schema v{})", LATEST_VERSION);
+    println!(
+        "✅ Database initialized successfully (schema v{})",
+        LATEST_VERSION
+    );
 
     // Store connection globally
     let mut db = DATABASE.lock().unwrap();
@@ -565,6 +572,17 @@ pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
                 usage.created_at
             ],
         )?;
+    }
+    Ok(())
+}
+
+/**
+ * Delete all token usage records
+ */
+pub fn delete_all_token_usage() -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute("DELETE FROM token_usage", [])?;
     }
     Ok(())
 }

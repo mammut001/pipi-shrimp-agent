@@ -264,12 +264,35 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
         </div>
 
         {/* Body */}
-        <div className="flex-1 px-3 py-2 space-y-1.5 overflow-hidden">
-          {/* Task */}
+        <div className="flex-1 px-3 py-2 space-y-2 overflow-hidden">
+          {/* Task label */}
           {agent.task && (
-            <p className="text-xs text-gray-600 truncate" title={agent.task}>
+            <p className="text-xs font-medium text-gray-700 truncate" title={agent.task}>
               {agent.task}
             </p>
+          )}
+
+          {/* Task prompt preview */}
+          {agent.taskPrompt && (
+            <div
+              className="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2"
+              title={agent.taskPrompt}
+            >
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                Prompt
+              </div>
+              <p
+                className="text-[11px] leading-4 text-gray-600"
+                style={{
+                  display: '-webkit-box',
+                  WebkitLineClamp: selected ? 5 : 3,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}
+              >
+                {agent.taskPrompt}
+              </p>
+            </div>
           )}
 
           {/* Mode badge */}
