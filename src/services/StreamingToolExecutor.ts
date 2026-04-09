@@ -23,6 +23,7 @@ export interface ToolResult {
 
 export interface ToolExecutionOptions {
   sessionId: string;
+  workDir?: string;
   onProgress?: (completed: number, total: number, currentTool?: string) => void;
   concurrencyLimit?: number;
   timeoutMs?: number;
@@ -35,32 +36,40 @@ export interface BatchExecutionResult {
 }
 
 /**
- * Read-only tools that can be executed concurrently without side effects
+ * Read-only tools that can be executed concurrently without side effects.
+ * Names must match exactly what the Rust execute_tool command accepts.
  */
 const READ_ONLY_TOOLS = new Set([
+  // Filesystem reads
   'read_file',
-  'list_dir',
-  'grep_search',
-  'file_search',
-  'semantic_search',
-  'run_in_terminal', // Some terminal commands are read-only
-  'get_errors',
-  'get_changed_files',
-  'vscode_listCodeUsages',
-  'vscode_renameSymbol',
-  // Add more as needed
+  'list_files',
+  'path_exists',
+  // Search — all read-only scans
+  'search_files',
+  'glob_search',
+  'grep_files',
+  // Browser observation (no DOM mutation)
+  'browser_get_page',
+  'browser_get_text',
 ]);
 
 /**
- * Tools that should never be executed concurrently
+ * Tools that should never be executed concurrently (explicit deny-list).
+ * Unknown tools not in READ_ONLY_TOOLS are already serial by default (fail-closed),
+ * so this set is only needed for documentation / extra safety belt.
  */
 const SERIAL_ONLY_TOOLS = new Set([
-  'run_in_terminal', // Some terminal commands modify state
-  'replace_string_in_file',
-  'create_file',
+  // Filesystem writes
+  'write_file',
+  'append_file',
   'create_directory',
-  'run_vscode_command',
-  // Add more as needed
+  // Code / command execution
+  'code_execution',
+  // Browser mutations
+  'browser_navigate',
+  'browser_click',
+  'browser_type',
+  'browser_scroll',
 ]);
 
 /**
@@ -111,7 +120,7 @@ export class StreamingToolExecutor {
     options: ToolExecutionOptions
   ): Promise<BatchExecutionResult> {
     const startTime = Date.now();
-    const { onProgress } = options;
+    const { onProgress, workDir } = options;
 
     if (toolRequests.length === 0) {
       return { results: [], totalExecutionTime: 0, errors: [] };
@@ -133,7 +142,7 @@ export class StreamingToolExecutor {
 
     // Execute concurrent tools in parallel (with limit)
     if (concurrent.length > 0) {
-      const concurrentResults = await this.executeConcurrent(concurrent, reportProgress);
+      const concurrentResults = await this.executeConcurrent(concurrent, reportProgress, workDir);
       allResults.push(...concurrentResults.results);
       errors.push(...concurrentResults.errors);
     }
@@ -141,7 +150,7 @@ export class StreamingToolExecutor {
     // Execute serial tools one by one
     for (const request of serial) {
       try {
-        const result = await this.executeSingleTool(request);
+        const result = await this.executeSingleTool(request, workDir);
         allResults.push(result);
         if (result.is_error) {
           errors.push(result);
@@ -175,7 +184,8 @@ export class StreamingToolExecutor {
    */
   private async executeConcurrent(
     toolRequests: ToolRequest[],
-    onProgress: (toolName: string) => void
+    onProgress: (toolName: string) => void,
+    workDir?: string,
   ): Promise<{ results: ToolResult[]; errors: ToolResult[] }> {
     const results: ToolResult[] = [];
     const errors: ToolResult[] = [];
@@ -184,7 +194,7 @@ export class StreamingToolExecutor {
     for (let i = 0; i < toolRequests.length; i += this.concurrencyLimit) {
       const batch = toolRequests.slice(i, i + this.concurrencyLimit);
       const batchPromises = batch.map(request =>
-        this.executeSingleTool(request).then(result => {
+        this.executeSingleTool(request, workDir).then(result => {
           onProgress(request.name);
           return result;
         }).catch(error => {
@@ -216,16 +226,17 @@ export class StreamingToolExecutor {
    * Execute a single tool with timeout
    */
   private async executeSingleTool(
-    request: ToolRequest
+    request: ToolRequest,
+    workDir?: string,
   ): Promise<ToolResult> {
     const startTime = Date.now();
 
     try {
       const result = await Promise.race([
-        invoke<any>('execute_single_tool', {
-          toolCallId: request.id,
-          name: request.name,
+        invoke<any>('execute_tool', {
+          toolName: request.name,
           arguments: JSON.stringify(request.arguments),
+          workDir: workDir ?? null,
         }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`Tool execution timeout: ${request.name}`)), this.timeoutMs)
@@ -234,11 +245,14 @@ export class StreamingToolExecutor {
 
       const executionTime = Date.now() - startTime;
 
+      // execute_tool returns a plain string (the tool result).
+      // Detect Rust-side AppError by checking for JSON error shape as fallback.
+      const content = typeof result === 'string' ? result : JSON.stringify(result);
+      const isError = content.startsWith('Error:') || content.startsWith('ERROR:');
       return {
-        id: result.id || request.id,
-        content: result.content || '',
-        is_error: result.is_error || false,
-        error_message: result.error_message,
+        id: request.id,
+        content,
+        is_error: isError,
         execution_time_ms: executionTime,
       };
     } catch (error) {

@@ -104,6 +104,17 @@ export type TranslationKeys = {
   'token.cost': string;
   'token.estimatedCost': string;
   'token.totalCost': string;
+  'token.disclaimer': string;
+  'token.resetConfirm': string;
+  'token.resetSuccess': string;
+  'token.resetFailed': string;
+  'token.usageStats': string;
+  'token.viewConsumption': string;
+  'token.resetStats': string;
+  'token.totalCostLabel': string;
+  'token.totalInput': string;
+  'token.totalOutput': string;
+  'token.loading': string;
 
   // Session
   'session.bindWorkDir': string;

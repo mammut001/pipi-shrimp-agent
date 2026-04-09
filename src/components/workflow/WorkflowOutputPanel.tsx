@@ -8,14 +8,16 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { workflowEngine } from '@/services/workflowEngine';
 import { workflowService, type FileInfo } from '@/services/workflow';
+import { useUIStore } from '@/store/uiStore';
 
 type Tab = 'output' | 'files';
 
 export function WorkflowOutputPanel() {
-  const { agents, isRunning, workflowRuns, selectedRunId } = useWorkflowStore();
+  const { agents, isRunning, workflowRuns, selectedRunId, selectedPreviewFile, setSelectedPreviewFile } = useWorkflowStore();
   const [agentOutputs, setAgentOutputs] = useState<Map<string, string>>(new Map());
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<Tab>('output');
@@ -23,9 +25,7 @@ export function WorkflowOutputPanel() {
 
   // File browser state
   const [files, setFiles] = useState<FileInfo[]>([]);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string>('');
-  const [fileLoading, setFileLoading] = useState(false);
+  const addNotification = useUIStore((state) => state.addNotification);
 
   // Use the explicitly selected run, or fall back to the latest run
   const activeRun = selectedRunId
@@ -91,15 +91,20 @@ export function WorkflowOutputPanel() {
   };
 
   const openFile = async (filePath: string) => {
-    setSelectedFile(filePath);
-    setFileLoading(true);
+    setSelectedPreviewFile(filePath);
+  };
+
+  const openRunDirectoryInFinder = async () => {
+    if (!runDirectory) {
+      addNotification('warning', '当前还没有可打开的工作目录');
+      return;
+    }
+
     try {
-      const result = await workflowService.readFile(filePath);
-      setFileContent(result.content);
-    } catch (e) {
-      setFileContent(`Error reading file: ${e}`);
-    } finally {
-      setFileLoading(false);
+      await invoke('reveal_in_finder', { path: runDirectory });
+    } catch (error) {
+      console.error('Failed to reveal workflow directory in Finder:', error);
+      addNotification('error', `无法打开工作目录: ${error}`);
     }
   };
 
@@ -126,6 +131,17 @@ export function WorkflowOutputPanel() {
           }`}
         >
           文件 {files.length > 0 && <span className="ml-1 text-xs bg-gray-100 rounded-full px-1.5">{files.length}</span>}
+        </button>
+        <button
+          onClick={openRunDirectoryInFinder}
+          disabled={!runDirectory}
+          className="ml-2 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          title={runDirectory || '当前没有工作目录'}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          打开工作目录
         </button>
         <span className="ml-auto pr-4 text-xs text-gray-400">
           {agents.filter((a) => agentOutputs.has(a.id)).length} / {agents.length} agents
@@ -202,30 +218,6 @@ export function WorkflowOutputPanel() {
               <div className="flex items-center justify-center h-full text-gray-400 text-sm">
                 运行工作流后将在此展示输出文件
               </div>
-            ) : selectedFile ? (
-              /* File viewer */
-              <div className="flex flex-col h-full">
-                <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 bg-gray-50">
-                  <button
-                    onClick={() => setSelectedFile(null)}
-                    className="text-gray-500 hover:text-gray-700"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                    </svg>
-                  </button>
-                  <span className="text-sm font-medium text-gray-700 truncate">
-                    {selectedFile.split('/').pop()}
-                  </span>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4">
-                  {fileLoading ? (
-                    <div className="text-gray-400 text-sm animate-pulse">加载中...</div>
-                  ) : (
-                    <pre className="text-sm text-gray-700 font-mono whitespace-pre-wrap">{fileContent}</pre>
-                  )}
-                </div>
-              </div>
             ) : (
               /* File list */
               <div className="py-2">
@@ -238,13 +230,22 @@ export function WorkflowOutputPanel() {
                     <button
                       key={file.path}
                       onClick={() => openFile(file.path)}
-                      className="w-full flex items-center gap-2 px-4 py-2 hover:bg-gray-50 transition-colors text-left"
+                      className={`w-full flex items-center gap-2 px-4 py-2 transition-colors text-left ${
+                        selectedPreviewFile === file.path
+                          ? 'bg-blue-50 border-l-2 border-blue-500'
+                          : 'hover:bg-gray-50'
+                      }`}
                     >
                       <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                           d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
-                      <span className="text-sm text-gray-900 truncate">{file.name}</span>
+                      <span className={`text-sm truncate ${selectedPreviewFile === file.path ? 'text-blue-700 font-medium' : 'text-gray-900'}`}>
+                        {file.name}
+                      </span>
+                      {selectedPreviewFile === file.path && (
+                        <span className="ml-auto text-xs text-blue-500">← 预览中</span>
+                      )}
                     </button>
                   ))
                 )}

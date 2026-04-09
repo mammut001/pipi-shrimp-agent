@@ -102,6 +102,17 @@ const enUS: TranslationKeys = {
   'token.cost': 'Cost',
   'token.estimatedCost': 'Estimated cost',
   'token.totalCost': 'Total cost',
+  'token.disclaimer': '⚠️ Cost estimates are for reference only. Actual costs may vary due to caching, bulk discounts, and other factors. Please configure model pricing in Settings for more accurate estimates.',
+  'token.resetConfirm': 'Are you sure you want to reset all token usage statistics? This action cannot be undone.',
+  'token.resetSuccess': 'Token usage statistics have been reset.',
+  'token.resetFailed': 'Reset failed',
+  'token.usageStats': 'Token Usage Statistics',
+  'token.viewConsumption': 'View your API token consumption and cost estimates',
+  'token.resetStats': 'Reset Stats',
+  'token.totalCostLabel': 'Total Estimated Cost',
+  'token.totalInput': 'Total Input',
+  'token.totalOutput': 'Total Output',
+  'token.loading': 'Loading...',
 
   // Session
   'session.bindWorkDir': 'Bind Work Directory',

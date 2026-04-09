@@ -132,6 +132,7 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
   },
 
   sync: () => {
+    const prevActiveCount = get().activeAgentCount;
     const allAgents = repo.getAllAgents();
     const pendingPerms = repo.getPendingPermissions();
 
@@ -140,6 +141,14 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
     for (const agent of allAgents) {
       totalUnread += repo.getUnreadMessages(agent.id).length;
     }
+
+    const newActiveCount = allAgents.filter(a => a.status === 'working').length;
+
+    // Auto-expand the panel the first time active agents appear (e.g., when delegation starts).
+    // This ensures the user sees runtime activity without having to click manually.
+    const panelExpanded = (!get().panelExpanded && prevActiveCount === 0 && newActiveCount > 0)
+      ? true
+      : get().panelExpanded;
 
     set({
       runs: repo.getAllRuns(),
@@ -150,7 +159,8 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       pendingPermissions: pendingPerms,
       totalUnreadCount: totalUnread,
       totalPendingPermissions: pendingPerms.length,
-      activeAgentCount: allAgents.filter(a => a.status === 'working').length,
+      activeAgentCount: newActiveCount,
+      panelExpanded,
     });
   },
 

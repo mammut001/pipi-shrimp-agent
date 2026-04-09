@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useChatStore, useSettingsStore } from '@/store';
 import { calculateRequestCost, formatCost } from '@/utils/pricing';
+import { t } from '@/i18n';
 
 interface DailyStats {
   date: string;
@@ -42,13 +43,30 @@ export function TokenStats() {
   const [modelStats, setModelStats] = useState<ModelStatsWithCost[]>([]);
   const [totalStats, setTotalStats] = useState({ input: 0, output: 0, total: 0, cost: 0 });
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const {
     getDailyTokenStats,
     getMonthlyTokenStats,
     getModelTokenStats,
     getTotalTokenStats,
+    resetTokenEstimate,
   } = useChatStore();
+
+  const handleResetTokenEstimate = async () => {
+    if (resetting) return;
+    if (!window.confirm(t('token.resetConfirm'))) return;
+    setResetting(true);
+    try {
+      await resetTokenEstimate();
+      await loadData();
+      alert(t('token.resetSuccess'));
+    } catch (error: any) {
+      alert(t('token.resetFailed') + ': ' + error.message);
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const getModelPricing = useSettingsStore((s) => s.getModelPricing);
 
@@ -136,11 +154,26 @@ export function TokenStats() {
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
-      {/* Header */}
-      <div className="px-4 py-3 bg-white border-b border-gray-200">
-        <h2 className="text-lg font-semibold text-gray-900">Token 使用统计</h2>
-        <p className="text-sm text-gray-500 mt-1">查看您的 API token 消耗和费用估算</p>
-      </div>
+       {/* Header */}
+       <div className="px-4 py-3 bg-white border-b border-gray-200">
+         <div className="flex justify-between items-center">
+           <div>
+              <h2 className="text-lg font-semibold text-gray-900">{t('token.usageStats')}</h2>
+              <p className="text-sm text-gray-500 mt-1">{t('token.viewConsumption')}</p>
+            </div>
+            <button
+              onClick={handleResetTokenEstimate}
+              disabled={resetting}
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                resetting
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : 'bg-red-50 text-red-600 hover:bg-red-100'
+              }`}
+            >
+              {resetting ? t('token.loading') : t('token.resetStats')}
+            </button>
+         </div>
+       </div>
 
       {/* Total Stats Card */}
       <div className="px-4 py-3 bg-white border-b border-gray-200">
@@ -151,22 +184,22 @@ export function TokenStats() {
               <div className="text-xl font-bold text-green-600">
                 💰 {formatCost(totalStats.cost)}
               </div>
-              <div className="text-xs text-green-600">总费用估算</div>
+               <div className="text-xs text-green-600">{t('token.totalCostLabel')}</div>
             </div>
           </div>
         )}
         <div className="grid grid-cols-3 gap-4">
           <div className="text-center">
             <div className="text-2xl font-bold text-blue-600">{formatNumber(totalStats.input)}</div>
-            <div className="text-xs text-gray-500">总输入</div>
+            <div className="text-xs text-gray-500">{t('token.totalInput')}</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-green-600">{formatNumber(totalStats.output)}</div>
-            <div className="text-xs text-gray-500">总输出</div>
+            <div className="text-xs text-gray-500">{t('token.totalOutput')}</div>
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-purple-600">{formatNumber(totalStats.total)}</div>
-            <div className="text-xs text-gray-500">总计</div>
+            <div className="text-xs text-gray-500">{t('token.total')}</div>
           </div>
         </div>
       </div>
@@ -181,7 +214,7 @@ export function TokenStats() {
               : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          每日
+          {t('token.daily')}
         </button>
         <button
           onClick={() => setActiveTab('monthly')}
@@ -191,7 +224,7 @@ export function TokenStats() {
               : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          月度
+          {t('token.monthly')}
         </button>
         <button
           onClick={() => setActiveTab('model')}
@@ -201,7 +234,7 @@ export function TokenStats() {
               : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          模型
+          {t('token.byModel')}
         </button>
       </div>
 
@@ -209,7 +242,7 @@ export function TokenStats() {
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
           <div className="flex items-center justify-center h-32">
-            <div className="text-gray-500">加载中...</div>
+            <div className="text-gray-500">{t('token.loading')}</div>
           </div>
         ) : (
           <>
@@ -218,7 +251,7 @@ export function TokenStats() {
               <div>
                 {/* Month Selector */}
                 <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">选择月份</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('token.selectMonth')}</label>
                   <input
                     type="month"
                     value={selectedMonth}
@@ -229,7 +262,7 @@ export function TokenStats() {
 
                 {/* Daily Stats List */}
                 {dailyStats.length === 0 ? (
-                  <div className="text-center text-gray-500 py-8">暂无数据</div>
+                  <div className="text-center text-gray-500 py-8">{t('token.noData')}</div>
                 ) : (
                   <div className="space-y-2">
                     {dailyStats.map((stat) => (
@@ -240,12 +273,12 @@ export function TokenStats() {
                         <div className="flex justify-between items-center">
                           <div className="font-medium text-gray-900">{stat.date}</div>
                           <div className="text-sm text-gray-500">
-                            总计: {formatNumber(stat.total_tokens)}
+                            {t('token.total')}: {formatNumber(stat.total_tokens)}
                           </div>
                         </div>
                         <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                          <span>输入: {formatNumber(stat.input_tokens)}</span>
-                          <span>输出: {formatNumber(stat.output_tokens)}</span>
+                          <span>{t('token.input')}: {formatNumber(stat.input_tokens)}</span>
+                          <span>{t('token.output')}: {formatNumber(stat.output_tokens)}</span>
                         </div>
                       </div>
                     ))}
@@ -258,7 +291,7 @@ export function TokenStats() {
             {activeTab === 'monthly' && (
               <div>
                 {monthlyStats.length === 0 ? (
-                  <div className="text-center text-gray-500 py-8">暂无数据</div>
+                  <div className="text-center text-gray-500 py-8">{t('token.noData')}</div>
                 ) : (
                   <div className="space-y-2">
                     {monthlyStats.map((stat) => (
@@ -269,12 +302,12 @@ export function TokenStats() {
                         <div className="flex justify-between items-center">
                           <div className="font-medium text-gray-900">{stat.date}</div>
                           <div className="text-sm text-gray-500">
-                            总计: {formatNumber(stat.total_tokens)}
+                            {t('token.total')}: {formatNumber(stat.total_tokens)}
                           </div>
                         </div>
                         <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                          <span>输入: {formatNumber(stat.input_tokens)}</span>
-                          <span>输出: {formatNumber(stat.output_tokens)}</span>
+                          <span>{t('token.input')}: {formatNumber(stat.input_tokens)}</span>
+                          <span>{t('token.output')}: {formatNumber(stat.output_tokens)}</span>
                         </div>
                       </div>
                     ))}
@@ -287,7 +320,7 @@ export function TokenStats() {
             {activeTab === 'model' && (
               <div>
                 {modelStats.length === 0 ? (
-                  <div className="text-center text-gray-500 py-8">暂无数据</div>
+                  <div className="text-center text-gray-500 py-8">{t('token.noData')}</div>
                 ) : (
                   <div className="space-y-2">
                     {modelStats.map((stat) => (
@@ -305,12 +338,12 @@ export function TokenStats() {
                             )}
                           </div>
                           <div className="text-sm text-gray-500">
-                            总计: {formatNumber(stat.total_tokens)}
+                            {t('token.total')}: {formatNumber(stat.total_tokens)}
                           </div>
                         </div>
                         <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                          <span>输入: {formatNumber(stat.input_tokens)}</span>
-                          <span>输出: {formatNumber(stat.output_tokens)}</span>
+                          <span>{t('token.input')}: {formatNumber(stat.input_tokens)}</span>
+                          <span>{t('token.output')}: {formatNumber(stat.output_tokens)}</span>
                         </div>
                         <div className="flex justify-between items-center mt-1">
                           <div className="text-xs text-gray-400">{stat.model}</div>
@@ -329,10 +362,7 @@ export function TokenStats() {
 
             {/* Cost Disclaimer */}
             <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-              <p className="text-xs text-yellow-700">
-                ⚠️ 费用估算仅供参考。实际费用可能因缓存、批量折扣等因素有所不同。
-                请前往设置页面配置您的模型定价以获取更准确的估算。
-              </p>
+              <p className="text-xs text-yellow-700 whitespace-pre-line">{t('token.disclaimer')}</p>
             </div>
           </>
         )}

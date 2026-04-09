@@ -54,6 +54,7 @@ const initialState: WorkflowState = {
   currentRunningAgentId: null,
   workflowRuns: [],
   selectedRunId: null,
+  selectedPreviewFile: null,
 };
 
 // Load persisted state
@@ -69,7 +70,7 @@ const initialStateWithPersistence: WorkflowState = {
 // Store interface includes both state and actions
 export interface WorkflowStore extends WorkflowState {
   // Agent CRUD
-  addAgent: (data: { name: string; soulPrompt?: string; task?: string; execution?: AgentExecutionConfig; inputFrom?: string | null }) => WorkflowAgent;
+  addAgent: (data: { name: string; soulPrompt?: string; task?: string; taskPrompt?: string; taskInstruction?: string; execution?: AgentExecutionConfig; inputFrom?: string | null }) => WorkflowAgent;
   updateAgent: (id: string, updates: Partial<Omit<WorkflowAgent, 'id'>>) => void;
   removeAgent: (id: string) => void;
   updateAgentPosition: (id: string, position: { x: number; y: number }) => void;
@@ -98,6 +99,9 @@ export interface WorkflowStore extends WorkflowState {
   setRunning: (running: boolean, agentId?: string | null) => void;
   resetAllStatuses: () => void;
 
+  // File preview
+  setSelectedPreviewFile: (path: string | null) => void;
+
   // Canvas operations
   clearCanvas: () => void;
 
@@ -116,6 +120,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       name: data.name || 'New Agent',
       soulPrompt: data.soulPrompt,
       task: data.task,
+      taskPrompt: data.taskPrompt,
+      taskInstruction: data.taskInstruction,
       position: { x: 100 + state.agents.length * 260, y: 200 },
       status: 'idle',
       outputRoutes: [],
@@ -532,6 +538,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }));
   },
 
+  setSelectedPreviewFile: (path) => {
+    set({ selectedPreviewFile: path });
+  },
+
   // Clear canvas (agents and connections, but keep history)
   clearCanvas: () => {
     set((state) => {
@@ -558,6 +568,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const agentA = addAgent({
       name: 'A - Technical Writer',
       task: writerTemplate?.task || '编写需求文档',
+      taskPrompt: writerTemplate?.taskPrompt,
+      taskInstruction: writerTemplate?.taskInstruction,
       soulPrompt: writerTemplate?.soulPrompt || '',
       execution: { mode: 'single' },
       inputFrom: null,
@@ -567,6 +579,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const agentB = addAgent({
       name: 'B - Full Stack Developer',
       task: devTemplate?.task || '编写代码',
+      taskPrompt: devTemplate?.taskPrompt,
+      taskInstruction: devTemplate?.taskInstruction,
       soulPrompt: devTemplate?.soulPrompt || '',
       execution: { mode: 'single' },
       inputFrom: agentA.id,
@@ -576,6 +590,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const agentC = addAgent({
       name: 'C - QA Engineer',
       task: qaTemplate?.task || '执行测试',
+      taskPrompt: qaTemplate?.taskPrompt,
+      taskInstruction: qaTemplate?.taskInstruction,
       soulPrompt: qaTemplate?.soulPrompt || '',
       execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
       inputFrom: agentB.id,

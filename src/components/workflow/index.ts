@@ -11,3 +11,4 @@ export { AgentTemplateDrawer } from './AgentTemplateDrawer';
 export { WorkflowOutputPanel } from './WorkflowOutputPanel';
 export { WorkflowRunHistory } from './WorkflowRunHistory';
 export { WorkflowView } from './WorkflowView';
+export { FilePreviewPanel } from './FilePreviewPanel';

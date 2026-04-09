@@ -2,27 +2,32 @@
  * WorkflowExecutionBar - Top bar for running/stopping the workflow
  *
  * Contains:
- * - Prompt input field
  * - Run/Stop buttons
- * - Mock run button (simulates execution without calling LLM)
  * - Status indicator
  * - Clear canvas button
  */
 
-import { useState } from 'react';
+import { useRef } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { workflowEngine } from '@/services/workflowEngine';
 
 export function WorkflowExecutionBar() {
-  const [prompt, setPrompt] = useState('');
   const { isRunning, currentRunningAgentId, agents, clearCanvas } = useWorkflowStore();
+  // Ref-based guard: prevents double-click and the stop→run race condition where
+  // stop() sets this.isRunning=false before the old coroutine's finally block runs.
+  const startingRef = useRef(false);
 
   const currentAgent = agents.find((a) => a.id === currentRunningAgentId);
   const currentAgentName = currentAgent?.name || '';
 
   const handleRun = async () => {
-    if (!prompt.trim() || isRunning) return;
-    await workflowEngine.start(prompt.trim());
+    if (agents.length === 0 || isRunning || startingRef.current || workflowEngine.getIsRunning()) return;
+    startingRef.current = true;
+    try {
+      await workflowEngine.start();
+    } finally {
+      startingRef.current = false;
+    }
   };
 
   const handleStop = async () => {
@@ -32,35 +37,22 @@ export function WorkflowExecutionBar() {
   const handleClear = () => {
     if (window.confirm('确定要清空画布吗？此操作不可恢复。')) {
       clearCanvas();
-      setPrompt('');
     }
   };
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200">
-      {/* Task description label */}
-      <div className="flex items-center gap-1 text-gray-400 flex-shrink-0">
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="flex items-center gap-2 text-sm text-gray-500 min-w-0 flex-1">
+        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
         </svg>
-        <span className="text-xs font-medium">任务:</span>
+        <span className="font-medium text-gray-700">工作流将直接使用当前 Agent Task 配置运行</span>
       </div>
-
-      {/* Task description input */}
-      <input
-        type="text"
-        placeholder="输入工作流任务描述..."
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && !isRunning && handleRun()}
-        disabled={isRunning}
-        className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
-      />
 
       {/* Run button */}
       <button
         onClick={handleRun}
-        disabled={isRunning || !prompt.trim()}
+        disabled={isRunning || agents.length === 0}
         className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
       >
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
