@@ -276,10 +276,15 @@ export interface ChatState {
    */
   getModelTokenStats: () => Promise<{ model: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
 
-  /**
-   * Get total token stats (input, output, total)
-   */
-  getTotalTokenStats: () => Promise<{ input: number; output: number; total: number }>;
+    /**
+    * Get total token stats (input, output, total)
+    */
+    getTotalTokenStats: () => Promise<{ input: number; output: number; total: number }>;
+
+    /**
+    * Reset token usage statistics
+    */
+    resetTokenEstimate: () => Promise<void>;
 
   // ========== Token Stats ==========
 }

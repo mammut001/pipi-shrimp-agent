@@ -51,7 +51,20 @@ export interface WorkflowAgent {
   id: string;
   name: string;
   soulPrompt?: string;
+  /** Short one-line label shown on the canvas card */
   task?: string;
+  /** Concrete work item for this run, combined with the agent instruction template */
+  taskPrompt?: string;
+  /**
+   * Detailed per-agent task instruction injected into the execution prompt.
+   * Should describe exactly what THIS agent is responsible for producing
+   * and how to use upstream outputs.
+   *
+   * Example for a coder agent:
+   * "Read the design document produced by the writer and implement the
+   * architecture improvements as working code. Do not write another analysis."
+   */
+  taskInstruction?: string;
   position: { x: number; y: number };
   width?: number;
   height?: number;
@@ -108,6 +121,8 @@ export interface WorkflowState {
   workflowRuns: WorkflowRun[];
   /** Which run's output is shown in the output panel (null = latest) */
   selectedRunId: string | null;
+  /** Currently previewing file in the right panel */
+  selectedPreviewFile: string | null;
 }
 
 // ============ Agent Templates ============
@@ -117,6 +132,8 @@ export interface AgentTemplate {
   name: string;
   color: string;
   task: string;
+  taskPrompt?: string;
+  taskInstruction?: string;
   soulPrompt: string;
   execution: AgentExecutionConfig;
 }
@@ -127,6 +144,16 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'Technical Writer',
     color: '#3B82F6',
     task: '根据用户需求编写详细的需求文档',
+    taskPrompt: '请基于当前项目或上游输入，产出一份结构完整、可供后续开发使用的需求/设计文档。',
+    taskInstruction: `根据上游提供的用户需求（或项目目标），撰写一份结构完整的需求文档。
+
+文档必须包含：
+1. 项目标题与目标（2-3句话）
+2. 功能需求（编号列表）
+3. 边界情况与约束
+4. 示例输入/输出（至少2-3个）
+
+不要写任何代码，不要做实现。你的输出是供下游开发者或评审者使用的设计文档。`,
     execution: { mode: 'single' },
     soulPrompt: `你是一名专业的技术文档撰写员和需求分析师。你的唯一工作是编写清晰、完整的需求文档。
 
@@ -150,6 +177,16 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'Full Stack Developer',
     color: '#10B981',
     task: '根据需求文档编写生产级代码',
+    taskPrompt: '请基于上游需求文档，完成可运行的生产级实现，并给出简短实现说明。',
+    taskInstruction: `仔细阅读上游（通常是技术写作者）提供的需求文档，然后编写完整的生产级代码。
+
+你的输出必须包含：
+1. 完整源代码（标明文件名和语言）
+2. 简短的实现说明（设计决策与运行说明）
+
+注意：
+- 如果上游包含代码审查报告且结论为 REJECT，先修复报告中列出的所有问题，再提交代码
+- 不要写需求文档，不要跑测试`,
     execution: { mode: 'single' },
     soulPrompt: `你是一名专业的全栈软件开发工程师。你的唯一工作是编写生产级代码。
 
@@ -176,6 +213,14 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'Code Reviewer',
     color: '#8B5CF6',
     task: '审查代码质量并给出 PASS/REJECT 结论',
+    taskPrompt: '请对上游代码做严格审查，明确指出问题、风险，并给出 PASS/REJECT 结论。',
+    taskInstruction: `审查上游开发者产出的代码。评估可读性、安全漏洞、性能、错误处理。
+
+在输出的最后一行必须输出：
+- <PASS> — 代码质量良好，无需修改
+- <REJECT> — 存在需修复的问题
+
+给出具体、可操作的反馈，而不仅仅是 PASS/REJECT。`,
     execution: { mode: 'single' },
     soulPrompt: `你是一名严格但公正的高级代码审查员。
 
@@ -196,6 +241,15 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'QA Engineer',
     color: '#EF4444',
     task: '编写并执行测试，直到所有测试通过',
+    taskPrompt: '请基于上游需求和代码输出，设计测试、分析失败原因，并给出明确路由结论。',
+    taskInstruction: `基于上游的需求文档和代码输出，编写测试用例并运行测试。
+
+对于每个失败的测试，分析是"代码 bug"还是"需求理解错误"，并给出明确的修复指令。
+
+在输出末尾使用路由标签：
+- <PASS> — 所有测试通过
+- <REJECT:CODE> — 代码有 bug，需要 Developer 修复
+- <REJECT:DOC> — 需求不清晰，需要 Writer 澄清`,
     execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
     soulPrompt: `你是一名严谨的 QA 工程师。你的职责不只是测试，而是**定位问题根源**。
 
@@ -243,6 +297,10 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'Security Auditor',
     color: '#F59E0B',
     task: '对代码进行安全漏洞审计',
+    taskPrompt: '请从架构、认证、输入验证、数据保护等角度对当前实现进行安全审计。',
+    taskInstruction: `审查上游代码和架构，识别安全漏洞（参考 OWASP Top 10）。
+
+输出：发现漏洞的列表（严重程度 高/中/低）、详细描述、及具体修复方案。`,
     execution: { mode: 'single' },
     soulPrompt: `你是一名网络安全专家，专注于应用安全审计。
 
@@ -263,6 +321,8 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'DevOps Engineer',
     color: '#EC4899',
     task: '创建 CI/CD 流程和部署配置',
+    taskPrompt: '请为当前项目补齐部署、容器化和 CI/CD 所需配置，并提供落地步骤。',
+    taskInstruction: `分析上游代码，确定语言/框架/依赖，然后编写 Dockerfile、docker-compose.yml 或 GitHub Actions 配置。提供完整的部署指南。`,
     execution: { mode: 'single' },
     soulPrompt: `你是一名经验丰富的 DevOps 工程师，专注于 CI/CD 和部署自动化。
 
@@ -282,6 +342,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'Data Analyst',
     color: '#EAB308',
     task: '分析数据并提供可视化建议',
+    taskPrompt: '请分析当前数据或数据描述，输出关键洞察、质量问题和推荐的可视化方案。',
     execution: { mode: 'single' },
     soulPrompt: `你是一名数据分析师。
 
@@ -302,6 +363,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     name: 'Translator',
     color: '#06B6D4',
     task: '将内容翻译成目标语言',
+    taskPrompt: '请把上游内容准确翻译成目标语言，同时保留术语一致性和原始结构。',
     execution: { mode: 'single' },
     soulPrompt: `你是一名专业翻译。
 

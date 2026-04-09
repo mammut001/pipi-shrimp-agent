@@ -20,6 +20,16 @@ import { useUIStore } from '@/store/uiStore';
 import { useCdpStore } from '@/store/cdpStore';
 import type { WorkflowAgent, WorkflowConnection, WorkflowRun } from '@/types/workflow';
 import { DEFAULT_EXECUTION_CONFIG } from '@/types/workflow';
+import {
+  topoSort,
+  getPredecessorIds,
+  getBlockingFailures,
+} from './workflowDependencies';
+import {
+  buildEntryAgentPrompt,
+  buildDownstreamAgentPrompt,
+  type UpstreamOutput,
+} from './workflowPromptBuilder';
 
 const MAX_TOTAL_STEPS = 50;
 const MAX_EDGE_ITERATIONS = 10;
@@ -42,7 +52,34 @@ class WorkflowEngine {
     this.onStreamChunk = cb;
   }
 
-  async start(userPrompt: string): Promise<void> {
+  private deriveWorkflowGoal(agents: WorkflowAgent[], explicitGoal?: string): string {
+    if (explicitGoal?.trim()) {
+      return explicitGoal.trim();
+    }
+
+    const entryAgents = agents.filter((agent) => !agent.inputFrom);
+    const preferredAgents = entryAgents.length > 0 ? entryAgents : agents;
+
+    const derivedLines = preferredAgents
+      .map((agent) => {
+        const pieces = [
+          agent.taskPrompt?.trim(),
+          agent.task?.trim(),
+        ].filter(Boolean);
+
+        if (pieces.length === 0) return null;
+        return `${agent.name}: ${pieces.join(' | ')}`;
+      })
+      .filter((line): line is string => Boolean(line));
+
+    if (derivedLines.length > 0) {
+      return derivedLines.join('\n');
+    }
+
+    return '请按照当前工作流中各个 Agent 的职责与配置依次完成任务。';
+  }
+
+  async start(userPrompt?: string): Promise<void> {
     if (this.isRunning) return;
 
     const store = useWorkflowStore.getState();
@@ -53,13 +90,18 @@ class WorkflowEngine {
       return;
     }
 
+    const workflowGoal = this.deriveWorkflowGoal(agents, userPrompt);
+
     // 1. Initialize state
     this.isRunning = true;
     this.stopRequested = false;
     this.totalSteps = 0;
     this.iterationCount.clear();
     this.agentOutputs.clear();
-    this.currentRunId = crypto.randomUUID();
+    // Capture run ID locally so the finally block can detect if a newer run has
+    // already started (e.g. stop() → immediate Re-run) and skip stale cleanup.
+    const localRunId = crypto.randomUUID();
+    this.currentRunId = localRunId;
     this.workingDirectory = '';
     store.resetAllStatuses();
     store.setRunning(true, null);
@@ -77,8 +119,8 @@ class WorkflowEngine {
     // 3. Create WorkflowRun record
     const run: WorkflowRun = {
       id: this.currentRunId,
-      title: userPrompt.substring(0, 60) + (userPrompt.length > 60 ? '...' : ''),
-      projectGoal: userPrompt,
+      title: workflowGoal.substring(0, 60) + (workflowGoal.length > 60 ? '...' : ''),
+      projectGoal: workflowGoal,
       status: 'running',
       startTime: Date.now(),
       agents: agents.map(a => ({ agentId: a.id, agentName: a.name, status: 'pending' })),
@@ -87,19 +129,19 @@ class WorkflowEngine {
     store.addWorkflowRun(run);
 
     try {
-      // 4. Find entry Agent (no inputFrom pointing to it)
-      const entryAgents = this.findEntryAgents(agents, connections);
-      if (entryAgents.length === 0) {
-        throw new Error('未找到入口 Agent。请确保至少有一个没有上游连接的 Agent。');
+      // 4. Build topological execution order (handles A→B, A+B→C, A→B+C)
+      const executionOrder = topoSort(agents, connections);
+      if (executionOrder.length === 0) {
+        throw new Error('未找到可执行的 Agent，请检查 Agent 之间的连接是否存在无法解析的环路。');
       }
 
-      // 5. Main loop
-      let currentAgent: WorkflowAgent | null = entryAgents[0];
-      // Wrap the raw prompt so every agent sees the project goal clearly
-      let currentInput = this.buildEntryPrompt(userPrompt, entryAgents[0]);
+      const failedAgents = new Set<string>();
       let loopCount = 0;
 
-      while (currentAgent !== null && this.isRunning && !this.stopRequested) {
+      // 5. Phase 1: Topological execution
+      for (const agent of executionOrder) {
+        if (!this.isRunning || this.stopRequested) break;
+
         // Global step protection
         this.totalSteps++;
         if (this.totalSteps > MAX_TOTAL_STEPS) {
@@ -107,64 +149,127 @@ class WorkflowEngine {
           break;
         }
 
+        // Upstream failure check — skip if any required predecessor failed
+        const blocking = getBlockingFailures(agent, agents, connections, failedAgents);
+        if (blocking.length > 0) {
+          const blockerNames = blocking
+            .map(id => agents.find(a => a.id === id)?.name ?? id)
+            .join('、');
+          useUIStore.getState().addNotification('info', `⏭ 跳过「${agent.name}」：上游「${blockerNames}」执行失败`);
+          store.setAgentStatus(agent.id, 'error');
+          store.updateRunAgent(this.currentRunId, agent.id, { status: 'skipped' });
+          failedAgents.add(agent.id);
+          continue;
+        }
+
+        // Build structured prompt injecting all upstream outputs
+        const predecessorIds = getPredecessorIds(agent.id, agents, connections);
+        const upstreams: UpstreamOutput[] = predecessorIds
+          .filter(id => this.agentOutputs.has(id))
+          .map(id => ({
+            agent: agents.find(a => a.id === id)!,
+            output: this.agentOutputs.get(id)!,
+          }));
+
+        const prompt = predecessorIds.length === 0
+          ? buildEntryAgentPrompt(workflowGoal, agent)
+          : buildDownstreamAgentPrompt(workflowGoal, agent, upstreams, loopCount);
+
         // Update UI state
-        store.setRunning(true, currentAgent.id);
-        store.setAgentStatus(currentAgent.id, 'running');
-        store.updateRunAgent(this.currentRunId, currentAgent.id, { status: 'running', startTime: Date.now() });
+        store.setRunning(true, agent.id);
+        store.setAgentStatus(agent.id, 'running');
+        store.updateRunAgent(this.currentRunId, agent.id, { status: 'running', startTime: Date.now() });
 
         try {
-          // Execute Agent
-          const output = await this.executeAgent(currentAgent, currentInput);
-          this.agentOutputs.set(currentAgent.id, output);
+          const output = await this.executeAgent(agent, prompt);
+          this.agentOutputs.set(agent.id, output);
+          await this.saveOutputToFile(agent, output);
 
-          // Save output to file in run directory
-          await this.saveOutputToFile(currentAgent, output);
+          store.setAgentStatus(agent.id, 'completed');
+          store.updateRunAgent(this.currentRunId, agent.id, {
+            status: 'completed',
+            endTime: Date.now(),
+            output: output.substring(0, 2000),
+          });
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : '未知错误';
+          store.setAgentStatus(agent.id, 'error');
+          store.updateRunAgent(this.currentRunId, agent.id, { status: 'error', endTime: Date.now() });
+          failedAgents.add(agent.id);
+          // If an explicit error route exists, the target agent will run in topo order (if connected)
+          // or will be picked up in Phase 2. Otherwise propagate.
+          const errorAgent = this.evaluateNextAgent(agent, errorMsg, connections, agents, 'error');
+          if (!errorAgent) throw error;
+        }
+      }
 
-          // Update status to completed
-          store.setAgentStatus(currentAgent.id, 'completed');
-          store.updateRunAgent(this.currentRunId, currentAgent.id, {
+      // 6. Phase 2: Conditional routing loops (e.g., QA <REJECT> → developer → QA...)
+      // Find the last completed agent whose output triggered a loop-back conditional route.
+      let conditionalCurrent: WorkflowAgent | null = null;
+      let conditionalInput = '';
+
+      for (const agent of [...executionOrder].reverse()) {
+        const agentOutput = this.agentOutputs.get(agent.id);
+        if (!agentOutput) continue;
+
+        const nextAgent = this.evaluateNextAgent(agent, agentOutput, connections, agents, 'completed');
+        if (nextAgent && this.agentOutputs.has(nextAgent.id)) {
+          // Loop-back detected: nextAgent already completed — this is a rejection/revision cycle.
+          conditionalCurrent = nextAgent;
+          conditionalInput = this.constructNextPrompt(agent, nextAgent, agentOutput, loopCount, workflowGoal, agents);
+          break;
+        }
+      }
+
+      while (conditionalCurrent !== null && this.isRunning && !this.stopRequested) {
+        this.totalSteps++;
+        if (this.totalSteps > MAX_TOTAL_STEPS) {
+          useUIStore.getState().addNotification('error', `已达最大步数限制（${MAX_TOTAL_STEPS}步），工作流已停止`);
+          break;
+        }
+
+        store.setRunning(true, conditionalCurrent.id);
+        store.setAgentStatus(conditionalCurrent.id, 'running');
+        store.updateRunAgent(this.currentRunId, conditionalCurrent.id, { status: 'running', startTime: Date.now() });
+
+        try {
+          const output = await this.executeAgent(conditionalCurrent, conditionalInput);
+          this.agentOutputs.set(conditionalCurrent.id, output);
+          await this.saveOutputToFile(conditionalCurrent, output);
+
+          store.setAgentStatus(conditionalCurrent.id, 'completed');
+          store.updateRunAgent(this.currentRunId, conditionalCurrent.id, {
             status: 'completed',
             endTime: Date.now(),
             output: output.substring(0, 2000),
           });
 
-          // Find next Agent
-          const nextAgent = this.evaluateNextAgent(currentAgent, output, connections, agents, 'completed');
+          const nextAgent = this.evaluateNextAgent(conditionalCurrent, output, connections, agents, 'completed');
+          if (!nextAgent) break;
 
-          if (!nextAgent) break; // Workflow ends
-
-          // Check edge iteration limit
-          const edgeKey = `${currentAgent.id}->${nextAgent.id}`;
+          const edgeKey = `${conditionalCurrent.id}->${nextAgent.id}`;
           const edgeCount = this.iterationCount.get(edgeKey) || 0;
           if (edgeCount >= MAX_EDGE_ITERATIONS) {
-            useUIStore.getState().addNotification('error', `循环 ${currentAgent.name} → ${nextAgent.name} 已达到最大迭代次数`);
+            useUIStore.getState().addNotification('error', `循环 ${conditionalCurrent.name} → ${nextAgent.name} 已达到最大迭代次数`);
             break;
           }
           this.iterationCount.set(edgeKey, edgeCount + 1);
 
-          const isLoop = this.agentOutputs.has(nextAgent.id);
-          if (isLoop) loopCount++;
-
-          // Build next Agent's prompt
-          currentInput = this.constructNextPrompt(
-            currentAgent, nextAgent, output, loopCount, userPrompt, agents
-          );
-          currentAgent = nextAgent;
+          loopCount++;
+          conditionalInput = this.constructNextPrompt(conditionalCurrent, nextAgent, output, loopCount, workflowGoal, agents);
+          conditionalCurrent = nextAgent;
 
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : '未知错误';
-          store.setAgentStatus(currentAgent.id, 'error');
-          store.updateRunAgent(this.currentRunId, currentAgent.id, { status: 'error', endTime: Date.now() });
+          store.setAgentStatus(conditionalCurrent.id, 'error');
+          store.updateRunAgent(this.currentRunId, conditionalCurrent.id, { status: 'error', endTime: Date.now() });
 
-          // Try to find error route
-          const errorAgent = this.evaluateNextAgent(currentAgent, errorMsg, connections, agents, 'error');
+          const errorAgent = this.evaluateNextAgent(conditionalCurrent, errorMsg, connections, agents, 'error');
           if (errorAgent) {
-            currentInput = `[来自 ${currentAgent.name} 的错误]\n${errorMsg}\n\n请处理此错误。`;
-            currentAgent = errorAgent;
+            conditionalInput = `[来自 ${conditionalCurrent.name} 的错误]\n${errorMsg}\n\n请处理此错误。`;
+            conditionalCurrent = errorAgent;
             continue;
           }
-
-          // No error route, stop
           throw error;
         }
       }
@@ -185,14 +290,22 @@ class WorkflowEngine {
       store.updateWorkflowRun(this.currentRunId, { status: 'error', endTime: Date.now() });
       useUIStore.getState().addNotification('error', `❌ 工作流失败：${errorMsg}`);
     } finally {
-      this.isRunning = false;
-      store.setRunning(false, null);
+      // Only reset shared engine state when this coroutine is still the active run.
+      // If stop() was called and the user immediately started a new run, localRunId
+      // will differ from this.currentRunId, meaning the new run already owns the state.
+      if (this.currentRunId === localRunId) {
+        this.isRunning = false;
+        store.setRunning(false, null);
+      }
     }
   }
 
   async stop(): Promise<void> {
     this.stopRequested = true;
-    this.isRunning = false;
+    // Do NOT set this.isRunning = false here: the active coroutine may still be
+    // awaiting an API response. Setting it false prematurely would let a new run
+    // start while the old coroutine is still running, causing shared state corruption.
+    // The finally block in start() is responsible for clearing this.isRunning.
     useWorkflowStore.getState().setRunning(false, null);
   }
 
@@ -288,13 +401,19 @@ class WorkflowEngine {
       baseUrl = activeConfig.baseUrl || '';
     }
 
-    // 2. Build system prompt: soulPrompt + agent task role injection
+    // 2. Build system prompt: soulPrompt + task label + detailed task instruction + concrete task prompt
     const taskLine = agent.task
-      ? `\n\n## 你在本次工作流中的具体任务\n${agent.task}`
+      ? `\n\n## 你在本次工作流中的角色\n${agent.task}`
+      : '';
+    const taskPromptBlock = agent.taskPrompt?.trim()
+      ? `\n\n## 你这次要完成的具体任务\n${agent.taskPrompt.trim()}`
+      : '';
+    const instructionBlock = agent.taskInstruction?.trim()
+      ? `\n\n## 你的专项任务指令\n${agent.taskInstruction.trim()}`
       : '';
     const systemPrompt = agent.soulPrompt
-      ? `${agent.soulPrompt}${taskLine}\n\n[系统注记：你当前运行的模型是 "${model}"。]`
-      : taskLine.trim();
+      ? `${agent.soulPrompt}${taskLine}${taskPromptBlock}${instructionBlock}\n\n[系统注记：你当前运行的模型是 "${model}"。]`
+      : `${taskLine}${taskPromptBlock}${instructionBlock}`.trim();
 
     // 3. Build messages
     const messages = [{ role: 'user', content: inputPrompt }];
@@ -438,15 +557,7 @@ ${output}
     return null; // No matching route, workflow ends
   }
 
-  /** Build the entry agent's first input, wrapping the raw user goal. */
-  private buildEntryPrompt(projectGoal: string, _entryAgent: WorkflowAgent): string {
-    return `## 项目目标
-${projectGoal}
 
----
-
-请根据你的角色和任务完成你的工作。`;
-  }
 
   /**
    * Build the prompt passed to the next agent.
@@ -499,11 +610,7 @@ ${projectGoal}
       .join('\n\n');
   }
 
-  private findEntryAgents(agents: WorkflowAgent[], connections: WorkflowConnection[]): WorkflowAgent[] {
-    // Entry Agent = has no incoming connection (no upstream)
-    const hasIncoming = new Set(connections.map(c => c.targetAgentId));
-    return agents.filter(a => !hasIncoming.has(a.id));
-  }
+
 
   // Get the current working directory (for revealing in file explorer)
   getWorkingDirectory(): string {

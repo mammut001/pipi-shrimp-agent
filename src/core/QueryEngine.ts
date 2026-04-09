@@ -104,28 +104,34 @@ export async function* runChatTurn(
       break; 
     }
 
-    const toolResults = [];
-    
-    // Yield each tool sequentially to the UI for permission/execution
-    for (const tool of pendingToolCalls) {
-      yield { type: 'status_update', message: `Executing tool: ${tool.name}` };
-      
-      let resolvePromise: ((value: string) => void) | undefined;
-      let resolved = false;
-      const promise = new Promise<string>(r => resolvePromise = r);
-      
+    const toolResults: { id: string; content: string }[] = [];
+
+    // Yield all tools as a single batch — lets the consumer execute read-only
+    // tools in parallel while handling write/permission tools serially.
+    // _resolveAll must be called with a result for EVERY tool in the batch.
+    if (pendingToolCalls.length > 0) {
+      yield { type: 'status_update', message: `Executing ${pendingToolCalls.length} tool(s): ${pendingToolCalls.map(t => t.name).join(', ')}` };
+
+      const resolvers: Array<(v: string) => void> = [];
+      const promises: Promise<string>[] = pendingToolCalls.map((_, i) =>
+        new Promise<string>(r => { resolvers[i] = r; })
+      );
+
       yield {
-        type: 'tool_call_request',
-        tool,
-        _resolve: (res: string) => {
-          if (resolved) return;
-          resolved = true;
-          resolvePromise!(res);
-        }
+        type: 'tool_batch_request',
+        tools: pendingToolCalls,
+        _resolveAll: (results: { id: string; content: string }[]) => {
+          for (let i = 0; i < pendingToolCalls.length; i++) {
+            const result = results.find(r => r.id === pendingToolCalls[i].id);
+            resolvers[i](result?.content ?? 'Error: no result returned for tool');
+          }
+        },
       } as EngineEvent;
-      
-      const toolResultContent = await promise;
-      toolResults.push({ id: tool.id, content: toolResultContent });
+
+      const allContent = await Promise.all(promises);
+      for (let i = 0; i < pendingToolCalls.length; i++) {
+        toolResults.push({ id: pendingToolCalls[i].id, content: allContent[i] });
+      }
     }
     
     // Append the tool results to the context for the next round

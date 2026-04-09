@@ -19,7 +19,7 @@ const BROAD_SCOPE_PATTERNS = [
   /\b(entire|whole|full|all)\s+(repo|codebase|project|code|source)/i,
   /\bread\s+(everything|all|the\s+code)/i,
   /\b(repo|codebase|project)\s*-?\s*wide/i,
-  /\boverall\s+(architecture|structure|design)/i,
+  /\boverall\s+(?:\w+\s+){0,3}(architecture|structure|design)\b/i,
   /\bevery\s+(file|module|component|service)/i,
 ];
 
@@ -110,7 +110,7 @@ const GOAL_PATTERNS: Array<{ patterns: RegExp[]; taskType: TaskType }> = [
   {
     taskType: 'architecture_review',
     patterns: [
-      /\b(review|analyze|inspect|audit|examine|assess)\s+(the\s+)?(architecture|structure|design|system|codebase|code)/i,
+      /\b(review|analyze|inspect|audit|examine|assess)\b.{0,40}\b(architecture|structure|design|system|codebase|code)\b/i,
       /\b(architecture|structural)\s+(review|analysis|audit)/i,
     ],
   },
