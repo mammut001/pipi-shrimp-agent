@@ -17,6 +17,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
 import { useSwarmStore } from '@/store/swarmStore';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
+import { useKeyboardShortcuts, KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
 
 // Lazy-load heavy pages so they don't bloat the initial bundle
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -31,6 +32,9 @@ export default function App() {
   const { init: initChat } = useChatStore();
   const { settingsOpen, currentView } = useUIStore();
   const initSwarm = useSwarmStore((s) => s.init);
+
+  // Keyboard shortcuts handler
+  const { showShortcuts, setShowShortcuts } = useKeyboardShortcuts();
 
   // Load settings on mount, then show window once fully initialized.
   // Window starts hidden (visible: false in tauri.conf.json) to avoid the
@@ -76,6 +80,12 @@ export default function App() {
         {renderMainContent()}
         {settingsOpen && <Settings />}
       </Suspense>
+
+      {/* Keyboard shortcuts modal */}
+      <KeyboardShortcutsModal
+        isOpen={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+      />
     </>
   );
 }

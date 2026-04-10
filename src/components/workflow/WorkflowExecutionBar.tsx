@@ -10,11 +10,16 @@
 import { useRef } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { workflowEngine } from '@/services/workflowEngine';
+import { t } from '@/i18n';
 
 export function WorkflowExecutionBar() {
-  const { isRunning, currentRunningAgentId, agents, clearCanvas } = useWorkflowStore();
-  // Ref-based guard: prevents double-click and the stop→run race condition where
-  // stop() sets this.isRunning=false before the old coroutine's finally block runs.
+  const currentInstance = useWorkflowStore((s) =>
+    s.instances.find(i => i.id === s.currentInstanceId) ?? null
+  );
+  const agents = currentInstance?.agents ?? [];
+  const isRunning = useWorkflowStore((s) => s.isRunning);
+  const currentRunningAgentId = useWorkflowStore((s) => s.currentRunningAgentId);
+  const clearCanvas = useWorkflowStore((s) => s.clearCanvas);
   const startingRef = useRef(false);
 
   const currentAgent = agents.find((a) => a.id === currentRunningAgentId);
@@ -35,7 +40,7 @@ export function WorkflowExecutionBar() {
   };
 
   const handleClear = () => {
-    if (window.confirm('确定要清空画布吗？此操作不可恢复。')) {
+    if (window.confirm(t('workflow.clearCanvasConfirm'))) {
       clearCanvas();
     }
   };
@@ -46,7 +51,7 @@ export function WorkflowExecutionBar() {
         <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
         </svg>
-        <span className="font-medium text-gray-700">工作流将直接使用当前 Agent Task 配置运行</span>
+        <span className="font-medium text-gray-700">{t('workflow.clearCanvasWarning')}</span>
       </div>
 
       {/* Run button */}
@@ -58,7 +63,7 @@ export function WorkflowExecutionBar() {
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
           <path d="M8 5v14l11-7z" />
         </svg>
-        Run
+        {t('workflow.run')}
       </button>
 
       {/* Stop button */}
@@ -70,7 +75,7 @@ export function WorkflowExecutionBar() {
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
           <rect x="6" y="6" width="12" height="12" />
         </svg>
-        Stop
+        {t('workflow.stop')}
       </button>
 
       {/* Status display with step progress */}
@@ -90,7 +95,7 @@ export function WorkflowExecutionBar() {
             </span>
             <span className="truncate max-w-[120px]">{currentAgentName}</span>
           </span>
-        ) : '就绪'}
+        ) : t('workflow.ready')}
       </div>
 
       {/* Mini step indicators */}
@@ -120,7 +125,7 @@ export function WorkflowExecutionBar() {
         disabled={isRunning}
         className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
       >
-        清空
+        {t('workflow.clearCanvas')}
       </button>
     </div>
   );

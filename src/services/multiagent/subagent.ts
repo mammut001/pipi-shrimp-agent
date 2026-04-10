@@ -11,6 +11,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { AgentContext, createChildContext, withAgentContext } from './agentContext';
 import { useSettingsStore } from '@/store';
+import {
+  COORDINATOR_SYSTEM_PROMPT,
+  WORKER_SYSTEM_PROMPT_ADDENDUM,
+  COORDINATOR_TOOL_GUIDANCE,
+} from '../orchestration/coordinatorPrompt';
 
 export interface SubagentOptions {
   name: string;
@@ -50,7 +55,7 @@ export async function runAgentSync(options: SubagentOptions): Promise<SubagentRe
       }
 
       // Build subagent system prompt
-      const systemPrompt = buildSubagentPrompt(options);
+      const systemPrompt = await buildSubagentPrompt(options);
 
       // Call the API with streaming
       const response = await invoke<any>('send_claude_sdk_chat_streaming', {
@@ -139,6 +144,27 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
 
           // Stop inbox polling and process remaining messages
           onAgentFinished(swarmAgentId);
+
+          // Extract agent memory after successful completion (fire-and-forget)
+          if (result.success && result.content && agent) {
+            swarm.getSwarmBaseDir().then(async baseDir => {
+              await swarm.extractAgentMemory(
+                `${baseDir}/swarm/${agent.teamId}/${swarmAgentId}/memory`,
+                result.content,
+                options.prompt,
+              );
+              // If leader, also extract team memory
+              const team = swarm.getTeam(agent.teamId);
+              if (team && team.leaderId === swarmAgentId) {
+                await swarm.extractTeamMemory(
+                  `${baseDir}/swarm/${agent.teamId}/team-memory`,
+                  result.content,
+                  options.prompt,
+                );
+              }
+            }).catch(e => console.warn('[Subagent] Memory extraction failed:', e));
+          }
+
           if (agent?.sessionId) {
             swarm.reconcileRunForChatSession(agent.sessionId);
           }
@@ -205,9 +231,53 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
 
 /**
  * Build system prompt for a subagent.
+ * When running in a swarm context, injects agent + team memory prompts.
+ *
+ * @param options - Subagent options including subagentType to determine prompt template
+ * @returns Built system prompt string
  */
-function buildSubagentPrompt(options: SubagentOptions): string {
-  return `You are a specialized AI assistant working on a specific task.
+async function buildSubagentPrompt(options: SubagentOptions): Promise<string> {
+  const isWorker = options.subagentType === 'worker';
+  const isCoordinator = options.subagentType === 'coordinator';
+
+  let base: string;
+
+  if (isCoordinator) {
+    // Coordinator gets the full coordinator prompt
+    base = `${COORDINATOR_SYSTEM_PROMPT}
+
+${COORDINATOR_TOOL_GUIDANCE}
+
+## Current Context
+
+Working directory: ${options.parentContext.workDir || process.cwd()}
+Session ID: ${options.sessionId}
+Agent: ${options.name}
+Role: Coordinator
+
+## Assigned Task
+
+${options.prompt}`;
+  } else if (isWorker) {
+    // Worker gets role-specific prompt + worker addendum
+    base = `You are a specialized AI assistant working on a specific task.
+
+${WORKER_SYSTEM_PROMPT_ADDENDUM}
+
+## Your Assigned Task
+
+**Description:** ${options.description}
+
+**Prompt:**
+${options.prompt}
+
+## Context
+Working directory: ${options.parentContext.workDir || process.cwd()}
+Agent name: ${options.name}
+`;
+  } else {
+    // Default prompt for generic subagents
+    base = `You are a specialized AI assistant working on a specific task.
 
 ## Your Role
 ${options.description}
@@ -222,6 +292,50 @@ ${options.prompt}
 4. Summarize your findings or work at the end
 
 ## Context
-Your working directory is: ${options.parentContext.workDir || 'not specified'}
+Working directory: ${options.parentContext.workDir || process.cwd()}
 `;
+  }
+
+  // Inject swarm memory prompts if running in a swarm context
+  if (options.parentContext?.teamName) {
+    try {
+      const swarm = await import('../swarm');
+      const baseDir = await swarm.getSwarmBaseDir(options.parentContext.workDir);
+      const agentId = options.parentContext.agentId;
+
+      // Find the team to get the teamId
+      const team = swarm.getTeamByName(options.parentContext.teamName);
+      if (team) {
+        if (isCoordinator) {
+          // Coordinator gets team memory for context
+          const teamMemoryPrompt = await swarm.buildTeamMemoryPrompt(
+            `${baseDir}/swarm/${team.id}/team-memory`,
+          );
+          if (teamMemoryPrompt) {
+            base += `\n\n---\n\n## Team Context\n\n${teamMemoryPrompt}`;
+          }
+        } else {
+          // Agent Memory
+          const agentMemoryPrompt = await swarm.buildAgentMemoryPrompt(
+            `${baseDir}/swarm/${team.id}/${agentId}/memory`,
+          );
+          if (agentMemoryPrompt) {
+            base += `\n\n---\n\n${agentMemoryPrompt}`;
+          }
+
+          // Team Memory (read-only for all team agents)
+          const teamMemoryPrompt = await swarm.buildTeamMemoryPrompt(
+            `${baseDir}/swarm/${team.id}/team-memory`,
+          );
+          if (teamMemoryPrompt) {
+            base += `\n\n---\n\n${teamMemoryPrompt}`;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Subagent] Failed to inject memory prompts:', e);
+    }
+  }
+
+  return base;
 }

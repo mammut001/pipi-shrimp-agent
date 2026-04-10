@@ -195,9 +195,9 @@ export function ChatBrowserWorkspaceShell() {
 
       {/* Error Banner */}
       {error && (
-        <div className="px-3 py-2 bg-red-50 border-t border-red-200">
+        <div className="px-3 py-2 error-banner border-t">
           <div className="mx-auto max-w-3xl flex flex-col sm:flex-row sm:items-center gap-2">
-            <div className="flex items-start gap-2 text-red-700 min-w-0 flex-1">
+            <div className="flex items-start gap-2 error-banner-text min-w-0 flex-1">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 className="h-5 w-5 flex-shrink-0 mt-0.5"
@@ -215,13 +215,13 @@ export function ChatBrowserWorkspaceShell() {
             <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-auto">
               <button
                 onClick={() => retryLastMessage()}
-                className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors whitespace-nowrap"
+                className="px-3 py-1 text-sm error-button-primary rounded transition-colors whitespace-nowrap"
               >
                 Retry
               </button>
               <button
                 onClick={() => clearError()}
-                className="p-1 hover:bg-red-100 rounded text-red-600"
+                className="p-1 error-button-secondary rounded"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />

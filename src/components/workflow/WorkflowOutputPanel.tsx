@@ -13,11 +13,20 @@ import { useWorkflowStore } from '@/store/workflowStore';
 import { workflowEngine } from '@/services/workflowEngine';
 import { workflowService, type FileInfo } from '@/services/workflow';
 import { useUIStore } from '@/store/uiStore';
+import { t } from '@/i18n';
 
 type Tab = 'output' | 'files';
 
 export function WorkflowOutputPanel() {
-  const { agents, isRunning, workflowRuns, selectedRunId, selectedPreviewFile, setSelectedPreviewFile } = useWorkflowStore();
+  const currentInstance = useWorkflowStore((s) =>
+    s.instances.find(i => i.id === s.currentInstanceId) ?? null
+  );
+  const agents = currentInstance?.agents ?? [];
+  const workflowRuns = currentInstance?.workflowRuns ?? [];
+  const isRunning = useWorkflowStore((s) => s.isRunning);
+  const selectedRunId = useWorkflowStore((s) => s.selectedRunId);
+  const selectedPreviewFile = useWorkflowStore((s) => s.selectedPreviewFile);
+  const setSelectedPreviewFile = useWorkflowStore((s) => s.setSelectedPreviewFile);
   const [agentOutputs, setAgentOutputs] = useState<Map<string, string>>(new Map());
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<Tab>('output');
@@ -96,7 +105,7 @@ export function WorkflowOutputPanel() {
 
   const openRunDirectoryInFinder = async () => {
     if (!runDirectory) {
-      addNotification('warning', '当前还没有可打开的工作目录');
+      addNotification('warning', t('workflow.output.noWorkDir'));
       return;
     }
 
@@ -104,7 +113,7 @@ export function WorkflowOutputPanel() {
       await invoke('reveal_in_finder', { path: runDirectory });
     } catch (error) {
       console.error('Failed to reveal workflow directory in Finder:', error);
-      addNotification('error', `无法打开工作目录: ${error}`);
+      addNotification('error', t('workflow.output.cannotOpenWorkDir').replace('{error}', String(error)));
     }
   };
 
@@ -120,7 +129,7 @@ export function WorkflowOutputPanel() {
               : 'border-transparent text-gray-500 hover:text-gray-700'
           }`}
         >
-          实时输出
+          {t('workflow.output.realTime')}
         </button>
         <button
           onClick={() => { setActiveTab('files'); refreshFiles(); }}
@@ -130,21 +139,21 @@ export function WorkflowOutputPanel() {
               : 'border-transparent text-gray-500 hover:text-gray-700'
           }`}
         >
-          文件 {files.length > 0 && <span className="ml-1 text-xs bg-gray-100 rounded-full px-1.5">{files.length}</span>}
+          {t('workflow.output.files')} {files.length > 0 && <span className="ml-1 text-xs bg-gray-100 rounded-full px-1.5">{files.length}</span>}
         </button>
         <button
           onClick={openRunDirectoryInFinder}
           disabled={!runDirectory}
           className="ml-2 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          title={runDirectory || '当前没有工作目录'}
+          title={runDirectory || t('workflow.output.noWorkDir')}
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
           </svg>
-          打开工作目录
+          {t('workflow.output.openWorkDir')}
         </button>
         <span className="ml-auto pr-4 text-xs text-gray-400">
-          {agents.filter((a) => agentOutputs.has(a.id)).length} / {agents.length} agents
+          {t('workflow.output.agentCount').replace('{done}', String(agents.filter((a) => agentOutputs.has(a.id)).length)).replace('{total}', String(agents.length))}
         </span>
       </div>
 
@@ -154,7 +163,7 @@ export function WorkflowOutputPanel() {
           /* ===== Output tab ===== */
           agents.length === 0 ? (
             <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-              添加 Agent 后将显示输出
+              {t('workflow.output.noAgents')}
             </div>
           ) : (
             agents.map((agent) => {
@@ -199,11 +208,11 @@ export function WorkflowOutputPanel() {
                     <div className="px-4 pb-3">
                       {agent.task && (
                         <div className="mb-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded text-xs text-blue-700">
-                          任务: {agent.task}
+                          {t('workflow.agentTask')}: {agent.task}
                         </div>
                       )}
                       <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 font-mono whitespace-pre-wrap max-h-80 overflow-y-auto">
-                        {output || (running ? '等待输出...' : '无输出')}
+                        {output || (running ? t('workflow.output.waiting') : t('workflow.output.noOutput'))}
                       </div>
                     </div>
                   )}
@@ -216,14 +225,14 @@ export function WorkflowOutputPanel() {
           <div className="flex flex-col h-full">
             {!runDirectory ? (
               <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-                运行工作流后将在此展示输出文件
+                {t('workflow.output.runAfter')}
               </div>
             ) : (
               /* File list */
               <div className="py-2">
                 {files.length === 0 ? (
                   <div className="px-4 py-8 text-center text-gray-400 text-sm">
-                    {isRunning ? '等待文件生成...' : '暂无输出文件'}
+                    {isRunning ? t('workflow.output.waitingForFiles') : t('workflow.output.noFiles')}
                   </div>
                 ) : (
                   files.map((file) => (
@@ -244,7 +253,7 @@ export function WorkflowOutputPanel() {
                         {file.name}
                       </span>
                       {selectedPreviewFile === file.path && (
-                        <span className="ml-auto text-xs text-blue-500">← 预览中</span>
+                        <span className="ml-auto text-xs text-blue-500">{t('workflow.output.previewing')}</span>
                       )}
                     </button>
                   ))

@@ -36,6 +36,27 @@ const MAX_EDGE_ITERATIONS = 10;
 
 export type StreamChunkCallback = (agentId: string, chunk: string, fullContent: string) => void;
 
+/**
+ * Transcript entry for workflow agents — records all operations for later review.
+ * Similar to Claude Code's transcript system.
+ */
+export type WorkflowTranscriptEntryType =
+  | 'user_prompt_injected'
+  | 'assistant_text'
+  | 'tool_called'
+  | 'tool_result'
+  | 'agent_completed'
+  | 'agent_error';
+
+export interface WorkflowTranscriptEntry {
+  timestamp: number;
+  type: WorkflowTranscriptEntryType;
+  content: string;
+  toolName?: string;
+  toolArgs?: string;
+  toolResult?: string;
+}
+
 class WorkflowEngine {
   private isRunning: boolean = false;
   private totalSteps: number = 0;
@@ -44,6 +65,9 @@ class WorkflowEngine {
   private stopRequested: boolean = false;
   private workingDirectory: string = '';  // Isolated run directory
   private currentRunId: string = '';
+
+  // Transcript: agentId -> list of operations
+  private agentTranscripts: Map<string, WorkflowTranscriptEntry[]> = new Map();
 
   // Callbacks for UI updates
   private onStreamChunk?: StreamChunkCallback;
@@ -83,7 +107,14 @@ class WorkflowEngine {
     if (this.isRunning) return;
 
     const store = useWorkflowStore.getState();
-    const { agents, connections } = store;
+    const instance = store.getCurrentInstance();
+
+    if (!instance) {
+      useUIStore.getState().addNotification('error', '请先创建一个 Workflow');
+      return;
+    }
+
+    const { agents, connections } = instance;
 
     if (agents.length === 0) {
       useUIStore.getState().addNotification('error', '请先添加至少一个 Agent');
@@ -185,6 +216,14 @@ class WorkflowEngine {
           this.agentOutputs.set(agent.id, output);
           await this.saveOutputToFile(agent, output);
 
+          // Record completion in transcript and save to file
+          this.recordTranscriptEntry(agent.id, {
+            timestamp: Date.now(),
+            type: 'agent_completed',
+            content: output,
+          });
+          await this.saveTranscriptToFile(agent.id);
+
           store.setAgentStatus(agent.id, 'completed');
           store.updateRunAgent(this.currentRunId, agent.id, {
             status: 'completed',
@@ -193,6 +232,15 @@ class WorkflowEngine {
           });
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : '未知错误';
+
+          // Record error in transcript
+          this.recordTranscriptEntry(agent.id, {
+            timestamp: Date.now(),
+            type: 'agent_error',
+            content: errorMsg,
+          });
+          await this.saveTranscriptToFile(agent.id);
+
           store.setAgentStatus(agent.id, 'error');
           store.updateRunAgent(this.currentRunId, agent.id, { status: 'error', endTime: Date.now() });
           failedAgents.add(agent.id);
@@ -237,6 +285,14 @@ class WorkflowEngine {
           this.agentOutputs.set(conditionalCurrent.id, output);
           await this.saveOutputToFile(conditionalCurrent, output);
 
+          // Record completion in transcript
+          this.recordTranscriptEntry(conditionalCurrent.id, {
+            timestamp: Date.now(),
+            type: 'agent_completed',
+            content: output,
+          });
+          await this.saveTranscriptToFile(conditionalCurrent.id);
+
           store.setAgentStatus(conditionalCurrent.id, 'completed');
           store.updateRunAgent(this.currentRunId, conditionalCurrent.id, {
             status: 'completed',
@@ -261,6 +317,15 @@ class WorkflowEngine {
 
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : '未知错误';
+
+          // Record error in transcript
+          this.recordTranscriptEntry(conditionalCurrent.id, {
+            timestamp: Date.now(),
+            type: 'agent_error',
+            content: errorMsg,
+          });
+          await this.saveTranscriptToFile(conditionalCurrent.id);
+
           store.setAgentStatus(conditionalCurrent.id, 'error');
           store.updateRunAgent(this.currentRunId, conditionalCurrent.id, { status: 'error', endTime: Date.now() });
 
@@ -315,8 +380,111 @@ class WorkflowEngine {
     this.totalSteps = 0;
     this.iterationCount.clear();
     this.agentOutputs.clear();
+    this.agentTranscripts.clear();
     this.workingDirectory = '';
     useWorkflowStore.getState().resetAllStatuses();
+  }
+
+  // =============================================================================
+  // Transcript recording
+  // =============================================================================
+
+  private recordTranscriptEntry(agentId: string, entry: WorkflowTranscriptEntry): void {
+    if (!this.agentTranscripts.has(agentId)) {
+      this.agentTranscripts.set(agentId, []);
+    }
+    this.agentTranscripts.get(agentId)!.push(entry);
+  }
+
+  private async saveTranscriptToFile(agentId: string): Promise<void> {
+    if (!this.workingDirectory) return;
+    const entries = this.agentTranscripts.get(agentId);
+    if (!entries || entries.length === 0) return;
+
+    const safeName = `agent-${agentId.substring(0, 8)}`;
+    const fileName = `${safeName}-transcript.md`;
+    const filePath = `${this.workingDirectory}/${fileName}`;
+
+    const lines = [
+      `# Agent Operation Transcript`,
+      ``,
+      `**Agent ID**: ${agentId}`,
+      `**Run ID**: ${this.currentRunId}`,
+      ``,
+      `---`,
+      ``,
+    ];
+
+    for (const entry of entries) {
+      const time = new Date(entry.timestamp).toLocaleTimeString();
+      switch (entry.type) {
+        case 'user_prompt_injected':
+          lines.push(`## [${time}] 📥 User Prompt`);
+          lines.push(``);
+          lines.push('```');
+          lines.push(entry.content);
+          lines.push('```');
+          lines.push(``);
+          break;
+        case 'assistant_text':
+          if (entry.content.trim()) {
+            lines.push(`## [${time}] 🤖 Assistant`);
+            lines.push(``);
+            lines.push(entry.content.trim());
+            lines.push(``);
+          }
+          break;
+        case 'tool_called':
+          lines.push(`## [${time}] 🔧 Tool Called`);
+          lines.push(`**Tool**: \`${entry.toolName}\``);
+          lines.push(``);
+          if (entry.toolArgs) {
+            lines.push('**Arguments**:');
+            lines.push('```json');
+            lines.push(entry.toolArgs);
+            lines.push('```');
+          }
+          lines.push(``);
+          break;
+        case 'tool_result':
+          lines.push(`## [${time}] 📋 Tool Result`);
+          lines.push(`**Tool**: \`${entry.toolName}\``);
+          lines.push(``);
+          lines.push('```');
+          lines.push((entry.toolResult || '(empty)').substring(0, 2000));
+          lines.push('```');
+          lines.push(``);
+          break;
+        case 'agent_completed':
+          lines.push(`## [${time}] ✅ Agent Completed`);
+          lines.push(`**Output length**: ${entry.content.length} chars`);
+          if (entry.content.trim()) {
+            lines.push(``);
+            lines.push('```');
+            lines.push(entry.content.substring(0, 3000));
+            if (entry.content.length > 3000) lines.push('... (truncated)');
+            lines.push('```');
+          }
+          lines.push(``);
+          break;
+        case 'agent_error':
+          lines.push(`## [${time}] ❌ Agent Error`);
+          lines.push(`\`\`\`\n${entry.content}\n\`\`\``);
+          lines.push(``);
+          break;
+      }
+    }
+
+    const content = lines.join('\n');
+    try {
+      await invoke('write_file', { path: filePath, content, workDir: null });
+    } catch (e) {
+      console.warn('[WorkflowEngine] Failed to save transcript:', e);
+    }
+  }
+
+  getTranscript(agentId: string): WorkflowTranscriptEntry[] {
+    return this.agentTranscripts.get(agentId) ?? [];
   }
 
   getIsRunning(): boolean {
@@ -333,6 +501,7 @@ class WorkflowEngine {
   ): Promise<string> {
     let fullContent = '';
     let unlistenFn: (() => void) | null = null;
+    let unlistenToolUse: (() => void) | null = null;
 
     try {
       // Register token listener (scoped to this agent's session)
@@ -343,6 +512,23 @@ class WorkflowEngine {
         fullContent += event.payload.content;
         // Callback to UI for real-time display
         this.onStreamChunk?.(agent.id, event.payload.content, fullContent);
+      });
+
+      // Register tool_use listener for transcript
+      unlistenToolUse = await getCurrentWindow().listen<{
+        session_id: string;
+        tool_call_id: string;
+        name: string;
+        arguments: string;
+      }>('claude-tool-use', (event) => {
+        if (event.payload.session_id !== sessionId) return;
+        this.recordTranscriptEntry(agent.id, {
+          timestamp: Date.now(),
+          type: 'tool_called',
+          content: `Called tool: ${event.payload.name}`,
+          toolName: event.payload.name,
+          toolArgs: event.payload.arguments,
+        });
       });
 
       // Invoke (blocking until complete)
@@ -360,10 +546,18 @@ class WorkflowEngine {
     } finally {
       // Must unsubscribe to avoid memory leak
       if (unlistenFn) unlistenFn();
+      if (unlistenToolUse) unlistenToolUse();
     }
   }
 
   private async executeAgent(agent: WorkflowAgent, inputPrompt: string): Promise<string> {
+    // Record the user prompt in transcript
+    this.recordTranscriptEntry(agent.id, {
+      timestamp: Date.now(),
+      type: 'user_prompt_injected',
+      content: inputPrompt,
+    });
+
     const execution = agent.execution || DEFAULT_EXECUTION_CONFIG;
     if (execution.mode === 'single') {
       return this.executeSingleRound(agent, inputPrompt);

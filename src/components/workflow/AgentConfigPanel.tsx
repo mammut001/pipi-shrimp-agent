@@ -16,6 +16,7 @@ import { useState, useEffect } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { AGENT_TEMPLATES, DEFAULT_EXECUTION_CONFIG } from '@/types/workflow';
 import type { RouteCondition } from '@/types/workflow';
+import { t } from '@/i18n';
 
 interface AgentConfigPanelProps {
   agentId: string;
@@ -25,15 +26,20 @@ interface AgentConfigPanelProps {
 }
 
 export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, embedded = false }: AgentConfigPanelProps) {
-  const agent = useWorkflowStore((state) =>
-    state.agents.find((a) => a.id === agentId)
-  );
-  const allAgents = useWorkflowStore((state) => state.agents);
+  const agent = useWorkflowStore((state) => {
+    const inst = state.instances.find(i => i.id === state.currentInstanceId);
+    return inst?.agents.find((a) => a.id === agentId);
+  });
+  const allAgents = useWorkflowStore((state) => {
+    const inst = state.instances.find(i => i.id === state.currentInstanceId);
+    return inst?.agents ?? [];
+  });
   const { updateAgent, addOutputRoute, removeOutputRoute, setAgentInputFrom } = useWorkflowStore();
 
-  const connections = useWorkflowStore((state) =>
-    state.connections.filter((c) => c.targetAgentId === agentId)
-  );
+  const connections = useWorkflowStore((state) => {
+    const inst = state.instances.find(i => i.id === state.currentInstanceId);
+    return (inst?.connections ?? []).filter((c) => c.targetAgentId === agentId);
+  });
 
   const [formData, setFormData] = useState({
     name: '',
@@ -112,15 +118,16 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
   };
 
   // Get other agents for route targets
-  const otherAgents = useWorkflowStore((state) =>
-    state.agents.filter((a) => a.id !== agentId)
-  );
+  const otherAgents = useWorkflowStore((state) => {
+    const inst = state.instances.find(i => i.id === state.currentInstanceId);
+    return (inst?.agents ?? []).filter((a) => a.id !== agentId);
+  });
 
   return (
     <div className={`bg-white ${embedded ? '' : 'flex flex-col h-full'}`}>
       {!embedded && (
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h2 className="font-medium text-gray-900">Agent 配置</h2>
+          <h2 className="font-medium text-gray-900">{t('workflow.agentConfig')}</h2>
           <button
             onClick={onClose}
             className="p-1 text-gray-400 hover:text-gray-600 rounded"
@@ -135,7 +142,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
       <div className={`space-y-4 ${embedded ? 'px-4 py-4' : 'flex-1 overflow-y-auto p-4'}`}>
         {embedded && (
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900">Agent 配置</h2>
+            <h2 className="text-sm font-semibold text-gray-900">{t('workflow.agentConfig')}</h2>
             <button
               onClick={onClose}
               className="p-1 text-gray-400 hover:text-gray-600 rounded"
@@ -150,7 +157,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
         {/* Agent Name */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Agent 名称
+            {t('workflow.agentName')}
           </label>
           <input
             type="text"
@@ -165,13 +172,13 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
             {/* Task label (short, shown on canvas card) */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                任务标签 <span className="text-xs text-gray-400">(显示在画布上)</span>
+                {t('workflow.agentTaskLabel')} <span className="text-xs text-gray-400">({t('workflow.agentTaskLabelHint')})</span>
               </label>
               <input
                 type="text"
                 value={formData.task}
                 onChange={(e) => setFormData({ ...formData, task: e.target.value })}
-                placeholder="如：撰写需求文档"
+                placeholder={t('workflow.agentTaskLabelPlaceholder')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -179,26 +186,26 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
             {/* Task Instruction (multiline, injected into prompt) */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                任务指令 <span className="text-xs text-gray-400">(注入 Agent 提示词)</span>
+                {t('workflow.taskInstruction')} <span className="text-xs text-gray-400">({t('workflow.taskInstructionHint')})</span>
               </label>
               <textarea
                 value={formData.taskInstruction}
                 onChange={(e) => setFormData({ ...formData, taskInstruction: e.target.value })}
                 rows={5}
-                placeholder="详细描述此 Agent 需要做什么，会作为专项任务指令注入到系统提示词中..."
+                placeholder={t('workflow.taskInstructionPlaceholder')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                任务 Prompt <span className="text-xs text-gray-400">(这次具体要做的事)</span>
+                {t('workflow.taskPrompt')} <span className="text-xs text-gray-400">({t('workflow.taskPromptHint')})</span>
               </label>
               <textarea
                 value={formData.taskPrompt}
                 onChange={(e) => setFormData({ ...formData, taskPrompt: e.target.value })}
                 rows={4}
-                placeholder="例如：请写一个关于这个项目的调研报告。"
+                placeholder={t('workflow.taskPromptPlaceholder')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               />
             </div>
@@ -209,7 +216,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
         {connections.length > 0 && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              等待上游完成
+              {t('workflow.waitingUpstream')}
             </label>
             <div className="flex flex-wrap gap-1">
               {connections.map((conn) => {
@@ -225,7 +232,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
               })}
             </div>
             <p className="mt-1 text-xs text-gray-400">
-              此 Agent 将在以上所有上游执行完成后才启动
+              {t('workflow.waitingUpstream')}
             </p>
           </div>
         )}
@@ -233,14 +240,14 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
         {/* InputFrom - Upstream Agent Selection */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            输入来源 <span className="text-xs text-gray-400">(上游 Agent)</span>
+            {t('workflow.inputSource')}
           </label>
           <select
             value={agent.inputFrom || ''}
             onChange={(e) => setAgentInputFrom(agentId, e.target.value || null)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">入口节点（无上游）</option>
+            <option value="">{t('workflow.entryNode')}</option>
             {allAgents
               .filter((a) => a.id !== agentId)
               .map((a) => (
@@ -251,8 +258,8 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
           </select>
           <p className="mt-1 text-xs text-gray-400">
             {agent.inputFrom
-              ? `将接收「${allAgents.find((a) => a.id === agent.inputFrom)?.name}」的输出作为输入`
-              : '此 Agent 将作为入口节点启动'}
+              ? t('workflow.upstreamInfo').replace('{name}', allAgents.find((a) => a.id === agent.inputFrom)?.name || '')
+              : t('workflow.upstreamNone')}
           </p>
         </div>
 
@@ -265,7 +272,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
             value={formData.soulPrompt}
             onChange={(e) => setFormData({ ...formData, soulPrompt: e.target.value })}
             rows={6}
-            placeholder="Agent 的系统提示词..."
+            placeholder={t('workflow.systemPromptPlaceholder')}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           />
         </div>
@@ -273,7 +280,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
         {/* Execution Mode */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            执行模式
+            {t('workflow.executionMode')}
           </label>
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm">
@@ -284,7 +291,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                 onChange={() => setFormData({ ...formData, execution: { mode: 'single' } })}
                 className="text-blue-600"
               />
-              单次执行
+              {t('workflow.singleExecution')}
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -299,14 +306,14 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                 }
                 className="text-blue-600"
               />
-              多轮执行
+              {t('workflow.multiExecution')}
             </label>
           </div>
 
           {formData.execution.mode === 'multi-round' && (
             <div className="mt-3 space-y-2 pl-4 border-l-2 border-gray-200">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">最大轮数:</span>
+                <span className="text-sm text-gray-600">{t('workflow.maxRounds')}:</span>
                 <input
                   type="number"
                   min={1}
@@ -322,7 +329,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                 />
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">停止条件:</span>
+                <span className="text-sm text-gray-600">{t('workflow.stopCondition')}:</span>
                 <select
                   value={formData.execution.roundCondition || 'untilComplete'}
                   onChange={(e) =>
@@ -333,9 +340,9 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                   }
                   className="px-2 py-1 border border-gray-300 rounded text-sm"
                 >
-                  <option value="untilComplete">直到完成</option>
-                  <option value="untilError">直到错误</option>
-                  <option value="fixed">固定轮数</option>
+                  <option value="untilComplete">{t('workflow.untilComplete')}</option>
+                  <option value="untilError">{t('workflow.untilError')}</option>
+                  <option value="fixed">{t('workflow.fixedRounds')}</option>
                 </select>
               </div>
             </div>
@@ -345,7 +352,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
         {/* Output Routes */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            输出路由
+            {t('workflow.outputRoutes')}
           </label>
 
           {/* Existing routes */}
@@ -357,11 +364,11 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                 className="flex items-center justify-between px-3 py-2 mb-2 bg-gray-50 rounded-lg text-sm"
               >
                 <span className="text-gray-600">
-                  {route.condition === 'onComplete' && '完成时'}
-                  {route.condition === 'onError' && '错误时'}
-                  {route.condition === 'outputContains' && `包含"${route.keyword}"`}
-                  {route.condition === 'always' && '总是'}
-                  → {targetAgent?.name || '未知'}
+                  {route.condition === 'onComplete' && t('workflow.onComplete')}
+                  {route.condition === 'onError' && t('workflow.onError')}
+                  {route.condition === 'outputContains' && `${t('workflow.outputContains')} "${route.keyword}"`}
+                  {route.condition === 'always' && t('workflow.always')}
+                  → {targetAgent?.name || '?'}
                 </span>
                 <button
                   onClick={() => removeOutputRoute(agentId, route.id)}
@@ -383,10 +390,10 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                 onChange={(e) => setNewRoute({ ...newRoute, condition: e.target.value as RouteCondition })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
-                <option value="onComplete">完成时</option>
-                <option value="onError">错误时</option>
-                <option value="outputContains">输出包含</option>
-                <option value="always">总是</option>
+                <option value="onComplete">{t('workflow.onComplete')}</option>
+                <option value="onError">{t('workflow.onError')}</option>
+                <option value="outputContains">{t('workflow.outputContains')}</option>
+                <option value="always">{t('workflow.always')}</option>
               </select>
 
               {newRoute.condition === 'outputContains' && (
@@ -394,7 +401,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                   type="text"
                   value={newRoute.keyword}
                   onChange={(e) => setNewRoute({ ...newRoute, keyword: e.target.value })}
-                  placeholder="关键词 (如 &lt;PASS&gt;)"
+                  placeholder={t('workflow.keywordPlaceholder')}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 />
               )}
@@ -404,7 +411,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                 onChange={(e) => setNewRoute({ ...newRoute, targetAgentId: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
-                <option value="">选择目标 Agent</option>
+                <option value="">{t('workflow.selectTargetAgent')}</option>
                 {otherAgents.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -417,7 +424,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
                 disabled={!newRoute.targetAgentId}
                 className="w-full px-3 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
               >
-                + 添加路由
+                + {t('workflow.addRoute')}
               </button>
             </div>
           )}
@@ -426,14 +433,14 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
         {/* Template Loader */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            预设模板
+            {t('workflow.template')}
           </label>
           <select
             value=""
             onChange={(e) => handleTemplateSelect(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">从模板加载...</option>
+            <option value="">{t('workflow.loadTemplate')}</option>
             {AGENT_TEMPLATES.map((template) => (
               <option key={template.id} value={template.id}>
                 {template.name}
@@ -449,7 +456,7 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
             onClick={handleSave}
             className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
           >
-            保存更改
+            {t('workflow.save')}
           </button>
         </div>
       )}

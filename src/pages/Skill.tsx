@@ -8,6 +8,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUIStore } from '@/store';
+import { t } from '@/i18n';
 
 // Skill documentation content
 const skillDocumentation: Record<string, string> = {
@@ -94,33 +95,74 @@ const skillDocumentation: Record<string, string> = {
 - 图标简洁易识别`,
 };
 
+// Skill type with optional documentation (for custom skills)
+interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  documentation?: string;
+  icon: string;
+}
+
 // Core skills only - no categories
-const defaultSkills = [
+const defaultSkills: Skill[] = [
   {
     id: 'pdf',
-    name: 'PDF 分析器',
-    description: '读取 PDF，提取文本、表格、元数据',
+    name: 'skill.pdf.name',
+    description: 'skill.pdf.description',
+    documentation: 'skill.pdf.documentation',
     icon: 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z',
   },
   {
     id: 'docx',
-    name: 'Word 文档',
-    description: '创建和编辑 Word 文档',
+    name: 'skill.docx.name',
+    description: 'skill.docx.description',
+    documentation: 'skill.docx.documentation',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
   },
   {
     id: 'xlsx',
-    name: '数据统计',
-    description: '处理 CSV/JSON/Excel，生成报告',
+    name: 'skill.xlsx.name',
+    description: 'skill.xlsx.description',
+    documentation: 'skill.xlsx.documentation',
     icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
   },
   {
+    id: 'resume',
+    name: 'skill.resume.name',
+    description: 'skill.resume.description',
+    documentation: 'skill.resume.documentation',
+    icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+  },
+  {
     id: 'skill-creator',
-    name: 'Skill 创建器',
-    description: '创建和优化自定义 skills',
+    name: 'skill.skillCreator.name',
+    description: 'skill.skillCreator.description',
+    documentation: 'skill.skillCreator.documentation',
     icon: 'M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z',
   },
 ];
+
+const getSkillDisplayName = (skill: Skill): string => {
+  if (skill.name.startsWith('skill.')) {
+    return t(skill.name as Parameters<typeof t>[0]);
+  }
+  return skill.name;
+};
+
+const getSkillDisplayDescription = (skill: Skill): string => {
+  if (skill.description.startsWith('skill.')) {
+    return t(skill.description as Parameters<typeof t>[0]);
+  }
+  return skill.description;
+};
+
+const getSkillDocumentation = (skill: Skill): string => {
+  if (skill.documentation && skill.documentation.startsWith('skill.')) {
+    return t(skill.documentation as Parameters<typeof t>[0]);
+  }
+  return skill.documentation || '';
+};
 
 /**
  * Skill page component - displays 4 core skills
@@ -128,14 +170,14 @@ const defaultSkills = [
 export function Skill() {
   const { setCurrentView } = useUIStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [skills, setSkills] = useState(defaultSkills);
-  const [selectedSkill, setSelectedSkill] = useState<typeof defaultSkills[0] | null>(null);
+  const [skills, setSkills] = useState<Skill[]>(defaultSkills);
+  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [skillContent, setSkillContent] = useState<string>('');
   const [loadingContent, setLoadingContent] = useState(false);
 
   // Custom skill modal state
   const [showCustomSkillModal, setShowCustomSkillModal] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<typeof defaultSkills[0] | null>(null);
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [skillForm, setSkillForm] = useState({
     name: '',
     description: '',
@@ -154,12 +196,12 @@ export function Skill() {
   };
 
   // Open edit skill modal
-  const handleEditSkill = (e: React.MouseEvent, skill: typeof defaultSkills[0]) => {
+  const handleEditSkill = (e: React.MouseEvent, skill: Skill) => {
     e.stopPropagation();
     setEditingSkill(skill);
     setSkillForm({
-      name: skill.name,
-      description: skill.description,
+      name: getSkillDisplayName(skill),
+      description: getSkillDisplayDescription(skill),
       icon: skill.icon,
     });
     setShowCustomSkillModal(true);
@@ -215,9 +257,18 @@ export function Skill() {
 
     setLoadingContent(true);
 
-    // Use inline documentation
-    const content = skillDocumentation[selectedSkill.id] || `# ${selectedSkill.name}\n\n${selectedSkill.description}`;
-    setSkillContent(content);
+    // Use inline documentation (for custom skills, generate from name/description)
+    const documentation = getSkillDocumentation(selectedSkill);
+    if (documentation) {
+      setSkillContent(documentation);
+    } else {
+      const customDoc = skillDocumentation[selectedSkill.id];
+      if (customDoc) {
+        setSkillContent(customDoc);
+      } else {
+        setSkillContent(`# ${getSkillDisplayName(selectedSkill)}\n\n${getSkillDisplayDescription(selectedSkill)}`);
+      }
+    }
     setLoadingContent(false);
   }, [selectedSkill]);
 
@@ -239,13 +290,13 @@ export function Skill() {
                 <button
                   onClick={() => setCurrentView('chat')}
                   className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                  title="返回聊天"
+                  title={t('skill.backToChat')}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
                   </svg>
                 </button>
-                <h1 className="text-2xl font-bold text-gray-900">Skills</h1>
+                <h1 className="text-2xl font-bold text-gray-900">{t('skill.title')}</h1>
               </div>
 
               {/* Add Custom Skill Button */}
@@ -256,7 +307,7 @@ export function Skill() {
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
                 </svg>
-                添加自定义 Skill
+                {t('skill.addCustomSkill')}
               </button>
             </div>
 
@@ -274,7 +325,7 @@ export function Skill() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索 Skill..."
+                placeholder={t('skill.searchPlaceholder')}
                 className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-700 placeholder-gray-400 text-sm"
               />
             </div>
@@ -297,7 +348,7 @@ export function Skill() {
                   <button
                     onClick={(e) => handleEditSkill(e, skill)}
                     className="absolute top-3 right-3 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-100 text-blue-500 transition-all"
-                    title="编辑"
+                    title={t('skill.edit')}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                       <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
@@ -308,7 +359,7 @@ export function Skill() {
                   <button
                     onClick={(e) => handleDeleteSkill(e, skill.id)}
                     className="absolute top-3 right-10 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-100 text-red-500 transition-all"
-                    title="删除"
+                    title={t('skill.delete')}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
@@ -331,12 +382,12 @@ export function Skill() {
 
                   {/* Skill Name */}
                   <h3 className="font-semibold text-gray-900 mb-1 group-hover:text-gray-700 transition-colors">
-                    {skill.name}
+                    {getSkillDisplayName(skill)}
                   </h3>
 
                   {/* Skill Description */}
                   <p className="text-sm text-gray-500">
-                    {skill.description}
+                    {getSkillDisplayDescription(skill)}
                   </p>
                 </div>
               ))}
@@ -356,8 +407,8 @@ export function Skill() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-1">未找到</h3>
-                <p className="text-gray-500 text-sm">尝试其他搜索词</p>
+                <h3 className="text-lg font-semibold text-gray-700 mb-1">{t('skill.notFound')}</h3>
+                <p className="text-gray-500 text-sm">{t('skill.tryOtherSearchTerms')}</p>
               </div>
             )}
           </div>
@@ -368,7 +419,7 @@ export function Skill() {
           <div className="w-[400px] border-l border-gray-200 flex flex-col bg-gray-50 overflow-hidden">
             {/* Panel Header */}
             <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-white flex-shrink-0">
-              <h2 className="font-semibold text-gray-900">{selectedSkill.name}</h2>
+              <h2 className="font-semibold text-gray-900">{getSkillDisplayName(selectedSkill)}</h2>
               <button
                 onClick={() => setSelectedSkill(null)}
                 className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
@@ -415,7 +466,7 @@ export function Skill() {
           <div className="bg-white rounded-2xl shadow-xl p-6 w-[420px]" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-gray-900">
-                {editingSkill ? '编辑 Skill' : '添加自定义 Skill'}
+                {editingSkill ? t('skill.editSkill') : t('skill.addCustomSkillModal')}
               </h3>
               <button
                 onClick={() => setShowCustomSkillModal(false)}
@@ -429,12 +480,12 @@ export function Skill() {
 
             {/* Skill Name */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">名称</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('skill.name')}</label>
               <input
                 type="text"
                 value={skillForm.name}
                 onChange={(e) => setSkillForm(prev => ({ ...prev, name: e.target.value }))}
-                placeholder="例如：PDF 分析器"
+                placeholder={t('skill.namePlaceholder')}
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 autoFocus
               />
@@ -442,11 +493,11 @@ export function Skill() {
 
             {/* Skill Description */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">描述</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('skill.description')}</label>
               <textarea
                 value={skillForm.description}
                 onChange={(e) => setSkillForm(prev => ({ ...prev, description: e.target.value }))}
-                placeholder="例如：读取 PDF，提取文本、表格、元数据"
+                placeholder={t('skill.descriptionPlaceholder')}
                 rows={3}
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
@@ -454,7 +505,7 @@ export function Skill() {
 
             {/* Icon Preview */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">图标预览</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('skill.iconPreview')}</label>
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 rounded-xl bg-gray-900 flex items-center justify-center">
                   <svg
@@ -468,7 +519,7 @@ export function Skill() {
                     <path strokeLinecap="round" strokeLinejoin="round" d={skillForm.icon} />
                   </svg>
                 </div>
-                <p className="text-xs text-gray-500">鼠标悬停在技能卡片上可以看到编辑按钮</p>
+                <p className="text-xs text-gray-500">{t('skill.iconPreviewHint')}</p>
               </div>
             </div>
 
@@ -478,14 +529,14 @@ export function Skill() {
                 onClick={() => setShowCustomSkillModal(false)}
                 className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors font-medium"
               >
-                取消
+                {t('skill.cancel')}
               </button>
               <button
                 onClick={handleSaveSkill}
                 disabled={!skillForm.name.trim() || !skillForm.description.trim()}
                 className="flex-1 px-4 py-2.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {editingSkill ? '保存修改' : '添加 Skill'}
+                {editingSkill ? t('skill.saveChanges') : t('skill.addSkill')}
               </button>
             </div>
           </div>

@@ -12,6 +12,7 @@ import { workflowService } from '@/services/workflow';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { t } from '@/i18n';
 
 const MD_EXTENSIONS = ['.md', '.markdown', '.txt'];
 const CODE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.json', '.py', '.sh', '.yaml', '.yml', '.css', '.html'];
@@ -52,9 +53,7 @@ export function FilePreviewPanel() {
       .finally(() => setLoading(false));
   }, [selectedPreviewFile]);
 
-  if (!selectedPreviewFile) return null;
-
-  const filename = selectedPreviewFile.split('/').pop() || selectedPreviewFile;
+  const filename = selectedPreviewFile ? selectedPreviewFile.split('/').pop() || selectedPreviewFile : '';
   const isMd = isMarkdown(filename);
   const isCodeFile = isCode(filename);
 
@@ -66,7 +65,7 @@ export function FilePreviewPanel() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>
-        <span className="text-sm font-medium text-gray-700 truncate" title={selectedPreviewFile}>
+        <span className="text-sm font-medium text-gray-700 truncate" title={selectedPreviewFile ?? undefined}>
           {filename}
         </span>
       </div>
@@ -75,12 +74,12 @@ export function FilePreviewPanel() {
       <div className="flex-1 overflow-y-auto">
         {loading && (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-            加载中...
+            {t('workflow.filePreview.loading')}
           </div>
         )}
         {error && (
           <div className="p-4 text-red-500 text-sm">
-            读取失败: {error}
+            {t('workflow.filePreview.readFailed').replace('{error}', String(error))}
           </div>
         )}
         {!loading && !error && content && (
@@ -108,7 +107,7 @@ export function FilePreviewPanel() {
         )}
         {!loading && !error && !content && (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-            文件为空
+            {t('workflow.filePreview.empty')}
           </div>
         )}
       </div>

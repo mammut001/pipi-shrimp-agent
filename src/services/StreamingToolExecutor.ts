@@ -6,6 +6,25 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { useMCPStore } from '@/store/mcpStore';
+import { parseMCPToolName } from '@/services/mcp/toolNormalizer';
+import type { ToolResult as MCPToolResult, ContentBlock } from '@/services/mcp/types';
+
+/** Convert MCP ContentBlock array to a plain string for tool output */
+function contentBlocksToString(blocks: ContentBlock[]): string {
+  return blocks
+    .map(block => {
+      if (block.type === 'text') return block.text ?? '';
+      if (block.type === 'image') return `[image: ${block.mime_type ?? 'unknown'}]`;
+      if (block.type === 'resource') return `[resource: ${block.uri ?? 'unknown'}]`;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Sanitize a string for use in a normalized MCP tool name (must mirror toolNormalizer.ts) */
+const sanitizeName = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_');
 
 export interface ToolRequest {
   id: string;
@@ -231,6 +250,11 @@ export class StreamingToolExecutor {
   ): Promise<ToolResult> {
     const startTime = Date.now();
 
+    // Route MCP tools (mcp__<server>__<tool>) to the MCP backend
+    if (request.name.startsWith('mcp__')) {
+      return this.executeMCPTool(request, startTime);
+    }
+
     try {
       const result = await Promise.race([
         invoke<any>('execute_tool', {
@@ -263,6 +287,68 @@ export class StreamingToolExecutor {
         is_error: true,
         error_message: error instanceof Error ? error.message : 'Tool execution failed',
         execution_time_ms: executionTime,
+      };
+    }
+  }
+
+  /**
+   * Execute an MCP tool by resolving the server from store and calling mcp_call_tool.
+   * Tool name format: mcp__<serverName>__<toolName>
+   */
+  private async executeMCPTool(request: ToolRequest, startTime: number): Promise<ToolResult> {
+    const parsed = parseMCPToolName(request.name);
+    if (!parsed) {
+      return {
+        id: request.id,
+        content: '',
+        is_error: true,
+        error_message: `Invalid MCP tool name: ${request.name}`,
+        execution_time_ms: 0,
+      };
+    }
+
+    const { runtimes } = useMCPStore.getState();
+    // Match by sanitized name to handle servers with special characters
+    const runtime = runtimes.find(r => sanitizeName(r.name) === parsed.serverName);
+
+    if (!runtime) {
+      return {
+        id: request.id,
+        content: '',
+        is_error: true,
+        error_message: `MCP server '${parsed.serverName}' is not connected`,
+        execution_time_ms: Date.now() - startTime,
+      };
+    }
+
+    try {
+      const mcpResult = await Promise.race([
+        invoke<MCPToolResult>('mcp_call_tool', {
+          serverId: runtime.id,
+          toolName: parsed.toolName,
+          args: request.arguments,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`MCP tool timeout: ${request.name}`)),
+            this.timeoutMs,
+          )
+        ),
+      ]);
+
+      return {
+        id: request.id,
+        content: contentBlocksToString(mcpResult.content),
+        is_error: mcpResult.is_error,
+        execution_time_ms: Date.now() - startTime,
+      };
+    } catch (error) {
+      return {
+        id: request.id,
+        content: '',
+        is_error: true,
+        error_message: error instanceof Error ? error.message : 'MCP tool execution failed',
+        execution_time_ms: Date.now() - startTime,
       };
     }
   }

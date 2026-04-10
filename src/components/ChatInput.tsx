@@ -11,6 +11,9 @@
 
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react';
 import { useChatStore } from '@/store';
+import { useUIStore } from '@/store';
+import { useMCPStore } from '@/store/mcpStore';
+import { MCPChatButton, MCPDropdown } from '@/components/mcp';
 import { t } from '@/i18n';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 
@@ -38,6 +41,8 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
   const isComposingRef = useRef(false);
 
   const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
+  const { toggleSettings } = useUIStore();
+  const { setDropdownOpen } = useMCPStore();
 
   // Get current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -175,7 +180,14 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
 
   return (
     <div className="border-t border-gray-200 bg-white p-4">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-3xl mx-auto relative">
+        {/* MCP server dropdown — positioned relative to this container */}
+        <MCPDropdown
+          onOpenSettings={() => {
+            setDropdownOpen(false);
+            toggleSettings();
+          }}
+        />
         {/* Work Dir chip — shown for all sessions */}
         {currentSession && (
           <div className="px-4 pt-4 pb-2 flex items-center gap-2">
@@ -337,6 +349,9 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
 
           {/* Actions */}
           <div className="flex items-center gap-1 pr-2 pb-2">
+            {/* MCP toggle button */}
+            <MCPChatButton />
+
             {/* File Upload Button (Optional) */}
             <button
               onClick={handleAttachFile}
