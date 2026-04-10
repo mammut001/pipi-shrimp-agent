@@ -18,6 +18,7 @@ import { useBrowserAgentStore, useUIStore, useCdpStore } from '@/store';
 import { showBrowserWindow } from '@/utils/browserCommands';
 import { createTaskEnvelope } from '@/utils/browserTaskPlanner';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
+import { t } from '@/i18n';
 
 /**
  * BrowserMiniPreview component
@@ -231,7 +232,7 @@ export function BrowserMiniPreview() {
         // The user must initiate from chat to create proper envelope context
         setIsExecuting(false);
         // Show inline error in logs instead of browser alert
-        addLog?.('error', '无法运行：缺少任务上下文。请从聊天中发起任务，或连接 Chrome 后在此输入 URL。');
+        addLog?.('error', t('browserMiniPreview.cannotRunMissingContext'));
         return;
       }
     } finally {
@@ -287,7 +288,7 @@ export function BrowserMiniPreview() {
         <div className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-[11px] font-medium flex-shrink-0">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-white animate-ping" />
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-white absolute" />
-          Agent 正在运行
+          {t('browserMiniPreview.agentRunning')}
         </div>
       )}
       {/* 1. Live Browser Surface / Compact Header */}
@@ -420,7 +421,7 @@ export function BrowserMiniPreview() {
               value={cdpUrl}
               onChange={(e) => setCdpUrl(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入目标 URL（如 example.com）"
+              placeholder={t('browserMiniPreview.enterTargetUrl')}
               className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-blue-400"
             />
           )}
@@ -460,26 +461,26 @@ export function BrowserMiniPreview() {
               onClick={handleOpenLiveWindow}
               className="px-3 py-1.5 text-[11px] font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-lg hover:bg-gray-200 transition-colors"
             >
-              在窗口中登录
+              {t('browserMiniPreview.loginInWindow')}
             </button>
             <button
               onClick={handleRefreshCheck}
               className="px-3 py-1.5 text-[11px] font-medium text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-lg hover:bg-yellow-100 transition-colors"
             >
-              刷新检查
+              {t('browserMiniPreview.refreshAndCheck')}
             </button>
             <button
               onClick={handleConfirmLogin}
               className="px-3 py-1.5 text-[11px] font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
             >
-              我已登录
+              {t('browserMiniPreview.iHaveLoggedIn')}
             </button>
             <button
               onClick={handleForceResume}
               className="px-3 py-1.5 text-[11px] font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-              title="跳过验证，直接继续执行"
+              title={t('browserMiniPreview.skipVerification')}
             >
-              强制继续
+              {t('browserMiniPreview.forceContinue')}
             </button>
           </div>
         )}

@@ -11,6 +11,7 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { t } from '@/i18n';
 import {
   ReactFlow,
   Controls,
@@ -67,9 +68,12 @@ interface WorkflowCanvasProps {
 }
 
 const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgentSelect }) => {
+  const currentInstance = useWorkflowStore((s) =>
+    s.instances.find(i => i.id === s.currentInstanceId) ?? null
+  );
+  const agents = currentInstance?.agents ?? [];
+  const connections = currentInstance?.connections ?? [];
   const {
-    agents,
-    connections,
     addAgent,
     removeAgent,
     updateAgentPosition,
@@ -83,7 +87,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   const isWorkflowActive = currentView === 'workflow';
 
   const notifyWorkflowLocked = useCallback(() => {
-    useUIStore.getState().addNotification('warning', '请先进入 Workflow 页面，再操作工作流画布');
+    useUIStore.getState().addNotification('warning', t('workflow.notInWorkflowPage'));
   }, []);
 
   // Convert store agents to React Flow nodes
@@ -180,7 +184,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
       if (!exists) {
         // Don't allow manual connection creation - show a hint instead
         // The user should configure connections in the agent panel
-        console.info('请在 Agent 配置面板中设置输入/输出连接');
+        console.info(t('workflow.notInWorkflowPage'));
         return;
       }
 
@@ -326,14 +330,14 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   const handleOpenWorkingDirectory = useCallback(async () => {
     const workDir = workflowEngine.getWorkingDirectory();
     if (!workDir) {
-      useUIStore.getState().addNotification('warning', '当前没有正在运行的工作流，无法打开工作目录');
+      useUIStore.getState().addNotification('warning', t('workflow.noWorkflowRunning'));
       return;
     }
     try {
       await invoke('reveal_in_finder', { path: workDir });
     } catch (e) {
       console.error('Failed to reveal in finder:', e);
-      useUIStore.getState().addNotification('error', `无法打开目录: ${e}`);
+      useUIStore.getState().addNotification('error', t('workflow.cannotOpenDir').replace('{error}', String(e)));
     }
   }, []);
 
@@ -431,7 +435,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
-            A→B→C 预设
+            {t('workflow.presetChain')}
           </button>
           <button
             onClick={handleOpenWorkingDirectory}
@@ -440,7 +444,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
-            打开工作目录
+            {t('workflow.openWorkDir')}
           </button>
         </Panel>
 
@@ -467,7 +471,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
       {!isWorkflowActive && (
         <div className="absolute inset-0 z-40 cursor-not-allowed bg-white/45 backdrop-blur-[1px] flex items-center justify-center">
           <div className="px-4 py-2 rounded-xl bg-white/95 border border-gray-200 shadow-sm text-sm text-gray-700">
-            请先进入 Workflow 页面再编辑画布
+            {t('workflow.notInWorkflowPage')}
           </div>
         </div>
       )}
@@ -486,14 +490,14 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
       {showClearConfirm && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/20">
           <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4">
-            <h3 className="font-medium text-gray-900 mb-2">确认清空画布？</h3>
-            <p className="text-sm text-gray-500 mb-4">这将删除所有 Agent 和连接。此操作不可撤销。</p>
+            <h3 className="font-medium text-gray-900 mb-2">{t('workflow.confirmClearCanvas')}</h3>
+            <p className="text-sm text-gray-500 mb-4">{t('workflow.clearCanvasDesc')}</p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setShowClearConfirm(false)}
                 className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={() => {
@@ -503,7 +507,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
                 }}
                 className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
               >
-                清空
+                {t('workflow.clearCanvas')}
               </button>
             </div>
           </div>

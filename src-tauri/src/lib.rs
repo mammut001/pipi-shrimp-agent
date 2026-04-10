@@ -11,6 +11,7 @@ mod utils;
 mod claude;
 mod database;
 mod tools;
+mod mcp;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -479,6 +480,16 @@ pub fn run() {
             });
             println!("🤖 Agent state initialized");
 
+            // Initialize MCP State
+            let mcp_data_dir = dirs::data_local_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("pipi-shrimp-agent");
+            app.manage(commands::mcp::MCPState {
+                manager: mcp::client::new_shared_manager(),
+                config_store: mcp::config_store::new_shared_config_store(mcp_data_dir),
+            });
+            println!("🔌 MCP state initialized");
+
             println!("✅ Main window created successfully");
 
             Ok(())
@@ -658,6 +669,21 @@ pub fn run() {
             // Web commands
             commands::web_search,
             commands::web_fetch,
+            // MCP commands
+            commands::mcp::mcp_connect_server,
+            commands::mcp::mcp_disconnect_server,
+            commands::mcp::mcp_disconnect_all,
+            commands::mcp::mcp_get_server_runtimes,
+            commands::mcp::mcp_list_tools,
+            commands::mcp::mcp_list_all_tools,
+            commands::mcp::mcp_call_tool,
+            commands::mcp::mcp_list_resources,
+            commands::mcp::mcp_read_resource,
+            commands::mcp::mcp_get_configured_servers,
+            commands::mcp::mcp_add_server,
+            commands::mcp::mcp_update_server,
+            commands::mcp::mcp_remove_server,
+            commands::mcp::mcp_get_preset_templates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

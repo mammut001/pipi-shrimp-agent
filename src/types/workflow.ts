@@ -111,14 +111,31 @@ export interface WorkflowRun {
   sessionId?: string;          // Cowork session ID for viewing in chat
 }
 
+// ============ Workflow Instance ============
+
+/**
+ * A single Workflow instance (analogous to a ChatSession).
+ * Each instance has its own agents, connections, and run history.
+ */
+export interface WorkflowInstance {
+  id: string;
+  name: string;
+  agents: WorkflowAgent[];
+  connections: WorkflowConnection[];
+  workflowRuns: WorkflowRun[];
+  /** Currently running Run ID within this instance */
+  activeRunId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ============ Global State ============
 
 export interface WorkflowState {
-  agents: WorkflowAgent[];
-  connections: WorkflowConnection[];
+  instances: WorkflowInstance[];
+  currentInstanceId: string | null;
   isRunning: boolean;
   currentRunningAgentId: string | null;
-  workflowRuns: WorkflowRun[];
   /** Which run's output is shown in the output panel (null = latest) */
   selectedRunId: string | null;
   /** Currently previewing file in the right panel */

@@ -36,6 +36,7 @@ You have access to the following tools:
 - create_directory: Create a new directory
 - path_exists: Check if a path exists
 - search_files: Search for text patterns using ripgrep
+- Skill: Execute a predefined skill (e.g., 'resume' for resume generation)
 
 ## Guidelines
 
@@ -141,7 +142,8 @@ This project has a built-in document management system for organizing your work.
 **Example user requests that should trigger document creation:**
 - "帮我写一个设计文档" → Create \`.pipi-shrimp/docs/00X_design-document.md\`
 - "Analyze the code structure" → Create document in \`.pipi-shrimp/docs/\`
-- "整理一下 API 文档" → Create \`.pipi-shrimp/docs/00X_api-documentation.md\`
+- "整理一下 API 文档" → Create document in \`.pipi-shrimp/docs/00X_api-documentation.md\`
+- "帮我写一份简历" → **MUST** use the \`Skill\` tool with \`skill: "resume"\` to generate a professional resume artifact.
 
 **Document storage location**: \`{workDir}/.pipi-shrimp/docs/\`
 

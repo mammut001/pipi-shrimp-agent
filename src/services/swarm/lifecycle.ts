@@ -16,9 +16,12 @@ import type {
   SwarmRun,
   AgentRole,
   AgentStatus,
+  AgentMemory,
+  TeamMemory,
 } from './types';
 import * as repo from './repository';
 import { recordTranscript } from './transcript';
+import { initTeamMemory, initAgentMemory, getSwarmBaseDir } from './memory';
 
 // =============================================================================
 // Run lifecycle
@@ -89,9 +92,11 @@ export interface CreateTeamOptions {
   description?: string;
   leaderName?: string;
   leaderModel?: string;
+  /** Project root for determining memory directory */
+  projectRoot?: string;
 }
 
-export function createTeam(options: CreateTeamOptions): { team: SwarmTeam; leader: SwarmAgent } {
+export async function createTeam(options: CreateTeamOptions): Promise<{ team: SwarmTeam; leader: SwarmAgent; teamMemory?: TeamMemory; leaderMemory?: AgentMemory }> {
   const now = Date.now();
   const teamId = repo.generateId('team');
   const leaderId = repo.generateId('agent');
@@ -126,7 +131,18 @@ export function createTeam(options: CreateTeamOptions): { team: SwarmTeam; leade
     eventType: 'agent_started',
   });
 
-  return { team, leader };
+  // Initialize memory directories (fire-and-forget on error)
+  let teamMemory: TeamMemory | undefined;
+  let leaderMemory: AgentMemory | undefined;
+  try {
+    const baseDir = await getSwarmBaseDir(options.projectRoot);
+    teamMemory = await initTeamMemory(teamId, baseDir);
+    leaderMemory = await initAgentMemory(teamId, leaderId, baseDir);
+  } catch (e) {
+    console.error('[SwarmLifecycle] Failed to initialize memory:', e);
+  }
+
+  return { team, leader, teamMemory, leaderMemory };
 }
 
 export function disbandTeam(teamId: string): boolean {
@@ -161,9 +177,11 @@ export interface SpawnAgentOptions {
   sessionId: string;
   parentAgentId?: string;
   model?: string;
+  /** Project root for determining memory directory */
+  projectRoot?: string;
 }
 
-export function spawnAgent(options: SpawnAgentOptions): SwarmAgent {
+export async function spawnAgent(options: SpawnAgentOptions): Promise<{ agent: SwarmAgent; memory?: AgentMemory }> {
   const now = Date.now();
   const agent = repo.createAgent({
     id: repo.generateId('agent'),
@@ -184,7 +202,16 @@ export function spawnAgent(options: SpawnAgentOptions): SwarmAgent {
     eventType: 'agent_started',
   });
 
-  return agent;
+  // Initialize agent memory directory
+  let memory: AgentMemory | undefined;
+  try {
+    const baseDir = await getSwarmBaseDir(options.projectRoot);
+    memory = await initAgentMemory(options.teamId, agent.id, baseDir);
+  } catch (e) {
+    console.error('[SwarmLifecycle] Failed to initialize agent memory:', e);
+  }
+
+  return { agent, memory };
 }
 
 export function startAgent(agentId: string, taskId?: string): SwarmAgent | undefined {

@@ -35,10 +35,11 @@ export interface Message {
 /** Artifact (code blocks, diagrams, etc) */
 export interface Artifact {
   id: string;
-  type: 'html' | 'svg' | 'mermaid' | 'react' | 'code';
+  type: 'html' | 'svg' | 'mermaid' | 'react' | 'code' | 'image';
   content: string;
   title?: string;
   language?: string;  // Only for 'code' type
+  mimeType?: string;  // e.g. 'image/png', 'image/svg+xml'
 }
 
 /** Chat session */

@@ -5,13 +5,14 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { useUIStore, useSettingsStore, useChatStore } from '@/store';
+import { useUIStore, useSettingsStore, useChatStore, useSkillStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
 import { CdpConnectorModal } from './CdpConnectorModal';
 import { TypstPreview } from './index';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { DocPanel } from './DocPanel';
+import { ChatImage } from './ChatImage';
 import { getLatestTypstBlock } from '@/utils/typst';
 import { Section } from './ui/Section';
 import { FileIcon } from './ui/FileIcon';
@@ -30,6 +31,7 @@ export const AgentPanel: React.FC = () => {
     addNotification,
     agentPanelTab: activeTab,
     setAgentPanelTab: setActiveTab,
+    currentArtifactId,
   } = useUIStore();
   const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
   const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode, isStreaming, pendingToolCalls } = useChatStore();
@@ -60,7 +62,25 @@ export const AgentPanel: React.FC = () => {
   const [autoSync, setAutoSync] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
+  // Load skills from tool registry
+  const loadSkills = useSkillStore((s) => s.loadSkills);
+  const getCoreSkills = useSkillStore((s) => s.getCoreSkills);
+  const getRemainingCount = useSkillStore((s) => s.getRemainingCount);
+  const isLoaded = useSkillStore((s) => s.isLoaded);
 
+  useEffect(() => {
+    loadSkills();
+  }, [loadSkills]);
+
+  const coreSkills = useMemo(() => {
+    if (!isLoaded) return [];
+    return getCoreSkills();
+  }, [isLoaded, getCoreSkills]);
+
+  const remainingCount = useMemo(() => {
+    if (!isLoaded) return 0;
+    return getRemainingCount();
+  }, [isLoaded, getRemainingCount]);
 
   const messages = currentMessages();
 
@@ -226,6 +246,23 @@ export const AgentPanel: React.FC = () => {
               d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
           </svg>
         </button>
+
+        {/* Artifact Preview tab (only if artifact exists) */}
+        {currentArtifactId && (
+          <button
+            onClick={() => setActiveTab('artifact-preview')}
+            className={`p-1.5 rounded-lg transition-all ${
+              activeTab === 'artifact-preview'
+                ? 'bg-gray-100 text-gray-900'
+                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+            }`}
+            title="Artifact Preview"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </button>
+        )}
         
 
         {/* Roadmap tab - TODO: re-implement with proper state management */}
@@ -277,14 +314,21 @@ export const AgentPanel: React.FC = () => {
         </div>
       )}
 
+      {/* Tab content: Artifact Preview */}
+      {activeTab === 'artifact-preview' && (
+        <div className="flex-1 overflow-hidden p-3">
+          <ArtifactRenderer artifactId={currentArtifactId} messages={messages} />
+        </div>
+      )}
+
       {/* Roadmap tab content removed - TODO: re-implement */}
 
 
       {/* Tab content: Main (original AgentPanel) */}
-      {activeTab === 'main' && <>
-
-      {/* Header / Mode Control */}
-      <div className="p-4 flex flex-col gap-3">
+      {activeTab === 'main' && (
+        <>
+          {/* Header / Mode Control */}
+          <div className="p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold text-gray-400 tracking-widest uppercase">Execution Mode</span>
@@ -484,15 +528,21 @@ export const AgentPanel: React.FC = () => {
             <div>
               <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Skills</h4>
               <div className="flex flex-wrap gap-2">
-                {['read_file', 'write_file', 'bash', 'ripgrep', 'glob'].map(skill => (
-                  <div key={skill} className="px-2 py-1 bg-white border border-gray-200 rounded-lg text-[10px] font-bold text-gray-600 shadow-sm flex items-center gap-1.5 hover:border-blue-200 transition-colors cursor-default">
+                {coreSkills.slice(0, 8).map((skill) => (
+                  <div
+                    key={skill.id}
+                    className="px-2 py-1 bg-white border border-gray-200 rounded-lg text-[10px] font-bold text-gray-600 shadow-sm flex items-center gap-1.5 hover:border-blue-200 transition-colors cursor-default"
+                    title={skill.description || skill.name}
+                  >
                     <div className="h-1 w-1 bg-blue-500 rounded-full" />
-                    {skill}
+                    {skill.displayName}
                   </div>
                 ))}
-                <div className="px-2 py-1 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-[10px] font-medium text-gray-400">
-                  + 12 more
-                </div>
+                {remainingCount > 0 && (
+                  <div className="px-2 py-1 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-[10px] font-medium text-gray-400">
+                    + {remainingCount} more
+                  </div>
+                )}
               </div>
             </div>
 
@@ -555,8 +605,8 @@ export const AgentPanel: React.FC = () => {
         </Section>
 
       </div>
-
-      </> /* end activeTab === 'main' */}
+        </>
+      )}
 
       {/* Footer / Status Area */}
       <div className="px-4 py-3 border-t border-gray-200/60 bg-white/50 flex items-center justify-between text-[10px] font-bold text-gray-400 uppercase tracking-tighter cursor-default">
@@ -577,5 +627,60 @@ export const AgentPanel: React.FC = () => {
     </div>
   );
 };
+
+/**
+ * ArtifactRenderer - Renders specialized artifact types in the side panel
+ */
+function ArtifactRenderer({ artifactId, messages }: { artifactId?: string; messages: any[] }) {
+  const artifact = useMemo(() => {
+    if (!artifactId) return null;
+    for (const msg of messages) {
+      const found = msg.artifacts?.find((a: any) => a.id === artifactId);
+      if (found) return found;
+    }
+    return null;
+  }, [artifactId, messages]);
+
+  if (!artifact) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span className="text-xs uppercase tracking-widest font-bold">No Artifact Selected</span>
+      </div>
+    );
+  }
+
+  if (artifact.type === 'image' || artifact.type === 'svg') {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-tight">{artifact.title || 'Image Artifact'}</h3>
+          <span className="text-[9px] font-mono text-gray-300">ID: {artifact.id}</span>
+        </div>
+        <div className="flex-1 overflow-auto bg-white rounded-xl border border-gray-100 p-2">
+          <ChatImage 
+            src={artifact.content} 
+            isSVG={artifact.type === 'svg' || artifact.mimeType === 'image/svg+xml'} 
+            className="w-full"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback for code/html etc.
+  return (
+    <div className="h-full flex flex-col">
+       <div className="mb-2">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-tight">{artifact.title || artifact.type}</h3>
+       </div>
+       <pre className="flex-1 p-3 bg-gray-900 text-gray-100 rounded-xl font-mono text-[11px] overflow-auto">
+         {artifact.content}
+       </pre>
+    </div>
+  );
+}
 
 export default AgentPanel;

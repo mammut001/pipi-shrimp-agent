@@ -67,7 +67,7 @@ export interface UIState {
   taskProgress: TaskStep[];
 
   // Right panel active tab (global so external triggers like browser intent can switch it)
-  agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code' | 'roadmap' | 'files';
+  agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code' | 'roadmap' | 'files' | 'artifact-preview';
 
   // Browser Dock State (see browser-docked-layout-design.md)
   browserDockMode: BrowserDockMode;
