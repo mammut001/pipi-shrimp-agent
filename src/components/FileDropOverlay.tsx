@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState, useRef, type ChangeEvent } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useSettingsStore, useUIStore, useChatStore } from '@/store';
+import { t } from '@/i18n';
 
 interface PendingFile {
   name: string;
@@ -108,11 +109,11 @@ export function FileDropOverlay() {
     // Add to current session's working files if session exists
     if (currentSessionId) {
       addSessionWorkingFiles(currentSessionId, fileData);
-      addNotification('success', `${fileData.length} 个文件已添加到当前 session`);
+      addNotification('success', t('chat.input.filesAddedToSession').replace('{count}', String(fileData.length)));
     } else {
       // Fallback to global imported files
       addImportedFiles(pendingFiles.map(({ name, path }) => ({ name, path })));
-      addNotification('success', `${fileData.length} 个文件已导入`);
+      addNotification('success', t('chat.input.filesImported').replace('{count}', String(fileData.length)));
     }
 
     setPendingFiles([]);
@@ -351,10 +352,10 @@ export function FileDropOverlay() {
             </div>
             <div>
               <h2 className="text-base font-bold text-gray-900">
-                {hasPendingFiles ? '已选择文件' : '拖放文件'}
+                {hasPendingFiles ? t('chat.input.filesSelected') : t('chat.input.dragFilesHere')}
               </h2>
               {hasPendingFiles && (
-                <p className="text-xs text-gray-500">{pendingFiles.length} 个文件</p>
+                <p className="text-xs text-gray-500">{pendingFiles.length} files</p>
               )}
             </div>
           </div>
@@ -386,7 +387,7 @@ export function FileDropOverlay() {
                   <button
                     onClick={() => removePendingFile(file.id)}
                     className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
-                    title="移除文件"
+                    title={t('chat.input.removeFile')}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-500" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -414,8 +415,8 @@ export function FileDropOverlay() {
                   />
                 </svg>
               </div>
-              <p className="text-base font-semibold text-gray-700 mb-1">拖放文件到此处</p>
-              <p className="text-xs text-gray-400">松手后文件将添加到列表</p>
+              <p className="text-base font-semibold text-gray-700 mb-1">{t('chat.input.dragFilesHere')}</p>
+              <p className="text-xs text-gray-400">{t('chat.input.filesWillBeAddedToList')}</p>
             </div>
           )}
         </div>
@@ -433,7 +434,7 @@ export function FileDropOverlay() {
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                确认导入 {pendingFiles.length} 个文件
+                {t('chat.input.confirmImportFiles').replace('{count}', String(pendingFiles.length))}
               </button>
               <div className="flex gap-2">
                 <button
@@ -441,14 +442,14 @@ export function FileDropOverlay() {
                   className="flex-1 px-4 py-2 bg-white hover:bg-gray-100 text-gray-600 text-sm font-medium
                            rounded-xl transition-colors border border-gray-200"
                 >
-                  清空列表
+                  {t('chat.input.clearList')}
                 </button>
                 <button
                   onClick={cancelOverlay}
                   className="flex-1 px-4 py-2 bg-white hover:bg-gray-100 text-gray-600 text-sm font-medium
                            rounded-xl transition-colors border border-gray-200"
                 >
-                  取消
+                  {t('chat.input.cancel')}
                 </button>
               </div>
             </div>
@@ -458,7 +459,7 @@ export function FileDropOverlay() {
               {/* Divider */}
               <div className="flex items-center gap-3">
                 <div className="flex-1 h-px bg-gray-200" />
-                <span className="text-xs text-gray-400 font-medium">或</span>
+                <span className="text-xs text-gray-400 font-medium">{t('chat.input.or')}</span>
                 <div className="flex-1 h-px bg-gray-200" />
               </div>
 
@@ -467,10 +468,10 @@ export function FileDropOverlay() {
                 className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold
                          rounded-xl transition-colors shadow-sm active:scale-[0.98]"
               >
-                选择文件
+                {t('chat.input.selectFiles')}
               </button>
 
-              <p className="text-center text-[11px] text-gray-400">按 Esc 取消</p>
+              <p className="text-center text-[11px] text-gray-400">{t('chat.input.pressEscToCancel')}</p>
             </div>
           )}
         </div>

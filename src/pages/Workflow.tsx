@@ -6,14 +6,11 @@
 
 import { MainLayout } from '@/layout';
 import { WorkflowView, FilePreviewPanel } from '@/components/workflow';
-import { useWorkflowStore } from '@/store/workflowStore';
 
 export function Workflow() {
-  const selectedPreviewFile = useWorkflowStore((state) => state.selectedPreviewFile);
-
   return (
     <MainLayout
-      showRightPanel={Boolean(selectedPreviewFile)}
+      showRightPanel={true}
       rightPanelContent={<FilePreviewPanel />}
       rightPanelWidthClassName="w-[420px]"
     >

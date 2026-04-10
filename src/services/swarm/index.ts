@@ -33,6 +33,11 @@ export type {
   PermissionStatus,
   RiskLevel,
   RunStatus,
+  AgentMemory,
+  TeamMemory,
+  AgentMemoryFile,
+  TeamMemoryFile,
+  TeamMemoryType,
 } from './types';
 
 // Repository (persistence + events)
@@ -157,3 +162,16 @@ export {
   getPendingPermissions,
   getPendingPermissionsForTeam,
 } from './repository';
+
+// Memory (team + agent memory subsystem)
+export {
+  initTeamMemory,
+  initAgentMemory,
+  getSwarmBaseDir,
+  readTeamMemoryIndex,
+  readAgentMemoryIndex,
+  buildAgentMemoryPrompt,
+  buildTeamMemoryPrompt,
+  extractAgentMemory,
+  extractTeamMemory,
+} from './memory';

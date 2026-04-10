@@ -12,13 +12,18 @@ import { AgentConfigPanel } from './AgentConfigPanel';
 import { WorkflowOutputPanel } from './WorkflowOutputPanel';
 import { WorkflowRunHistory } from './WorkflowRunHistory';
 import { useWorkflowStore } from '@/store/workflowStore';
+import { t } from '@/i18n';
 
 function WorkflowTaskPanel({ agentId }: { agentId: string }) {
-  const agent = useWorkflowStore((state) =>
-    state.agents.find((item) => item.id === agentId)
-  );
+  const agent = useWorkflowStore((state) => {
+    const inst = state.instances.find(i => i.id === state.currentInstanceId);
+    return inst?.agents.find((item) => item.id === agentId);
+  });
   const updateAgent = useWorkflowStore((state) => state.updateAgent);
-  const allAgents = useWorkflowStore((state) => state.agents);
+  const allAgents = useWorkflowStore((state) => {
+    const inst = state.instances.find(i => i.id === state.currentInstanceId);
+    return inst?.agents ?? [];
+  });
 
   const [task, setTask] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
@@ -49,80 +54,83 @@ function WorkflowTaskPanel({ agentId }: { agentId: string }) {
       <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
-              Agent Task
+              {t('workflow.agentTask')}
             </div>
           <h3 className="mt-1 text-sm font-semibold text-gray-900">{agent.name}</h3>
           <p className="mt-1 text-xs text-gray-500">
-            先在这里写清楚这个 Agent 的职责。下面的配置面板再调模型、路由和执行模式。
+            {t('workflow.agentTaskLabelHint')}
           </p>
         </div>
         <button
           onClick={handleSave}
           className="shrink-0 px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
         >
-          保存
+          {t('workflow.save')}
         </button>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          任务标签
+          {t('workflow.agentTaskLabel')}
         </label>
         <input
           type="text"
           value={task}
           onChange={(e) => setTask(e.target.value)}
-          placeholder="如：撰写架构优化文档"
+          placeholder={t('workflow.agentTaskLabelPlaceholder')}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         <p className="mt-1 text-xs text-gray-400">
-          这个短标题会显示在画布节点上。
+          {t('workflow.agentTaskLabelHint')}
         </p>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          任务 Prompt
+          {t('workflow.taskPrompt')}
         </label>
         <textarea
           value={taskPrompt}
           onChange={(e) => setTaskPrompt(e.target.value)}
           rows={4}
-          placeholder="例如：请写一个关于 PiPi Shrimp 当前架构和优化方向的调研报告。"
+          placeholder={t('workflow.taskPromptPlaceholder')}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
         />
         <p className="mt-1 text-xs text-gray-400">
-          这里写这次具体想让它产出的内容。发送给模型时，会和下面的任务指令一起组合。
+          {t('workflow.taskPromptHint')}
         </p>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          任务指令
+          {t('workflow.taskInstruction')}
         </label>
         <textarea
           value={taskInstruction}
           onChange={(e) => setTaskInstruction(e.target.value)}
           rows={6}
-          placeholder="例如：请你写一份详细的 PiPi Shrimp 架构优化文档，重点说明当前问题、改造方向、影响范围和分阶段实施建议。"
+          placeholder={t('workflow.taskInstructionPlaceholder')}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
         />
         <p className="mt-1 text-xs text-gray-400">
-          这段会直接注入到该 Agent 的执行提示词里，适合写这个节点的固定职责模板。
+          {t('workflow.taskInstructionHint')}
         </p>
       </div>
 
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
         {upstreamAgent
-          ? `当前会接收上游「${upstreamAgent.name}」的输出，然后基于它继续工作。`
-          : '当前是入口节点，没有上游输入，会直接根据 Workflow 的目标启动。'}
+          ? t('workflow.upstreamInfo').replace('{name}', upstreamAgent.name)
+          : t('workflow.upstreamNone')}
       </div>
     </div>
   );
 }
 
 export function WorkflowView() {
-  const agents = useWorkflowStore((state) => state.agents);
+  const currentInstance = useWorkflowStore((state) =>
+    state.instances.find(i => i.id === state.currentInstanceId) ?? null
+  );
+  const agents = currentInstance?.agents ?? [];
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [outputPanelOpen, setOutputPanelOpen] = useState(true);
 
@@ -137,6 +145,30 @@ export function WorkflowView() {
   const handleAgentSelect = (id: string | null) => {
     setSelectedAgentId(id);
   };
+
+  // No active workflow instance
+  if (!currentInstance) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50">
+        <div className="text-6xl mb-4 opacity-60">🦐</div>
+        <h2 className="text-xl font-semibold text-gray-700 mb-2">
+          No Active Workflow
+        </h2>
+        <p className="text-gray-400 mb-6 text-center max-w-sm">
+          Create a new workflow to get started with multi-agent orchestration.
+        </p>
+        <button
+          onClick={() => useWorkflowStore.getState().createInstance()}
+          className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 flex items-center gap-2"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          {t('workflow.newWorkflow')}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">

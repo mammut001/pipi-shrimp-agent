@@ -68,7 +68,7 @@ export async function runDelegationPlan(
 
   // Create a team for this delegation
   const teamName = `auto-delegation-${plan.id.slice(-8)}`;
-  const { team, leader } = swarm.createTeam({
+  const { team, leader } = await swarm.createTeam({
     name: teamName,
     sessionId,
     description: `Auto-delegation: ${plan.planType} — ${plan.userMessage.slice(0, 80)}`,
@@ -121,7 +121,7 @@ export async function runDelegationPlan(
   // Spawn and start each planned agent
   for (const plannedAgent of plan.agents) {
     // Spawn agent in swarm runtime
-    const runtimeAgent = swarm.spawnAgent({
+    const { agent: runtimeAgent } = await swarm.spawnAgent({
       teamId: team.id,
       name: plannedAgent.name,
       role: 'member',

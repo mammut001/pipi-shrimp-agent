@@ -22,6 +22,10 @@ export {
   useTelegramChats,
 } from './telegramStore';
 
+// Export skill store
+export { useSkillStore } from './skillStore';
+export type { SkillInfo } from './skillStore';
+
 // Export chat types
 export type {
   ChatState,

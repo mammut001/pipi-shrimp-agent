@@ -7,10 +7,15 @@
 
 import { useState } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
+import { t } from '@/i18n';
 
 export function WorkflowRunHistory() {
   const [isOpen, setIsOpen] = useState(false);
-  const { workflowRuns, agents } = useWorkflowStore();
+  const currentInstance = useWorkflowStore((s) =>
+    s.instances.find(i => i.id === s.currentInstanceId) ?? null
+  );
+  const workflowRuns = currentInstance?.workflowRuns ?? [];
+  const agents = currentInstance?.agents ?? [];
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -82,7 +87,7 @@ export function WorkflowRunHistory() {
         <div className="fixed bottom-16 left-4 z-40 w-80 max-h-96 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
-            <h3 className="font-medium text-sm text-gray-900">执行历史</h3>
+            <h3 className="font-medium text-sm text-gray-900">{t('workflow.history.title')}</h3>
             <button
               onClick={() => setIsOpen(false)}
               className="p-1 text-gray-400 hover:text-gray-600 rounded"

@@ -19,6 +19,7 @@ import {
   getAuthStateColor,
   getAuthStateBgColor,
 } from '../utils/browserInspection';
+import { t } from '@/i18n';
 
 /**
  * Quick access website definitions
@@ -53,57 +54,57 @@ const getQuickTasks = (url: string): string[] => {
 
   if (lowerUrl.includes('news') || lowerUrl.includes('cbc') || lowerUrl.includes('bbc')) {
     return [
-      '提取头条新闻标题',
-      '找出科技/AI相关新闻',
-      '列出所有新闻分类',
+      'browser.quickTask.extractHeadlines',
+      'browser.quickTask.findTechNews',
+      'browser.quickTask.listCategories',
     ];
   }
 
   if (lowerUrl.includes('reddit')) {
     return [
-      '找出热门帖子',
-      '搜索相关讨论',
-      '提取评论概要',
+      'browser.quickTask.findHotPosts',
+      'browser.quickTask.searchDiscussions',
+      'browser.quickTask.extractComments',
     ];
   }
 
   if (lowerUrl.includes('github')) {
     return [
-      '找出热门仓库',
-      '搜索开源项目',
-      '提取项目信息',
+      'browser.quickTask.findHotRepos',
+      'browser.quickTask.searchProjects',
+      'browser.quickTask.extractProjectInfo',
     ];
   }
 
   if (lowerUrl.includes('youtube')) {
     return [
-      '提取视频标题',
-      '找出相关推荐',
-      '获取视频描述',
+      'browser.quickTask.extractVideoTitle',
+      'browser.quickTask.findRelatedRecommendations',
+      'browser.quickTask.getVideoDescription',
     ];
   }
 
   if (lowerUrl.includes('whatsapp')) {
     return [
-      '搜索联系人',
-      '发送测试消息',
-      '获取最近对话',
+      'browser.quickTask.searchContacts',
+      'browser.quickTask.sendTestMessage',
+      'browser.quickTask.getRecentChats',
     ];
   }
 
   if (lowerUrl.includes('amazon') || lowerUrl.includes('shopping')) {
     return [
-      '搜索产品',
-      '提取价格信息',
-      '比较产品评价',
+      'browser.quickTask.searchProducts',
+      'browser.quickTask.extractPriceInfo',
+      'browser.quickTask.compareReviews',
     ];
   }
 
   // Default tasks
   return [
-    '提取页面主要内容',
-    '找出重要信息',
-    '总结页面要点',
+    'browser.quickTask.extractMainContent',
+    'browser.quickTask.findImportantInfo',
+    'browser.quickTask.summarizePage',
   ];
 };
 
@@ -304,20 +305,20 @@ export const BrowserPanel: React.FC = () => {
 
   const getStatusText = () => {
     switch (status) {
-      case 'uninitialized': return '未初始化';
-      case 'opening': return '正在打开';
-      case 'idle': return '空闲';
-      case 'inspecting': return '检查中';
-      case 'needs_login': return '需要登录';
-      case 'waiting_user_resume': return '等待确认';
-      case 'ready_for_agent': return '可执行任务';
-      case 'running': return '执行中';
-      case 'blocked_auth': return '认证被阻止';
-      case 'blocked_captcha': return '需要验证码';
-      case 'blocked_manual_step': return '需要手动确认';
-      case 'completed': return '已完成';
-      case 'error': return '错误';
-      default: return '未知';
+      case 'uninitialized': return t('browser.status.uninitialized');
+      case 'opening': return t('browser.status.opening');
+      case 'idle': return t('browser.status.idle');
+      case 'inspecting': return t('browser.status.inspecting');
+      case 'needs_login': return t('browser.status.needsLogin');
+      case 'waiting_user_resume': return t('browser.status.waitingUserResume');
+      case 'ready_for_agent': return t('browser.status.readyForAgent');
+      case 'running': return t('browser.status.running');
+      case 'blocked_auth': return t('browser.status.blockedAuth');
+      case 'blocked_captcha': return t('browser.status.blockedCaptcha');
+      case 'blocked_manual_step': return t('browser.status.blockedManualStep');
+      case 'completed': return t('browser.status.completed');
+      case 'error': return t('browser.status.error');
+      default: return t('browser.status.unknown');
     }
   };
 
@@ -326,13 +327,13 @@ export const BrowserPanel: React.FC = () => {
     if (mode === 'manual_handoff') {
       return (
         <span className="px-2 py-0.5 text-[10px] font-medium bg-yellow-100 text-yellow-700 rounded-full">
-          手动控制
+          {t('browser.manualControl')}
         </span>
       );
     }
     return (
       <span className="px-2 py-0.5 text-[10px] font-medium bg-green-100 text-green-700 rounded-full">
-        Agent 控制
+        {t('browser.agentControl')}
       </span>
     );
   };
@@ -385,13 +386,13 @@ export const BrowserPanel: React.FC = () => {
             <button
               onClick={handleReturnToChat}
               className="p-1.5 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
-              title="返回聊天"
+              title={t('browser.returnToChat')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </button>
-            <h2 className="text-sm font-bold text-gray-800 uppercase tracking-tight">浏览器控制</h2>
+            <h2 className="text-sm font-bold text-gray-800 uppercase tracking-tight">{t('browser.title')}</h2>
           </div>
           <div className="flex items-center gap-2">
             {/* Control Mode Badge */}
@@ -402,7 +403,7 @@ export const BrowserPanel: React.FC = () => {
               <button
                 onClick={handleGoBack}
                 className="p-1.5 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
-                title="返回上一页"
+                title={t('browser.returnToPreviousPage')}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -411,7 +412,7 @@ export const BrowserPanel: React.FC = () => {
             )}
             {isWindowOpen && (
               <span className="text-xs text-green-500">
-                ● 窗口已打开
+                {t('browser.windowOpened')}
               </span>
             )}
             <span className={`text-xs font-medium ${getStatusColor()}`}>
@@ -427,7 +428,7 @@ export const BrowserPanel: React.FC = () => {
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleOpenWindow()}
-            placeholder="输入网址 (例如: https://www.example.com)"
+            placeholder={t('browser.url') + ' (https://www.example.com)'}
             className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
           {isWindowOpen ? (
@@ -436,7 +437,7 @@ export const BrowserPanel: React.FC = () => {
               <button
                 onClick={handleExpandToSplit}
                 className="px-2 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                title="展开到分屏"
+                title={t('browser.expandToSplit')}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
@@ -446,7 +447,7 @@ export const BrowserPanel: React.FC = () => {
               <button
                 onClick={handleOpenInWindow}
                 className="px-2 py-2 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                title="打开新窗口"
+                title={t('browser.openNewWindow')}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -457,7 +458,7 @@ export const BrowserPanel: React.FC = () => {
                 onClick={handleCloseBrowser}
                 className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
               >
-                关闭
+                {t('browser.close')}
               </button>
             </>
           ) : (
@@ -466,14 +467,14 @@ export const BrowserPanel: React.FC = () => {
               disabled={!urlInput.trim()}
               className="px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              打开窗口
+              {t('browser.openWindow')}
             </button>
           )}
         </div>
 
         {currentUrl && (
           <div className="mt-2 text-[10px] text-gray-400 truncate flex items-center gap-2">
-            <span>当前页面:</span>
+            <span>{t('browser.currentPage')}</span>
             <span className="text-blue-500">{currentUrl}</span>
           </div>
         )}
@@ -507,27 +508,27 @@ export const BrowserPanel: React.FC = () => {
                 {getRecommendation(inspection || { authState, safeForAgent: false } as any)}
               </p>
               <p className="text-[10px] text-yellow-600 mt-1">
-                请在浏览器窗口中完成登录后，点击下方按钮验证登录状态
+                {t('browser.pleaseCompleteLoginFirst')}
               </p>
               <div className="mt-2 flex gap-2 flex-wrap">
                 <button
                   onClick={inspectCurrentPage}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-yellow-600 rounded-lg hover:bg-yellow-700 transition-colors"
                 >
-                  刷新检查
+                  {t('browser.refreshAndCheck')}
                 </button>
                 <button
                   onClick={confirmLoginAndResume}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
                 >
-                  我已登录
+                  {t('browser.iHaveLoggedIn')}
                 </button>
                 <button
                   onClick={forceResumeWithoutAuth}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-                  title="跳过验证，直接继续执行"
+                  title={t('browser.skipVerificationAndContinue')}
                 >
-                  强制继续
+                  {t('browser.forceContinue')}
                 </button>
               </div>
             </div>
@@ -542,23 +543,23 @@ export const BrowserPanel: React.FC = () => {
             <span className="text-lg">⚠️</span>
             <div className="flex-1">
               <p className="text-xs font-medium text-orange-800">
-                操作被阻止: {getBlockReasonText(blockReason || undefined)}
+                {t('browser.operationBlocked')}: {getBlockReasonText(blockReason || undefined)}
               </p>
               <p className="text-[10px] text-orange-600 mt-1">
-                请在浏览器窗口中完成必要的操作，然后重试。
+                {t('browser.pleaseCompleteOperationInBrowser')}
               </p>
               <div className="mt-2 flex gap-2">
                 <button
                   onClick={inspectCurrentPage}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
                 >
-                  重新检查
+                  {t('browser.recheck')}
                 </button>
                 <button
                   onClick={switchToManualMode}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-gray-600 rounded-lg hover:bg-gray-700 transition-colors"
                 >
-                  手动控制
+                  {t('browser.switchToManual')}
                 </button>
               </div>
             </div>
@@ -571,13 +572,13 @@ export const BrowserPanel: React.FC = () => {
         <div className="px-4 py-2 bg-green-50 border-b border-green-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-green-500">✓</span>
-            <span className="text-xs text-green-700">页面已就绪，可以执行自动化任务</span>
+            <span className="text-xs text-green-700">{t('browser.pageReadyForAutomation')}</span>
           </div>
           <button
             onClick={switchToManualMode}
             className="text-[10px] text-green-600 hover:text-green-700"
           >
-            切换到手动
+            {t('browser.switchToManual')}
           </button>
         </div>
       )}
@@ -592,11 +593,11 @@ export const BrowserPanel: React.FC = () => {
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
-            检查页面状态
+            {t('browser.refreshAndCheck')}
           </button>
           {inspection && (
             <span className="text-[10px] text-gray-500">
-              匹配站点: {inspection.matchedProfileId || '未知'}
+              {t('browser.matchedSite')}: {inspection.matchedProfileId || t('browser.unknownSite')}
             </span>
           )}
         </div>
@@ -606,12 +607,12 @@ export const BrowserPanel: React.FC = () => {
       {isWindowOpen && (
         <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] text-gray-500 font-medium">快捷任务</span>
+            <span className="text-[10px] text-gray-500 font-medium">{t('browser.quickTasks')}</span>
             <button
               onClick={() => setShowHistory(!showHistory)}
               className="text-[10px] text-blue-500 hover:text-blue-600"
             >
-              {showHistory ? '隐藏历史' : '查看历史'}
+              {showHistory ? t('browser.hideHistory') : t('browser.showHistory')}
             </button>
           </div>
 
@@ -640,10 +641,10 @@ export const BrowserPanel: React.FC = () => {
               {getQuickTasks(currentUrl).map((task, index) => (
                 <button
                   key={index}
-                  onClick={() => handleQuickTask(task)}
+                  onClick={() => handleQuickTask(t(task as Parameters<typeof t>[0]))}
                   className="px-2 py-1 text-[10px] bg-white rounded border border-gray-200 text-gray-600 hover:border-green-300 hover:text-green-600 transition-colors"
                 >
-                  {task}
+                  {t(task as Parameters<typeof t>[0])}
                 </button>
               ))}
             </div>
@@ -659,7 +660,7 @@ export const BrowserPanel: React.FC = () => {
             value={taskInput}
             onChange={(e) => setTaskInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isWindowOpen ? "输入任务指令 (例如: 点击登录按钮)" : "请先打开浏览器窗口"}
+            placeholder={isWindowOpen ? t('browser.enterTaskInstruction') : t('browser.pleaseOpenBrowserFirst')}
             disabled={status === 'running' || !isWindowOpen || showLoginPrompt}
             className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
           />
@@ -668,14 +669,14 @@ export const BrowserPanel: React.FC = () => {
               onClick={stopTask}
               className="px-3 py-2 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
             >
-              停止
+              {t('browser.stop')}
             </button>
           ) : status === 'completed' ? (
             <button
               onClick={resetToReady}
               className="px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
             >
-              重置状态
+              {t('browser.resetStatus')}
             </button>
           ) : (
             <button
@@ -683,7 +684,7 @@ export const BrowserPanel: React.FC = () => {
               disabled={!taskInput.trim() || !isWindowOpen || showLoginPrompt || !canExecute}
               className="px-3 py-2 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              执行
+              {t('browser.execute')}
             </button>
           )}
         </div>
@@ -699,14 +700,14 @@ export const BrowserPanel: React.FC = () => {
       {/* Logs Panel — fills remaining space */}
       <div className="flex-1 flex flex-col min-h-0">
         <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
-          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">执行日志</span>
+          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{t('browser.executionLog')}</span>
           <button onClick={clearLogs} className="text-[10px] text-gray-400 hover:text-gray-600">
-            清空
+            {t('browser.clear')}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 bg-gray-900">
           {logs.length === 0 ? (
-            <p className="text-xs text-gray-600">等待任务执行...</p>
+            <p className="text-xs text-gray-600">{t('browser.waitingForExecution')}</p>
           ) : (
             <div className="space-y-0.5">
               {logs.map((log, index) => (

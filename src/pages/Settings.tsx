@@ -19,6 +19,7 @@ import { API_PROVIDERS, PROVIDER_MODELS, DEFAULT_MODEL_PRICING } from '@/types/s
 import { formatCost } from '@/utils/pricing';
 import { TokenStats } from '@/components/TokenStats';
 import { TelegramSettings } from '@/components/settings/TelegramSettings';
+import { MCPSettingsSection } from '@/components/settings/MCPSettingsSection';
 import { t, getSupportedLocales, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
 import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuilder';
 
@@ -839,6 +840,9 @@ export function Settings() {
 
           {/* ====== Telegram Section ====== */}
           <TelegramSettings />
+
+          {/* ====== MCP Section ====== */}
+          <MCPSettingsSection />
 
           {/* ====== Agent Settings Section ====== */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">

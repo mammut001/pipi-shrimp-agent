@@ -17,6 +17,7 @@ import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import type { WorkflowAgent, RouteCondition } from '@/types/workflow';
 import { useSettingsStore } from '@/store/settingsStore';
 import { PROVIDER_MODELS } from '@/types/settings';
+import { t } from '@/i18n';
 
 interface AgentNodeData {
   agent: WorkflowAgent;
@@ -58,10 +59,10 @@ function getInitials(name: string): string {
 
 // Condition display config
 const CONDITION_CONFIG: Record<RouteCondition, { label: string; icon: string }> = {
-  onComplete: { label: '完成', icon: '✅' },
-  onError: { label: '失败', icon: '❌' },
-  outputContains: { label: '含关键词', icon: '🔍' },
-  always: { label: '始终', icon: '🔄' },
+  onComplete: { label: t('workflow.onComplete'), icon: '✅' },
+  onError: { label: t('workflow.onError'), icon: '❌' },
+  outputContains: { label: t('workflow.outputContains'), icon: '🔍' },
+  always: { label: t('workflow.always'), icon: '🔄' },
 };
 
 const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
@@ -243,7 +244,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                     e.stopPropagation();
                     handleNameDoubleClick();
                   }}
-                  title={`${agent.name} (双击改名)`}
+                  title={agent.name}
                 >
                   {agent.name}
                 </span>
@@ -255,7 +256,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
           <button
             onClick={handleDelete}
             className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors shrink-0"
-            title="删除 Agent"
+            title={t('workflow.delete')}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -302,7 +303,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                 ? 'bg-gray-100 text-gray-500'
                 : 'bg-blue-100 text-blue-600'
             }`}>
-              {agent.execution.mode === 'single' ? '单次' : `${agent.execution.maxRounds || 3}轮`}
+              {agent.execution.mode === 'single' ? t('workflow.singleExecution') : `${agent.execution.maxRounds || 3}${t('workflow.rounds')}`}
             </span>
           </div>
 
@@ -321,7 +322,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
               >
                 <span className="text-gray-500">Model:</span>
                 <span className="text-gray-700 font-medium truncate flex-1 text-left">
-                  {currentProvider ? `${currentProvider}/${currentModelId || 'default'}` : '使用全局配置'}
+                  {currentProvider ? `${currentProvider}/${currentModelId || 'default'}` : t('workflow.usingGlobalConfig')}
                 </span>
                 <span className="text-gray-400 shrink-0">▼</span>
               </button>
@@ -346,8 +347,8 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                   {modelsByProvider.length === 0 ? (
                     <div className="px-3 py-2 text-[10px] text-gray-500 text-center">
                       {configuredProviders.length === 0 
-                        ? '请先在设置中添加 API 配置' 
-                        : '请先获取模型列表'}
+                        ? t('workflow.addApiConfigFirst') 
+                        : t('workflow.getModelListFirst')}
                     </div>
                   ) : modelsByProvider.map(([provider, models]) => (
                     <div key={provider}>
@@ -421,7 +422,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
               }}
               className="text-[10px] text-blue-500 hover:text-blue-700 mt-0.5"
             >
-              {showAddRoute ? '取消添加' : '+ 添加输出路由'}
+              {showAddRoute ? t('workflow.cancelAdd') : `+ ${t('workflow.addRoute')}`}
             </button>
           )}
 
@@ -433,16 +434,16 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                 onChange={(e) => setNewRouteCondition(e.target.value as RouteCondition)}
                 className="w-full text-[10px] border border-gray-200 rounded px-1 py-0.5"
               >
-                <option value="onComplete">完成时</option>
-                <option value="onError">错误时</option>
-                <option value="outputContains">含关键词</option>
-                <option value="always">始终</option>
+                <option value="onComplete">{t('workflow.onComplete')}</option>
+                <option value="onError">{t('workflow.onError')}</option>
+                <option value="outputContains">{t('workflow.outputContains')}</option>
+                <option value="always">{t('workflow.always')}</option>
               </select>
               {newRouteCondition === 'outputContains' && (
                 <input
                   value={newRouteKeyword}
                   onChange={(e) => setNewRouteKeyword(e.target.value)}
-                  placeholder="关键词"
+                  placeholder={t('workflow.keywordPlaceholder')}
                   className="w-full text-[10px] border border-gray-200 rounded px-1 py-0.5"
                 />
               )}
@@ -451,7 +452,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                 onChange={(e) => setNewRouteTarget(e.target.value)}
                 className="w-full text-[10px] border border-gray-200 rounded px-1 py-0.5"
               >
-                <option value="">选择目标</option>
+                <option value="">{t('workflow.selectTargetAgent')}</option>
                 {otherAgents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
@@ -461,7 +462,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                 disabled={!newRouteTarget}
                 className="w-full text-[10px] bg-blue-500 text-white rounded px-1 py-0.5 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
-                确认
+                {t('workflow.confirm')}
               </button>
             </div>
           )}
@@ -471,7 +472,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
         {agent.inputFrom && (
           <div className="px-3 py-1 bg-gray-50 border-t border-gray-100">
             <div className="flex items-center gap-1 text-[10px] text-gray-400">
-              <span>来自:</span>
+              <span>{t('workflow.target')}:</span>
               <span className="font-medium text-gray-600">
                 {allAgents.find((a) => a.id === agent.inputFrom)?.name || '?'}
               </span>

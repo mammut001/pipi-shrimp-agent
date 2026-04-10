@@ -18,6 +18,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
+import { ChatImage } from './ChatImage';
+import { useUIStore } from '@/store';
 
 /**
  * Props for ChatMessage component
@@ -135,6 +137,10 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                         );
                       }
 
+                      if (language === 'svg') {
+                        return <ChatImage src={codeContent} isSVG alt="SVG Preview" />;
+                      }
+
                       return (
                         <div className="my-4 rounded-xl overflow-hidden border border-gray-200/20 shadow-xl relative group max-w-full">
                           {/* Header with language and preview button */}
@@ -218,6 +224,10 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                         </a>
                       );
                     },
+                    // Custom image rendering
+                    img({ src, alt }) {
+                      return <ChatImage src={src || ''} alt={alt || ''} />;
+                    },
                   }}
                 >
                   {DOMPurify.sanitize(message.content)}
@@ -227,27 +237,37 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
               {/* Artifacts */}
               {message.artifacts && message.artifacts.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {message.artifacts.map((artifact) => (
-                    <a
-                      key={artifact.id}
-                      href={`#artifact-${artifact.id}`}
-                      className="inline-flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-sm hover:bg-blue-100 transition-colors"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-4 w-4"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
+                  {message.artifacts.map((artifact) => {
+                    const { setArtifactId, setAgentPanelTab } = useUIStore.getState();
+                    const handleClick = (e: React.MouseEvent) => {
+                      e.preventDefault();
+                      setArtifactId(artifact.id);
+                      setAgentPanelTab('artifact-preview');
+                    };
+
+                    return (
+                      <a
+                        key={artifact.id}
+                        href={`#artifact-${artifact.id}`}
+                        onClick={handleClick}
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-sm hover:bg-blue-100 transition-colors"
                       >
-                        <path
-                          fillRule="evenodd"
-                          d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                      {artifact.title || artifact.type}
-                    </a>
-                  ))}
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-4 w-4"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                        {artifact.title || artifact.type}
+                      </a>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -277,19 +297,19 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
-                  <span>输入: {message.token_usage.input_tokens.toLocaleString()}</span>
+                  <span>{t('chat.input')}: {message.token_usage.input_tokens.toLocaleString()}</span>
                 </span>
                 <span className="flex items-center gap-1">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                   </svg>
-                  <span>输出: {message.token_usage.output_tokens.toLocaleString()}</span>
+                  <span>{t('chat.output')}: {message.token_usage.output_tokens.toLocaleString()}</span>
                 </span>
                 <span className="flex items-center gap-1">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
                   </svg>
-                  <span>总计: {(message.token_usage.input_tokens + message.token_usage.output_tokens).toLocaleString()}</span>
+                  <span>{t('chat.total')}: {(message.token_usage.input_tokens + message.token_usage.output_tokens).toLocaleString()}</span>
                 </span>
               </div>
             )}
