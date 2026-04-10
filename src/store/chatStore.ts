@@ -1260,10 +1260,22 @@ export const useChatStore = create<ChatState>()(
 
             // Add task steps for all tools upfront
             for (const tool of chunk.tools) {
-              uiStore.addTaskStep(
-                `${tool.name}: ${tool.arguments.slice(0, 50)}${tool.arguments.length > 50 ? '...' : ''}`,
-                tool.id
-              );
+              let label = `${tool.name}: ${tool.arguments.slice(0, 50)}${tool.arguments.length > 50 ? '...' : ''}`;
+              
+              // Human-readable labels for Skills
+              if (tool.name === 'Skill' || tool.name === 'skill' || tool.name === 'execute_skill') {
+                try {
+                  const args = JSON.parse(tool.arguments);
+                  if (args.skill) {
+                    label = `Calling Skill: ${args.skill}...`;
+                    uiStore.addNotification('info', `Agent is invoking the "${args.skill}" skill.`);
+                  }
+                } catch (e) {
+                  // Fallback to default label
+                }
+              }
+
+              uiStore.addTaskStep(label, tool.id);
               uiStore.updateTaskStep(tool.id, 'pending');
             }
 
@@ -1369,14 +1381,14 @@ export const useChatStore = create<ChatState>()(
                     if (!activeRun) activeRun = swarm.startRun(activeSessionId);
                     let runtimeTeam = swarm.getTeamByName(parsedAgentArgs.team_name);
                     if (!runtimeTeam) {
-                      runtimeTeam = swarm.createTeam({
+                      runtimeTeam = (await swarm.createTeam({
                         name: parsedAgentArgs.team_name,
                         sessionId: activeSessionId,
                         description: parsedAgentArgs.description || `Team ${parsedAgentArgs.team_name}`,
                         leaderName: 'leader',
-                      }).team;
+                      })).team;
                     }
-                    const runtimeAgent = swarm.spawnAgent({
+                    const { agent: runtimeAgent } = await swarm.spawnAgent({
                       teamId: runtimeTeam.id,
                       name: parsedAgentArgs.name,
                       role: 'member',
@@ -1442,7 +1454,7 @@ export const useChatStore = create<ChatState>()(
                         let teamId: string;
                         let leaderId: string;
                         if (!runtimeTeam) {
-                          const { team, leader } = swarm.createTeam({
+                          const { team, leader } = await swarm.createTeam({
                             name: args.team_name,
                             sessionId: activeSessionId,
                             description: args.description || `Team ${args.team_name}`,
@@ -1455,7 +1467,7 @@ export const useChatStore = create<ChatState>()(
                           teamId = runtimeTeam.id;
                           leaderId = runtimeTeam.leaderId;
                         }
-                        const runtimeAgent = swarm.spawnAgent({
+                        const { agent: runtimeAgent } = await swarm.spawnAgent({
                           teamId,
                           name: args.name,
                           role: 'member',

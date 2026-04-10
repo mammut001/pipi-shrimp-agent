@@ -428,6 +428,25 @@ pub fn get_tools(browser_connected: bool) -> Vec<serde_json::Value> {
                 "additionalProperties": false
             }
         }),
+        serde_json::json!({
+            "name": "Skill",
+            "description": "Execute a predefined skill (reusable prompt template or script). Use this for specialized tasks like resume generation, data analysis, or complex workflows.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "skill": {
+                        "type": "string",
+                        "description": "Name of the skill to execute (e.g., 'resume')"
+                    },
+                    "args": {
+                        "type": "string",
+                        "description": "JSON string of arguments to pass to the skill"
+                    }
+                },
+                "required": ["skill"],
+                "additionalProperties": false
+            }
+        }),
     ];
 
     // Add browser tools only when Chrome CDP is connected

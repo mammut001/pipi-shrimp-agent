@@ -200,3 +200,60 @@ export interface SwarmEvent {
   entityId: string;
   timestamp: number;
 }
+
+// =============================================================================
+// Agent Memory
+// =============================================================================
+
+/**
+ * Agent-level persistent memory.
+ * Each agent has its own private memory directory.
+ */
+export interface AgentMemory {
+  teamId: string;
+  agentId: string;
+  /** e.g. ~/.pipi-shrimp/swarm/{teamId}/{agentId}/memory/ */
+  memoryDir: string;
+  enabled: boolean;
+}
+
+/**
+ * Metadata for a single agent memory file.
+ */
+export interface AgentMemoryFile {
+  filename: string;
+  type: import('../memory/memoryTypes').MemoryType;
+  title: string;
+  created: string;
+  preview: string;
+  path: string;
+}
+
+// =============================================================================
+// Team Memory
+// =============================================================================
+
+/**
+ * Team-level shared memory.
+ * All team agents can read; only the leader can write.
+ */
+export interface TeamMemory {
+  teamId: string;
+  /** e.g. ~/.pipi-shrimp/swarm/{teamId}/team-memory/ */
+  memoryDir: string;
+  enabled: boolean;
+}
+
+export type TeamMemoryType = 'goal' | 'convention' | 'context' | 'decision';
+
+/**
+ * Metadata for a single team memory file.
+ */
+export interface TeamMemoryFile {
+  filename: string;
+  type: TeamMemoryType;
+  title: string;
+  created: string;
+  preview: string;
+  path: string;
+}

@@ -11,6 +11,7 @@ export { AgentPanel } from './AgentPanel';
 // Chat components
 export { ChatMessage } from './ChatMessage';
 export { ChatInput } from './ChatInput';
+export { ChatImage } from './ChatImage';
 
 // Modal components
 export { PermissionModal } from './PermissionModal';

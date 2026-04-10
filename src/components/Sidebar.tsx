@@ -16,6 +16,7 @@ import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount } from '@/utils/chat';
 import { invoke } from '@tauri-apps/api/core';
 import { workflowEngine } from '@/services/workflowEngine';
+import { SearchInput } from '@/components/ui';
 
 
 /**
@@ -39,10 +40,9 @@ export function Sidebar() {
   // Functions are stable references, safe to destructure
   const { selectSession, deleteSession, deleteSessions, createProject, deleteProject, getSessionsByProject, updateSessionProject, startSession, renameSession } = useChatStore();
   const { toggleSettings, currentView, setCurrentView } = useUIStore();
-  const workflowRuns = useWorkflowStore((s) => s.workflowRuns);
-  const { renameWorkflowRun, deleteWorkflowRun, selectRun } = useWorkflowStore();
-  // Read selectedRunId inline to avoid a subscription (we only need it in click handlers and JSX class logic)
-  const selectedRunId = useWorkflowStore.getState().selectedRunId;
+  const workflowInstances = useWorkflowStore((s) => s.instances);
+  const currentInstanceId = useWorkflowStore((s) => s.currentInstanceId);
+  const { renameInstance, deleteInstance, deleteInstances, selectInstance } = useWorkflowStore();
 
   // Pricing helpers
   const getModelPricing = useSettingsStore((s) => s.getModelPricing);
@@ -64,6 +64,9 @@ export function Sidebar() {
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Workflow search state
+  const [workflowSearchQuery, setWorkflowSearchQuery] = useState('');
+
   // Move session modal state
   const [showMoveChatModal, setShowMoveChatModal] = useState(false);
   const [sessionToMove, setSessionToMove] = useState<string | null>(null);
@@ -74,12 +77,12 @@ export function Sidebar() {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
   const [showWorkflowDeleteConfirm, setShowWorkflowDeleteConfirm] = useState(false);
-  const [workflowRunToDelete, setWorkflowRunToDelete] = useState<string | null>(null);
+  const [workflowInstanceToDelete, setWorkflowInstanceToDelete] = useState<string | null>(null);
 
   // Rename session state
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState('');
-  const [renamingWorkflowRunId, setRenamingWorkflowRunId] = useState<string | null>(null);
+  const [renamingWorkflowInstanceId, setRenamingWorkflowInstanceId] = useState<string | null>(null);
   const [workflowRenameInput, setWorkflowRenameInput] = useState('');
 
   // New Chat modal state
@@ -89,6 +92,10 @@ export function Sidebar() {
   // Multi-select state
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
+
+  // Workflow multi-select state
+  const [isWorkflowMultiSelectMode, setIsWorkflowMultiSelectMode] = useState(false);
+  const [selectedWorkflows, setSelectedWorkflows] = useState<Set<string>>(new Set());
 
   // Get sessions without a project (show in original store order, which is typically newest first)
   const ungroupedSessions = useMemo(
@@ -106,6 +113,17 @@ export function Sidebar() {
         s.messages.some((m) => m.content.toLowerCase().includes(q)),
     );
   }, [sessions, searchQuery]);
+
+  // Filtered workflow instances for search results
+  const filteredWorkflows = useMemo(() => {
+    if (!workflowSearchQuery.trim()) return null;
+    const q = workflowSearchQuery.toLowerCase();
+    return workflowInstances.filter(
+      (i) =>
+        i.name.toLowerCase().includes(q) ||
+        i.agents.some((a) => a.name.toLowerCase().includes(q)),
+    );
+  }, [workflowInstances, workflowSearchQuery]);
 
   // Memoized token usage map for all sessions
   const tokenUsageMap = useMemo(() => {
@@ -317,6 +335,53 @@ export function Sidebar() {
   }, [selectedSessions, deleteSessions]);
 
   /**
+   * Handle toggle workflow selection in multi-select mode
+   */
+  const handleToggleWorkflowSelection = useCallback((instanceId: string) => {
+    setSelectedWorkflows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(instanceId)) {
+        newSet.delete(instanceId);
+      } else {
+        newSet.add(instanceId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  /**
+   * Handle select all / deselect all workflows
+   */
+  const handleWorkflowSelectAll = useCallback(() => {
+    const workflowIds = workflowInstances.map(i => i.id);
+    const allSelected = workflowIds.every(id => selectedWorkflows.has(id));
+    if (allSelected && selectedWorkflows.size > 0) {
+      setSelectedWorkflows(new Set());
+    } else {
+      setSelectedWorkflows(new Set(workflowIds));
+    }
+  }, [workflowInstances, selectedWorkflows]);
+
+  /**
+   * Handle batch delete selected workflows
+   */
+  const handleBatchDeleteWorkflows = useCallback(() => {
+    if (selectedWorkflows.size > 0) {
+      setShowWorkflowDeleteConfirm(true);
+    }
+  }, [selectedWorkflows]);
+
+  /**
+   * Confirm batch delete workflows
+   */
+  const handleConfirmBatchDeleteWorkflows = useCallback(() => {
+    deleteInstances(Array.from(selectedWorkflows));
+    setSelectedWorkflows(new Set());
+    setIsWorkflowMultiSelectMode(false);
+    setShowWorkflowDeleteConfirm(false);
+  }, [selectedWorkflows, deleteInstances]);
+
+  /**
    * Handle context menu
    */
   const handleContextMenu = useCallback((e: React.MouseEvent, type: 'session' | 'project', id: string) => {
@@ -363,56 +428,45 @@ export function Sidebar() {
   }, []);
 
   /**
-   * Handle workflow run selection
+   * Handle workflow instance selection
    */
-  const handleSelectRun = useCallback((runId: string) => {
-    selectRun(runId);
-  }, [selectRun]);
+  const handleSelectInstance = useCallback((instanceId: string) => {
+    selectInstance(instanceId);
+  }, [selectInstance]);
 
-  const handleStartWorkflowRename = useCallback((runId: string) => {
-    const run = workflowRuns.find((r) => r.id === runId);
-    if (run) {
-      setRenamingWorkflowRunId(runId);
-      setWorkflowRenameInput(run.title || 'Untitled Run');
+  const handleStartWorkflowRename = useCallback((instanceId: string) => {
+    const instance = workflowInstances.find((i) => i.id === instanceId);
+    if (instance) {
+      setRenamingWorkflowInstanceId(instanceId);
+      setWorkflowRenameInput(instance.name || 'Untitled Workflow');
     }
-  }, [workflowRuns]);
+  }, [workflowInstances]);
 
   const handleConfirmWorkflowRename = useCallback(() => {
-    if (renamingWorkflowRunId && workflowRenameInput.trim()) {
-      renameWorkflowRun(renamingWorkflowRunId, workflowRenameInput.trim());
+    if (renamingWorkflowInstanceId && workflowRenameInput.trim()) {
+      renameInstance(renamingWorkflowInstanceId, workflowRenameInput.trim());
     }
-    setRenamingWorkflowRunId(null);
+    setRenamingWorkflowInstanceId(null);
     setWorkflowRenameInput('');
-  }, [renamingWorkflowRunId, workflowRenameInput, renameWorkflowRun]);
+  }, [renamingWorkflowInstanceId, workflowRenameInput, renameInstance]);
 
   const handleCancelWorkflowRename = useCallback(() => {
-    setRenamingWorkflowRunId(null);
+    setRenamingWorkflowInstanceId(null);
     setWorkflowRenameInput('');
   }, []);
 
-  const handleOpenWorkflowDeleteConfirm = useCallback((runId: string) => {
-    setWorkflowRunToDelete(runId);
+  const handleOpenWorkflowDeleteConfirm = useCallback((instanceId: string) => {
+    setWorkflowInstanceToDelete(instanceId);
     setShowWorkflowDeleteConfirm(true);
   }, []);
 
-  const handleConfirmWorkflowDelete = useCallback(async () => {
-    if (!workflowRunToDelete) return;
+  const handleConfirmWorkflowDelete = useCallback(() => {
+    if (!workflowInstanceToDelete) return;
 
-    const run = workflowRuns.find((r) => r.id === workflowRunToDelete);
-    if (run?.runDirectory) {
-      try {
-        await invoke('delete_workflow_run_directory', { path: run.runDirectory });
-      } catch (error) {
-        console.error('Failed to delete workflow run directory:', error);
-        useUIStore.getState().addNotification('warning', `运行目录删除失败（${error}），记录已清除`);
-      }
-    }
-
-    // Store's deleteWorkflowRun handles selectedRunId cleanup automatically
-    deleteWorkflowRun(workflowRunToDelete);
+    deleteInstance(workflowInstanceToDelete);
     setShowWorkflowDeleteConfirm(false);
-    setWorkflowRunToDelete(null);
-  }, [deleteWorkflowRun, workflowRunToDelete, workflowRuns]);
+    setWorkflowInstanceToDelete(null);
+  }, [deleteInstance, workflowInstanceToDelete]);
 
   /**
    * Format date for display
@@ -430,20 +484,6 @@ export function Sidebar() {
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
     return date.toLocaleDateString();
-  };
-
-  /**
-   * Get status color for workflow run
-   */
-  const getStatusColor = (status: string): string => {
-    switch (status) {
-      case 'completed': return 'text-green-600';
-      case 'error': return 'text-red-600';
-      case 'running': return 'text-blue-600';
-      case 'stopped': return 'text-gray-500';
-      case 'idle': return 'text-gray-400';
-      default: return 'text-gray-400';
-    }
   };
 
   /**
@@ -528,7 +568,7 @@ export function Sidebar() {
           >
             {t('nav.workflow')}
           </button>
-          {/* Multi-select Button - Integrated in Tab Container */}
+          {/* Chat Multi-select Button */}
           {currentView === 'chat' && sessions.length > 0 && (
             <button
               onClick={() => {
@@ -544,6 +584,33 @@ export function Sidebar() {
               title={isMultiSelectMode ? 'Exit multi-select' : 'Multi-select'}
             >
               {isMultiSelectMode ? (
+                <span className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  Selecting
+                </span>
+              ) : (
+                'Select'
+              )}
+            </button>
+          )}
+          {/* Workflow Multi-select Button */}
+          {currentView === 'workflow' && workflowInstances.length > 0 && (
+            <button
+              onClick={() => {
+                setIsWorkflowMultiSelectMode(!isWorkflowMultiSelectMode);
+                if (isWorkflowMultiSelectMode) {
+                  setSelectedWorkflows(new Set());
+                }
+              }}
+              className={`ml-auto px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 ${isWorkflowMultiSelectMode
+                  ? 'bg-blue-100 text-blue-700 shadow-sm ring-1 ring-blue-300'
+                  : 'bg-gray-50 text-gray-600 hover:bg-gray-200/50 active:bg-gray-200'
+                }`}
+              title={isWorkflowMultiSelectMode ? 'Exit multi-select' : 'Multi-select'}
+            >
+              {isWorkflowMultiSelectMode ? (
                 <span className="flex items-center gap-1.5">
                   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -616,6 +683,53 @@ export function Sidebar() {
             </div>
           </div>
         )}
+
+        {/* Workflow Multi-select Toolbar */}
+        {isWorkflowMultiSelectMode && (
+          <div className="transition-all duration-200 ease-out">
+            <div className="mx-2 px-2.5 py-2 rounded-xl bg-white border border-gray-200 shadow-sm overflow-hidden flex items-center gap-2">
+              {/* Cancel / exit multi-select */}
+              <button
+                onClick={() => { setIsWorkflowMultiSelectMode(false); setSelectedWorkflows(new Set()); }}
+                className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 active:scale-95 transition-all duration-150"
+                title="Exit selection"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Count */}
+              <span className="text-xs font-semibold text-gray-700 tabular-nums whitespace-nowrap">
+                {selectedWorkflows.size} selected
+              </span>
+
+              {/* Right-side actions */}
+              <div className="ml-auto flex-shrink-0 flex items-center gap-1.5">
+                {/* Select All / None */}
+                <button
+                  onClick={handleWorkflowSelectAll}
+                  className="px-2 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-lg transition-all duration-150 whitespace-nowrap"
+                >
+                  {workflowInstances.every(i => selectedWorkflows.has(i.id)) && selectedWorkflows.size > 0
+                    ? 'None' : 'All'}
+                </button>
+
+                {/* Delete */}
+                <button
+                  onClick={handleBatchDeleteWorkflows}
+                  disabled={selectedWorkflows.size === 0}
+                  className="px-2 py-1 text-[11px] font-bold flex items-center gap-1 rounded-lg transition-all duration-150 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed text-red-600 bg-red-50 hover:bg-red-100 border border-red-100/80"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Session/Run List */}
@@ -626,31 +740,12 @@ export function Sidebar() {
             {/* Search */}
             {sessions.length > 0 && (
               <div className="px-4 pb-2 pt-1">
-                <div className="relative">
-                  <svg
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none"
-                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search chats..."
-                    className="w-full pl-8 pr-8 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300 focus:border-gray-300 placeholder-gray-400"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
+                <SearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  onClear={() => setSearchQuery('')}
+                  placeholder="Search chats..."
+                />
               </div>
             )}
 
@@ -950,115 +1045,178 @@ export function Sidebar() {
             </div>
           )
         : (
-          // Workflow Runs
-          workflowRuns.length === 0 ? (
-            <div className="p-8 text-center text-gray-400 text-sm">
-              <div className="mb-2 opacity-50">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-                </svg>
+          // Workflow Instances
+          <>
+            {/* Workflow Search */}
+            {workflowInstances.length > 0 && (
+              <div className="px-4 pb-2 pt-1">
+                <SearchInput
+                  value={workflowSearchQuery}
+                  onChange={setWorkflowSearchQuery}
+                  onClear={() => setWorkflowSearchQuery('')}
+                  placeholder="Search workflows..."
+                />
               </div>
-              <p>No workflow runs yet</p>
-            </div>
-          ) : (
-            <ul className="py-2 space-y-1 px-2">
-              {workflowRuns.map((run) => (
-                <li key={run.id}>
-                  <button
-                    onClick={() => handleSelectRun(run.id)}
-                    className={`w-full px-3 py-3 text-left rounded-xl transition-all group ${run.id === selectedRunId
-                        ? 'bg-gray-100 shadow-sm'
-                        : 'hover:bg-gray-50'
-                      }`}
-                  >
-                      <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        {renamingWorkflowRunId === run.id ? (
-                          <input
-                            type="text"
-                            value={workflowRenameInput}
-                            onChange={(e) => setWorkflowRenameInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') { e.preventDefault(); handleConfirmWorkflowRename(); }
-                              if (e.key === 'Escape') handleCancelWorkflowRename();
-                            }}
-                            onBlur={handleConfirmWorkflowRename}
-                            autoFocus
-                            className="w-full text-sm font-semibold text-gray-900 bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                        ) : (
-                          <h3
-                            className="font-semibold text-gray-900 truncate text-sm cursor-text hover:bg-gray-100 rounded px-1 -mx-1 transition-colors"
-                            onDoubleClick={(e) => {
-                              e.stopPropagation();
-                              handleStartWorkflowRename(run.id);
-                            }}
-                            title="Double-click to rename"
-                          >
-                            {run.title || 'Untitled Run'}
-                          </h3>
-                        )}
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className={`text-xs font-medium ${getStatusColor(run.status)}`}>
-                            {run.status.charAt(0).toUpperCase() + run.status.slice(1)}
-                          </span>
-                          <span className="text-xs text-gray-400">
-                            {run.agents.filter(a => a.status === 'completed').length}/{run.agents.length} agents
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {formatDate(run.startTime)}
-                        </p>
-                      </div>
+            )}
 
-                      {/* Actions + Status Icon */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenWorkflowDeleteConfirm(run.id);
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-red-500"
-                          title="Delete workflow"
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="h-4 w-4"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
+            {filteredWorkflows !== null ? (
+              // Search results
+              <ul className="py-2 space-y-1 px-2">
+                {filteredWorkflows.length === 0 ? (
+                  <li className="px-3 py-4 text-xs text-gray-400 text-center">No results</li>
+                ) : (
+                  filteredWorkflows.map((instance) => (
+                    <li key={instance.id}>
+                      <button
+                        onClick={() => { handleSelectInstance(instance.id); setWorkflowSearchQuery(''); }}
+                        className={`w-full px-3 py-3 text-left rounded-xl transition-all group ${instance.id === currentInstanceId
+                            ? 'bg-gray-100 shadow-sm'
+                            : 'hover:bg-gray-50'
+                          }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold text-gray-900 truncate text-sm">
+                              {instance.name || 'Untitled Workflow'}
+                            </h3>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-xs text-gray-400">
+                                {instance.agents.length} agents
+                              </span>
+                              <span className="text-xs text-gray-400">·</span>
+                              <span className="text-xs text-gray-400">
+                                {instance.workflowRuns.length} runs
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            ) : workflowInstances.length === 0 ? (
+              <div className="p-8 text-center text-gray-400 text-sm">
+                <div className="mb-2 opacity-50">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                  </svg>
+                </div>
+                <p>No workflows yet</p>
+              </div>
+            ) : (
+              <ul className="py-2 space-y-1 px-2">
+                {workflowInstances.map((instance) => (
+                  <li key={instance.id}>
+                    <button
+                      onClick={() => isWorkflowMultiSelectMode ? handleToggleWorkflowSelection(instance.id) : handleSelectInstance(instance.id)}
+                      className={`w-full px-3 py-3 text-left rounded-xl transition-all group ${instance.id === currentInstanceId
+                          ? 'bg-gray-100 shadow-sm'
+                          : 'hover:bg-gray-50'
+                        }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        {/* Multi-select Checkbox */}
+                        {isWorkflowMultiSelectMode && (
+                          <div
+                            className={`flex-shrink-0 w-5 h-5 rounded-md border-2 mr-2.5 flex items-center justify-center transition-all duration-200 cursor-pointer ${selectedWorkflows.has(instance.id)
+                                ? 'bg-blue-600 border-blue-600 shadow-md shadow-blue-500/20'
+                                : 'border-gray-300 group-hover:border-blue-400 group-hover:shadow-sm'
+                              }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleWorkflowSelection(instance.id);
+                            }}
                           >
-                            <path
-                              fillRule="evenodd"
-                              d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
-                              clipRule="evenodd"
+                            {selectedWorkflows.has(instance.id) && (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-white" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          {renamingWorkflowInstanceId === instance.id ? (
+                            <input
+                              type="text"
+                              value={workflowRenameInput}
+                              onChange={(e) => setWorkflowRenameInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); handleConfirmWorkflowRename(); }
+                                if (e.key === 'Escape') handleCancelWorkflowRename();
+                              }}
+                              onBlur={handleConfirmWorkflowRename}
+                              autoFocus
+                              className="w-full text-sm font-semibold text-gray-900 bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
-                          </svg>
-                        </button>
-                        {run.status === 'running' ? (
-                          <svg className="h-4 w-4 text-blue-500 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                        ) : run.status === 'completed' ? (
-                          <svg className="h-4 w-4 text-green-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        ) : run.status === 'error' ? (
-                          <svg className="h-4 w-4 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                          </svg>
-                        ) : (
-                          <svg className="h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
-                          </svg>
+                          ) : (
+                            <h3
+                              className="font-semibold text-gray-900 truncate text-sm cursor-text hover:bg-gray-100 rounded px-1 -mx-1 transition-colors"
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                handleStartWorkflowRename(instance.id);
+                              }}
+                              title="Double-click to rename"
+                            >
+                              {instance.name || 'Untitled Workflow'}
+                            </h3>
+                          )}
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-gray-400">
+                              {instance.agents.length} agents
+                            </span>
+                            <span className="text-xs text-gray-400">·</span>
+                            <span className="text-xs text-gray-400">
+                              {instance.workflowRuns.length} runs
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {formatDate(instance.updatedAt)}
+                          </p>
+                        </div>
+
+                        {/* Actions + Status Icon */}
+                        {!isWorkflowMultiSelectMode && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenWorkflowDeleteConfirm(instance.id);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-red-500"
+                              title="Delete workflow"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="h-4 w-4"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                              >
+                                <path
+                                  fillRule="evenodd"
+                                  d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                            </button>
+                            {instance.activeRunId ? (
+                              <svg className="h-4 w-4 text-blue-500 animate-pulse" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20">
+                                <circle cx="10" cy="10" r="4" />
+                              </svg>
+                            ) : (
+                              <svg className="h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
                         )}
                       </div>
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </div>
 
@@ -1249,20 +1407,30 @@ export function Sidebar() {
       {showWorkflowDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowWorkflowDeleteConfirm(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Workflow</h3>
-            <p className="text-sm text-gray-600 mb-4">Are you sure you want to delete this workflow run? This action cannot be undone.</p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              {isWorkflowMultiSelectMode
+                ? `Delete ${selectedWorkflows.size} Workflows`
+                : 'Delete Workflow'}
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              {isWorkflowMultiSelectMode
+                ? `Are you sure you want to delete ${selectedWorkflows.size} workflows? All agents, connections, and run history will be lost. This action cannot be undone.`
+                : 'Are you sure you want to delete this workflow? All agents, connections, and run history will be lost. This action cannot be undone.'}
+            </p>
             <div className="flex gap-2">
               <button
                 onClick={() => {
                   setShowWorkflowDeleteConfirm(false);
-                  setWorkflowRunToDelete(null);
+                  setWorkflowInstanceToDelete(null);
+                  setSelectedWorkflows(new Set());
+                  setIsWorkflowMultiSelectMode(false);
                 }}
                 className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={handleConfirmWorkflowDelete}
+                onClick={isWorkflowMultiSelectMode ? handleConfirmBatchDeleteWorkflows : handleConfirmWorkflowDelete}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
               >
                 Delete

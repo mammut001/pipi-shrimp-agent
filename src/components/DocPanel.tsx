@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { listDocs, readDoc, openFileExternal, openFileWithApp, DocMeta, DocContent } from '@/services/docService';
 import { invoke } from '@tauri-apps/api/core';
 import { Section } from './ui/Section';
+import { DocListSkeleton } from './ui/Skeleton';
 
 interface DocPanelProps {
   workDir: string;
@@ -151,9 +152,7 @@ export function DocPanel({ workDir }: DocPanelProps) {
 
         {/* Doc list */}
         {loading ? (
-          <div className="py-4 flex items-center justify-center">
-            <div className="h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          </div>
+          <DocListSkeleton count={3} />
         ) : filteredDocs.length > 0 ? (
           <div className="space-y-1 max-h-[200px] overflow-y-auto">
             {filteredDocs.map((doc) => (

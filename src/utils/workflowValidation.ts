@@ -19,12 +19,15 @@ export interface WorkflowValidation {
  */
 export function validateWorkflowState(): WorkflowValidation {
   const state = useWorkflowStore.getState();
+  const instance = state.getCurrentInstance();
   const issues: string[] = [];
   const recommendations: string[] = [];
 
+  const workflowRuns = instance?.workflowRuns ?? [];
+
   // Check selected run exists
   if (state.selectedRunId) {
-    const selected = state.workflowRuns.find(r => r.id === state.selectedRunId);
+    const selected = workflowRuns.find(r => r.id === state.selectedRunId);
     if (!selected) {
       issues.push(`Selected run ${state.selectedRunId} not found in workflowRuns list`);
       recommendations.push('Clear selectedRunId when run is deleted');
@@ -32,7 +35,7 @@ export function validateWorkflowState(): WorkflowValidation {
   }
 
   // Check for duplicate IDs
-  const ids = state.workflowRuns.map(r => r.id);
+  const ids = workflowRuns.map(r => r.id);
   const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
   if (duplicates.length > 0) {
     issues.push(`Duplicate workflow run IDs found: ${duplicates.join(', ')}`);
@@ -40,7 +43,7 @@ export function validateWorkflowState(): WorkflowValidation {
   }
 
   // Check run titles are not empty
-  const emptyTitles = state.workflowRuns.filter(r => !r.title.trim());
+  const emptyTitles = workflowRuns.filter(r => !r.title.trim());
   if (emptyTitles.length > 0) {
     issues.push(`${emptyTitles.length} runs have empty titles`);
     recommendations.push('Validate run titles on creation/update');
@@ -59,10 +62,13 @@ export function validateWorkflowState(): WorkflowValidation {
  */
 export async function validateWorkflowFilesystem(): Promise<WorkflowValidation> {
   const state = useWorkflowStore.getState();
+  const instance = state.getCurrentInstance();
   const issues: string[] = [];
   const recommendations: string[] = [];
 
-  for (const run of state.workflowRuns) {
+  const workflowRuns = instance?.workflowRuns ?? [];
+
+  for (const run of workflowRuns) {
     if (run.runDirectory) {
       try {
         await invoke('read_dir', { path: run.runDirectory });
@@ -86,22 +92,26 @@ export async function validateWorkflowFilesystem(): Promise<WorkflowValidation> 
  */
 export async function testWorkflowRename(): Promise<WorkflowValidation> {
   const store = useWorkflowStore.getState();
+  const instance = store.getCurrentInstance();
   const issues: string[] = [];
   const recommendations: string[] = [];
 
-  if (store.workflowRuns.length === 0) {
+  const workflowRuns = instance?.workflowRuns ?? [];
+
+  if (workflowRuns.length === 0) {
     issues.push('No workflow runs to test rename');
     return { isValid: false, issues, recommendations };
   }
 
-  const originalRun = store.workflowRuns[0];
+  const originalRun = workflowRuns[0];
   const originalTitle = originalRun.title;
   const tempTitle = `Rename Test ${Date.now()}`;
 
   try {
     // Rename
     store.renameWorkflowRun(originalRun.id, tempTitle);
-    const renamed = store.workflowRuns.find(r => r.id === originalRun.id);
+    const updatedInstance = store.getCurrentInstance();
+    const renamed = updatedInstance?.workflowRuns.find(r => r.id === originalRun.id);
 
     // Validate rename
     if (!renamed) {
@@ -159,7 +169,8 @@ export async function testWorkflowDelete(): Promise<WorkflowValidation> {
       agents: [],
     });
 
-    const created = store.workflowRuns.find(r => r.id === testId);
+    const createdInstance = store.getCurrentInstance();
+    const created = createdInstance?.workflowRuns.find(r => r.id === testId);
     if (!created) {
       issues.push('Failed to create test run for deletion');
       return { isValid: false, issues, recommendations };
@@ -169,7 +180,8 @@ export async function testWorkflowDelete(): Promise<WorkflowValidation> {
     store.deleteWorkflowRun(testId);
 
     // Validate deletion
-    const stillExists = store.workflowRuns.find(r => r.id === testId);
+    const deletedInstance = store.getCurrentInstance();
+    const stillExists = deletedInstance?.workflowRuns.find(r => r.id === testId);
     if (stillExists) {
       issues.push('Run still exists in store after deletion');
       recommendations.push('Remove run from store during delete');
@@ -199,9 +211,13 @@ export async function testWorkflowDelete(): Promise<WorkflowValidation> {
  */
 export function logWorkflowState(): void {
   const state = useWorkflowStore.getState();
+  const instance = state.getCurrentInstance();
+  const workflowRuns = instance?.workflowRuns ?? [];
   console.group('Workflow State Debug');
+  console.log('Current Instance:', state.currentInstanceId);
+  console.log('Total Instances:', state.instances.length);
   console.log('Selected Run:', state.selectedRunId);
-  console.log('Runs:', state.workflowRuns.map(r => `${r.id}: ${r.title} (${r.runDirectory || 'no dir'})`));
+  console.log('Runs:', workflowRuns.map(r => `${r.id}: ${r.title} (${r.runDirectory || 'no dir'})`));
   console.log('Is Running:', state.isRunning, '| Agent:', state.currentRunningAgentId);
   console.groupEnd();
 

@@ -13,6 +13,7 @@
 
 pub mod agent;       // Multi-agent: subagent/coordinator/swarm
 pub mod browser;    // NEW - Browser window commands for PageAgent
+pub mod mcp;         // MCP (Model Context Protocol) server management
 pub mod chat;
 pub mod code;
 pub mod compact;     // Context compression system - Layer 1: Microcompact
