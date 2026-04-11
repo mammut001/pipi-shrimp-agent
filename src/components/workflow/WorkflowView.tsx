@@ -171,7 +171,7 @@ export function WorkflowView() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div key={currentInstance?.id ?? 'none'} className="flex flex-col h-full">
       {/* Top: Execution bar */}
       <WorkflowExecutionBar />
 
@@ -204,7 +204,7 @@ export function WorkflowView() {
       {/* Bottom: Output panel (collapsible, ~200px) */}
       {outputPanelOpen && (
         <div className="h-48 border-t border-gray-200">
-          <WorkflowOutputPanel />
+          <WorkflowOutputPanel key={currentInstance?.id ?? 'none'} />
         </div>
       )}
 

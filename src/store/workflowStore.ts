@@ -201,13 +201,17 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set((state) => {
       const remaining = state.instances.filter(i => i.id !== id);
       let nextId = state.currentInstanceId;
-      if (nextId === id) {
+      const shouldClearSelected = nextId === id;
+      if (shouldClearSelected) {
         nextId = remaining.length > 0 ? remaining[remaining.length - 1].id : null;
       }
       const newState = {
         ...state,
         instances: remaining,
         currentInstanceId: nextId,
+        // Clear selected run/preview when deleting the current instance
+        selectedRunId: shouldClearSelected ? null : state.selectedRunId,
+        selectedPreviewFile: shouldClearSelected ? null : state.selectedPreviewFile,
       };
       saveToStorage(newState);
       return newState;
@@ -219,13 +223,17 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       const idSet = new Set(ids);
       const remaining = state.instances.filter(i => !idSet.has(i.id));
       let nextId = state.currentInstanceId;
-      if (idSet.has(nextId ?? '')) {
+      const shouldClearSelected = idSet.has(nextId ?? '');
+      if (shouldClearSelected) {
         nextId = remaining.length > 0 ? remaining[remaining.length - 1].id : null;
       }
       const newState = {
         ...state,
         instances: remaining,
         currentInstanceId: nextId,
+        // Clear selected run/preview when deleting the current instance
+        selectedRunId: shouldClearSelected ? null : state.selectedRunId,
+        selectedPreviewFile: shouldClearSelected ? null : state.selectedPreviewFile,
       };
       saveToStorage(newState);
       return newState;
