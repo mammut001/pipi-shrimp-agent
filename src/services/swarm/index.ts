@@ -174,4 +174,4 @@ export {
   buildTeamMemoryPrompt,
   extractAgentMemory,
   extractTeamMemory,
-} from './memory';
+} from './memory/index';
