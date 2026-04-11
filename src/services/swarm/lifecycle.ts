@@ -21,7 +21,7 @@ import type {
 } from './types';
 import * as repo from './repository';
 import { recordTranscript } from './transcript';
-import { initTeamMemory, initAgentMemory, getSwarmBaseDir } from './memory';
+import { initTeamMemory, initAgentMemory, getSwarmBaseDir } from './memory/index';
 
 // =============================================================================
 // Run lifecycle

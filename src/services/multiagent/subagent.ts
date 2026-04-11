@@ -162,7 +162,7 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
                   options.prompt,
                 );
               }
-            }).catch(e => console.warn('[Subagent] Memory extraction failed:', e));
+            }).catch((e: any) => console.warn('[Subagent] Memory extraction failed:', e));
           }
 
           if (agent?.sessionId) {

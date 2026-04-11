@@ -27,7 +27,6 @@ doc/
 .cowork-temp/
 node-scripts/.env
 /docs
-.pipi-shrimp/
 
 # Vite build cache files
 vite.config.ts.timestamp-*.mjs
@@ -45,6 +44,5 @@ TOOLS.md
 HEARTBEAT.md
 MEMORY.md
 IDENTITY.md
-memory/
 /coverage
 TESTING.md
