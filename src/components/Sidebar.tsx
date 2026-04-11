@@ -738,16 +738,14 @@ export function Sidebar() {
           // Chat Sessions - wrap everything in Fragment
           <div className="flex flex-col h-full">
             {/* Search */}
-            {sessions.length > 0 && (
-              <div className="px-4 pb-2 pt-1">
-                <SearchInput
-                  value={searchQuery}
-                  onChange={setSearchQuery}
-                  onClear={() => setSearchQuery('')}
-                  placeholder="Search chats..."
-                />
-              </div>
-            )}
+            <div className="px-4 pb-2 pt-1">
+              <SearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                onClear={() => setSearchQuery('')}
+                placeholder="Search chats..."
+              />
+            </div>
 
             {/* Search results panel */}
             {filteredSessions !== null && (
@@ -1048,16 +1046,14 @@ export function Sidebar() {
           // Workflow Instances
           <>
             {/* Workflow Search */}
-            {workflowInstances.length > 0 && (
-              <div className="px-4 pb-2 pt-1">
-                <SearchInput
-                  value={workflowSearchQuery}
-                  onChange={setWorkflowSearchQuery}
-                  onClear={() => setWorkflowSearchQuery('')}
-                  placeholder="Search workflows..."
-                />
-              </div>
-            )}
+            <div className="px-4 pb-2 pt-1">
+              <SearchInput
+                value={workflowSearchQuery}
+                onChange={setWorkflowSearchQuery}
+                onClear={() => setWorkflowSearchQuery('')}
+                placeholder="Search workflows..."
+              />
+            </div>
 
             {filteredWorkflows !== null ? (
               // Search results
