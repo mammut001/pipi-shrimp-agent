@@ -53,6 +53,7 @@ export interface Session {
   projectId?: string;           // Project ID this session belongs to (optional)
   model?: string;               // Model to use for this session (optional, defaults to apiConfig model)
   workDir?: string;             // work directory for this session
+  outputDir?: string;            // current output directory (auto-created under .pipi-shrimp/)
   workingFiles?: ImportedFile[]; // session-level working files
   permissionMode?: 'standard' | 'auto-edits' | 'bypass' | 'plan-only'; // NEW: execution permission mode
 }
@@ -265,22 +266,22 @@ export interface ChatState {
   /**
    * Get daily token stats for a specific month (YYYY-MM format)
    */
-  getDailyTokenStats: (yearMonth: string) => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+  getDailyTokenStats: (yearMonth: string, apiConfigId?: string) => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
 
   /**
    * Get monthly token stats
    */
-  getMonthlyTokenStats: () => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+  getMonthlyTokenStats: (apiConfigId?: string) => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
 
   /**
    * Get token stats by model
    */
-  getModelTokenStats: () => Promise<{ model: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+  getModelTokenStats: (apiConfigId?: string) => Promise<{ model: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
 
     /**
     * Get total token stats (input, output, total)
     */
-    getTotalTokenStats: () => Promise<{ input: number; output: number; total: number }>;
+    getTotalTokenStats: (apiConfigId?: string) => Promise<{ input: number; output: number; total: number }>;
 
     /**
     * Reset token usage statistics

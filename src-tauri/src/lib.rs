@@ -40,8 +40,8 @@ struct ClaudeState {
  * Pre-built font state (initialized once at startup).
  * Fonts are Arc-wrapped internally, so cloning for each render is O(n) but free of disk I/O.
  */
-struct FontDbState {
-    prebuilt: PrebuiltFonts,
+pub struct FontDbState {
+    pub prebuilt: PrebuiltFonts,
 }
 
 /**
@@ -266,32 +266,32 @@ fn db_save_token_usage(usage: DbTokenUsage) -> Result<(), String> {
  * Get daily token stats for a specific month (YYYY-MM format)
  */
 #[tauri::command]
-fn db_get_daily_token_stats(year_month: String) -> Result<Vec<DailyTokenStats>, String> {
-    get_daily_token_stats(&year_month).map_err(|e| e.to_string())
+fn db_get_daily_token_stats(year_month: String, api_config_id: Option<String>) -> Result<Vec<DailyTokenStats>, String> {
+    get_daily_token_stats(&year_month, api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 
 /**
  * Get monthly token stats
  */
 #[tauri::command]
-fn db_get_monthly_token_stats() -> Result<Vec<DailyTokenStats>, String> {
-    get_monthly_token_stats().map_err(|e| e.to_string())
+fn db_get_monthly_token_stats(api_config_id: Option<String>) -> Result<Vec<DailyTokenStats>, String> {
+    get_monthly_token_stats(api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 
 /**
  * Get token stats by model
  */
 #[tauri::command]
-fn db_get_model_token_stats() -> Result<Vec<ModelTokenStats>, String> {
-    get_model_token_stats().map_err(|e| e.to_string())
+fn db_get_model_token_stats(api_config_id: Option<String>) -> Result<Vec<ModelTokenStats>, String> {
+    get_model_token_stats(api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 
 /**
  * Get total token stats (input, output, total)
  */
 #[tauri::command]
-fn db_get_total_token_stats() -> Result<(i64, i64, i64), String> {
-    get_total_token_stats().map_err(|e| e.to_string())
+fn db_get_total_token_stats(api_config_id: Option<String>) -> Result<(i64, i64, i64), String> {
+    get_total_token_stats(api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 
 /**
@@ -492,6 +492,7 @@ pub fn run() {
 
             println!("✅ Main window created successfully");
 
+            println!("✅ PiPi Shrimp Agent initialized successfully");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

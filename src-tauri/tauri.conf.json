@@ -20,7 +20,7 @@
         "fullscreen": false,
         "center": true,
         "label": "main",
-        "visible": false
+        "visible": true
       }
     ],
     "security": {

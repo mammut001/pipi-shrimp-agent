@@ -1188,6 +1188,21 @@ export const useChatStore = create<ChatState>()(
         const sessionWorkingFiles = currentSession?.workingFiles ?? [];
         const sessionWorkDir = currentSession?.workDir;
 
+        // Auto-create output directory for this session if workDir is bound and no outputDir yet
+        if (sessionWorkDir && !currentSession?.outputDir) {
+          try {
+            const outputDir = await invoke<string>('get_next_output_dir', { workDir: sessionWorkDir });
+            await invoke('create_directory', { path: outputDir });
+            const updated = { ...currentSession!, outputDir, updatedAt: Date.now() };
+            set(state => ({
+              sessions: state.sessions.map(s => s.id === activeSessionId ? updated : s)
+            }));
+            console.log(`📁 Auto-created session output dir: ${outputDir}`);
+          } catch (e) {
+            console.debug('Failed to auto-create output dir (non-fatal):', e);
+          }
+        }
+
         let coreMdContent = '';
         if (sessionWorkDir) {
           try {
@@ -1258,25 +1273,16 @@ export const useChatStore = create<ChatState>()(
             const currentSess = get().sessions.find(s => s.id === activeSessionId);
             const workDir = currentSess?.workDir ?? null;
 
-            // Add task steps for all tools upfront
+            // Notify for Skill invocations
             for (const tool of chunk.tools) {
-              let label = `${tool.name}: ${tool.arguments.slice(0, 50)}${tool.arguments.length > 50 ? '...' : ''}`;
-              
-              // Human-readable labels for Skills
               if (tool.name === 'Skill' || tool.name === 'skill' || tool.name === 'execute_skill') {
                 try {
                   const args = JSON.parse(tool.arguments);
                   if (args.skill) {
-                    label = `Calling Skill: ${args.skill}...`;
-                    uiStore.addNotification('info', `Agent is invoking the "${args.skill}" skill.`);
+                    uiStore.addNotification('skill', `⚡ Invoking Skill: ${args.skill}`);
                   }
-                } catch (e) {
-                  // Fallback to default label
-                }
+                } catch (e) { /* ignore */ }
               }
-
-              uiStore.addTaskStep(label, tool.id);
-              uiStore.updateTaskStep(tool.id, 'pending');
             }
 
             const allResults: { id: string; content: string }[] = [];
@@ -1294,7 +1300,6 @@ export const useChatStore = create<ChatState>()(
             // === 1. Concurrent read-only tools — execute in parallel (no permission check) ===
             // Rust-side path validation in execute_tool provides defense-in-depth.
             if (concurrent.length > 0) {
-              concurrent.forEach(req => uiStore.updateTaskStep(req.id, 'running'));
               try {
                 const executor = new StreamingToolExecutor();
                 const batchResult = await executor.executeBatch(concurrent, {
@@ -1302,7 +1307,6 @@ export const useChatStore = create<ChatState>()(
                   workDir: workDir ?? undefined,
                 });
                 for (const result of batchResult.results) {
-                  uiStore.updateTaskStep(result.id, result.is_error ? 'failed' : 'done');
                   allResults.push({ id: result.id, content: result.content });
                   const req = concurrent.find(r => r.id === result.id);
                   if (req) {
@@ -1320,7 +1324,6 @@ export const useChatStore = create<ChatState>()(
                 }
               } catch (concurrentErr) {
                 for (const req of concurrent) {
-                  uiStore.updateTaskStep(req.id, 'failed');
                   allResults.push({ id: req.id, content: `Error: batch execution failed: ${concurrentErr instanceof Error ? concurrentErr.message : String(concurrentErr)}` });
                 }
               }
@@ -1329,6 +1332,25 @@ export const useChatStore = create<ChatState>()(
             // === 2. Serial tools — full permission flow, one by one ===
             for (const tool of chunk.tools) {
               if (!serialIds.has(tool.id)) continue;
+
+              // === AskUserQuestion: frontend-only interactive tool ===
+              if (tool.name === 'AskUserQuestion') {
+                let toolResultContent = '';
+                try {
+                  const args = JSON.parse(tool.arguments);
+                  const response = await uiStore.showQuestionnaire({
+                    toolCallId: tool.id,
+                    title: args.title || 'Information Needed',
+                    description: args.description || '',
+                    fields: args.fields || [],
+                  });
+                  toolResultContent = response;
+                } catch (err) {
+                  toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+                }
+                allResults.push({ id: tool.id, content: toolResultContent });
+                continue;
+              }
 
               const permissionMode = currentSess?.permissionMode || 'standard';
 
@@ -1343,7 +1365,6 @@ export const useChatStore = create<ChatState>()(
 
               let toolResultContent = '';
               if (!hookResult.approved) {
-                uiStore.updateTaskStep(tool.id, 'failed');
                 uiStore.addNotification('error', hookResult.error || 'Tool execution blocked');
                 toolResultContent = `Error: ${hookResult.error || 'Tool execution blocked'}`;
               } else {
@@ -1413,10 +1434,8 @@ export const useChatStore = create<ChatState>()(
                 }
 
                 if (!approved) {
-                  uiStore.updateTaskStep(tool.id, 'failed');
                   toolResultContent = 'Permission denied by user.';
                 } else {
-                  uiStore.updateTaskStep(tool.id, 'running');
                   try {
                     if (tool.name === 'get_current_workspace') {
                       toolResultContent = workDir
@@ -1429,7 +1448,6 @@ export const useChatStore = create<ChatState>()(
                         args = parsedAgentArgs || JSON.parse(effectiveArgs);
                       } catch (parseErr) {
                         toolResultContent = `Error: Failed to parse agent_tool arguments: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`;
-                        uiStore.updateTaskStep(tool.id, 'failed');
                         uiStore.addNotification('error', 'Invalid agent tool arguments');
                         allResults.push({ id: tool.id, content: toolResultContent });
                         continue; // skip to next serial tool
@@ -1615,6 +1633,7 @@ export const useChatStore = create<ChatState>()(
               input_tokens: tokenUsage.input_tokens,
               output_tokens: tokenUsage.output_tokens,
               model: tokenUsage.model || apiConfig.model,
+              api_config_id: apiConfig.id,
               created_at: Math.floor(now.getTime() / 1000),
             },
           }).catch((e: unknown) => console.error('Failed to save token usage:', e));
@@ -2390,11 +2409,16 @@ export const useChatStore = create<ChatState>()(
       if (!session?.workDir) return null;
 
       try {
-        // Get next output directory path
-        const outputDir = await invoke<string>('get_next_output_dir', { workDir: session.workDir });
-
-        // Create the directory
-        await invoke('create_directory', { path: outputDir });
+        // Reuse session's output directory if already created, otherwise create new one
+        let outputDir = session.outputDir;
+        if (!outputDir) {
+          outputDir = await invoke<string>('get_next_output_dir', { workDir: session.workDir });
+          await invoke('create_directory', { path: outputDir });
+          const updated = { ...session, outputDir, updatedAt: Date.now() };
+          set(state => ({
+            sessions: state.sessions.map(s => s.id === sessionId ? updated : s)
+          }));
+        }
 
         // Write the file
         const filePath = `${outputDir}/${filename}`;
@@ -2422,11 +2446,11 @@ export const useChatStore = create<ChatState>()(
 
     // ========== Token Stats ==========
 
-    getDailyTokenStats: async (yearMonth: string) => {
+    getDailyTokenStats: async (yearMonth: string, apiConfigId?: string) => {
       try {
         return await invoke<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>(
           'db_get_daily_token_stats',
-          { yearMonth }
+          { yearMonth, apiConfigId: apiConfigId ?? null }
         );
       } catch (error) {
         console.error('Failed to get daily token stats:', error);
@@ -2434,10 +2458,11 @@ export const useChatStore = create<ChatState>()(
       }
     },
 
-    getMonthlyTokenStats: async () => {
+    getMonthlyTokenStats: async (apiConfigId?: string) => {
       try {
         return await invoke<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>(
-          'db_get_monthly_token_stats'
+          'db_get_monthly_token_stats',
+          { apiConfigId: apiConfigId ?? null }
         );
       } catch (error) {
         console.error('Failed to get monthly token stats:', error);
@@ -2445,10 +2470,11 @@ export const useChatStore = create<ChatState>()(
       }
     },
 
-    getModelTokenStats: async () => {
+    getModelTokenStats: async (apiConfigId?: string) => {
       try {
         return await invoke<{ model: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>(
-          'db_get_model_token_stats'
+          'db_get_model_token_stats',
+          { apiConfigId: apiConfigId ?? null }
         );
       } catch (error) {
         console.error('Failed to get model token stats:', error);
@@ -2456,9 +2482,12 @@ export const useChatStore = create<ChatState>()(
       }
     },
 
-    getTotalTokenStats: async () => {
+    getTotalTokenStats: async (apiConfigId?: string) => {
       try {
-        const [input, output, total] = await invoke<[number, number, number]>('db_get_total_token_stats');
+        const [input, output, total] = await invoke<[number, number, number]>(
+          'db_get_total_token_stats',
+          { apiConfigId: apiConfigId ?? null }
+        );
         return { input, output, total };
       } catch (error) {
         console.error('Failed to get total token stats:', error);

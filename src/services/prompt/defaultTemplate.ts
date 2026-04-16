@@ -143,7 +143,7 @@ This project has a built-in document management system for organizing your work.
 - "帮我写一个设计文档" → Create \`.pipi-shrimp/docs/00X_design-document.md\`
 - "Analyze the code structure" → Create document in \`.pipi-shrimp/docs/\`
 - "整理一下 API 文档" → Create document in \`.pipi-shrimp/docs/00X_api-documentation.md\`
-- "帮我写一份简历" → **MUST** use the \`Skill\` tool with \`skill: "resume"\` to generate a professional resume artifact.
+- "帮我写一份简历" → **MUST IMMEDIATELY** use the \`Skill\` tool with \`skill: "resume"\` to learn how to generate a professional resume artifact. **DO NOT ask the user for information first. Call the Skill tool first.**
 
 **Document storage location**: \`{workDir}/.pipi-shrimp/docs/\`
 

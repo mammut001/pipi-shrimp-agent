@@ -109,6 +109,7 @@ const zhCN: TranslationKeys = {
   'token.usageStats': 'Token 使用统计',
   'token.viewConsumption': '查看您的 API token 消耗和费用估算',
   'token.resetStats': '重置统计',
+  'token.allApiKeys': '全部 API Key',
   'token.totalCostLabel': '总费用估算',
   'token.totalInput': '总输入',
   'token.totalOutput': '总输出',

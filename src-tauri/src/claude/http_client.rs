@@ -447,6 +447,96 @@ pub fn get_tools(browser_connected: bool) -> Vec<serde_json::Value> {
                 "additionalProperties": false
             }
         }),
+        serde_json::json!({
+            "name": "AskUserQuestion",
+            "description": "Present a structured questionnaire form to the user to collect multiple pieces of information at once. Use this when you need several related inputs (e.g., resume details, project setup, profile information) instead of asking questions one by one in chat. The form will be displayed as an interactive UI. The user's responses will be returned as a JSON object keyed by field id.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Title of the questionnaire form"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Brief explanation of why this information is needed"
+                    },
+                    "fields": {
+                        "type": "array",
+                        "description": "List of form fields to present to the user",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Unique key for this field (e.g., 'education', 'work_experience')"
+                                },
+                                "label": {
+                                    "type": "string",
+                                    "description": "User-facing label or question for this field"
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["text", "textarea", "select", "boolean"],
+                                    "description": "Input type: text for short answers, textarea for long answers, select for dropdown, boolean for yes/no"
+                                },
+                                "required": {
+                                    "type": "boolean",
+                                    "description": "Whether this field must be filled out"
+                                },
+                                "placeholder": {
+                                    "type": "string",
+                                    "description": "Optional placeholder text for the input"
+                                },
+                                "options": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Options for select type fields"
+                                }
+                            },
+                            "required": ["id", "label", "type", "required"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["title", "description", "fields"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "render_typst_to_svg",
+            "description": "Compile Typst source code into SVG for preview. Returns the SVG string. Use this to show the user a visual preview of a Typst document (e.g., resume, report).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "The Typst source code to compile"
+                    }
+                },
+                "required": ["source"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "render_typst_to_pdf",
+            "description": "Compile Typst source code into a PDF file and save it to disk. Returns the file path of the saved PDF. Use this to generate downloadable PDF documents (e.g., resumes, reports).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "The Typst source code to compile"
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "The absolute file path where the PDF should be saved (e.g., /Users/user/output/resume.pdf)"
+                    }
+                },
+                "required": ["source", "file_path"],
+                "additionalProperties": false
+            }
+        }),
     ];
 
     // Add browser tools only when Chrome CDP is connected

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import DOMPurify from 'dompurify';
 import { t } from '@/i18n';
 
 interface ChatImageProps {
@@ -33,10 +34,15 @@ export const ChatImage = ({ src, alt, className = '', isSVG = false }: ChatImage
    */
   const renderContent = (isLightbox: boolean = false) => {
     if (isSVG && src.trim().startsWith('<svg')) {
+      const sanitizedSvg = DOMPurify.sanitize(src, {
+        USE_PROFILES: { svg: true, svgFilters: true },
+        FORBID_TAGS: ['script'],
+        FORBID_ATTR: ['onload', 'onerror', 'onclick', 'onmouseover'],
+      });
       return (
         <div 
           className={isLightbox ? 'max-w-full max-h-[90vh]' : 'max-w-full'}
-          dangerouslySetInnerHTML={{ __html: src }}
+          dangerouslySetInnerHTML={{ __html: sanitizedSvg }}
         />
       );
     }

@@ -10,16 +10,100 @@
  * - external: Browser in separate window, Chat takes full width
  */
 
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef, useCallback } from 'react';
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { ChatMessage, ChatInput, PermissionModal } from '@/components';
+import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
 import { SwarmPanel } from './SwarmPanel';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
+
+/**
+ * Draggable wrapper for SwarmPanel — allows free positioning anywhere on screen.
+ */
+const SWARM_PANEL_POS_KEY = 'swarm-panel-position';
+
+function SwarmPanelDraggable() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragState = useRef<{ offsetX: number; offsetY: number } | null>(null);
+
+  // Restore saved position on mount
+  useEffect(() => {
+    const panel = containerRef.current;
+    if (!panel) return;
+    try {
+      const saved = localStorage.getItem(SWARM_PANEL_POS_KEY);
+      if (saved) {
+        const { x, y } = JSON.parse(saved);
+        const maxX = window.innerWidth - panel.offsetWidth;
+        const maxY = window.innerHeight - panel.offsetHeight;
+        panel.style.left = `${Math.max(0, Math.min(x, maxX))}px`;
+        panel.style.top = `${Math.max(0, Math.min(y, maxY))}px`;
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // Only drag from the header drag-handle area (data-drag-handle attribute)
+    if (!(e.target as HTMLElement).closest('[data-drag-handle]')) return;
+    e.preventDefault();
+
+    const panel = containerRef.current;
+    if (!panel) return;
+
+    const rect = panel.getBoundingClientRect();
+    dragState.current = {
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+    };
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!dragState.current || !panel) return;
+      let x = ev.clientX - dragState.current.offsetX;
+      let y = ev.clientY - dragState.current.offsetY;
+      // Clamp within viewport
+      const maxX = window.innerWidth - panel.offsetWidth;
+      const maxY = window.innerHeight - panel.offsetHeight;
+      x = Math.max(0, Math.min(x, maxX));
+      y = Math.max(0, Math.min(y, maxY));
+      panel.style.left = `${x}px`;
+      panel.style.top = `${y}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+    };
+
+    const onMouseUp = () => {
+      dragState.current = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      // Persist final position
+      if (panel) {
+        const rect = panel.getBoundingClientRect();
+        try {
+          localStorage.setItem(SWARM_PANEL_POS_KEY, JSON.stringify({ x: rect.left, y: rect.top }));
+        } catch { /* ignore */ }
+      }
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className="fixed bottom-4 right-4 z-40 w-[460px]"
+      onMouseDown={handleMouseDown}
+    >
+      <SwarmPanel />
+    </div>
+  );
+}
 
 /**
  * ChatBrowserWorkspaceShell component
@@ -47,6 +131,11 @@ export function ChatBrowserWorkspaceShell() {
   const pendingPermission = permissionQueue[0];
   const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
+
+  // Questionnaire state
+  const activeQuestionnaire = useUIStore((s) => s.activeQuestionnaire);
+  const submitQuestionnaire = useUIStore((s) => s.submitQuestionnaire);
+  const clearQuestionnaire = useUIStore((s) => s.clearQuestionnaire);
 
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
@@ -282,10 +371,8 @@ export function ChatBrowserWorkspaceShell() {
         </div>
       )}
 
-      {/* Swarm Runtime Panel — floating overlay for swarm observability */}
-      <div className="fixed bottom-4 right-4 z-40 w-[460px]">
-        <SwarmPanel />
-      </div>
+      {/* Swarm Runtime Panel — floating overlay for swarm observability, draggable */}
+      <SwarmPanelDraggable />
 
       {/* Permission Modal — Ask mode tool confirmation (fixed overlay, always on top) */}
       {pendingPermission && (
@@ -293,6 +380,15 @@ export function ChatBrowserWorkspaceShell() {
           permission={pendingPermission}
           onApprove={handleApprovePermission}
           onDeny={handleDenyPermission}
+        />
+      )}
+
+      {/* Questionnaire Modal — AskUserQuestion tool interactive form */}
+      {activeQuestionnaire && (
+        <QuestionnaireCard
+          data={activeQuestionnaire}
+          onSubmit={submitQuestionnaire}
+          onCancel={clearQuestionnaire}
         />
       )}
     </MainLayout>

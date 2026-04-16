@@ -68,7 +68,8 @@ fn row_to_token_usage(row: &Row) -> SqliteResult<DbTokenUsage> {
         input_tokens: row.get(3)?,
         output_tokens: row.get(4)?,
         model: row.get(5)?,
-        created_at: row.get(6)?,
+        api_config_id: row.get(6)?,
+        created_at: row.get(7)?,
     })
 }
 
@@ -134,6 +135,7 @@ pub struct DbTokenUsage {
     pub input_tokens: i32,
     pub output_tokens: i32,
     pub model: String,
+    pub api_config_id: Option<String>,
     pub created_at: i64,
 }
 
@@ -262,6 +264,22 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 [],
             )?;
         }
+        3 => {
+            // Add api_config_id column to token_usage for per-API-key tracking
+            let _ = conn.execute(
+                "ALTER TABLE token_usage ADD COLUMN api_config_id TEXT",
+                [],
+            );
+            // Index for efficient per-key queries
+            let _ = conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_token_usage_api_config ON token_usage(api_config_id)",
+                [],
+            );
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (3, strftime('%s','now'))",
+                [],
+            )?;
+        }
         _ => {
             eprintln!("⚠️  Unknown migration version {}", version);
         }
@@ -278,7 +296,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
  * `LATEST_VERSION`.
  */
 pub fn init_database() -> SqliteResult<()> {
-    const LATEST_VERSION: i64 = 2;
+    const LATEST_VERSION: i64 = 3;
 
     let db_path = get_db_path();
     println!("📂 Database path: {:?}", db_path);
@@ -560,8 +578,8 @@ pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT INTO token_usage (id, session_id, date, input_tokens, output_tokens, model, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO token_usage (id, session_id, date, input_tokens, output_tokens, model, api_config_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 usage.id,
                 usage.session_id,
@@ -569,6 +587,7 @@ pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
                 usage.input_tokens,
                 usage.output_tokens,
                 usage.model,
+                usage.api_config_id,
                 usage.created_at
             ],
         )?;
@@ -612,24 +631,39 @@ pub struct ModelTokenStats {
 /**
  * Get daily token stats for a specific month
  */
-pub fn get_daily_token_stats(year_month: &str) -> SqliteResult<Vec<DailyTokenStats>> {
+pub fn get_daily_token_stats(year_month: &str, api_config_id: Option<&str>) -> SqliteResult<Vec<DailyTokenStats>> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     let mut stats = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
-        let mut stmt = conn.prepare(
-            "SELECT date, 
-                    SUM(input_tokens) as total_input, 
-                    SUM(output_tokens) as total_output,
-                    SUM(input_tokens + output_tokens) as total
-             FROM token_usage 
-             WHERE date LIKE ?1 
-             GROUP BY date 
-             ORDER BY date DESC",
-        )?;
-
         let pattern = format!("{}%", year_month);
-        let rows = stmt.query_map(params![pattern], |row| {
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match api_config_id {
+            Some(config_id) => (
+                "SELECT date, 
+                        SUM(input_tokens) as total_input, 
+                        SUM(output_tokens) as total_output,
+                        SUM(input_tokens + output_tokens) as total
+                 FROM token_usage 
+                 WHERE date LIKE ?1 AND api_config_id = ?2
+                 GROUP BY date 
+                 ORDER BY date DESC".to_string(),
+                vec![Box::new(pattern) as Box<dyn rusqlite::types::ToSql>, Box::new(config_id.to_string())],
+            ),
+            None => (
+                "SELECT date, 
+                        SUM(input_tokens) as total_input, 
+                        SUM(output_tokens) as total_output,
+                        SUM(input_tokens + output_tokens) as total
+                 FROM token_usage 
+                 WHERE date LIKE ?1
+                 GROUP BY date 
+                 ORDER BY date DESC".to_string(),
+                vec![Box::new(pattern) as Box<dyn rusqlite::types::ToSql>],
+            ),
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(DailyTokenStats {
                 date: row.get(0)?,
                 input_tokens: row.get(1)?,
@@ -649,22 +683,37 @@ pub fn get_daily_token_stats(year_month: &str) -> SqliteResult<Vec<DailyTokenSta
 /**
  * Get monthly token stats
  */
-pub fn get_monthly_token_stats() -> SqliteResult<Vec<DailyTokenStats>> {
+pub fn get_monthly_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<DailyTokenStats>> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     let mut stats = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
-        let mut stmt = conn.prepare(
-            "SELECT SUBSTR(date, 1, 7) as month,
-                    SUM(input_tokens) as total_input,
-                    SUM(output_tokens) as total_output,
-                    SUM(input_tokens + output_tokens) as total
-             FROM token_usage
-             GROUP BY month
-             ORDER BY month DESC",
-        )?;
-
-        let rows = stmt.query_map([], |row| {
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match api_config_id {
+            Some(config_id) => (
+                "SELECT SUBSTR(date, 1, 7) as month,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        SUM(input_tokens + output_tokens) as total
+                 FROM token_usage
+                 WHERE api_config_id = ?1
+                 GROUP BY month
+                 ORDER BY month DESC".to_string(),
+                vec![Box::new(config_id.to_string()) as Box<dyn rusqlite::types::ToSql>],
+            ),
+            None => (
+                "SELECT SUBSTR(date, 1, 7) as month,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        SUM(input_tokens + output_tokens) as total
+                 FROM token_usage
+                 GROUP BY month
+                 ORDER BY month DESC".to_string(),
+                vec![],
+            ),
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(DailyTokenStats {
                 date: row.get(0)?,
                 input_tokens: row.get(1)?,
@@ -684,22 +733,37 @@ pub fn get_monthly_token_stats() -> SqliteResult<Vec<DailyTokenStats>> {
 /**
  * Get token stats by model
  */
-pub fn get_model_token_stats() -> SqliteResult<Vec<ModelTokenStats>> {
+pub fn get_model_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<ModelTokenStats>> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     let mut stats = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
-        let mut stmt = conn.prepare(
-            "SELECT model,
-                    SUM(input_tokens) as total_input,
-                    SUM(output_tokens) as total_output,
-                    SUM(input_tokens + output_tokens) as total
-             FROM token_usage
-             GROUP BY model
-             ORDER BY total DESC",
-        )?;
-
-        let rows = stmt.query_map([], |row| {
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match api_config_id {
+            Some(config_id) => (
+                "SELECT model,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        SUM(input_tokens + output_tokens) as total
+                 FROM token_usage
+                 WHERE api_config_id = ?1
+                 GROUP BY model
+                 ORDER BY total DESC".to_string(),
+                vec![Box::new(config_id.to_string()) as Box<dyn rusqlite::types::ToSql>],
+            ),
+            None => (
+                "SELECT model,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        SUM(input_tokens + output_tokens) as total
+                 FROM token_usage
+                 GROUP BY model
+                 ORDER BY total DESC".to_string(),
+                vec![],
+            ),
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(ModelTokenStats {
                 model: row.get(0)?,
                 input_tokens: row.get(1)?,
@@ -719,18 +783,30 @@ pub fn get_model_token_stats() -> SqliteResult<Vec<ModelTokenStats>> {
 /**
  * Get total token stats
  */
-pub fn get_total_token_stats() -> SqliteResult<(i64, i64, i64)> {
+pub fn get_total_token_stats(api_config_id: Option<&str>) -> SqliteResult<(i64, i64, i64)> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
 
     if let Some(conn) = guard.as_ref() {
-        let mut stmt = conn.prepare(
-            "SELECT COALESCE(SUM(input_tokens), 0),
-                    COALESCE(SUM(output_tokens), 0),
-                    COALESCE(SUM(input_tokens + output_tokens), 0)
-             FROM token_usage",
-        )?;
-
-        let row = stmt.query_row([], |row| {
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match api_config_id {
+            Some(config_id) => (
+                "SELECT COALESCE(SUM(input_tokens), 0),
+                        COALESCE(SUM(output_tokens), 0),
+                        COALESCE(SUM(input_tokens + output_tokens), 0)
+                 FROM token_usage
+                 WHERE api_config_id = ?1".to_string(),
+                vec![Box::new(config_id.to_string()) as Box<dyn rusqlite::types::ToSql>],
+            ),
+            None => (
+                "SELECT COALESCE(SUM(input_tokens), 0),
+                        COALESCE(SUM(output_tokens), 0),
+                        COALESCE(SUM(input_tokens + output_tokens), 0)
+                 FROM token_usage".to_string(),
+                vec![],
+            ),
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let row = stmt.query_row(params_refs.as_slice(), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, i64>(1)?,
