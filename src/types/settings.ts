@@ -362,6 +362,7 @@ export interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
   model: string;
+  api_config_id: string | null;
   created_at: number;
 }
 

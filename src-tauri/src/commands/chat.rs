@@ -312,6 +312,7 @@ pub async fn execute_tool(
     arguments: String,
     work_dir: Option<String>,
     browser_state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
+    font_state: tauri::State<'_, crate::FontDbState>,
 ) -> AppResult<String> {
     println!("🔧 Executing tool: {} with args: {}", tool_name, arguments);
 
@@ -620,6 +621,56 @@ pub async fn execute_tool(
             }
         }
 
+        "Skill" => {
+            let skill_name = args.get("skill")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'skill' argument for Skill".to_string()))?;
+            
+            match crate::commands::skill::execute_skill(skill_name.to_string(), work_dir.clone()).await {
+                Ok(res) => serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()),
+                Err(e) => format!("ERROR: Failed to execute skill: {}", e),
+            }
+        }
+
+        "render_typst_to_svg" => {
+            let source = args.get("source")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'source' argument for render_typst_to_svg".to_string()))?;
+            let book = font_state.prebuilt.book.clone();
+            let fonts = font_state.prebuilt.fonts.clone();
+            let source_owned = source.to_string();
+            let svg = tokio::task::spawn_blocking(move || {
+                let prebuilt = crate::utils::typst::PrebuiltFonts { book, fonts };
+                crate::utils::typst::compile_typst_to_svg_with_prebuilt(&source_owned, &prebuilt)
+            })
+            .await
+            .map_err(|e| AppError::InternalError(format!("Thread error: {}", e)))?
+            .map_err(|e| AppError::InternalError(format!("Typst compilation failed: {}", e)))?;
+            serde_json::json!({ "svg": svg }).to_string()
+        }
+
+        "render_typst_to_pdf" => {
+            let source = args.get("source")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'source' argument for render_typst_to_pdf".to_string()))?;
+            let file_path = args.get("file_path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'file_path' argument for render_typst_to_pdf".to_string()))?;
+            let book = font_state.prebuilt.book.clone();
+            let fonts = font_state.prebuilt.fonts.clone();
+            let source_owned = source.to_string();
+            let pdf_bytes = tokio::task::spawn_blocking(move || {
+                let prebuilt = crate::utils::typst::PrebuiltFonts { book, fonts };
+                crate::utils::typst::compile_typst_to_pdf_with_prebuilt(&source_owned, &prebuilt)
+            })
+            .await
+            .map_err(|e| AppError::InternalError(format!("Thread error: {}", e)))?
+            .map_err(|e| AppError::InternalError(format!("Typst compilation failed: {}", e)))?;
+            std::fs::write(&file_path, pdf_bytes)
+                .map_err(|e| AppError::InternalError(format!("Failed to write PDF: {}", e)))?;
+            serde_json::json!({ "file_path": file_path, "message": format!("PDF saved to {}", file_path) }).to_string()
+        }
+
         // 第一层防御：unknown tool 返回合法 JSON，让 Claude 自己 fallback 到文本回复
         _ => {
             let supported_tools = vec![
@@ -627,7 +678,8 @@ pub async fn execute_tool(
                 "create_directory", "code_execution", "search_files", "glob_search",
                 "grep_files", "get_current_workspace",
                 "browser_navigate", "browser_get_page", "browser_click", "browser_type",
-                "browser_scroll", "browser_get_text"
+                "browser_scroll", "browser_get_text", "Skill",
+                "render_typst_to_svg", "render_typst_to_pdf"
             ];
             return Ok(serde_json::json!({
                 "error": true,

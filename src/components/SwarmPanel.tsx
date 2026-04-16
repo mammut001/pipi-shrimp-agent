@@ -377,34 +377,43 @@ export function SwarmPanel() {
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-      <button
-        onClick={() => store.togglePanel()}
-        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-gray-50 transition-colors"
-      >
-        <span className="text-sm font-bold text-black flex-1 text-left">
-          🪼 Swarm Runtime
+      <div className="flex items-center" data-drag-handle>
+        {/* Drag handle — grab to reposition */}
+        <span
+          className="pl-3 pr-1 py-3 text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing select-none"
+          title="拖动移动面板"
+        >
+          ⠿
         </span>
-        <div className="flex items-center gap-2">
-          {activeAgentCount > 0 && (
-            <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-medium">
-              {activeAgentCount} active
-            </span>
-          )}
-          {totalUnreadCount > 0 && (
-            <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
-              {totalUnreadCount} unread
-            </span>
-          )}
-          {totalPendingPermissions > 0 && (
-            <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
-              {totalPendingPermissions} perms
-            </span>
-          )}
-        </div>
-        <span className="text-black text-xs">
-          {panelExpanded ? '▲' : '▼'}
-        </span>
-      </button>
+        <button
+          onClick={() => store.togglePanel()}
+          className="flex-1 flex items-center gap-2 px-3 py-3 hover:bg-gray-50 transition-colors"
+        >
+          <span className="text-sm font-bold text-black flex-1 text-left">
+            🪼 Swarm Runtime
+          </span>
+          <div className="flex items-center gap-2">
+            {activeAgentCount > 0 && (
+              <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-medium">
+                {activeAgentCount} active
+              </span>
+            )}
+            {totalUnreadCount > 0 && (
+              <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                {totalUnreadCount} unread
+              </span>
+            )}
+            {totalPendingPermissions > 0 && (
+              <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
+                {totalPendingPermissions} perms
+              </span>
+            )}
+          </div>
+          <span className="text-black text-xs">
+            {panelExpanded ? '▲' : '▼'}
+          </span>
+        </button>
+      </div>
 
       {panelExpanded && (
         <div className="border-t border-gray-100">

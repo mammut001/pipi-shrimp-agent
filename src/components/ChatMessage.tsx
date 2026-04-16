@@ -9,7 +9,7 @@
  * - Timestamp display
  */
 
-import { memo, useState } from 'react';
+import { memo, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -51,9 +51,20 @@ const formatTimestamp = (timestamp: number): string => {
  */
 export const ChatMessage = memo(function ChatMessage({ message, isLatest = false, isStreaming = false, onTypstPreview }: ChatMessageProps) {
   const isUser = message.role === 'user';
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyMessage = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy message:', err);
+    }
+  }, [message.content]);
 
   return (
-    <div className={`py-4 px-4 max-w-full overflow-hidden ${isUser ? 'bg-gray-50' : 'bg-white'}`}
+    <div className={`group/msg py-4 px-4 max-w-full overflow-hidden ${isUser ? 'bg-gray-50' : 'bg-white'}`}
     >
       <div className="max-w-3xl mx-auto">
         <div className="flex gap-4">
@@ -100,6 +111,25 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
               <span className="text-xs text-gray-400">
                 {formatTimestamp(message.timestamp)}
               </span>
+              {/* Copy button for assistant messages */}
+              {!isUser && message.content && (
+                <button
+                  onClick={handleCopyMessage}
+                  className="opacity-0 group-hover/msg:opacity-100 transition-opacity p-1 text-gray-400 hover:text-gray-600 rounded"
+                  title={copied ? 'Copied!' : 'Copy message'}
+                >
+                  {copied ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-green-500" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                      <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                    </svg>
+                  )}
+                </button>
+              )}
             </div>
 
             {/* AI Reasoning Block */}

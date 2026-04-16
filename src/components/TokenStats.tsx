@@ -38,6 +38,7 @@ export function TokenStats() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>('all');
   const [dailyStats, setDailyStats] = useState<DailyStatsWithCost[]>([]);
   const [monthlyStats, setMonthlyStats] = useState<DailyStatsWithCost[]>([]);
   const [modelStats, setModelStats] = useState<ModelStatsWithCost[]>([]);
@@ -52,6 +53,8 @@ export function TokenStats() {
     getTotalTokenStats,
     resetTokenEstimate,
   } = useChatStore();
+
+  const apiConfigs = useSettingsStore((s) => s.apiConfigs);
 
   const handleResetTokenEstimate = async () => {
     if (resetting) return;
@@ -86,12 +89,13 @@ export function TokenStats() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    const filterConfigId = selectedApiConfigId === 'all' ? undefined : selectedApiConfigId;
     try {
       const [daily, monthly, model, total] = await Promise.all([
-        getDailyTokenStats(selectedMonth),
-        getMonthlyTokenStats(),
-        getModelTokenStats(),
-        getTotalTokenStats(),
+        getDailyTokenStats(selectedMonth, filterConfigId),
+        getMonthlyTokenStats(filterConfigId),
+        getModelTokenStats(filterConfigId),
+        getTotalTokenStats(filterConfigId),
       ]);
 
       // Calculate costs for daily stats (using default model pricing as approximation)
@@ -132,7 +136,7 @@ export function TokenStats() {
     } finally {
       setLoading(false);
     }
-  }, [selectedMonth, getDailyTokenStats, getMonthlyTokenStats, getModelTokenStats, getTotalTokenStats, getModelPricing, calculateStatsCost]);
+  }, [selectedMonth, selectedApiConfigId, getDailyTokenStats, getMonthlyTokenStats, getModelTokenStats, getTotalTokenStats, getModelPricing, calculateStatsCost]);
 
   useEffect(() => {
     loadData();
@@ -173,6 +177,24 @@ export function TokenStats() {
               {resetting ? t('token.loading') : t('token.resetStats')}
             </button>
          </div>
+
+         {/* API Key Selector */}
+         {apiConfigs.length > 1 && (
+           <div className="mt-2">
+             <select
+               value={selectedApiConfigId}
+               onChange={(e) => setSelectedApiConfigId(e.target.value)}
+               className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-md bg-gray-50 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+             >
+               <option value="all">{t('token.allApiKeys') || '全部 API Key'}</option>
+               {apiConfigs.map((config) => (
+                 <option key={config.id} value={config.id}>
+                   {config.name} ({config.provider})
+                 </option>
+               ))}
+             </select>
+           </div>
+         )}
        </div>
 
       {/* Total Stats Card */}

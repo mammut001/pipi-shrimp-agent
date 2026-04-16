@@ -22,6 +22,8 @@ interface TypstPreviewProps {
   rawContent: string;
   /** Optional className for container styling */
   className?: string;
+  /** Optional output directory — when set, PDF exports save here directly */
+  outputDir?: string;
 }
 
 /**
@@ -46,7 +48,7 @@ function useDebounce<T>(value: T, delay: number): T {
 /**
  * TypstPreview - Renders Typst content as SVG with real-time preview
  */
-export function TypstPreview({ rawContent, className = '' }: TypstPreviewProps) {
+export function TypstPreview({ rawContent, className = '', outputDir }: TypstPreviewProps) {
   const [svgContent, setSvgContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -202,20 +204,27 @@ export function TypstPreview({ rawContent, className = '' }: TypstPreviewProps) 
 
     setIsExporting(true);
     try {
-      // First, open folder selection dialog
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: 'Select folder to save PDF',
-      });
+      let folderPath: string | undefined;
 
-      if (!selected) {
-        // User cancelled the dialog
-        setIsExporting(false);
-        return;
+      if (outputDir) {
+        // Use session output directory directly
+        folderPath = outputDir;
+      } else {
+        // Fall back to folder selection dialog
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select folder to save PDF',
+        });
+
+        if (!selected) {
+          setIsExporting(false);
+          return;
+        }
+
+        folderPath = Array.isArray(selected) ? selected[0] : selected;
       }
 
-      const folderPath = Array.isArray(selected) ? selected[0] : selected;
       if (folderPath) {
         // Generate timestamp-based filename
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -234,7 +243,7 @@ export function TypstPreview({ rawContent, className = '' }: TypstPreviewProps) 
     } finally {
       setIsExporting(false);
     }
-  }, [rawContent]);
+  }, [rawContent, outputDir]);
 
   return (
     <div className={`flex flex-col ${className}`}>

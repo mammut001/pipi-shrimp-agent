@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { BaseTool, ToolContext, ToolResult } from '../base/Tool';
+import { useUIStore } from '../../store/uiStore';
+import type { TaskStep } from '../../types/ui';
 
 /**
  * TodoWriteTool - 管理 Todo 列表
@@ -20,6 +22,20 @@ export class TodoWriteTool extends BaseTool<TodoWriteInput, TodoWriteOutput> {
   async execute(input: TodoWriteInput, _context: ToolContext): Promise<ToolResult<TodoWriteOutput>> {
     // Store todos in-memory
     todoStore.write(input.todos);
+
+    // Sync to UI progress panel
+    const statusMap: Record<string, TaskStep['status']> = {
+      pending: 'pending',
+      in_progress: 'running',
+      completed: 'done',
+    };
+    const steps: TaskStep[] = input.todos.map((todo, idx) => ({
+      id: `todo-${idx}-${todo.content.slice(0, 20)}`,
+      label: todo.content,
+      status: statusMap[todo.status] ?? 'pending',
+    }));
+    useUIStore.getState().setTaskProgress(steps);
+
     return {
       success: true,
       data: {

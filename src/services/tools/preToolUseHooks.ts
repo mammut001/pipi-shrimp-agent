@@ -162,6 +162,10 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
     // Check denial history
     const denialCheck = defaultDenialTracker.shouldDenyBasedOnHistory(request);
     if (denialCheck.shouldDeny) {
+      // In standard (ASK) mode, let the permission UI handle it
+      if (ctx.permissionMode === 'standard') {
+        return { approved: true };
+      }
       defaultDenialTracker.recordDenial(
         ctx.sessionId,
         request,
@@ -178,6 +182,12 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
 
     // Handle decision
     if (!decision.approved) {
+      // In standard (ASK) mode, only hard-block critical risk.
+      // Medium/high risk should pass through to the permission UI.
+      if (ctx.permissionMode === 'standard' && decision.riskLevel !== 'critical') {
+        // Let the permission UI handle user approval
+        return { approved: true };
+      }
       defaultDenialTracker.recordDenial(
         ctx.sessionId,
         request,
@@ -242,6 +252,11 @@ export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult>
     );
 
     if (classification.requiresApproval) {
+      // In standard (ASK) mode, only hard-block critical risk.
+      // Other risky commands should pass through to the permission UI.
+      if (ctx.permissionMode === 'standard' && classification.riskLevel !== 'critical') {
+        return { approved: true };
+      }
       return {
         approved: false,
         error: `Shell command blocked: ${classification.reasoning}`,

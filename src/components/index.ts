@@ -16,6 +16,9 @@ export { ChatImage } from './ChatImage';
 // Modal components
 export { PermissionModal } from './PermissionModal';
 
+// Questionnaire
+export { QuestionnaireCard } from './QuestionnaireCard';
+
 // Feedback components
 export { NotificationToast } from './NotificationToast';
 

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::{ToolCallRequest, ToolCallResult, ToolMetadata};
+use crate::commands::path_security::validate_path;
 use jsonschema::{JSONSchema, ValidationError};
 
 /// Tool handler: receives parsed JSON arguments, returns result string
@@ -167,6 +168,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            validate_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
             std::fs::read_to_string(path)
                 .map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))
         }),
@@ -199,6 +203,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let content = args.get("content")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: content"))?;
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            validate_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
 
             // Ensure parent directory exists
             if let Some(parent) = std::path::Path::new(path).parent() {
@@ -242,6 +249,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            validate_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
 
             let dir = std::path::Path::new(path);
             if !dir.exists() {
@@ -291,6 +301,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            validate_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
             std::fs::create_dir_all(path)
                 .map_err(|e| anyhow::anyhow!("Cannot create directory '{}': {}", path, e))?;
             Ok(format!("Directory created: {}", path))
@@ -321,6 +334,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            validate_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
             let exists = std::path::Path::new(path).exists();
             let is_dir = std::path::Path::new(path).is_dir();
             let is_file = std::path::Path::new(path).is_file();
@@ -356,6 +372,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or(".");
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            validate_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
 
             let output = std::process::Command::new("rg")
                 .arg("--line-number")

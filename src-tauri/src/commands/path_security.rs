@@ -36,7 +36,6 @@ const BLOCKED_FILES: &[&str] = &[
     "/etc/sudoers",
     "/etc/ssh/sshd_config",
     "/etc/hosts",
-    "/etc/hosts",
 ];
 
 #[derive(Debug)]

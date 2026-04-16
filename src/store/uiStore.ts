@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { UIState, PermissionRequest, Notification, BrowserDockMode, SplitFocus } from '../types/ui';
+import type { UIState, PermissionRequest, Notification, BrowserDockMode, SplitFocus, QuestionnaireData } from '../types/ui';
 import { NOTIFICATION_TIMEOUT } from '../types/ui';
 
 /**
@@ -29,6 +29,9 @@ const getInitialCurrentView = (): 'chat' | 'workflow' | 'skill' | 'browser' => {
 
 // Promise resolver for the Chrome connect prompt (module-level, one at a time)
 let _chromePromptResolver: ((useCdp: boolean) => void) | null = null;
+
+// Promise resolver for questionnaire (module-level, one at a time)
+let _questionnaireResolver: ((response: string) => void) | null = null;
 
 /**
  * UI store using Zustand
@@ -58,6 +61,9 @@ export const useUIStore = create<UIState>((set) => ({
   // Chrome connect prompt
   chromePromptVisible: false,
   chromePromptTargetUrl: null,
+
+  // Questionnaire state
+  activeQuestionnaire: null,
 
   // Project Analysis State
   isAnalyzingProject: false,
@@ -189,6 +195,7 @@ export const useUIStore = create<UIState>((set) => ({
   updateTaskStep: (id, status) => set((state) => ({
     taskProgress: state.taskProgress.map(step => step.id === id ? { ...step, status } : step)
   })),
+  setTaskProgress: (steps) => set({ taskProgress: steps }),
   clearTaskProgress: () => set({ taskProgress: [] }),
   setAgentPanelTab: (tab) => set({ agentPanelTab: tab }),
 
@@ -247,6 +254,30 @@ export const useUIStore = create<UIState>((set) => ({
     if (_chromePromptResolver) {
       _chromePromptResolver(useCdp);
       _chromePromptResolver = null;
+    }
+  },
+
+  // Questionnaire actions: show form and return a promise resolved by user's submission
+  showQuestionnaire: (data: Omit<QuestionnaireData, '_resolve'>): Promise<string> => {
+    return new Promise((resolve) => {
+      _questionnaireResolver = resolve;
+      set({ activeQuestionnaire: { ...data, _resolve: resolve } });
+    });
+  },
+
+  submitQuestionnaire: (response: string) => {
+    set({ activeQuestionnaire: null });
+    if (_questionnaireResolver) {
+      _questionnaireResolver(response);
+      _questionnaireResolver = null;
+    }
+  },
+
+  clearQuestionnaire: () => {
+    set({ activeQuestionnaire: null });
+    if (_questionnaireResolver) {
+      _questionnaireResolver(JSON.stringify({ _cancelled: true }));
+      _questionnaireResolver = null;
     }
   },
 

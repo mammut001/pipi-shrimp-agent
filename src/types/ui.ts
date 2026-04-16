@@ -27,7 +27,7 @@ export interface PermissionRequest {
 /** Notification item */
 export interface Notification {
   id: string;
-  type: 'info' | 'success' | 'warning' | 'error';
+  type: 'info' | 'success' | 'warning' | 'error' | 'skill';
   message: string;
   timestamp?: number;
 }
@@ -37,6 +37,25 @@ export interface TaskStep {
   id: string;
   label: string;
   status: 'pending' | 'running' | 'done' | 'failed';
+}
+
+/** Questionnaire field definition */
+export interface QuestionnaireField {
+  id: string;
+  label: string;
+  type: 'text' | 'textarea' | 'select' | 'boolean';
+  required: boolean;
+  placeholder?: string;
+  options?: string[];
+}
+
+/** Active questionnaire data */
+export interface QuestionnaireData {
+  toolCallId: string;
+  title: string;
+  description: string;
+  fields: QuestionnaireField[];
+  _resolve?: (response: string) => void;
 }
 
 /** Project fingerprint - result from project analysis */
@@ -80,6 +99,12 @@ export interface UIState {
   chromePromptTargetUrl: string | null;
   showChromePrompt: (targetUrl: string) => Promise<boolean>;
   resolveChromePrompt: (useCdp: boolean) => void;
+
+  // Questionnaire state
+  activeQuestionnaire: QuestionnaireData | null;
+  showQuestionnaire: (data: Omit<QuestionnaireData, '_resolve'>) => Promise<string>;
+  submitQuestionnaire: (response: string) => void;
+  clearQuestionnaire: () => void;
 
   // Project Analysis State
   isAnalyzingProject: boolean;
@@ -160,6 +185,7 @@ export interface UIState {
   setAgentInstructions: (instructions: string) => void;
   addTaskStep: (label: string, id?: string) => void;
   updateTaskStep: (id: string, status: TaskStep['status']) => void;
+  setTaskProgress: (steps: TaskStep[]) => void;
   clearTaskProgress: () => void;
   setAgentPanelTab: (tab: UIState['agentPanelTab']) => void;
 

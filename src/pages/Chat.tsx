@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { ChatMessage, ChatInput, PermissionModal } from '@/components';
+import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard } from '@/components';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, processMessagesForDisplay } from '@/utils/chat';
@@ -72,6 +72,11 @@ export function Chat() {
   const pendingPermission = permissionQueue[0];   // undefined when queue is empty
   const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
+
+  // Questionnaire state
+  const activeQuestionnaire = useUIStore((s) => s.activeQuestionnaire);
+  const submitQuestionnaire = useUIStore((s) => s.submitQuestionnaire);
+  const clearQuestionnaire = useUIStore((s) => s.clearQuestionnaire);
 
   // Memoized: filter out internal tool-result messages
   const rawMessages = currentMessages();
@@ -327,6 +332,15 @@ export function Chat() {
             permission={pendingPermission}
             onApprove={handleApprovePermission}
             onDeny={handleDenyPermission}
+          />
+        )}
+
+        {/* Questionnaire Modal */}
+        {activeQuestionnaire && (
+          <QuestionnaireCard
+            data={activeQuestionnaire}
+            onSubmit={submitQuestionnaire}
+            onCancel={clearQuestionnaire}
           />
         )}
       </div>

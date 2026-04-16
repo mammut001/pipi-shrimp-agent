@@ -2,17 +2,15 @@ import { z } from 'zod';
 import { BaseTool, ToolContext, ToolResult } from '../base/Tool';
 
 /**
- * AskUserQuestionTool - 向用户提问
+ * AskUserQuestionTool - 向用户提问（通过结构化表单）
  *
- * Prompts the user with a question and optional predefined choices.
- * Based on Claude Code's AskUserQuestionTool.
- *
- * Note: In a Tauri/React context, this publishes an event that the UI listens to.
+ * Presents a structured questionnaire form to the user.
+ * The form is intercepted by chatStore and rendered as a QuestionnaireCard.
  */
 export class AskUserQuestionTool extends BaseTool<AskUserQuestionInput, AskUserQuestionOutput> {
   readonly name = 'AskUserQuestion';
   readonly aliases = ['AskUser', 'Question'];
-  readonly searchHint = 'ask user question clarify input';
+  readonly searchHint = 'ask user question clarify input form questionnaire';
   readonly maxResultSizeChars = 10000;
   readonly shouldDefer = false;
   readonly alwaysLoad = true;
@@ -21,20 +19,18 @@ export class AskUserQuestionTool extends BaseTool<AskUserQuestionInput, AskUserQ
   readonly outputSchema = AskUserQuestionOutputSchema;
 
   async execute(input: AskUserQuestionInput, _context: ToolContext): Promise<ToolResult<AskUserQuestionOutput>> {
-    // Emit an event/signal to the UI layer asking for user input.
-    // The actual response will come back via the chat input.
-    // For now, we return a placeholder that signals the UI to handle it.
+    // This tool is intercepted by chatStore before reaching here.
+    // If it somehow reaches here, return a placeholder.
     return {
       success: true,
       data: {
-        response: `[Awaiting user response to: "${input.question}"]`,
-        selectedOption: undefined
+        response: `[Awaiting user response to questionnaire: "${input.title}"]`,
       }
     };
   }
 
   async describe(): Promise<string> {
-    return `Ask the user a clarifying question. Use when you need more information to proceed.`;
+    return `Present a structured questionnaire form to the user to collect multiple pieces of information at once. Use this when you need several related inputs (e.g., resume details, project setup, profile information) instead of asking questions one by one in chat. The form will be displayed as an interactive UI. The user's responses will be returned as a JSON object keyed by field id.`;
   }
 
   isConcurrencySafe(): boolean { return false; }
@@ -43,14 +39,23 @@ export class AskUserQuestionTool extends BaseTool<AskUserQuestionInput, AskUserQ
 
 // ============== Schema ==============
 
+const QuestionnaireFieldSchema = z.object({
+  id: z.string().describe('Unique key for this field (e.g., "education", "work_experience")'),
+  label: z.string().describe('User-facing label or question for this field'),
+  type: z.enum(['text', 'textarea', 'select', 'boolean']).describe('Input type: text for short answers, textarea for long answers, select for dropdown, boolean for yes/no'),
+  required: z.boolean().describe('Whether this field must be filled out'),
+  placeholder: z.string().optional().describe('Optional placeholder text for the input'),
+  options: z.array(z.string()).optional().describe('Options for select type fields'),
+});
+
 export const AskUserQuestionInputSchema = z.object({
-  question: z.string().describe('Question to ask the user'),
-  options: z.array(z.string()).optional().describe('Predefined answer options')
+  title: z.string().describe('Title of the questionnaire form'),
+  description: z.string().describe('Brief explanation of why this information is needed'),
+  fields: z.array(QuestionnaireFieldSchema).describe('List of form fields to present to the user'),
 });
 
 export const AskUserQuestionOutputSchema = z.object({
-  response: z.string().describe('The user\'s response'),
-  selectedOption: z.string().optional().describe('The selected option if options were provided')
+  response: z.string().describe('The user\'s response as a JSON object'),
 });
 
 export type AskUserQuestionInput = z.infer<typeof AskUserQuestionInputSchema>;

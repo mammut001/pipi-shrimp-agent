@@ -294,7 +294,7 @@ export const AgentPanel: React.FC = () => {
       {/* Tab content: Typst Preview */}
       {activeTab === 'typst-preview' && (
         <div className="flex-1 overflow-hidden p-3">
-          <TypstPreview rawContent={previewContent} className="h-full" />
+          <TypstPreview rawContent={previewContent} className="h-full" outputDir={currentSession?.outputDir} />
         </div>
       )}
 

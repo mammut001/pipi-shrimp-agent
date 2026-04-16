@@ -63,9 +63,18 @@ fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult
 /// This is a defence-in-depth measure — the AI system prompt also restricts these,
 /// but we enforce it at the code level too.
 fn check_command_safety(command: &str) -> AppResult<()> {
+    // Normalize whitespace for pattern matching (collapse runs of spaces/tabs)
+    let normalized: String = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = normalized.to_lowercase();
+
+    // Patterns checked against normalized lowercase form to prevent trivial bypasses
+    // (e.g. extra spaces, mixed case). Regex-level checks are in the TypeScript layer;
+    // this is a last-resort Rust guard.
     let blocked_patterns = [
         "rm -rf /",
         "rm -rf ~",
+        "rm -r /",
+        "rm -r ~",
         "mkfs",
         "dd if=",
         "> /dev/sda",
@@ -77,7 +86,6 @@ fn check_command_safety(command: &str) -> AppResult<()> {
         "halt",
         "poweroff",
     ];
-    let lower = command.to_lowercase();
     for pattern in &blocked_patterns {
         if lower.contains(pattern) {
             return Err(AppError::ProcessError(format!(

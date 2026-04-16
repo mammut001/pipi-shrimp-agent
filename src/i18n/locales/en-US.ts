@@ -109,6 +109,7 @@ const enUS: TranslationKeys = {
   'token.usageStats': 'Token Usage Statistics',
   'token.viewConsumption': 'View your API token consumption and cost estimates',
   'token.resetStats': 'Reset Stats',
+  'token.allApiKeys': 'All API Keys',
   'token.totalCostLabel': 'Total Estimated Cost',
   'token.totalInput': 'Total Input',
   'token.totalOutput': 'Total Output',
