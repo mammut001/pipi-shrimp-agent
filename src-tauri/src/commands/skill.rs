@@ -62,30 +62,39 @@ pub async fn execute_skill(
         });
     }
 
-    // Build path to SKILL.md - skillName maps to subdirectory under src/skills/
-    let mut skill_path = PathBuf::from("src/skills");
-    skill_path.push(&skillName);
-    skill_path.push("SKILL.md");
-
-    // Read the skill file
-    match tokio::fs::read_to_string(&skill_path).await {
-        Ok(content) => {
-            // Return the skill content for frontend to process
-            // Frontend will handle actual skill execution logic
-            Ok(SkillResult {
-                success: true,
-                status: Some("inline".to_string()),
-                output: Some(content),
-                ..Default::default()
-            })
+    // Try multiple candidate base directories to handle different CWDs
+    // (dev mode binary CWD varies: project root vs src-tauri vs app bundle)
+    let candidate_bases: Vec<PathBuf> = {
+        let mut bases = vec![
+            // Relative: works if CWD is project root
+            PathBuf::from("src/skills"),
+            // Relative: works if CWD is src-tauri/
+            PathBuf::from("../src/skills"),
+            // Tauri-bundled skills dir (production bundle and dev src-tauri/)
+            PathBuf::from("skills"),
+            PathBuf::from("../skills"),
+        ];
+        // Also try relative to the binary location
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                bases.push(exe_dir.join("skills"));
+                bases.push(exe_dir.join("../skills"));
+                bases.push(exe_dir.join("../../src/skills"));
+                bases.push(exe_dir.join("../../../src/skills"));
+            }
         }
-        Err(e) => {
-            // Try common variations
-            let skill_path_with_underscore = PathBuf::from("src/skills")
-                .join(&skillName.replace('-', "_"))
-                .join("SKILL.md");
+        bases
+    };
 
-            if let Ok(content) = tokio::fs::read_to_string(&skill_path_with_underscore).await {
+    let name_variants = vec![
+        skillName.clone(),
+        skillName.replace('-', "_"),
+    ];
+
+    for base in &candidate_bases {
+        for variant in &name_variants {
+            let path = base.join(variant).join("SKILL.md");
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 return Ok(SkillResult {
                     success: true,
                     status: Some("inline".to_string()),
@@ -93,12 +102,19 @@ pub async fn execute_skill(
                     ..Default::default()
                 });
             }
-
-            Ok(SkillResult {
-                success: false,
-                error: Some(format!("Skill '{}' not found at {:?}: {}", skillName, skill_path, e)),
-                ..Default::default()
-            })
         }
     }
+
+    Ok(SkillResult {
+        success: false,
+        error: Some(format!(
+            "Skill '{}' not found. Searched in: {}",
+            skillName,
+            candidate_bases.iter()
+                .map(|b| b.join(&skillName).join("SKILL.md").display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        ..Default::default()
+    })
 }
