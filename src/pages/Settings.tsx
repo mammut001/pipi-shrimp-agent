@@ -25,6 +25,8 @@ import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuild
 
 /** Minimax API base URL */
 const MINIMAX_BASE_URL = 'https://api.minimaxi.com/v1';
+/** DeepSeek API base URL */
+const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 
 /**
  * Settings page component
@@ -68,6 +70,7 @@ export function Settings() {
     apiKey: string;
     baseUrl: string;
     model: string;
+    apiFormat: '' | 'anthropic' | 'openai';
     pricing: Partial<Omit<ModelPricing, 'model' | 'provider'>>;
   }>({
     name: '',
@@ -75,6 +78,7 @@ export function Settings() {
     apiKey: '',
     baseUrl: '',
     model: 'claude-3-5-sonnet-20241022',
+    apiFormat: '',
     pricing: {},
   });
 
@@ -119,6 +123,7 @@ export function Settings() {
           apiKey: active.apiKey,
           baseUrl: active.baseUrl || '',
           model: active.model,
+          apiFormat: (active.apiFormat || '') as '' | 'anthropic' | 'openai',
           pricing: active.pricing || {},
         });
         setShowPricingSection(!!active.pricing);
@@ -139,6 +144,7 @@ export function Settings() {
       apiKey: config.apiKey,
       baseUrl: config.baseUrl || '',
       model: config.model,
+      apiFormat: (config.apiFormat || '') as '' | 'anthropic' | 'openai',
       pricing: config.pricing || {},
     });
     setShowPricingSection(!!config.pricing);
@@ -157,6 +163,7 @@ export function Settings() {
       apiKey: '',
       baseUrl: '',
       model: 'claude-3-5-sonnet-20241022',
+      apiFormat: '',
       pricing: {},
     });
     setShowPricingSection(false);
@@ -230,8 +237,22 @@ export function Settings() {
       // Auto-fill Base URL for known providers
       if (newProvider === 'minimax') {
         updates.baseUrl = MINIMAX_BASE_URL;
+      } else if (newProvider === 'deepseek') {
+        updates.baseUrl = DEEPSEEK_BASE_URL;
       } else if (newProvider === 'anthropic' || newProvider === 'openai') {
         updates.baseUrl = '';
+      } else if (newProvider === 'anthropic-compatible' || newProvider === 'openai-compatible') {
+        updates.baseUrl = '';
+      }
+
+      // Auto-set apiFormat so the Rust backend uses the right wire format
+      if (newProvider === 'anthropic-compatible') {
+        (updates as any).apiFormat = 'anthropic';
+      } else if (newProvider === 'openai-compatible') {
+        (updates as any).apiFormat = 'openai';
+      } else {
+        // Auto-detection handles all first-party providers
+        (updates as any).apiFormat = '';
       }
 
       setFormData((prev) => ({ ...prev, ...updates }));
@@ -319,7 +340,7 @@ export function Settings() {
       newErrors.name = 'Name is required';
     }
 
-    if ((formData.provider === 'custom' || formData.provider === 'minimax') && !formData.baseUrl.trim()) {
+    if ((formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax' || formData.provider === 'deepseek') && !formData.baseUrl.trim()) {
       newErrors.baseUrl = 'Base URL is required for this provider';
     }
 
@@ -341,6 +362,7 @@ export function Settings() {
         apiKey: formData.apiKey,
         baseUrl: formData.baseUrl || undefined,
         model: formData.model,
+        apiFormat: (formData.apiFormat || undefined) as ApiConfig['apiFormat'],
         pricing: Object.keys(formData.pricing).length > 0 ? formData.pricing : undefined,
       };
 
@@ -401,7 +423,7 @@ export function Settings() {
       newErrors.apiKey = 'API key is required';
     }
 
-    if ((formData.provider === 'custom' || formData.provider === 'minimax') && !formData.baseUrl.trim()) {
+    if ((formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax' || formData.provider === 'deepseek') && !formData.baseUrl.trim()) {
       newErrors.baseUrl = 'Base URL is required';
     }
 
@@ -417,7 +439,7 @@ export function Settings() {
       const result = await invoke<boolean>('test_connection', {
         apiKey: formData.apiKey,
         model: formData.model,
-        baseUrl: (formData.provider === 'custom' || formData.provider === 'minimax') ? formData.baseUrl : null,
+        baseUrl: (formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax' || formData.provider === 'deepseek') ? formData.baseUrl : null,
       });
 
       if (result) {
@@ -610,7 +632,13 @@ export function Settings() {
                 >
                   {API_PROVIDERS.map((p) => (
                     <option key={p} value={p}>
-                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                      {p === 'anthropic' ? 'Anthropic'
+                        : p === 'openai' ? 'OpenAI'
+                        : p === 'minimax' ? 'MiniMax'
+                        : p === 'deepseek' ? 'DeepSeek'
+                        : p === 'anthropic-compatible' ? 'Anthropic Compatible (自定义)'
+                        : p === 'openai-compatible' ? 'OpenAI Compatible (自定义)'
+                        : p}
                     </option>
                   ))}
                 </select>
@@ -643,8 +671,8 @@ export function Settings() {
                 {errors.apiKey && <p className="mt-1 text-xs text-red-500">{errors.apiKey}</p>}
               </div>
 
-              {/* Base URL (for custom/minimax provider) */}
-              {(formData.provider === 'custom' || formData.provider === 'minimax') && (
+              {/* Base URL (for compatible/minimax/deepseek providers) */}
+              {(formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax') && (
                 <div className="mb-3">
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     Base URL <span className="text-red-500">*</span>
@@ -653,12 +681,17 @@ export function Settings() {
                     type="url"
                     value={formData.baseUrl}
                     onChange={(e) => handleChange('baseUrl', e.target.value)}
-                    placeholder="https://api.example.com/v1"
+                    placeholder={formData.provider === 'anthropic-compatible' ? 'https://your-proxy.example.com' : 'https://api.example.com/v1'}
                     className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
                       errors.baseUrl ? 'border-red-300' : 'border-gray-300'
                     }`}
                   />
                   {errors.baseUrl && <p className="mt-1 text-xs text-red-500">{errors.baseUrl}</p>}
+                  <p className="mt-1 text-xs text-gray-400">
+                    {formData.provider === 'anthropic-compatible'
+                      ? '使用 Anthropic /v1/messages 格式，适合 Claude 中转代理。'
+                      : '使用 OpenAI /chat/completions 格式，适合大多数兼容接口。'}
+                  </p>
                 </div>
               )}
 

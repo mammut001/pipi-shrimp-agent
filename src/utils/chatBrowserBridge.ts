@@ -5,7 +5,7 @@
  * to the browser orchestration layer.
  */
 
-import { detectBrowserIntent, mightBeBrowserIntent } from './browserIntentDetector';
+import { detectBrowserIntent, mightBeBrowserIntent, detectGenericBrowserTask } from './browserIntentDetector';
 import { createTaskEnvelope, estimateTaskComplexity } from './browserTaskPlanner';
 import type { BrowserTaskEnvelope, BrowserSessionStatus } from '../types/browser';
 import { createMessage, type Message } from '../types/chat';
@@ -241,6 +241,19 @@ export function detectChatBrowserIntent(message: string): ChatBrowserIntent {
         reason: `Detected auth-gated action: ${keyword}`,
       };
     }
+  }
+
+  // No browser intent detected via standard detector.
+  // Try generic task detection ("帮我查询下机票", "search for flights")
+  const genericIntent = detectGenericBrowserTask(message);
+  if (genericIntent && genericIntent.detected && genericIntent.url) {
+    return {
+      shouldUseBrowser: true,
+      kind: 'browser_task',
+      targetUrl: genericIntent.url,
+      confidence: genericIntent.confidence,
+      reason: `Detected generic search task: ${genericIntent.task}`,
+    };
   }
 
   // No browser intent detected
@@ -774,7 +787,18 @@ export function quickCheckBrowserIntent(message: string): boolean {
       'netlify',
     ];
 
-    return authGatedKeywords.some(keyword => lowerMessage.includes(keyword.toLowerCase()));
+    if (authGatedKeywords.some(keyword => lowerMessage.includes(keyword.toLowerCase()))) {
+      return true;
+    }
+
+    // Check for generic task patterns ("帮我查询下机票", "search for flights")
+    const genericTaskKeywords = [
+      '查询', '查一下', '搜一下', '帮我查', '帮我搜', '帮我找',
+      '查找', '搜一搜', '查一查', '找一找',
+      'search for', 'find me', 'look up', 'help me find',
+    ];
+
+    return genericTaskKeywords.some(keyword => lowerMessage.includes(keyword.toLowerCase()));
   }
 
   return true;

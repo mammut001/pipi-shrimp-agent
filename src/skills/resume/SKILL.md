@@ -1,82 +1,73 @@
 ---
 name: resume
-description: Professional Resume Generator using Typst. Extracts experience from chat and renders high-quality PDF/SVG resumes.
+description: Professional Resume Generator using Typst templates with carousel selection.
 ---
 
 # Resume Generation Skill
 
-This skill allows you to generate professional resumes using the modern **Typst** typesetting system.
+## Step 1 — Show Template Carousel
 
-## How it Works
+**IMPORTANT: Always start here.** Output this code block to show the template picker:
 
-1.  **Data Extraction**: When a user wants a resume, analyze the chat history or ask for specific details (Education, Experience, Skills).
-2.  **Typst Generation**: Write a `.typ` file that imports the standard template and fills in the data.
-3.  **PDF Rendering**: Use `render_typst_to_pdf(source, file_path)` to generate the final PDF for download.
-4.  **SVG Preview**: Use `render_typst_to_svg(source)` to get an SVG string for instant preview in chat.
-5.  **Artifact Return**: Include the SVG as an `image` artifact in the chat response.
+````markdown
+```resume-templates
+[]
+```
+````
 
-## Typical Workflow
+Wait for the user to select a template before proceeding.
 
-```typst
-#import "assets/template.typ": *
+## Step 2 — Collect User Information
 
-#show: resume.with(
-  author: "John Doe",
-  location: "New York, NY",
-  email: "john@example.com",
-  phone: "+1 (555) 123-4567",
-  github: "github.com/johndoe",
-  linkedin: "linkedin.com/in/johndoe",
-)
+After the user selects a template, use `AskUserQuestion` to collect their info:
 
-= Education
-
-#edu_item(
-  university: "University of Excellence",
-  degree: "B.S. in Computer Science",
-  location: "Springfield, IL",
-  date: "2018 - 2022",
-)
-
-= Experience
-
-#work_item(
-  company: "Tech Solutions Inc.",
-  position: "Full Stack Developer",
-  location: "Boston, MA",
-  date: "2022 - Present",
-  bullets: (
-    [Developed scalable microservices using **Node.js** and **Rust**.],
-    [Improved application performance by 30% through database optimization.],
-    [Led a team of 5 developers in delivering a mission-critical dashboard.],
-  )
-)
-
-= Skills
-
-- *Languages*: Python, JavaScript, Rust, SQL
-- *Frameworks*: React, Next.js, FastAPI, Tauri
-- *Tools*: Docker, Git, AWS, Typst
+```json
+{
+  "title": "Resume Information",
+  "description": "Fill in your details. Leave blank if not applicable.",
+  "fields": [
+    { "id": "name", "label": "Full Name", "type": "text", "required": true },
+    { "id": "email", "label": "Email", "type": "text" },
+    { "id": "phone", "label": "Phone", "type": "text" },
+    { "id": "location", "label": "City, Country", "type": "text" },
+    { "id": "linkedin", "label": "LinkedIn URL", "type": "text" },
+    { "id": "github", "label": "GitHub URL", "type": "text" },
+    { "id": "education", "label": "Education (school, degree, dates)", "type": "textarea" },
+    { "id": "experience", "label": "Work Experience (company, role, dates, highlights)", "type": "textarea" },
+    { "id": "projects", "label": "Projects (name, tech, description)", "type": "textarea" },
+    { "id": "skills", "label": "Skills (languages, frameworks, tools)", "type": "textarea" }
+  ]
+}
 ```
 
-## Available Functions (from template.typ)
+If the user already provided info in their message, skip redundant fields.
 
-- `resume(...)`: Initial setup for the document.
-- `edu_item(...)`: Entry for schools/degrees.
-- `work_item(...)`: Entry for job experiences with bullet points.
-- `project_item(...)`: Entry for personal projects.
+## Step 3 — Generate Resume
 
-## Output Format
+### 3a. Write `.typ` file
 
-When generation is complete, provide:
-1.  The PDF file path to the user.
-2.  An SVG artifact for visual confirmation.
+Read the selected template's example from `src/skills/resume/templates/{template-id}/template/` to learn the API. Use Bash `cat` to read the example `.typ` file. Then write a `.typ` file to `{workDir}/resume.typ`.
 
-Example response:
-```markdown
-I've generated your resume. You can find the PDF at: `/Users/user/resume.pdf`
+Available templates (use `@preview/` import):
+- **basic-resume** → `#import "@preview/basic-resume:0.2.9": *` — Functions: `resume()`, `edu()`, `work()`, `project()`, `dates-helper()`
+- **brilliant-cv** → `#import "@preview/brilliant-cv:3.3.0": cv` — Metadata-driven with `metadata.toml`
+- **calligraphics** → `#import "@preview/calligraphics:1.0.0": *` — Two-column: `resume(author: (...))[ left ][ right ]`
+- **grotesk-cv** → `#import "@preview/grotesk-cv:1.0.5"` — Uses `info.toml` config
+- **nabcv** → `#import "@preview/nabcv:0.1.0": cv` — Uses `cv.toml` config
 
-<artifact id="resume-preview" title="Resume Preview" type="image" mimeType="image/svg+xml">
-<svg ...>
-</artifact>
+### 3b. Compile
+
+```bash
+typst compile "{workDir}/resume.typ" "{workDir}/resume.pdf"
+typst compile "{workDir}/resume.typ" "{workDir}/resume-preview.svg"
 ```
+
+### 3c. Deliver
+
+1. Show SVG preview in a ```svg code block
+2. Tell user the PDF path
+3. Offer adjustments
+
+## Notes
+- Expand brief user input into professional resume language with action verbs and metrics
+- If `typst` CLI unavailable, fall back to built-in `render_typst_to_pdf` (only for self-contained source without `@preview` imports)

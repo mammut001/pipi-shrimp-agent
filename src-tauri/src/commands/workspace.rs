@@ -337,3 +337,25 @@ pub fn open_file_with_app(path: String, app_name: String) -> AppResult<()> {
 
     Ok(())
 }
+
+/// Return a per-session default output directory under `~/Documents/PiPi-Shrimp/chats/{session_id}/`.
+///
+/// Each chat session gets its own isolated subfolder so files from different
+/// conversations never mix. The directory is created if it doesn't exist yet.
+///
+/// On every platform this resolves to the user's Documents folder (or HOME if
+/// Documents is unavailable), so generated files are easy to find.
+#[tauri::command]
+pub fn get_app_default_dir(session_id: String) -> AppResult<String> {
+    let base = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| AppError::FileError("Cannot determine Documents directory".to_string()))?
+        .join("PiPi-Shrimp")
+        .join("chats")
+        .join(&session_id);
+
+    fs::create_dir_all(&base)
+        .map_err(|e| AppError::FileError(format!("Failed to create default dir: {}", e)))?;
+
+    Ok(base.to_string_lossy().to_string())
+}

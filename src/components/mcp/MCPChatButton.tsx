@@ -24,30 +24,30 @@ export function MCPChatButton() {
   const hasError = runtimes.some(r => r.status === 'error');
   const isConnecting = runtimes.some(r => r.status === 'connecting');
 
-  let statusIcon = '🔗';
-  let statusClass = 'text-gray-400 hover:text-gray-300';
-  let suffix = '';
+  let dotClass = 'bg-gray-300';
+  let labelClass = 'text-gray-500 hover:text-gray-700 hover:bg-gray-100';
 
   if (connectedCount > 0) {
-    statusClass = 'text-green-400 hover:text-green-300';
-    suffix = ` ${connectedCount}`;
+    dotClass = 'bg-green-500';
+    labelClass = 'text-gray-700 hover:text-gray-900 hover:bg-gray-100';
   }
   if (isConnecting) {
-    statusClass = 'text-yellow-400 hover:text-yellow-300 animate-pulse';
-    suffix = '...';
+    dotClass = 'bg-yellow-400 animate-pulse';
+    labelClass = 'text-gray-600 hover:bg-gray-100';
   }
   if (hasError) {
-    statusIcon = '⚠';
-    statusClass = 'text-red-400 hover:text-red-300';
+    dotClass = 'bg-red-500';
+    labelClass = 'text-red-500 hover:bg-red-50';
   }
 
   return (
     <button
-      className={`px-2 py-1 rounded text-sm transition-colors ${statusClass}`}
+      className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${labelClass}`}
       onClick={() => setDropdownOpen(!dropdownOpen)}
       title="MCP Servers"
     >
-      {statusIcon} MCP{suffix}
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}`} />
+      <span>MCP{connectedCount > 0 ? ` ${connectedCount}` : ''}</span>
     </button>
   );
 }

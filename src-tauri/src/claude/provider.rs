@@ -22,6 +22,7 @@ pub enum ProviderId {
     OpenAI,
     MiniMax,
     Gemini,
+    DeepSeek,
     /// For custom providers that use OpenAI-compatible format
     Custom,
 }
@@ -49,6 +50,9 @@ impl ProviderId {
             if url_lower.contains("gemini") {
                 return ProviderId::Gemini;
             }
+            if url_lower.contains("deepseek") {
+                return ProviderId::DeepSeek;
+            }
             // Any other URL is Custom (OpenAI-compatible)
             return ProviderId::Custom;
         }
@@ -66,6 +70,9 @@ impl ProviderId {
         }
         if model_lower.contains("minimax") || model_lower.contains("abab") {
             return ProviderId::MiniMax;
+        }
+        if model_lower.contains("deepseek") {
+            return ProviderId::DeepSeek;
         }
 
         // Default to Anthropic (most common for this codebase)
@@ -86,7 +93,11 @@ impl ApiFormat {
     pub fn for_provider(provider: ProviderId) -> Self {
         match provider {
             ProviderId::Anthropic => ApiFormat::Anthropic,
-            ProviderId::OpenAI | ProviderId::MiniMax | ProviderId::Gemini | ProviderId::Custom => ApiFormat::OpenAI,
+            ProviderId::OpenAI
+            | ProviderId::MiniMax
+            | ProviderId::Gemini
+            | ProviderId::DeepSeek
+            | ProviderId::Custom => ApiFormat::OpenAI,
         }
     }
 }
@@ -106,6 +117,8 @@ pub struct ProviderCapabilities {
     pub requires_tool_ordering: bool,
     /// Maximum thinking budget (if supports_thinking)
     pub thinking_budget: Option<i32>,
+    /// Hard cap on max_tokens the provider accepts. None means use the default (32768).
+    pub max_output_tokens: Option<u32>,
 }
 
 impl Default for ProviderCapabilities {
@@ -117,6 +130,7 @@ impl Default for ProviderCapabilities {
             uses_responses_api: false,
             requires_tool_ordering: false,
             thinking_budget: None,
+            max_output_tokens: None,
         }
     }
 }
@@ -180,6 +194,7 @@ impl ResolvedProviderConfig {
             ProviderId::OpenAI => "https://api.openai.com".to_string(),
             ProviderId::MiniMax => "https://api.minimaxi.com/v1".to_string(),
             ProviderId::Gemini => "https://generativelanguage.googleapis.com".to_string(),
+            ProviderId::DeepSeek => "https://api.deepseek.com".to_string(),
             ProviderId::Custom => "https://api.openai.com/v1".to_string(),
         }
     }
@@ -203,6 +218,7 @@ impl ResolvedProviderConfig {
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: if supports_thinking { Some(5000) } else { None },
+                    max_output_tokens: None,
                 }
             }
             ProviderId::OpenAI => {
@@ -217,6 +233,7 @@ impl ResolvedProviderConfig {
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
+                    max_output_tokens: None,
                 }
             }
             ProviderId::MiniMax => {
@@ -228,6 +245,7 @@ impl ResolvedProviderConfig {
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
+                    max_output_tokens: None,
                 }
             }
             ProviderId::Gemini => {
@@ -239,10 +257,24 @@ impl ResolvedProviderConfig {
                     uses_responses_api: true, // Gemini uses different API
                     requires_tool_ordering: false,
                     thinking_budget: None,
+                    max_output_tokens: None,
+                }
+            }
+            ProviderId::DeepSeek => {
+                // DeepSeek: OpenAI-compatible, max_tokens capped at 8192
+                let supports_thinking = model_lower.contains("reasoner") || model_lower.contains("r1");
+                ProviderCapabilities {
+                    supports_thinking,
+                    supports_tool_calls: true,
+                    supports_streaming: true,
+                    uses_responses_api: false,
+                    requires_tool_ordering: false,
+                    thinking_budget: None,
+                    max_output_tokens: Some(8192),
                 }
             }
             ProviderId::Custom => {
-                // Custom provider: assume OpenAI-compatible
+                // Custom provider: assume OpenAI-compatible, no token cap assumed
                 ProviderCapabilities {
                     supports_thinking: model_lower.contains("reasoning"),
                     supports_tool_calls: true,
@@ -250,6 +282,7 @@ impl ResolvedProviderConfig {
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
+                    max_output_tokens: None,
                 }
             }
         }

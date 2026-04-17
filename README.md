@@ -280,6 +280,18 @@ pipi-shrimp-agent/
 
 ## 🙏 Thanks & Acknowledgments
 
+### Resume Template Credits
+
+The built-in resume skill includes templates from the following open-source [Typst Universe](https://typst.app/universe) packages. Full license files are included alongside each template in `src/skills/resume/templates/`.
+
+| Template | Author | License | Link |
+|----------|--------|---------|------|
+| **basic-resume** | Stephen Xu | Unlicense (Public Domain) | [typst.app/universe/package/basic-resume](https://typst.app/universe/package/basic-resume) |
+| **brilliant-cv** | Yunan Wang | Apache 2.0 | [typst.app/universe/package/brilliant-cv](https://typst.app/universe/package/brilliant-cv) |
+| **calligraphics** | Lieunoir | MIT | [typst.app/universe/package/calligraphics](https://typst.app/universe/package/calligraphics) |
+| **grotesk-cv** | Jesper Dramsch | Unlicense (Public Domain) | [typst.app/universe/package/grotesk-cv](https://typst.app/universe/package/grotesk-cv) |
+| **nabcv** | Resul | MIT | [typst.app/universe/package/nabcv](https://typst.app/universe/package/nabcv) |
+
 ### Open Source Inspiration
 
 - **[LobsterAI](https://lobsterai.youdao.com/#/en/index)** - Provides architectural inspiration and reference for our agent system

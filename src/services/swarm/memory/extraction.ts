@@ -68,6 +68,7 @@ export async function extractAgentMemory(
       noTools: true,
       browserConnected: false,
       sessionId: `swarm-agent-memory-${Date.now()}`,
+      apiFormat: apiConfig.apiFormat,
     });
 
     let raw = response.content ?? '';
@@ -205,6 +206,7 @@ export async function extractTeamMemory(
       noTools: true,
       browserConnected: false,
       sessionId: `swarm-team-memory-${Date.now()}`,
+      apiFormat: apiConfig.apiFormat,
     });
 
     let raw = response.content ?? '';

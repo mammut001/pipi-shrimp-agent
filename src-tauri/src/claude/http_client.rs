@@ -67,30 +67,64 @@ Following these guidelines will make interactions faster and more efficient.
 /// Browser tools guide - injected when Chrome CDP is connected
 /// Note: browser tools only appear in the tool list when browser is connected
 const BROWSER_TOOLS_GUIDE: &str = r#"
-## Browser Tools (when Chrome CDP is connected)
+## Browser Tools (Chrome CDP Connected)
 
-You have access to browser tools for web automation. Use these when the user asks you to browse websites, extract information, or interact with web pages.
+You have access to browser tools for web automation. Use these when the user asks you to browse websites, search for information, interact with web pages, or perform any web-based task.
 
 ### Available Browser Tools:
 - **browser_navigate(url)**: Open a URL in the browser
 - **browser_get_page()**: Get all interactive elements on the current page (use after navigating)
 - **browser_click(element_id)**: Click an element by its id from browser_get_page
 - **browser_type(element_id, text)**: Type text into an input field
-- **browser_scroll(direction, pixels)**: Scroll the page up or down (direction: "up" or "down", pixels: scroll amount)
+- **browser_press_key(key)**: Press a key (Enter, Tab, Escape, ArrowDown, ArrowUp, Backspace)
+- **browser_scroll(direction, pixels)**: Scroll the page up or down
 - **browser_get_text(max_length)**: Get the full visible text content of the page
+- **browser_extract_content()**: Extract structured content (headings, links, tables, forms)
+- **browser_screenshot()**: Take a screenshot of the current page
+- **browser_wait(seconds)**: Wait for page to load/update (1-10 seconds)
 
-### Recommended Workflow:
-1. Start with **browser_navigate** to open the target URL
-2. Use **browser_get_page** to see what's on the page
-3. Use **browser_click** to click buttons/links, or **browser_type** to fill forms
-4. Use **browser_get_page** again to see the updated state
-5. Use **browser_get_text** to read article content or data
+### Task Execution Strategy:
 
-### Important Notes:
-- Browser tools only work if the user has connected Chrome via CDP (Developer Tools Protocol)
-- If tools return an error about "browser not connected", tell the user to connect Chrome first
-- After clicking, wait a moment and call browser_get_page to see the new page state
-- Use browser_scroll to reveal content below the fold
+**STEP 1: Plan** — Before taking any action, think about the task:
+- What is the user trying to accomplish?
+- What is the best starting URL? (use search engines for unknown topics)
+- What are the key steps to complete the task?
+
+**STEP 2: Navigate** — Go to the target URL:
+- For specific sites: navigate directly
+- For search tasks: go to Google/relevant search engine
+- For flights: use Google Flights (https://www.google.com/travel/flights)
+- For shopping: navigate to relevant e-commerce site or Google Shopping
+
+**STEP 3: Observe** — Understand the page:
+- Use browser_get_page to see interactive elements
+- Use browser_extract_content for structured data
+- Use browser_get_text for raw text content
+
+**STEP 4: Act** — Interact with the page:
+- Type in search boxes, click buttons/links
+- After typing in a search box, use browser_press_key("Enter") to submit
+- After clicking, use browser_wait(2) then browser_get_page to see updated state
+
+**STEP 5: Extract & Report** — Get the information:
+- Use browser_extract_content or browser_get_text to read results
+- Summarize findings clearly for the user
+- If more pages needed, navigate and repeat
+
+### Important Rules:
+1. Always call browser_get_page after navigating to understand the page
+2. After typing in a search box, press Enter to submit
+3. After clicking a link/button, wait briefly then get the new page state
+4. If a page requires login, inform the user — do not attempt to bypass authentication
+5. For search tasks, extract the TOP results and summarize them concisely
+6. If the first approach fails, try alternative URLs or search queries
+7. Report your findings in a clear, structured format
+
+### Common Patterns:
+- **Search**: navigate → type in search box → press Enter → extract results
+- **Browse**: navigate → get page → click links → extract content
+- **Fill form**: navigate → get page → type in fields → click submit
+- **Compare**: navigate to multiple pages → extract data → compare
 "#;
 
 /// Helper function to merge user system prompt with global security constraints
@@ -240,6 +274,56 @@ fn get_browser_tools() -> Vec<serde_json::Value> {
                     "max_length": {
                         "type": "number",
                         "description": "Maximum characters to return, default 3000"
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_screenshot",
+            "description": "Take a screenshot of the current browser page. Use this to visually confirm the page state, especially for complex layouts, images, charts, or when text extraction is insufficient.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_extract_content",
+            "description": "Extract structured content from the current page including headings, links, tables, text, and form fields. More structured than browser_get_text. Use this to efficiently understand page structure and extract data.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_press_key",
+            "description": "Press a keyboard key on the current page. Use for Enter (submit forms/search), Tab (move between fields), Escape (close dialogs), ArrowDown/ArrowUp (navigate dropdowns).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "The key to press: 'Enter', 'Tab', 'Escape', 'Backspace', 'ArrowDown', 'ArrowUp'"
+                    }
+                },
+                "required": ["key"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "browser_wait",
+            "description": "Wait for a specified number of seconds for the page to load or update. Use after navigation or clicks that trigger dynamic content loading.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "number",
+                        "description": "Number of seconds to wait (1-10, default 2)"
                     }
                 },
                 "required": [],
@@ -1070,6 +1154,26 @@ fn split_think_content(input: &str, in_think: &mut bool) -> Vec<(String, bool)> 
     segments
 }
 
+/// Resolves the API format (Anthropic vs OpenAI) from:
+///  1. An explicit hint string ("anthropic" / "openai"), if provided
+///  2. Auto-detection via `ResolvedProviderConfig::resolve` (key prefix, model name, base URL)
+fn resolve_api_format(
+    api_key: &str,
+    model: &str,
+    base_url: Option<&str>,
+    hint: Option<&str>,
+) -> super::provider::ApiFormat {
+    if let Some(h) = hint {
+        match h {
+            "anthropic" => return super::provider::ApiFormat::Anthropic,
+            "openai" => return super::provider::ApiFormat::OpenAI,
+            _ => {}
+        }
+    }
+    let config = super::provider::ResolvedProviderConfig::resolve(model, api_key, base_url, None);
+    config.api_format
+}
+
 impl ClaudeClient {
     /**
      * Send a chat message to Claude (non-streaming)
@@ -1095,10 +1199,16 @@ impl ClaudeClient {
             eprintln!("[chat] Validation warnings: {:?}", validation.warnings);
         }
 
-        if let Some(url) = base_url {
-            self.chat_openai(&normalized, &api_key, &model, Some(url), system_prompt.as_deref(), false, false, None, browser_connected, "").await
-        } else {
-            self.chat_anthropic(&normalized, &api_key, &model, system_prompt.as_deref(), false, false, None, browser_connected, "").await
+        // Determine API format using provider detection + optional explicit hint
+        let api_format = resolve_api_format(&api_key, &model, base_url.as_deref(), None);
+
+        match api_format {
+            super::provider::ApiFormat::Anthropic => {
+                self.chat_anthropic(&normalized, &api_key, &model, base_url.as_deref(), system_prompt.as_deref(), false, false, None, browser_connected, "").await
+            }
+            super::provider::ApiFormat::OpenAI => {
+                self.chat_openai(&normalized, &api_key, &model, base_url, system_prompt.as_deref(), false, false, None, browser_connected, "").await
+            }
         }
     }
 
@@ -1116,6 +1226,9 @@ impl ClaudeClient {
         window: Window,
         browser_connected: bool,
         session_id: String,
+        // Optional explicit API format override: "anthropic" or "openai".
+        // When None, the format is auto-detected from base_url / api_key / model.
+        api_format_hint: Option<String>,
     ) -> AppResult<ChatResponse> {
         // Validate message sequence before sending to API
         let (normalized, validation) = normalize_messages(&messages);
@@ -1152,10 +1265,16 @@ impl ClaudeClient {
                 })
             }
             result = async {
-                if let Some(url) = base_url {
-                    self.chat_openai(&normalized, &api_key, &model, Some(url), system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
-                } else {
-                    self.chat_anthropic(&normalized, &api_key, &model, system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
+                // Determine API format using provider detection + optional explicit hint
+                let api_format = resolve_api_format(&api_key, &model, base_url.as_deref(), api_format_hint.as_deref());
+
+                match api_format {
+                    super::provider::ApiFormat::Anthropic => {
+                        self.chat_anthropic(&normalized, &api_key, &model, base_url.as_deref(), system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
+                    }
+                    super::provider::ApiFormat::OpenAI => {
+                        self.chat_openai(&normalized, &api_key, &model, base_url, system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
+                    }
                 }
             } => result
         };
@@ -1177,6 +1296,8 @@ impl ClaudeClient {
         messages: &[Message],
         api_key: &str,
         model: &str,
+        // Custom Anthropic-compatible base URL. None defaults to https://api.anthropic.com
+        base_url: Option<&str>,
         system_prompt: Option<&str>,
         streaming: bool,
         no_tools: bool,
@@ -1243,8 +1364,12 @@ impl ClaudeClient {
             + estimate_tokens(&merge_system_prompt(system_prompt, browser_connected));
 
         // Send request
+        let endpoint = base_url
+            .map(|u| format!("{}/v1/messages", u.trim_end_matches('/')))
+            .unwrap_or_else(|| "https://api.anthropic.com/v1/messages".to_string());
+
         let request = self.client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&endpoint)
             .headers(headers)
             .json(&body);
 
@@ -1528,13 +1653,16 @@ impl ClaudeClient {
         }));
 
         // Build request body
-        // Use 32768 as default max_tokens for OpenAI-compatible endpoints.
-        // 8192 was too small — models with extended thinking use thousands of tokens for reasoning
-        // alone, leaving barely anything for actual output in complex multi-tool tasks.
+        // Use provider-specific max_tokens cap. DeepSeek allows at most 8192; most others
+        // support up to 32768. Fetching the cap from ProviderCapabilities ensures we never
+        // send a value outside the valid range for the target provider.
+        let resolved = super::provider::ResolvedProviderConfig::resolve(model, api_key, Some(&base_url), None);
+        let max_tokens = resolved.capabilities.max_output_tokens.unwrap_or(32768);
+
         let mut body: serde_json::Map<String, serde_json::Value> = serde_json::json!({
             "model": model,
             "messages": openai_messages,
-            "max_tokens": 32768,
+            "max_tokens": max_tokens,
             "stream": streaming,
         }).as_object().cloned().unwrap();
 

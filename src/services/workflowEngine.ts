@@ -498,6 +498,7 @@ class WorkflowEngine {
     apiKey: string,
     model: string,
     baseUrl: string,
+    apiFormat?: string,
   ): Promise<string> {
     let fullContent = '';
     let unlistenFn: (() => void) | null = null;
@@ -540,6 +541,7 @@ class WorkflowEngine {
         systemPrompt,
         browserConnected: useCdpStore.getState().status === 'connected',
         sessionId,
+        apiFormat,
       });
 
       return fullContent;
@@ -571,6 +573,7 @@ class WorkflowEngine {
     let apiKey: string;
     let model: string;
     let baseUrl: string = '';
+    let apiFormat: string | undefined;
 
     if (agent.model?.configId) {
       const config = useSettingsStore.getState().apiConfigs
@@ -581,6 +584,7 @@ class WorkflowEngine {
       apiKey = config.apiKey;
       model = config.model;
       baseUrl = config.baseUrl || '';
+      apiFormat = config.apiFormat;
     } else if (agent.model?.apiKey) {
       apiKey = agent.model.apiKey;
       model = agent.model.modelId;
@@ -593,6 +597,7 @@ class WorkflowEngine {
       apiKey = activeConfig.apiKey;
       model = activeConfig.model;
       baseUrl = activeConfig.baseUrl || '';
+      apiFormat = activeConfig.apiFormat;
     }
 
     // 2. Build system prompt: soulPrompt + task label + detailed task instruction + concrete task prompt
@@ -613,7 +618,7 @@ class WorkflowEngine {
     const messages = [{ role: 'user', content: inputPrompt }];
 
     // 4. Streaming call
-    return this.invokeWithStreaming(agent, messages, systemPrompt, apiKey, model, baseUrl);
+    return this.invokeWithStreaming(agent, messages, systemPrompt, apiKey, model, baseUrl, apiFormat);
   }
 
   private async executeMultiRound(

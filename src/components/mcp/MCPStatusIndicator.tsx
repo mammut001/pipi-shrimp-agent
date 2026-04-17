@@ -7,8 +7,8 @@ interface MCPStatusIndicatorProps {
 
 const statusColors: Record<ServerStatus, string> = {
   connected: 'bg-green-500',
-  connecting: 'bg-yellow-500 animate-pulse',
-  disconnected: 'bg-gray-400',
+  connecting: 'bg-yellow-400 animate-pulse',
+  disconnected: 'bg-gray-300',
   error: 'bg-red-500',
 };
 

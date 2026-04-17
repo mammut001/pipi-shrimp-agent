@@ -13,6 +13,9 @@ export { ChatMessage } from './ChatMessage';
 export { ChatInput } from './ChatInput';
 export { ChatImage } from './ChatImage';
 
+// Resume template carousel
+export { ResumeTemplateCarousel } from './ResumeTemplateCarousel';
+
 // Modal components
 export { PermissionModal } from './PermissionModal';
 
@@ -30,6 +33,9 @@ export { ChromeConnectPrompt } from './ChromeConnectPrompt';
 
 // Typst Preview
 export { TypstPreview } from './TypstPreview';
+
+// Embedded Terminal
+export { TerminalPanel } from './TerminalPanel';
 
 
 // Browser Panel (PageAgent)

@@ -14,17 +14,25 @@ export interface ModelPricing {
   cacheWritePrice?: number;   // $/1M tokens（缓存写入，Anthropic 特有）
   maxTokens?: number;         // 模型单次输出上限
   contextWindow: number;       // 模型上下文窗口大小（tokens）
-  provider: 'anthropic' | 'openai' | 'minimax' | 'other';
+  provider: 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'other';
 }
 
 /** API configuration interface */
 export interface ApiConfig {
   id: string;              // Unique identifier
   name: string;            // User-friendly name (e.g., "My Anthropic", "Minimax Pro")
-  provider: 'anthropic' | 'openai' | 'minimax' | 'custom';
+  provider: 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'anthropic-compatible' | 'openai-compatible';
   apiKey: string;
   baseUrl?: string;        // Custom API endpoint
   model: string;           // Model name to use
+  /**
+   * Explicit API wire format override.
+   * - "anthropic": use Anthropic /v1/messages format (x-api-key header)
+   * - "openai":    use OpenAI /chat/completions format (Bearer header)
+   * When absent, the format is auto-detected from provider / base URL / model name.
+   * Mainly useful for Anthropic-compatible and OpenAI-compatible custom gateway providers.
+   */
+  apiFormat?: 'anthropic' | 'openai';
   /** Optional custom pricing for this config (overrides defaults) */
   pricing?: Partial<Omit<ModelPricing, 'model' | 'provider'>>;
 }
@@ -169,7 +177,7 @@ export const DEFAULT_API_CONFIG: ApiConfig = {
 };
 
 /** Supported API providers */
-export const API_PROVIDERS = ['anthropic', 'openai', 'minimax', 'custom'] as const;
+export const API_PROVIDERS = ['anthropic', 'openai', 'minimax', 'deepseek', 'anthropic-compatible', 'openai-compatible'] as const;
 
 /** Supported models per provider */
 export const PROVIDER_MODELS: Record<ApiConfig['provider'], string[]> = {
@@ -196,7 +204,12 @@ export const PROVIDER_MODELS: Record<ApiConfig['provider'], string[]> = {
     'MiniMax-M2.1-highspeed',
     'MiniMax-M2',
   ],
-  custom: [],
+  deepseek: [
+    'deepseek-chat',
+    'deepseek-reasoner',
+  ],
+  'anthropic-compatible': [],
+  'openai-compatible': [],
 };
 
 /** Default model pricing (per 1M tokens, in USD) */
@@ -334,6 +347,22 @@ export const DEFAULT_MODEL_PRICING: Record<string, ModelPricing> = {
     inputPrice: 0,
     outputPrice: 0,
     contextWindow: 1000000,
+  },
+
+  // DeepSeek models — prices as of 2025 (per 1M tokens, USD)
+  'deepseek-chat': {
+    model: 'deepseek-chat',
+    provider: 'deepseek',
+    inputPrice: 0.27,
+    outputPrice: 1.1,
+    contextWindow: 128000,
+  },
+  'deepseek-reasoner': {
+    model: 'deepseek-reasoner',
+    provider: 'deepseek',
+    inputPrice: 0.55,
+    outputPrice: 2.19,
+    contextWindow: 128000,
   },
 };
 

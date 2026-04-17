@@ -12,6 +12,15 @@
     max-width: 100%;
   }
 
+  /* xterm.js uses hidden spans to measure character width.
+     The global * { max-width: 100% } constrains those measurement
+     spans and produces wrong glyph widths → double-spaced text.
+     Override it for the entire terminal container. */
+  .xterm *,
+  .xterm-helper-textarea {
+    max-width: none;
+  }
+
   /* Prevent unwanted drag on images/links only.
      A blanket * { -webkit-user-drag: none } causes macOS WKWebView
      to enter drag-detection state and swallow subsequent click events. */

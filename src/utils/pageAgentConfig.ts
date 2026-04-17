@@ -18,8 +18,9 @@ function getDefaultBaseUrl(provider: ApiConfig['provider']): string {
       // Anthropic uses a different API structure, but PageAgent uses OpenAI-compatible format
       // We'll use the Anthropic API with the OpenAI compatibility layer
       return 'https://api.anthropic.com/v1';
-    case 'custom':
-      // Custom requires explicit baseUrl in the config
+    case 'anthropic-compatible':
+    case 'openai-compatible':
+      // Compatible providers require explicit baseUrl in the config
       return '';
     default:
       return '';

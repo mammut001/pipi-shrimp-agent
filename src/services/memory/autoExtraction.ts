@@ -145,6 +145,7 @@ async function runExtraction(ctx: ExtractionContext, isTrailingRun = false): Pro
       noTools: true,
       browserConnected: false,
       sessionId: `memory-extraction-${Date.now()}`,
+      apiFormat: apiConfig.apiFormat,
     });
 
     // Parse JSON result

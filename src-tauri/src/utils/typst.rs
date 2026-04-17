@@ -155,22 +155,28 @@ impl World for TypstWorld {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Initialize font database with only Times New Roman (for faster startup).
-/// TODO: In the future, add a font selection feature to allow users to choose their preferred fonts.
+/// Initialize font database with Latin and CJK (Chinese/Japanese/Korean) fonts.
+///
+/// Load order:
+/// 1. Times New Roman — Western serif (always tried first)
+/// 2. CJK fonts — PingFang / Heiti / Noto CJK / SimSun depending on platform
+/// 3. System-font fallback — scanned only if *no* Latin font was found above
 pub fn init_font_database() -> FontDatabase {
     let mut db = FontDatabase::new();
-    
-    // Try to load Times New Roman from common macOS locations
+
+    // ------------------------------------------------------------------
+    // 1. Latin font – Times New Roman
+    // ------------------------------------------------------------------
     let times_new_roman_paths = [
         "/Library/Fonts/Times New Roman.ttf",
         "/System/Library/Fonts/Times New Roman.ttf",
         "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
         "~/Library/Fonts/Times New Roman.ttf",
     ];
-    
-    let mut loaded = false;
+
+    let mut latin_loaded = false;
     for path in &times_new_roman_paths {
-        let expanded_path = if path.starts_with("~") {
+        let expanded_path = if path.starts_with('~') {
             if let Some(home) = std::env::var_os("HOME") {
                 let home_path = std::path::Path::new(&home);
                 let relative = path.strip_prefix("~/").unwrap_or(path);
@@ -181,21 +187,72 @@ pub fn init_font_database() -> FontDatabase {
         } else {
             std::path::PathBuf::from(path)
         };
-        
+
         if expanded_path.exists() {
             if db.load_font_file(&expanded_path).is_ok() {
                 println!("✅ Loaded Times New Roman from: {}", expanded_path.display());
-                loaded = true;
+                latin_loaded = true;
                 break;
             }
         }
     }
-    
-    if !loaded {
-        println!("⚠️ Times New Roman not found, falling back to system fonts");
-        db.load_system_fonts();
+
+    // ------------------------------------------------------------------
+    // 2. CJK fonts — try platform-specific paths in order of preference
+    // ------------------------------------------------------------------
+    let cjk_font_paths: &[&str] = &[
+        // macOS system CJK fonts (always present on macOS 10.11+)
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        // Windows CJK fonts
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\simsun.ttc",
+        "C:\\Windows\\Fonts\\simhei.ttf",
+        // Linux – Noto CJK (common package locations)
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf",
+        // User-level Noto fonts (Linux/macOS)
+        "~/.local/share/fonts/NotoSansCJK-Regular.ttc",
+        "~/Library/Fonts/NotoSansCJK-Regular.ttc",
+    ];
+
+    let mut cjk_loaded = 0usize;
+    for path in cjk_font_paths {
+        let expanded_path = if path.starts_with('~') {
+            if let Some(home) = std::env::var_os("HOME") {
+                let home_path = std::path::Path::new(&home);
+                let relative = path.strip_prefix("~/").unwrap_or(path);
+                home_path.join(relative)
+            } else {
+                continue;
+            }
+        } else {
+            std::path::PathBuf::from(path)
+        };
+
+        if expanded_path.exists() {
+            if db.load_font_file(&expanded_path).is_ok() {
+                println!("✅ Loaded CJK font from: {}", expanded_path.display());
+                cjk_loaded += 1;
+            }
+        }
     }
-    
+
+    // ------------------------------------------------------------------
+    // 3. System-font fallback — only if nothing was found above
+    // ------------------------------------------------------------------
+    if !latin_loaded && cjk_loaded == 0 {
+        println!("⚠️ No bundled fonts found, falling back to full system font scan");
+        db.load_system_fonts();
+    } else if cjk_loaded == 0 {
+        println!("⚠️ No CJK fonts found on this system — Chinese/Japanese/Korean text may not render");
+    }
+
     db
 }
 

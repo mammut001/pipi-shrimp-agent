@@ -73,6 +73,7 @@ Return only the filenames of the selected memories, one per line. Do not include
       systemPrompt: 'You are a memory selector. Return only filenames.',
       browserConnected: false,
       sessionId: 'memory-recall',
+      apiFormat: apiConfig.apiFormat,
     });
 
     const selectedNames = (response.content || '')

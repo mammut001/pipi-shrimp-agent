@@ -52,6 +52,13 @@ export const useUIStore = create<UIState>((set) => ({
   agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || 'You are a powerful AI Agent designed by the Google Deepmind team.',
   taskProgress: [],
 
+  // Terminal Panel State
+  terminalPanelVisible: false,
+  terminalPanelHeight: 250,
+
+  // Active skill (skill currently being invoked, shown in AgentPanel)
+  activeSkill: null,
+
   // Browser Dock State (see browser-docked-layout-design.md)
   browserDockMode: 'hidden' as BrowserDockMode,
   browserSplitFocus: 'chat' as SplitFocus,
@@ -189,6 +196,13 @@ export const useUIStore = create<UIState>((set) => ({
     set({ agentInstructions });
     localStorage.setItem(AGENT_INSTRUCTIONS_STORAGE_KEY, agentInstructions);
   },
+
+  // Active skill action
+  setActiveSkill: (name: string | null) => set({ activeSkill: name }),
+
+  // Terminal Panel Actions
+  toggleTerminalPanel: () => set((state) => ({ terminalPanelVisible: !state.terminalPanelVisible })),
+  setTerminalPanelHeight: (terminalPanelHeight: number) => set({ terminalPanelHeight }),
   addTaskStep: (label, id) => set((state) => ({
     taskProgress: [...state.taskProgress, { id: id ?? crypto.randomUUID(), label, status: 'pending' }]
   })),

@@ -85,6 +85,13 @@ export interface UIState {
   agentInstructions: string;
   taskProgress: TaskStep[];
 
+  // Terminal Panel State (bottom panel, VS Code-style)
+  terminalPanelVisible: boolean;
+  terminalPanelHeight: number;
+
+  /** Name of the skill currently being invoked (shown in AgentPanel, clears after 3s) */
+  activeSkill: string | null;
+
   // Right panel active tab (global so external triggers like browser intent can switch it)
   agentPanelTab: 'main' | 'browser' | 'typst-preview' | 'typst-code' | 'roadmap' | 'files' | 'artifact-preview';
 
@@ -180,6 +187,11 @@ export interface UIState {
    */
   clearNotifications: () => void;
 
+  /**
+   * Set/clear the currently active skill name (for AgentPanel highlight)
+   */
+  setActiveSkill: (name: string | null) => void;
+
   // Agentic Actions
   toggleRightPanel: () => void;
   setAgentInstructions: (instructions: string) => void;
@@ -188,6 +200,10 @@ export interface UIState {
   setTaskProgress: (steps: TaskStep[]) => void;
   clearTaskProgress: () => void;
   setAgentPanelTab: (tab: UIState['agentPanelTab']) => void;
+
+  // Terminal Panel Actions
+  toggleTerminalPanel: () => void;
+  setTerminalPanelHeight: (height: number) => void;
 
   // Browser Dock Actions (see browser-docked-layout-design.md)
   setBrowserDockMode: (mode: BrowserDockMode) => void;

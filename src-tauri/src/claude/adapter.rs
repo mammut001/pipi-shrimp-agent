@@ -728,6 +728,7 @@ pub fn get_adapter(provider: ProviderId) -> Box<dyn ProviderAdapter> {
         ProviderId::OpenAI => Box::new(OpenAIAdapter::openai()),
         ProviderId::MiniMax => Box::new(OpenAIAdapter::minimax()),
         ProviderId::Gemini => Box::new(OpenAIAdapter::custom()), // Gemini uses different API
+        ProviderId::DeepSeek => Box::new(OpenAIAdapter::custom()), // DeepSeek is OpenAI-compatible
         ProviderId::Custom => Box::new(OpenAIAdapter::custom()),
     }
 }

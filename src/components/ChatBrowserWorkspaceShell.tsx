@@ -10,13 +10,14 @@
  * - external: Browser in separate window, Chat takes full width
  */
 
-import { useMemo, useEffect, useRef, useCallback } from 'react';
+import { useMemo, useEffect, useRef, useCallback, useState } from 'react';
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
 import { SwarmPanel } from './SwarmPanel';
+import { TerminalPanel } from './TerminalPanel';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
@@ -137,6 +138,21 @@ export function ChatBrowserWorkspaceShell() {
   const submitQuestionnaire = useUIStore((s) => s.submitQuestionnaire);
   const clearQuestionnaire = useUIStore((s) => s.clearQuestionnaire);
 
+  // Terminal panel state
+  const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
+  const terminalPanelHeight = useUIStore((s) => s.terminalPanelHeight);
+  const setTerminalPanelHeight = useUIStore((s) => s.setTerminalPanelHeight);
+  const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
+
+  // Once the terminal has been opened at least once, keep it mounted so the
+  // PTY session survives hide/show toggles (avoids clearing the session).
+  const [terminalEverOpened, setTerminalEverOpened] = useState(false);
+  useEffect(() => {
+    if (terminalPanelVisible && !terminalEverOpened) {
+      setTerminalEverOpened(true);
+    }
+  }, [terminalPanelVisible, terminalEverOpened]);
+
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
     pendingPermission._resolve?.(true);
@@ -150,18 +166,64 @@ export function ChatBrowserWorkspaceShell() {
     clearPermissionRequest();
   };
 
+  // Terminal drag-resize handler
+  const handleTerminalDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = terminalPanelHeight;
+      const onMouseMove = (ev: MouseEvent) => {
+        const delta = startY - ev.clientY;
+        setTerminalPanelHeight(Math.max(100, Math.min(600, startHeight + delta)));
+      };
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [terminalPanelHeight, setTerminalPanelHeight]
+  );
+
   // Chat store
   const {
     currentMessages,
     currentSession,
+    currentSessionId,
     isStreaming,
     error,
     clearError,
     retryLastMessage,
+    startSession,
+    sendMessage,
+    projects,
   } = useChatStore();
+
+  // ── New-chat modal (triggered when user types in the empty-state input) ──
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
+  const [selectedProjectForNewChat, setSelectedProjectForNewChat] = useState<string | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<string>('');
+
+  const handleNewSessionRequired = useCallback((message: string) => {
+    setPendingMessage(message);
+    setSelectedProjectForNewChat(null);
+    setShowNewChatModal(true);
+  }, []);
+
+  const handleCreateNewChat = useCallback(async () => {
+    setShowNewChatModal(false);
+    const newSessionId = await startSession(selectedProjectForNewChat || undefined);
+    setSelectedProjectForNewChat(null);
+    if (pendingMessage.trim()) {
+      await sendMessage(pendingMessage.trim(), newSessionId);
+      setPendingMessage('');
+    }
+  }, [startSession, sendMessage, selectedProjectForNewChat, pendingMessage]);
 
   // Memoized token usage
   const currentSessionData = currentSession();
+  const terminalCwd = currentSessionData?.workDir;
   const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
 
   // Get pricing from settings store
@@ -246,9 +308,9 @@ export function ChatBrowserWorkspaceShell() {
 
   // Render the chat panel content
   const renderChatPanel = () => (
-    <div className="flex flex-col min-h-0 w-full min-w-0">
-      {/* Messages List */}
-      <div className="flex-1 overflow-y-auto">
+    <div className="flex flex-col min-h-0 w-full min-w-0 flex-1">
+      {/* Messages List — min-h-0 allows this to shrink when terminal panel is open */}
+      <div className="flex-1 overflow-y-auto min-h-0">
         {hasMessages ? (
           <div className="divide-y divide-gray-100">
             {displayMessages.map((message, index, filtered) => (
@@ -350,8 +412,35 @@ export function ChatBrowserWorkspaceShell() {
         </div>
       )}
 
-      {/* Chat Input */}
-      <ChatInput />
+      {/* Chat Input — pass onNewSessionRequired so empty-state sends open the new-chat modal */}
+      <ChatInput onNewSessionRequired={!currentSessionId ? handleNewSessionRequired : undefined} />
+
+      {/* Terminal Panel — keep mounted after first open so PTY session survives
+           hide/show toggles. Visibility controlled by CSS, not unmounting. */}
+      {terminalEverOpened && (
+        <>
+          {/* Drag handle */}
+          <div
+            className="h-1 bg-[#3c3c3c] cursor-row-resize hover:bg-blue-500 transition-colors flex-shrink-0"
+            onMouseDown={handleTerminalDragStart}
+            style={{ display: terminalPanelVisible ? undefined : 'none' }}
+          />
+          <div
+            className="flex-shrink-0 overflow-hidden"
+            style={{
+              height: terminalPanelVisible ? terminalPanelHeight : 0,
+              display: terminalPanelVisible ? undefined : 'none',
+            }}
+          >
+            {/* key=cwd resets the terminal when the work folder changes */}
+            <TerminalPanel
+              key={terminalCwd ?? '__no_cwd__'}
+              cwd={terminalCwd}
+              onClose={toggleTerminalPanel}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -390,6 +479,47 @@ export function ChatBrowserWorkspaceShell() {
           onSubmit={submitQuestionnaire}
           onCancel={clearQuestionnaire}
         />
+      )}
+
+      {/* New Chat Modal — shown when user submits a message with no active session */}
+      {showNewChatModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setShowNewChatModal(false)}
+        >
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">New Chat</h3>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select Project</label>
+              <select
+                value={selectedProjectForNewChat || ''}
+                onChange={(e) => setSelectedProjectForNewChat(e.target.value || null)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">No project (root)</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowNewChatModal(false); setSelectedProjectForNewChat(null); setPendingMessage(''); }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateNewChat}
+                className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </MainLayout>
   );

@@ -92,6 +92,10 @@ async fn send_claude_sdk_chat_streaming(
     browserConnected: Option<bool>,
     #[allow(non_snake_case)]
     sessionId: String,
+    // Optional explicit API format override: "anthropic" or "openai".
+    // When absent the format is auto-detected from key / model / base URL.
+    #[allow(non_snake_case)]
+    apiFormat: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, String> {
@@ -99,13 +103,14 @@ async fn send_claude_sdk_chat_streaming(
     let base_url = baseUrl.filter(|s| !s.is_empty());
     let no_tools = noTools.unwrap_or(false);
     let browser_connected = browserConnected.unwrap_or(false);
+    let api_format = apiFormat.filter(|s| !s.is_empty());
     // Clone out of lock before the long-running streaming call.
     let client = {
         let state = state.lock().await;
         state.client.clone()
     };
     client
-        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window, browser_connected, sessionId)
+        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window, browser_connected, sessionId, api_format)
         .await
         .map_err(|e| e.to_string())
 }
@@ -530,6 +535,8 @@ pub fn run() {
             commands::web::disconnect_browser,
             commands::web::resync_page,
             commands::web::cdp_execute_script,
+            commands::web::cdp_screenshot,
+            commands::web::cdp_extract_content,
             commands::open_url,
             // Claude SDK commands (API-based)
             send_claude_sdk_chat,
@@ -575,6 +582,7 @@ pub fn run() {
             commands::open_folder_dialog,
             commands::init_pipi_shrimp,
             commands::get_next_output_dir,
+            commands::get_app_default_dir,
             commands::list_pipi_shrimp_index,
             commands::create_workflow_run_directory,
             commands::delete_workflow_run_directory,
@@ -670,6 +678,11 @@ pub fn run() {
             // Web commands
             commands::web_search,
             commands::web_fetch,
+            // Terminal PTY commands
+            commands::terminal_create,
+            commands::terminal_input,
+            commands::terminal_resize,
+            commands::terminal_close,
             // MCP commands
             commands::mcp::mcp_connect_server,
             commands::mcp::mcp_disconnect_server,
@@ -688,4 +701,7 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    // Clean up all PTY sessions on app exit
+    commands::terminal::close_all_terminals();
 }

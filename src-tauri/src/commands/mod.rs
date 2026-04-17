@@ -28,6 +28,7 @@ pub mod search;
 pub mod session_memory; // Layer 2: Session Memory
 pub mod skill;        // Skill execution (reads SKILL.md files)
 pub mod telegram;    // Telegram Bot API commands
+pub mod terminal;    // Embedded PTY terminal
 pub mod tools;       // Tool pipeline: unified tool execution
 pub mod web;
 pub mod workspace;
@@ -44,6 +45,7 @@ pub use search::*;
 pub use session_memory::*;
 pub use skill::*;    // Skill execution
 pub use telegram::*;
+pub use terminal::*;
 pub use tools::*;
 pub use agent::*;
 pub use web::*;

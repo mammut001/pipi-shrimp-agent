@@ -115,6 +115,7 @@ export type TranslationKeys = {
   'token.totalInput': string;
   'token.totalOutput': string;
   'token.loading': string;
+  'token.allApiKeys': string;
 
   // Session
   'session.bindWorkDir': string;

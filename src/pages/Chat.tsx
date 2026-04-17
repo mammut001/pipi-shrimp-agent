@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard } from '@/components';
+import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard, TerminalPanel } from '@/components';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, processMessagesForDisplay } from '@/utils/chat';
@@ -78,6 +78,15 @@ export function Chat() {
   const submitQuestionnaire = useUIStore((s) => s.submitQuestionnaire);
   const clearQuestionnaire = useUIStore((s) => s.clearQuestionnaire);
 
+  // Terminal panel state
+  const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
+  const terminalPanelHeight = useUIStore((s) => s.terminalPanelHeight);
+  const setTerminalPanelHeight = useUIStore((s) => s.setTerminalPanelHeight);
+  const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
+
+  // Get current session work dir for terminal cwd
+  const terminalCwd = currentSessionData?.workDir;
+
   // Memoized: filter out internal tool-result messages
   const rawMessages = currentMessages();
   const displayMessages = useMemo(
@@ -93,6 +102,28 @@ export function Chat() {
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     setUserScrolledUp(distanceFromBottom > 100); // Consider user scrolled up if >100px from bottom
   }, []);
+
+  // Terminal panel drag-resize handler
+  const handleTerminalDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = terminalPanelHeight;
+
+      const onMouseMove = (ev: MouseEvent) => {
+        const delta = startY - ev.clientY;
+        const newHeight = Math.max(100, Math.min(600, startHeight + delta));
+        setTerminalPanelHeight(newHeight);
+      };
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [terminalPanelHeight, setTerminalPanelHeight]
+  );
 
   // Auto-scroll to bottom only when user is at bottom
   useEffect(() => {
@@ -156,15 +187,17 @@ export function Chat() {
 
   return (
     <MainLayout>
-      <div className="flex-1 flex min-h-0">
-        {/* Chat Panel - full width */}
-        <div className="flex flex-col min-h-0 w-full">
-          {/* Messages List */}
-          <div
-            ref={scrollContainerRef}
-            onScroll={handleScroll}
-            className="flex-1 overflow-y-auto max-w-full"
-          >
+      <div className="flex-1 flex flex-col min-h-0">
+        {/* Chat Panel + Terminal vertical split */}
+        <div className="flex-1 flex flex-col min-h-0 w-full">
+          {/* Chat area (fills remaining space above terminal) */}
+          <div className="flex-1 flex flex-col min-h-0">
+            {/* Messages List */}
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              className="flex-1 overflow-y-auto max-w-full"
+            >
             {hasMessages ? (
               <div className="divide-y divide-gray-100 max-w-full overflow-hidden">
                 {/* Filter out intermediate tool-dispatch assistant messages:
@@ -285,6 +318,29 @@ export function Chat() {
 
           {/* Chat Input */}
           <ChatInput onNewSessionRequired={handleNewSessionRequired} />
+          </div>{/* end chat area */}
+
+          {/* Terminal Panel (bottom, VS Code-style)
+              We always render this subtree but hide it via CSS so the xterm
+              instance (and its PTY session) survives toggle cycles. Conditional
+              rendering would unmount the component and destroy the session,
+              making the terminal appear "cleared" every time it is reopened. */}
+          <div style={{ display: terminalPanelVisible ? 'contents' : 'none' }}>
+            {/* Drag handle for resizing */}
+            <div
+              className="h-1 bg-[#3c3c3c] cursor-row-resize hover:bg-blue-500 transition-colors flex-shrink-0"
+              onMouseDown={handleTerminalDragStart}
+            />
+            <div
+              className="flex-shrink-0"
+              style={{ height: terminalPanelHeight }}
+            >
+              <TerminalPanel
+                cwd={terminalCwd}
+                onClose={toggleTerminalPanel}
+              />
+            </div>
+          </div>
         </div>
 
         {/* New Session Modal - Select Project */}
