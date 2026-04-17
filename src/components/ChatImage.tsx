@@ -33,16 +33,38 @@ export const ChatImage = ({ src, alt, className = '', isSVG = false }: ChatImage
    * Render actual image content
    */
   const renderContent = (isLightbox: boolean = false) => {
-    if (isSVG && src.trim().startsWith('<svg')) {
-      const sanitizedSvg = DOMPurify.sanitize(src, {
-        USE_PROFILES: { svg: true, svgFilters: true },
-        FORBID_TAGS: ['script'],
-        FORBID_ATTR: ['onload', 'onerror', 'onclick', 'onmouseover'],
-      });
+    if (isSVG) {
+      // Normalise: strip leading XML / DOCTYPE declarations so the tag starts at <svg
+      const trimmed = src.trim();
+      let svgSource = trimmed;
+      if (!trimmed.startsWith('<svg')) {
+        const svgStart = trimmed.indexOf('<svg');
+        if (svgStart !== -1) {
+          svgSource = trimmed.slice(svgStart);
+        }
+      }
+
+      if (svgSource.startsWith('<svg')) {
+        const sanitizedSvg = DOMPurify.sanitize(svgSource, {
+          USE_PROFILES: { svg: true, svgFilters: true },
+          FORBID_TAGS: ['script'],
+          FORBID_ATTR: ['onload', 'onerror', 'onclick', 'onmouseover'],
+        });
+        return (
+          <div
+            className={isLightbox ? 'max-w-full max-h-[90vh]' : 'max-w-full'}
+            dangerouslySetInnerHTML={{ __html: sanitizedSvg }}
+          />
+        );
+      }
+
+      // Fallback: encode as data URI and render via <img>
+      const dataUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgSource)}`;
       return (
-        <div 
-          className={isLightbox ? 'max-w-full max-h-[90vh]' : 'max-w-full'}
-          dangerouslySetInnerHTML={{ __html: sanitizedSvg }}
+        <img
+          src={dataUri}
+          alt={alt || 'SVG'}
+          className={isLightbox ? 'max-w-full max-h-[90vh] object-contain' : `max-w-full rounded-xl ${className}`}
         />
       );
     }

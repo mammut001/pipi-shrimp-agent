@@ -563,6 +563,121 @@ pub async fn cdp_execute_script(
         .map_err(|e| e.to_string())
 }
 
+/// Capture a screenshot of the current CDP page as a base64-encoded PNG.
+/// Returns the base64 string (without data:image/png;base64, prefix).
+#[tauri::command]
+pub async fn cdp_screenshot(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let page = {
+        let st = state.lock().await;
+        st.page.clone().ok_or("浏览器未连接，请先调用 connect_browser")?
+    };
+
+    use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams;
+    use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+
+    let params = CaptureScreenshotParams::builder()
+        .format(CaptureScreenshotFormat::Png)
+        .build();
+
+    let screenshot = page.execute(params).await.map_err(|e| format!("截图失败: {}", e))?;
+    // screenshot.data is chromiumoxide::Binary, convert to base64 string
+    use base64::Engine;
+    let base64_str = base64::engine::general_purpose::STANDARD.encode(&screenshot.data);
+    Ok(base64_str)
+}
+
+/// Extract structured text content from the current CDP page.
+/// Returns readable content with headers, links, and key data.
+#[tauri::command]
+pub async fn cdp_extract_content(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let page = {
+        let st = state.lock().await;
+        st.page.clone().ok_or("浏览器未连接")?
+    };
+
+    let extract_script = r#"
+        (() => {
+            const result = {};
+            result.url = window.location.href;
+            result.title = document.title;
+
+            // Extract main content areas
+            const mainSelectors = ['main', 'article', '[role="main"]', '#content', '.content', '#main'];
+            let mainEl = null;
+            for (const sel of mainSelectors) {
+                mainEl = document.querySelector(sel);
+                if (mainEl) break;
+            }
+            const contentRoot = mainEl || document.body;
+
+            // Extract headings
+            const headings = [];
+            contentRoot.querySelectorAll('h1, h2, h3').forEach(h => {
+                const text = h.innerText.trim();
+                if (text) headings.push({ level: parseInt(h.tagName[1]), text: text.substring(0, 200) });
+            });
+            result.headings = headings.slice(0, 20);
+
+            // Extract links with context
+            const links = [];
+            contentRoot.querySelectorAll('a[href]').forEach(a => {
+                const text = a.innerText.trim();
+                const href = a.href;
+                if (text && href && !href.startsWith('javascript:') && text.length > 1) {
+                    links.push({ text: text.substring(0, 100), href: href.substring(0, 300) });
+                }
+            });
+            result.links = links.slice(0, 30);
+
+            // Extract text content (cleaned)
+            const text = contentRoot.innerText
+                .replace(/\n{3,}/g, '\n\n')
+                .substring(0, 5000);
+            result.text = text;
+
+            // Extract tables if any
+            const tables = [];
+            contentRoot.querySelectorAll('table').forEach(table => {
+                const rows = [];
+                table.querySelectorAll('tr').forEach(tr => {
+                    const cells = [];
+                    tr.querySelectorAll('th, td').forEach(cell => {
+                        cells.push(cell.innerText.trim().substring(0, 100));
+                    });
+                    if (cells.length > 0) rows.push(cells);
+                });
+                if (rows.length > 0 && rows.length <= 50) tables.push(rows);
+            });
+            result.tables = tables.slice(0, 5);
+
+            // Extract form fields
+            const forms = [];
+            contentRoot.querySelectorAll('input, select, textarea').forEach(el => {
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') return;
+                forms.push({
+                    tag: el.tagName.toLowerCase(),
+                    type: el.type || '',
+                    name: el.name || '',
+                    placeholder: el.placeholder || '',
+                    label: el.getAttribute('aria-label') || '',
+                    value: el.value || '',
+                });
+            });
+            result.forms = forms.slice(0, 20);
+
+            return JSON.stringify(result);
+        })();
+    "#;
+
+    let result = page.evaluate(extract_script).await.map_err(|e| e.to_string())?;
+    Ok(result.into_value::<String>().unwrap_or_else(|_| "{}".to_string()))
+}
+
 // ============= Web Search & Fetch Commands =============
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -101,6 +101,108 @@ export const WEBSITE_MAPPINGS: Record<string, string> = {
 };
 
 /**
+ * Generic task patterns that should trigger browser search
+ * These patterns don't require a specific URL - the system will route to search
+ */
+const GENERIC_TASK_PATTERNS: Array<{ pattern: RegExp; taskExtractor: (match: RegExpMatchArray, message: string) => string }> = [
+  // Chinese: 帮我查询/搜索/查一下/找一下 + task
+  { pattern: /(?:帮我|请帮我|帮忙|请)\s*(?:查询|查一下|搜索|搜一下|找一下|查找|查下|搜下|找下|搜一搜|查一查|看一看|找一找)\s*(?:一下|下)?\s*(.+)/i, taskExtractor: (m) => m[1]?.trim() || '' },
+  // Chinese: 查询/搜索 + task (no prefix)
+  { pattern: /^(?:查询|搜索|搜一下|查一下|查找|搜一搜|查一查|找一找)\s*(?:一下|下)?\s*(.+)/i, taskExtractor: (m) => m[1]?.trim() || '' },
+  // Chinese: 帮我+verb+object (帮我订/帮我找/帮我买/帮我看)
+  { pattern: /(?:帮我|请帮我)\s*(?:订|找|买|看|比较|对比|了解)\s*(.+)/i, taskExtractor: (m) => m[1]?.trim() || '' },
+  // Chinese: task + 怎么样/多少钱/哪里有/在哪
+  { pattern: /(.+?)\s*(?:多少钱|怎么样|什么价格|哪个好|哪里.*?(?:买|订|有)|在哪.*?(?:买|订|有)|价格|报价)/i, taskExtractor: (m) => m[0]?.trim() || '' },
+  // English: search for / find / look up + task
+  { pattern: /(?:search\s+for|find\s+me|look\s+up|find|search)\s+(.+)/i, taskExtractor: (m) => m[1]?.trim() || '' },
+  // English: help me + verb + task
+  { pattern: /help\s+me\s+(?:find|search|book|buy|compare|check|look\s+up|get)\s+(.+)/i, taskExtractor: (m) => m[1]?.trim() || '' },
+  // English: I want to + verb (buy/book/find/search)
+  { pattern: /i\s+(?:want|need)\s+to\s+(?:find|search|book|buy|compare|check|look\s+up)\s+(.+)/i, taskExtractor: (m) => m[1]?.trim() || '' },
+  // English: what is the price of / where can I buy
+  { pattern: /(?:what\s+is\s+the\s+(?:price|cost)\s+of|where\s+can\s+i\s+(?:buy|find|book|get))\s+(.+)/i, taskExtractor: (m) => m[1]?.trim() || '' },
+];
+
+/**
+ * Topic-specific URL mappings for generic tasks
+ * Maps task keywords to the best starting URL
+ */
+export const TASK_TOPIC_URLS: Record<string, { url: string; label: string }> = {
+  // Travel
+  '机票': { url: 'https://www.google.com/travel/flights', label: 'Google Flights' },
+  '航班': { url: 'https://www.google.com/travel/flights', label: 'Google Flights' },
+  'flight': { url: 'https://www.google.com/travel/flights', label: 'Google Flights' },
+  'flights': { url: 'https://www.google.com/travel/flights', label: 'Google Flights' },
+  '酒店': { url: 'https://www.google.com/travel/hotels', label: 'Google Hotels' },
+  'hotel': { url: 'https://www.google.com/travel/hotels', label: 'Google Hotels' },
+  'hotels': { url: 'https://www.google.com/travel/hotels', label: 'Google Hotels' },
+  '旅游': { url: 'https://www.google.com/travel/', label: 'Google Travel' },
+  'travel': { url: 'https://www.google.com/travel/', label: 'Google Travel' },
+  // Shopping
+  '价格': { url: 'https://www.google.com/search', label: 'Google Search' },
+  '买': { url: 'https://www.google.com/search', label: 'Google Search' },
+  '购买': { url: 'https://www.google.com/search', label: 'Google Search' },
+  'buy': { url: 'https://www.google.com/search', label: 'Google Search' },
+  'price': { url: 'https://www.google.com/search', label: 'Google Search' },
+  // Weather
+  '天气': { url: 'https://www.google.com/search', label: 'Google Search' },
+  'weather': { url: 'https://www.google.com/search', label: 'Google Search' },
+  // Stocks/Finance
+  '股票': { url: 'https://www.google.com/finance', label: 'Google Finance' },
+  '股价': { url: 'https://www.google.com/finance', label: 'Google Finance' },
+  'stock': { url: 'https://www.google.com/finance', label: 'Google Finance' },
+  // Maps
+  '地图': { url: 'https://www.google.com/maps', label: 'Google Maps' },
+  '路线': { url: 'https://www.google.com/maps', label: 'Google Maps' },
+  'map': { url: 'https://www.google.com/maps', label: 'Google Maps' },
+  'directions': { url: 'https://www.google.com/maps', label: 'Google Maps' },
+  // Restaurant
+  '餐厅': { url: 'https://www.google.com/maps', label: 'Google Maps' },
+  '美食': { url: 'https://www.google.com/maps', label: 'Google Maps' },
+  'restaurant': { url: 'https://www.google.com/maps', label: 'Google Maps' },
+};
+
+/**
+ * Detect a generic task that needs browser search (no specific URL)
+ */
+export function detectGenericBrowserTask(message: string): BrowserIntent | null {
+  for (const { pattern, taskExtractor } of GENERIC_TASK_PATTERNS) {
+    const match = message.match(pattern);
+    if (match) {
+      const task = taskExtractor(match, message);
+      if (!task || task.length < 2) continue;
+
+      // Check if the task mentions a specific topic with a known URL
+      const lowerTask = task.toLowerCase();
+      let bestUrl = 'https://www.google.com/search';
+      let bestLabel = 'Google Search';
+
+      for (const [keyword, { url, label }] of Object.entries(TASK_TOPIC_URLS)) {
+        if (lowerTask.includes(keyword)) {
+          bestUrl = url;
+          bestLabel = label;
+          break;
+        }
+      }
+
+      // Build search URL with query if going to Google Search
+      const searchUrl = bestUrl === 'https://www.google.com/search'
+        ? `${bestUrl}?q=${encodeURIComponent(task)}`
+        : bestUrl;
+
+      return {
+        detected: true,
+        website: bestLabel,
+        url: searchUrl,
+        task: message, // Keep original message as task for the AI agent
+        confidence: 0.85,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Regex patterns for detecting browser intents
  */
 const INTENT_PATTERNS = [
@@ -487,6 +589,12 @@ export function detectBrowserIntent(message: string): BrowserIntent {
     return fuzzyResult;
   }
 
+  // Fallback: Try generic task detection ("帮我查询下机票", "search for flights")
+  const genericResult = detectGenericBrowserTask(message);
+  if (genericResult) {
+    return genericResult;
+  }
+
   // No intent detected
   return {
     detected: false,
@@ -509,6 +617,10 @@ export function mightBeBrowserIntent(message: string): boolean {
     '去', '打开', '访问', '看看', '查查', '找找',
     'go to', 'visit', 'open', 'check out', 'browse',
     'search', '搜索',
+    // Generic task keywords
+    '查询', '查一下', '搜一下', '帮我查', '帮我搜', '帮我找',
+    '查找', '搜一搜', '查一查', '找一找',
+    'search for', 'find me', 'look up', 'help me find',
   ];
 
   for (const keyword of browserKeywords) {

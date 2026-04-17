@@ -70,6 +70,8 @@ const READ_ONLY_TOOLS = new Set([
   // Browser observation (no DOM mutation)
   'browser_get_page',
   'browser_get_text',
+  'browser_screenshot',
+  'browser_extract_content',
   // Typst rendering (SVG is pure computation, no disk write)
   'render_typst_to_svg',
 ]);
@@ -91,6 +93,8 @@ const SERIAL_ONLY_TOOLS = new Set([
   'browser_click',
   'browser_type',
   'browser_scroll',
+  'browser_press_key',
+  'browser_wait',
 ]);
 
 /**

@@ -108,7 +108,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
   }).filter(([, models]) => models.length > 0);
 
   const handleSelectModel = (provider: string, modelId: string) => {
-    onUpdateModel(agent.id, provider as 'anthropic' | 'openai' | 'minimax' | 'custom', modelId);
+    onUpdateModel(agent.id, provider as 'anthropic' | 'openai' | 'minimax' | 'anthropic-compatible' | 'openai-compatible', modelId);
     setShowModelSelector(false);
     setExpandedProvider(null);
   };

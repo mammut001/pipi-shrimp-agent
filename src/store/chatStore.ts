@@ -640,7 +640,7 @@ export const useChatStore = create<ChatState>()(
 
         set({ sessions });
 
-        // Restore the previously selected session (from localStorage), or fall back to most recent
+        // Restore the previously selected session (from localStorage)
         const savedSessionId = localStorage.getItem(CURRENT_SESSION_ID_STORAGE_KEY);
         let selectedSessionId: string | null = null;
 
@@ -648,15 +648,12 @@ export const useChatStore = create<ChatState>()(
           // Session exists - restore it
           selectedSessionId = savedSessionId;
           console.log('✅ Restored previously selected session:', savedSessionId);
-        } else if (sessions.length > 0) {
-          // No saved session or session was deleted - select most recent
-          const mostRecent = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0];
-          selectedSessionId = mostRecent.id;
-          console.log('✅ Auto-selected most recent session:', mostRecent.id, mostRecent.title);
-        }
-
-        if (selectedSessionId) {
           set({ currentSessionId: selectedSessionId });
+        } else {
+          // No saved session or session was deleted - do NOT auto-select.
+          // This ensures the user lands on the "Welcome Home" screen.
+          console.log('🏠 Starting at home screen (no session selected)');
+          set({ currentSessionId: null });
         }
 
         console.log('✅ Store initialization completed successfully');
@@ -1003,6 +1000,7 @@ export const useChatStore = create<ChatState>()(
           noTools: true,
           browserConnected: useCdpStore.getState().status === 'connected',
           sessionId: currentSessionId,
+          apiFormat: apiConfig.apiFormat,
         });
 
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
@@ -1273,13 +1271,14 @@ export const useChatStore = create<ChatState>()(
             const currentSess = get().sessions.find(s => s.id === activeSessionId);
             const workDir = currentSess?.workDir ?? null;
 
-            // Notify for Skill invocations
+            // Highlight active skill in AgentPanel (replaces the old shimmer toast)
             for (const tool of chunk.tools) {
               if (tool.name === 'Skill' || tool.name === 'skill' || tool.name === 'execute_skill') {
                 try {
                   const args = JSON.parse(tool.arguments);
                   if (args.skill) {
-                    uiStore.addNotification('skill', `⚡ Invoking Skill: ${args.skill}`);
+                    uiStore.setActiveSkill(args.skill);
+                    // Skill stays highlighted until stream ends (cleared in finally block)
                   }
                 } catch (e) { /* ignore */ }
               }
@@ -1641,6 +1640,7 @@ export const useChatStore = create<ChatState>()(
 
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+        useUIStore.getState().setActiveSkill(null);
 
         // === Auto Memory Extraction (fire-and-forget) ===
         try {
@@ -1691,6 +1691,7 @@ export const useChatStore = create<ChatState>()(
 
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+        useUIStore.getState().setActiveSkill(null);
 
         // Use activeSessionId (captured before the try block) to target the correct session
         // even if the user switched sessions during the failed request.
@@ -2405,7 +2406,40 @@ export const useChatStore = create<ChatState>()(
     },
 
     writeToWorkDir: async (sessionId: string, filename: string, content: string) => {
-      const session = get().sessions.find(s => s.id === sessionId);
+      let session = get().sessions.find(s => s.id === sessionId);
+
+      // ----------------------------------------------------------------
+      // If no folder is bound, prompt the user to pick one.
+      // ----------------------------------------------------------------
+      if (!session?.workDir) {
+        useUIStore.getState().addNotification(
+          'info',
+          '请选择一个文件夹来保存生成的文件。'
+        );
+        // Open folder picker — this also runs init_pipi_shrimp and persists workDir
+        const selectedPath = await get().setSessionWorkDir(sessionId);
+        if (!selectedPath) {
+          // User cancelled: fall back to the app-level default directory (per-session subfolder)
+          try {
+            const defaultDir = await invoke<string>('get_app_default_dir', { sessionId });
+            // Treat the default dir as the workDir for this session
+            const currentSession = get().sessions.find(s => s.id === sessionId);
+            if (currentSession) {
+              const updated = { ...currentSession, workDir: defaultDir, updatedAt: Date.now() };
+              await invoke('db_save_session', { session: sessionToDb(updated) });
+              set(state => ({
+                sessions: state.sessions.map(s => s.id === sessionId ? updated : s)
+              }));
+            }
+          } catch {
+            console.error('[writeToWorkDir] Could not resolve default dir');
+            return null;
+          }
+        }
+        // Re-fetch session after workDir was set
+        session = get().sessions.find(s => s.id === sessionId);
+      }
+
       if (!session?.workDir) return null;
 
       try {

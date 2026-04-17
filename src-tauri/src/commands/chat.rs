@@ -621,6 +621,87 @@ pub async fn execute_tool(
             }
         }
 
+        "browser_screenshot" => {
+            let result = web::cdp_screenshot(browser_state).await;
+
+            match result {
+                Ok(base64_data) => {
+                    format!("截图已捕获（base64 PNG，长度 {} 字符）。图片数据已保存，可直接展示给用户。", base64_data.len())
+                }
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+                    } else {
+                        format!("ERROR: 截图失败: {}", e)
+                    }
+                }
+            }
+        }
+
+        "browser_extract_content" => {
+            let result = web::cdp_extract_content(browser_state).await;
+
+            match result {
+                Ok(content) => content,
+                Err(e) => {
+                    if e.contains("未连接") || e.contains("not connected") {
+                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+                    } else {
+                        format!("ERROR: 提取内容失败: {}", e)
+                    }
+                }
+            }
+        }
+
+        "browser_press_key" => {
+            let key = args.get("key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'key' argument for browser_press_key".to_string()))?;
+
+            let script = format!(r#"
+                (function() {{
+                    var event = new KeyboardEvent('keydown', {{
+                        key: '{}',
+                        code: '{}',
+                        keyCode: {},
+                        which: {},
+                        bubbles: true
+                    }});
+                    document.activeElement.dispatchEvent(event);
+                    // Also fire keyup
+                    var eventUp = new KeyboardEvent('keyup', {{
+                        key: '{}',
+                        code: '{}',
+                        bubbles: true
+                    }});
+                    document.activeElement.dispatchEvent(eventUp);
+                    return 'ok';
+                }})();
+            "#,
+                key.replace('\'', "\\'"),
+                key.replace('\'', "\\'"),
+                match key { "Enter" => 13, "Tab" => 9, "Escape" => 27, "Backspace" => 8, "ArrowDown" => 40, "ArrowUp" => 38, _ => 0 },
+                match key { "Enter" => 13, "Tab" => 9, "Escape" => 27, "Backspace" => 8, "ArrowDown" => 40, "ArrowUp" => 38, _ => 0 },
+                key.replace('\'', "\\'"),
+                key.replace('\'', "\\'"),
+            );
+
+            let result = web::cdp_execute_script(script, browser_state).await;
+            match result {
+                Ok(_) => format!("已按下键 '{}'", key),
+                Err(e) => format!("ERROR: 按键失败: {}", e),
+            }
+        }
+
+        "browser_wait" => {
+            let seconds = args.get("seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2);
+            let capped = seconds.min(10); // Cap at 10 seconds
+            tokio::time::sleep(std::time::Duration::from_secs(capped)).await;
+            format!("已等待 {} 秒", capped)
+        }
+
         "Skill" => {
             let skill_name = args.get("skill")
                 .and_then(|v| v.as_str())
@@ -678,8 +759,9 @@ pub async fn execute_tool(
                 "create_directory", "code_execution", "search_files", "glob_search",
                 "grep_files", "get_current_workspace",
                 "browser_navigate", "browser_get_page", "browser_click", "browser_type",
-                "browser_scroll", "browser_get_text", "Skill",
-                "render_typst_to_svg", "render_typst_to_pdf"
+                "browser_scroll", "browser_get_text", "browser_screenshot",
+                "browser_extract_content", "browser_press_key", "browser_wait",
+                "Skill", "render_typst_to_svg", "render_typst_to_pdf"
             ];
             return Ok(serde_json::json!({
                 "error": true,

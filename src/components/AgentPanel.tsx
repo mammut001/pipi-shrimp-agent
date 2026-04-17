@@ -8,6 +8,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useUIStore, useSettingsStore, useChatStore, useSkillStore } from '@/store';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
+import { invoke } from '@tauri-apps/api/core';
 import { CdpConnectorModal } from './CdpConnectorModal';
 import { TypstPreview } from './index';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
@@ -62,11 +63,49 @@ export const AgentPanel: React.FC = () => {
   const [autoSync, setAutoSync] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
+  // Synchronized workspace files
+  const [syncedFiles, setSyncedFiles] = useState<{name: string, is_directory: boolean, path: string}[]>([]);
+
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval>;
+
+    const syncWorkspaceFiles = async () => {
+      if (!currentSessionId) return;
+      let targetPath = currentSession?.workDir;
+      if (!targetPath) {
+        try {
+          targetPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
+        } catch (e) {
+          return; // Ignore
+        }
+      }
+      
+      if (targetPath) {
+        try {
+          // fetch all files
+          const files = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: targetPath });
+          // ignore .pipi-shrimp and hidden files/folders
+          const visibleFiles = files.filter(f => !f.name.startsWith('.'));
+          setSyncedFiles(visibleFiles);
+        } catch (e) {
+          // Folder might not exist yet, that's fine
+          setSyncedFiles([]);
+        }
+      }
+    };
+
+    syncWorkspaceFiles();
+    intervalId = setInterval(syncWorkspaceFiles, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(intervalId);
+  }, [currentSessionId, currentSession?.workDir]);
+
   // Load skills from tool registry
   const loadSkills = useSkillStore((s) => s.loadSkills);
   const getCoreSkills = useSkillStore((s) => s.getCoreSkills);
   const getRemainingCount = useSkillStore((s) => s.getRemainingCount);
   const isLoaded = useSkillStore((s) => s.isLoaded);
+  const activeSkill = useUIStore((s) => s.activeSkill);
 
   useEffect(() => {
     loadSkills();
@@ -460,9 +499,34 @@ export const AgentPanel: React.FC = () => {
         {/* Working Folders Section */}
         <Section
           title="Working folders"
-          count={allWorkingFiles.length > 0 ? allWorkingFiles.length.toString() : undefined}
+          count={((syncedFiles.length) + allWorkingFiles.length).toString()}
         >
           <div className="pt-2 space-y-1">
+            {/* Render Disk-Synced Files */}
+            {syncedFiles.length > 0 && syncedFiles.map((file) => (
+              <div 
+                key={file.path} 
+                className="group flex items-center gap-3 p-2 hover:bg-gray-100/50 rounded-xl transition-all cursor-pointer"
+                onClick={() => {
+                   if (!file.is_directory) invoke('reveal_in_finder', { path: file.path }).catch(console.error);
+                }}
+              >
+                {file.is_directory ? (
+                  <div className="text-blue-400">
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                       <path d="M2 6a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1H8a3 3 0 00-3 3v6H4a2 2 0 01-2-2V6z" />
+                    </svg>
+                  </div>
+                ) : (
+                  <FileIcon filename={file.name} />
+                )}
+                <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.path}>
+                  {file.name}
+                </span>
+                <span className="text-[8px] text-green-500 font-bold">disk</span>
+              </div>
+            ))}
+
             {allWorkingFiles.length > 0 ? (
               allWorkingFiles.map((file) => {
                 // Check if file is from session or global
@@ -497,9 +561,11 @@ export const AgentPanel: React.FC = () => {
                 );
               })
             ) : (
-              <div className="py-6 flex flex-col items-center justify-center opacity-25">
-                <p className="text-[10px] font-bold uppercase tracking-tight text-center px-4 leading-normal">Drop files here to add to context</p>
-              </div>
+              syncedFiles.length === 0 && (
+                <div className="py-6 flex flex-col items-center justify-center opacity-25">
+                  <p className="text-[10px] font-bold uppercase tracking-tight text-center px-4 leading-normal">Drop files here to add to context</p>
+                </div>
+              )
             )}
             {globalImportedFiles.length > 0 && (
               <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
@@ -528,16 +594,41 @@ export const AgentPanel: React.FC = () => {
             <div>
               <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Skills</h4>
               <div className="flex flex-wrap gap-2">
-                {coreSkills.slice(0, 8).map((skill) => (
+                {/* Show active skill badge if it doesn't match any core skill */}
+                {activeSkill != null && !coreSkills.some(s =>
+                  s.id === activeSkill || s.name === activeSkill ||
+                  (s.displayName ?? '').toLowerCase() === activeSkill.toLowerCase()
+                ) && (
                   <div
-                    key={skill.id}
-                    className="px-2 py-1 bg-white border border-gray-200 rounded-lg text-[10px] font-bold text-gray-600 shadow-sm flex items-center gap-1.5 hover:border-blue-200 transition-colors cursor-default"
-                    title={skill.description || skill.name}
+                    className="px-2 py-1 border rounded-lg text-[10px] font-bold shadow-sm flex items-center gap-1.5 transition-all cursor-default bg-black text-white border-black scale-105 shadow-md animate-pulse"
+                    title={activeSkill}
                   >
-                    <div className="h-1 w-1 bg-blue-500 rounded-full" />
-                    {skill.displayName}
+                    <div className="h-1 w-1 rounded-full bg-white animate-pulse" />
+                    {activeSkill.charAt(0).toUpperCase() + activeSkill.slice(1)}
+                    <span className="ml-0.5 text-[9px] opacity-80">⚡</span>
                   </div>
-                ))}
+                )}
+                {coreSkills.slice(0, 8).map((skill) => {
+                  const isActive = activeSkill != null &&
+                    (skill.id === activeSkill ||
+                     skill.name === activeSkill ||
+                     (skill.displayName ?? '').toLowerCase() === activeSkill.toLowerCase());
+                  return (
+                    <div
+                      key={skill.id}
+                      className={`px-2 py-1 border rounded-lg text-[10px] font-bold shadow-sm flex items-center gap-1.5 transition-all cursor-default ${
+                        isActive
+                          ? 'bg-black text-white border-black scale-105 shadow-md'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-blue-200'
+                      }`}
+                      title={skill.description || skill.name}
+                    >
+                      <div className={`h-1 w-1 rounded-full ${isActive ? 'bg-white animate-pulse' : 'bg-blue-500'}`} />
+                      {skill.displayName}
+                      {isActive && <span className="ml-0.5 text-[9px] opacity-80">⚡</span>}
+                    </div>
+                  );
+                })}
                 {remainingCount > 0 && (
                   <div className="px-2 py-1 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-[10px] font-medium text-gray-400">
                     + {remainingCount} more

@@ -19,6 +19,7 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
 import { ChatImage } from './ChatImage';
+import { ResumeTemplateCarousel } from './ResumeTemplateCarousel';
 import { useUIStore } from '@/store';
 
 /**
@@ -169,6 +170,10 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
 
                       if (language === 'svg') {
                         return <ChatImage src={codeContent} isSVG alt="SVG Preview" />;
+                      }
+
+                      if (language === 'resume-templates') {
+                        return <ResumeTemplateCarousel dataJson={codeContent} />;
                       }
 
                       return (

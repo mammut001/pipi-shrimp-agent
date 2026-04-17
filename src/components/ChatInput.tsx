@@ -11,12 +11,16 @@
 
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
 import { useMCPStore } from '@/store/mcpStore';
 import { MCPChatButton, MCPDropdown } from '@/components/mcp';
 import { t } from '@/i18n';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
+
+// Check if running inside Tauri
+const isTauri = !!(window as any).__TAURI__;
 
 /**
  * Props for ChatInput component
@@ -44,6 +48,8 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
   const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
   const { toggleSettings } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
+  const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
+  const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
 
   // Get current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -83,11 +89,56 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
-   * Handle file attachment - trigger hidden file input
+   * Handle opening the current working directory in Finder
    */
-  const handleAttachFile = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+  const handleOpenFolder = useCallback(async () => {
+    try {
+      let targetPath = workDir;
+      if (!targetPath && currentSessionId) {
+        try {
+          targetPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
+        } catch (e) {
+          console.error("Failed to get default dir:", e);
+        }
+      }
+      if (targetPath) {
+        await invoke('reveal_in_finder', { path: targetPath });
+      }
+    } catch (err) {
+      console.error('Failed to open folder:', err);
+    }
+  }, [workDir, currentSessionId]);
+
+  /**
+   * Handle file attachment - trigger Tauri file dialog
+   */
+  const handleAttachFile = useCallback(async () => {
+    try {
+      let defaultPath = workDir;
+      if (!defaultPath && currentSessionId) {
+        try {
+          defaultPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
+        } catch (e) {
+          console.error("Failed to get default dir:", e);
+        }
+      }
+
+      const selected = await open({
+        multiple: true,
+        defaultPath,
+      });
+
+      if (selected === null) return;
+      
+      const paths = (Array.isArray(selected) ? selected : [selected]).map(p => (typeof p === 'string' ? p : (p as any).path));
+      setReferences(prev => [...prev, ...paths]);
+    } catch (err) {
+      console.error('Failed to open file dialog using Tauri plugin:', err);
+      // Fallback to html input
+      fileInputRef.current?.click();
+    }
+  }, [workDir, currentSessionId]);
+
 
   /**
    * Handle file selection from native file input
@@ -189,8 +240,8 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
             toggleSettings();
           }}
         />
-        {/* Work Dir chip — shown for all sessions */}
-        {currentSession && (
+        {/* Work Dir chip — shown only when session has messages (conversation started) */}
+        {currentSession && currentSession.messages.length > 0 && (
           <div className="px-4 pt-4 pb-2 flex items-center gap-2">
             {workDir ? (
               // Has work dir — show path chip
@@ -301,6 +352,25 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                 {isBindingFolder ? 'binding...' : 'Bind work folder'}
               </button>
             )}
+
+            {/* Terminal toggle button */}
+            {isTauri && (
+              <button
+                onClick={toggleTerminalPanel}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full
+                           border text-xs transition-all duration-150
+                           ${terminalPanelVisible
+                             ? 'bg-gray-800 border-gray-700 text-gray-200 hover:bg-gray-700'
+                             : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'
+                           }`}
+                title={terminalPanelVisible ? 'Hide Terminal' : 'Show Terminal'}
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Terminal
+              </button>
+            )}
           </div>
         )}
 
@@ -376,6 +446,18 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
           <div className="flex items-center gap-1 pr-2 pb-2">
             {/* MCP toggle button */}
             <MCPChatButton />
+
+            {/* Open Folder Button */}
+            <button
+              onClick={handleOpenFolder}
+              type="button"
+              className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
+              title="Open chat folder"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+              </svg>
+            </button>
 
             {/* File Upload Button (Optional) */}
             <button

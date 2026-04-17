@@ -72,32 +72,42 @@ export async function executeNativeBrowserTask(
     throw new Error(`Failed to connect to local Chrome (is remote debugging enabled?)\nDetails: ${e}`);
   }
 
-  const systemPrompt = `You are a native browser automation agent navigating dynamic dashboards like App Store Connect.
-You CANNOT use the traditional JS injected PageAgent commands. Instead, evaluate the "semantic tree" provided by the user.
+  const systemPrompt = `You are a powerful browser automation agent. You control a real Chrome browser to complete tasks for the user.
 
 CRITICAL OUTPUT FORMAT — You MUST respond with valid JSON only. NO conversational text outside JSON.
 {
+  "thought": "Brief explanation of what I see and what I'll do next",
   "action": {
     "action_name": { "param": "value" }
   }
 }
 
 VALID ACTIONS:
-1. {"action": {"wait": {"seconds": 3}}} - Brief standard wait.
-2. {"action": {"wait_for_selector": {"selector": ".chart-container or [aria-label='Sales Data']"}}} - Precise wait for an element.
+1. {"action": {"wait": {"seconds": 3}}} - Wait briefly for page to load.
+2. {"action": {"wait_for_selector": {"selector": ".results"}}} - Wait for a specific element.
 3. {"action": {"click_element": {"id": 12}}} - Click an element by its ID from the semantic tree.
 4. {"action": {"input_text": {"id": 5, "text": "hello world"}}} - Type text into an input element.
-5. {"action": {"scroll": {"direction": "down", "pixels": 600}}} - Scroll the page (direction: down/up/left/right).
-6. {"action": {"navigate": {"url": "https://example.com"}}} - Navigate to a URL.
-7. {"action": {"done": {"text": "Found 12k downloads", "success": true}}} - End task successfully.
-8. {"action": {"ask_user": {"question": "I need MFA code"}}} - Stop and ask human.
+5. {"action": {"press_key": {"key": "Enter"}}} - Press a keyboard key (Enter, Tab, Escape, ArrowDown, ArrowUp).
+6. {"action": {"scroll": {"direction": "down", "pixels": 600}}} - Scroll the page.
+7. {"action": {"navigate": {"url": "https://example.com"}}} - Navigate to a URL.
+8. {"action": {"extract_text": {}}} - Get the page's text content for analysis.
+9. {"action": {"done": {"text": "Here are the results: ...", "success": true}}} - End task with results.
+10. {"action": {"ask_user": {"question": "I need your input"}}} - Ask the user for information.
 
-GUIDANCE FOR DYNAMIC DASHBOARDS:
-- If the tree appears empty and you just started, do NOT immediately fail. Return \`wait_for_selector\` or \`wait\`.
-- Use the semantic 'id' directly for clicking.
-- Use input_text for typing into search boxes, text fields, etc.
-- Use scroll when you need to reveal more content on the page.
-- Use navigate to go to a specific URL.`;
+TASK EXECUTION STRATEGY:
+1. **Plan First**: Before acting, think about the best approach. Use the "thought" field.
+2. **Search Strategy**: For generic queries (flights, prices, etc.), navigate to the best search engine or specialized site.
+3. **Interact Efficiently**: Type in search boxes, press Enter to submit, then read results.
+4. **Extract Data**: When you find relevant information, use extract_text or read from the semantic tree.
+5. **Report Results**: In the "done" action, provide a clear, structured summary of findings.
+
+KEY RULES:
+- After typing in a search box, ALWAYS use press_key Enter to submit the search.
+- If the page is loading or empty, wait 2-3 seconds before retrying.
+- Always use the semantic element IDs for clicking and typing.
+- When done, provide comprehensive results in the "text" field — this is what the user sees.
+- For search tasks, extract the TOP 3-5 results with details (prices, links, descriptions).
+- If a page requires login, use ask_user instead of trying to authenticate.`;
 
   const messages: any[] = [];
   let isDone = false;
@@ -111,53 +121,55 @@ GUIDANCE FOR DYNAMIC DASHBOARDS:
     // Try bare domain like github.com
     const domainMatch = task.match(/(?:^|\s)([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s，。！？]*)?)/);
     if (domainMatch) return `https://${domainMatch[1]}`;
-    return '';
+    // For generic search tasks, default to Google
+    return 'https://www.google.com';
   };
 
-  log('info', `[NativeAgent] Starting task loop for: ${task}`);
+  log('info', `[NativeAgent] Starting task: ${task}`);
 
-  // 25 max steps to avoid infinite loop
-  for (let step = 0; step < 25 && !isDone; step++) {
+  // 30 max steps for complex tasks
+  for (let step = 0; step < 30 && !isDone; step++) {
     // Navigate if it's the first step
     if (step === 0) {
       const startUrl = resolveStartUrl();
-      if (startUrl) {
-        log('info', `[NativeAgent] Navigating to target: ${startUrl}`);
-        try {
-          await invoke('navigate_and_wait', { url: startUrl });
-          log('success', `[NativeAgent] Navigated to ${startUrl}`);
-        } catch (e) {
-          log('warning', `[NativeAgent] Initial navigation attempted but might have failed: ${e}`);
-        }
-      } else {
-        log('warning', '[NativeAgent] No target URL found — starting from current page');
+      log('info', `[NativeAgent] Navigating to: ${startUrl}`);
+      try {
+        await invoke('navigate_and_wait', { url: startUrl });
+        log('success', `[NativeAgent] Page loaded: ${startUrl}`);
+      } catch (e) {
+        log('warning', `[NativeAgent] Navigation attempted: ${e}`);
       }
-      // Give JS-heavy pages (React/GitHub) time to render after navigation
+      // Give JS-heavy pages time to render
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      // Inject scanning overlay so user can see the page is being controlled
       await injectOverlay();
     }
 
-    log('info', `[NativeAgent] Step ${step + 1}: Fetching Semantic Tree...`);
+    log('info', `[NativeAgent] Step ${step + 1}: Analyzing page...`);
     let semanticTree = '[]';
+    let currentUrl = '';
+
+    // Get current URL for context
+    try {
+      const urlScript = '(function() { return window.location.href; })()';
+      currentUrl = await invoke('cdp_execute_script', { script: urlScript }) || '';
+    } catch { /* ignore */ }
+
     try {
       semanticTree = await invoke('get_semantic_tree');
       if (semanticTree === '[]' || !semanticTree) {
-        log('warning', '[NativeAgent] Received empty semantic tree. Page might still be loading.');
+        log('warning', '[NativeAgent] Page appears empty, might still be loading.');
       }
     } catch (e: any) {
       const errStr = String(e);
-      log('warning', `[NativeAgent] Failed to compute tree: ${e}`);
-      // If page receiver is gone (navigation happened), try to re-sync the page reference
+      log('warning', `[NativeAgent] Tree fetch failed: ${e}`);
       if (errStr.includes('receiver is gone') || errStr.includes('send failed') || errStr.includes('No page')) {
-        log('info', '[NativeAgent] Attempting page re-sync after navigation...');
+        log('info', '[NativeAgent] Re-syncing page reference...');
         try {
           await invoke('resync_page');
-          log('success', '[NativeAgent] Page re-synced, retrying tree fetch...');
           try {
             semanticTree = await invoke('get_semantic_tree');
           } catch (_retryErr) {
-            log('warning', '[NativeAgent] Retry also failed, using empty tree');
+            log('warning', '[NativeAgent] Retry failed, using empty tree');
           }
         } catch (resyncErr) {
           log('warning', `[NativeAgent] Re-sync failed: ${resyncErr}`);
@@ -165,8 +177,7 @@ GUIDANCE FOR DYNAMIC DASHBOARDS:
       }
     }
 
-    const promptText = `TASK: ${task}\n\nCURRENT VISIBLE ELEMENTS (Simplified Semantic Tree):\n${semanticTree}\n\nWhat is your next JSON action? Respond ONLY with a JSON object. If you want to think, put it inside a <think> tag before the JSON.`;
-    log('info', '[NativeAgent] Prompting LLM for next action...');
+    const promptText = `TASK: ${task}\n\nCURRENT URL: ${currentUrl}\nSTEP: ${step + 1}/30\n\nCURRENT VISIBLE ELEMENTS:\n${semanticTree}\n\nDecide your next action. Include a "thought" explaining your reasoning. Respond with JSON only.`;
     messages.push({ role: 'user', content: promptText });
 
     try {
@@ -179,88 +190,80 @@ GUIDANCE FOR DYNAMIC DASHBOARDS:
       });
 
       const responseText = response.content;
-      log('info', `[NativeAgent] Raw LLM Response length: ${responseText.length}`);
       messages.push({ role: 'assistant', content: responseText });
 
       let parsed: any;
       try {
-        // Find the LAST JSON block in the response (after thinking)
         const jsonBlocks = responseText.match(/\{[\s\S]*\}/g);
         if (!jsonBlocks) throw new Error('No JSON block found');
         const lastJson = jsonBlocks[jsonBlocks.length - 1];
         parsed = JSON.parse(lastJson);
       } catch (e) {
-        log('error', `[NativeAgent] JSON Parse Error: ${e}. Raw snippet: ${responseText.substring(0, 500)}...`);
-        messages.push({ role: 'user', content: 'CRITICAL: You MUST output a JSON object. Your last response had no JSON. Output ONLY this exact format (nothing else, no markdown, no text):\n{"action": {"wait": {"seconds": 2}}}\nOr use navigate/done/click_element etc. You MUST output JSON NOW.' });
+        log('error', `[NativeAgent] JSON Parse Error: ${e}`);
+        messages.push({ role: 'user', content: 'CRITICAL: Output ONLY JSON. Example: {"thought":"...","action":{"wait":{"seconds":2}}}' });
         continue;
       }
 
       if (!parsed.action) {
-        log('error', '[NativeAgent] JSON missing "action" payload.');
-        messages.push({ role: 'user', content: 'You forgot the "action" property in your JSON. Format properly.' });
+        log('error', '[NativeAgent] Missing "action" in response.');
+        messages.push({ role: 'user', content: 'Missing "action" key. Format: {"thought":"...","action":{"navigate":{"url":"..."}}}' });
         continue;
+      }
+
+      // Log the thought for user visibility
+      if (parsed.thought) {
+        log('info', `[NativeAgent] 💭 ${parsed.thought}`);
       }
 
       const actionName = Object.keys(parsed.action)[0];
       const actionPayload = parsed.action[actionName];
 
-      log('success', `[NativeAgent] AI chose action: ${actionName} ${JSON.stringify(actionPayload)}`);
+      log('success', `[NativeAgent] Action: ${actionName} ${JSON.stringify(actionPayload)}`);
 
       // Execute action
       if (actionName === 'done') {
         isDone = true;
-        finalResult = actionPayload.text || 'Success';
+        finalResult = actionPayload.text || 'Task completed';
         await removeOverlay();
-        log('success', `[NativeAgent] Finished task: ${finalResult}`);
+        log('success', `[NativeAgent] ✅ ${finalResult}`);
       } else if (actionName === 'wait') {
-        const secs = actionPayload.seconds || 3;
-        log('info', `[NativeAgent] Sleeping for ${secs}s...`);
+        const secs = Math.min(actionPayload.seconds || 3, 10);
+        log('info', `[NativeAgent] Waiting ${secs}s...`);
         await new Promise((resolve) => setTimeout(resolve, secs * 1000));
       } else if (actionName === 'navigate') {
         const navUrl = actionPayload.url || '';
-        log('info', `[NativeAgent] Navigating to: ${navUrl}`);
         if (navUrl) {
+          log('info', `[NativeAgent] Navigating to: ${navUrl}`);
           try {
             await invoke('navigate_and_wait', { url: navUrl });
-            log('success', `[NativeAgent] Navigated to ${navUrl}`);
+            log('success', `[NativeAgent] Loaded: ${navUrl}`);
             await injectOverlay();
           } catch (e) {
             log('warning', `[NativeAgent] Navigation error: ${e}`);
-            messages.push({ role: 'user', content: `导航失败: ${e}` });
+            messages.push({ role: 'user', content: `Navigation failed: ${e}. Try a different URL.` });
           }
-        } else {
-          log('warning', '[NativeAgent] navigate action missing url parameter');
         }
       } else if (actionName === 'wait_for_selector') {
-        log('info', `[NativeAgent] Waiting for selector: ${actionPayload.selector}...`);
+        log('info', `[NativeAgent] Waiting for: ${actionPayload.selector}...`);
         try {
-          // Use the rust backend tool for polling
           await invoke('navigate_and_wait', { url: '', waitSelector: actionPayload.selector });
-          log('success', `[NativeAgent] Selector wait completed.`);
+          log('success', '[NativeAgent] Element found.');
         } catch (e) {
-          log('warning', `[NativeAgent] Selector wait error or timeout: ${e}`);
+          log('warning', `[NativeAgent] Selector wait timeout: ${e}`);
         }
       } else if (actionName === 'click_element') {
-        log('info', `[NativeAgent] Clicking element ID ${actionPayload.id}...`);
+        log('info', `[NativeAgent] Clicking element ${actionPayload.id}...`);
         try {
           const result: string = await invoke('cdp_click', { elementId: actionPayload.id });
           log('success', `[NativeAgent] ${result}`);
-          // Wait for potential navigation/animation after click
-          // Wait for navigation/new-tab to settle, then always resync
           await new Promise((resolve) => setTimeout(resolve, 1500));
-          log('info', '[NativeAgent] Post-click page resync...');
-          try {
-            await invoke('resync_page');
-            log('success', '[NativeAgent] Page resynced after click');
-          } catch (_) {
-            // resync failed — not fatal, will retry at next step
-          }
+          try { await invoke('resync_page'); } catch { /* ok */ }
         } catch (e) {
           log('error', `[NativeAgent] Click failed: ${e}`);
-          messages.push({ role: 'user', content: `点击失败: ${e}。请尝试其他元素或等待后重试。` });
+          messages.push({ role: 'user', content: `Click failed on element ${actionPayload.id}: ${e}. Try a different element or wait.` });
         }
       } else if (actionName === 'input_text') {
-        log('info', `[NativeAgent] Typing into element ID ${actionPayload.id}: "${actionPayload.text}"`);
+        log('info', `[NativeAgent] Typing: "${actionPayload.text}" into element ${actionPayload.id}`);
         try {
           const result: string = await invoke('cdp_type', {
             elementId: actionPayload.id,
@@ -270,32 +273,74 @@ GUIDANCE FOR DYNAMIC DASHBOARDS:
           await new Promise((resolve) => setTimeout(resolve, 300));
         } catch (e) {
           log('error', `[NativeAgent] Input failed: ${e}`);
-          messages.push({ role: 'user', content: `输入失败: ${e}` });
+          messages.push({ role: 'user', content: `Input failed: ${e}` });
+        }
+      } else if (actionName === 'press_key') {
+        const key = actionPayload.key || 'Enter';
+        log('info', `[NativeAgent] Pressing key: ${key}`);
+        try {
+          const keyScript = `
+            (function() {
+              var event = new KeyboardEvent('keydown', { key: '${key}', code: '${key}', bubbles: true });
+              document.activeElement.dispatchEvent(event);
+              var eventUp = new KeyboardEvent('keyup', { key: '${key}', code: '${key}', bubbles: true });
+              document.activeElement.dispatchEvent(eventUp);
+              if ('${key}' === 'Enter') {
+                // Also try form submission for Enter key
+                var form = document.activeElement.closest('form');
+                if (form) form.submit();
+              }
+              return 'ok';
+            })();
+          `;
+          await invoke('cdp_execute_script', { script: keyScript });
+          log('success', `[NativeAgent] Key pressed: ${key}`);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          try { await invoke('resync_page'); } catch { /* ok */ }
+        } catch (e) {
+          log('warning', `[NativeAgent] Key press failed: ${e}`);
         }
       } else if (actionName === 'scroll') {
         const direction = actionPayload.direction || 'down';
         const pixels = actionPayload.pixels || 600;
-        log('info', `[NativeAgent] Scrolling ${direction} ${pixels}px...`);
+        log('info', `[NativeAgent] Scrolling ${direction} ${pixels}px`);
         try {
           await invoke('cdp_scroll', { direction, pixels });
           await new Promise((resolve) => setTimeout(resolve, 500));
-          log('success', `[NativeAgent] Scroll completed`);
         } catch (e) {
           log('warning', `[NativeAgent] Scroll failed: ${e}`);
         }
+      } else if (actionName === 'extract_text') {
+        log('info', '[NativeAgent] Extracting page text...');
+        try {
+          const textScript = '(function() { return document.body.innerText.substring(0, 5000); })()';
+          const pageText: string = await invoke('cdp_execute_script', { script: textScript });
+          log('success', `[NativeAgent] Extracted ${pageText.length} chars of text`);
+          // Feed text back to the LLM as context
+          messages.push({ role: 'user', content: `PAGE TEXT CONTENT:\n${pageText}\n\nUse this information to complete the task. What is your next action?` });
+          continue; // Skip the normal prompt since we already added context
+        } catch (e) {
+          log('warning', `[NativeAgent] Text extraction failed: ${e}`);
+        }
+      } else if (actionName === 'ask_user') {
+        const question = actionPayload.question || 'I need your help';
+        log('warning', `[NativeAgent] ❓ ${question}`);
+        await removeOverlay();
+        finalResult = `Agent needs your input: ${question}`;
+        isDone = true;
       } else {
         log('warning', `[NativeAgent] Unknown action: ${actionName}`);
-        messages.push({ role: 'user', content: `Error: The action ${actionName} is not recognized or not implemented yet.` });
+        messages.push({ role: 'user', content: `Unknown action "${actionName}". Use one of: wait, navigate, click_element, input_text, press_key, scroll, extract_text, done, ask_user.` });
       }
     } catch (error: any) {
-      log('error', `[NativeAgent] LLM API Error: ${error}`);
+      log('error', `[NativeAgent] API Error: ${error}`);
       throw error;
     }
   }
 
   if (!isDone) {
     await removeOverlay();
-    throw new Error('NativeAgent exhausted all allowed steps without encountering "done".');
+    throw new Error('NativeAgent exhausted all allowed steps without completing the task.');
   }
 
   return finalResult;

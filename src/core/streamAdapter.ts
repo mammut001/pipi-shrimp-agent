@@ -17,6 +17,8 @@ interface InvokeParams {
   systemPrompt: string;
   browserConnected: boolean;
   sessionId: string;
+  /** Optional explicit API format override: "anthropic" | "openai" */
+  apiFormat?: string;
 }
 
 /**
