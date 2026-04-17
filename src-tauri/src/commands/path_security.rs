@@ -29,6 +29,16 @@ const BLOCKED_PREFIXES: &[&str] = &[
     "/private/var/",
 ];
 
+/// User-home sensitive directories resolved at check time via $HOME
+const HOME_BLOCKED_SUFFIXES: &[&str] = &[
+    "/.ssh/",
+    "/.gnupg/",
+    "/.aws/",
+    "/.kube/",
+    "/.config/gcloud/",
+    "/Library/Keychains/",
+];
+
 /// Sensitive files that are blocked from access
 const BLOCKED_FILES: &[&str] = &[
     "/etc/shadow",
@@ -124,6 +134,18 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
                 return Err(PathSecurityError {
                     message: format!("Access to system directory '{}' is not allowed", prefix),
                 });
+            }
+        }
+
+        // Check for user-home sensitive directories
+        if let Ok(home) = std::env::var("HOME") {
+            for suffix in HOME_BLOCKED_SUFFIXES {
+                let blocked_path = format!("{}{}", home, suffix);
+                if canonical_str.starts_with(&blocked_path) {
+                    return Err(PathSecurityError {
+                        message: format!("Access to sensitive directory '{}' is not allowed", suffix),
+                    });
+                }
             }
         }
 

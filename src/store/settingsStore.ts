@@ -5,7 +5,8 @@
 
 import { create } from 'zustand';
 import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings, AgentSettings } from '../types/settings';
-import { DEFAULT_BUDGET_SETTINGS, DEFAULT_MODEL_PRICING } from '../types/settings';
+import { DEFAULT_BUDGET_SETTINGS } from '../types/settings';
+import { resolvePricing } from '../shared/providers';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
 
 /**
@@ -31,16 +32,56 @@ function generateConfigId(): string {
 }
 
 /**
+ * Minimal obfuscation for API keys in localStorage.
+ * NOT encryption — prevents casual shoulder-surfing and accidental log exposure.
+ * Full security requires Tauri secure store plugin (P2).
+ */
+function obfuscate(value: string): string {
+  return btoa(unescape(encodeURIComponent(value)));
+}
+
+function deobfuscate(value: string): string {
+  try {
+    return decodeURIComponent(escape(atob(value)));
+  } catch {
+    // Fallback: value might be stored in plaintext from before this change
+    return value;
+  }
+}
+
+/**
  * Persist all API configs to localStorage
  */
 function persistConfigs(configs: ApiConfig[], activeId: string | null) {
   try {
-    localStorage.setItem(API_CONFIGS_STORAGE_KEY, JSON.stringify(configs));
+    // Obfuscate API keys before persisting
+    const safe = configs.map(c => ({
+      ...c,
+      apiKey: c.apiKey ? obfuscate(c.apiKey) : '',
+    }));
+    localStorage.setItem(API_CONFIGS_STORAGE_KEY, JSON.stringify(safe));
     if (activeId) {
       localStorage.setItem(ACTIVE_CONFIG_STORAGE_KEY, activeId);
     }
   } catch (error) {
     console.error('Failed to persist API configs:', error);
+  }
+}
+
+/**
+ * Load API configs from localStorage, deobfuscating keys.
+ */
+function loadPersistedConfigs(): ApiConfig[] {
+  try {
+    const raw = localStorage.getItem(API_CONFIGS_STORAGE_KEY);
+    if (!raw) return [];
+    const configs = JSON.parse(raw) as ApiConfig[];
+    return configs.map(c => ({
+      ...c,
+      apiKey: c.apiKey ? deobfuscate(c.apiKey) : '',
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -53,6 +94,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   activeConfigId: null,
   apiConfig: null, // Computed from apiConfigs + activeConfigId
   availableModels: {},
+  availableModelEntries: {},
   telegramToken: undefined,
   theme: 'dark',
   language: 'en',
@@ -69,6 +111,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const newConfig: ApiConfig = {
       ...configData,
       id: generateConfigId(),
+      // Back-fill modelProviderId so identity is always explicit
+      modelProviderId: configData.modelProviderId ?? configData.provider,
     };
 
     const { apiConfigs } = get();
@@ -215,10 +259,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         baseUrl,
       });
 
+      const remoteEntries = models.map((id) => ({ id, source: 'remote' as const }));
+
       set((state) => ({
         availableModels: {
           ...state.availableModels,
           [provider]: models,
+        },
+        availableModelEntries: {
+          ...state.availableModelEntries,
+          [provider]: remoteEntries,
         },
       }));
 
@@ -234,7 +284,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
    */
   setTelegramToken: async (token: string) => {
     try {
-      localStorage.setItem(TELEGRAM_TOKEN_STORAGE_KEY, token);
+      localStorage.setItem(TELEGRAM_TOKEN_STORAGE_KEY, obfuscate(token));
       set({ telegramToken: token });
     } catch (error) {
       console.error('Failed to save Telegram token:', error);
@@ -372,12 +422,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         cacheReadPrice: activeConfig.pricing.cacheReadPrice,
         cacheWritePrice: activeConfig.pricing.cacheWritePrice,
         maxTokens: activeConfig.pricing.maxTokens,
-        contextWindow: activeConfig.pricing.contextWindow ?? DEFAULT_MODEL_PRICING[model]?.contextWindow ?? 200000,
+        contextWindow: activeConfig.pricing.contextWindow ?? resolvePricing(model, activeConfig.provider)?.contextWindow ?? 200000,
       };
     }
 
-    // Fall back to default pricing
-    return DEFAULT_MODEL_PRICING[model] || null;
+    // Fall back to default pricing from registry
+    const defaultPricing = resolvePricing(model);
+    if (defaultPricing) {
+      // Map compatible provider names to the ModelPricing union
+      const pricingProvider = (_provider === 'anthropic-compatible' || _provider === 'openai-compatible')
+        ? 'other' as const
+        : _provider;
+      return {
+        model,
+        provider: pricingProvider,
+        ...defaultPricing,
+      };
+    }
+    return null;
   },
 }));
 
@@ -408,7 +470,7 @@ const initializeSettings = () => {
     // Load Telegram token
     const storedTelegramToken = localStorage.getItem(TELEGRAM_TOKEN_STORAGE_KEY);
     if (storedTelegramToken) {
-      useSettingsStore.setState({ telegramToken: storedTelegramToken });
+      useSettingsStore.setState({ telegramToken: deobfuscate(storedTelegramToken) });
     }
 
     // Load imported files
@@ -448,8 +510,13 @@ const initializeSettings = () => {
     const storedActiveId = localStorage.getItem(ACTIVE_CONFIG_STORAGE_KEY);
 
     if (storedConfigs) {
-      // New multi-config format
-      const configs = JSON.parse(storedConfigs) as ApiConfig[];
+      // New multi-config format — deobfuscate API keys
+      const raw = loadPersistedConfigs();
+      // Back-fill modelProviderId for configs saved before P1-1 migration
+      const configs = raw.map((c) => ({
+        ...c,
+        modelProviderId: c.modelProviderId ?? c.provider,
+      }));
       const activeId = storedActiveId && configs.some((c) => c.id === storedActiveId)
         ? storedActiveId
         : configs.length > 0 ? configs[0].id : null;

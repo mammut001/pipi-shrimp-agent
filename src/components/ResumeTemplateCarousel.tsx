@@ -23,31 +23,31 @@ const BUILT_IN_TEMPLATES: ResumeTemplate[] = [
     id: 'basic-resume',
     name: 'Basic Resume',
     description: 'Clean single-column layout. Great for software engineers and new grads.',
-    preview: '/resume-previews/basic-resume.svg',
+    preview: '/resume-previews/basic-resume.png',
   },
   {
     id: 'brilliant-cv',
     name: 'Brilliant CV',
     description: 'Photo sidebar with color accent. Multi-language support, great for international roles.',
-    preview: '/resume-previews/brilliant-cv.svg',
+    preview: '/resume-previews/brilliant-cv.png',
   },
   {
     id: 'calligraphics',
     name: 'Calligraphics',
     description: 'Elegant two-column design with artistic flair. Perfect for creative professionals.',
-    preview: '/resume-previews/calligraphics.svg',
+    preview: '/resume-previews/calligraphics.png',
   },
   {
     id: 'grotesk-cv',
     name: 'Grotesk CV',
     description: 'Modern sans-serif style with warm tones. Professional and distinctive.',
-    preview: '/resume-previews/grotesk-cv.svg',
+    preview: '/resume-previews/grotesk-cv.png',
   },
   {
     id: 'nabcv',
     name: 'NAB CV',
     description: 'TOML-driven sidebar layout with icons. Structured and data-focused.',
-    preview: '/resume-previews/nabcv.svg',
+    preview: '/resume-previews/nabcv.png',
   },
 ];
 

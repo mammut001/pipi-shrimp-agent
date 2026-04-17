@@ -15,7 +15,7 @@ import { runPreToolUseHooks } from '../services/tools/preToolUseHooks';
 import { runPostToolUseHooks } from '../services/tools/postToolUseHooks';
 import type { PostHookContext } from '../services/tools/postToolUseHooks';
 import type { ImportedFile } from '../types/settings';
-import { runMicrocompactCheck } from '../services/compact/microCompact';
+import { runMicrocompactCheck, resetMicrocompactForNewTurn } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
 import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
@@ -1587,6 +1587,14 @@ export const useChatStore = create<ChatState>()(
               allResults.push({ id: tool.id, content: toolResultContent });
             }
 
+            // === Artifact detection: scan tool results for generated files ===
+            try {
+              const { detectAndRegisterArtifacts } = await import('../services/artifactDetector');
+              for (const result of allResults) {
+                detectAndRegisterArtifacts(assistantMessage.id, result.content);
+              }
+            } catch (e) { /* artifact detection is best-effort */ }
+
             chunk._resolveAll(allResults);
           } else if (chunk.type === 'error') {
             throw chunk.error;
@@ -2037,6 +2045,8 @@ export const useChatStore = create<ChatState>()(
           setStreaming(false);
           set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
         }, 300000);
+        // Reset microcompact state at the start of each new streaming turn
+        resetMicrocompactForNewTurn();
         set({ isStreaming: true, streamingTimeoutId: timeoutId });
       }
     },

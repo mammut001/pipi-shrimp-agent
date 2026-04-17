@@ -454,6 +454,32 @@ Develop and optimize custom skills
 - Detailed and accurate description
 - Simple and recognizable icons`,
 
+  'skill.autoresearch.name': 'AutoResearch',
+  'skill.autoresearch.description': 'Autonomous experiment loop with SSH remote training & metric-driven optimization',
+  'skill.autoresearch.documentation': `# AutoResearch
+
+Autonomous experiment loop for iterative ML training and hyperparameter optimization.
+
+## Capabilities
+
+- Run training commands on a remote VPS via SSH
+- Automatically iterate based on metric improvements
+- Log experiments and support failure rollback (git-based)
+- Real-time status and live output in the right panel
+
+## How to Use
+
+1. Click **Open in Chat** to enter the Chat view
+2. The AutoResearch panel opens and a Setup modal appears
+3. Configure SSH connection and experiment parameters, then start the loop
+
+## Architecture
+
+- The loop engine builds a system prompt each iteration
+- The agent uses ssh_exec / ssh_upload_file tools to run experiments
+- Results are parsed and logged; improved experiments are committed, failures are rolled back`,
+  'skill.autoresearch.openInChat': 'Open in Chat',
+
   // Typst Preview
   'typst.title': 'Document Preview',
   'typst.render': 'Render',

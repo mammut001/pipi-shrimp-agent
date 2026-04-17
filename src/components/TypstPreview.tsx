@@ -13,6 +13,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import DOMPurify from 'dompurify';
 
 /**
  * Props for TypstPreview component
@@ -332,7 +333,11 @@ export function TypstPreview({ rawContent, className = '', outputDir }: TypstPre
             <div
               ref={svgContainerRef}
               style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
-              dangerouslySetInnerHTML={{ __html: svgContent }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(svgContent, {
+                USE_PROFILES: { svg: true, svgFilters: true },
+                FORBID_TAGS: ['script'],
+                FORBID_ATTR: ['onload', 'onerror', 'onclick', 'onmouseover'],
+              }) }}
             />
           ) : !isLoading && !error ? (
             <div className="flex items-center justify-center py-12 text-gray-400" style={{ width: 400 }}>

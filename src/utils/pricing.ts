@@ -2,7 +2,8 @@
  * Pricing utilities for cost estimation
  */
 
-import { DEFAULT_MODEL_PRICING, type ModelPricing } from '../types/settings';
+import { type ModelPricing } from '../types/settings';
+import { resolvePricing } from '../shared/providers';
 
 /**
  * Calculate cost for a given number of tokens
@@ -67,7 +68,9 @@ export function calculateCostBreakdown(
  * @returns Pricing configuration or null if not found
  */
 export function getDefaultPricing(model: string): ModelPricing | null {
-  return DEFAULT_MODEL_PRICING[model] || null;
+  const pricing = resolvePricing(model);
+  if (!pricing) return null;
+  return { model, ...pricing } as ModelPricing;
 }
 
 /**

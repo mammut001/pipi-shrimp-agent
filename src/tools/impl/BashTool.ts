@@ -33,7 +33,7 @@ export class BashTool extends BaseTool<BashInput, BashOutput> {
 
   async execute(input: BashInput, context: ToolContext): Promise<ToolResult<BashOutput>> {
     // 危险命令检查
-    if (!input.dangerouslyDisableSandbox && context.settings.sandboxEnabled !== false) {
+    if (context.settings.sandboxEnabled !== false) {
       for (const pattern of DANGEROUS_PATTERNS) {
         if (pattern.test(input.command)) {
           return {
@@ -137,8 +137,7 @@ export const BashInputSchema = z.object({
   command: z.string().describe('The shell command to execute'),
   timeout: z.number().optional().describe('Timeout in seconds (default: 60)'),
   description: z.string().optional().describe('Description of what this command does'),
-  run_in_background: z.boolean().optional().describe('Run in background without blocking'),
-  dangerouslyDisableSandbox: z.boolean().optional().describe('Disable dangerous command check')
+  run_in_background: z.boolean().optional().describe('Run in background without blocking')
 });
 
 export const BashOutputSchema = z.object({

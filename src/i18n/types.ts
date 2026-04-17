@@ -370,6 +370,10 @@ export type TranslationKeys = {
   'skill.skillCreator.name': string;
   'skill.skillCreator.description': string;
   'skill.skillCreator.documentation': string;
+  'skill.autoresearch.name': string;
+  'skill.autoresearch.description': string;
+  'skill.autoresearch.documentation': string;
+  'skill.autoresearch.openInChat': string;
 
   // Typst Preview
   'typst.title': string;

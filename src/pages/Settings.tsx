@@ -15,18 +15,25 @@ import { useSettingsStore, useUIStore } from '@/store';
 import { usePromptStore } from '@/store/promptStore';
 import { invoke } from '@tauri-apps/api/core';
 import type { ApiConfig, ModelPricing } from '@/types/settings';
-import { API_PROVIDERS, PROVIDER_MODELS, DEFAULT_MODEL_PRICING } from '@/types/settings';
+import { DEFAULT_MODEL_PRICING } from '@/types/settings';
+import {
+  getProviderNames,
+  getProvider,
+  getProviderDefaultModelIds,
+  getProviderDefaultBaseUrl,
+  getProviderDefaultApiFormat,
+  isApiKeyRequired,
+  canFetchModels,
+  validateProviderFields,
+  validateFetchModelsPrereqs,
+} from '@/shared/providers';
+import type { ProviderName } from '@/shared/providers';
 import { formatCost } from '@/utils/pricing';
 import { TokenStats } from '@/components/TokenStats';
 import { TelegramSettings } from '@/components/settings/TelegramSettings';
 import { MCPSettingsSection } from '@/components/settings/MCPSettingsSection';
 import { t, getSupportedLocales, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
 import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuilder';
-
-/** Minimax API base URL */
-const MINIMAX_BASE_URL = 'https://api.minimaxi.com/v1';
-/** DeepSeek API base URL */
-const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 
 /**
  * Settings page component
@@ -36,7 +43,7 @@ export function Settings() {
     apiConfigs,
     activeConfigId,
     theme,
-    availableModels,
+    availableModelEntries,
     agentSettings,
     addApiConfig,
     updateApiConfig,
@@ -91,12 +98,15 @@ export function Settings() {
     language: getCurrentLocale(),
   });
 
-  // Combine static fallback models with dynamically fetched models
-  const provider = formData.provider as keyof typeof PROVIDER_MODELS;
-  const currentProviderModels = Array.from(new Set([
-    ...(PROVIDER_MODELS[provider] || []),
-    ...(availableModels[provider] || [])
-  ]));
+  // Build source-annotated model list: remote entries first, then default fallbacks
+  const providerName = formData.provider as ProviderName;
+  const remoteEntries = availableModelEntries[providerName] ?? [];
+  const remoteIds = new Set(remoteEntries.map((e) => e.id));
+  const defaultIds = getProviderDefaultModelIds(providerName).filter((id) => !remoteIds.has(id));
+  const currentProviderModelEntries = [
+    ...remoteEntries,
+    ...defaultIds.map((id) => ({ id, source: 'default' as const })),
+  ];
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -175,8 +185,9 @@ export function Settings() {
    * Handle model fetching
    */
   const handleRefreshModels = async () => {
-    if (!formData.apiKey.trim()) {
-      setErrors((prev) => ({ ...prev, apiKey: 'API key required to fetch models' }));
+    const prereqErrors = validateFetchModelsPrereqs(formData.provider, formData.apiKey, formData.baseUrl);
+    if (Object.keys(prereqErrors).length > 0) {
+      setErrors((prev) => ({ ...prev, ...prereqErrors }));
       return;
     }
 
@@ -218,42 +229,28 @@ export function Settings() {
 
     // Reset model and clear API key when provider changes
     if (field === 'provider') {
-      const newProvider = value as ApiConfig['provider'];
-      const dynamicModels = availableModels[newProvider] || [];
-      const staticModels = PROVIDER_MODELS[newProvider] || [];
+      const newProvider = value as ProviderName;
+      const providerDef = getProvider(newProvider);
+      const dynamicModels = (availableModelEntries[newProvider] ?? []).map((e) => e.id);
+      const staticModels = getProviderDefaultModelIds(newProvider);
       const allModels = [...new Set([...staticModels, ...dynamicModels])];
 
       const updates: Partial<typeof formData> = {
         apiKey: '',
-        name: formData.name || (newProvider.charAt(0).toUpperCase() + newProvider.slice(1)),
+        name: formData.name || (providerDef?.label ?? newProvider),
       };
 
       if (allModels.length > 0) {
         updates.model = allModels[0];
       } else {
-        updates.model = formData.model; // Keep current model if no new models are found
+        updates.model = formData.model;
       }
 
-      // Auto-fill Base URL for known providers
-      if (newProvider === 'minimax') {
-        updates.baseUrl = MINIMAX_BASE_URL;
-      } else if (newProvider === 'deepseek') {
-        updates.baseUrl = DEEPSEEK_BASE_URL;
-      } else if (newProvider === 'anthropic' || newProvider === 'openai') {
-        updates.baseUrl = '';
-      } else if (newProvider === 'anthropic-compatible' || newProvider === 'openai-compatible') {
-        updates.baseUrl = '';
-      }
+      // Auto-fill Base URL from registry
+      updates.baseUrl = getProviderDefaultBaseUrl(newProvider);
 
-      // Auto-set apiFormat so the Rust backend uses the right wire format
-      if (newProvider === 'anthropic-compatible') {
-        (updates as any).apiFormat = 'anthropic';
-      } else if (newProvider === 'openai-compatible') {
-        (updates as any).apiFormat = 'openai';
-      } else {
-        // Auto-detection handles all first-party providers
-        (updates as any).apiFormat = '';
-      }
+      // Auto-set apiFormat from registry
+      (updates as any).apiFormat = getProviderDefaultApiFormat(newProvider);
 
       setFormData((prev) => ({ ...prev, ...updates }));
     }
@@ -332,17 +329,13 @@ export function Settings() {
   const validateApiForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
-    if (!formData.apiKey.trim()) {
-      newErrors.apiKey = 'API key is required';
-    }
-
     if (!formData.name.trim()) {
       newErrors.name = 'Name is required';
     }
 
-    if ((formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax' || formData.provider === 'deepseek') && !formData.baseUrl.trim()) {
-      newErrors.baseUrl = 'Base URL is required for this provider';
-    }
+    // Capability-driven provider field validation
+    const providerErrors = validateProviderFields(formData.provider, formData.apiKey, formData.baseUrl);
+    Object.assign(newErrors, providerErrors);
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -417,18 +410,9 @@ export function Settings() {
    * Handle test connection
    */
   const handleTestConnection = async () => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.apiKey.trim()) {
-      newErrors.apiKey = 'API key is required';
-    }
-
-    if ((formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax' || formData.provider === 'deepseek') && !formData.baseUrl.trim()) {
-      newErrors.baseUrl = 'Base URL is required';
-    }
-
-    if (Object.keys(newErrors).length > 0) {
-      setErrors(newErrors);
+    const providerErrors = validateProviderFields(formData.provider, formData.apiKey, formData.baseUrl);
+    if (Object.keys(providerErrors).length > 0) {
+      setErrors((prev) => ({ ...prev, ...providerErrors }));
       return;
     }
 
@@ -436,10 +420,11 @@ export function Settings() {
     setTestResult(null);
 
     try {
+      const providerDef = getProvider(formData.provider);
       const result = await invoke<boolean>('test_connection', {
         apiKey: formData.apiKey,
         model: formData.model,
-        baseUrl: (formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax' || formData.provider === 'deepseek') ? formData.baseUrl : null,
+        baseUrl: providerDef?.requiresBaseUrl ? formData.baseUrl : null,
       });
 
       if (result) {
@@ -630,21 +615,16 @@ export function Settings() {
                   onChange={(e) => handleChange('provider', e.target.value as ApiConfig['provider'])}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                 >
-                  {API_PROVIDERS.map((p) => (
+                  {getProviderNames().map((p) => (
                     <option key={p} value={p}>
-                      {p === 'anthropic' ? 'Anthropic'
-                        : p === 'openai' ? 'OpenAI'
-                        : p === 'minimax' ? 'MiniMax'
-                        : p === 'deepseek' ? 'DeepSeek'
-                        : p === 'anthropic-compatible' ? 'Anthropic Compatible (自定义)'
-                        : p === 'openai-compatible' ? 'OpenAI Compatible (自定义)'
-                        : p}
+                      {getProvider(p)?.label ?? p}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* API Key */}
+              {/* API Key — hidden for providers that don't require it */}
+              {isApiKeyRequired(formData.provider) && (
               <div className="mb-3">
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   API Key <span className="text-red-500">*</span>
@@ -670,9 +650,10 @@ export function Settings() {
                 </div>
                 {errors.apiKey && <p className="mt-1 text-xs text-red-500">{errors.apiKey}</p>}
               </div>
+              )}
 
-              {/* Base URL (for compatible/minimax/deepseek providers) */}
-              {(formData.provider === 'anthropic-compatible' || formData.provider === 'openai-compatible' || formData.provider === 'minimax') && (
+              {/* Base URL (shown when provider has showBaseUrl) */}
+              {(getProvider(formData.provider)?.showBaseUrl) && (
                 <div className="mb-3">
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     Base URL <span className="text-red-500">*</span>
@@ -681,17 +662,17 @@ export function Settings() {
                     type="url"
                     value={formData.baseUrl}
                     onChange={(e) => handleChange('baseUrl', e.target.value)}
-                    placeholder={formData.provider === 'anthropic-compatible' ? 'https://your-proxy.example.com' : 'https://api.example.com/v1'}
+                    placeholder={getProvider(formData.provider)?.baseUrlPlaceholder || 'https://api.example.com/v1'}
                     className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
                       errors.baseUrl ? 'border-red-300' : 'border-gray-300'
                     }`}
                   />
                   {errors.baseUrl && <p className="mt-1 text-xs text-red-500">{errors.baseUrl}</p>}
-                  <p className="mt-1 text-xs text-gray-400">
-                    {formData.provider === 'anthropic-compatible'
-                      ? '使用 Anthropic /v1/messages 格式，适合 Claude 中转代理。'
-                      : '使用 OpenAI /chat/completions 格式，适合大多数兼容接口。'}
-                  </p>
+                  {getProvider(formData.provider)?.baseUrlHelp && (
+                    <p className="mt-1 text-xs text-gray-400">
+                      {getProvider(formData.provider)!.baseUrlHelp}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -699,6 +680,7 @@ export function Settings() {
               <div className="mb-3">
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-medium text-gray-600">Model</label>
+                  {canFetchModels(formData.provider) && (
                   <button
                     type="button"
                     onClick={handleRefreshModels}
@@ -715,14 +697,17 @@ export function Settings() {
                     </svg>
                     {isFetchingModels ? 'Fetching...' : 'Fetch models'}
                   </button>
+                  )}
                 </div>
                 <select
                   value={formData.model}
                   onChange={(e) => handleChange('model', e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                 >
-                  {currentProviderModels.map((model) => (
-                    <option key={model} value={model}>{model}</option>
+                  {currentProviderModelEntries.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.id}{entry.source === 'remote' ? ' ✦' : ''}
+                    </option>
                   ))}
                 </select>
               </div>

@@ -1,7 +1,7 @@
 [package]
-name = "tauri-ai-agent"
+name = "pipi-shrimp-agent"
 version = "0.0.3"
-description = "AI Agent - Tauri App"
+description = "PiPi Shrimp Agent - AI Assistant"
 authors = ["you"]
 edition = "2021"
 

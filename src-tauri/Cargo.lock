@@ -4205,6 +4205,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipi-shrimp-agent"
+version = "0.0.3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chromiumoxide",
+ "chrono",
+ "comemo",
+ "dirs 5.0.1",
+ "fontdb 0.14.1",
+ "futures",
+ "glob",
+ "jsonschema",
+ "once_cell",
+ "open",
+ "portable-pty",
+ "regex",
+ "reqwest 0.11.27",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-notification",
+ "tauri-plugin-shell",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "typst",
+ "typst-pdf",
+ "typst-svg",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5911,47 +5952,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows",
-]
-
-[[package]]
-name = "tauri-ai-agent"
-version = "0.0.3"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "chromiumoxide",
- "chrono",
- "comemo",
- "dirs 5.0.1",
- "fontdb 0.14.1",
- "futures",
- "glob",
- "jsonschema",
- "once_cell",
- "open",
- "portable-pty",
- "regex",
- "reqwest 0.11.27",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-notification",
- "tauri-plugin-shell",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "typst",
- "typst-pdf",
- "typst-svg",
- "urlencoding",
- "uuid",
 ]
 
 [[package]]
