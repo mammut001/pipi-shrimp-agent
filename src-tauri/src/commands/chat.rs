@@ -708,8 +708,17 @@ pub async fn execute_tool(
                 .ok_or_else(|| AppError::InternalError("Missing 'skill' argument for Skill".to_string()))?;
             
             match crate::commands::skill::execute_skill(skill_name.to_string(), work_dir.clone()).await {
-                Ok(res) => serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()),
-                Err(e) => format!("ERROR: Failed to execute skill: {}", e),
+                Ok(res) => {
+                    if res.success {
+                        // Return the SKILL.md content directly so the AI can read and follow it
+                        res.output.unwrap_or_else(|| format!("Skill '{}' loaded but has no content.", skill_name))
+                    } else {
+                        format!("Skill '{}' not found. Available skills: resume, pdf, docx, xlsx. Error: {}",
+                            skill_name,
+                            res.error.unwrap_or_else(|| "unknown".to_string()))
+                    }
+                },
+                Err(e) => format!("ERROR: Failed to execute skill '{}': {}", skill_name, e),
             }
         }
 

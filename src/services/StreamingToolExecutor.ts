@@ -74,6 +74,8 @@ const READ_ONLY_TOOLS = new Set([
   'browser_extract_content',
   // Typst rendering (SVG is pure computation, no disk write)
   'render_typst_to_svg',
+  // Skill loading is read-only (reads a SKILL.md file, no side effects)
+  'Skill',
 ]);
 
 /**
