@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BaseTool, ToolContext, ToolResult } from '../base/Tool';
+import { isBlockedUrl } from '@/utils/urlSecurity';
 
 /**
  * WebFetchTool - 抓取网页内容
@@ -18,6 +19,12 @@ export class WebFetchTool extends BaseTool<WebFetchInput, WebFetchOutput> {
   readonly outputSchema = WebFetchOutputSchema;
 
   async execute(input: WebFetchInput, _context: ToolContext): Promise<ToolResult<WebFetchOutput>> {
+    // SSRF protection: block private/internal URLs
+    const blocked = isBlockedUrl(input.url);
+    if (blocked) {
+      return { success: false, error: blocked };
+    }
+
     const startTime = Date.now();
 
     try {

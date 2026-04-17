@@ -21,6 +21,8 @@
     "technology-news-search": { "order": 214, "enabled": true },
     "films-search": { "order": 222, "enabled": true },
     "music-search": { "order": 223, "enabled": true },
-    "skill-creator": { "order": 300, "enabled": true }
+    "skill-creator": { "order": 300, "enabled": true },
+    "resume": { "order": 215, "enabled": true },
+    "autoresearch": { "order": 216, "enabled": true }
   }
 }

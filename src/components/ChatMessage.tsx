@@ -9,18 +9,20 @@
  * - Timestamp display
  */
 
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, lazy, Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
 import { ChatImage } from './ChatImage';
-import { ResumeTemplateCarousel } from './ResumeTemplateCarousel';
+import { ArtifactsBadge } from './ArtifactsBadge';
 import { useUIStore } from '@/store';
+
+// Lazy-loaded heavy components — split into separate chunks
+const LazyCodeBlock = lazy(() => import('./LazyCodeBlock'));
+const ResumeTemplateCarousel = lazy(() => import('./ResumeTemplateCarousel'));
 
 /**
  * Props for ChatMessage component
@@ -172,8 +174,12 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                         return <ChatImage src={codeContent} isSVG alt="SVG Preview" />;
                       }
 
-                      if (language === 'resume-templates') {
-                        return <ResumeTemplateCarousel dataJson={codeContent} />;
+                      if (language === 'resume-templates' || language === 'resume') {
+                        return (
+                          <Suspense fallback={<div className="p-4 text-gray-400 text-sm">Loading carousel...</div>}>
+                            <ResumeTemplateCarousel dataJson={codeContent} />
+                          </Suspense>
+                        );
                       }
 
                       return (
@@ -224,24 +230,20 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                             </div>
                           </div>
                           
-                          <SyntaxHighlighter
-                            language={language || 'text'}
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.85rem',
-                              backgroundColor: '#1e1e1e',
-                              borderRadius: '0 0 0.75rem 0.75rem',
-                              maxWidth: '100%',
-                              overflowX: 'auto',
-                            }}
-                            codeTagProps={{
-                              className: 'break-all'
-                            }}
+                          <Suspense
+                            fallback={
+                              <pre
+                                className="p-4 text-sm font-mono text-gray-300 overflow-x-auto"
+                                style={{ backgroundColor: '#1e1e1e', borderRadius: '0 0 0.75rem 0.75rem', margin: 0 }}
+                              >
+                                <code>{codeContent}</code>
+                              </pre>
+                            }
                           >
-                            {codeContent}
-                          </SyntaxHighlighter>
+                            <LazyCodeBlock language={language || 'text'}>
+                              {codeContent}
+                            </LazyCodeBlock>
+                          </Suspense>
                         </div>
                       );
                     },
@@ -305,6 +307,8 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                   })}
                 </div>
               )}
+              {/* Generated file artifacts (right panel preview) */}
+              {!isUser && <ArtifactsBadge messageId={message.id} />}
             </div>
 
             {/* Loading indicator for latest message */}

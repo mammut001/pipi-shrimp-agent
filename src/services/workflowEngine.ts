@@ -729,6 +729,11 @@ ${output}
           break;
       }
       if (matched) {
+        // Skip self-loop to prevent infinite loops
+        if (route.targetAgentId === currentAgent.id) {
+          console.warn(`[WorkflowEngine] Skipping self-loop route on agent "${currentAgent.name}"`);
+          continue;
+        }
         return agents.find(a => a.id === route.targetAgentId) || null;
       }
     }
@@ -750,6 +755,11 @@ ${output}
     // If agent has no outputRoutes configured, check connections (backward compatibility)
     const outgoingConn = connections.find(c => c.sourceAgentId === currentAgent.id);
     if (outgoingConn) {
+      // Skip self-loop to prevent infinite loops
+      if (outgoingConn.targetAgentId === currentAgent.id) {
+        console.warn(`[WorkflowEngine] Skipping self-loop connection on agent "${currentAgent.name}"`);
+        return null;
+      }
       return agents.find(a => a.id === outgoingConn.targetAgentId) || null;
     }
 

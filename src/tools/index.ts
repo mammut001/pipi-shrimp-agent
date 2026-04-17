@@ -35,6 +35,7 @@ export { RemoteTriggerTool, remoteTriggerTool } from './impl/RemoteTriggerTool';
 export { SleepTool, sleepTool } from './impl/SleepTool';
 export { SyntheticOutputTool, syntheticOutputTool } from './impl/SyntheticOutputTool';
 export { LSPTool, lspTool } from './impl/LSPTool';
+export { SshExecTool, SshUploadFileTool, SshReadFileTool, sshExecTool, sshUploadFileTool, sshReadFileTool } from './impl/SshTool';
 
 import { toolRegistry } from './core/ToolRegistry';
 import { fileReadTool } from './impl/FileReadTool';
@@ -57,6 +58,7 @@ import { remoteTriggerTool } from './impl/RemoteTriggerTool';
 import { sleepTool } from './impl/SleepTool';
 import { syntheticOutputTool } from './impl/SyntheticOutputTool';
 import { lspTool } from './impl/LSPTool';
+import { sshExecTool, sshUploadFileTool, sshReadFileTool } from './impl/SshTool';
 
 /**
  * 注册所有内置工具到全局注册表
@@ -109,6 +111,11 @@ export function registerAllTools(): void {
 
     // LSP
     lspTool,
+
+    // SSH (remote execution)
+    sshExecTool,
+    sshUploadFileTool,
+    sshReadFileTool,
   ];
 
   for (const tool of tools) {

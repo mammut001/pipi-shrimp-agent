@@ -207,3 +207,5 @@ function FieldInput({
       return null;
   }
 }
+
+export default QuestionnaireCard;

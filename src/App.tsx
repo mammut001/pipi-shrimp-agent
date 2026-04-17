@@ -18,6 +18,7 @@ import { useSettingsStore, useChatStore, useUIStore } from '@/store';
 import { useSwarmStore } from '@/store/swarmStore';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 import { useKeyboardShortcuts, KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
+import { AutoResearchSetupModal } from '@/components/AutoResearchSetupModal';
 
 // Lazy-load heavy pages so they don't bloat the initial bundle
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -86,6 +87,9 @@ export default function App() {
         isOpen={showShortcuts}
         onClose={() => setShowShortcuts(false)}
       />
+
+      {/* AutoResearch setup modal */}
+      <AutoResearchSetupModal />
     </>
   );
 }

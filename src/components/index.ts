@@ -16,6 +16,10 @@ export { ChatImage } from './ChatImage';
 // Resume template carousel
 export { ResumeTemplateCarousel } from './ResumeTemplateCarousel';
 
+// Artifacts
+export { ArtifactsPanel } from './ArtifactsPanel';
+export { ArtifactsBadge } from './ArtifactsBadge';
+
 // Modal components
 export { PermissionModal } from './PermissionModal';
 

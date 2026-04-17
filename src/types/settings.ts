@@ -26,6 +26,12 @@ export interface ApiConfig {
   baseUrl?: string;        // Custom API endpoint
   model: string;           // Model name to use
   /**
+   * Explicit provider scope for the model, used to disambiguate when the same
+   * model ID exists across providers. Defaults to `provider` when absent.
+   * New configs set this; old configs are back-filled on read.
+   */
+  modelProviderId?: ApiConfig['provider'];
+  /**
    * Explicit API wire format override.
    * - "anthropic": use Anthropic /v1/messages format (x-api-key header)
    * - "openai":    use OpenAI /chat/completions format (Bearer header)
@@ -55,6 +61,15 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   maxToolRounds: 50,
 };
 
+/** Source of a model entry — for observability and debugging */
+export type ModelSource = 'remote' | 'user' | 'default';
+
+/** A model entry with source tracking */
+export interface ModelEntry {
+  id: string;
+  source: ModelSource;
+}
+
 /** Settings store state interface */
 export interface SettingsState {
   // ========== Data State ==========
@@ -62,7 +77,10 @@ export interface SettingsState {
   activeConfigId: string | null;     // Currently active config ID
   /** @deprecated Use apiConfigs + activeConfigId instead */
   apiConfig: ApiConfig | null;       // Computed: the active config (for backward compat)
-  availableModels: Record<string, string[]>; // Provider -> Model IDs
+  /** @deprecated Use availableModelEntries for source-aware access */
+  availableModels: Record<string, string[]>; // Provider -> Model IDs (backward compat)
+  /** Source-aware model store: provider -> ModelEntry[] */
+  availableModelEntries: Record<string, ModelEntry[]>;
   telegramToken?: string;
   theme: 'light' | 'dark';
   language: 'en' | 'zh';
@@ -179,192 +197,21 @@ export const DEFAULT_API_CONFIG: ApiConfig = {
 /** Supported API providers */
 export const API_PROVIDERS = ['anthropic', 'openai', 'minimax', 'deepseek', 'anthropic-compatible', 'openai-compatible'] as const;
 
-/** Supported models per provider */
-export const PROVIDER_MODELS: Record<ApiConfig['provider'], string[]> = {
-  anthropic: [
-    'claude-sonnet-4-20250514',
-    'claude-sonnet-4-20250508',
-    'claude-3-5-sonnet-20241022',
-    'claude-3-5-haiku-20241022',
-    'claude-3-opus-20240229',
-    'claude-3-haiku-20240307',
-  ],
-  openai: [
-    'gpt-4.5',
-    'gpt-4o',
-    'gpt-4o-mini',
-    'gpt-4-turbo',
-    'gpt-4',
-    'gpt-3.5-turbo',
-  ],
-  minimax: [
-    'MiniMax-M2.5',
-    'MiniMax-M2.1',
-    'MiniMax-M2.5-highspeed',
-    'MiniMax-M2.1-highspeed',
-    'MiniMax-M2',
-  ],
-  deepseek: [
-    'deepseek-chat',
-    'deepseek-reasoner',
-  ],
-  'anthropic-compatible': [],
-  'openai-compatible': [],
-};
+/**
+ * Supported models per provider.
+ * @deprecated Use PROVIDER_REGISTRY from '@/shared/providers' instead.
+ * Now auto-derived from the registry for backward compatibility.
+ */
+import { buildProviderModelsMap, buildFlatPricingMap } from '@/shared/providers';
 
-/** Default model pricing (per 1M tokens, in USD) */
-export const DEFAULT_MODEL_PRICING: Record<string, ModelPricing> = {
-  // Anthropic models
-  'claude-sonnet-4-20250514': {
-    model: 'claude-sonnet-4-20250514',
-    provider: 'anthropic',
-    inputPrice: 3,
-    outputPrice: 15,
-    cacheReadPrice: 0.3,
-    cacheWritePrice: 3.75,
-    contextWindow: 200000,
-  },
-  'claude-sonnet-4-20250508': {
-    model: 'claude-sonnet-4-20250508',
-    provider: 'anthropic',
-    inputPrice: 3,
-    outputPrice: 15,
-    cacheReadPrice: 0.3,
-    cacheWritePrice: 3.75,
-    contextWindow: 200000,
-  },
-  'claude-3-5-sonnet-20241022': {
-    model: 'claude-3-5-sonnet-20241022',
-    provider: 'anthropic',
-    inputPrice: 3,
-    outputPrice: 15,
-    cacheReadPrice: 0.3,
-    cacheWritePrice: 3.75,
-    contextWindow: 200000,
-  },
-  'claude-3-5-haiku-20241022': {
-    model: 'claude-3-5-haiku-20241022',
-    provider: 'anthropic',
-    inputPrice: 0.25,
-    outputPrice: 1.25,
-    cacheReadPrice: 0.03,
-    cacheWritePrice: 0.03,
-    contextWindow: 200000,
-  },
-  'claude-3-opus-20240229': {
-    model: 'claude-3-opus-20240229',
-    provider: 'anthropic',
-    inputPrice: 15,
-    outputPrice: 75,
-    cacheReadPrice: 1.5,
-    cacheWritePrice: 18.75,
-    contextWindow: 200000,
-  },
-  'claude-3-haiku-20240307': {
-    model: 'claude-3-haiku-20240307',
-    provider: 'anthropic',
-    inputPrice: 0.25,
-    outputPrice: 1.25,
-    contextWindow: 200000,
-  },
+export const PROVIDER_MODELS: Record<ApiConfig['provider'], string[]> = buildProviderModelsMap() as Record<ApiConfig['provider'], string[]>;
 
-  // OpenAI models
-  'gpt-4.5': {
-    model: 'gpt-4.5',
-    provider: 'openai',
-    inputPrice: 75,
-    outputPrice: 150,
-    contextWindow: 128000,
-  },
-  'gpt-4o': {
-    model: 'gpt-4o',
-    provider: 'openai',
-    inputPrice: 2.5,
-    outputPrice: 10,
-    contextWindow: 128000,
-  },
-  'gpt-4o-mini': {
-    model: 'gpt-4o-mini',
-    provider: 'openai',
-    inputPrice: 0.15,
-    outputPrice: 0.6,
-    contextWindow: 128000,
-  },
-  'gpt-4-turbo': {
-    model: 'gpt-4-turbo',
-    provider: 'openai',
-    inputPrice: 10,
-    outputPrice: 30,
-    contextWindow: 128000,
-  },
-  'gpt-4': {
-    model: 'gpt-4',
-    provider: 'openai',
-    inputPrice: 30,
-    outputPrice: 60,
-    contextWindow: 128000,
-  },
-  'gpt-3.5-turbo': {
-    model: 'gpt-3.5-turbo',
-    provider: 'openai',
-    inputPrice: 0.5,
-    outputPrice: 1.5,
-    contextWindow: 16385,
-  },
-
-  // MiniMax models (default pricing, user should configure)
-  'MiniMax-M2.5': {
-    model: 'MiniMax-M2.5',
-    provider: 'minimax',
-    inputPrice: 0,
-    outputPrice: 0,
-    contextWindow: 1000000,
-  },
-  'MiniMax-M2.1': {
-    model: 'MiniMax-M2.1',
-    provider: 'minimax',
-    inputPrice: 0,
-    outputPrice: 0,
-    contextWindow: 1000000,
-  },
-  'MiniMax-M2.5-highspeed': {
-    model: 'MiniMax-M2.5-highspeed',
-    provider: 'minimax',
-    inputPrice: 0,
-    outputPrice: 0,
-    contextWindow: 1000000,
-  },
-  'MiniMax-M2.1-highspeed': {
-    model: 'MiniMax-M2.1-highspeed',
-    provider: 'minimax',
-    inputPrice: 0,
-    outputPrice: 0,
-    contextWindow: 1000000,
-  },
-  'MiniMax-M2': {
-    model: 'MiniMax-M2',
-    provider: 'minimax',
-    inputPrice: 0,
-    outputPrice: 0,
-    contextWindow: 1000000,
-  },
-
-  // DeepSeek models — prices as of 2025 (per 1M tokens, USD)
-  'deepseek-chat': {
-    model: 'deepseek-chat',
-    provider: 'deepseek',
-    inputPrice: 0.27,
-    outputPrice: 1.1,
-    contextWindow: 128000,
-  },
-  'deepseek-reasoner': {
-    model: 'deepseek-reasoner',
-    provider: 'deepseek',
-    inputPrice: 0.55,
-    outputPrice: 2.19,
-    contextWindow: 128000,
-  },
-};
+/**
+ * Default model pricing (per 1M tokens, in USD).
+ * @deprecated Use resolvePricing() from '@/shared/providers' instead.
+ * Now auto-derived from the registry for backward compatibility.
+ */
+export const DEFAULT_MODEL_PRICING: Record<string, ModelPricing> = buildFlatPricingMap() as Record<string, ModelPricing>;
 
 /** Default budget settings */
 export const DEFAULT_BUDGET_SETTINGS: BudgetSettings = {

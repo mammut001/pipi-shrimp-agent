@@ -7,6 +7,7 @@
 
 mod commands;
 mod models;
+mod providers;
 mod utils;
 mod claude;
 mod database;

@@ -23,6 +23,24 @@ export default defineConfig(async () => ({
     },
   },
 
+  // Split heavy vendor libs into their own chunks so the main bundle stays lean
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // react-syntax-highlighter + prism grammars (~800 KB)
+          'syntax-highlight': [
+            'react-syntax-highlighter',
+            'react-syntax-highlighter/dist/esm/styles/prism',
+            'refractor',
+          ],
+          // react core (rarely changes → good cache hit)
+          'vendor-react': ['react', 'react-dom'],
+        },
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   clearScreen: false,
   server: {

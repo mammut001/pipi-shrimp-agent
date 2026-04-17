@@ -16,7 +16,7 @@ import { createPortal } from 'react-dom';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import type { WorkflowAgent, RouteCondition } from '@/types/workflow';
 import { useSettingsStore } from '@/store/settingsStore';
-import { PROVIDER_MODELS } from '@/types/settings';
+import { getProviderDefaultModelIds } from '@/shared/providers';
 import { t } from '@/i18n';
 
 interface AgentNodeData {
@@ -103,7 +103,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
     const fetchedModels = availableModels[provider];
     const models = fetchedModels && fetchedModels.length > 0 
       ? fetchedModels 
-      : (PROVIDER_MODELS[provider as keyof typeof PROVIDER_MODELS] || []);
+      : getProviderDefaultModelIds(provider);
     return [provider, models] as [string, string[]];
   }).filter(([, models]) => models.length > 0);
 

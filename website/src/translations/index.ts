@@ -154,6 +154,26 @@ export const translations: Record<Language, TranslationKeys> = {
           title: "Skills Plugin System",
           description: "Built-in utilities for PDF analysis, Excel processing, Word document extraction, and email management.",
         },
+        {
+          title: "Multi-Agent Workflow",
+          description: "Design and execute complex workflows with multiple AI agents working together. Supports conditional routing and feedback loops.",
+        },
+        {
+          title: "Browser Agent",
+          description: "Full browser automation with CDP integration. The agent can take screenshots, extract content, and interact with web pages.",
+        },
+        {
+          title: "MCP Server Support",
+          description: "Connect to any Model Context Protocol server to extend capabilities. Integrates seamlessly with external tools and data sources.",
+        },
+        {
+          title: "Smart Context Management",
+          description: "Automatic context compression with 3-layer system: Microcompact, Session Memory, and Legacy Compact for infinite conversations.",
+        },
+        {
+          title: "Integrated Terminal",
+          description: "Full-featured terminal panel embedded in the app. Run commands and see results without switching windows.",
+        },
       ],
     },
     changelog: {
@@ -247,6 +267,26 @@ export const translations: Record<Language, TranslationKeys> = {
         {
           title: "Système de plugins de compétences",
           description: "Utilitaires intégrés pour l'analyse PDF, le traitement Excel, l'extraction de documents Word et la gestion des e-mails.",
+        },
+        {
+          title: "Flux de travail multi-agents",
+          description: "Concevez et exécutez des flux de travail complexes avec plusieurs agents IA travaillant ensemble. Prend en charge le routage conditionnel et les boucles de rétroaction.",
+        },
+        {
+          title: "Agent de navigateur",
+          description: "Automatisation complète du navigateur avec intégration CDP. L'agent peut capturer des écrans, extraire du contenu et interagir avec les pages web.",
+        },
+        {
+          title: "Prise en charge du serveur MCP",
+          description: "Connectez-vous à n'importe quel serveur Model Context Protocol pour étendre les capacités. S'intègre parfaitement aux outils et sources de données externes.",
+        },
+        {
+          title: "Gestion intelligente du contexte",
+          description: "Compression automatique du contexte avec un système à 3 couches : Microcompact, Mémoire de session et Compression遗产 pour des conversations infinies.",
+        },
+        {
+          title: "Terminal intégré",
+          description: "Panneau de terminal complet intégré dans l'application. Exécutez des commandes et voyez les résultats sans changer de fenêtre.",
         },
       ],
     },
@@ -342,6 +382,26 @@ export const translations: Record<Language, TranslationKeys> = {
           title: "技能插件系统",
           description: "内置 PDF 分析、Excel 处理、Word 文档提取和邮件管理等实用工具。",
         },
+        {
+          title: "多代理工作流",
+          description: "设计并执行复杂工作流，多个 AI 代理协同工作。支持条件路由和反馈循环。",
+        },
+        {
+          title: "浏览器代理",
+          description: "基于 CDP 集成实现完整浏览器自动化。Agent 可截取屏幕截图、提取内容并与网页交互。",
+        },
+        {
+          title: "MCP 服务器支持",
+          description: "连接任何 Model Context Protocol 服务器以扩展功能。无缝集成外部工具和数据源。",
+        },
+        {
+          title: "智能上下文管理",
+          description: "三层自动上下文压缩系统：Microcompact、会话内存和传统压缩，实现无限长度对话。",
+        },
+        {
+          title: "集成终端",
+          description: "应用内嵌入全功能终端面板。无需切换窗口即可运行命令并查看结果。",
+        },
       ],
     },
     changelog: {
@@ -436,6 +496,26 @@ export const translations: Record<Language, TranslationKeys> = {
           title: "스킬 플러그인 시스템",
           description: "PDF 분석, Excel 처리, Word 문서 추출 및 이메일 관리를 위한 내장 유틸리티.",
         },
+        {
+          title: "멀티 에이전트 워크플로우",
+          description: "복잡한 워크플로우를 설계하고 실행하며, 여러 AI 에이전트가 함께 작업합니다. 조건부 라우팅 및 피드백 루프를 지원합니다.",
+        },
+        {
+          title: "브라우저 에이전트",
+          description: "CDP 통합으로 완전한 브라우저 자동화. 에이전트가 스크린샷을 캡처하고 콘텐츠를 추출하며 웹 페이지와 상호 작용할 수 있습니다.",
+        },
+        {
+          title: "MCP 서버 지원",
+          description: "모든 Model Context Protocol 서버에 연결하여 기능을 확장합니다. 외부 도구 및 데이터 소스와 원활하게 통합됩니다.",
+        },
+        {
+          title: "스마트 컨텍스트 관리",
+          description: "3층 시스템으로 자동 컨텍스트 압축: 마이크로컴팩트, 세션 메모리 및 레거시 컴팩트로 무한 대화 가능.",
+        },
+        {
+          title: "통합 터미널",
+          description: "앱 내에 내장된 완전한 기능의 터미널 패널. 창을 전환하지 않고 명령을 실행하고 결과를 볼 수 있습니다.",
+        },
       ],
     },
     changelog: {
@@ -529,6 +609,26 @@ export const translations: Record<Language, TranslationKeys> = {
         {
           title: "Hệ thống plugin kỹ năng",
           description: "Tiện ích tích hợp cho phân tích PDF, xử lý Excel, trích xuất tài liệu Word và quản lý email.",
+        },
+        {
+          title: "Quy trình làm việc đa tác tử",
+          description: "Thiết kế và thực thi các quy trình phức tạp với nhiều tác tử AI làm việc cùng nhau. Hỗ trợ định tuyến có điều kiện và vòng lặp phản hồi.",
+        },
+        {
+          title: "Tác tử trình duyệt",
+          description: "Tự động hóa trình duyệt đầy đủ với tích hợp CDP. Tác tử có thể chụp ảnh màn hình, trích xuất nội dung và tương tác với các trang web.",
+        },
+        {
+          title: "Hỗ trợ máy chủ MCP",
+          description: "Kết nối với bất kỳ máy chủ Model Context Protocol nào để mở rộng khả năng. Tích hợp liền mạch với các công cụ và nguồn dữ liệu bên ngoài.",
+        },
+        {
+          title: "Quản lý ngữ cảnh thông minh",
+          description: "Nén ngữ cảnh tự động với hệ thống 3 lớp: Microcompact, Bộ nhớ phiên và Compact cổ điển cho các cuộc trò chuyện vô hạn.",
+        },
+        {
+          title: "Terminal tích hợp",
+          description: "Bảng terminal đầy đủ tính năng được nhúng trong ứng dụng. Chạy lệnh và xem kết quả mà không cần chuyển đổi cửa sổ.",
         },
       ],
     },

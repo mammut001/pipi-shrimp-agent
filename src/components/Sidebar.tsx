@@ -569,15 +569,17 @@ export function Sidebar() {
             {t('nav.workflow')}
           </button>
           {/* Chat Multi-select Button */}
-          {currentView === 'chat' && sessions.length > 0 && (
+          {currentView === 'chat' && (
             <button
               onClick={() => {
+                if (sessions.length === 0) return;
                 setIsMultiSelectMode(!isMultiSelectMode);
                 if (isMultiSelectMode) {
                   setSelectedSessions(new Set());
                 }
               }}
-              className={`ml-auto px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 ${isMultiSelectMode
+              disabled={sessions.length === 0}
+              className={`ml-auto px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed ${isMultiSelectMode
                   ? 'bg-blue-100 text-blue-700 shadow-sm ring-1 ring-blue-300'
                   : 'bg-gray-50 text-gray-600 hover:bg-gray-200/50 active:bg-gray-200'
                 }`}
@@ -596,15 +598,17 @@ export function Sidebar() {
             </button>
           )}
           {/* Workflow Multi-select Button */}
-          {currentView === 'workflow' && workflowInstances.length > 0 && (
+          {currentView === 'workflow' && (
             <button
               onClick={() => {
+                if (workflowInstances.length === 0) return;
                 setIsWorkflowMultiSelectMode(!isWorkflowMultiSelectMode);
                 if (isWorkflowMultiSelectMode) {
                   setSelectedWorkflows(new Set());
                 }
               }}
-              className={`ml-auto px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 ${isWorkflowMultiSelectMode
+              disabled={workflowInstances.length === 0}
+              className={`ml-auto px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed ${isWorkflowMultiSelectMode
                   ? 'bg-blue-100 text-blue-700 shadow-sm ring-1 ring-blue-300'
                   : 'bg-gray-50 text-gray-600 hover:bg-gray-200/50 active:bg-gray-200'
                 }`}

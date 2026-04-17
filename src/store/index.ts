@@ -24,6 +24,10 @@ export {
 
 // Export skill store
 export { useSkillStore } from './skillStore';
+
+// Export artifacts store
+export { useArtifactsStore } from './artifactsStore';
+export type { ArtifactItem, ArtifactFileType } from './artifactsStore';
 export type { SkillInfo } from './skillStore';
 
 // Export chat types
@@ -53,6 +57,18 @@ export {
   DEFAULT_MODEL_PRICING,
   DEFAULT_BUDGET_SETTINGS,
 } from '../types/settings';
+
+// Re-export registry for direct access
+export {
+  PROVIDER_REGISTRY,
+  getProvider,
+  getProviderNames,
+  getProviderDefaultModelIds,
+  getProviderDefaultBaseUrl,
+  getProviderDefaultApiFormat,
+  resolvePricing,
+} from '../shared/providers';
+export type { ProviderName, ProviderDef } from '../shared/providers';
 
 // Export UI types
 export type {

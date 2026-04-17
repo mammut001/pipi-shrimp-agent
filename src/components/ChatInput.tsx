@@ -9,9 +9,8 @@
  * - Auto focus
  */
 
-import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
 import { useMCPStore } from '@/store/mcpStore';
@@ -39,7 +38,6 @@ interface ChatInputProps {
  */
 export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }: ChatInputProps) {
   const [input, setInput] = useState('');
-  const [references, setReferences] = useState<string[]>([]);
   const [isBindingFolder, setIsBindingFolder] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -77,7 +75,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
-  }, [input, references]);
+  }, [input]);
 
   // Auto-focus on mount
   useEffect(() => {
@@ -85,8 +83,6 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
       textareaRef.current.focus();
     }
   }, []);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
    * Handle opening the current working directory in Finder
@@ -110,76 +106,13 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
   }, [workDir, currentSessionId]);
 
   /**
-   * Handle file attachment - trigger Tauri file dialog
-   */
-  const handleAttachFile = useCallback(async () => {
-    try {
-      let defaultPath = workDir;
-      if (!defaultPath && currentSessionId) {
-        try {
-          defaultPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
-        } catch (e) {
-          console.error("Failed to get default dir:", e);
-        }
-      }
-
-      const selected = await open({
-        multiple: true,
-        defaultPath,
-      });
-
-      if (selected === null) return;
-      
-      const paths = (Array.isArray(selected) ? selected : [selected]).map(p => (typeof p === 'string' ? p : (p as any).path));
-      setReferences(prev => [...prev, ...paths]);
-    } catch (err) {
-      console.error('Failed to open file dialog using Tauri plugin:', err);
-      // Fallback to html input
-      fileInputRef.current?.click();
-    }
-  }, [workDir, currentSessionId]);
-
-
-  /**
-   * Handle file selection from native file input
-   */
-  const handleFileChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const paths: string[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      // In Tauri, files have a .path property
-      const path = (file as unknown as { path?: string }).path || file.name;
-      paths.push(path);
-    }
-    setReferences(prev => [...prev, ...paths]);
-
-    // Reset input so same file can be selected again
-    e.target.value = '';
-  }, []);
-
-  /**
-   * Remove a file reference
-   */
-  const removeReference = useCallback((path: string) => {
-    setReferences(prev => prev.filter(p => p !== path));
-  }, []);
-
-  /**
    * Handle message submission
    */
   const handleSubmit = useCallback(async () => {
     const trimmedInput = input.trim();
-    if ((!trimmedInput && references.length === 0) || isStreaming) return;
+    if (!trimmedInput || isStreaming) return;
 
-    // Build the message with references
-    let finalMessage = trimmedInput;
-    if (references.length > 0) {
-      const refText = references.map(p => `[File Reference: ${p}]`).join('\n');
-      finalMessage = `${refText}\n\n${trimmedInput}`;
-    }
+    const finalMessage = trimmedInput;
 
     // Quick check for browser intent before creating session
     const mightBeBrowser = quickCheckBrowserIntent(finalMessage);
@@ -189,7 +122,6 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
     if (mightBeBrowser) {
       // Clear input state first so browser workflows feel the same as normal sends
       setInput('');
-      setReferences([]);
 
       const handled = await handleChatBrowserWorkflow(finalMessage);
       if (handled) {
@@ -203,7 +135,6 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
       if (onNewSessionRequired) {
         onNewSessionRequired(finalMessage);
         setInput('');
-        setReferences([]);
         return;
       }
       // 否则直接创建 session（向后兼容）
@@ -212,13 +143,12 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
 
     // Clear input state and draft
     setInput('');
-    setReferences([]);
     localStorage.removeItem(`chat_draft_${draftKey}`);
 
     // Send to AI (browser is controlled manually or via AI tools, not by client-side regex)
     onSend?.(finalMessage);
     await sendMessage(finalMessage);
-  }, [input, references, isStreaming, currentSessionId, onNewSessionRequired, startSession, draftKey, onSend, sendMessage]);
+  }, [input, isStreaming, currentSessionId, onNewSessionRequired, startSession, draftKey, onSend, sendMessage]);
 
   /**
    * Handle stop generation
@@ -374,31 +304,6 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
           </div>
         )}
 
-        {/* References list */}
-        {references.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-3">
-            {references.map((path) => (
-              <div 
-                key={path} 
-                className="flex items-center gap-1.5 bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-1 rounded-full border border-blue-100 group animate-in slide-in-from-bottom-1 duration-200"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                </svg>
-                <span className="max-w-[150px] truncate">{path.split('/').pop()}</span>
-                <button 
-                  onClick={() => removeReference(path)}
-                  className="p-0.5 hover:bg-blue-200 rounded-full transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
         <div className={`relative flex items-end gap-2 bg-gray-50 rounded-xl border transition-all px-4 ${
           isFocused
             ? 'border-gray-400 ring-2 ring-gray-200 shadow-sm'
@@ -426,20 +331,11 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
               // Delay resetting to false so the KeyDown event for the same Enter key still sees true
               setTimeout(() => { isComposingRef.current = false; }, 100); 
             }}
-            placeholder={references.length > 0 ? t('chat.inputPlaceholder') : t('chat.inputPlaceholder')}
+            placeholder={t('chat.inputPlaceholder')}
             disabled={isDisabled}
             rows={1}
             className="flex-1 bg-transparent px-0 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
             style={{ minHeight: '48px' }}
-          />
-
-          {/* Hidden file input for native file selection */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileChange}
-            className="hidden"
           />
 
           {/* Actions */}
@@ -456,28 +352,6 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-              </svg>
-            </button>
-
-            {/* File Upload Button (Optional) */}
-            <button
-              onClick={handleAttachFile}
-              type="button"
-              disabled={isDisabled}
-              className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Attach file"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M8 4a3 3 0 00-3 3v4a5 5 0 0010 0V7a1 1 0 112 0v4a7 7 0 11-14 0V7a5 5 0 0110 0v4a3 3 0 11-6 0V7a1 1 0 012 0v4a1 1 0 102 0V7a3 3 0 00-3-3z"
-                  clipRule="evenodd"
-                />
               </svg>
             </button>
 
@@ -504,7 +378,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
             ) : (
               <button
                 onClick={handleSubmit}
-                disabled={isDisabled || (!input.trim() && references.length === 0)}
+                disabled={isDisabled || !input.trim()}
                 className="p-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title={t('chat.send')}
               >

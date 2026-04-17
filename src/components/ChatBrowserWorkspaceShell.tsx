@@ -10,14 +10,18 @@
  * - external: Browser in separate window, Chat takes full width
  */
 
-import { useMemo, useEffect, useRef, useCallback, useState } from 'react';
+import { useMemo, useEffect, useRef, useCallback, useState, lazy, Suspense } from 'react';
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard } from '@/components';
+import { ChatMessage, ChatInput } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
 import { SwarmPanel } from './SwarmPanel';
 import { TerminalPanel } from './TerminalPanel';
+
+// Lazy-loaded modal/overlay components (rarely visible on first render)
+const PermissionModal = lazy(() => import('./PermissionModal'));
+const QuestionnaireCard = lazy(() => import('./QuestionnaireCard'));
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
@@ -465,20 +469,24 @@ export function ChatBrowserWorkspaceShell() {
 
       {/* Permission Modal — Ask mode tool confirmation (fixed overlay, always on top) */}
       {pendingPermission && (
-        <PermissionModal
-          permission={pendingPermission}
-          onApprove={handleApprovePermission}
-          onDeny={handleDenyPermission}
-        />
+        <Suspense fallback={null}>
+          <PermissionModal
+            permission={pendingPermission}
+            onApprove={handleApprovePermission}
+            onDeny={handleDenyPermission}
+          />
+        </Suspense>
       )}
 
       {/* Questionnaire Modal — AskUserQuestion tool interactive form */}
       {activeQuestionnaire && (
-        <QuestionnaireCard
-          data={activeQuestionnaire}
-          onSubmit={submitQuestionnaire}
-          onCancel={clearQuestionnaire}
-        />
+        <Suspense fallback={null}>
+          <QuestionnaireCard
+            data={activeQuestionnaire}
+            onSubmit={submitQuestionnaire}
+            onCancel={clearQuestionnaire}
+          />
+        </Suspense>
       )}
 
       {/* New Chat Modal — shown when user submits a message with no active session */}

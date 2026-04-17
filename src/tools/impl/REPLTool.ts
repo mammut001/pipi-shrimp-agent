@@ -8,6 +8,36 @@ import { BaseTool, ToolContext, ToolResult } from '../base/Tool';
  * Executes code in a persistent REPL session.
  * Based on Claude Code's REPLTool primitive tools.
  */
+
+// Dangerous code patterns — block system-level operations that bypass BashTool safety
+const DANGEROUS_PYTHON_PATTERNS = [
+  /os\.system\s*\(/,
+  /subprocess\.(run|call|Popen|check_output)\s*\(/,
+  /shutil\.rmtree\s*\(\s*['"]\//, // rmtree on root paths
+  /open\s*\(\s*['"]\/etc\//,
+  /open\s*\(\s*['"]\/proc\//,
+  /os\.remove\s*\(\s*['"]\//, // os.remove on root paths
+  /__import__\s*\(\s*['"]subprocess/,
+  /exec\s*\(\s*compile/,   // exec(compile(...)) dynamic code
+];
+
+const DANGEROUS_JS_PATTERNS = [
+  /require\s*\(\s*['"]child_process/,
+  /require\s*\(\s*['"]fs['"]\).*unlinkSync\s*\(\s*['"]\//, // fs.unlinkSync on root paths
+  /process\.exit/,
+  /require\s*\(\s*['"]os['"]\)/,
+];
+
+function isDangerousCode(code: string, lang: string): string | null {
+  const patterns = lang === 'python' ? DANGEROUS_PYTHON_PATTERNS : DANGEROUS_JS_PATTERNS;
+  for (const p of patterns) {
+    if (p.test(code)) {
+      return `Blocked: dangerous code pattern detected (${p.source.substring(0, 30)})`;
+    }
+  }
+  return null;
+}
+
 export class REPLTool extends BaseTool<REPLInput, REPLOutput> {
   readonly name = 'REPL';
   readonly aliases = ['Eval', 'Execute', 'RunCode'];
@@ -25,6 +55,12 @@ export class REPLTool extends BaseTool<REPLInput, REPLOutput> {
   async execute(input: REPLInput, context: ToolContext): Promise<ToolResult<REPLOutput>> {
     try {
       const lang = input.language || 'javascript';
+
+      // Safety check: block dangerous system-level operations
+      const blocked = isDangerousCode(input.code, lang);
+      if (blocked) {
+        return { success: false, error: blocked };
+      }
 
       // Use session-based execution for Python when sessionId is provided
       if (lang === 'python' && input.sessionId) {

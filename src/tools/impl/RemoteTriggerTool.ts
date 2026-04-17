@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BaseTool, ToolContext, ToolResult } from '../base/Tool';
+import { isBlockedUrl } from '@/utils/urlSecurity';
 
 /**
  * RemoteTriggerTool - 触发远程操作
@@ -18,6 +19,12 @@ export class RemoteTriggerTool extends BaseTool<RemoteTriggerInput, RemoteTrigge
   readonly outputSchema = RemoteTriggerOutputSchema;
 
   async execute(input: RemoteTriggerInput, _context: ToolContext): Promise<ToolResult<RemoteTriggerOutput>> {
+    // SSRF protection: block private/internal URLs
+    const blocked = isBlockedUrl(input.url);
+    if (blocked) {
+      return { success: false, error: blocked };
+    }
+
     try {
       const response = await fetch(input.url, {
         method: input.method || 'POST',

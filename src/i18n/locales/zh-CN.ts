@@ -454,6 +454,32 @@ const zhCN: TranslationKeys = {
 - 描述详细准确
 - 图标简洁易识别`,
 
+  'skill.autoresearch.name': 'AutoResearch',
+  'skill.autoresearch.description': '自动实验循环 — SSH 远程训练与指标驱动优化',
+  'skill.autoresearch.documentation': `# AutoResearch
+
+自主实验循环，用于 ML 训练迭代与超参数优化。
+
+## 功能
+
+- 通过 SSH 在远程 VPS 上执行训练命令
+- 根据指标变化自动进入下一轮实验
+- 记录实验日志，支持失败回滚（基于 git）
+- 在右侧面板实时查看实验状态与输出
+
+## 使用方式
+
+1. 点击 **在 Chat 中打开** 进入 Chat 视图
+2. 系统会打开 AutoResearch 面板并弹出配置弹窗
+3. 完成 SSH 与实验参数后启动循环
+
+## 架构
+
+- 循环引擎每轮构建系统提示词
+- Agent 使用 ssh_exec / ssh_upload_file 工具执行实验
+- 解析结果并记录；改进的实验提交，失败的回滚`,
+  'skill.autoresearch.openInChat': '在 Chat 中打开',
+
   // Typst Preview
   'typst.title': '文档预览',
   'typst.render': '渲染',
