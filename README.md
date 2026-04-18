@@ -296,6 +296,11 @@ The built-in resume skill includes templates from the following open-source [Typ
 
 - **[LobsterAI](https://lobsterai.youdao.com/#/en/index)** - Provides architectural inspiration and reference for our agent system
 - **[PageAgent](https://github.com/alibaba/page-agent)** by Alibaba
+
+### Project License
+
+This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE).
+
 ### Sponsors
 
 

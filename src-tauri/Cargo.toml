@@ -4,6 +4,7 @@ version = "0.0.3"
 description = "PiPi Shrimp Agent - AI Assistant"
 authors = ["you"]
 edition = "2021"
+license = "Apache-2.0"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
