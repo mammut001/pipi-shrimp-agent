@@ -222,6 +222,7 @@ interface DbMessage {
   reasoning: string | null;
   artifacts: string | null;
   tool_calls: string | null;  // JSON-serialized Vec<ToolCall>
+  token_usage: string | null; // JSON-serialized token usage
   created_at: number;
 }
 
@@ -270,6 +271,7 @@ const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => 
     timestamp: m.created_at,
     artifacts: safeJsonParse(m.artifacts, undefined),
     tool_calls: safeJsonParse(m.tool_calls, undefined),
+    token_usage: safeJsonParse(m.token_usage, undefined),
   })),
 });
 
@@ -300,6 +302,7 @@ const messageToDb = (message: Message, sessionId: string): DbMessage => ({
   reasoning: message.reasoning || null,
   artifacts: message.artifacts ? JSON.stringify(message.artifacts) : null,
   tool_calls: message.tool_calls ? JSON.stringify(message.tool_calls) : null,
+  token_usage: message.token_usage ? JSON.stringify(message.token_usage) : null,
   created_at: message.timestamp,
 });
 
@@ -1269,7 +1272,28 @@ export const useChatStore = create<ChatState>()(
             uiStore.addNotification('info', chunk.message);
           } else if (chunk.type === 'tool_batch_request') {
             const currentSess = get().sessions.find(s => s.id === activeSessionId);
-            const workDir = currentSess?.workDir ?? null;
+            let workDir = currentSess?.workDir ?? null;
+
+            // Auto-assign default output dir when workDir is null and batch contains write tools
+            if (!workDir) {
+              const writeTools = ['write_file', 'create_directory', 'execute_command'];
+              const hasWriteTool = chunk.tools.some(t => writeTools.includes(t.name));
+              if (hasWriteTool) {
+                try {
+                  const defaultDir = await invoke<string>('get_app_default_dir', { sessionId: activeSessionId });
+                  await invoke('create_directory', { path: defaultDir });
+                  workDir = defaultDir;
+                  const updated = { ...currentSess!, workDir: defaultDir, updatedAt: Date.now() };
+                  await invoke('db_save_session', { session: sessionToDb(updated) });
+                  set(state => ({
+                    sessions: state.sessions.map(s => s.id === activeSessionId ? updated : s)
+                  }));
+                  console.log(`📂 Auto-assigned workDir for session: ${defaultDir}`);
+                } catch (e) {
+                  console.error('[sendMessage] Failed to auto-assign workDir:', e);
+                }
+              }
+            }
 
             // Highlight active skill in AgentPanel (replaces the old shimmer toast)
             for (const tool of chunk.tools) {

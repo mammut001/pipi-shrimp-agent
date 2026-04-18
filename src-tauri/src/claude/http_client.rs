@@ -621,6 +621,25 @@ pub fn get_tools(browser_connected: bool) -> Vec<serde_json::Value> {
                 "additionalProperties": false
             }
         }),
+        serde_json::json!({
+            "name": "compile_typst_file",
+            "description": "Compile a .typ file from disk into PDF and SVG with full @preview package support. Use this instead of render_typst_to_pdf when the .typ file uses @preview imports (e.g., resume templates). The file must already exist on disk. Returns PDF path, SVG path, and SVG string for preview.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Absolute path to the .typ source file on disk"
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Absolute path to the directory where PDF and SVG files will be saved"
+                    }
+                },
+                "required": ["file_path", "output_dir"],
+                "additionalProperties": false
+            }
+        }),
     ];
 
     // Add browser tools only when Chrome CDP is connected
@@ -2030,13 +2049,13 @@ mod tests {
     #[test]
     fn test_get_tools_count_without_browser() {
         let tools = get_tools(false);
-        assert_eq!(tools.len(), 10); // 10 file/command tools
+        assert_eq!(tools.len(), 15);
     }
 
     #[test]
     fn test_get_tools_count_with_browser() {
         let tools = get_tools(true);
-        assert_eq!(tools.len(), 16); // 10 file/command + 6 browser tools
+        assert_eq!(tools.len(), 25); // 15 base + 10 browser tools
     }
 
     #[test]
