@@ -153,9 +153,12 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                   components={{
                     // Custom code block rendering
                     code({ className, children, ...props }) {
-                      const match = /language-(\w+)/.exec(className || '');
+                      // Support hyphenated names and optional [] brackets in the class name
+                      const match = /language-([a-zA-Z0-9_\-\[\]]+)/.exec(className || '');
                       const isInline = !match;
-                      const language = match?.[1];
+                      const rawLanguage = match?.[1] || '';
+                      // Clean up the language name from any '[' or ']' or spaces
+                      const language = rawLanguage.replace(/\[|\]/g, '').trim();
                       const isTypst = language === 'typst';
                       const codeContent = String(children).replace(/\n$/, '');
 

@@ -7,14 +7,16 @@ description: Professional Resume Generator using Typst templates with carousel s
 
 ## Step 1 — Show Template Carousel
 
-**IMPORTANT: Always start here.** Output a single fenced code block with language `resume-templates` and body `[]`. Example output (exactly 3 lines):
+**Check conversation history first:** If the user has ALREADY selected a template (e.g., "I'd like to use the Basic Resume template"), SKIP Step 1 entirely and PROCEED IMMEDIATELY TO STEP 2.
 
-Line 1: three backticks followed by resume-templates
-Line 2: []
-Line 3: three backticks
+If no template has been selected yet, output a single fenced code block with language `resume-templates` and body `[]`. 
 
-This renders an interactive template carousel. Do NOT output it twice. Do NOT wrap it in markdown or other code blocks.
-Wait for the user to select a template before proceeding.
+**CRITICAL FORMATTING:** You MUST use exact newlines. Do not output inline. Example output (exactly 3 lines):
+```resume-templates
+[]
+```
+
+This renders an interactive template carousel. Do NOT output it twice. Do NOT wrap it in other markdown. Wait for the user to select a template before proceeding.
 
 ## Step 2 — Collect User Information
 
@@ -43,30 +45,123 @@ If the user already provided info in their message, skip redundant fields.
 
 ## Step 3 — Generate Resume
 
-### 3a. Write `.typ` file
+### 3a. Read the template example
 
-Read the selected template's example from `src/skills/resume/templates/{template-id}/template/` to learn the API. Use Bash `cat` to read the example `.typ` file. Then write a `.typ` file to `{workDir}/resume.typ`.
+Use `read_file` or `execute_command` with `cat` to read the template's example `.typ` file:
 
-Available templates (use `@preview/` import):
-- **basic-resume** → `#import "@preview/basic-resume:0.2.9": *` — Functions: `resume()`, `edu()`, `work()`, `project()`, `dates-helper()`
-- **brilliant-cv** → `#import "@preview/brilliant-cv:3.3.0": cv` — Metadata-driven with `metadata.toml`
-- **calligraphics** → `#import "@preview/calligraphics:1.0.0": *` — Two-column: `resume(author: (...))[ left ][ right ]`
-- **grotesk-cv** → `#import "@preview/grotesk-cv:1.0.5"` — Uses `info.toml` config
-- **nabcv** → `#import "@preview/nabcv:0.1.0": cv` — Uses `cv.toml` config
+| Template | Example file to read |
+|----------|---------------------|
+| basic-resume | `src/skills/resume/templates/basic-resume/template/main.typ` |
+| brilliant-cv | `src/skills/resume/templates/brilliant-cv/template/cv.typ` |
+| calligraphics | `src/skills/resume/templates/calligraphics/template/resume.typ` |
+| grotesk-cv | `src/skills/resume/templates/grotesk-cv/src/template/cv.typ` + `src/skills/resume/templates/grotesk-cv/src/template/info.toml` |
+| nabcv | `src/skills/resume/templates/nabcv/template/cv.typ` + `src/skills/resume/templates/nabcv/template/cv.toml` |
 
-### 3b. Compile
+Study the example to understand the exact import syntax and API.
 
-```bash
-typst compile "{workDir}/resume.typ" "{workDir}/resume.pdf"
-typst compile "{workDir}/resume.typ" "{workDir}/resume-preview.svg"
+### 3b. Write files to `{workDir}`
+
+**CRITICAL — Output directory:** Always write files to `{workDir}`. NEVER write files to `src/`, `src-tauri/`, or the project root. Writing files to `src-tauri/` will trigger a Rust recompile and crash the app.
+
+Write the `.typ` file (and any config files the template requires, e.g. `info.toml`) to `{workDir}/`.
+
+**CRITICAL — Import syntax:** You MUST copy the `#import` line EXACTLY from the template example. Common mistakes:
+- ❌ `#show: grotesk-cv.with(...)` — Typst treats `grotesk-cv` as `grotesk - cv` (subtraction)
+- ✅ `#import "@preview/grotesk-cv:1.0.5": cv` then `#show: cv.with(...)`
+- ❌ Writing Typst code from memory — you WILL get syntax wrong
+- ✅ Copy the template structure exactly, only change data values
+
+**CRITICAL — Email addresses:** In Typst, `@` starts a label reference. Wrap emails in quotes or use `#link()`:
+- ❌ `user@example.com` — Typst parses `@example.com` as a label
+- ✅ `#link("mailto:user@example.com")[user\@example.com]`
+
+### 3c. Compile
+
+Use the `compile_typst_file` tool — it has built-in `@preview` package resolution:
+```json
+{
+  "file_path": "{workDir}/resume.typ",
+  "output_dir": "{workDir}"
+}
 ```
 
-### 3c. Deliver
+This returns `pdf_path`, `svg_path`, and `svg` (SVG string for preview).
 
-1. Show SVG preview in a ```svg code block
+**Fallback** (only if `compile_typst_file` fails): use `render_typst_to_pdf` with the fallback template below.
+
+### 3d. Deliver
+
+1. Show SVG preview in a ```svg code block (from the `svg` field in compile result)
 2. Tell user the PDF path
 3. Offer adjustments
 
+## Fallback Template (No `@preview` — works with `render_typst_to_pdf`)
+
+If `compile_typst_file` fails (package not found, etc.), generate a self-contained `.typ` using ONLY built-in Typst features. Use `render_typst_to_svg` for preview and `render_typst_to_pdf` to save.
+
+```typ
+// === Self-contained resume template (no @preview imports) ===
+#set page(paper: "a4", margin: (x: 1.8cm, y: 1.5cm))
+#set text(font: "Times New Roman", size: 10pt)
+#set par(justify: true, leading: 0.65em)
+
+#let accent = rgb("#2b5797")
+#let light-gray = rgb("#f5f5f5")
+
+#let header(name, title, details) = {
+  align(center)[
+    #text(size: 22pt, weight: "bold", fill: accent)[#name]
+    #v(2pt)
+    #text(size: 12pt, fill: luma(100))[#title]
+    #v(6pt)
+    #text(size: 9pt, fill: luma(120))[#details]
+  ]
+  #v(8pt)
+  #line(length: 100%, stroke: 0.5pt + accent)
+}
+
+#let section-title(title) = {
+  v(10pt)
+  text(size: 12pt, weight: "bold", fill: accent)[#title]
+  v(2pt)
+  line(length: 100%, stroke: 0.3pt + luma(200))
+  v(4pt)
+}
+
+#let entry(left, right, body) = {
+  grid(
+    columns: (1fr, auto),
+    text(weight: "bold")[#left],
+    text(fill: luma(100), size: 9pt)[#right],
+  )
+  v(2pt)
+  body
+  v(6pt)
+}
+
+// === Fill in user data below ===
+#header(
+  "Full Name",
+  "Job Title",
+  "email · phone · location · linkedin · github",
+)
+
+#section-title("Work Experience")
+#entry("Company — Role", "Start – End")[
+  - Achievement with metrics and action verbs
+]
+
+#section-title("Education")
+#entry("University — Degree", "Start – End")[
+  GPA, honors, relevant coursework
+]
+
+#section-title("Skills")
+Languages: ... · Frameworks: ... · Tools: ...
+```
+
 ## Notes
+- All 5 templates (`basic-resume`, `brilliant-cv`, `calligraphics`, `grotesk-cv`, `nabcv`) have their `@preview` dependencies pre-bundled. No network access needed.
 - Expand brief user input into professional resume language with action verbs and metrics
-- If `typst` CLI unavailable, fall back to built-in `render_typst_to_pdf` (only for self-contained source without `@preview` imports)
+- Do NOT retry the same failing Typst code more than once. If compilation fails, read the error carefully, fix the specific issue, then retry.
+- If `compile_typst_file` errors mention a missing package, switch to the fallback template above.

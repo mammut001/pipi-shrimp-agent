@@ -37,7 +37,8 @@ fn row_to_message(row: &Row) -> SqliteResult<DbMessage> {
         reasoning: row.get(4)?,
         artifacts: row.get(5)?,
         tool_calls: row.get(6)?,
-        created_at: row.get(7)?,
+        token_usage: row.get(7)?,
+        created_at: row.get(8)?,
     })
 }
 
@@ -107,6 +108,7 @@ pub struct DbMessage {
     pub reasoning: Option<String>,
     pub artifacts: Option<String>,
     pub tool_calls: Option<String>, // JSON-serialized Vec<ToolCall>
+    pub token_usage: Option<String>, // JSON-serialized token usage
     pub created_at: i64,
 }
 
@@ -280,6 +282,16 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 [],
             )?;
         }
+        4 => {
+            let _ = conn.execute(
+                "ALTER TABLE messages ADD COLUMN token_usage TEXT",
+                [],
+            );
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (4, strftime('%s','now'))",
+                [],
+            )?;
+        }
         _ => {
             eprintln!("⚠️  Unknown migration version {}", version);
         }
@@ -296,7 +308,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
  * `LATEST_VERSION`.
  */
 pub fn init_database() -> SqliteResult<()> {
-    const LATEST_VERSION: i64 = 3;
+    const LATEST_VERSION: i64 = 4;
 
     let db_path = get_db_path();
     println!("📂 Database path: {:?}", db_path);
@@ -408,8 +420,8 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
     let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, artifacts, tool_calls, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, artifacts, tool_calls, token_usage, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 message.id,
                 message.session_id,
@@ -418,6 +430,7 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
                 message.reasoning,
                 message.artifacts,
                 message.tool_calls,
+                message.token_usage,
                 message.created_at
             ],
         )?;
@@ -459,7 +472,7 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, reasoning, artifacts, tool_calls, created_at
+            "SELECT id, session_id, role, content, reasoning, artifacts, tool_calls, token_usage, created_at
              FROM messages WHERE session_id = ?1 ORDER BY created_at ASC",
         )?;
 

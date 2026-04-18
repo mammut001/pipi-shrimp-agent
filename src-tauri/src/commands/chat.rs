@@ -34,6 +34,7 @@ pub struct Message {
     pub reasoning: Option<String>,
     pub artifacts: Option<String>,
     pub tool_calls: Option<String>,
+    pub token_usage: Option<String>,
     pub tool_call_id: Option<String>,
     pub timestamp: u64,
 }
@@ -61,6 +62,7 @@ fn db_session_to_session_data(db_session: DbSession) -> AppResult<SessionData> {
             reasoning: m.reasoning,
             artifacts: m.artifacts,
             tool_calls: m.tool_calls,
+            token_usage: m.token_usage,
             tool_call_id: None, // This field is used for API requests, not persisted in DB for every msg role yet (in prefix)
             timestamp: m.created_at as u64,
         })
@@ -125,6 +127,7 @@ pub async fn send_message(_app: AppHandle, req: SendMessageRequest) -> AppResult
         reasoning: None,
         artifacts: None,
         tool_calls: None,
+        token_usage: None,
         created_at: timestamp,
     };
 
@@ -162,6 +165,7 @@ pub async fn save_message_to_db(
     reasoning: Option<String>,
     artifacts: Option<String>,
     tool_calls: Option<String>,
+    token_usage: Option<String>,
 ) -> AppResult<String> {
     let timestamp = get_timestamp() as i64;
     let message_id = Uuid::new_v4().to_string();
@@ -174,6 +178,7 @@ pub async fn save_message_to_db(
         reasoning,
         artifacts,
         tool_calls,
+        token_usage,
         created_at: timestamp,
     };
 
@@ -761,6 +766,52 @@ pub async fn execute_tool(
             serde_json::json!({ "file_path": file_path, "message": format!("PDF saved to {}", file_path) }).to_string()
         }
 
+        "compile_typst_file" => {
+            let typ_path = args.get("file_path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'file_path' argument for compile_typst_file".to_string()))?;
+            let output_dir = args.get("output_dir")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'output_dir' argument for compile_typst_file".to_string()))?;
+
+            let typ_path_buf = std::path::PathBuf::from(typ_path);
+            let output_dir_buf = std::path::PathBuf::from(output_dir);
+            let book = font_state.prebuilt.book.clone();
+            let fonts = font_state.prebuilt.fonts.clone();
+
+            let (svg_string, pdf_bytes) = tokio::task::spawn_blocking(move || {
+                let prebuilt = crate::utils::typst::PrebuiltFonts { book, fonts };
+                let templates_dir = crate::utils::typst::find_templates_dir();
+                crate::utils::typst::compile_typst_file(
+                    &typ_path_buf,
+                    &prebuilt,
+                    templates_dir.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| AppError::InternalError(format!("Thread error: {}", e)))?
+            .map_err(|e| AppError::InternalError(format!("Typst compilation failed: {}", e)))?;
+
+            // Write PDF
+            let pdf_path = output_dir_buf.join("resume.pdf");
+            std::fs::create_dir_all(&output_dir_buf)
+                .map_err(|e| AppError::InternalError(format!("Failed to create output dir: {}", e)))?;
+            std::fs::write(&pdf_path, pdf_bytes)
+                .map_err(|e| AppError::InternalError(format!("Failed to write PDF: {}", e)))?;
+
+            // Write SVG preview
+            let svg_path = output_dir_buf.join("resume-preview.svg");
+            std::fs::write(&svg_path, &svg_string)
+                .map_err(|e| AppError::InternalError(format!("Failed to write SVG: {}", e)))?;
+
+            serde_json::json!({
+                "pdf_path": pdf_path.to_string_lossy(),
+                "svg_path": svg_path.to_string_lossy(),
+                "svg": svg_string,
+                "message": format!("Resume compiled successfully. PDF: {}", pdf_path.display())
+            }).to_string()
+        }
+
         // 第一层防御：unknown tool 返回合法 JSON，让 Claude 自己 fallback 到文本回复
         _ => {
             let supported_tools = vec![
@@ -770,7 +821,7 @@ pub async fn execute_tool(
                 "browser_navigate", "browser_get_page", "browser_click", "browser_type",
                 "browser_scroll", "browser_get_text", "browser_screenshot",
                 "browser_extract_content", "browser_press_key", "browser_wait",
-                "Skill", "render_typst_to_svg", "render_typst_to_pdf"
+                "Skill", "render_typst_to_svg", "render_typst_to_pdf", "compile_typst_file"
             ];
             return Ok(serde_json::json!({
                 "error": true,

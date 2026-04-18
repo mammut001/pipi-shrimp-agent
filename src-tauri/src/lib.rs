@@ -231,6 +231,7 @@ fn save_compact_boundary(sessionId: String, boundary: CompactBoundaryPayload) ->
         reasoning: None,
         artifacts,
         tool_calls: None,
+        token_usage: None,
         created_at: boundary.created_at,
     };
     database::save_message(&message).map_err(|e| e.to_string())

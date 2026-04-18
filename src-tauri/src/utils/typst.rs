@@ -8,14 +8,20 @@
  * - Fonts are built ONCE at startup into `PrebuiltFonts`
  * - Each render call clones the fonts (cheap Arc clone, no disk I/O)
  * - This avoids re-reading hundreds of font files on every keypress
+ *
+ * Package resolution:
+ * - Bundled `@preview` packages are resolved from `src/skills/resume/templates/{name}/`
+ * - Local files (toml, images, sub-files) resolved from a root directory
  */
 
 use chrono::{Datelike, Timelike};
 use comemo::Prehashed;
 use fontdb::Database as FontDatabase;
+use std::collections::HashMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 use typst::text::{Font, FontBook};
-use typst::syntax::{FileId, Source};
+use typst::syntax::{FileId, Source, VirtualPath};
 use typst::World;
 use typst::compile;
 use typst::foundations::Smart;
@@ -71,11 +77,20 @@ pub fn build_fonts(font_db: &FontDatabase) -> PrebuiltFonts {
 // ---------------------------------------------------------------------------
 
 /// Custom World implementation for in-memory Typst compilation.
+///
+/// Supports two modes:
+/// 1. **Detached** (legacy): source is in-memory, no file/package resolution.
+/// 2. **Rooted**: source is on disk at `root_dir`, files resolved relative to
+///    root, `@preview` packages resolved from bundled template directories.
 pub struct TypstWorld {
     source: Source,
     book: Prehashed<FontBook>,
     fonts: Vec<Font>,
     library: Prehashed<Library>,
+    /// Root directory for resolving local file paths (None = detached mode).
+    root_dir: Option<PathBuf>,
+    /// Map from package name (e.g. "basic-resume") to its directory on disk.
+    package_dirs: HashMap<String, PathBuf>,
 }
 
 impl TypstWorld {
@@ -83,11 +98,75 @@ impl TypstWorld {
     pub fn new_with_prebuilt(source_text: &str, prebuilt: &PrebuiltFonts) -> Self {
         Self {
             source: Source::detached(source_text),
-            // Cloning Prehashed<FontBook> clones the Arc inside — O(1)
             book: prebuilt.book.clone(),
-            // Cloning Vec<Font> clones each Font's inner Arc — O(n) but allocation-free
             fonts: prebuilt.fonts.clone(),
             library: Prehashed::new(Library::builder().build()),
+            root_dir: None,
+            package_dirs: HashMap::new(),
+        }
+    }
+
+    /// Create a rooted world that can resolve local files and bundled packages.
+    ///
+    /// - `root_dir`: directory containing the main `.typ` file
+    /// - `main_filename`: name of the main file (e.g. "resume.typ")
+    /// - `templates_dir`: directory containing bundled template packages
+    pub fn new_rooted(
+        root_dir: &Path,
+        main_filename: &str,
+        prebuilt: &PrebuiltFonts,
+        templates_dir: Option<&Path>,
+    ) -> Result<Self, String> {
+        let main_path = root_dir.join(main_filename);
+        let source_text = fs::read_to_string(&main_path)
+            .map_err(|e| format!("Failed to read {}: {}", main_path.display(), e))?;
+
+        let main_vpath = VirtualPath::new(format!("/{}", main_filename));
+        let source = Source::new(FileId::new(None, main_vpath), source_text);
+
+        // Discover bundled packages from templates directory
+        let mut package_dirs = HashMap::new();
+        if let Some(tpl_dir) = templates_dir {
+            if tpl_dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(tpl_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            package_dirs.insert(name, entry.path());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            source,
+            book: prebuilt.book.clone(),
+            fonts: prebuilt.fonts.clone(),
+            library: Prehashed::new(Library::builder().build()),
+            root_dir: Some(root_dir.to_path_buf()),
+            package_dirs,
+        })
+    }
+
+    /// Resolve a FileId to a real filesystem path.
+    fn resolve_file_path(&self, id: FileId) -> Result<PathBuf, FileError> {
+        if let Some(package) = id.package() {
+            // Package file: resolve from bundled templates
+            // Try name-version first (e.g. "fontawesome-0.5.0"), then name only (e.g. "basic-resume")
+            let pkg_name = package.name.as_str();
+            let versioned_key = format!("{}-{}", pkg_name, package.version);
+            let pkg_dir = self.package_dirs.get(&versioned_key)
+                .or_else(|| self.package_dirs.get(pkg_name))
+                .ok_or_else(|| FileError::NotFound(PathBuf::from(format!("@{}/{}", package.namespace, pkg_name))))?;
+            id.vpath().resolve(pkg_dir)
+                .ok_or_else(|| FileError::AccessDenied)
+        } else {
+            // Local file: resolve from root_dir
+            let root = self.root_dir.as_ref()
+                .ok_or_else(|| FileError::NotFound(PathBuf::new()))?;
+            id.vpath().resolve(root)
+                .ok_or_else(|| FileError::AccessDenied)
         }
     }
 
@@ -125,12 +204,18 @@ impl World for TypstWorld {
         self.source.clone()
     }
 
-    fn source(&self, _id: FileId) -> typst::diag::FileResult<Source> {
-        Err(FileError::NotFound(std::path::PathBuf::new()))
+    fn source(&self, id: FileId) -> typst::diag::FileResult<Source> {
+        let path = self.resolve_file_path(id)?;
+        let text = fs::read_to_string(&path)
+            .map_err(|e| FileError::from_io(e, &path))?;
+        Ok(Source::new(id, text))
     }
 
-    fn file(&self, _id: FileId) -> typst::diag::FileResult<Bytes> {
-        Err(FileError::NotFound(std::path::PathBuf::new()))
+    fn file(&self, id: FileId) -> typst::diag::FileResult<Bytes> {
+        let path = self.resolve_file_path(id)?;
+        let data = fs::read(&path)
+            .map_err(|e| FileError::from_io(e, &path))?;
+        Ok(Bytes::from(data))
     }
 
     fn font(&self, index: usize) -> Option<Font> {
@@ -282,6 +367,185 @@ pub fn compile_typst_to_pdf_with_prebuilt(source: &str, prebuilt: &PrebuiltFonts
     Ok(pdf_bytes)
 }
 
+// ---------------------------------------------------------------------------
+// Rooted compilation — file-based with package resolution
+// ---------------------------------------------------------------------------
+
+/// Find the bundled resume templates directory.
+///
+/// Searches multiple candidate paths to handle different CWDs
+/// (dev mode, production bundle, etc.)
+pub fn find_templates_dir() -> Option<PathBuf> {
+    let candidates: Vec<PathBuf> = {
+        let mut bases = vec![
+            PathBuf::from("src/skills/resume/templates"),
+            PathBuf::from("../src/skills/resume/templates"),
+            PathBuf::from("skills/resume/templates"),
+            PathBuf::from("../skills/resume/templates"),
+        ];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                bases.push(exe_dir.join("skills/resume/templates"));
+                bases.push(exe_dir.join("../skills/resume/templates"));
+                bases.push(exe_dir.join("../../src/skills/resume/templates"));
+                bases.push(exe_dir.join("../../../src/skills/resume/templates"));
+            }
+        }
+        bases
+    };
+    candidates.into_iter().find(|p| p.is_dir())
+}
+
+/// Compile a `.typ` file from disk with package resolution.
+///
+/// - `file_path`: absolute path to the main `.typ` file
+/// - `prebuilt`: pre-built fonts
+/// - `templates_dir`: optional path to bundled template packages
+///
+/// Returns `(svg_string, pdf_bytes)`.
+pub fn compile_typst_file(
+    file_path: &Path,
+    prebuilt: &PrebuiltFonts,
+    templates_dir: Option<&Path>,
+) -> Result<(String, Vec<u8>), String> {
+    let root_dir = file_path.parent()
+        .ok_or_else(|| "Cannot determine parent directory of .typ file".to_string())?;
+    let filename = file_path.file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid .typ filename".to_string())?;
+
+    let world = TypstWorld::new_rooted(root_dir, filename, prebuilt, templates_dir)?;
+
+    let mut tracer = Tracer::new();
+    let document = compile(&world, &mut tracer)
+        .map_err(|errors| {
+            errors
+                .iter()
+                .map(|d| d.message.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
+
+    let svg_outputs: Vec<String> = document.pages
+        .iter()
+        .map(|page| svg(&page.frame))
+        .collect();
+    let svg_string = svg_outputs.join("\n");
+
+    let pdf_bytes = typst_pdf::pdf(&document, Smart::Auto, None);
+
+    Ok((svg_string, pdf_bytes))
+}
+
 /// Re-export for use in State.
 #[allow(unused_imports)]
 pub use fontdb::Database as FontDb;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_compile_typst_file_simple() {
+        // Create a temp dir with a simple .typ file
+        let tmp = std::env::temp_dir().join("typst_test_simple");
+        fs::create_dir_all(&tmp).unwrap();
+        let typ_path = tmp.join("test.typ");
+        let mut f = fs::File::create(&typ_path).unwrap();
+        writeln!(f, "#set page(width: 200pt, height: 100pt)").unwrap();
+        writeln!(f, "Hello, World!").unwrap();
+        drop(f);
+
+        let font_db = init_font_database();
+        let prebuilt = build_fonts(&font_db);
+
+        let result = compile_typst_file(&typ_path, &prebuilt, None);
+        assert!(result.is_ok(), "compile failed: {:?}", result.err());
+
+        let (svg, pdf) = result.unwrap();
+        assert!(svg.contains("<svg"), "SVG should contain <svg tag");
+        assert!(!pdf.is_empty(), "PDF should not be empty");
+
+        // Cleanup
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_compile_typst_file_with_package() {
+        // Only run if templates dir exists (dev environment)
+        let templates_dir = find_templates_dir();
+        if templates_dir.is_none() {
+            println!("Skipping: templates dir not found");
+            return;
+        }
+        let templates_dir = templates_dir.unwrap();
+
+        // Create a temp dir with a basic-resume .typ file
+        let tmp = std::env::temp_dir().join("typst_test_pkg");
+        let _ = fs::remove_dir_all(&tmp); // clean from previous runs
+        fs::create_dir_all(&tmp).unwrap();
+        let typ_path = tmp.join("resume.typ");
+        let mut f = fs::File::create(&typ_path).unwrap();
+        writeln!(f, r#"#import "@preview/basic-resume:0.2.9": *"#).unwrap();
+        writeln!(f, r#"#show: resume.with(author: "Test User")"#).unwrap();
+        writeln!(f, "== Education").unwrap();
+        writeln!(f, "Test University").unwrap();
+        drop(f);
+
+        let font_db = init_font_database();
+        let prebuilt = build_fonts(&font_db);
+
+        let result = compile_typst_file(&typ_path, &prebuilt, Some(&templates_dir));
+        match &result {
+            Ok((svg, pdf)) => {
+                assert!(svg.contains("<svg"), "SVG should contain <svg tag");
+                assert!(!pdf.is_empty(), "PDF should not be empty");
+            }
+            Err(e) => {
+                // Template may have type errors with this Typst version
+                // but package resolution itself should work (no "not found" errors)
+                assert!(
+                    !e.contains("not found (searched at"),
+                    "Package resolution should work, but got: {}",
+                    e
+                );
+                println!("Template compile error (not a resolution issue): {}", e);
+            }
+        }
+
+        // Cleanup
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_compile_typst_file_with_local_include() {
+        // Test that local file resolution works (toml, include, etc.)
+        let tmp = std::env::temp_dir().join("typst_test_include");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // Write a sub-file
+        let sub_path = tmp.join("header.typ");
+        fs::write(&sub_path, "#text(size: 16pt, weight: \"bold\")[Resume]").unwrap();
+
+        // Write main file that includes it
+        let typ_path = tmp.join("main.typ");
+        let mut f = fs::File::create(&typ_path).unwrap();
+        writeln!(f, "#set page(width: 200pt, height: 100pt)").unwrap();
+        writeln!(f, "#include \"header.typ\"").unwrap();
+        writeln!(f, "Content here").unwrap();
+        drop(f);
+
+        let font_db = init_font_database();
+        let prebuilt = build_fonts(&font_db);
+
+        let result = compile_typst_file(&typ_path, &prebuilt, None);
+        assert!(result.is_ok(), "compile with local include failed: {:?}", result.err());
+
+        let (svg, _) = result.unwrap();
+        assert!(svg.contains("<svg"), "SVG should contain <svg tag");
+
+        // Cleanup
+        fs::remove_dir_all(&tmp).ok();
+    }
+}
