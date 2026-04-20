@@ -84,7 +84,7 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
   // User picks a template → send message back to the AI
   const handleSelect = useCallback((tpl: ResumeTemplate) => {
     setSelectedId(tpl.id);
-    sendMessage(`I'd like to use the **${tpl.name}** template (id: \`${tpl.id}\`).`);
+    sendMessage(`I'd like to use the **${tpl.name}** template (id: \`${tpl.id}\`). Please call Skill("resume") first to load the template code examples before writing any files.`);
   }, [sendMessage]);
 
   // Lightbox navigation
