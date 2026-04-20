@@ -740,7 +740,13 @@ pub async fn execute_tool(
             })
             .await
             .map_err(|e| AppError::InternalError(format!("Thread error: {}", e)))?
-            .map_err(|e| AppError::InternalError(format!("Typst compilation failed: {}", e)))?;
+            .map_err(|e| {
+                let mut msg = format!("Typst compilation failed: {}", e);
+                if e.contains("label") && e.contains("does not exist") {
+                    msg += "\n\nHint: The '@' character starts a label reference in Typst. Escape it as '\\@' in .typ files (e.g., user\\@example.com).";
+                }
+                AppError::InternalError(msg)
+            })?;
             serde_json::json!({ "svg": svg }).to_string()
         }
 
@@ -760,7 +766,13 @@ pub async fn execute_tool(
             })
             .await
             .map_err(|e| AppError::InternalError(format!("Thread error: {}", e)))?
-            .map_err(|e| AppError::InternalError(format!("Typst compilation failed: {}", e)))?;
+            .map_err(|e| {
+                let mut msg = format!("Typst compilation failed: {}", e);
+                if e.contains("label") && e.contains("does not exist") {
+                    msg += "\n\nHint: The '@' character starts a label reference in Typst. Escape it as '\\@' in .typ files (e.g., user\\@example.com).";
+                }
+                AppError::InternalError(msg)
+            })?;
             std::fs::write(&file_path, pdf_bytes)
                 .map_err(|e| AppError::InternalError(format!("Failed to write PDF: {}", e)))?;
             serde_json::json!({ "file_path": file_path, "message": format!("PDF saved to {}", file_path) }).to_string()
@@ -790,7 +802,16 @@ pub async fn execute_tool(
             })
             .await
             .map_err(|e| AppError::InternalError(format!("Thread error: {}", e)))?
-            .map_err(|e| AppError::InternalError(format!("Typst compilation failed: {}", e)))?;
+            .map_err(|e| {
+                let mut msg = format!("Typst compilation failed: {}", e);
+                if e.contains("file not found") || e.contains("not found") && e.contains("@preview") {
+                    msg += "\n\nAvailable bundled @preview packages: basic-resume:0.2.9, grotesk-cv:1.0.5, nabcv:0.1.0, brilliant-cv:3.3.0, calligraphics:1.0.0. Do NOT invent package names. Call Skill(\"resume\") to load the correct code examples for each template.";
+                }
+                if e.contains("label") && e.contains("does not exist") {
+                    msg += "\n\nHint: The '@' character starts a label reference in Typst. You MUST escape it as '\\@' inside .typ files (e.g., user\\@example.com). Do NOT escape @ in .toml files.";
+                }
+                AppError::InternalError(msg)
+            })?;
 
             // Write PDF
             let pdf_path = output_dir_buf.join("resume.pdf");
