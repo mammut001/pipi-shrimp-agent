@@ -2156,11 +2156,31 @@ export const useChatStore = create<ChatState>()(
      * Delete a session and remove from database
      */
     deleteSession: async (sessionId: string) => {
-      // Delete from database
+      const uiStore = useUIStore.getState();
+      const sessionWorkDir = get().sessions.find((s) => s.id === sessionId)?.workDir;
+
+      // Delete from database first; only update UI state when persistence succeeds.
       try {
         await invoke('db_delete_session', { sessionId });
       } catch (error) {
         console.error('Failed to delete session from database:', error);
+        uiStore.addNotification('error', 'Delete failed: unable to remove conversation from database');
+        throw error;
+      }
+
+      try {
+        await invoke<boolean>('delete_app_chat_dir', { sessionId });
+      } catch (error) {
+        console.warn('Failed to delete app chat directory:', error);
+      }
+
+      if (sessionWorkDir) {
+        try {
+          await invoke<boolean>('delete_session_work_dir', { path: sessionWorkDir });
+        } catch (error) {
+          console.warn('Failed to delete session work directory:', error);
+          uiStore.addNotification('warning', 'Conversation deleted, but folder cleanup failed');
+        }
       }
 
       set((state) => {
@@ -2177,31 +2197,53 @@ export const useChatStore = create<ChatState>()(
           currentSessionId: newCurrentSessionId,
         };
       });
+
+      uiStore.addNotification('success', 'Conversation deleted');
     },
 
     /**
      * Delete multiple sessions at once
      */
     deleteSessions: async (sessionIds: string[]) => {
-      // Delete from database
-      let deleteErrors = 0;
+      const uiStore = useUIStore.getState();
+      const deletedSessionIds: string[] = [];
+      let workDirDeleteErrors = 0;
+
+      // Delete from database first and track succeeded IDs.
       for (const sessionId of sessionIds) {
         try {
           await invoke('db_delete_session', { sessionId });
+          deletedSessionIds.push(sessionId);
           console.log(`🗑️ Deleted session from DB: ${sessionId}`);
+
+          try {
+            await invoke<boolean>('delete_app_chat_dir', { sessionId });
+          } catch (error) {
+            workDirDeleteErrors++;
+            console.warn(`⚠️ Failed to delete app chat directory for ${sessionId}:`, error);
+          }
+
+          const sessionWorkDir = get().sessions.find((s) => s.id === sessionId)?.workDir;
+          if (sessionWorkDir) {
+            try {
+              await invoke<boolean>('delete_session_work_dir', { path: sessionWorkDir });
+            } catch (error) {
+              workDirDeleteErrors++;
+              console.warn(`⚠️ Failed to delete work directory for ${sessionId}:`, error);
+            }
+          }
         } catch (error) {
-          deleteErrors++;
           console.error(`❌ Failed to delete session ${sessionId} from database:`, error);
         }
       }
-      if (deleteErrors > 0) {
-        console.warn(`⚠️ ${deleteErrors}/${sessionIds.length} sessions failed to delete from database`);
-      } else {
-        console.log(`✅ All ${sessionIds.length} sessions deleted from database`);
+
+      if (deletedSessionIds.length === 0) {
+        uiStore.addNotification('error', 'Delete failed: unable to remove selected conversations');
+        throw new Error('Failed to delete sessions from database');
       }
 
       set((state) => {
-        const sessionIdSet = new Set(sessionIds);
+        const sessionIdSet = new Set(deletedSessionIds);
         const newSessions = state.sessions.filter((s) => !sessionIdSet.has(s.id));
         let newCurrentSessionId = state.currentSessionId;
 
@@ -2215,6 +2257,22 @@ export const useChatStore = create<ChatState>()(
           currentSessionId: newCurrentSessionId,
         };
       });
+
+      if (deletedSessionIds.length < sessionIds.length) {
+        uiStore.addNotification(
+          'warning',
+          `Partially deleted: ${deletedSessionIds.length}/${sessionIds.length} conversations removed`,
+        );
+      } else {
+        uiStore.addNotification('success', `Deleted ${deletedSessionIds.length} conversations`);
+      }
+
+      if (workDirDeleteErrors > 0) {
+        uiStore.addNotification(
+          'warning',
+          `Deleted chats, but ${workDirDeleteErrors} folder(s) could not be cleaned up`,
+        );
+      }
     },
 
     /**
