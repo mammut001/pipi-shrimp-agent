@@ -359,3 +359,64 @@ pub fn get_app_default_dir(session_id: String) -> AppResult<String> {
 
     Ok(base.to_string_lossy().to_string())
 }
+
+/// Delete the app-managed chat directory for a session:
+/// {Documents|HOME}/PiPi-Shrimp/chats/{session_id}
+///
+/// Returns true if deleted, false if directory does not exist.
+#[tauri::command]
+pub fn delete_app_chat_dir(session_id: String) -> AppResult<bool> {
+    let base = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| AppError::FileError("Cannot determine Documents directory".to_string()))?
+        .join("PiPi-Shrimp")
+        .join("chats")
+        .join(&session_id);
+
+    if !base.exists() {
+        return Ok(false);
+    }
+
+    fs::remove_dir_all(&base)
+        .map_err(|e| AppError::FileError(format!("Failed to delete app chat directory: {}", e)))?;
+
+    Ok(true)
+}
+
+/// Delete a session work directory only if it is under the app-managed root:
+/// {Documents|HOME}/PiPi-Shrimp/chats/
+///
+/// Returns true if a directory was deleted, false if the path didn't exist.
+#[tauri::command]
+pub fn delete_session_work_dir(path: String) -> AppResult<bool> {
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Ok(false);
+    }
+
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|e| AppError::FileError(format!("Failed to resolve session directory: {}", e)))?;
+
+    let managed_root = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| AppError::FileError("Cannot determine Documents directory".to_string()))?
+        .join("PiPi-Shrimp")
+        .join("chats");
+
+    let canonical_root = managed_root
+        .canonicalize()
+        .unwrap_or(managed_root);
+
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(AppError::FileError(format!(
+            "Refusing to delete non-managed session directory: {}",
+            canonical_target.to_string_lossy()
+        )));
+    }
+
+    fs::remove_dir_all(&canonical_target)
+        .map_err(|e| AppError::FileError(format!("Failed to delete session directory: {}", e)))?;
+
+    Ok(true)
+}

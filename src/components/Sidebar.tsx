@@ -12,6 +12,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { useChatStore, useUIStore, useWorkflowStore, useSettingsStore } from '@/store';
 import type { Session } from '@/types/chat';
 import { t } from '@/i18n';
+import { getProvider } from '@/shared/providers';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount } from '@/utils/chat';
 import { invoke } from '@tauri-apps/api/core';
@@ -47,6 +48,19 @@ export function Sidebar() {
   // Pricing helpers
   const getModelPricing = useSettingsStore((s) => s.getModelPricing);
   const apiConfigs = useSettingsStore((s) => s.apiConfigs);
+  const activeConfigId = useSettingsStore((s) => s.activeConfigId);
+
+  // Footer profile info (derived from active API config; fallback to first config)
+  const activeApiConfig = useMemo(
+    () => apiConfigs.find((c) => c.id === activeConfigId) || apiConfigs[0] || null,
+    [apiConfigs, activeConfigId],
+  );
+  const profileName = activeApiConfig?.name?.trim() || 'Local User';
+  const providerLabel = activeApiConfig
+    ? (getProvider(activeApiConfig.provider)?.label ?? activeApiConfig.provider)
+    : null;
+  const profileSubtitle = providerLabel ? `${providerLabel} Account` : 'No API Config';
+  const profileInitial = (profileName.charAt(0) || 'U').toUpperCase();
 
   // Projects state
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => {
@@ -281,9 +295,13 @@ export function Sidebar() {
    */
   const handleConfirmDelete = useCallback(async () => {
     if (sessionToDelete) {
-      await deleteSession(sessionToDelete);
-      setShowDeleteConfirm(false);
-      setSessionToDelete(null);
+      try {
+        await deleteSession(sessionToDelete);
+        setShowDeleteConfirm(false);
+        setSessionToDelete(null);
+      } catch (error) {
+        console.error('Failed to delete session:', error);
+      }
     }
   }, [sessionToDelete, deleteSession]);
 
@@ -328,10 +346,14 @@ export function Sidebar() {
    * Confirm batch delete
    */
   const handleConfirmBatchDelete = useCallback(async () => {
-    await deleteSessions(Array.from(selectedSessions));
-    setSelectedSessions(new Set());
-    setIsMultiSelectMode(false);
-    setShowBatchDeleteConfirm(false);
+    try {
+      await deleteSessions(Array.from(selectedSessions));
+      setSelectedSessions(new Set());
+      setIsMultiSelectMode(false);
+      setShowBatchDeleteConfirm(false);
+    } catch (error) {
+      console.error('Failed to batch delete sessions:', error);
+    }
   }, [selectedSessions, deleteSessions]);
 
   /**
@@ -800,7 +822,7 @@ export function Sidebar() {
                     <li key={session.id}>
                       <button
                         onClick={() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id)}
-                        className={`w-full px-3 py-3 text-left rounded-xl transition-all group relative ${session.id === currentSessionId
+                        className={`w-full px-3 py-2 text-left rounded-xl transition-all group relative ${session.id === currentSessionId
                             ? 'bg-gray-100 shadow-sm'
                             : 'hover:bg-gray-50'
                           }`}
@@ -859,9 +881,6 @@ export function Sidebar() {
                                 )}
                               </h3>
                             )}
-                            <p className="text-xs text-gray-500 truncate mt-0.5">
-                              {getSessionPreview(session)}
-                            </p>
                             {/* Token usage display */}
                             {(tokenUsageMap.get(session.id)?.total ?? 0) > 0 && (
                               <p className="text-[10px] text-gray-400 truncate mt-0.5 flex items-center gap-1">
@@ -986,7 +1005,7 @@ export function Sidebar() {
                               <button
                                 onClick={() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id)}
                                 onContextMenu={(e) => handleContextMenu(e, 'session', session.id)}
-                                className={`w-full px-3 py-2 text-left rounded-xl transition-all group relative ${session.id === currentSessionId
+                                className={`w-full px-3 py-1.5 text-left rounded-xl transition-all group relative ${session.id === currentSessionId
                                     ? 'bg-gray-100 shadow-sm'
                                     : 'hover:bg-gray-50'
                                   }`}
@@ -1019,9 +1038,6 @@ export function Sidebar() {
                                     >
                                       {session.title || 'Chat'}
                                     </h3>
-                                    <p className="text-xs text-gray-500 truncate mt-0.5">
-                                      {getSessionPreview(session)}
-                                    </p>
                                   </div>
                                   <div className="flex items-center gap-1">
                                     <button
@@ -1462,11 +1478,11 @@ export function Sidebar() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-gray-900 flex items-center justify-center text-white shadow-sm ring-2 ring-white select-none">
-              <span className="font-bold text-sm">D</span>
+              <span className="font-bold text-sm">{profileInitial}</span>
             </div>
             <div className="min-w-0 select-none">
-              <p className="text-sm font-semibold text-gray-900 truncate leading-none mb-1">Doge User</p>
-              <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider opacity-60">Personal Account</p>
+              <p className="text-sm font-semibold text-gray-900 truncate leading-none mb-1">{profileName}</p>
+              <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider opacity-60">{profileSubtitle}</p>
             </div>
           </div>
 
