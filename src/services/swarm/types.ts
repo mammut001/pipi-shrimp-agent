@@ -212,7 +212,7 @@ export interface SwarmEvent {
 export interface AgentMemory {
   teamId: string;
   agentId: string;
-  /** e.g. ~/.pipi-shrimp/swarm/{teamId}/{agentId}/memory/ */
+  /** e.g. {projectRoot}/.pipi-shrimp/memory/swarm/{teamId}/{agentId}/memory/ */
   memoryDir: string;
   enabled: boolean;
 }
@@ -239,7 +239,7 @@ export interface AgentMemoryFile {
  */
 export interface TeamMemory {
   teamId: string;
-  /** e.g. ~/.pipi-shrimp/swarm/{teamId}/team-memory/ */
+  /** e.g. {projectRoot}/.pipi-shrimp/memory/swarm/{teamId}/team-memory/ */
   memoryDir: string;
   enabled: boolean;
 }

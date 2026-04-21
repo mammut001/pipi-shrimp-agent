@@ -16,6 +16,7 @@
  */
 
 import { useCallback } from 'react';
+import { useUIStore } from '@/store';
 import { useArtifactsStore, type ArtifactItem } from '@/store/artifactsStore';
 
 // ============= Sub-components =============
@@ -108,6 +109,7 @@ export function ArtifactsPanel() {
   const items = useArtifactsStore((s) => s.items);
   const closePanel = useArtifactsStore((s) => s.closePanel);
   const setActiveItem = useArtifactsStore((s) => s.setActiveItem);
+  const setAgentPanelTab = useUIStore((s) => s.setAgentPanelTab);
 
   // Filter to current message's artifacts
   const messageItems = activeMessageId
@@ -127,6 +129,11 @@ export function ArtifactsPanel() {
     setActiveItem(messageItems[activeIdx + 1].id);
   }, [messageItems, activeIdx, setActiveItem]);
 
+  const handleBackToPanel = useCallback(() => {
+    closePanel();
+    setAgentPanelTab('main');
+  }, [closePanel, setAgentPanelTab]);
+
   if (!panelOpen || messageItems.length === 0) return null;
 
   return (
@@ -134,6 +141,17 @@ export function ArtifactsPanel() {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleBackToPanel}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+            title="Back to panel"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+            Back
+          </button>
           <span className="text-sm">📁</span>
           <span className="text-sm font-semibold text-gray-800">Artifacts</span>
         </div>

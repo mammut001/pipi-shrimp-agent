@@ -11,14 +11,17 @@ import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore'
 import { useChatStore, useUIStore } from '@/store';
 import { startExperimentLoop } from '@/services/autoresearch';
 import { createAutoResearchSendMessage } from '@/services/autoresearch/chatAdapter';
+import { getDefaultAutoResearchSessionFilePath } from '@/services/autoresearch/paths';
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
   const setShowSetupModal = useAutoResearchStore(s => s.setShowSetupModal);
   const sshConfig = useAutoResearchStore(s => s.sshConfig);
+  const storedSessionFilePath = useAutoResearchStore(s => s.sessionFilePath);
   const setSshConfig = useAutoResearchStore(s => s.setSshConfig);
   const initSession = useAutoResearchStore(s => s.initSession);
   const setAgentPanelTab = useUIStore(s => s.setAgentPanelTab);
+  const addNotification = useUIStore(s => s.addNotification);
 
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -32,7 +35,7 @@ export function AutoResearchSetupModal() {
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
   const [maxIter, setMaxIter] = useState(50);
-  const [sessionFile, setSessionFile] = useState('~/.pipi-shrimp/autoresearch/session.md');
+  const [sessionFile, setSessionFile] = useState('');
 
   // Sync form when sshConfig changes (e.g. from previous session)
   useEffect(() => {
@@ -40,6 +43,32 @@ export function AutoResearchSetupModal() {
       setForm(sshConfig);
     }
   }, [sshConfig]);
+
+  useEffect(() => {
+    if (!showSetupModal) return;
+
+    let cancelled = false;
+
+    if (storedSessionFilePath) {
+      setSessionFile(storedSessionFilePath);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const defaultPath = await getDefaultAutoResearchSessionFilePath();
+        if (!cancelled) {
+          setSessionFile((current) => current || defaultPath);
+        }
+      } catch (error) {
+        console.error('[AutoResearch] Failed to resolve default session file path:', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showSetupModal, storedSessionFilePath]);
 
   // Close on click outside
   useEffect(() => {
@@ -63,8 +92,20 @@ export function AutoResearchSetupModal() {
     return () => document.removeEventListener('keydown', handler);
   }, [showSetupModal, setShowSetupModal]);
 
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback(async () => {
     if (!form.host) return;
+
+    let resolvedSessionFilePath = sessionFile.trim();
+    if (!resolvedSessionFilePath) {
+      try {
+        resolvedSessionFilePath = await getDefaultAutoResearchSessionFilePath();
+        setSessionFile(resolvedSessionFilePath);
+      } catch (error) {
+        console.error('[AutoResearch] Failed to resolve default session file path:', error);
+        addNotification('error', '无法解析 AutoResearch 默认 session 文件路径。');
+        return;
+      }
+    }
 
     setSshConfig(form);
 
@@ -75,7 +116,7 @@ export function AutoResearchSetupModal() {
       metricName: metric,
       metricDirection: direction,
       sshConfig: form,
-      sessionFilePath: sessionFile,
+      sessionFilePath: resolvedSessionFilePath,
     });
 
     setShowSetupModal(false);
@@ -88,7 +129,7 @@ export function AutoResearchSetupModal() {
     const sendMessage = createAutoResearchSendMessage(chatSession?.workDir);
 
     startExperimentLoop(sendMessage);
-  }, [form, maxIter, metric, direction, sessionFile, initSession, setSshConfig, setShowSetupModal, setAgentPanelTab]);
+  }, [addNotification, form, maxIter, metric, direction, sessionFile, initSession, setSshConfig, setShowSetupModal, setAgentPanelTab]);
 
   if (!showSetupModal) return null;
 
@@ -168,7 +209,7 @@ export function AutoResearchSetupModal() {
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Experiment</label>
             <input
               className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors font-mono"
-              placeholder="session file path (e.g. ~/.pipi-shrimp/autoresearch/session.md)"
+              placeholder="session file path (default: Documents/PiPi-Shrimp/autoresearch/session.md)"
               value={sessionFile}
               onChange={e => setSessionFile(e.target.value)}
             />

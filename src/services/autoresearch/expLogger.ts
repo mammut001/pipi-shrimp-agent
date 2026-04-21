@@ -1,16 +1,24 @@
 /**
  * AutoResearch Experiment Logger — Dual-write to Markdown + SQLite.
  *
- * Markdown log at ~/.pipi-shrimp/autoresearch/experiment_log.md  (human-readable)
- * SQLite experiments table                                        (queryable)
+ * Markdown log beside the configured AutoResearch session file      (human-readable)
+ * SQLite experiments table                                         (queryable)
  */
 
 import { invoke } from '@tauri-apps/api/core';
 import type { ExperimentEntry, ExperimentSession } from '@/store/autoresearchStore';
+import {
+  getAutoResearchLogPathFromSessionFile,
+  getAutoResearchParentDir,
+  getDefaultAutoResearchLogPath,
+} from './paths';
 
 // ============== Markdown logging ==============
 
-const LOG_PATH = '~/.pipi-shrimp/autoresearch/experiment_log.md';
+type FileResponse = {
+  content: string;
+  path: string;
+};
 
 function formatMarkdownEntry(entry: ExperimentEntry, session: ExperimentSession): string {
   const metricStr = entry.metricValue !== null
@@ -38,28 +46,26 @@ function formatMarkdownEntry(entry: ExperimentEntry, session: ExperimentSession)
 export async function appendMarkdownLog(entry: ExperimentEntry, session: ExperimentSession): Promise<void> {
   const block = formatMarkdownEntry(entry, session);
 
-  // Resolve ~ to home dir, then use write_file in append mode.
-  // We rely on the Rust backend to handle the path and create parent dirs.
+  const logPath = await resolveLogPath(session);
+  const logDir = getAutoResearchParentDir(logPath);
+  const header = `# AutoResearch Experiment Log\n\nSession: ${session.id}\nStarted: ${session.startedAt}\nMetric: ${session.metricName} (${session.metricDirection} is better)\n\n---\n\n`;
+
   try {
-    // First check if file exists by reading it
-    try {
-      await invoke<string>('read_file_text', { path: expandHome(LOG_PATH) });
-    } catch {
-      // File doesn't exist — write header first
-      const header = `# AutoResearch Experiment Log\n\nSession: ${session.id}\nStarted: ${session.startedAt}\nMetric: ${session.metricName} (${session.metricDirection} is better)\n\n---\n\n`;
-      await invoke('write_file_text', { path: expandHome(LOG_PATH), content: header });
+    if (logDir) {
+      await invoke('create_directory', { path: logDir });
     }
 
-    // Append the entry
-    await invoke('append_file_text', { path: expandHome(LOG_PATH), content: block });
-  } catch (e) {
-    // Fallback: try writing through Bash
-    console.warn('[expLogger] invoke failed, falling back to bash:', e);
-    const escaped = block.replace(/'/g, "'\\''");
-    await invoke('execute_bash', {
-      command: `mkdir -p ~/.pipi-shrimp/autoresearch && echo '${escaped}' >> ${expandHome(LOG_PATH)}`,
-      timeoutSecs: 10,
-    });
+    const exists = await invoke<boolean>('path_exists', { path: logPath });
+    if (!exists) {
+      await invoke('write_file', { path: logPath, content: `${header}${block}` });
+      return;
+    }
+
+    const current = await invoke<FileResponse>('read_file', { path: logPath });
+    await invoke('write_file', { path: logPath, content: `${current.content}${block}` });
+  } catch (error) {
+    console.warn('[expLogger] file-command logging failed:', error);
+    throw error;
   }
 }
 
@@ -120,11 +126,7 @@ export async function logExperiment(entry: ExperimentEntry, session: ExperimentS
 
 // ============== Helpers ==============
 
-function expandHome(p: string): string {
-  if (p.startsWith('~/')) {
-    // We can't resolve ~ in TS — pass it through and let Rust handle it.
-    // If Rust doesn't handle ~, the bash fallback will.
-    return p;
-  }
-  return p;
+async function resolveLogPath(session: ExperimentSession): Promise<string> {
+  return getAutoResearchLogPathFromSessionFile(session.sessionFilePath)
+    ?? getDefaultAutoResearchLogPath();
 }

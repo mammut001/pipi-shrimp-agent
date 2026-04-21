@@ -15,6 +15,4 @@ pub use typst::{
     init_font_database,
     compile_typst_to_svg_with_prebuilt,
     compile_typst_to_pdf_with_prebuilt,
-    compile_typst_file,
-    find_templates_dir,
 };

@@ -22,12 +22,17 @@ use claude::{ClaudeClient, ChatResponse, Message};
 use commands::browser::BrowserState;
 use commands::web::BrowserController;
 use commands::telegram::TelegramState;
-use database::{DbSession, DbMessage, DbProject, DbTokenUsage, DailyTokenStats, ModelTokenStats,
-               init_database, get_all_sessions, save_session, delete_session, save_message, delete_message,
-               get_messages_for_session, save_project, get_all_projects, delete_project,
-               update_project, save_token_usage, get_daily_token_stats, get_monthly_token_stats,
-               get_model_token_stats, get_total_token_stats,
-               save_swarm_snapshot, load_swarm_snapshot, clear_swarm_snapshots};
+use database::{DbSession, DbMessage, DbProject, DbTokenUsage, DbTelegramBinding, DbTelegramTask,
+               DailyTokenStats, ModelTokenStats, init_database, get_all_sessions, save_session,
+               delete_session, save_message, delete_message, get_messages_for_session,
+               save_project, get_all_projects, delete_project, update_project, save_token_usage,
+               get_daily_token_stats, get_monthly_token_stats, get_model_token_stats,
+               get_total_token_stats, save_swarm_snapshot, load_swarm_snapshot,
+               clear_swarm_snapshots, save_telegram_binding, get_telegram_binding,
+               list_telegram_bindings, save_telegram_task, get_telegram_task,
+               list_telegram_tasks_for_chat, list_telegram_tasks_by_statuses,
+               find_telegram_task_by_source, set_telegram_runtime_state,
+               get_telegram_runtime_state};
 use utils::{PrebuiltFonts, init_font_database, build_fonts, compile_typst_to_svg_with_prebuilt, compile_typst_to_pdf_with_prebuilt};
 
 /**
@@ -259,6 +264,61 @@ fn db_delete_project(project_id: String) -> Result<(), String> {
 #[tauri::command]
 fn db_update_project(project: DbProject) -> Result<(), String> {
     update_project(&project).map_err(|e| e.to_string())
+}
+
+/**
+ * Telegram persistence commands
+ */
+#[tauri::command]
+fn db_save_telegram_binding(binding: DbTelegramBinding) -> Result<(), String> {
+    save_telegram_binding(&binding).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_get_telegram_binding(chat_id: i64) -> Result<Option<DbTelegramBinding>, String> {
+    get_telegram_binding(chat_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_list_telegram_bindings() -> Result<Vec<DbTelegramBinding>, String> {
+    list_telegram_bindings().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_save_telegram_task(task: DbTelegramTask) -> Result<(), String> {
+    save_telegram_task(&task).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_get_telegram_task(task_id: String) -> Result<Option<DbTelegramTask>, String> {
+    get_telegram_task(&task_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_find_telegram_task_by_source(chat_id: i64, source_message_id: i64) -> Result<Option<DbTelegramTask>, String> {
+    find_telegram_task_by_source(chat_id, source_message_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_list_telegram_tasks_for_chat(chat_id: i64, limit: Option<i64>) -> Result<Vec<DbTelegramTask>, String> {
+    let normalized_limit = limit.and_then(|value| if value > 0 { Some(value as usize) } else { None });
+    list_telegram_tasks_for_chat(chat_id, normalized_limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_list_telegram_tasks_by_statuses(statuses: Vec<String>, limit: Option<i64>) -> Result<Vec<DbTelegramTask>, String> {
+    let normalized_limit = limit.and_then(|value| if value > 0 { Some(value as usize) } else { None });
+    list_telegram_tasks_by_statuses(&statuses, normalized_limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_set_telegram_runtime_state(key: String, value: String) -> Result<(), String> {
+    set_telegram_runtime_state(&key, &value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_get_telegram_runtime_state(key: String) -> Result<Option<String>, String> {
+    get_telegram_runtime_state(&key).map_err(|e| e.to_string())
 }
 
 /**
@@ -561,6 +621,17 @@ pub fn run() {
             db_get_all_projects,
             db_delete_project,
             db_update_project,
+            // Telegram persistence commands
+            db_save_telegram_binding,
+            db_get_telegram_binding,
+            db_list_telegram_bindings,
+            db_save_telegram_task,
+            db_get_telegram_task,
+            db_find_telegram_task_by_source,
+            db_list_telegram_tasks_for_chat,
+            db_list_telegram_tasks_by_statuses,
+            db_set_telegram_runtime_state,
+            db_get_telegram_runtime_state,
             // Token usage commands
             db_save_token_usage,
             db_get_daily_token_stats,
@@ -585,6 +656,8 @@ pub fn run() {
             commands::init_pipi_shrimp,
             commands::get_next_output_dir,
             commands::get_app_default_dir,
+            commands::get_app_autoresearch_dir,
+            commands::get_app_memory_projects_dir,
             commands::delete_app_chat_dir,
             commands::list_pipi_shrimp_index,
             commands::delete_session_work_dir,

@@ -6,6 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { getMemoryDir } from '../../memory/memoryPaths';
 import type { AgentMemory, TeamMemory } from '../types';
 import { buildTeamMemoryTemplate } from './teamMemory';
 import { buildAgentMemoryTemplate } from './agentMemory';
@@ -64,16 +65,9 @@ export async function initAgentMemory(
 
 /**
  * Get the base swarm directory for the current project.
- * Uses the same pattern as memoryPaths.ts but scoped to swarm.
+ * Reuses the project memory base so swarm state stays local to the
+ * current workDir when available.
  */
 export async function getSwarmBaseDir(projectRoot?: string): Promise<string> {
-  try {
-    const homeDir = await invoke<string>('get_home_dir');
-    const sanitized = projectRoot
-      ? projectRoot.replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').toLowerCase().slice(0, 100)
-      : 'default';
-    return `${homeDir}/.pipi-shrimp/memory/projects/${sanitized}`;
-  } catch {
-    return '/tmp/pipi-shrimp-memory/default';
-  }
+  return getMemoryDir(projectRoot);
 }

@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   TelegramBotInfo,
   TelegramMessage,
+  TelegramUpdate,
   TelegramConnectionStatus,
   TelegramSendMessageParams,
 } from '../types/telegram';
@@ -266,9 +267,9 @@ export async function telegramAnswerCallbackQuery(
 /**
  * Get updates (for debugging)
  */
-export async function telegramGetUpdates(offset?: number, limit?: number): Promise<TelegramMessage[]> {
+export async function telegramGetUpdates(offset?: number, limit?: number): Promise<TelegramUpdate[]> {
   try {
-    const result = await invoke<TelegramMessage[]>('telegram_get_updates', {
+    const result = await invoke<TelegramUpdate[]>('telegram_get_updates', {
       offset,
       limit,
     });

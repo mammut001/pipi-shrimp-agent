@@ -13,6 +13,7 @@ import {
   pauseExperimentLoop,
   resumeExperimentLoop,
 } from '@/services/autoresearch';
+import { getDefaultAutoResearchSessionFilePath } from '@/services/autoresearch/paths';
 
 // ============== Experiment Detail Panel ==============
 
@@ -100,12 +101,20 @@ function AutoResearchView() {
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
 
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback(async () => {
     if (!sshConfig && !setupForm.host) return;
 
     const cfg = sshConfig || setupForm;
     if (!sshConfig) {
       setSshConfig(cfg);
+    }
+
+    let sessionFilePath = '';
+    try {
+      sessionFilePath = await getDefaultAutoResearchSessionFilePath();
+    } catch (error) {
+      useAutoResearchStore.getState().setError(`Failed to resolve AutoResearch session file path: ${error instanceof Error ? error.message : String(error)}`);
+      return;
     }
 
     const sessionId = `autoresearch-${Date.now()}`;
@@ -115,6 +124,7 @@ function AutoResearchView() {
       metricName: metric,
       metricDirection: direction,
       sshConfig: cfg,
+      sessionFilePath,
     });
 
     setShowSetup(false);

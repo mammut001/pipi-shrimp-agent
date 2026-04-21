@@ -20,6 +20,14 @@ import { FileIcon } from './ui/FileIcon';
 import { AutoResearchPanel } from './AutoResearchPanel';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 
+type SyncedWorkspaceEntry = {
+  name: string;
+  is_directory: boolean;
+  path: string;
+  depth: number;
+  displayName: string;
+};
+
 // TODO: Roadmap feature removed due to UI freeze bug (infinite re-render loop).
 // Re-implement with proper state management when ready.
 
@@ -66,13 +74,30 @@ export const AgentPanel: React.FC = () => {
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   // Synchronized workspace files
-  const [syncedFiles, setSyncedFiles] = useState<{name: string, is_directory: boolean, path: string}[]>([]);
+  const [syncedFiles, setSyncedFiles] = useState<SyncedWorkspaceEntry[]>([]);
+
+  useEffect(() => {
+    if (!currentSessionId) {
+      setPreviewContent('');
+      setSyncedFiles([]);
+      setIsInitialLoad(true);
+      setAutoSync(true);
+      return;
+    }
+
+    setPreviewContent('');
+    setSyncedFiles([]);
+    setIsInitialLoad(true);
+  }, [currentSessionId]);
 
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval>;
 
     const syncWorkspaceFiles = async () => {
-      if (!currentSessionId) return;
+      if (!currentSessionId) {
+        setSyncedFiles([]);
+        return;
+      }
       let targetPath = currentSession?.workDir;
       if (!targetPath) {
         try {
@@ -88,7 +113,31 @@ export const AgentPanel: React.FC = () => {
           const files = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: targetPath });
           // ignore .pipi-shrimp and hidden files/folders
           const visibleFiles = files.filter(f => !f.name.startsWith('.'));
-          setSyncedFiles(visibleFiles);
+          const flattened: SyncedWorkspaceEntry[] = [];
+
+          for (const file of visibleFiles) {
+            flattened.push({ ...file, depth: 0, displayName: file.name });
+
+            if (!file.is_directory) {
+              continue;
+            }
+
+            try {
+              const children = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: file.path });
+              const visibleChildren = children.filter((child) => !child.name.startsWith('.'));
+              for (const child of visibleChildren) {
+                flattened.push({
+                  ...child,
+                  depth: 1,
+                  displayName: `${file.name}/${child.name}`,
+                });
+              }
+            } catch {
+              // Ignore unreadable sub-directories; top-level entry is still useful.
+            }
+          }
+
+          setSyncedFiles(flattened);
         } catch (e) {
           // Folder might not exist yet, that's fine
           setSyncedFiles([]);
@@ -540,8 +589,9 @@ export const AgentPanel: React.FC = () => {
                 key={file.path} 
                 className="group flex items-center gap-3 p-2 hover:bg-gray-100/50 rounded-xl transition-all cursor-pointer"
                 onClick={() => {
-                   if (!file.is_directory) invoke('reveal_in_finder', { path: file.path }).catch(console.error);
+                   invoke('reveal_in_finder', { path: file.path }).catch(console.error);
                 }}
+                style={{ paddingLeft: `${0.5 + file.depth * 1}rem` }}
               >
                 {file.is_directory ? (
                   <div className="text-blue-400">
@@ -553,7 +603,7 @@ export const AgentPanel: React.FC = () => {
                   <FileIcon filename={file.name} />
                 )}
                 <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.path}>
-                  {file.name}
+                  {file.displayName}
                 </span>
                 <span className="text-[8px] text-green-500 font-bold">disk</span>
               </div>

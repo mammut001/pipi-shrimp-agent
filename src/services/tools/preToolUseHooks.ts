@@ -9,6 +9,7 @@
  * Hook execution order:
  * 1. dangerousCommandCheck — hard constraint, cannot be bypassed
  * 2. pathValidationCheck — ensures paths are within workDir
+ * 2b. typstRenderGuardCheck — blocks inline render tools for @preview imports
  * 3. permissionModeCheck — plan-only blocks all tools
  * 4. autoEditsRestriction — auto-edits limits which tools are auto-approved
  */
@@ -71,6 +72,34 @@ export async function pathValidationCheck(ctx: HookContext): Promise<HookResult>
     };
   }
   return { approved: true };
+}
+
+/**
+ * Hook 2b: Typst render guard.
+ * Inline render tools cannot resolve bundled @preview packages.
+ */
+export async function typstRenderGuardCheck(ctx: HookContext): Promise<HookResult> {
+  if (ctx.toolName !== 'render_typst_to_pdf' && ctx.toolName !== 'render_typst_to_svg') {
+    return { approved: true };
+  }
+
+  try {
+    const parsedArgs = JSON.parse(ctx.toolArgs) as { source?: unknown };
+    const source = typeof parsedArgs.source === 'string' ? parsedArgs.source : '';
+
+    if (!source.includes('@preview/')) {
+      return { approved: true };
+    }
+
+    return {
+      approved: false,
+      error: 'This Typst source imports @preview packages. Use compile_typst_file on the saved .typ file instead of render_typst_to_pdf/render_typst_to_svg, because inline render tools cannot resolve bundled @preview packages.',
+      blockedBy: 'hook',
+      severity: 'medium',
+    };
+  } catch {
+    return { approved: true };
+  }
 }
 
 /**
@@ -281,6 +310,7 @@ export async function runPreToolUseHooks(ctx: HookContext): Promise<HookResult> 
   const hooks = [
     dangerousCommandCheck,
     pathValidationCheck,
+    typstRenderGuardCheck,
     permissionModeCheck,
     autoEditsRestriction,
     mlClassifierCheck,

@@ -16,6 +16,7 @@ import { useEffect, lazy, Suspense } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
 import { useSwarmStore } from '@/store/swarmStore';
+import { initializeTelegramStore } from '@/store/telegramStore';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 import { useKeyboardShortcuts, KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
 import { AutoResearchSetupModal } from '@/components/AutoResearchSetupModal';
@@ -45,6 +46,7 @@ export default function App() {
       try {
         await getApiConfig();
         await initChat();
+        await initializeTelegramStore();
         initSwarm();
       } catch (error) {
         console.error('Failed to initialize:', error);

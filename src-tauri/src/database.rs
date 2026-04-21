@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 /**
  * Database module - SQLite persistence for sessions and messages
  */
-use rusqlite::{params, Connection, Result as SqliteResult, Row};
+use rusqlite::{params, types::ToSql, Connection, OptionalExtension, Result as SqliteResult, Row};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -39,6 +39,47 @@ fn row_to_message(row: &Row) -> SqliteResult<DbMessage> {
         tool_calls: row.get(6)?,
         token_usage: row.get(7)?,
         created_at: row.get(8)?,
+    })
+}
+
+/**
+ * Helper to map a row to DbTelegramBinding
+ */
+fn row_to_telegram_binding(row: &Row) -> SqliteResult<DbTelegramBinding> {
+    Ok(DbTelegramBinding {
+        chat_id: row.get(0)?,
+        chat_type: row.get(1)?,
+        display_name: row.get(2)?,
+        is_owner: row.get::<_, i64>(3)? != 0,
+        auto_run: row.get::<_, i64>(4)? != 0,
+        allowed_modes_json: row.get(5)?,
+        default_project_id: row.get(6)?,
+        default_work_dir: row.get(7)?,
+        default_permission_mode: row.get(8)?,
+        default_autoresearch_profile_id: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+/**
+ * Helper to map a row to DbTelegramTask
+ */
+fn row_to_telegram_task(row: &Row) -> SqliteResult<DbTelegramTask> {
+    Ok(DbTelegramTask {
+        id: row.get(0)?,
+        chat_id: row.get(1)?,
+        source_message_id: row.get(2)?,
+        r#type: row.get(3)?,
+        status: row.get(4)?,
+        prompt: row.get(5)?,
+        local_session_id: row.get(6)?,
+        result_summary: row.get(7)?,
+        error_message: row.get(8)?,
+        created_at: row.get(9)?,
+        started_at: row.get(10)?,
+        finished_at: row.get(11)?,
+        updated_at: row.get(12)?,
     })
 }
 
@@ -139,6 +180,45 @@ pub struct DbTokenUsage {
     pub model: String,
     pub api_config_id: Option<String>,
     pub created_at: i64,
+}
+
+/**
+ * Telegram binding model for database
+ */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTelegramBinding {
+    pub chat_id: i64,
+    pub chat_type: String,
+    pub display_name: String,
+    pub is_owner: bool,
+    pub auto_run: bool,
+    pub allowed_modes_json: String,
+    pub default_project_id: Option<String>,
+    pub default_work_dir: Option<String>,
+    pub default_permission_mode: String,
+    pub default_autoresearch_profile_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/**
+ * Telegram task model for database
+ */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTelegramTask {
+    pub id: String,
+    pub chat_id: i64,
+    pub source_message_id: i64,
+    pub r#type: String,
+    pub status: String,
+    pub prompt: String,
+    pub local_session_id: Option<String>,
+    pub result_summary: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    pub updated_at: i64,
 }
 
 /**
@@ -292,6 +372,60 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 [],
             )?;
         }
+        5 => {
+            conn.execute_batch(
+                "
+                BEGIN;
+                CREATE TABLE IF NOT EXISTS telegram_bindings (
+                    chat_id INTEGER PRIMARY KEY,
+                    chat_type TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    is_owner INTEGER NOT NULL,
+                    auto_run INTEGER NOT NULL,
+                    allowed_modes_json TEXT NOT NULL,
+                    default_project_id TEXT,
+                    default_work_dir TEXT,
+                    default_permission_mode TEXT NOT NULL,
+                    default_autoresearch_profile_id TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS telegram_tasks (
+                    id TEXT PRIMARY KEY,
+                    chat_id INTEGER NOT NULL,
+                    source_message_id INTEGER NOT NULL,
+                    type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    local_session_id TEXT,
+                    result_summary TEXT,
+                    error_message TEXT,
+                    created_at INTEGER NOT NULL,
+                    started_at INTEGER,
+                    finished_at INTEGER,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS telegram_runtime_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_tasks_source
+                    ON telegram_tasks(chat_id, source_message_id);
+                CREATE INDEX IF NOT EXISTS idx_telegram_tasks_status_created_at
+                    ON telegram_tasks(status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_telegram_tasks_chat_created_at
+                    ON telegram_tasks(chat_id, created_at DESC);
+                COMMIT;
+            ",
+            )?;
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (5, strftime('%s','now'))",
+                [],
+            )?;
+        }
         _ => {
             eprintln!("⚠️  Unknown migration version {}", version);
         }
@@ -308,7 +442,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
  * `LATEST_VERSION`.
  */
 pub fn init_database() -> SqliteResult<()> {
-    const LATEST_VERSION: i64 = 4;
+    const LATEST_VERSION: i64 = 5;
 
     let db_path = get_db_path();
     println!("📂 Database path: {:?}", db_path);
@@ -436,6 +570,282 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
         )?;
     }
     Ok(())
+}
+
+/**
+ * Save a Telegram binding to database (INSERT OR REPLACE)
+ */
+pub fn save_telegram_binding(binding: &DbTelegramBinding) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute(
+            "INSERT OR REPLACE INTO telegram_bindings (
+                chat_id, chat_type, display_name, is_owner, auto_run, allowed_modes_json,
+                default_project_id, default_work_dir, default_permission_mode,
+                default_autoresearch_profile_id, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                binding.chat_id,
+                binding.chat_type,
+                binding.display_name,
+                if binding.is_owner { 1 } else { 0 },
+                if binding.auto_run { 1 } else { 0 },
+                binding.allowed_modes_json,
+                binding.default_project_id,
+                binding.default_work_dir,
+                binding.default_permission_mode,
+                binding.default_autoresearch_profile_id,
+                binding.created_at,
+                binding.updated_at,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/**
+ * Get a Telegram binding by chat ID
+ */
+pub fn get_telegram_binding(chat_id: i64) -> SqliteResult<Option<DbTelegramBinding>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT chat_id, chat_type, display_name, is_owner, auto_run, allowed_modes_json,
+                    default_project_id, default_work_dir, default_permission_mode,
+                    default_autoresearch_profile_id, created_at, updated_at
+             FROM telegram_bindings WHERE chat_id = ?1 LIMIT 1",
+        )?;
+
+        return stmt
+            .query_row(params![chat_id], row_to_telegram_binding)
+            .optional();
+    }
+
+    Ok(None)
+}
+
+/**
+ * Get all Telegram bindings
+ */
+pub fn list_telegram_bindings() -> SqliteResult<Vec<DbTelegramBinding>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let mut bindings = Vec::new();
+
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT chat_id, chat_type, display_name, is_owner, auto_run, allowed_modes_json,
+                    default_project_id, default_work_dir, default_permission_mode,
+                    default_autoresearch_profile_id, created_at, updated_at
+             FROM telegram_bindings ORDER BY created_at ASC",
+        )?;
+
+        let binding_iter = stmt.query_map([], row_to_telegram_binding)?;
+        for binding in binding_iter {
+            bindings.push(binding?);
+        }
+    }
+
+    Ok(bindings)
+}
+
+/**
+ * Save a Telegram task to database (INSERT OR REPLACE)
+ */
+pub fn save_telegram_task(task: &DbTelegramTask) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute(
+            "INSERT OR REPLACE INTO telegram_tasks (
+                id, chat_id, source_message_id, type, status, prompt, local_session_id,
+                result_summary, error_message, created_at, started_at, finished_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                task.id,
+                task.chat_id,
+                task.source_message_id,
+                task.r#type,
+                task.status,
+                task.prompt,
+                task.local_session_id,
+                task.result_summary,
+                task.error_message,
+                task.created_at,
+                task.started_at,
+                task.finished_at,
+                task.updated_at,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/**
+ * Get a Telegram task by ID
+ */
+pub fn get_telegram_task(task_id: &str) -> SqliteResult<Option<DbTelegramTask>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT id, chat_id, source_message_id, type, status, prompt, local_session_id,
+                    result_summary, error_message, created_at, started_at, finished_at, updated_at
+             FROM telegram_tasks WHERE id = ?1 LIMIT 1",
+        )?;
+
+        return stmt
+            .query_row(params![task_id], row_to_telegram_task)
+            .optional();
+    }
+
+    Ok(None)
+}
+
+/**
+ * Find a Telegram task by source message.
+ * Used for idempotency when polling updates is retried.
+ */
+pub fn find_telegram_task_by_source(chat_id: i64, source_message_id: i64) -> SqliteResult<Option<DbTelegramTask>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT id, chat_id, source_message_id, type, status, prompt, local_session_id,
+                    result_summary, error_message, created_at, started_at, finished_at, updated_at
+             FROM telegram_tasks
+             WHERE chat_id = ?1 AND source_message_id = ?2
+             LIMIT 1",
+        )?;
+
+        return stmt
+            .query_row(params![chat_id, source_message_id], row_to_telegram_task)
+            .optional();
+    }
+
+    Ok(None)
+}
+
+/**
+ * List recent Telegram tasks for a chat
+ */
+pub fn list_telegram_tasks_for_chat(chat_id: i64, limit: Option<usize>) -> SqliteResult<Vec<DbTelegramTask>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let mut tasks = Vec::new();
+
+    if let Some(conn) = guard.as_ref() {
+        match limit {
+            Some(limit_value) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, chat_id, source_message_id, type, status, prompt, local_session_id,
+                            result_summary, error_message, created_at, started_at, finished_at, updated_at
+                     FROM telegram_tasks
+                     WHERE chat_id = ?1
+                     ORDER BY created_at DESC
+                     LIMIT ?2",
+                )?;
+
+                let task_iter = stmt.query_map(params![chat_id, limit_value as i64], row_to_telegram_task)?;
+                for task in task_iter {
+                    tasks.push(task?);
+                }
+            }
+            None => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, chat_id, source_message_id, type, status, prompt, local_session_id,
+                            result_summary, error_message, created_at, started_at, finished_at, updated_at
+                     FROM telegram_tasks
+                     WHERE chat_id = ?1
+                     ORDER BY created_at DESC",
+                )?;
+
+                let task_iter = stmt.query_map(params![chat_id], row_to_telegram_task)?;
+                for task in task_iter {
+                    tasks.push(task?);
+                }
+            }
+        }
+    }
+
+    Ok(tasks)
+}
+
+/**
+ * List Telegram tasks by status values.
+ */
+pub fn list_telegram_tasks_by_statuses(statuses: &[String], limit: Option<usize>) -> SqliteResult<Vec<DbTelegramTask>> {
+    if statuses.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let mut tasks = Vec::new();
+
+    if let Some(conn) = guard.as_ref() {
+        let placeholders = statuses
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("?{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut sql = format!(
+            "SELECT id, chat_id, source_message_id, type, status, prompt, local_session_id,
+                    result_summary, error_message, created_at, started_at, finished_at, updated_at
+             FROM telegram_tasks
+             WHERE status IN ({})
+             ORDER BY created_at ASC",
+            placeholders,
+        );
+
+        let mut params_vec: Vec<Box<dyn ToSql>> = statuses
+            .iter()
+            .cloned()
+            .map(|status| Box::new(status) as Box<dyn ToSql>)
+            .collect();
+
+        if let Some(limit_value) = limit {
+            sql.push_str(&format!(" LIMIT ?{}", params_vec.len() + 1));
+            params_vec.push(Box::new(limit_value as i64));
+        }
+
+        let params_refs: Vec<&dyn ToSql> = params_vec.iter().map(|value| value.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let task_iter = stmt.query_map(params_refs.as_slice(), row_to_telegram_task)?;
+        for task in task_iter {
+            tasks.push(task?);
+        }
+    }
+
+    Ok(tasks)
+}
+
+/**
+ * Save a Telegram runtime state value
+ */
+pub fn set_telegram_runtime_state(key: &str, value: &str) -> SqliteResult<()> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        conn.execute(
+            "INSERT OR REPLACE INTO telegram_runtime_state (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+    }
+    Ok(())
+}
+
+/**
+ * Get a Telegram runtime state value
+ */
+pub fn get_telegram_runtime_state(key: &str) -> SqliteResult<Option<String>> {
+    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    if let Some(conn) = guard.as_ref() {
+        let mut stmt = conn.prepare(
+            "SELECT value FROM telegram_runtime_state WHERE key = ?1 LIMIT 1",
+        )?;
+
+        return stmt
+            .query_row(params![key], |row| row.get(0))
+            .optional();
+    }
+
+    Ok(None)
 }
 
 /**

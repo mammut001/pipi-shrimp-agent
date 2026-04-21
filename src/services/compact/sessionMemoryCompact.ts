@@ -125,6 +125,7 @@ export async function trySessionMemoryCompact(
         summaryMessage,
         ...messages.slice(keepIndex),
       ]),
+      workDir,
       sessionMemoryPath: undefined,  // 会在 Rust 端获取
       preservedSegment: {
         headUuid: messages[keepIndex]?.id,
@@ -331,6 +332,7 @@ interface CreateBoundaryOptions {
   compactType: string;
   preCompactTokenCount: number;
   postCompactTokenCount: number;
+  workDir?: string;
   sessionMemoryPath?: string | null;
   preservedSegment?: {
     headUuid: string;
@@ -365,7 +367,7 @@ async function createCompactBoundary(
     memoryPath = options.sessionMemoryPath;
   } else {
     try {
-      memoryPath = await invoke<string>('get_session_memory_path', { workDir: null });
+      memoryPath = await invoke<string>('get_session_memory_path', { workDir: options.workDir ?? null });
     } catch { /* ignore */ }
   }
   

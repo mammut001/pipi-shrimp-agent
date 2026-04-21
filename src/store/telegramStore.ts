@@ -24,6 +24,7 @@ import {
   telegramOn,
   getTelegramErrorMessage,
 } from '../services/telegramService';
+import { startTelegramPoller, stopTelegramPoller } from '../services/telegram/poller';
 import { useSettingsStore } from './settingsStore';
 
 // ============= Storage Keys =============
@@ -120,6 +121,7 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
 
       // Set up event listeners
       setupEventListeners();
+      await startTelegramPoller();
 
     } catch (error) {
       const errorMessage = getTelegramErrorMessage(error);
@@ -135,6 +137,8 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
    * Disconnect from Telegram
    */
   disconnect: async () => {
+    await stopTelegramPoller();
+
     try {
       await disconnectTelegram();
     } catch (error) {
@@ -299,6 +303,7 @@ export async function initializeTelegramStore(): Promise<void> {
 
       if (status === 'connected' && botInfo) {
         useTelegramStore.setState({ status, botInfo });
+        await startTelegramPoller();
       } else {
         useTelegramStore.setState({ status });
       }

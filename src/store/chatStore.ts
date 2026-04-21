@@ -7,6 +7,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import type { ChatState, Session, Message, Project, OutputFolder } from '../types/chat';
 import { createSession, createMessage, createProject } from '../types/chat';
+import { useArtifactsStore } from './artifactsStore';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 import { useCdpStore } from './cdpStore';
@@ -21,6 +22,7 @@ import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
 import { checkReactiveCompact, recordToolForReactiveCompact } from '../services/compact/reactiveCompact';
 import { triggerContextAnalysis } from '../services/contextAnalysis/hooks/contextAnalysisTrigger';
+import { sanitizeToolResultForModel } from '../services/tools/toolResultSanitizer';
 
 
 /**
@@ -118,7 +120,7 @@ async function runSMCompactAfterStreaming(
     if (stats.current >= config.legacy_auto_threshold_tokens) {
       console.log('[Legacy Compact] Triggering...');
       
-      const legacyResult = await triggerLegacyCompact(sessionId, messages);
+      const legacyResult = await triggerLegacyCompact(sessionId, messages, workDir);
       
       if (legacyResult.success && legacyResult.boundary_message && legacyResult.summary_message) {
         console.log('[Legacy Compact] Success:', legacyResult.deleted_count, 'messages removed');
@@ -290,6 +292,35 @@ const sessionToDb = (session: Session): DbSession => ({
   working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
   permission_mode: session.permissionMode || null,
 });
+
+async function ensureSessionWorkDir(
+  sessionId: string,
+  set: (updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
+  get: () => ChatState,
+): Promise<string | null> {
+  const session = get().sessions.find((s) => s.id === sessionId);
+  if (!session) return null;
+  if (session.workDir) return session.workDir;
+
+  try {
+    const defaultDir = await invoke<string>('get_app_default_dir', { sessionId });
+    await invoke('create_directory', { path: defaultDir });
+
+    const latestSession = get().sessions.find((s) => s.id === sessionId) ?? session;
+    const updated = { ...latestSession, workDir: defaultDir, updatedAt: Date.now() };
+    await invoke('db_save_session', { session: sessionToDb(updated) });
+
+    set((state) => ({
+      sessions: state.sessions.map((s) => (s.id === sessionId ? updated : s)),
+    }));
+
+    console.log(`📂 Auto-assigned workDir for session: ${defaultDir}`);
+    return defaultDir;
+  } catch (error) {
+    console.error('[workDir] Failed to auto-assign default directory:', error);
+    return null;
+  }
+}
 
 /**
  * Convert frontend message to database message
@@ -512,7 +543,7 @@ function buildApiMessages(messages: Message[]) {
       for (const toolCall of msg.tool_calls) {
         apiMessages.push({
           role: 'user',
-          content: `__TOOL_RESULT__:${toolCall.id}:${resultById.get(toolCall.id) ?? ''}`,
+          content: `__TOOL_RESULT__:${toolCall.id}:${sanitizeToolResultForModel(toolCall.name, resultById.get(toolCall.id) ?? '')}`,
         });
       }
 
@@ -540,6 +571,204 @@ function buildApiMessages(messages: Message[]) {
  * Storage key for persisting current session ID (so we can restore it on restart)
  */
 const CURRENT_SESSION_ID_STORAGE_KEY = 'ai-agent-current-session-id';
+
+function resetRightPanelStateAfterSessionRemoval(
+  deletedSessionIds: string[],
+  nextSessionId: string | null,
+  previousCurrentSessionId: string | null,
+) {
+  const uiStore = useUIStore.getState();
+  const artifactsStore = useArtifactsStore.getState();
+  const currentSessionWasDeleted = previousCurrentSessionId
+    ? deletedSessionIds.includes(previousCurrentSessionId)
+    : false;
+  for (const sessionId of deletedSessionIds) {
+    uiStore.clearQuestionnaire(sessionId);
+  }
+
+  if (currentSessionWasDeleted || nextSessionId === null) {
+    uiStore.clearAllPermissions();
+    uiStore.clearArtifactId();
+    uiStore.clearTaskProgress();
+    uiStore.setActiveSkill(null);
+    uiStore.setAgentPanelTab('main');
+    artifactsStore.closePanel();
+  }
+
+  if (nextSessionId) {
+    localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, nextSessionId);
+  } else {
+    localStorage.removeItem(CURRENT_SESSION_ID_STORAGE_KEY);
+  }
+}
+
+type FileListEntry = {
+  name: string;
+  is_directory: boolean;
+  path: string;
+};
+
+const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, '');
+
+const parentDirOf = (value: string): string => {
+  const normalized = trimTrailingSlash(value);
+  const idx = normalized.lastIndexOf('/');
+  return idx > 0 ? normalized.slice(0, idx) : normalized;
+};
+
+const normalizeResumeWorkspacePath = (value: string, workDir: string): string => {
+  const normalizedWorkDir = trimTrailingSlash(workDir);
+  const normalizedValue = trimTrailingSlash(value);
+  const absoluteResumeRoot = `${normalizedWorkDir}/resume`;
+
+  if (normalizedValue === absoluteResumeRoot) {
+    return normalizedWorkDir;
+  }
+
+  if (normalizedValue.startsWith(`${absoluteResumeRoot}/`)) {
+    return `${normalizedWorkDir}/${normalizedValue.slice(absoluteResumeRoot.length + 1)}`;
+  }
+
+  if (normalizedValue === 'resume') {
+    return normalizedWorkDir;
+  }
+
+  if (normalizedValue.startsWith('resume/')) {
+    return `${normalizedWorkDir}/${normalizedValue.slice('resume/'.length)}`;
+  }
+
+  return value;
+};
+
+function normalizeResumeWorkspaceToolArgs(
+  toolName: string,
+  toolArgs: string,
+  workDir?: string | null,
+  activeSkill?: string | null,
+): string {
+  if (!workDir || activeSkill !== 'resume') {
+    return toolArgs;
+  }
+
+  let parsedArgs: Record<string, unknown>;
+  try {
+    parsedArgs = JSON.parse(toolArgs);
+  } catch {
+    return toolArgs;
+  }
+
+  let changed = false;
+  const normalizedArgs: Record<string, unknown> = { ...parsedArgs };
+
+  for (const key of ['path', 'file_path', 'output_dir']) {
+    const rawValue = normalizedArgs[key];
+    if (typeof rawValue !== 'string' || !rawValue.trim()) {
+      continue;
+    }
+
+    const normalizedValue = normalizeResumeWorkspacePath(rawValue, workDir);
+    if (normalizedValue !== rawValue) {
+      normalizedArgs[key] = normalizedValue;
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return toolArgs;
+  }
+
+  console.info('[resume] Flattened nested resume workspace path', {
+    toolName,
+    originalArgs: parsedArgs,
+    normalizedArgs,
+  });
+
+  return JSON.stringify(normalizedArgs);
+}
+
+async function findNestedResumeTyp(workDir: string): Promise<string | null> {
+  try {
+    const entries = await invoke<FileListEntry[]>('list_files', { path: workDir });
+    const visibleDirs = entries.filter((entry) => entry.is_directory && !entry.name.startsWith('.'));
+    const candidates: string[] = [];
+
+    for (const dir of visibleDirs) {
+      const candidate = `${trimTrailingSlash(dir.path)}/resume.typ`;
+      const exists = await invoke<boolean>('path_exists', { path: candidate, workDir });
+      if (exists) {
+        candidates.push(candidate);
+      }
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    return candidates.find((candidate) => candidate.endsWith('/resume/resume.typ')) ?? candidates[0];
+  } catch {
+    return null;
+  }
+}
+
+async function normalizeCompileTypstArgs(toolArgs: string, workDir?: string | null): Promise<string> {
+  if (!workDir) {
+    return toolArgs;
+  }
+
+  let parsedArgs: Record<string, unknown>;
+  try {
+    parsedArgs = JSON.parse(toolArgs);
+  } catch {
+    return toolArgs;
+  }
+
+  const rawFilePath = typeof parsedArgs.file_path === 'string' ? parsedArgs.file_path : '';
+  const rawOutputDir = typeof parsedArgs.output_dir === 'string' ? parsedArgs.output_dir : '';
+  if (!rawFilePath || !rawOutputDir) {
+    return toolArgs;
+  }
+
+  let filePath = rawFilePath;
+  let outputDir = rawOutputDir;
+  let changed = false;
+
+  try {
+    const fileExists = await invoke<boolean>('path_exists', { path: filePath, workDir });
+    if (!fileExists) {
+      const nestedResumeTyp = await findNestedResumeTyp(workDir);
+      if (nestedResumeTyp) {
+        filePath = nestedResumeTyp;
+        changed = true;
+      }
+    }
+  } catch {
+    return toolArgs;
+  }
+
+  const normalizedWorkDir = trimTrailingSlash(workDir);
+  const fileDir = parentDirOf(filePath);
+  if (fileDir && trimTrailingSlash(outputDir) === normalizedWorkDir && trimTrailingSlash(fileDir) !== normalizedWorkDir) {
+    outputDir = fileDir;
+    changed = true;
+  }
+
+  if (!changed) {
+    return toolArgs;
+  }
+
+  console.info('[resume] Normalized compile_typst_file args', {
+    originalFilePath: rawFilePath,
+    normalizedFilePath: filePath,
+    originalOutputDir: rawOutputDir,
+    normalizedOutputDir: outputDir,
+  });
+
+  return JSON.stringify({
+    ...parsedArgs,
+    file_path: filePath,
+    output_dir: outputDir,
+  });
+}
 
 /**
  * Chat store using Zustand
@@ -675,6 +904,7 @@ export const useChatStore = create<ChatState>()(
             uiStore.addNotification(
               event.payload.success ? 'success' : 'error',
               `Agent ${event.payload.agentId.slice(0, 12)}... completed`,
+              event.payload.sessionId,
             );
           },
         );
@@ -685,7 +915,7 @@ export const useChatStore = create<ChatState>()(
           (event) => {
             console.error(`[Subagent] Error: ${event.payload.agentId}`, event.payload.error);
             const uiStore = useUIStore.getState();
-            uiStore.addNotification('error', `Agent ${event.payload.agentId.slice(0, 12)}... failed: ${event.payload.error}`);
+            uiStore.addNotification('error', `Agent ${event.payload.agentId.slice(0, 12)}... failed: ${event.payload.error}`, event.payload.sessionId);
           },
         );
 
@@ -731,7 +961,7 @@ export const useChatStore = create<ChatState>()(
           );
           await get().addMessageToSession(sessionId, resultMessage);
 
-          useUIStore.getState().addNotification('success', `Teammate "${agentName}" finished: ${taskDesc}`);
+          useUIStore.getState().addNotification('success', `Teammate "${agentName}" finished: ${taskDesc}`, sessionId);
         });
       } catch (error) {
         console.error('❌ Failed to load sessions:', error);
@@ -774,6 +1004,7 @@ export const useChatStore = create<ChatState>()(
 
       // Clear stale permission dialogs before switching to the new session
       useUIStore.getState().clearAllPermissions();
+      useUIStore.getState().clearQuestionnaire(get().currentSessionId || undefined);
 
       // Persist current session ID so we can restore it on restart
       localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, newSession.id);
@@ -1078,12 +1309,19 @@ export const useChatStore = create<ChatState>()(
         addMessage,
         setStreaming,
         setError,
+        isStreaming,
+        streamingSessionId,
       } = get();
 
       const activeSessionId = targetSessionId || currentSessionId;
 
       if (!activeSessionId) {
         setError('No active session');
+        return;
+      }
+
+      if (isStreaming && streamingSessionId === activeSessionId) {
+        useUIStore.getState().addNotification('warning', '当前会话仍在处理中，请等待当前步骤完成后再发送。', activeSessionId);
         return;
       }
 
@@ -1269,29 +1507,25 @@ export const useChatStore = create<ChatState>()(
           } else if (chunk.type === 'reasoning_delta') {
             set((state) => ({ streamingReasoning: state.streamingReasoning + chunk.content }));
           } else if (chunk.type === 'status_update') {
-            uiStore.addNotification('info', chunk.message);
+            uiStore.addNotification('info', chunk.message, activeSessionId);
           } else if (chunk.type === 'tool_batch_request') {
-            const currentSess = get().sessions.find(s => s.id === activeSessionId);
+            let currentSess = get().sessions.find(s => s.id === activeSessionId);
             let workDir = currentSess?.workDir ?? null;
 
-            // Auto-assign default output dir when workDir is null and batch contains write tools
+            // Bind a default session directory before any workspace-sensitive tools run.
             if (!workDir) {
-              const writeTools = ['write_file', 'create_directory', 'execute_command'];
-              const hasWriteTool = chunk.tools.some(t => writeTools.includes(t.name));
-              if (hasWriteTool) {
-                try {
-                  const defaultDir = await invoke<string>('get_app_default_dir', { sessionId: activeSessionId });
-                  await invoke('create_directory', { path: defaultDir });
-                  workDir = defaultDir;
-                  const updated = { ...currentSess!, workDir: defaultDir, updatedAt: Date.now() };
-                  await invoke('db_save_session', { session: sessionToDb(updated) });
-                  set(state => ({
-                    sessions: state.sessions.map(s => s.id === activeSessionId ? updated : s)
-                  }));
-                  console.log(`📂 Auto-assigned workDir for session: ${defaultDir}`);
-                } catch (e) {
-                  console.error('[sendMessage] Failed to auto-assign workDir:', e);
-                }
+              const workspaceTools = new Set([
+                'get_current_workspace',
+                'write_file',
+                'create_directory',
+                'execute_command',
+                'compile_typst_file',
+                'render_typst_to_pdf',
+              ]);
+              const needsWorkDir = chunk.tools.some((t) => workspaceTools.has(t.name));
+              if (needsWorkDir) {
+                workDir = await ensureSessionWorkDir(activeSessionId, set, get);
+                currentSess = get().sessions.find((s) => s.id === activeSessionId);
               }
             }
 
@@ -1309,12 +1543,28 @@ export const useChatStore = create<ChatState>()(
             }
 
             const allResults: { id: string; content: string }[] = [];
+            const normalizedToolArgsById = new Map<string, string>();
+
+            for (const tool of chunk.tools) {
+              let normalizedArgs = normalizeResumeWorkspaceToolArgs(
+                tool.name,
+                tool.arguments,
+                workDir ?? currentSess?.workDir,
+                useUIStore.getState().activeSkill,
+              );
+
+              if (tool.name === 'compile_typst_file') {
+                normalizedArgs = await normalizeCompileTypstArgs(normalizedArgs, workDir ?? currentSess?.workDir);
+              }
+
+              normalizedToolArgsById.set(tool.id, normalizedArgs);
+            }
 
             // Partition tools into concurrent (read-only, auto-approved) and serial (needs permission)
             const { partitionTools, StreamingToolExecutor } = await import('../services/StreamingToolExecutor');
             const toolRequests = chunk.tools.map(t => {
               let parsedArgs: Record<string, any> = {};
-              try { parsedArgs = JSON.parse(t.arguments); } catch { parsedArgs = {}; }
+              try { parsedArgs = JSON.parse(normalizedToolArgsById.get(t.id) ?? t.arguments); } catch { parsedArgs = {}; }
               return { id: t.id, name: t.name, arguments: parsedArgs };
             });
             const { concurrent, serial } = partitionTools(toolRequests);
@@ -1333,10 +1583,9 @@ export const useChatStore = create<ChatState>()(
                   allResults.push({ id: result.id, content: result.content });
                   const req = concurrent.find(r => r.id === result.id);
                   if (req) {
-                    const origTool = chunk.tools.find(t => t.id === result.id);
                     const postCtx: PostHookContext = {
                       toolName: req.name,
-                      toolArgs: origTool?.arguments ?? '{}',
+                      toolArgs: normalizedToolArgsById.get(result.id) ?? '{}',
                       result: result.content,
                       isError: result.is_error,
                       sessionId: activeSessionId,
@@ -1356,12 +1605,14 @@ export const useChatStore = create<ChatState>()(
             for (const tool of chunk.tools) {
               if (!serialIds.has(tool.id)) continue;
 
+              const normalizedToolArgs = normalizedToolArgsById.get(tool.id) ?? tool.arguments;
+
               // === AskUserQuestion: frontend-only interactive tool ===
               if (tool.name === 'AskUserQuestion') {
                 let toolResultContent = '';
                 try {
-                  const args = JSON.parse(tool.arguments);
-                  const response = await uiStore.showQuestionnaire({
+                  const args = JSON.parse(normalizedToolArgs);
+                  const response = await uiStore.showQuestionnaire(activeSessionId, {
                     toolCallId: tool.id,
                     title: args.title || 'Information Needed',
                     description: args.description || '',
@@ -1380,18 +1631,18 @@ export const useChatStore = create<ChatState>()(
               // === PreToolUse Hooks (dangerous commands, path validation, permission mode) ===
               const hookResult = await runPreToolUseHooks({
                 toolName: tool.name,
-                toolArgs: tool.arguments,
-                workDir: currentSess?.workDir,
+                toolArgs: normalizedToolArgs,
+                workDir: workDir ?? currentSess?.workDir,
                 permissionMode,
                 sessionId: activeSessionId,
               });
 
               let toolResultContent = '';
               if (!hookResult.approved) {
-                uiStore.addNotification('error', hookResult.error || 'Tool execution blocked');
+                uiStore.addNotification('error', hookResult.error || 'Tool execution blocked', activeSessionId);
                 toolResultContent = `Error: ${hookResult.error || 'Tool execution blocked'}`;
               } else {
-                const effectiveArgs = hookResult.modifiedArgs || tool.arguments;
+                const effectiveArgs = hookResult.modifiedArgs || normalizedToolArgs;
                 const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
                 let parsedAgentArgs: Record<string, any> | null = null;
                 let isSwarmTeammateRequest = false;
@@ -1415,10 +1666,11 @@ export const useChatStore = create<ChatState>()(
                     const parentCtx = getCurrentAgentContext() || {
                       agentId: 'main',
                       sessionId: activeSessionId,
-                      workDir: currentSess?.workDir || undefined,
+                      workDir: workDir || currentSess?.workDir || undefined,
                       toolPool: [],
                       metadata: {},
                     };
+                    const swarmProjectRoot = parentCtx.workDir || workDir || currentSess?.workDir || undefined;
                     const { useSwarmStore } = await import('./swarmStore');
                     useSwarmStore.getState().init();
                     let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
@@ -1430,6 +1682,7 @@ export const useChatStore = create<ChatState>()(
                         sessionId: activeSessionId,
                         description: parsedAgentArgs.description || `Team ${parsedAgentArgs.team_name}`,
                         leaderName: 'leader',
+                        projectRoot: swarmProjectRoot,
                       })).team;
                     }
                     const { agent: runtimeAgent } = await swarm.spawnAgent({
@@ -1439,6 +1692,7 @@ export const useChatStore = create<ChatState>()(
                       sessionId: activeSessionId,
                       parentAgentId: parentCtx.agentId,
                       model: parsedAgentArgs.model,
+                      projectRoot: swarmProjectRoot,
                     });
                     approved = await swarm.enqueuePermissionInUI({
                       teamId: runtimeTeam.id,
@@ -1452,7 +1706,11 @@ export const useChatStore = create<ChatState>()(
                       swarm.reconcileRunForChatSession(activeSessionId);
                     }
                   } else {
-                    approved = await uiStore.waitForPermission(tool);
+                    approved = await uiStore.waitForPermission({
+                      id: tool.id,
+                      name: tool.name,
+                      arguments: effectiveArgs,
+                    });
                   }
                 }
 
@@ -1471,7 +1729,7 @@ export const useChatStore = create<ChatState>()(
                         args = parsedAgentArgs || JSON.parse(effectiveArgs);
                       } catch (parseErr) {
                         toolResultContent = `Error: Failed to parse agent_tool arguments: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`;
-                        uiStore.addNotification('error', 'Invalid agent tool arguments');
+                        uiStore.addNotification('error', 'Invalid agent tool arguments', activeSessionId);
                         allResults.push({ id: tool.id, content: toolResultContent });
                         continue; // skip to next serial tool
                       }
@@ -1483,10 +1741,11 @@ export const useChatStore = create<ChatState>()(
                         const parentCtx = getCurrentAgentContext() || {
                           agentId: 'main',
                           sessionId: activeSessionId,
-                          workDir: workDir || undefined,
+                          workDir: workDir || currentSess?.workDir || undefined,
                           toolPool: [],
                           metadata: {},
                         };
+                        const swarmProjectRoot = parentCtx.workDir || workDir || currentSess?.workDir || undefined;
                         const { useSwarmStore } = await import('./swarmStore');
                         useSwarmStore.getState().init();
                         let activeRun = swarm.getActiveRunForChatSession(activeSessionId);
@@ -1500,6 +1759,7 @@ export const useChatStore = create<ChatState>()(
                             sessionId: activeSessionId,
                             description: args.description || `Team ${args.team_name}`,
                             leaderName: 'leader',
+                            projectRoot: swarmProjectRoot,
                           });
                           teamId = team.id;
                           leaderId = leader.id;
@@ -1515,6 +1775,7 @@ export const useChatStore = create<ChatState>()(
                           sessionId: activeSessionId,
                           parentAgentId: parentCtx.agentId,
                           model: args.model,
+                          projectRoot: swarmProjectRoot,
                         });
                         const runtimeTask = swarm.createTask({
                           teamId,
@@ -1695,7 +1956,7 @@ export const useChatStore = create<ChatState>()(
         await runSMCompactAfterStreaming(activeSessionId, set, get);
 
         // === Context Analysis (smart compression trigger) ===
-        triggerContextAnalysis(activeSessionId, currentMessages()).catch((e: unknown) =>
+        triggerContextAnalysis(activeSessionId, currentMessages(), sessionWorkDir ?? undefined).catch((e: unknown) =>
           console.debug('[ContextAnalysis] Trigger failed:', e)
         );
 
@@ -2120,6 +2381,9 @@ export const useChatStore = create<ChatState>()(
         // approve it, the tool_result gets injected into the WRONG session's message
         // history (no matching tool_use), causing a permanent 400 on every future call.
         useUIStore.getState().clearAllPermissions();
+        if (previousSessionId && previousSessionId !== sessionId) {
+          useUIStore.getState().clearQuestionnaire(previousSessionId);
+        }
 
         // If we're leaving a session mid-ASK-flow, scrub its dangling tool_calls so
         // the next request to that session won't hit OpenAI-compatible 400 errors.
@@ -2158,13 +2422,14 @@ export const useChatStore = create<ChatState>()(
     deleteSession: async (sessionId: string) => {
       const uiStore = useUIStore.getState();
       const sessionWorkDir = get().sessions.find((s) => s.id === sessionId)?.workDir;
+      const previousCurrentSessionId = get().currentSessionId;
 
       // Delete from database first; only update UI state when persistence succeeds.
       try {
         await invoke('db_delete_session', { sessionId });
       } catch (error) {
         console.error('Failed to delete session from database:', error);
-        uiStore.addNotification('error', 'Delete failed: unable to remove conversation from database');
+        uiStore.addNotification('error', 'Delete failed: unable to remove conversation from database', sessionId);
         throw error;
       }
 
@@ -2179,10 +2444,11 @@ export const useChatStore = create<ChatState>()(
           await invoke<boolean>('delete_session_work_dir', { path: sessionWorkDir });
         } catch (error) {
           console.warn('Failed to delete session work directory:', error);
-          uiStore.addNotification('warning', 'Conversation deleted, but folder cleanup failed');
+          uiStore.addNotification('warning', 'Conversation deleted, but folder cleanup failed', sessionId);
         }
       }
 
+      let nextSessionId: string | null = null;
       set((state) => {
         const newSessions = state.sessions.filter((s) => s.id !== sessionId);
         const newCurrentSessionId =
@@ -2192,13 +2458,17 @@ export const useChatStore = create<ChatState>()(
               : null
             : state.currentSessionId;
 
+        nextSessionId = newCurrentSessionId;
+
         return {
           sessions: newSessions,
           currentSessionId: newCurrentSessionId,
         };
       });
 
-      uiStore.addNotification('success', 'Conversation deleted');
+      resetRightPanelStateAfterSessionRemoval([sessionId], nextSessionId, previousCurrentSessionId);
+
+      uiStore.addNotification('success', 'Conversation deleted', sessionId);
     },
 
     /**
@@ -2206,6 +2476,7 @@ export const useChatStore = create<ChatState>()(
      */
     deleteSessions: async (sessionIds: string[]) => {
       const uiStore = useUIStore.getState();
+      const previousCurrentSessionId = get().currentSessionId;
       const deletedSessionIds: string[] = [];
       let workDirDeleteErrors = 0;
 
@@ -2238,10 +2509,11 @@ export const useChatStore = create<ChatState>()(
       }
 
       if (deletedSessionIds.length === 0) {
-        uiStore.addNotification('error', 'Delete failed: unable to remove selected conversations');
+        uiStore.addNotification('error', 'Delete failed: unable to remove selected conversations', get().currentSessionId || undefined);
         throw new Error('Failed to delete sessions from database');
       }
 
+      let nextSessionId: string | null = null;
       set((state) => {
         const sessionIdSet = new Set(deletedSessionIds);
         const newSessions = state.sessions.filter((s) => !sessionIdSet.has(s.id));
@@ -2252,25 +2524,31 @@ export const useChatStore = create<ChatState>()(
           newCurrentSessionId = newSessions.length > 0 ? newSessions[0].id : null;
         }
 
+        nextSessionId = newCurrentSessionId;
+
         return {
           sessions: newSessions,
           currentSessionId: newCurrentSessionId,
         };
       });
 
+      resetRightPanelStateAfterSessionRemoval(deletedSessionIds, nextSessionId, previousCurrentSessionId);
+
       if (deletedSessionIds.length < sessionIds.length) {
         uiStore.addNotification(
           'warning',
           `Partially deleted: ${deletedSessionIds.length}/${sessionIds.length} conversations removed`,
+          get().currentSessionId || undefined,
         );
       } else {
-        uiStore.addNotification('success', `Deleted ${deletedSessionIds.length} conversations`);
+        uiStore.addNotification('success', `Deleted ${deletedSessionIds.length} conversations`, get().currentSessionId || undefined);
       }
 
       if (workDirDeleteErrors > 0) {
         uiStore.addNotification(
           'warning',
           `Deleted chats, but ${workDirDeleteErrors} folder(s) could not be cleaned up`,
+          get().currentSessionId || undefined,
         );
       }
     },
@@ -2506,7 +2784,8 @@ export const useChatStore = create<ChatState>()(
       if (!session?.workDir) {
         useUIStore.getState().addNotification(
           'info',
-          '请选择一个文件夹来保存生成的文件。'
+          '请选择一个文件夹来保存生成的文件。',
+          sessionId,
         );
         // Open folder picker — this also runs init_pipi_shrimp and persists workDir
         const selectedPath = await get().setSessionWorkDir(sessionId);

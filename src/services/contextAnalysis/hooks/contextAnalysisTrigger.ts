@@ -20,6 +20,7 @@ import { useContextAnalysisStore } from './store';
 export async function triggerContextAnalysis(
   sessionId: string,
   messages: Message[],
+  workDir?: string,
 ): Promise<CompressionStrategy | null> {
   const store = useContextAnalysisStore.getState();
 
@@ -38,7 +39,7 @@ export async function triggerContextAnalysis(
     store.setLastStrategy(strategy);
 
     if (strategy.should_compact) {
-      await notifyCompressionSystem(strategy, sessionId, messages);
+      await notifyCompressionSystem(strategy, sessionId, messages, workDir);
     }
 
     return strategy;
@@ -57,6 +58,7 @@ async function notifyCompressionSystem(
   strategy: CompressionStrategy,
   sessionId: string,
   _messages: Message[],
+  workDir?: string,
 ): Promise<void> {
   switch (strategy.compact_type) {
     case 'micro': {
@@ -70,12 +72,12 @@ async function notifyCompressionSystem(
       // re-reads from its state when it needs them.
       // Pass empty array as a no-op guard — the function will fetch messages
       // from Rust via the sessionId.
-      await trySessionMemoryCompact(sessionId, _messages);
+      await trySessionMemoryCompact(sessionId, _messages, workDir);
       break;
     }
     case 'legacy': {
       const { triggerLegacyCompact } = await import('../../compact/compact');
-      await triggerLegacyCompact(sessionId, _messages);
+      await triggerLegacyCompact(sessionId, _messages, workDir);
       break;
     }
     default:

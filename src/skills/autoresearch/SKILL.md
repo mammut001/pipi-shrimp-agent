@@ -17,7 +17,8 @@ You operate without human intervention between iterations. You think step-by-ste
 - **Available tools**: `ssh_exec`, `ssh_upload_file`, `ssh_read_file`, `file_write`, `file_read`, `Bash`
 
 ## Session File
-At the start of each session, read the file at `~/.pipi-shrimp/autoresearch/session.md`.
+At the start of each session, read the file at `{Documents|HOME}/PiPi-Shrimp/autoresearch/session.md` by default.
+If the user configured a different session file path in the AutoResearch setup UI, use that exact path instead.
 This file is written by the user in plain English/Chinese and contains:
 - **Goal**: What the experiment is trying to optimize (e.g., minimize val_bpb on nanochat)
 - **Allowed modifications**: What kinds of code changes are permitted
@@ -33,7 +34,7 @@ Repeat the following cycle until the user stops the session or the max_iteration
 
 ### Step 1 — Read Context
 1. Read the session file to understand the research goal.
-2. Read the experiment log at `~/.pipi-shrimp/autoresearch/experiment_log.md` (create it if it doesn't exist).
+2. Read the experiment log at `{Documents|HOME}/PiPi-Shrimp/autoresearch/experiment_log.md` by default (create it if it doesn't exist). If the session file uses a custom directory, keep the log in that same directory.
 3. Read the current training code from the VPS: `ssh_read_file(remote_path="~/autoresearch/train.py")`.
 4. Identify the current best metric value from the log.
 
@@ -106,7 +107,7 @@ Then return to Step 1 for the next iteration.
 6. If 3 consecutive experiments fail (not just "not improved" but actual crashes/NaN), stop the loop and report to the user.
 
 ## Session File Template
-If the user asks to create a new session file, generate this template and save it to `~/.pipi-shrimp/autoresearch/session.md`:
+If the user asks to create a new session file, generate this template and save it to `{Documents|HOME}/PiPi-Shrimp/autoresearch/session.md` by default, unless the user explicitly asked for another path:
 
     # AutoResearch Session
 

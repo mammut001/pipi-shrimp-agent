@@ -9,6 +9,22 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+function getLocalStorageItem(key: string): string | null {
+  try {
+    return globalThis.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function trimTrailingSlash(path: string): string {
+  return path.replace(/[\\/]+$/, '');
+}
+
+async function getAppManagedMemoryProjectsDir(): Promise<string> {
+  return invoke<string>('get_app_memory_projects_dir');
+}
+
 /**
  * Calculate the memory directory for a project.
  */
@@ -19,17 +35,17 @@ export async function getMemoryDir(projectRoot?: string): Promise<string> {
   if (override) return override;
 
   // 2. Settings-based custom directory
-  const customDir = localStorage.getItem('pipishrimp-memory-dir');
+  const customDir = getLocalStorageItem('pipishrimp-memory-dir');
   if (customDir) return customDir;
 
-  // 3. Default: ~/.pipi-shrimp/memory/projects/<git-root>/
-  try {
-    const homeDir = await invoke<string>('get_home_dir');
-    const sanitizedRoot = projectRoot
-      ? sanitizeProjectName(projectRoot)
-      : 'default';
+  // 3. Local project/workDir memory under .pipi-shrimp/
+  if (projectRoot?.trim()) {
+    return `${trimTrailingSlash(projectRoot)}/.pipi-shrimp/memory`;
+  }
 
-    return `${homeDir}/.pipi-shrimp/memory/projects/${sanitizedRoot}`;
+  // 4. App-managed fallback when no project root is available
+  try {
+    return `${await getAppManagedMemoryProjectsDir()}/default`;
   } catch {
     // Fallback if home dir can't be determined
     return '/tmp/pipi-shrimp-memory/default';
@@ -70,7 +86,7 @@ export function isAutoMemoryEnabled(): boolean {
   const disabled = envVars.PIPISHRIMP_DISABLE_AUTO_MEMORY;
   if (disabled === 'true' || disabled === '1') return false;
 
-  const settings = localStorage.getItem('pipishrimp-auto-memory-enabled');
+  const settings = getLocalStorageItem('pipishrimp-auto-memory-enabled');
   return settings !== 'false';
 }
 

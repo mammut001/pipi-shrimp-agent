@@ -25,8 +25,11 @@ The skill is designed to be **deterministic and failure-resistant**. The agent M
 `{workDir}` in this document refers to the **current session's scratch directory**. Resolve it in this order:
 
 1. If the session provides a working directory variable, use it directly.
-2. Otherwise, use `~/.pipi-shrimp/sessions/{session_id}/resume/` and create it if it doesn't exist.
-3. If no session ID is available, fall back to `{OS_TEMP_DIR}/pipi-shrimp-resume-{timestamp}/`.
+2. If the session has no working directory yet, use the app-managed session directory for that chat: `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}`.
+3. Do **NOT** invent legacy home-scoped session folders, `/tmp/...`, or any other fallback path when a session ID already exists.
+4. Only if there is truly no session ID and no bound workspace, fall back to `{OS_TEMP_DIR}/pipi-shrimp-resume-{timestamp}/`.
+
+If a session `workDir` is already provided, treat it as the final resume workspace. Do **NOT** create an extra `resume/` subdirectory unless the template explicitly requires support folders such as `modules_en/`.
 
 **NEVER** write to `src/`, `src-tauri/`, project root, or any path under the app installation directory.
 
@@ -610,11 +613,13 @@ Use the `compile_typst_file` tool (it resolves `@preview` packages automatically
 }
 ```
 
-Expected return: `{ "pdf_path": "...", "svg_path": "...", "svg": "<svg>...</svg>" }`.
+Expected return includes `pdf_path` and `svg_path`. The tool may also include a raw `svg` field, but it can be very large. Treat that field as opaque preview data and do NOT paste the raw SVG/XML back into chat.
 
 ### 3e. Handle compile failure
 
 **1st failure**: Read the error message carefully. Fix only the specific issue mentioned (usually a typo, missing argument, or wrong type). Retry once.
+
+If the error is a template compatibility/API mismatch from the imported package, such as `expected string, found bytes`, do **NOT** keep patching the template call. Switch to the Fallback Template immediately.
 
 **2nd failure**: Stop retrying the current template. Proceed to Fallback Template below.
 
@@ -625,10 +630,9 @@ Expected return: `{ "pdf_path": "...", "svg_path": "...", "svg": "<svg>...</svg>
 After a successful compile, respond with this exact structure:
 
 ```
-{svg_content_from_compile_result}
-
 ✅ Resume generated successfully using the {template_name} template.
 📄 PDF saved to: `{pdf_path}`
+🖼️ Preview saved to: `{svg_path}`
 
 Would you like to:
 - Adjust any section content?
@@ -636,6 +640,8 @@ Would you like to:
 - Change colors, fonts, or layout?
 - Add/remove sections?
 ```
+
+Do NOT paste raw SVG or XML into the chat response.
 
 If you used placeholder metrics (like `[N]` or `[X%]`), add a separate note:
 

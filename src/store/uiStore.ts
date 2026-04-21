@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import type { UIState, PermissionRequest, Notification, BrowserDockMode, SplitFocus, QuestionnaireData } from '../types/ui';
-import { NOTIFICATION_TIMEOUT } from '../types/ui';
+import { NOTIFICATION_HISTORY_LIMIT, NOTIFICATION_TIMEOUT } from '../types/ui';
 
 /**
  * Storage key for persisting agent instructions
@@ -30,8 +30,8 @@ const getInitialCurrentView = (): 'chat' | 'workflow' | 'skill' | 'browser' => {
 // Promise resolver for the Chrome connect prompt (module-level, one at a time)
 let _chromePromptResolver: ((useCdp: boolean) => void) | null = null;
 
-// Promise resolver for questionnaire (module-level, one at a time)
-let _questionnaireResolver: ((response: string) => void) | null = null;
+// Questionnaire resolvers grouped by session so repeated tool calls resolve together.
+const _questionnaireResolvers = new Map<string, Array<(response: string) => void>>();
 
 /**
  * UI store using Zustand
@@ -44,7 +44,10 @@ export const useUIStore = create<UIState>((set) => ({
   currentArtifactId: undefined,
   permissionQueue: [],
   notifications: [],
+  notificationHistory: [],
   showApiKey: false,
+  activeQuestionnaireSessionId: null,
+  selectedResumeTemplates: {},
 
   // Agentic UI State
   rightPanelVisible: true,
@@ -158,14 +161,13 @@ export const useUIStore = create<UIState>((set) => ({
   /**
    * Add notification with auto-dismiss
    */
-  addNotification: (type: Notification['type'], message: string) => {
+  addNotification: (type: Notification['type'], message: string, sessionId?: string) => {
     const id = crypto.randomUUID();
+    const entry = { id, type, message, timestamp: Date.now(), sessionId };
 
     set((state) => ({
-      notifications: [
-        ...state.notifications,
-        { id, type, message, timestamp: Date.now() },
-      ],
+      notifications: [...state.notifications, entry],
+      notificationHistory: [entry, ...state.notificationHistory].slice(0, NOTIFICATION_HISTORY_LIMIT),
     }));
 
     // Auto-remove notification after timeout
@@ -189,6 +191,16 @@ export const useUIStore = create<UIState>((set) => ({
    */
   clearNotifications: () =>
     set({ notifications: [] }),
+
+  /**
+   * Clear notification history
+   */
+  clearNotificationHistory: (sessionId?: string) =>
+    set((state) => ({
+      notificationHistory: sessionId
+        ? state.notificationHistory.filter((n) => n.sessionId !== sessionId)
+        : [],
+    })),
 
   // Agentic Actions
   toggleRightPanel: () => set((state) => ({ rightPanelVisible: !state.rightPanelVisible })),
@@ -272,28 +284,62 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   // Questionnaire actions: show form and return a promise resolved by user's submission
-  showQuestionnaire: (data: Omit<QuestionnaireData, '_resolve'>): Promise<string> => {
+  showQuestionnaire: (sessionId: string, data: Omit<QuestionnaireData, '_resolve' | 'sessionId'>): Promise<string> => {
     return new Promise((resolve) => {
-      _questionnaireResolver = resolve;
-      set({ activeQuestionnaire: { ...data, _resolve: resolve } });
+      const existingResolvers = _questionnaireResolvers.get(sessionId) ?? [];
+      _questionnaireResolvers.set(sessionId, [...existingResolvers, resolve]);
+
+      const { activeQuestionnaireSessionId } = useUIStore.getState();
+      if (activeQuestionnaireSessionId === sessionId) {
+        return;
+      }
+
+      set({
+        activeQuestionnaire: { ...data, sessionId, _resolve: resolve },
+        activeQuestionnaireSessionId: sessionId,
+      });
     });
   },
 
-  submitQuestionnaire: (response: string) => {
-    set({ activeQuestionnaire: null });
-    if (_questionnaireResolver) {
-      _questionnaireResolver(response);
-      _questionnaireResolver = null;
+  submitQuestionnaire: (response: string, sessionId?: string) => {
+    const targetSessionId = sessionId ?? useUIStore.getState().activeQuestionnaireSessionId;
+    set({ activeQuestionnaire: null, activeQuestionnaireSessionId: null });
+    if (!targetSessionId) return;
+
+    const resolvers = _questionnaireResolvers.get(targetSessionId) ?? [];
+    for (const resolve of resolvers) {
+      resolve(response);
     }
+    _questionnaireResolvers.delete(targetSessionId);
   },
 
-  clearQuestionnaire: () => {
-    set({ activeQuestionnaire: null });
-    if (_questionnaireResolver) {
-      _questionnaireResolver(JSON.stringify({ _cancelled: true }));
-      _questionnaireResolver = null;
+  clearQuestionnaire: (sessionId?: string) => {
+    const targetSessionId = sessionId ?? useUIStore.getState().activeQuestionnaireSessionId;
+    set({ activeQuestionnaire: null, activeQuestionnaireSessionId: null });
+    if (!targetSessionId) return;
+
+    const resolvers = _questionnaireResolvers.get(targetSessionId) ?? [];
+    for (const resolve of resolvers) {
+      resolve(JSON.stringify({ _cancelled: true }));
     }
+    _questionnaireResolvers.delete(targetSessionId);
   },
+
+  setSelectedResumeTemplate: (sessionId: string, templateId: string | null) =>
+    set((state) => {
+      if (!templateId) {
+        const next = { ...state.selectedResumeTemplates };
+        delete next[sessionId];
+        return { selectedResumeTemplates: next };
+      }
+
+      return {
+        selectedResumeTemplates: {
+          ...state.selectedResumeTemplates,
+          [sessionId]: templateId,
+        },
+      };
+    }),
 
   // Project analysis actions
   setAnalyzingProject: (analyzing: boolean, progress?: string) =>
