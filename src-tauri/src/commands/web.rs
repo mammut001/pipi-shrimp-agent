@@ -5,25 +5,163 @@
  * (Placeholder for future Page-Agent integration)
  */
 
+use crate::browser::actions::{
+    self, ActionContext, ClickInput, ElementReference, ExtractContentInput,
+    GetTextContentInput, NavigateInput, PressKeyInput, ScrollInput, TypeTextInput, WaitInput,
+};
+use crate::browser::dom::PageState;
+use crate::browser::observability::BrowserObservabilitySnapshot;
+use crate::browser::session::{BrowserConnectionState, BrowserSessionManager};
 use crate::utils::AppResult;
 use serde::{Deserialize, Serialize};
-
-use chromiumoxide::browser::Browser;
-use chromiumoxide::page::Page;
-use tokio::sync::Mutex;
-use futures::StreamExt;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct BrowserController {
-    pub page: Option<Page>,
-    pub browser: Option<Browser>,
-    pub browser_handle: Option<tokio::task::JoinHandle<()>>,
+    pub manager: Arc<Mutex<BrowserSessionManager>>,
+}
+
+enum ChromeDebugLaunchOutcome {
+    DebugPortReady,
+    Launched,
 }
 
 impl Default for BrowserController {
     fn default() -> Self {
-        Self { page: None, browser: None, browser_handle: None }
+        Self {
+            manager: Arc::new(Mutex::new(BrowserSessionManager::default())),
+        }
     }
+}
+
+async fn clone_manager_handle(
+    state: &tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> Arc<Mutex<BrowserSessionManager>> {
+    state.lock().await.manager.clone()
+}
+
+async fn action_context(
+    state: &tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> ActionContext {
+    ActionContext::new(clone_manager_handle(state).await)
+}
+
+fn action_result<T>(result: actions::ActionResult<T>) -> Result<T, String> {
+    result.map_err(|error| error.to_string())
+}
+
+async fn navigate_and_wait_with_ctx(
+    ctx: &ActionContext,
+    url: String,
+    wait_selector: Option<String>,
+) -> Result<String, String> {
+    action_result(
+        actions::navigate(
+            ctx,
+            NavigateInput {
+                url: Some(url),
+                wait_selector,
+                timeout_ms: None,
+            },
+        )
+        .await,
+    )?;
+
+    Ok("页面加载并渲染完全".to_string())
+}
+
+async fn browser_wait_with_ctx(
+    ctx: &ActionContext,
+    seconds: Option<u64>,
+    wait_selector: Option<String>,
+) -> Result<String, String> {
+    let output = action_result(
+        actions::wait(
+            ctx,
+            WaitInput {
+                seconds,
+                wait_selector,
+                timeout_ms: None,
+            },
+        )
+        .await,
+    )?;
+
+    if output.selector_matched {
+        Ok(format!("等待完成，目标选择器已出现（{}ms）", output.waited_ms))
+    } else {
+        Ok(format!("已等待 {} 秒", output.waited_ms / 1_000))
+    }
+}
+
+async fn browser_click_with_ctx(
+    ctx: &ActionContext,
+    element_id: Option<u64>,
+    backend_node_id: Option<i64>,
+    navigation_id: Option<String>,
+) -> Result<String, String> {
+    let output = action_result(
+        actions::click(
+            ctx,
+            ClickInput {
+                target: ElementReference {
+                    index: element_id,
+                    backend_node_id,
+                    navigation_id,
+                },
+            },
+        )
+        .await,
+    )?;
+
+    Ok(format!(
+        "点击成功: backend_node_id {}{}",
+        output.backend_node_id,
+        output
+            .tag_name
+            .as_ref()
+            .map(|tag| format!(" <{}>", tag))
+            .unwrap_or_default()
+    ))
+}
+
+async fn browser_type_with_ctx(
+    ctx: &ActionContext,
+    element_id: Option<u64>,
+    backend_node_id: Option<i64>,
+    navigation_id: Option<String>,
+    text: String,
+) -> Result<String, String> {
+    let output = action_result(
+        actions::type_text(
+            ctx,
+            TypeTextInput {
+                target: ElementReference {
+                    index: element_id,
+                    backend_node_id,
+                    navigation_id,
+                },
+                text,
+            },
+        )
+        .await,
+    )?;
+
+    Ok(format!(
+        "输入成功: backend_node_id {}，共 {} 个字符",
+        output.backend_node_id, output.text_len
+    ))
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LegacySemanticElement {
+    id: u32,
+    tag: String,
+    role: String,
+    text: String,
+    #[serde(rename = "ariaLabel")]
+    aria_label: String,
+    href: String,
 }
 
 // 核心命令：开启并接管用户的本地 Chrome
@@ -31,61 +169,16 @@ impl Default for BrowserController {
 pub async fn connect_browser(
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    // If already connected, reuse existing connection — don't create a second WebSocket
-    {
-        let st = state.lock().await;
-        if st.browser.is_some() && st.page.is_some() {
-            return Ok("浏览器已连接（复用现有连接）".to_string());
-        }
+    let manager = clone_manager_handle(&state).await;
+    let mut manager_guard = manager.lock().await;
+
+    if manager_guard.has_connection() {
+        return Ok("浏览器已连接（复用现有连接）".to_string());
     }
 
-    // 首先我们要去获取 websocket 的 debugger URL
-    let resp = reqwest::get("http://127.0.0.1:9222/json/version")
-        .await
-        .map_err(|e| format!("无法访问 Chrome 调试端点 (请确保开启了 --remote-debugging-port=9222): {}", e))?;
-        
-    let json: serde_json::Value = resp.json()
-        .await
-        .map_err(|e| format!("无法解析 Chrome 调试数据: {}", e))?;
-        
-    let ws_url = json["webSocketDebuggerUrl"]
-        .as_str()
-        .ok_or_else(|| "未从 Chrome 返回数据中找到 webSocketDebuggerUrl 的字段".to_string())?;
-
-    // 连接本地浏览器
-    let (browser, mut handler) = Browser::connect(ws_url)
-        .await
-        .map_err(|e| format!("无法连接本地浏览器 WebSocket: {}", e))?;
-
-    // 在后台运行事件循环
-    // IMPORTANT: do NOT break on errors — navigation events (frameDetached, etc.)
-    // can yield Err but should not kill the entire session.
-    let handle = tokio::spawn(async move {
-        while let Some(_) = handler.next().await {}
-    });
-
-    // Prefer reusing the first existing page (already has session/cookies) rather
-    // than opening a fresh about:blank tab which would lose all logged-in state.
-    let page = {
-        let existing = browser.pages().await.ok().and_then(|pages| {
-            pages.into_iter().find(|_| true) // first page
-        });
-        match existing {
-            Some(p) => p,
-            None => browser.new_page("about:blank").await.map_err(|e| e.to_string())?,
-        }
-    };
-
-    let mut st = state.lock().await;
-    // Abort old handler if any
-    if let Some(old_handle) = st.browser_handle.take() {
-        old_handle.abort();
-    }
-    st.page = Some(page);
-    st.browser = Some(browser);   // KEEP browser alive — dropping it kills the CDP connection
-    st.browser_handle = Some(handle);
-
-    Ok("成功接管浏览器！".to_string())
+    let session = manager_guard.connect_attach().await.map_err(|e| e.to_string())?;
+    manager_guard.start_background_workers(manager.clone());
+    Ok(format!("成功接管浏览器！模式: {}", session.launch_mode.as_str()))
 }
 
 // 高级功能：智能等待导航
@@ -95,75 +188,55 @@ pub async fn navigate_and_wait(
     wait_selector: Option<String>,
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let page = {
-        let st = state.lock().await;
-        st.page.clone().ok_or("浏览器未连接")?
-    };
-
-    // 1. 发起导航
-    page.goto(&url).await.map_err(|e| e.to_string())?;
-
-    // 2. 模拟等待网络空闲
-    page.wait_for_navigation().await.map_err(|e| e.to_string())?;
-
-    // 3. 等待指定节点出现
-    if let Some(selector) = wait_selector {
-        let mut found = false;
-        for _ in 0..10 {
-            if page.find_element(&selector).await.is_ok() {
-                found = true;
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-        if !found {
-            return Err(format!("Timeout waiting for selector: {}", selector));
-        }
-    }
-
-    Ok("页面加载并渲染完全".to_string())
+    let ctx = action_context(&state).await;
+    navigate_and_wait_with_ctx(&ctx, url, wait_selector).await
 }
 
-// 核心优化：获取 Semantic Tree
+#[tauri::command]
+pub async fn get_page_state(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> Result<PageState, String> {
+    let ctx = action_context(&state).await;
+    action_result(actions::get_page_state(&ctx).await)
+}
+
+#[tauri::command]
+pub async fn get_page_state_text(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    action_result(actions::get_page_state_text(&ctx).await)
+}
+
+// 兼容层：保留旧 Semantic Tree 结构，内部转发到 PageState。
 #[tauri::command]
 pub async fn get_semantic_tree(
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let page = {
-        let st = state.lock().await;
-        st.page.clone().ok_or("浏览器未连接")?
-    };
+    let page_state = get_page_state(state).await?;
+    let legacy_elements: Vec<LegacySemanticElement> = page_state
+        .elements
+        .into_iter()
+        .map(|element| {
+            let text = if !element.name.trim().is_empty() {
+                element.name.clone()
+            } else {
+                element.text_hint.clone().unwrap_or_default()
+            };
 
-    let parse_script = r#"
-        (() => {
-            const elements = [];
-            let i = 1;
-            // NOTE: getBoundingClientRect() always returns 0 in background tabs.
-            // Use CSS computed style to check visibility instead.
-            document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], h1, h2, h3, h4, [aria-label], [data-testid]').forEach(el => {
-                const style = window.getComputedStyle(el);
-                const hidden = style.display === 'none'
-                    || style.visibility === 'hidden'
-                    || style.opacity === '0'
-                    || el.closest('[hidden]') !== null;
-                if (hidden) return;
-                const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().substring(0, 120);
-                if (!text) return;
-                elements.push({
-                    id: i++,
-                    tag: el.tagName.toLowerCase(),
-                    role: el.getAttribute('role') || '',
-                    text,
-                    ariaLabel: el.getAttribute('aria-label') || '',
-                    href: el.tagName === 'A' ? el.getAttribute('href') || '' : ''
-                });
-            });
-            return JSON.stringify(elements);
-        })();
-    "#;
+            LegacySemanticElement {
+                id: element.index,
+                tag: element.tag_name.unwrap_or_else(|| element.role.clone()),
+                role: element.role,
+                aria_label: element.name,
+                text,
+                href: element.href.unwrap_or_default(),
+            }
+        })
+        .collect();
 
-    let result = page.evaluate(parse_script).await.map_err(|e| e.to_string())?;
-    Ok(result.into_value::<String>().unwrap_or_else(|_| "[]".to_string()))
+    serde_json::to_string(&legacy_elements)
+        .map_err(|e| format!("序列化语义树失败: {}", e))
 }
 
 /**
@@ -179,101 +252,38 @@ pub async fn open_url(url: String) -> AppResult<String> {
 
 // ============= CDP Tier Commands =============
 
-/// Click an element by its ID using CDP Mouse Events
-/// element_id is 1-indexed (matches get_semantic_tree order)
+/// Click an element by either PageState index or backend_node_id.
+#[tauri::command]
+pub async fn browser_click(
+    element_id: Option<u64>,
+    backend_node_id: Option<i64>,
+    navigation_id: Option<String>,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    browser_click_with_ctx(&ctx, element_id, backend_node_id, navigation_id).await
+}
+
+/// Click an element by its PageState index / semantic-tree id.
 #[tauri::command]
 pub async fn cdp_click(
     element_id: u64,
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let page = {
-        let st = state.lock().await;
-        st.page.clone().ok_or("浏览器未连接，请先调用 connect_browser")?
-    };
+    browser_click(Some(element_id), None, None, state).await
+}
 
-    // Prefer a direct JS .click() which works even in background/hidden tabs
-    // where getBoundingClientRect() would return all-zeros.
-    // Fall back to CDP mouse events only when .click() throws (e.g. the element
-    // has no default click handler and needs a real pointer event).
-    let script = format!(r#"
-        (() => {{
-            const els = Array.from(document.querySelectorAll(
-                'button, a, input, [role="button"], h1, h2, h3'
-            ));
-            const el = els[{} - 1];  // element_id is 1-indexed
-            if (!el) return JSON.stringify({{ ok: false, reason: "not_found" }});
-            el.scrollIntoView({{ block: "center" }});
-            try {{
-                el.click();
-                return JSON.stringify({{ ok: true, method: "js_click", tag: el.tagName }});
-            }} catch (e) {{
-                // Return coordinates so the caller can use CDP mouse events
-                const r = el.getBoundingClientRect();
-                return JSON.stringify({{
-                    ok: false,
-                    method: "need_cdp",
-                    x: r.left + r.width / 2,
-                    y: r.top + r.height / 2,
-                    tag: el.tagName
-                }});
-            }}
-        }})();
-    "#, element_id);
-
-    let result = page.evaluate(script).await.map_err(|e| e.to_string())?;
-    let resp_str = result.into_value::<String>()
-        .map_err(|_| format!("元素 ID {} 未找到或脚本返回空", element_id))?;
-
-    let resp: serde_json::Value = serde_json::from_str(&resp_str)
-        .map_err(|e| format!("JS 响应解析失败: {}", e))?;
-
-    if resp["ok"].as_bool().unwrap_or(false) {
-        let tag = resp["tag"].as_str().unwrap_or("?");
-        return Ok(format!("点击成功: 元素 ID {} <{}>", element_id, tag));
-    }
-
-    let reason = resp["reason"].as_str().unwrap_or("");
-    if reason == "not_found" {
-        return Err(format!("元素 ID {} 不存在", element_id));
-    }
-
-    // JS click threw — fall back to CDP mouse events using the coordinates
-    let x = resp["x"].as_f64().ok_or("x 坐标无效")?;
-    let y = resp["y"].as_f64().ok_or("y 坐标无效")?;
-
-    if x == 0.0 && y == 0.0 {
-        return Err(format!(
-            "元素 ID {} 在后台标签页中不可见，坐标为零，无法点击", element_id
-        ));
-    }
-
-    use chromiumoxide::cdp::browser_protocol::input::{
-        DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
-    };
-
-    let params_down = DispatchMouseEventParams::builder()
-        .r#type(DispatchMouseEventType::MousePressed)
-        .x(x)
-        .y(y)
-        .button(MouseButton::Left)
-        .click_count(1)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let params_up = DispatchMouseEventParams::builder()
-        .r#type(DispatchMouseEventType::MouseReleased)
-        .x(x)
-        .y(y)
-        .button(MouseButton::Left)
-        .click_count(1)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    page.execute(params_down).await.map_err(|e| e.to_string())?;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    page.execute(params_up).await.map_err(|e| e.to_string())?;
-
-    Ok(format!("点击成功(CDP): 元素 ID {} 坐标 ({}, {})", element_id, x, y))
+/// Type text into an element by either PageState index or backend_node_id.
+#[tauri::command]
+pub async fn browser_type(
+    element_id: Option<u64>,
+    backend_node_id: Option<i64>,
+    navigation_id: Option<String>,
+    text: String,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    browser_type_with_ctx(&ctx, element_id, backend_node_id, navigation_id, text).await
 }
 
 /// Type text into an element by its ID using CDP KeyEvents
@@ -283,53 +293,29 @@ pub async fn cdp_type(
     text: String,
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let page = {
-        let st = state.lock().await;
-        st.page.clone().ok_or("浏览器未连接")?
-    };
+    browser_type(Some(element_id), None, None, text, state).await
+}
 
-    // Focus and clear the target input
-    let focus_script = format!(r#"
-        (() => {{
-            const els = Array.from(document.querySelectorAll(
-                'button, a, input, [role="button"], h1, h2, h3'
-            )).filter(el => {{
-                const r = el.getBoundingClientRect();
-                return r.width > 0 && r.height > 0;
-            }});
-            const el = els[{} - 1];
-            if (!el) return false;
-            el.focus();
-            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {{
-                el.value = '';
-            }}
-            return true;
-        }})();
-    "#, element_id);
+/// Scroll the page.
+#[tauri::command]
+pub async fn browser_scroll(
+    direction: String,
+    pixels: i64,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    let output = action_result(
+        actions::scroll(
+            &ctx,
+            ScrollInput {
+                direction,
+                pixels,
+            },
+        )
+        .await,
+    )?;
 
-    let focused = page.evaluate(focus_script).await.map_err(|e| e.to_string())?;
-    let ok = focused.into_value::<bool>().unwrap_or(false);
-    if !ok {
-        return Err(format!("元素 ID {} 未找到，无法输入", element_id));
-    }
-
-    // Type character by character via CDP KeyEvent (triggers React/Vue listeners)
-    use chromiumoxide::cdp::browser_protocol::input::{
-        DispatchKeyEventParams, DispatchKeyEventType,
-    };
-
-    for ch in text.chars() {
-        let char_str = ch.to_string();
-        let key_event = DispatchKeyEventParams::builder()
-            .r#type(DispatchKeyEventType::Char)
-            .text(char_str)
-            .build()
-            .map_err(|e| e.to_string())?;
-        page.execute(key_event).await.map_err(|e| e.to_string())?;
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-    }
-
-    Ok(format!("输入成功: 元素 ID {} 内容 \"{}\"", element_id, text))
+    Ok(format!("滚动: {} {}px", output.direction, output.pixels))
 }
 
 /// Scroll the page
@@ -339,52 +325,59 @@ pub async fn cdp_scroll(
     pixels: i64,
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let page = {
-        let st = state.lock().await;
-        st.page.clone().ok_or("浏览器未连接")?
-    };
+    browser_scroll(direction, pixels, state).await
+}
 
-    let (dx, dy) = match direction.as_str() {
-        "down"  => (0, pixels),
-        "up"    => (0, -pixels),
-        "right" => (pixels, 0),
-        "left"  => (-pixels, 0),
-        other   => return Err(format!("无效方向: {}，请用 down/up/left/right", other)),
-    };
+#[tauri::command]
+pub async fn browser_press_key(
+    key: String,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    let output = action_result(actions::press_key(&ctx, PressKeyInput { key }).await)?;
+    Ok(format!("已按下键 '{}'", output.key))
+}
 
-    let script = format!("window.scrollBy({}, {});", dx, dy);
-    page.evaluate(script).await.map_err(|e| e.to_string())?;
+#[tauri::command]
+pub async fn browser_wait(
+    seconds: Option<u64>,
+    wait_selector: Option<String>,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    browser_wait_with_ctx(&ctx, seconds, wait_selector).await
+}
 
-    Ok(format!("滚动: {} {}px", direction, pixels))
+#[tauri::command]
+pub async fn browser_get_text(
+    max_length: Option<u64>,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    action_result(
+        actions::get_text_content(
+            &ctx,
+            GetTextContentInput {
+                max_length: max_length.unwrap_or(3_000) as usize,
+            },
+        )
+        .await,
+    )
 }
 
 // ============= CDP Connector UI Commands =============
 
-/// Launch Chrome with remote debugging port enabled.
-///
-/// If Chrome is already running WITHOUT the debug port, `open -a` would just focus
-/// the existing window and ignore `--args`. To fix this, we kill any running Chrome
-/// first, then relaunch with the debug flag. The caller should wait ~3s after this
-/// returns before attempting connect_browser.
-#[tauri::command]
-pub async fn launch_chrome_debug() -> Result<String, String> {
+async fn chrome_debug_port_ready() -> bool {
+    reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok()
+}
+
+async fn ensure_chrome_debug_process() -> Result<ChromeDebugLaunchOutcome, String> {
     #[cfg(target_os = "macos")]
     {
-        // Strategy: try to reuse the EXISTING Chrome by enabling remote debugging
-        // via AppleScript. If Chrome is not running, launch it fresh with the user's
-        // REAL profile so all cookies / sessions are preserved.
-        //
-        // We intentionally do NOT kill Chrome — killing it would wipe the user's
-        // open tabs and logged-in sessions.
-
-        // Step 1: Check if port 9222 is already open (Chrome already in debug mode).
-        if reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok() {
-            return Ok("Chrome 调试端口已就绪，无需重启。".to_string());
+        if chrome_debug_port_ready().await {
+            return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
         }
 
-        // Step 2: Chrome is running but without the debug port — we cannot inject
-        // the flag into a running process. Inform the caller so the UI can show
-        // a manual instruction ("Quit Chrome, then click Connect again").
         let chrome_running = std::process::Command::new("pgrep")
             .args(["-x", "Google Chrome"])
             .output()
@@ -392,23 +385,16 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
             .unwrap_or(false);
 
         if chrome_running {
-            // Chrome is open but doesn't have --remote-debugging-port.
-            // We cannot enable CDP without restarting it. Return a specific error
-            // so the frontend can guide the user.
             return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」，软件会自动以调试模式启动它。".to_string());
         }
 
-        // Step 3: Chrome is not running — launch it with the real user profile.
-        // Using the real profile preserves all logins, cookies and extensions.
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let real_profile = format!("{}/Library/Application Support/Google/Chrome", home);
-
         let chrome_paths = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
         ];
 
-        let mut launched = false;
         for path in &chrome_paths {
             if std::path::Path::new(path).exists() {
                 std::process::Command::new(path)
@@ -420,26 +406,19 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
                     ])
                     .spawn()
                     .map_err(|e| format!("启动 Chrome 失败: {}", e))?;
-                launched = true;
-                break;
+                return Ok(ChromeDebugLaunchOutcome::Launched);
             }
         }
 
-        if !launched {
-            return Err("未找到 Chrome 或 Chromium，请确认已安装在 /Applications 目录下".to_string());
-        }
-
-        return Ok("Chrome 正在以调试模式启动（使用您的真实 Profile）...".to_string());
+        Err("未找到 Chrome 或 Chromium，请确认已安装在 /Applications 目录下".to_string())
     }
 
     #[cfg(target_os = "windows")]
     {
-        // Check if port is already open
-        if reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok() {
-            return Ok("Chrome 调试端口已就绪，无需重启。".to_string());
+        if chrome_debug_port_ready().await {
+            return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
         }
 
-        // Check if Chrome is running without debug port
         let chrome_running = std::process::Command::new("tasklist")
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("chrome.exe"))
@@ -449,14 +428,14 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
             return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」。".to_string());
         }
 
-        // Launch with real user profile
-        let appdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Users\\User\\AppData\\Local".to_string());
+        let appdata = std::env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| "C:\\Users\\User\\AppData\\Local".to_string());
         let real_profile = format!("{}\\Google\\Chrome\\User Data", appdata);
-
         let chrome_paths = [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         ];
+
         for path in &chrome_paths {
             if std::path::Path::new(path).exists() {
                 std::process::Command::new(path)
@@ -468,16 +447,17 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
                     ])
                     .spawn()
                     .map_err(|e| format!("启动 Chrome 失败: {}", e))?;
-                return Ok("Chrome 正在以调试模式启动...".to_string());
+                return Ok(ChromeDebugLaunchOutcome::Launched);
             }
         }
-        return Err("未找到 Chrome 安装路径".to_string());
+
+        Err("未找到 Chrome 安装路径".to_string())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        if reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok() {
-            return Ok("Chrome 调试端口已就绪，无需重启。".to_string());
+        if chrome_debug_port_ready().await {
+            return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
         }
 
         let chrome_running = std::process::Command::new("pgrep")
@@ -503,8 +483,41 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
             .spawn()
             .map_err(|e| format!("启动 Chrome 失败: {}", e))?;
 
-        Ok("Chrome 正在以调试模式启动...".to_string())
+        Ok(ChromeDebugLaunchOutcome::Launched)
     }
+}
+
+/// Launch Chrome with remote debugging enabled and connect through the shared session manager.
+#[tauri::command]
+pub async fn launch_chrome_debug(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let manager = clone_manager_handle(&state).await;
+
+    {
+        let manager_guard = manager.lock().await;
+        if manager_guard.has_connection() {
+            return Ok("Chrome 已连接（复用现有连接）".to_string());
+        }
+    }
+
+    let launch_outcome = ensure_chrome_debug_process().await?;
+    let mut manager_guard = manager.lock().await;
+    let session = match launch_outcome {
+        ChromeDebugLaunchOutcome::DebugPortReady => manager_guard.connect_attach().await,
+        ChromeDebugLaunchOutcome::Launched => manager_guard.connect_launch().await,
+    }
+    .map_err(|e| e.to_string())?;
+    manager_guard.start_background_workers(manager.clone());
+
+    Ok(match launch_outcome {
+        ChromeDebugLaunchOutcome::DebugPortReady => {
+            format!("Chrome 调试端口已就绪，已接管浏览器（模式: {}）", session.launch_mode.as_str())
+        }
+        ChromeDebugLaunchOutcome::Launched => {
+            format!("Chrome 已启动并接管浏览器（模式: {}）", session.launch_mode.as_str())
+        }
+    })
 }
 
 /// Re-sync page reference after navigation or new-tab opens.
@@ -514,20 +527,9 @@ pub async fn launch_chrome_debug() -> Result<String, String> {
 pub async fn resync_page(
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let mut st = state.lock().await;
-    let browser = st.browser.as_mut().ok_or("浏览器未连接")?;
-
-    // Get all pages from the browser
-    let pages = browser.pages().await.map_err(|e| e.to_string())?;
-
-    // Pick the LAST page — when a link opens a new tab (target=_blank),
-    // that new tab is the last entry. Falling back to first if only one exists.
-    let active_page = pages
-        .into_iter()
-        .last()
-        .ok_or("未找到任何已打开的页面")?;
-
-    st.page = Some(active_page);
+    let manager = clone_manager_handle(&state).await;
+    let mut manager_guard = manager.lock().await;
+    manager_guard.resync_page().await.map_err(|e| e.to_string())?;
     Ok("页面已重新同步".to_string())
 }
 
@@ -536,14 +538,37 @@ pub async fn resync_page(
 pub async fn disconnect_browser(
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let mut st = state.lock().await;
-    // Abort background handler task
-    if let Some(handle) = st.browser_handle.take() {
-        handle.abort();
-    }
-    st.page = None;
-    st.browser = None;   // drop browser → closes CDP connection
+    let manager = clone_manager_handle(&state).await;
+    let mut manager_guard = manager.lock().await;
+    manager_guard.disconnect().await;
     Ok("已断开 Chrome 连接".to_string())
+}
+
+#[tauri::command]
+pub async fn get_browser_connection_state(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<BrowserConnectionState, String> {
+    let manager = clone_manager_handle(&state).await;
+    let manager_guard = manager.lock().await;
+    Ok(manager_guard.connection_state())
+}
+
+#[tauri::command]
+pub async fn get_browser_observability_snapshot(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<BrowserObservabilitySnapshot, String> {
+    let manager = clone_manager_handle(&state).await;
+    let manager_guard = manager.lock().await;
+    Ok(manager_guard.observability_snapshot())
+}
+
+#[tauri::command]
+pub async fn export_browser_benchmark_report(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let manager = clone_manager_handle(&state).await;
+    let manager_guard = manager.lock().await;
+    Ok(manager_guard.export_benchmark_markdown())
 }
 
 /// Execute arbitrary JavaScript in the current CDP page.
@@ -553,14 +578,32 @@ pub async fn cdp_execute_script(
     script: String,
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let st = state.lock().await;
-    let page = st.page.as_ref().ok_or("CDP 未连接")?;
-    page.evaluate(script)
+    let manager = clone_manager_handle(&state).await;
+    let page = {
+        let manager_guard = manager.lock().await;
+        manager_guard.page_cloned().ok_or("CDP 未连接")?
+    };
+    let result = page.evaluate(script)
         .await
         .map(|v| v.into_value::<serde_json::Value>().ok()
             .map(|val| val.to_string())
             .unwrap_or_default())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let mut manager_guard = manager.lock().await;
+    manager_guard.note_manual_activity();
+    manager_guard.invalidate_page_state();
+    Ok(result)
+}
+
+/// Capture a screenshot of the current CDP page as a base64-encoded PNG.
+/// Returns the base64 string (without data:image/png;base64, prefix).
+#[tauri::command]
+pub async fn browser_screenshot(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    action_result(actions::screenshot(&ctx).await).map(|screenshot| screenshot.value)
 }
 
 /// Capture a screenshot of the current CDP page as a base64-encoded PNG.
@@ -569,23 +612,17 @@ pub async fn cdp_execute_script(
 pub async fn cdp_screenshot(
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let page = {
-        let st = state.lock().await;
-        st.page.clone().ok_or("浏览器未连接，请先调用 connect_browser")?
-    };
+    browser_screenshot(state).await
+}
 
-    use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotParams;
-    use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-
-    let params = CaptureScreenshotParams::builder()
-        .format(CaptureScreenshotFormat::Png)
-        .build();
-
-    let screenshot = page.execute(params).await.map_err(|e| format!("截图失败: {}", e))?;
-    // screenshot.data is chromiumoxide::Binary, convert to base64 string
-    use base64::Engine;
-    let base64_str = base64::engine::general_purpose::STANDARD.encode(&screenshot.data);
-    Ok(base64_str)
+/// Extract structured text content from the current CDP page.
+/// Returns readable content with headers, links, and key data.
+#[tauri::command]
+pub async fn browser_extract_content(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+) -> Result<String, String> {
+    let ctx = action_context(&state).await;
+    action_result(actions::extract_content(&ctx, ExtractContentInput).await)
 }
 
 /// Extract structured text content from the current CDP page.
@@ -594,88 +631,7 @@ pub async fn cdp_screenshot(
 pub async fn cdp_extract_content(
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>
 ) -> Result<String, String> {
-    let page = {
-        let st = state.lock().await;
-        st.page.clone().ok_or("浏览器未连接")?
-    };
-
-    let extract_script = r#"
-        (() => {
-            const result = {};
-            result.url = window.location.href;
-            result.title = document.title;
-
-            // Extract main content areas
-            const mainSelectors = ['main', 'article', '[role="main"]', '#content', '.content', '#main'];
-            let mainEl = null;
-            for (const sel of mainSelectors) {
-                mainEl = document.querySelector(sel);
-                if (mainEl) break;
-            }
-            const contentRoot = mainEl || document.body;
-
-            // Extract headings
-            const headings = [];
-            contentRoot.querySelectorAll('h1, h2, h3').forEach(h => {
-                const text = h.innerText.trim();
-                if (text) headings.push({ level: parseInt(h.tagName[1]), text: text.substring(0, 200) });
-            });
-            result.headings = headings.slice(0, 20);
-
-            // Extract links with context
-            const links = [];
-            contentRoot.querySelectorAll('a[href]').forEach(a => {
-                const text = a.innerText.trim();
-                const href = a.href;
-                if (text && href && !href.startsWith('javascript:') && text.length > 1) {
-                    links.push({ text: text.substring(0, 100), href: href.substring(0, 300) });
-                }
-            });
-            result.links = links.slice(0, 30);
-
-            // Extract text content (cleaned)
-            const text = contentRoot.innerText
-                .replace(/\n{3,}/g, '\n\n')
-                .substring(0, 5000);
-            result.text = text;
-
-            // Extract tables if any
-            const tables = [];
-            contentRoot.querySelectorAll('table').forEach(table => {
-                const rows = [];
-                table.querySelectorAll('tr').forEach(tr => {
-                    const cells = [];
-                    tr.querySelectorAll('th, td').forEach(cell => {
-                        cells.push(cell.innerText.trim().substring(0, 100));
-                    });
-                    if (cells.length > 0) rows.push(cells);
-                });
-                if (rows.length > 0 && rows.length <= 50) tables.push(rows);
-            });
-            result.tables = tables.slice(0, 5);
-
-            // Extract form fields
-            const forms = [];
-            contentRoot.querySelectorAll('input, select, textarea').forEach(el => {
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden') return;
-                forms.push({
-                    tag: el.tagName.toLowerCase(),
-                    type: el.type || '',
-                    name: el.name || '',
-                    placeholder: el.placeholder || '',
-                    label: el.getAttribute('aria-label') || '',
-                    value: el.value || '',
-                });
-            });
-            result.forms = forms.slice(0, 20);
-
-            return JSON.stringify(result);
-        })();
-    "#;
-
-    let result = page.evaluate(extract_script).await.map_err(|e| e.to_string())?;
-    Ok(result.into_value::<String>().unwrap_or_else(|_| "{}".to_string()))
+    browser_extract_content(state).await
 }
 
 // ============= Web Search & Fetch Commands =============
@@ -892,4 +848,255 @@ fn extract_relevant_content(html: &str) -> String {
         .collect();
 
     cleaned
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::browser::actions;
+    use crate::browser::actions::test_support::{CheckoutFlowServer, LiveActionHarness};
+    use crate::browser::dom::{InteractiveElement, PageState};
+    use anyhow::Result;
+
+    fn find_live_element<F>(
+        page_state: &PageState,
+        label: &str,
+        predicate: F,
+    ) -> Result<InteractiveElement>
+    where
+        F: Fn(&InteractiveElement) -> bool,
+    {
+        let element_debug = serde_json::to_string_pretty(&page_state.elements)
+            .unwrap_or_else(|_| format!("{:?}", page_state.elements));
+
+        page_state
+            .elements
+            .iter()
+            .find(|element| predicate(element))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("expected {} in live page state; elements={}", label, element_debug))
+    }
+
+    async fn read_payment_status_text(harness: &LiveActionHarness) -> Result<String> {
+        harness
+            .page()
+            .evaluate(
+                "(function() { const node = document.querySelector('#payment-status'); return node ? node.textContent : ''; })()",
+            )
+            .await
+            .map_err(anyhow::Error::from)?
+            .into_value::<String>()
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn read_selector_text(harness: &LiveActionHarness, selector: &str) -> Result<String> {
+        let script = format!(
+            "(function() {{ const node = document.querySelector({selector:?}); return node ? node.textContent : ''; }})()",
+        );
+        harness
+            .page()
+            .evaluate(script)
+            .await
+            .map_err(anyhow::Error::from)?
+            .into_value::<String>()
+            .map_err(anyhow::Error::from)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a local Chrome/Chromium binary for Chromiumoxide Browser::launch"]
+    async fn navigate_and_wait_and_browser_wait_wrappers_support_selector_flows() -> Result<()> {
+        let server = CheckoutFlowServer::start().await?;
+        let harness = LiveActionHarness::launch().await?;
+
+        let wrapper_result = async {
+            let navigate_message = navigate_and_wait_with_ctx(
+                harness.ctx(),
+                server.checkout_url(),
+                Some("#page-ready.ready".to_string()),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert_eq!(navigate_message, "页面加载并渲染完全");
+
+            let wait_message = browser_wait_with_ctx(
+                harness.ctx(),
+                None,
+                Some("#late-ready.ready".to_string()),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert!(wait_message.starts_with("等待完成，目标选择器已出现（"));
+            assert!(wait_message.ends_with("ms）"));
+
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let harness_shutdown = harness.shutdown().await;
+        let server_shutdown = server.shutdown().await;
+
+        wrapper_result?;
+        harness_shutdown?;
+        server_shutdown?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a local Chrome/Chromium binary for Chromiumoxide Browser::launch"]
+    async fn browser_click_and_browser_type_wrappers_support_shadow_dom_targets() -> Result<()> {
+        let server = CheckoutFlowServer::start().await?;
+        let harness = LiveActionHarness::launch().await?;
+
+        let wrapper_result = async {
+            let navigate_message = navigate_and_wait_with_ctx(
+                harness.ctx(),
+                server.shadow_checkout_url(),
+                Some("#page-ready.ready".to_string()),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert_eq!(navigate_message, "页面加载并渲染完全");
+
+            let page_state = actions::get_page_state(harness.ctx())
+                .await
+                .map_err(anyhow::Error::msg)?;
+            let navigation_id = page_state.navigation_id.clone();
+            let shadow_input = find_live_element(&page_state, "shadow iframe input", |element| {
+                element.frame_id != "root"
+                    && element.is_editable
+                    && element.selector_hint.as_deref() == Some("#shadow-card-number")
+            })?;
+            let shadow_button = find_live_element(&page_state, "shadow iframe button", |element| {
+                element.frame_id != "root"
+                    && element.is_clickable
+                    && element.tag_name.as_deref() == Some("button")
+                    && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
+            })?;
+
+            let typed_value = "1010 2020 3030 4040".to_string();
+            let type_message = browser_type_with_ctx(
+                harness.ctx(),
+                Some(shadow_input.index as u64),
+                Some(shadow_input.backend_node_id),
+                Some(navigation_id.clone()),
+                typed_value.clone(),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert_eq!(
+                type_message,
+                format!(
+                    "输入成功: backend_node_id {}，共 {} 个字符",
+                    shadow_input.backend_node_id,
+                    typed_value.chars().count()
+                )
+            );
+
+            let click_message = browser_click_with_ctx(
+                harness.ctx(),
+                Some(shadow_button.index as u64),
+                Some(shadow_button.backend_node_id),
+                Some(navigation_id),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert_eq!(
+                click_message,
+                format!("点击成功: backend_node_id {} <BUTTON>", shadow_button.backend_node_id)
+            );
+
+            let wait_message = browser_wait_with_ctx(
+                harness.ctx(),
+                None,
+                Some("#payment-status.ready".to_string()),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert!(wait_message.starts_with("等待完成，目标选择器已出现（"));
+
+            let status_text = read_payment_status_text(&harness).await?;
+            assert!(status_text.contains("confirmed:"));
+            assert!(status_text.contains("1010"));
+
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let harness_shutdown = harness.shutdown().await;
+        let server_shutdown = server.shutdown().await;
+
+        wrapper_result?;
+        harness_shutdown?;
+        server_shutdown?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a local Chrome/Chromium binary for Chromiumoxide Browser::launch"]
+    async fn browser_wrappers_preserve_root_actions_when_cross_frame_partial_warning_exists() -> Result<()> {
+        let server = CheckoutFlowServer::start().await?;
+        let harness = LiveActionHarness::launch_site_isolated().await?;
+
+        let wrapper_result = async {
+            let navigate_message = navigate_and_wait_with_ctx(
+                harness.ctx(),
+                server.partial_warning_checkout_url(),
+                Some("#frame-ready.ready".to_string()),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert_eq!(navigate_message, "页面加载并渲染完全");
+
+            let page_state = actions::get_page_state(harness.ctx())
+                .await
+                .map_err(anyhow::Error::msg)?;
+            assert!(page_state
+                .warnings
+                .contains(&"cross_origin_iframe_partial".to_string()));
+            assert!(!page_state
+                .warnings
+                .contains(&"closed_shadow_root_partial".to_string()));
+
+            let root_button = find_live_element(&page_state, "partial warning root button", |element| {
+                element.is_clickable
+                    && element.selector_hint.as_deref() == Some("#warning-root-action")
+            })?;
+
+            let click_message = browser_click_with_ctx(
+                harness.ctx(),
+                Some(root_button.index as u64),
+                Some(root_button.backend_node_id),
+                Some(page_state.navigation_id.clone()),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert_eq!(
+                click_message,
+                format!("点击成功: backend_node_id {} <BUTTON>", root_button.backend_node_id)
+            );
+
+            let wait_message = browser_wait_with_ctx(
+                harness.ctx(),
+                None,
+                Some("#warning-status.ready".to_string()),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            assert!(wait_message.starts_with("等待完成，目标选择器已出现（"));
+
+            let status_text = read_selector_text(&harness, "#warning-status").await?;
+            assert_eq!(status_text, "support-opened");
+
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let harness_shutdown = harness.shutdown().await;
+        let server_shutdown = server.shutdown().await;
+
+        wrapper_result?;
+        harness_shutdown?;
+        server_shutdown?;
+        Ok(())
+    }
 }

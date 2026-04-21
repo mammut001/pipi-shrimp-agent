@@ -6,6 +6,7 @@
  */
 
 mod commands;
+pub mod browser;
 mod models;
 mod providers;
 mod utils;
@@ -589,12 +590,25 @@ pub fn run() {
             // Web automation commands
             commands::web::connect_browser,
             commands::web::navigate_and_wait,
+            commands::web::get_page_state,
+            commands::web::get_page_state_text,
             commands::web::get_semantic_tree,
+            commands::web::browser_click,
+            commands::web::browser_type,
+            commands::web::browser_scroll,
+            commands::web::browser_press_key,
+            commands::web::browser_wait,
+            commands::web::browser_get_text,
+            commands::web::browser_screenshot,
+            commands::web::browser_extract_content,
             commands::web::cdp_click,
             commands::web::cdp_type,
             commands::web::cdp_scroll,
             commands::web::launch_chrome_debug,
             commands::web::disconnect_browser,
+            commands::web::get_browser_connection_state,
+            commands::web::get_browser_observability_snapshot,
+            commands::web::export_browser_benchmark_report,
             commands::web::resync_page,
             commands::web::cdp_execute_script,
             commands::web::cdp_screenshot,

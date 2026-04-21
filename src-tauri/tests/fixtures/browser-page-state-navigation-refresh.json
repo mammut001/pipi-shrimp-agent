@@ -1,0 +1,105 @@
+{
+  "url": "https://example.com/checkout/review",
+  "title": "Review Order",
+  "navigation_id": "loader-root-2",
+  "frames": [
+    {
+      "id": "root",
+      "parent_id": null,
+      "loader_id": "loader-root-2",
+      "name": null,
+      "url": "https://example.com/checkout/review"
+    },
+    {
+      "id": "frame-checkout",
+      "parent_id": "root",
+      "loader_id": "loader-frame-2",
+      "name": "payment-frame",
+      "url": "https://example.com/frame/payment"
+    }
+  ],
+  "viewport": {
+    "page_x": 0.0,
+    "page_y": 0.0,
+    "width": 1440.0,
+    "height": 900.0
+  },
+  "dom_nodes": [
+    {
+      "backend_node_id": 200,
+      "frame_id": "root",
+      "node_type": 1,
+      "tag_name": "button",
+      "node_value": null,
+      "attributes": {
+        "data-testid": "confirm-order"
+      },
+      "text_value": "Confirm Order",
+      "input_value": null,
+      "layout_text": "Confirm Order",
+      "bounds": {
+        "x": 1020.0,
+        "y": 804.0,
+        "width": 160.0,
+        "height": 42.0
+      },
+      "is_clickable": true,
+      "shadow_root_type": "open",
+      "content_document_index": null
+    },
+    {
+      "backend_node_id": 310,
+      "frame_id": "frame-checkout",
+      "node_type": 1,
+      "tag_name": "input",
+      "node_value": null,
+      "attributes": {
+        "id": "card-number",
+        "type": "text",
+        "placeholder": "Card number"
+      },
+      "text_value": null,
+      "input_value": "4111 1111 1111 1111",
+      "layout_text": null,
+      "bounds": {
+        "x": 80.0,
+        "y": 112.0,
+        "width": 320.0,
+        "height": 40.0
+      },
+      "is_clickable": true,
+      "shadow_root_type": null,
+      "content_document_index": null
+    }
+  ],
+  "ax_nodes": [
+    {
+      "backend_node_id": 200,
+      "frame_id": "root",
+      "ignored": false,
+      "role": "button",
+      "name": "Confirm Order",
+      "description": null,
+      "value": null,
+      "properties": {
+        "hidden": false,
+        "disabled": false
+      }
+    },
+    {
+      "backend_node_id": 310,
+      "frame_id": "frame-checkout",
+      "ignored": false,
+      "role": "textbox",
+      "name": "Card number",
+      "description": null,
+      "value": "4111 1111 1111 1111",
+      "properties": {
+        "hidden": false,
+        "disabled": false,
+        "editable": true
+      }
+    }
+  ],
+  "warnings": []
+}

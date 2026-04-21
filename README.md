@@ -292,10 +292,11 @@ The built-in resume skill includes templates from the following open-source [Typ
 | **grotesk-cv** | Jesper Dramsch | Unlicense (Public Domain) | [typst.app/universe/package/grotesk-cv](https://typst.app/universe/package/grotesk-cv) |
 | **nabcv** | Resul | MIT | [typst.app/universe/package/nabcv](https://typst.app/universe/package/nabcv) |
 
-### Open Source Inspiration
+### Product & Open Source Inspiration
 
 - **[LobsterAI](https://lobsterai.youdao.com/#/en/index)** - Provides architectural inspiration and reference for our agent system
 - **[PageAgent](https://github.com/alibaba/page-agent)** by Alibaba
+- **[WorkAny](https://workany.ai/)** - Public product UX reference for our workspace/sidebar exploration. We only reference the interaction ideas and do not reuse WorkAny frontend code, assets, or branding.
 
 ### Project License
 

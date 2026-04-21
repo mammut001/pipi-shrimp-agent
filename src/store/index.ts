@@ -9,6 +9,7 @@ export { useUIStore } from './uiStore';
 export { useWorkflowStore } from './workflowStore';
 export { useBrowserAgentStore } from './browserAgentStore';
 export { useCdpStore } from './cdpStore';
+export { useBrowserObservabilityStore } from './browserObservabilityStore';
 export { useSwarmStore } from './swarmStore';
 export {
   useTelegramStore,

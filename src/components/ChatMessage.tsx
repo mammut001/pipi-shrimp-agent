@@ -34,8 +34,6 @@ interface ChatMessageProps {
   isLatest?: boolean;
   /** Whether the message is currently streaming */
   isStreaming?: boolean;
-  /** Callback when user clicks preview on a Typst code block */
-  onTypstPreview?: (code: string) => void;
 }
 
 /**
@@ -83,7 +81,7 @@ function normalizeResumeTemplateMarkdown(content: string): string {
 /**
  * Single chat message component
  */
-export const ChatMessage = memo(function ChatMessage({ message, isLatest = false, isStreaming = false, onTypstPreview }: ChatMessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, isLatest = false, isStreaming = false }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
   const normalizedMessageContent = isUser
@@ -193,7 +191,6 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                       const rawLanguage = match?.[1] || '';
                       // Clean up the language name from any '[' or ']' or spaces
                       const language = rawLanguage.replace(/\[|\]/g, '').trim();
-                      const isTypst = language === 'typst';
                       const codeContent = String(children).replace(/\n$/, '');
 
                       if (isInline) {
@@ -225,27 +222,6 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                           <div className="bg-[#1e1e1e] border-b border-gray-800 text-gray-400 px-4 py-1.5 text-xs flex items-center justify-between">
                             <span className="font-mono tracking-tighter opacity-70">{language || 'code'}</span>
                             <div className="flex items-center gap-2">
-                              {isTypst && onTypstPreview && (
-                                <button
-                                  onClick={() => onTypstPreview(codeContent)}
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity px-2 py-0.5 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/20 rounded-md text-[10px] flex items-center gap-1.5 backdrop-blur-sm"
-                                >
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    className="h-3 w-3"
-                                    viewBox="0 0 20 20"
-                                    fill="currentColor"
-                                  >
-                                    <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                                    <path
-                                      fillRule="evenodd"
-                                      d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
-                                      clipRule="evenodd"
-                                    />
-                                  </svg>
-                                  {t('common.preview')}
-                                </button>
-                              )}
                               <button
                                 onClick={async () => {
                                   try {

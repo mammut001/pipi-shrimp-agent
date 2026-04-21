@@ -1,0 +1,104 @@
+{
+  "url": "https://example.com/checkout",
+  "title": "Checkout",
+  "navigation_id": "loader-root-1",
+  "frames": [
+    {
+      "id": "root",
+      "parent_id": null,
+      "loader_id": "loader-root-1",
+      "name": null,
+      "url": "https://example.com/checkout"
+    },
+    {
+      "id": "frame-checkout",
+      "parent_id": "root",
+      "loader_id": "loader-frame-1",
+      "name": "payment-frame",
+      "url": "https://example.com/frame/payment"
+    }
+  ],
+  "viewport": {
+    "page_x": 0.0,
+    "page_y": 0.0,
+    "width": 1440.0,
+    "height": 900.0
+  },
+  "dom_nodes": [
+    {
+      "backend_node_id": 110,
+      "frame_id": "root",
+      "node_type": 1,
+      "tag_name": "button",
+      "node_value": null,
+      "attributes": {
+        "id": "cart-submit"
+      },
+      "text_value": "Place Order",
+      "input_value": null,
+      "layout_text": "Place Order",
+      "bounds": {
+        "x": 980.0,
+        "y": 740.0,
+        "width": 180.0,
+        "height": 48.0
+      },
+      "is_clickable": true,
+      "shadow_root_type": null,
+      "content_document_index": null
+    },
+    {
+      "backend_node_id": 200,
+      "frame_id": "root",
+      "node_type": 1,
+      "tag_name": "button",
+      "node_value": null,
+      "attributes": {
+        "data-testid": "confirm-order"
+      },
+      "text_value": "Confirm Order",
+      "input_value": null,
+      "layout_text": "Confirm Order",
+      "bounds": {
+        "x": 1020.0,
+        "y": 804.0,
+        "width": 160.0,
+        "height": 42.0
+      },
+      "is_clickable": true,
+      "shadow_root_type": "open",
+      "content_document_index": null
+    }
+  ],
+  "ax_nodes": [
+    {
+      "backend_node_id": 110,
+      "frame_id": "root",
+      "ignored": false,
+      "role": "button",
+      "name": "Place Order",
+      "description": null,
+      "value": null,
+      "properties": {
+        "hidden": false,
+        "disabled": false
+      }
+    },
+    {
+      "backend_node_id": 200,
+      "frame_id": "root",
+      "ignored": false,
+      "role": "button",
+      "name": "Confirm Order",
+      "description": null,
+      "value": null,
+      "properties": {
+        "hidden": false,
+        "disabled": false
+      }
+    }
+  ],
+  "warnings": [
+    "cross_origin_iframe_partial"
+  ]
+}

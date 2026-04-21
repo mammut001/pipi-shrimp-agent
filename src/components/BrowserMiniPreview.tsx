@@ -15,8 +15,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useBrowserAgentStore, useUIStore, useCdpStore } from '@/store';
+import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { showBrowserWindow } from '@/utils/browserCommands';
 import { createTaskEnvelope } from '@/utils/browserTaskPlanner';
+import { BrowserDebugPanel } from './BrowserDebugPanel';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
 import { t } from '@/i18n';
 
@@ -71,11 +73,20 @@ export function BrowserMiniPreview() {
   const [taskInput, setTaskInput] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [copiedLogs, setCopiedLogs] = useState(false);
+  const [activityView, setActivityView] = useState<'logs' | 'debug'>('logs');
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // CDP state for direct task input
   const cdpConnected = useCdpStore(s => s.status === 'connected');
+  const cdpConnectionState = useCdpStore(s => s.connectionState);
+  const debugPanelEnabled = useBrowserObservabilityStore((state) => state.debugPanelEnabled);
   const [cdpUrl, setCdpUrl] = useState('');
+
+  useEffect(() => {
+    if (!debugPanelEnabled && activityView === 'debug') {
+      setActivityView('logs');
+    }
+  }, [activityView, debugPanelEnabled]);
 
   // Copy all logs to clipboard
   const handleCopyLogs = async () => {
@@ -257,6 +268,9 @@ export function BrowserMiniPreview() {
   // Check if should show login prompt
   const showLoginPrompt = status === 'waiting_user_resume' || status === 'needs_login';
   const canExecute = status === 'ready_for_agent' && !showLoginPrompt;
+  const cdpCurrentUrl = cdpConnectionState?.current_url ?? null;
+  const cdpHealthStatus = cdpConnectionState?.health_status ?? null;
+  const cdpLaunchMode = cdpConnectionState?.launch_mode ?? null;
 
   const handleOpenLiveWindow = async () => {
     try {
@@ -324,6 +338,12 @@ export function BrowserMiniPreview() {
                   {authState === 'authenticated' ? 'Logged In' : authState === 'unauthenticated' ? 'Not Logged In' : 'Unknown'}
                 </span>
               </div>
+              {cdpConnected && cdpConnectionState && (
+                <div className="mt-2 grid grid-cols-1 gap-1 text-[10px] text-gray-500">
+                  <p className="truncate">CDP URL: {cdpCurrentUrl || 'Pending page metadata'}</p>
+                  <p>Mode: {cdpLaunchMode || 'unknown'} · Health: {cdpHealthStatus || 'unknown'}</p>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -345,6 +365,11 @@ export function BrowserMiniPreview() {
                 {authState === 'authenticated' ? 'Logged In' : authState === 'unauthenticated' ? 'Not Logged In' : 'Unknown'}
               </span>
             </div>
+            {cdpConnected && cdpConnectionState && (
+              <div className="mt-2 text-[10px] text-gray-500">
+                {cdpLaunchMode || 'unknown'} · {cdpHealthStatus || 'unknown'} · {cdpCurrentUrl || 'Pending page metadata'}
+              </div>
+            )}
           </div>
         )}
 
@@ -489,43 +514,83 @@ export function BrowserMiniPreview() {
       {/* 3. Action Logs */}
       <div className="flex-1 flex flex-col min-h-0 border-t border-gray-200">
         <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Action Logs</span>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleCopyLogs}
-              disabled={logs.length === 0}
-              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-                copiedLogs
-                  ? 'text-green-600 bg-green-50'
-                  : logs.length === 0
-                    ? 'text-gray-300 cursor-not-allowed'
-                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {copiedLogs ? '✓ Copied!' : 'Copy All'}
-            </button>
-            <button onClick={clearLogs} className="text-[10px] text-gray-400 hover:text-gray-600">
-              Clear
-            </button>
+            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+              {activityView === 'logs' ? 'Action Logs' : 'Browser Debug'}
+            </span>
+            {debugPanelEnabled && (
+              <div className="flex items-center rounded-full border border-gray-200 bg-white p-0.5">
+                <button
+                  onClick={() => setActivityView('logs')}
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                    activityView === 'logs'
+                      ? 'bg-gray-900 text-white'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  Logs
+                </button>
+                <button
+                  onClick={() => setActivityView('debug')}
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                    activityView === 'debug'
+                      ? 'bg-gray-900 text-white'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  Debug
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {activityView === 'logs' ? (
+              <>
+                <button
+                  onClick={handleCopyLogs}
+                  disabled={logs.length === 0}
+                  className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                    copiedLogs
+                      ? 'text-green-600 bg-green-50'
+                      : logs.length === 0
+                        ? 'text-gray-300 cursor-not-allowed'
+                        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {copiedLogs ? '✓ Copied!' : 'Copy All'}
+                </button>
+                <button onClick={clearLogs} className="text-[10px] text-gray-400 hover:text-gray-600">
+                  Clear
+                </button>
+              </>
+            ) : (
+              <span className="text-[10px] text-gray-400">Observability</span>
+            )}
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 bg-gray-900">
-          {logs.length === 0 ? (
-            <p className="text-xs text-gray-600">Waiting for actions...</p>
-          ) : (
-            <div className="space-y-0.5">
-              {logs.map((log, index) => (
-                <p
-                  key={index}
-                  className={`text-[10px] font-mono leading-relaxed ${getLogColor(log.level)}`}
-                >
-                  [{formatTime(log.timestamp)}] {log.message}
-                </p>
-              ))}
-              <div ref={logsEndRef} />
-            </div>
-          )}
-        </div>
+        {activityView === 'logs' ? (
+          <div className="flex-1 overflow-y-auto p-3 bg-gray-900">
+            {logs.length === 0 ? (
+              <p className="text-xs text-gray-600">Waiting for actions...</p>
+            ) : (
+              <div className="space-y-0.5">
+                {logs.map((log, index) => (
+                  <p
+                    key={index}
+                    className={`text-[10px] font-mono leading-relaxed ${getLogColor(log.level)}`}
+                  >
+                    [{formatTime(log.timestamp)}] {log.message}
+                  </p>
+                ))}
+                <div ref={logsEndRef} />
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0">
+            <BrowserDebugPanel />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -12,18 +12,45 @@ interface Props {
 }
 
 export const CdpConnectorModal: React.FC<Props> = ({ onClose }) => {
-  const { status, errorMessage, connect, launchChromeAndConnect } = useCdpStore();
+  const {
+    status,
+    errorMessage,
+    connectionState,
+    attachFailureReason,
+    connect,
+    launchChromeAndConnect,
+    setupConnectionMonitor,
+    syncConnectionState,
+  } = useCdpStore();
   const [mode, setMode] = useState<'choice' | 'manual'>('choice');
 
   const isLoading = status === 'connecting';
 
+  const attachHint = (() => {
+    switch (attachFailureReason) {
+      case 'chrome_needs_restart':
+        return 'Chrome 已运行但没带调试端口，需要先完全退出再重新连接。';
+      case 'debug_port_unavailable':
+        return '9222 端口当前不可用，请确认 Chrome 已用调试模式启动。';
+      case 'connect_failed':
+        return '调试端点能访问，但 attach 过程失败，通常是 Chrome 尚未完全就绪。';
+      default:
+        return '请确认 Chrome 已完全退出后重新以调试模式启动。';
+    }
+  })();
+
+  useEffect(() => {
+    return setupConnectionMonitor();
+  }, [setupConnectionMonitor]);
+
   // Auto-close on successful connection
   useEffect(() => {
     if (status === 'connected') {
+      void syncConnectionState();
       const timer = setTimeout(() => onClose(), 1200);
       return () => clearTimeout(timer);
     }
-  }, [status, onClose]);
+  }, [status, onClose, syncConnectionState]);
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -115,11 +142,36 @@ export const CdpConnectorModal: React.FC<Props> = ({ onClose }) => {
           </div>
         )}
 
+        {connectionState && (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-[10px] text-gray-600 space-y-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <span className="uppercase tracking-wider text-gray-400">Mode</span>
+              <span className="font-medium text-gray-700">{connectionState.launch_mode ?? 'attach'}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="uppercase tracking-wider text-gray-400">Health</span>
+              <span className="font-medium text-gray-700">{connectionState.health_status}</span>
+            </div>
+            {connectionState.health_failures > 0 && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="uppercase tracking-wider text-gray-400">Failures</span>
+                <span className="font-medium text-amber-700">{connectionState.health_failures}</span>
+              </div>
+            )}
+            {connectionState.current_url && (
+              <div>
+                <p className="uppercase tracking-wider text-gray-400">Current URL</p>
+                <p className="mt-1 break-all text-gray-700">{connectionState.current_url}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {status === 'error' && (
           <div className="text-xs text-red-600 bg-red-50 p-3 rounded-xl space-y-1">
             <p className="font-bold">连接失败</p>
             <p className="text-[10px] opacity-75 break-all">{errorMessage}</p>
-            <p className="text-[10px] text-gray-500 mt-1">请确认 Chrome 已完全退出后重新以调试模式启动</p>
+            <p className="text-[10px] text-gray-500 mt-1">{attachHint}</p>
           </div>
         )}
 

@@ -1,0 +1,63 @@
+{
+  "url": "https://example.com/support",
+  "title": "Support",
+  "navigation_id": "loader-root-2",
+  "frames": [
+    {
+      "id": "root",
+      "parent_id": null,
+      "loader_id": "loader-root-2",
+      "name": null,
+      "url": "https://example.com/support"
+    }
+  ],
+  "viewport": {
+    "page_x": 0.0,
+    "page_y": 0.0,
+    "width": 1280.0,
+    "height": 720.0
+  },
+  "dom_nodes": [
+    {
+      "backend_node_id": 120,
+      "frame_id": "root",
+      "node_type": 1,
+      "tag_name": "button",
+      "node_value": null,
+      "attributes": {
+        "aria-label": "Open Support"
+      },
+      "text_value": "Open Support",
+      "input_value": null,
+      "layout_text": "Open Support",
+      "bounds": {
+        "x": 96.0,
+        "y": 88.0,
+        "width": 152.0,
+        "height": 40.0
+      },
+      "is_clickable": true,
+      "shadow_root_type": null,
+      "content_document_index": null
+    }
+  ],
+  "ax_nodes": [
+    {
+      "backend_node_id": 120,
+      "frame_id": "root",
+      "ignored": false,
+      "role": "button",
+      "name": "Open Support",
+      "description": null,
+      "value": null,
+      "properties": {
+        "hidden": false,
+        "disabled": false
+      }
+    }
+  ],
+  "warnings": [
+    "cross_origin_iframe_partial",
+    "closed_shadow_root_partial"
+  ]
+}

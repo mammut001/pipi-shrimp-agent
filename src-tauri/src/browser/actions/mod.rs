@@ -1,0 +1,22 @@
+pub mod click;
+pub mod common;
+pub mod extract;
+pub mod navigate;
+pub mod press_key;
+pub mod screenshot;
+pub mod scroll;
+pub mod test_support;
+pub mod state;
+pub mod type_text;
+pub mod wait;
+
+pub use click::{click, ClickInput};
+pub use common::{ActionContext, ActionResult, ElementReference};
+pub use extract::{extract_content, get_text_content, ExtractContentInput, GetTextContentInput};
+pub use navigate::{navigate, NavigateInput};
+pub use press_key::{press_key, PressKeyInput};
+pub use screenshot::screenshot;
+pub use scroll::{scroll, ScrollInput};
+pub use state::{get_page_state, get_page_state_text};
+pub use type_text::{type_text, TypeTextInput};
+pub use wait::{wait, WaitInput};

@@ -16,6 +16,12 @@ import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput } from '@/components';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
+import {
+  SessionWorkspaceFileManagerPane,
+  SessionWorkspacePreviewPane,
+  useSessionWorkspacePreview,
+  workspacePreviewChrome,
+} from './SessionWorkspacePreview';
 import { SwarmPanel } from './SwarmPanel';
 import { TerminalPanel } from './TerminalPanel';
 
@@ -130,6 +136,7 @@ export function ChatBrowserWorkspaceShell() {
   }, []);
   // Browser dock state
   const { browserDockMode } = useUIStore();
+  const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'preview'>('chat');
 
   // Permission modal state (Ask mode)
   const permissionQueue = useUIStore((s) => s.permissionQueue);
@@ -229,7 +236,22 @@ export function ChatBrowserWorkspaceShell() {
   // Memoized token usage
   const currentSessionData = currentSession();
   const terminalCwd = currentSessionData?.workDir;
+  const canPreviewWorkspace = Boolean(currentSessionData?.workDir);
   const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
+  const isSplitMode = browserDockMode === 'split';
+  const previewWorkspaceActive = !isSplitMode && workspaceMode === 'preview';
+  const {
+    entries: workspaceEntries,
+    selectedFilePath,
+    setSelectedFilePath,
+    selectedContent,
+    fileLoading,
+    fileError,
+    isRefreshing: workspaceRefreshing,
+    isTruncated: workspaceTruncated,
+    refreshEntries: refreshWorkspaceEntries,
+    revealInFinder: revealWorkspacePath,
+  } = useSessionWorkspacePreview(currentSessionData?.workDir ?? null, previewWorkspaceActive);
 
   // Get pricing from settings store
   const getModelPricing = useSettingsStore((s) => s.getModelPricing);
@@ -308,8 +330,90 @@ export function ChatBrowserWorkspaceShell() {
   }, [messages]);
   const hasMessages = displayMessages.length > 0;
 
-  // Determine if we're in split mode
-  const isSplitMode = browserDockMode === 'split';
+  useEffect(() => {
+    setWorkspaceMode('chat');
+  }, [currentSessionId]);
+
+  useEffect(() => {
+    if (!canPreviewWorkspace && workspaceMode === 'preview') {
+      setWorkspaceMode('chat');
+    }
+  }, [canPreviewWorkspace, workspaceMode]);
+
+  const renderWorkspaceModeToolbar = () => (
+    <div className={`${workspacePreviewChrome.toolbar} px-4 py-3`}>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className={workspacePreviewChrome.eyebrow}>Workspace View</p>
+          <p className={workspacePreviewChrome.secondaryText}>
+            Switch between live chat and a document-focused workspace preview.
+          </p>
+        </div>
+
+        <div className={workspacePreviewChrome.segmented}>
+          <button
+            type="button"
+            onClick={() => setWorkspaceMode('chat')}
+            className={`${workspacePreviewChrome.segmentedButton} ${
+              workspaceMode === 'chat'
+                ? workspacePreviewChrome.segmentedButtonActive
+                : workspacePreviewChrome.segmentedButtonInactive
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z" />
+            </svg>
+            Chat
+          </button>
+          <button
+            type="button"
+            onClick={() => canPreviewWorkspace && setWorkspaceMode('preview')}
+            disabled={!canPreviewWorkspace}
+            className={`${workspacePreviewChrome.segmentedButton} ${
+              workspaceMode === 'preview'
+                ? workspacePreviewChrome.segmentedButtonActive
+                : workspacePreviewChrome.segmentedButtonInactiveDisabled
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6h13M9 5h13M3 5h.01M3 11h.01M3 17h.01" />
+            </svg>
+            Preview
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderPreviewWorkspaceShell = () => (
+    <div className={`flex h-full min-h-0 min-w-0 flex-col ${workspacePreviewChrome.shellBg}`}>
+      {renderWorkspaceModeToolbar()}
+      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+        <div className="flex w-[420px] min-w-[360px] max-w-[460px] flex-col border-r border-[#e9e9e7] bg-[#fbfbfa] shadow-[inset_-1px_0_0_rgba(255,255,255,0.6)]">
+          <div className="border-b border-[#e9e9e7] bg-[#fbfbfa]/92 px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.72)]">
+            <p className={workspacePreviewChrome.eyebrow}>Conversation</p>
+            <p className={workspacePreviewChrome.secondaryText}>
+              Keep the chat thread visible while reading generated documents.
+            </p>
+          </div>
+          <div className="flex-1 min-h-0 min-w-0">
+            {renderChatPanel()}
+          </div>
+        </div>
+
+        <div className={`flex-1 min-w-0 ${workspacePreviewChrome.shellBg}`}>
+          <SessionWorkspacePreviewPane
+            workDir={currentSessionData?.workDir ?? null}
+            selectedFilePath={selectedFilePath}
+            selectedContent={selectedContent}
+            fileLoading={fileLoading}
+            fileError={fileError}
+            onRevealPath={revealWorkspacePath}
+          />
+        </div>
+      </div>
+    </div>
+  );
 
   // Render the chat panel content
   const renderChatPanel = () => (
@@ -391,28 +495,35 @@ export function ChatBrowserWorkspaceShell() {
 
       {/* Session Token Stats */}
       {hasMessages && sessionTokenUsage.total > 0 && (
-        <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
-          <div className="mx-auto flex items-center justify-center gap-4 text-xs text-gray-500 max-w-3xl">
+        <div className={`${workspacePreviewChrome.statusStrip} px-4 py-2.5`}>
+          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2">
             {sessionCost > 0 && (
-              <>
-                <span className="flex items-center gap-1 text-green-600 font-medium">
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <span className={workspacePreviewChrome.statusBadge}>
+                <svg className="h-3 w-3 text-[#8a867f]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  {formatCostCompact(sessionCost)}
+                </svg>
+                <span>Cost</span>
+                <span className={workspacePreviewChrome.statusValue}>{formatCostCompact(sessionCost)}</span>
                 </span>
-                <span className="text-gray-300">|</span>
-              </>
             )}
-            <span className="flex items-center gap-1">
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <span className={workspacePreviewChrome.statusBadge}>
+              <svg className="h-3 w-3 text-[#8a867f]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
-              <span>{t('chat.sessionTokenUsage')}: <strong className="text-gray-700">{formatTokenCount(sessionTokenUsage.total)}</strong> tokens</span>
+              <span>{t('chat.sessionTokenUsage')}</span>
+              <span className={workspacePreviewChrome.statusValue}>{formatTokenCount(sessionTokenUsage.total)}</span>
+              <span>tokens</span>
             </span>
-            <span className="text-gray-300">|</span>
-            <span>{t('chat.input')}: {formatTokenCount(sessionTokenUsage.input)}</span>
-            <span>{t('chat.output')}: {formatTokenCount(sessionTokenUsage.output)}</span>
+
+            <span className={workspacePreviewChrome.statusBadge}>
+              <span>{t('chat.input')}</span>
+              <span className={workspacePreviewChrome.statusValue}>{formatTokenCount(sessionTokenUsage.input)}</span>
+            </span>
+
+            <span className={workspacePreviewChrome.statusBadge}>
+              <span>{t('chat.output')}</span>
+              <span className={workspacePreviewChrome.statusValue}>{formatTokenCount(sessionTokenUsage.output)}</span>
+            </span>
           </div>
         </div>
       )}
@@ -426,10 +537,12 @@ export function ChatBrowserWorkspaceShell() {
         <>
           {/* Drag handle */}
           <div
-            className="h-1 bg-[#3c3c3c] cursor-row-resize hover:bg-blue-500 transition-colors flex-shrink-0"
+            className={workspacePreviewChrome.terminalDivider}
             onMouseDown={handleTerminalDragStart}
             style={{ display: terminalPanelVisible ? undefined : 'none' }}
-          />
+          >
+            <span className={workspacePreviewChrome.terminalDividerThumb} />
+          </div>
           <div
             className="flex-shrink-0 overflow-hidden"
             style={{
@@ -450,7 +563,24 @@ export function ChatBrowserWorkspaceShell() {
   );
 
   return (
-    <MainLayout>
+    <MainLayout
+      showRightPanel={previewWorkspaceActive ? true : undefined}
+      rightPanelContent={
+        previewWorkspaceActive ? (
+          <SessionWorkspaceFileManagerPane
+            workDir={currentSessionData?.workDir ?? null}
+            entries={workspaceEntries}
+            selectedFilePath={selectedFilePath}
+            onSelectFile={setSelectedFilePath}
+            onRevealPath={revealWorkspacePath}
+            onRefresh={() => void refreshWorkspaceEntries()}
+            isRefreshing={workspaceRefreshing}
+            isTruncated={workspaceTruncated}
+          />
+        ) : undefined
+      }
+      rightPanelWidthClassName={previewWorkspaceActive ? 'w-[360px]' : undefined}
+    >
       {/* Split Mode: Browser takes full center area, right AgentPanel shows controls+logs */}
       {isSplitMode ? (
         <div className="flex-1 flex min-h-0 min-w-0">
@@ -460,9 +590,7 @@ export function ChatBrowserWorkspaceShell() {
         </div>
       ) : (
         /* Normal Mode: Chat takes full width */
-        <div className="flex-1 flex min-h-0 min-w-0">
-          {renderChatPanel()}
-        </div>
+        previewWorkspaceActive ? renderPreviewWorkspaceShell() : renderChatPanel()
       )}
 
       {/* Swarm Runtime Panel — floating overlay for swarm observability, draggable */}

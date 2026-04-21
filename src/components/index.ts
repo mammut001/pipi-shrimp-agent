@@ -35,9 +35,6 @@ export { FileDropOverlay } from './FileDropOverlay';
 // Chrome connect prompt
 export { ChromeConnectPrompt } from './ChromeConnectPrompt';
 
-// Typst Preview
-export { TypstPreview } from './TypstPreview';
-
 // Embedded Terminal
 export { TerminalPanel } from './TerminalPanel';
 

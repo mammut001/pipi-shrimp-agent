@@ -73,15 +73,15 @@ You have access to browser tools for web automation. Use these when the user ask
 
 ### Available Browser Tools:
 - **browser_navigate(url)**: Open a URL in the browser
-- **browser_get_page()**: Get all interactive elements on the current page (use after navigating)
-- **browser_click(element_id)**: Click an element by its id from browser_get_page
-- **browser_type(element_id, text)**: Type text into an input field
+- **browser_get_page()**: Get the current PageState JSON including `navigation_id`, warnings, and interactive elements with `index` and `backend_node_id`
+- **browser_click(element_id?, backend_node_id?, navigation_id?)**: Click an element using the latest PageState target identifiers
+- **browser_type(element_id?, backend_node_id?, navigation_id?, text)**: Type text into an input field using the latest PageState target identifiers
 - **browser_press_key(key)**: Press a key (Enter, Tab, Escape, ArrowDown, ArrowUp, Backspace)
 - **browser_scroll(direction, pixels)**: Scroll the page up or down
 - **browser_get_text(max_length)**: Get the full visible text content of the page
 - **browser_extract_content()**: Extract structured content (headings, links, tables, forms)
 - **browser_screenshot()**: Take a screenshot of the current page
-- **browser_wait(seconds)**: Wait for page to load/update (1-10 seconds)
+- **browser_wait(seconds?, selector?)**: Wait for page to load/update or for a selector to appear
 
 ### Task Execution Strategy:
 
@@ -100,11 +100,12 @@ You have access to browser tools for web automation. Use these when the user ask
 - Use browser_get_page to see interactive elements
 - Use browser_extract_content for structured data
 - Use browser_get_text for raw text content
+- When browser_get_page returns `backend_node_id`, prefer it over `element_id` for click/type targets
 
 **STEP 4: Act** — Interact with the page:
 - Type in search boxes, click buttons/links
 - After typing in a search box, use browser_press_key("Enter") to submit
-- After clicking, use browser_wait(2) then browser_get_page to see updated state
+- After clicking, use browser_wait(2) or browser_wait(selector="...") then browser_get_page to see updated state
 
 **STEP 5: Extract & Report** — Get the information:
 - Use browser_extract_content or browser_get_text to read results
@@ -113,6 +114,7 @@ You have access to browser tools for web automation. Use these when the user ask
 
 ### Important Rules:
 1. Always call browser_get_page after navigating to understand the page
+2. Prefer `backend_node_id` when browser_get_page includes it, and pass `navigation_id` back on click/type when available
 2. After typing in a search box, press Enter to submit
 3. After clicking a link/button, wait briefly then get the new page state
 4. If a page requires login, inform the user — do not attempt to bypass authentication
@@ -188,13 +190,17 @@ fn get_browser_tools() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
             "name": "browser_navigate",
-            "description": "Navigate the browser to a URL. Use this to open websites or move between pages. Returns the page title and current URL after navigation.",
+            "description": "Navigate the browser to a URL. Use this to open websites or move between pages. Optionally wait for a selector before continuing. Returns the page title after navigation.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "url": {
                         "type": "string",
                         "description": "Full URL to navigate to, e.g. https://example.com"
+                    },
+                    "wait_selector": {
+                        "type": "string",
+                        "description": "Optional selector to wait for after navigation, e.g. main article or button[type=submit]"
                     }
                 },
                 "required": ["url"],
@@ -203,7 +209,7 @@ fn get_browser_tools() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "name": "browser_get_page",
-            "description": "Get the interactive elements on the current browser page as a structured list. Each element has an id (for clicking), tag, text content, and role. Use this after navigating or after user interactions to understand what's on screen.",
+            "description": "Get the current browser PageState as pretty JSON. The response includes url, title, navigation_id, warnings, and interactive elements with index and backend_node_id for stable follow-up actions.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
@@ -213,35 +219,51 @@ fn get_browser_tools() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "name": "browser_click",
-            "description": "Click an element on the current browser page by its id from browser_get_page. After clicking, wait briefly for the page to update, then call browser_get_page again to see the new state.",
+            "description": "Click an element on the current browser page using the latest browser_get_page target identifiers. Prefer backend_node_id when present, and include navigation_id when browser_get_page returned one.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "element_id": {
                         "type": "number",
-                        "description": "The id of the element to click, from browser_get_page output"
+                        "description": "Legacy element index from browser_get_page output"
+                    },
+                    "backend_node_id": {
+                        "type": "number",
+                        "description": "Stable backend_node_id from browser_get_page output; prefer this when available"
+                    },
+                    "navigation_id": {
+                        "type": "string",
+                        "description": "Pass through the navigation_id from browser_get_page when targeting a fresh PageState snapshot"
                     }
                 },
-                "required": ["element_id"],
+                "required": [],
                 "additionalProperties": false
             }
         }),
         serde_json::json!({
             "name": "browser_type",
-            "description": "Type text into an input element on the current page by its id. Use browser_get_page first to find the correct input element id.",
+            "description": "Type text into an input element on the current page using the latest browser_get_page target identifiers. Prefer backend_node_id when present, and include navigation_id when browser_get_page returned one.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "element_id": {
                         "type": "number",
-                        "description": "The id of the input element to type into"
+                        "description": "Legacy element index from browser_get_page output"
+                    },
+                    "backend_node_id": {
+                        "type": "number",
+                        "description": "Stable backend_node_id from browser_get_page output; prefer this when available"
+                    },
+                    "navigation_id": {
+                        "type": "string",
+                        "description": "Pass through the navigation_id from browser_get_page when targeting a fresh PageState snapshot"
                     },
                     "text": {
                         "type": "string",
                         "description": "The text to type"
                     }
                 },
-                "required": ["element_id", "text"],
+                "required": ["text"],
                 "additionalProperties": false
             }
         }),
@@ -317,13 +339,17 @@ fn get_browser_tools() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "name": "browser_wait",
-            "description": "Wait for a specified number of seconds for the page to load or update. Use after navigation or clicks that trigger dynamic content loading.",
+            "description": "Wait for a specified number of seconds or until a selector appears. Use after navigation or clicks that trigger dynamic content loading.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "seconds": {
                         "type": "number",
                         "description": "Number of seconds to wait (1-10, default 2)"
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": "Optional selector to wait for before returning"
                     }
                 },
                 "required": [],
@@ -2083,6 +2109,46 @@ mod tests {
     }
 
     #[test]
+    fn test_browser_click_tool_schema_supports_backend_node_targets() {
+        let tools = get_tools(true);
+        let click_tool = tools.iter()
+            .find(|tool| tool.get("name").and_then(|value| value.as_str()) == Some("browser_click"))
+            .expect("browser_click tool should exist");
+        let properties = click_tool
+            .get("input_schema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(|properties| properties.as_object())
+            .expect("browser_click schema should expose properties");
+
+        assert!(properties.contains_key("element_id"));
+        assert!(properties.contains_key("backend_node_id"));
+        assert!(properties.contains_key("navigation_id"));
+        assert_eq!(
+            click_tool["input_schema"]["required"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn test_browser_type_and_wait_tool_schema_support_latest_inputs() {
+        let tools = get_tools(true);
+        let type_tool = tools.iter()
+            .find(|tool| tool.get("name").and_then(|value| value.as_str()) == Some("browser_type"))
+            .expect("browser_type tool should exist");
+        let wait_tool = tools.iter()
+            .find(|tool| tool.get("name").and_then(|value| value.as_str()) == Some("browser_wait"))
+            .expect("browser_wait tool should exist");
+
+        assert!(type_tool["input_schema"]["properties"].get("backend_node_id").is_some());
+        assert!(type_tool["input_schema"]["properties"].get("navigation_id").is_some());
+        assert_eq!(
+            type_tool["input_schema"]["required"],
+            serde_json::json!(["text"])
+        );
+        assert!(wait_tool["input_schema"]["properties"].get("selector").is_some());
+    }
+
+    #[test]
     fn test_browser_tools_absent_when_disconnected() {
         let tools = get_tools(false);
         let tool_names: Vec<&str> = tools.iter()
@@ -2142,7 +2208,7 @@ mod tests {
 
     #[test]
     fn test_client_new() {
-        let client = ClaudeClient::new();
+        let _client = ClaudeClient::new();
         // Just ensure it doesn't panic
         assert!(true);
     }
