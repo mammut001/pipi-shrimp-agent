@@ -360,6 +360,45 @@ pub fn get_app_default_dir(session_id: String) -> AppResult<String> {
     Ok(base.to_string_lossy().to_string())
 }
 
+/// Return the app-managed AutoResearch directory under
+/// `{Documents|HOME}/PiPi-Shrimp/autoresearch/`.
+///
+/// This stores local AutoResearch session files and logs without relying on a
+/// legacy home-scoped dotfile convention.
+#[tauri::command]
+pub fn get_app_autoresearch_dir() -> AppResult<String> {
+    let base = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| AppError::FileError("Cannot determine Documents directory".to_string()))?
+        .join("PiPi-Shrimp")
+        .join("autoresearch");
+
+    fs::create_dir_all(&base)
+        .map_err(|e| AppError::FileError(format!("Failed to create AutoResearch dir: {}", e)))?;
+
+    Ok(base.to_string_lossy().to_string())
+}
+
+/// Return the app-managed project-memory fallback directory under
+/// `{Documents|HOME}/PiPi-Shrimp/memory/projects/`.
+///
+/// This is used only when no local workDir/project root is available; normal
+/// chat- or repo-bound memory should stay under `{workDir}/.pipi-shrimp/`.
+#[tauri::command]
+pub fn get_app_memory_projects_dir() -> AppResult<String> {
+    let base = dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| AppError::FileError("Cannot determine Documents directory".to_string()))?
+        .join("PiPi-Shrimp")
+        .join("memory")
+        .join("projects");
+
+    fs::create_dir_all(&base)
+        .map_err(|e| AppError::FileError(format!("Failed to create project memory dir: {}", e)))?;
+
+    Ok(base.to_string_lossy().to_string())
+}
+
 /// Delete the app-managed chat directory for a session:
 /// {Documents|HOME}/PiPi-Shrimp/chats/{session_id}
 ///

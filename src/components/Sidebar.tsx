@@ -155,9 +155,13 @@ export function Sidebar() {
       const usage = tokenUsageMap.get(session.id);
       if (!usage || usage.total === 0) continue;
 
-      // Get pricing for session's model (fall back to first available config if session doesn't have model)
-      const model = session.model || apiConfigs[0]?.model;
-      const provider = session.model ? apiConfigs.find(c => c.model === session.model)?.provider : apiConfigs[0]?.provider;
+      // Get pricing for session's model (prefer the matching config, then active config, then first config)
+      const matchingConfig = session.model
+        ? apiConfigs.find((c) => c.model === session.model)
+        : null;
+      const fallbackConfig = matchingConfig || activeApiConfig || apiConfigs[0] || null;
+      const model = session.model || fallbackConfig?.model;
+      const provider = fallbackConfig?.modelProviderId || fallbackConfig?.provider;
 
       if (model && provider) {
         const pricing = getModelPricing(model, provider);
@@ -168,7 +172,7 @@ export function Sidebar() {
       }
     }
     return map;
-  }, [sessions, tokenUsageMap, apiConfigs, getModelPricing]);
+  }, [sessions, tokenUsageMap, apiConfigs, activeApiConfig, getModelPricing]);
 
   /**
    * Handle creating a new project
@@ -884,7 +888,7 @@ export function Sidebar() {
                             {/* Token usage display */}
                             {(tokenUsageMap.get(session.id)?.total ?? 0) > 0 && (
                               <p className="text-[10px] text-gray-400 truncate mt-0.5 flex items-center gap-1">
-                                {sessionCostMap.get(session.id) ? (
+                                {sessionCostMap.has(session.id) ? (
                                   <span className="text-green-600 font-medium">
                                     {formatCostCompact(sessionCostMap.get(session.id) ?? 0)}
                                   </span>

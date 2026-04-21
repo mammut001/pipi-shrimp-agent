@@ -89,6 +89,7 @@ export async function compactConversation(
     isAutoCompact?: boolean;
     customInstructions?: string;
     suppressFollowUp?: boolean;
+    workDir?: string;
   },
 ): Promise<LegacyCompactResult> {
   const {
@@ -178,7 +179,7 @@ export async function compactConversation(
     });
 
     // 10. 获取 attachments
-    const attachments = await buildPostCompactAttachments(messagesToKeep);
+    const attachments = await buildPostCompactAttachments(messagesToKeep, options?.workDir);
 
     // 11. 计算最终 token 数（不含 attachments，它们会被单独计算）
     const postCompactTokenCount = await estimateMessagesTokens([
@@ -482,13 +483,14 @@ export type CompactAttachment =
  */
 async function buildPostCompactAttachments(
   recentMessages: Message[],
+  workDir?: string,
 ): Promise<CompactAttachment[]> {
   const attachments: CompactAttachment[] = [];
   let totalTokens = 0;
 
   // 1. Session Memory（如果存在）
   try {
-    const smContent = await invoke<string | null>('get_session_memory', { workDir: null });
+    const smContent = await invoke<string | null>('get_session_memory', { workDir: workDir ?? null });
     if (smContent && smContent.trim().length > 100) {
       // 估算 SM token
       const smTokens = Math.ceil(smContent.length / 3);  // 粗估
@@ -507,7 +509,7 @@ async function buildPostCompactAttachments(
     try {
       const response = await invoke<{ content: string; path: string }>('read_file', {
         path: filePath,
-        workDir: null,
+        workDir: workDir ?? null,
       });
 
       if (!response || !response.content) continue;
@@ -591,9 +593,11 @@ async function runPostCompactCleanup(): Promise<void> {
 export async function triggerLegacyCompact(
   sessionId: string,
   messages: Message[],
+  workDir?: string,
 ): Promise<LegacyCompactResult> {
   return compactConversation(sessionId, messages, {
     isAutoCompact: false,
     suppressFollowUp: true,
+    workDir,
   });
 }

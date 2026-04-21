@@ -98,20 +98,26 @@ struct TelegramApiError {
     description: Option<String>,
 }
 
+/// Telegram getMe response
+#[derive(Debug, Deserialize)]
+struct GetMeResponse {
+    ok: bool,
+    result: TelegramBotInfo,
+}
+
 /// Telegram getUpdates response
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetUpdatesResponse {
     ok: bool,
-    result: Vec<Update>,
+    result: Vec<TelegramUpdate>,
 }
 
 /// Telegram update
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Update {
+pub struct TelegramUpdate {
     update_id: i64,
     #[serde(default)]
     message: Option<TelegramMessage>,
@@ -219,10 +225,14 @@ pub async fn telegram_connect(
         return Err(format!("API error: {}", body));
     }
 
-    let bot_info: TelegramBotInfo = response
+    let get_me_response: GetMeResponse = response
         .json()
         .await
         .map_err(|e| format!("Failed to parse bot info: {}", e))?;
+    if !get_me_response.ok {
+        return Err("Telegram getMe returned ok=false".to_string());
+    }
+    let bot_info = get_me_response.result;
 
     // Update state with successful connection
     {
@@ -377,10 +387,16 @@ pub async fn telegram_validate_token(
         return Err(format!("API error: {}", body));
     }
 
-    response
+    let get_me_response: GetMeResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    if !get_me_response.ok {
+        return Err("Telegram getMe returned ok=false".to_string());
+    }
+
+    Ok(get_me_response.result)
 }
 
 /// Get pending messages count
@@ -573,7 +589,7 @@ pub async fn telegram_get_updates(
     offset: Option<i64>,
     limit: Option<i64>,
     state: tauri::State<'_, Arc<Mutex<TelegramState>>>,
-) -> Result<Vec<TelegramMessage>, String> {
+) -> Result<Vec<TelegramUpdate>, String> {
     let s = state.lock().await;
 
     let token = s.token.clone()
@@ -612,9 +628,9 @@ pub async fn telegram_get_updates(
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    Ok(updates_response
-        .result
-        .into_iter()
-        .filter_map(|u| u.message)
-        .collect())
+    if !updates_response.ok {
+        return Err("Telegram getUpdates returned ok=false".to_string());
+    }
+
+    Ok(updates_response.result)
 }

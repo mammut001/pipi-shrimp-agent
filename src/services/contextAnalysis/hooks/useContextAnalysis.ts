@@ -10,9 +10,9 @@ export function useContextAnalysis() {
   const store = useContextAnalysisStore();
 
   const analyze = useCallback(
-    async (sessionId: string, messages: Message[]) => {
+    async (sessionId: string, messages: Message[], workDir?: string) => {
       const { triggerContextAnalysis } = await import('./contextAnalysisTrigger');
-      return triggerContextAnalysis(sessionId, messages);
+      return triggerContextAnalysis(sessionId, messages, workDir);
     },
     [],
   );

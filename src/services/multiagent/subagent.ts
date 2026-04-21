@@ -148,7 +148,7 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
 
           // Extract agent memory after successful completion (fire-and-forget)
           if (result.success && result.content && agent) {
-            swarm.getSwarmBaseDir().then(async baseDir => {
+            swarm.getSwarmBaseDir(options.parentContext?.workDir).then(async baseDir => {
               await swarm.extractAgentMemory(
                 `${baseDir}/swarm/${agent.teamId}/${swarmAgentId}/memory`,
                 result.content,

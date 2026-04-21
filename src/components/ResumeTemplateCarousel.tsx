@@ -9,7 +9,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useChatStore } from '@/store';
+import { useChatStore, useUIStore } from '@/store';
 
 export interface ResumeTemplate {
   id: string;
@@ -69,9 +69,15 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const currentSessionId = useChatStore((s) => s.currentSessionId);
+  const isStreaming = useChatStore((s) => s.isStreaming);
+  const streamingSessionId = useChatStore((s) => s.streamingSessionId);
+  const selectedResumeTemplates = useUIStore((s) => s.selectedResumeTemplates);
+  const setSelectedResumeTemplate = useUIStore((s) => s.setSelectedResumeTemplate);
+  const selectedId = currentSessionId ? selectedResumeTemplates[currentSessionId] ?? null : null;
+  const isSessionBusy = Boolean(currentSessionId && isStreaming && streamingSessionId === currentSessionId);
 
   // Scroll helpers
   const scroll = useCallback((dir: 'left' | 'right') => {
@@ -83,9 +89,11 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
 
   // User picks a template → send message back to the AI
   const handleSelect = useCallback((tpl: ResumeTemplate) => {
-    setSelectedId(tpl.id);
+    if (!currentSessionId || isSessionBusy || selectedId === tpl.id) return;
+
+    setSelectedResumeTemplate(currentSessionId, tpl.id);
     sendMessage(`I'd like to use the **${tpl.name}** template (id: \`${tpl.id}\`). Please call Skill("resume") first to load the template code examples before writing any files.`);
-  }, [sendMessage]);
+  }, [currentSessionId, isSessionBusy, selectedId, sendMessage, setSelectedResumeTemplate]);
 
   // Lightbox navigation
   const lightboxPrev = useCallback(() => {
@@ -167,14 +175,16 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleSelect(tpl); }}
-                    disabled={isSelected}
+                    disabled={isSelected || isSessionBusy}
                     className={`w-full py-1.5 text-[11px] font-medium rounded-lg transition-colors ${
                       isSelected
                         ? 'bg-blue-500 text-white cursor-default'
-                        : 'bg-gray-900 text-white hover:bg-gray-800'
+                        : isSessionBusy
+                          ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                          : 'bg-gray-900 text-white hover:bg-gray-800'
                     }`}
                   >
-                    {isSelected ? '✓ Selected' : 'Use This Template'}
+                    {isSelected ? '✓ Selected' : isSessionBusy ? 'Processing...' : 'Use This Template'}
                   </button>
                 </div>
               </div>

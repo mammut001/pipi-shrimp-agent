@@ -139,6 +139,7 @@ export function ChatBrowserWorkspaceShell() {
 
   // Questionnaire state
   const activeQuestionnaire = useUIStore((s) => s.activeQuestionnaire);
+  const activeQuestionnaireSessionId = useUIStore((s) => s.activeQuestionnaireSessionId);
   const submitQuestionnaire = useUIStore((s) => s.submitQuestionnaire);
   const clearQuestionnaire = useUIStore((s) => s.clearQuestionnaire);
 
@@ -479,12 +480,12 @@ export function ChatBrowserWorkspaceShell() {
       )}
 
       {/* Questionnaire Modal — AskUserQuestion tool interactive form */}
-      {activeQuestionnaire && (
+      {activeQuestionnaire && activeQuestionnaireSessionId === currentSessionId && (
         <Suspense fallback={null}>
           <QuestionnaireCard
             data={activeQuestionnaire}
-            onSubmit={submitQuestionnaire}
-            onCancel={clearQuestionnaire}
+            onSubmit={(response) => submitQuestionnaire(response, currentSessionId || undefined)}
+            onCancel={() => clearQuestionnaire(currentSessionId || undefined)}
           />
         </Suspense>
       )}

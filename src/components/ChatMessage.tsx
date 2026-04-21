@@ -49,12 +49,46 @@ const formatTimestamp = (timestamp: number): string => {
   });
 };
 
+function normalizeResumeTemplateMarkdown(content: string): string {
+  let normalized = content;
+
+  normalized = normalized.replace(
+    /```resume-templates\s*(\[[\s\S]*?\])\s*```/g,
+    '\n```resume-templates\n$1\n```\n',
+  );
+
+  normalized = normalized.replace(
+    /```resume-templates\s*(\[[\s\S]*?\])\s*$/g,
+    '\n```resume-templates\n$1\n```\n',
+  );
+
+  normalized = normalized.replace(/```resume-templates\s*$/g, '\n```resume-templates\n[]\n```');
+
+  const openingIndex = normalized.indexOf('```resume-templates');
+  if (openingIndex === -1) {
+    return normalized;
+  }
+
+  const afterOpening = normalized.slice(openingIndex + '```resume-templates'.length);
+  if (afterOpening.includes('```')) {
+    return normalized;
+  }
+
+  const payload = afterOpening.trim();
+  const normalizedPayload = payload.startsWith('[') ? payload : '[]';
+  const prefix = normalized.slice(0, openingIndex).trimEnd();
+  return prefix + '\n\n```resume-templates\n' + normalizedPayload + '\n```\n';
+}
+
 /**
  * Single chat message component
  */
 export const ChatMessage = memo(function ChatMessage({ message, isLatest = false, isStreaming = false, onTypstPreview }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
+  const normalizedMessageContent = isUser
+    ? message.content
+    : normalizeResumeTemplateMarkdown(message.content);
 
   const handleCopyMessage = useCallback(async () => {
     try {
@@ -270,7 +304,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                     },
                   }}
                 >
-                  {DOMPurify.sanitize(message.content)}
+                  {DOMPurify.sanitize(normalizedMessageContent)}
                 </ReactMarkdown>
               )}
 

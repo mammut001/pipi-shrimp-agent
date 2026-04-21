@@ -73,6 +73,7 @@ export async function runDelegationPlan(
     sessionId,
     description: `Auto-delegation: ${plan.planType} — ${plan.userMessage.slice(0, 80)}`,
     leaderName: 'orchestrator',
+    projectRoot: workDir || undefined,
   });
 
   // Start leader inbox polling
@@ -127,6 +128,7 @@ export async function runDelegationPlan(
       role: 'member',
       sessionId,
       parentAgentId: leader.id,
+      projectRoot: workDir || undefined,
     });
 
     // Create a task for this agent

@@ -142,22 +142,20 @@ export async function startExperimentLoop(
     return;
   }
 
+  if (!store.sessionFilePath.trim()) {
+    useAutoResearchStore.getState().setError('AutoResearch session file path not set');
+    return;
+  }
+
   const notifier = createNotifier(store.telegramConfig);
 
   // Read session file
   let sessionContent: string;
   try {
-    const result = await invoke<{ stdout?: string; exit_code?: number }>('execute_bash', {
-      command: `cat ${store.sessionFilePath.replace('~', '$HOME')}`,
-      timeoutSecs: 10,
+    const result = await invoke<{ content: string; path: string }>('read_file', {
+      path: store.sessionFilePath,
     });
-    if ((result.exit_code ?? 0) !== 0 || !result.stdout) {
-      useAutoResearchStore.getState().setError(
-        `Cannot read session file at ${store.sessionFilePath}. Please create it first.`
-      );
-      return;
-    }
-    sessionContent = result.stdout;
+    sessionContent = result.content;
   } catch (e) {
     useAutoResearchStore.getState().setError(`Failed to read session file: ${e}`);
     return;

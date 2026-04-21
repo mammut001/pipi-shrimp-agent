@@ -410,24 +410,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
    */
   getModelPricing: (model: string, _provider: ApiConfig['provider']) => {
     const { apiConfigs, activeConfigId } = get();
+    const activeConfig = apiConfigs.find(c => c.id === activeConfigId);
+    const providerScope = activeConfig?.model === model
+      ? (activeConfig.modelProviderId || activeConfig.provider)
+      : _provider;
+    const defaultPricing = resolvePricing(model, providerScope) || resolvePricing(model, _provider);
 
     // First check if the active config has custom pricing for this model
-    const activeConfig = apiConfigs.find(c => c.id === activeConfigId);
     if (activeConfig && activeConfig.pricing && activeConfig.model === model) {
+      const resolvedProvider = (providerScope === 'anthropic-compatible' || providerScope === 'openai-compatible')
+        ? 'other' as const
+        : providerScope;
       return {
         model,
-        provider: activeConfig.provider as 'anthropic' | 'openai' | 'minimax' | 'other',
-        inputPrice: activeConfig.pricing.inputPrice ?? 0,
-        outputPrice: activeConfig.pricing.outputPrice ?? 0,
-        cacheReadPrice: activeConfig.pricing.cacheReadPrice,
-        cacheWritePrice: activeConfig.pricing.cacheWritePrice,
-        maxTokens: activeConfig.pricing.maxTokens,
-        contextWindow: activeConfig.pricing.contextWindow ?? resolvePricing(model, activeConfig.provider)?.contextWindow ?? 200000,
+        provider: resolvedProvider,
+        inputPrice: activeConfig.pricing.inputPrice ?? defaultPricing?.inputPrice ?? 0,
+        outputPrice: activeConfig.pricing.outputPrice ?? defaultPricing?.outputPrice ?? 0,
+        cacheReadPrice: activeConfig.pricing.cacheReadPrice ?? defaultPricing?.cacheReadPrice,
+        cacheWritePrice: activeConfig.pricing.cacheWritePrice ?? defaultPricing?.cacheWritePrice,
+        maxTokens: activeConfig.pricing.maxTokens ?? defaultPricing?.maxTokens,
+        contextWindow: activeConfig.pricing.contextWindow ?? defaultPricing?.contextWindow ?? 200000,
       };
     }
 
     // Fall back to default pricing from registry
-    const defaultPricing = resolvePricing(model);
     if (defaultPricing) {
       // Map compatible provider names to the ModelPricing union
       const pricingProvider = (_provider === 'anthropic-compatible' || _provider === 'openai-compatible')

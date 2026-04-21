@@ -30,6 +30,7 @@ export interface Notification {
   type: 'info' | 'success' | 'warning' | 'error' | 'skill';
   message: string;
   timestamp?: number;
+  sessionId?: string;
 }
 
 /** Task step for progress tracking */
@@ -52,6 +53,7 @@ export interface QuestionnaireField {
 /** Active questionnaire data */
 export interface QuestionnaireData {
   toolCallId: string;
+  sessionId?: string;
   title: string;
   description: string;
   fields: QuestionnaireField[];
@@ -78,7 +80,10 @@ export interface UIState {
   currentArtifactId?: string;
   permissionQueue: PermissionRequest[];  // FIFO queue — supports multiple concurrent tool calls
   notifications: Notification[];
+  notificationHistory: Notification[];
   showApiKey: boolean;
+  activeQuestionnaireSessionId: string | null;
+  selectedResumeTemplates: Record<string, string>;
 
   // Agentic UI State
   rightPanelVisible: boolean;
@@ -109,9 +114,9 @@ export interface UIState {
 
   // Questionnaire state
   activeQuestionnaire: QuestionnaireData | null;
-  showQuestionnaire: (data: Omit<QuestionnaireData, '_resolve'>) => Promise<string>;
-  submitQuestionnaire: (response: string) => void;
-  clearQuestionnaire: () => void;
+  showQuestionnaire: (sessionId: string, data: Omit<QuestionnaireData, '_resolve' | 'sessionId'>) => Promise<string>;
+  submitQuestionnaire: (response: string, sessionId?: string) => void;
+  clearQuestionnaire: (sessionId?: string) => void;
 
   // Project Analysis State
   isAnalyzingProject: boolean;
@@ -175,7 +180,7 @@ export interface UIState {
   /**
    * Add notification
    */
-  addNotification: (type: Notification['type'], message: string) => void;
+  addNotification: (type: Notification['type'], message: string, sessionId?: string) => void;
 
   /**
    * Remove notification
@@ -186,6 +191,16 @@ export interface UIState {
    * Clear all notifications
    */
   clearNotifications: () => void;
+
+  /**
+   * Clear notification history
+   */
+  clearNotificationHistory: (sessionId?: string) => void;
+
+  /**
+   * Persist the selected resume template for a session so carousel state survives rerenders.
+   */
+  setSelectedResumeTemplate: (sessionId: string, templateId: string | null) => void;
 
   /**
    * Set/clear the currently active skill name (for AgentPanel highlight)
@@ -220,6 +235,9 @@ export interface UIState {
 
 /** Default notification auto-dismiss timeout in ms */
 export const NOTIFICATION_TIMEOUT = 3000;
+
+/** Maximum number of notifications to retain in history */
+export const NOTIFICATION_HISTORY_LIMIT = 20;
 
 /** Notification types */
 export const NOTIFICATION_TYPES = ['info', 'success', 'warning', 'error'] as const;

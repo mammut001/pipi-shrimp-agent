@@ -2,6 +2,7 @@ import { invokeRustAPIStream } from './streamAdapter';
 import type { EngineEvent, ToolCallParams } from './types';
 import { useSettingsStore, useCdpStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
+import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
 
 export async function* runChatTurn(
   sessionId: string,
@@ -130,7 +131,10 @@ export async function* runChatTurn(
 
       const allContent = await Promise.all(promises);
       for (let i = 0; i < pendingToolCalls.length; i++) {
-        toolResults.push({ id: pendingToolCalls[i].id, content: allContent[i] });
+        toolResults.push({
+          id: pendingToolCalls[i].id,
+          content: sanitizeToolResultForModel(pendingToolCalls[i].name, allContent[i]),
+        });
       }
     }
     
