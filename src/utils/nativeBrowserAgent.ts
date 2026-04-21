@@ -1,4 +1,21 @@
 import { invoke } from '@tauri-apps/api/core';
+import {
+  clickBrowserElement,
+  executeBrowserScript,
+  pressBrowserKey,
+  scrollBrowser,
+  typeIntoBrowserElement,
+  waitForBrowser,
+} from './browserActionClient';
+import { getCurrentBrowserUrl, getBrowserPageState, getBrowserSemanticTree, getBrowserText } from './browserPageStateClient';
+import {
+  describeBrowserActionTarget,
+  formatBrowserPageStateForPrompt,
+  resolveBrowserActionTarget,
+} from './browserPageStateModel';
+import { connectBrowserSession, navigateBrowserPage, resyncBrowserPage } from './browserSessionClient';
+import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled } from './browserFeatureFlags';
+import type { BrowserPageState } from '@/types/browserPageState';
 
 // ─── Agent scanning overlay ────────────────────────────────────────────────
 // Injected into the CDP-controlled Chrome page while the agent is running.
@@ -43,12 +60,80 @@ const OVERLAY_REMOVE_SCRIPT = `(function(){
 })();`;
 
 async function injectOverlay(): Promise<void> {
-  try { await invoke('cdp_execute_script', { script: OVERLAY_INJECT_SCRIPT }); } catch { /* ignore */ }
+  try { await executeBrowserScript(OVERLAY_INJECT_SCRIPT); } catch { /* ignore */ }
 }
 async function removeOverlay(): Promise<void> {
-  try { await invoke('cdp_execute_script', { script: OVERLAY_REMOVE_SCRIPT }); } catch { /* ignore */ }
+  try { await executeBrowserScript(OVERLAY_REMOVE_SCRIPT); } catch { /* ignore */ }
 }
 // ──────────────────────────────────────────────────────────────────────────
+
+type AgentLogLevel = 'info' | 'success' | 'error' | 'warning';
+type AgentLogger = (level: AgentLogLevel, message: string) => void;
+
+const PAGE_REFERENCE_ERROR_MARKERS = ['receiver is gone', 'send failed', 'No page'];
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
+
+const isPageReferenceError = (error: unknown): boolean => {
+  const message = String(error);
+  return PAGE_REFERENCE_ERROR_MARKERS.some((marker) => message.includes(marker));
+};
+
+async function loadBrowserPageState(log: AgentLogger): Promise<BrowserPageState | null> {
+  try {
+    return await getBrowserPageState();
+  } catch (error) {
+    log('warning', `[NativeAgent] PageState fetch failed: ${error}`);
+    if (!isPageReferenceError(error)) {
+      return null;
+    }
+
+    log('info', '[NativeAgent] Re-syncing page reference...');
+    try {
+      await resyncBrowserPage();
+      return await getBrowserPageState();
+    } catch (resyncError) {
+      log('warning', `[NativeAgent] Re-sync failed: ${resyncError}`);
+      return null;
+    }
+  }
+}
+
+async function loadSemanticTree(log: AgentLogger): Promise<string> {
+  try {
+    return await getBrowserSemanticTree();
+  } catch (error) {
+    log('warning', `[NativeAgent] Tree fetch failed: ${error}`);
+    if (!isPageReferenceError(error)) {
+      return '[]';
+    }
+
+    log('info', '[NativeAgent] Re-syncing page reference...');
+    try {
+      await resyncBrowserPage();
+      return await getBrowserSemanticTree();
+    } catch (resyncError) {
+      log('warning', `[NativeAgent] Re-sync failed: ${resyncError}`);
+      return '[]';
+    }
+  }
+}
+
+const readActionPayload = (value: unknown): Record<string, unknown> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+};
+
+const readString = (value: unknown, fallback = ''): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return fallback;
+};
 
 export async function executeNativeBrowserTask(
   task: string,
@@ -62,10 +147,11 @@ export async function executeNativeBrowserTask(
 ): Promise<string> {
   const { onLog } = options;
   const log = (level: 'info' | 'success' | 'error' | 'warning', msg: string) => onLog?.(level, msg);
+  const usePageStateFlow = isBrowserPageStateV2Enabled() && isBrowserActionsV2Enabled();
 
   log('info', '[NativeAgent] Initializing CDP Connection...');
   try {
-    await invoke('connect_browser');
+    await connectBrowserSession();
     log('success', '[NativeAgent] Browser connected via CDP!');
   } catch (e: any) {
     log('error', `[NativeAgent] Connection failed: ${e}`);
@@ -94,6 +180,11 @@ VALID ACTIONS:
 9. {"action": {"done": {"text": "Here are the results: ...", "success": true}}} - End task with results.
 10. {"action": {"ask_user": {"question": "I need your input"}}} - Ask the user for information.
 
+TARGETING RULES:
+- For click_element and input_text, you may send either {"id": 12} or {"backend_node_id": 45678}.
+- When CURRENT PAGE STATE includes backend_node_id, prefer backend_node_id because it is more stable on dynamic pages.
+- If both are available, include both.
+
 TASK EXECUTION STRATEGY:
 1. **Plan First**: Before acting, think about the best approach. Use the "thought" field.
 2. **Search Strategy**: For generic queries (flights, prices, etc.), navigate to the best search engine or specialized site.
@@ -104,7 +195,7 @@ TASK EXECUTION STRATEGY:
 KEY RULES:
 - After typing in a search box, ALWAYS use press_key Enter to submit the search.
 - If the page is loading or empty, wait 2-3 seconds before retrying.
-- Always use the semantic element IDs for clicking and typing.
+- Use the CURRENT PAGE STATE element ids or backend_node_id values for clicking and typing.
 - When done, provide comprehensive results in the "text" field — this is what the user sees.
 - For search tasks, extract the TOP 3-5 results with details (prices, links, descriptions).
 - If a page requires login, use ask_user instead of trying to authenticate.`;
@@ -134,50 +225,50 @@ KEY RULES:
       const startUrl = resolveStartUrl();
       log('info', `[NativeAgent] Navigating to: ${startUrl}`);
       try {
-        await invoke('navigate_and_wait', { url: startUrl });
+        await navigateBrowserPage(startUrl);
         log('success', `[NativeAgent] Page loaded: ${startUrl}`);
       } catch (e) {
         log('warning', `[NativeAgent] Navigation attempted: ${e}`);
       }
       // Give JS-heavy pages time to render
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await delay(1500);
       await injectOverlay();
     }
 
     log('info', `[NativeAgent] Step ${step + 1}: Analyzing page...`);
-    let semanticTree = '[]';
+    let pageState: BrowserPageState | null = null;
+    let pageContextLabel = 'CURRENT PAGE STATE';
+    let pageContextBody = 'PageState unavailable.';
     let currentUrl = '';
 
-    // Get current URL for context
-    try {
-      const urlScript = '(function() { return window.location.href; })()';
-      currentUrl = await invoke('cdp_execute_script', { script: urlScript }) || '';
-    } catch { /* ignore */ }
-
-    try {
-      semanticTree = await invoke('get_semantic_tree');
-      if (semanticTree === '[]' || !semanticTree) {
-        log('warning', '[NativeAgent] Page appears empty, might still be loading.');
-      }
-    } catch (e: any) {
-      const errStr = String(e);
-      log('warning', `[NativeAgent] Tree fetch failed: ${e}`);
-      if (errStr.includes('receiver is gone') || errStr.includes('send failed') || errStr.includes('No page')) {
-        log('info', '[NativeAgent] Re-syncing page reference...');
-        try {
-          await invoke('resync_page');
-          try {
-            semanticTree = await invoke('get_semantic_tree');
-          } catch (_retryErr) {
-            log('warning', '[NativeAgent] Retry failed, using empty tree');
-          }
-        } catch (resyncErr) {
-          log('warning', `[NativeAgent] Re-sync failed: ${resyncErr}`);
+    if (usePageStateFlow) {
+      pageState = await loadBrowserPageState(log);
+      if (pageState) {
+        currentUrl = pageState.url;
+        pageContextBody = formatBrowserPageStateForPrompt(pageState);
+        if (pageState.elements.length === 0) {
+          log('warning', '[NativeAgent] PageState returned no interactive elements, page might still be loading.');
         }
       }
     }
 
-    const promptText = `TASK: ${task}\n\nCURRENT URL: ${currentUrl}\nSTEP: ${step + 1}/30\n\nCURRENT VISIBLE ELEMENTS:\n${semanticTree}\n\nDecide your next action. Include a "thought" explaining your reasoning. Respond with JSON only.`;
+    if (!currentUrl) {
+      try {
+        currentUrl = (await getCurrentBrowserUrl()) || '';
+      } catch {
+        currentUrl = '';
+      }
+    }
+
+    if (!pageState) {
+      pageContextLabel = 'CURRENT VISIBLE ELEMENTS';
+      pageContextBody = await loadSemanticTree(log);
+      if (pageContextBody === '[]' || !pageContextBody) {
+        log('warning', '[NativeAgent] Page appears empty, might still be loading.');
+      }
+    }
+
+    const promptText = `TASK: ${task}\n\nCURRENT URL: ${currentUrl}\nSTEP: ${step + 1}/30\n\n${pageContextLabel}:\n${pageContextBody}\n\nDecide your next action. Include a "thought" explaining your reasoning. Respond with JSON only.`;
     messages.push({ role: 'user', content: promptText });
 
     try {
@@ -216,26 +307,26 @@ KEY RULES:
       }
 
       const actionName = Object.keys(parsed.action)[0];
-      const actionPayload = parsed.action[actionName];
+  const actionPayload = readActionPayload(parsed.action[actionName]);
 
       log('success', `[NativeAgent] Action: ${actionName} ${JSON.stringify(actionPayload)}`);
 
       // Execute action
       if (actionName === 'done') {
         isDone = true;
-        finalResult = actionPayload.text || 'Task completed';
+        finalResult = readString(actionPayload.text, 'Task completed');
         await removeOverlay();
         log('success', `[NativeAgent] ✅ ${finalResult}`);
       } else if (actionName === 'wait') {
-        const secs = Math.min(actionPayload.seconds || 3, 10);
+        const secs = Math.min(Number(actionPayload.seconds) || 3, 10);
         log('info', `[NativeAgent] Waiting ${secs}s...`);
-        await new Promise((resolve) => setTimeout(resolve, secs * 1000));
+        await waitForBrowser({ seconds: secs });
       } else if (actionName === 'navigate') {
-        const navUrl = actionPayload.url || '';
+        const navUrl = readString(actionPayload.url);
         if (navUrl) {
           log('info', `[NativeAgent] Navigating to: ${navUrl}`);
           try {
-            await invoke('navigate_and_wait', { url: navUrl });
+            await navigateBrowserPage(navUrl);
             log('success', `[NativeAgent] Loaded: ${navUrl}`);
             await injectOverlay();
           } catch (e) {
@@ -244,77 +335,77 @@ KEY RULES:
           }
         }
       } else if (actionName === 'wait_for_selector') {
-        log('info', `[NativeAgent] Waiting for: ${actionPayload.selector}...`);
+        const selector = readString(actionPayload.selector);
+        log('info', `[NativeAgent] Waiting for: ${selector}...`);
         try {
-          await invoke('navigate_and_wait', { url: '', waitSelector: actionPayload.selector });
+          await waitForBrowser({ selector });
           log('success', '[NativeAgent] Element found.');
         } catch (e) {
           log('warning', `[NativeAgent] Selector wait timeout: ${e}`);
         }
       } else if (actionName === 'click_element') {
-        log('info', `[NativeAgent] Clicking element ${actionPayload.id}...`);
+        const target = resolveBrowserActionTarget(pageState, actionPayload);
+        if (!target) {
+          log('warning', '[NativeAgent] Click payload missing id/backend_node_id.');
+          messages.push({ role: 'user', content: 'Click payload must include id or backend_node_id. Re-read CURRENT PAGE STATE and choose a valid target.' });
+          continue;
+        }
+
+        const targetLabel = describeBrowserActionTarget(target);
+        log('info', `[NativeAgent] Clicking ${targetLabel}...`);
         try {
-          const result: string = await invoke('cdp_click', { elementId: actionPayload.id });
+          const result = await clickBrowserElement(target);
           log('success', `[NativeAgent] ${result}`);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          try { await invoke('resync_page'); } catch { /* ok */ }
+          await delay(1500);
+          try { await resyncBrowserPage(); } catch { /* ok */ }
         } catch (e) {
           log('error', `[NativeAgent] Click failed: ${e}`);
-          messages.push({ role: 'user', content: `Click failed on element ${actionPayload.id}: ${e}. Try a different element or wait.` });
+          messages.push({ role: 'user', content: `Click failed on ${targetLabel}: ${e}. Try a different target or wait.` });
         }
       } else if (actionName === 'input_text') {
-        log('info', `[NativeAgent] Typing: "${actionPayload.text}" into element ${actionPayload.id}`);
+        const target = resolveBrowserActionTarget(pageState, actionPayload);
+        const text = readString(actionPayload.text);
+        if (!target || !text) {
+          log('warning', '[NativeAgent] Input payload missing target or text.');
+          messages.push({ role: 'user', content: 'input_text must include text plus id or backend_node_id. Re-read CURRENT PAGE STATE and try again.' });
+          continue;
+        }
+
+        const targetLabel = describeBrowserActionTarget(target);
+        log('info', `[NativeAgent] Typing: "${text}" into ${targetLabel}`);
         try {
-          const result: string = await invoke('cdp_type', {
-            elementId: actionPayload.id,
-            text: actionPayload.text,
-          });
+          const result = await typeIntoBrowserElement(target, text);
           log('success', `[NativeAgent] ${result}`);
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await delay(300);
         } catch (e) {
           log('error', `[NativeAgent] Input failed: ${e}`);
           messages.push({ role: 'user', content: `Input failed: ${e}` });
         }
       } else if (actionName === 'press_key') {
-        const key = actionPayload.key || 'Enter';
+        const key = readString(actionPayload.key, 'Enter');
         log('info', `[NativeAgent] Pressing key: ${key}`);
         try {
-          const keyScript = `
-            (function() {
-              var event = new KeyboardEvent('keydown', { key: '${key}', code: '${key}', bubbles: true });
-              document.activeElement.dispatchEvent(event);
-              var eventUp = new KeyboardEvent('keyup', { key: '${key}', code: '${key}', bubbles: true });
-              document.activeElement.dispatchEvent(eventUp);
-              if ('${key}' === 'Enter') {
-                // Also try form submission for Enter key
-                var form = document.activeElement.closest('form');
-                if (form) form.submit();
-              }
-              return 'ok';
-            })();
-          `;
-          await invoke('cdp_execute_script', { script: keyScript });
+          await pressBrowserKey(key);
           log('success', `[NativeAgent] Key pressed: ${key}`);
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          try { await invoke('resync_page'); } catch { /* ok */ }
+          await delay(1000);
+          try { await resyncBrowserPage(); } catch { /* ok */ }
         } catch (e) {
           log('warning', `[NativeAgent] Key press failed: ${e}`);
         }
       } else if (actionName === 'scroll') {
-        const direction = actionPayload.direction || 'down';
-        const pixels = actionPayload.pixels || 600;
+        const direction = readString(actionPayload.direction, 'down');
+        const pixels = Number(actionPayload.pixels) || 600;
         log('info', `[NativeAgent] Scrolling ${direction} ${pixels}px`);
         try {
-          await invoke('cdp_scroll', { direction, pixels });
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await scrollBrowser(direction, pixels);
+          await delay(500);
         } catch (e) {
           log('warning', `[NativeAgent] Scroll failed: ${e}`);
         }
       } else if (actionName === 'extract_text') {
         log('info', '[NativeAgent] Extracting page text...');
         try {
-          const textScript = '(function() { return document.body.innerText.substring(0, 5000); })()';
-          const pageText: string = await invoke('cdp_execute_script', { script: textScript });
+          const pageText = await getBrowserText(5000);
           log('success', `[NativeAgent] Extracted ${pageText.length} chars of text`);
           // Feed text back to the LLM as context
           messages.push({ role: 'user', content: `PAGE TEXT CONTENT:\n${pageText}\n\nUse this information to complete the task. What is your next action?` });
@@ -323,7 +414,7 @@ KEY RULES:
           log('warning', `[NativeAgent] Text extraction failed: ${e}`);
         }
       } else if (actionName === 'ask_user') {
-        const question = actionPayload.question || 'I need your help';
+        const question = readString(actionPayload.question, 'I need your help');
         log('warning', `[NativeAgent] ❓ ${question}`);
         await removeOverlay();
         finalResult = `Agent needs your input: ${question}`;

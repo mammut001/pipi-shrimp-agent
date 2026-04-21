@@ -8,6 +8,8 @@ use crate::database::{self, DbSession, DbMessage};
 use crate::models::{SendMessageRequest, SendMessageResponse};
 use crate::utils::{AppError, AppResult};
 use crate::commands::web::{self, BrowserController};
+use async_trait::async_trait;
+use crate::browser::dom::PageState;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -47,6 +49,435 @@ fn get_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+fn is_browser_not_connected_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("未连接") || normalized.contains("not connected")
+}
+
+fn browser_not_connected_message() -> String {
+    "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
+}
+
+fn serialize_page_state_for_chat(page_state: &crate::browser::dom::PageState) -> String {
+    serde_json::to_string_pretty(page_state).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn browser_target_from_args(
+    args: &serde_json::Value,
+    tool_name: &str,
+) -> AppResult<(Option<u64>, Option<i64>, Option<String>)> {
+    let element_id = args
+        .get("element_id")
+        .or_else(|| args.get("elementId"))
+        .and_then(|value| value.as_u64());
+    let backend_node_id = args
+        .get("backend_node_id")
+        .or_else(|| args.get("backendNodeId"))
+        .and_then(|value| value.as_i64());
+    let navigation_id = args
+        .get("navigation_id")
+        .or_else(|| args.get("navigationId"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+
+    if element_id.is_none() && backend_node_id.is_none() {
+        return Err(AppError::InternalError(format!(
+            "Missing 'element_id' or 'backend_node_id' argument for {}",
+            tool_name
+        )));
+    }
+
+    Ok((element_id, backend_node_id, navigation_id))
+}
+
+fn describe_browser_target(element_id: Option<u64>, backend_node_id: Option<i64>) -> String {
+    match (element_id, backend_node_id) {
+        (Some(element_id), Some(backend_node_id)) => {
+            format!("元素 {} / backend_node_id {}", element_id, backend_node_id)
+        }
+        (Some(element_id), None) => format!("元素 {}", element_id),
+        (None, Some(backend_node_id)) => format!("backend_node_id {}", backend_node_id),
+        (None, None) => "目标元素".to_string(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserToolTarget {
+    element_id: Option<u64>,
+    backend_node_id: Option<i64>,
+    navigation_id: Option<String>,
+}
+
+impl BrowserToolTarget {
+    fn from_args(args: &serde_json::Value, tool_name: &str) -> AppResult<Self> {
+        let (element_id, backend_node_id, navigation_id) = browser_target_from_args(args, tool_name)?;
+        Ok(Self {
+            element_id,
+            backend_node_id,
+            navigation_id,
+        })
+    }
+
+    fn label(&self) -> String {
+        describe_browser_target(self.element_id, self.backend_node_id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BrowserChatToolCall {
+    Navigate {
+        url: String,
+        wait_selector: Option<String>,
+    },
+    GetPage,
+    Click {
+        target: BrowserToolTarget,
+    },
+    Type {
+        target: BrowserToolTarget,
+        text: String,
+    },
+    Scroll {
+        direction: String,
+        pixels: i64,
+    },
+    GetText {
+        max_length: usize,
+    },
+    Screenshot,
+    ExtractContent,
+    PressKey {
+        key: String,
+    },
+    Wait {
+        seconds: Option<u64>,
+        wait_selector: Option<String>,
+    },
+}
+
+fn browser_wait_selector_from_args(args: &serde_json::Value) -> Option<String> {
+    args
+        .get("selector")
+        .or_else(|| args.get("wait_selector"))
+        .or_else(|| args.get("waitSelector"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+}
+
+fn parse_browser_chat_tool_call(
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> AppResult<Option<BrowserChatToolCall>> {
+    let call = match tool_name {
+        "browser_navigate" => {
+            let url = args.get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'url' argument for browser_navigate".to_string()))?;
+
+            Some(BrowserChatToolCall::Navigate {
+                url: url.to_string(),
+                wait_selector: browser_wait_selector_from_args(args),
+            })
+        }
+        "browser_get_page" => Some(BrowserChatToolCall::GetPage),
+        "browser_click" => Some(BrowserChatToolCall::Click {
+            target: BrowserToolTarget::from_args(args, "browser_click")?,
+        }),
+        "browser_type" => {
+            let text = args.get("text")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'text' argument for browser_type".to_string()))?;
+
+            Some(BrowserChatToolCall::Type {
+                target: BrowserToolTarget::from_args(args, "browser_type")?,
+                text: text.to_string(),
+            })
+        }
+        "browser_scroll" => {
+            let direction = args.get("direction")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'direction' argument for browser_scroll".to_string()))?;
+            let pixels = args.get("pixels")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(600);
+
+            Some(BrowserChatToolCall::Scroll {
+                direction: direction.to_string(),
+                pixels,
+            })
+        }
+        "browser_get_text" => Some(BrowserChatToolCall::GetText {
+            max_length: args.get("max_length")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3000) as usize,
+        }),
+        "browser_screenshot" => Some(BrowserChatToolCall::Screenshot),
+        "browser_extract_content" => Some(BrowserChatToolCall::ExtractContent),
+        "browser_press_key" => {
+            let key = args.get("key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::InternalError("Missing 'key' argument for browser_press_key".to_string()))?;
+
+            Some(BrowserChatToolCall::PressKey {
+                key: key.to_string(),
+            })
+        }
+        "browser_wait" => Some(BrowserChatToolCall::Wait {
+            seconds: args.get("seconds")
+                .and_then(|v| v.as_u64()),
+            wait_selector: browser_wait_selector_from_args(args),
+        }),
+        _ => None,
+    };
+
+    Ok(call)
+}
+
+#[async_trait]
+trait BrowserChatRuntime {
+    async fn navigate_and_wait(&self, url: String, wait_selector: Option<String>) -> Result<(), String>;
+    async fn resync_page(&self) -> Result<(), String>;
+    async fn get_page_state(&self) -> Result<PageState, String>;
+    async fn click(&self, target: &BrowserToolTarget) -> Result<String, String>;
+    async fn type_text(&self, target: &BrowserToolTarget, text: String) -> Result<String, String>;
+    async fn scroll(&self, direction: String, pixels: i64) -> Result<String, String>;
+    async fn get_text(&self, max_length: Option<u64>) -> Result<String, String>;
+    async fn screenshot(&self) -> Result<String, String>;
+    async fn extract_content(&self) -> Result<String, String>;
+    async fn press_key(&self, key: String) -> Result<String, String>;
+    async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String>;
+
+    async fn delay_after_click(&self) {
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    }
+}
+
+struct LiveBrowserChatRuntime<'a> {
+    browser_state: tauri::State<'a, Arc<Mutex<BrowserController>>>,
+}
+
+#[async_trait]
+impl BrowserChatRuntime for LiveBrowserChatRuntime<'_> {
+    async fn navigate_and_wait(&self, url: String, wait_selector: Option<String>) -> Result<(), String> {
+        web::navigate_and_wait(url, wait_selector, self.browser_state.clone())
+            .await
+            .map(|_| ())
+    }
+
+    async fn resync_page(&self) -> Result<(), String> {
+        web::resync_page(self.browser_state.clone()).await.map(|_| ())
+    }
+
+    async fn get_page_state(&self) -> Result<PageState, String> {
+        web::get_page_state(self.browser_state.clone()).await
+    }
+
+    async fn click(&self, target: &BrowserToolTarget) -> Result<String, String> {
+        web::browser_click(
+            target.element_id,
+            target.backend_node_id,
+            target.navigation_id.clone(),
+            self.browser_state.clone(),
+        )
+        .await
+    }
+
+    async fn type_text(&self, target: &BrowserToolTarget, text: String) -> Result<String, String> {
+        web::browser_type(
+            target.element_id,
+            target.backend_node_id,
+            target.navigation_id.clone(),
+            text,
+            self.browser_state.clone(),
+        )
+        .await
+    }
+
+    async fn scroll(&self, direction: String, pixels: i64) -> Result<String, String> {
+        web::browser_scroll(direction, pixels, self.browser_state.clone()).await
+    }
+
+    async fn get_text(&self, max_length: Option<u64>) -> Result<String, String> {
+        web::browser_get_text(max_length, self.browser_state.clone()).await
+    }
+
+    async fn screenshot(&self) -> Result<String, String> {
+        web::browser_screenshot(self.browser_state.clone()).await
+    }
+
+    async fn extract_content(&self) -> Result<String, String> {
+        web::browser_extract_content(self.browser_state.clone()).await
+    }
+
+    async fn press_key(&self, key: String) -> Result<String, String> {
+        web::browser_press_key(key, self.browser_state.clone()).await
+    }
+
+    async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String> {
+        web::browser_wait(seconds, wait_selector, self.browser_state.clone()).await
+    }
+}
+
+async fn execute_browser_chat_tool_call<R>(
+    call: BrowserChatToolCall,
+    runtime: &R,
+) -> String
+where
+    R: BrowserChatRuntime + Sync,
+{
+    match call {
+        BrowserChatToolCall::Navigate { url, wait_selector } => {
+            match runtime.navigate_and_wait(url.clone(), wait_selector).await {
+                Ok(_) => {
+                    if let Err(e) = runtime.resync_page().await {
+                        eprintln!("[browser_navigate] resync_page warning: {}", e);
+                    }
+                    let title = runtime
+                        .get_page_state()
+                        .await
+                        .map(|page_state| page_state.title)
+                        .unwrap_or_else(|_| "Unknown".to_string());
+                    format!("已导航到: {}，页面标题: {}", url, title)
+                }
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 导航失败（{}s）。URL: {}。可能是网络问题或页面需要认证。", 30, url)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::GetPage => {
+            match runtime.get_page_state().await {
+                Ok(page_state) => serialize_page_state_for_chat(&page_state),
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 获取页面元素失败: {}", e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::Click { target } => {
+            let target_label = target.label();
+
+            match runtime.click(&target).await {
+                Ok(_) => {
+                    runtime.delay_after_click().await;
+                    format!("已点击{}，页面可能已更新，请使用 browser_get_page 查看新状态", target_label)
+                }
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 点击{}失败: {}", target_label, e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::Type { target, text } => {
+            let target_label = target.label();
+
+            match runtime.type_text(&target, text).await {
+                Ok(msg) => msg,
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 向{}输入失败: {}", target_label, e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::Scroll { direction, pixels } => {
+            match runtime.scroll(direction.clone(), pixels).await {
+                Ok(_) => format!("已向{}滚动 {}px", direction, pixels),
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 滚动失败: {}", e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::GetText { max_length } => {
+            match runtime.get_text(Some(max_length as u64)).await {
+                Ok(text) => {
+                    if text.is_empty() {
+                        "页面没有文本内容".to_string()
+                    } else {
+                        text
+                    }
+                }
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 获取页面文本失败: {}", e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::Screenshot => {
+            match runtime.screenshot().await {
+                Ok(base64_data) => {
+                    format!("截图已捕获（base64 PNG，长度 {} 字符）。图片数据已保存，可直接展示给用户。", base64_data.len())
+                }
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 截图失败: {}", e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::ExtractContent => {
+            match runtime.extract_content().await {
+                Ok(content) => content,
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 提取内容失败: {}", e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::PressKey { key } => {
+            match runtime.press_key(key.clone()).await {
+                Ok(_) => format!("已按下键 '{}'", key),
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 按键失败: {}", e)
+                    }
+                }
+            }
+        }
+        BrowserChatToolCall::Wait { seconds, wait_selector } => {
+            match runtime.wait(seconds, wait_selector).await {
+                Ok(message) => message,
+                Err(e) => {
+                    if is_browser_not_connected_error(&e) {
+                        browser_not_connected_message()
+                    } else {
+                        format!("ERROR: 等待失败: {}", e)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -354,6 +785,11 @@ pub async fn execute_tool(
         _ => {}
     }
 
+    if let Some(browser_call) = parse_browser_chat_tool_call(&tool_name, &args)? {
+        let runtime = LiveBrowserChatRuntime { browser_state };
+        return Ok(execute_browser_chat_tool_call(browser_call, &runtime).await);
+    }
+
     // Execute tool and convert result to JSON
     let result_json = match tool_name.as_str() {
         "read_file" => {
@@ -447,266 +883,6 @@ pub async fn execute_tool(
             }).to_string()
         }
 
-        // ==================== Browser Tools ====================
-
-        "browser_navigate" => {
-            let url = args.get("url")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'url' argument for browser_navigate".to_string()))?;
-
-            // Call navigate_and_wait via the browser commands
-            let result = web::navigate_and_wait(url.to_string(), None, browser_state.clone()).await;
-
-            match result {
-                Ok(_) => {
-                    // Resync page reference — navigation may switch the active page
-                    // (new tab, redirect, SPA router). Stale reference would make
-                    // subsequent browser_get_page / browser_click fail silently.
-                    if let Err(e) = web::resync_page(browser_state.clone()).await {
-                        eprintln!("[browser_navigate] resync_page warning: {}", e);
-                        // Non-fatal — continue with current reference
-                    }
-                    // Get page title after navigation
-                    let title_script = r#"(function() { return document.title; })()"#;
-                    let title_result = web::cdp_execute_script(title_script.to_string(), browser_state).await;
-                    let title = title_result.unwrap_or_else(|_| "Unknown".to_string());
-                    format!("已导航到: {}，页面标题: {}", url, title)
-                }
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        format!("ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。")
-                    } else {
-                        format!("ERROR: 导航失败（{}s）。URL: {}。可能是网络问题或页面需要认证。", 30, url)
-                    }
-                }
-            }
-        }
-
-        "browser_get_page" => {
-            // Get semantic tree from the browser
-            let result = web::get_semantic_tree(browser_state).await;
-
-            match result {
-                Ok(elements_json) => {
-                    // Parse and format the elements for readability
-                    let elements: Vec<serde_json::Value> = serde_json::from_str(&elements_json)
-                        .unwrap_or_default();
-
-                    if elements.is_empty() {
-                        "当前页面没有可交互元素".to_string()
-                    } else {
-                        let mut output = format!("当前页面元素（共 {} 个）:\n", elements.len());
-                        for el in elements.iter().take(50) {
-                            let id = el.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let tag = el.get("tag").and_then(|v| v.as_str()).unwrap_or("");
-                            let text = el.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                            let href = el.get("href").and_then(|v| v.as_str()).unwrap_or("");
-                            let aria = el.get("ariaLabel").and_then(|v| v.as_str()).unwrap_or("");
-
-                            if !text.is_empty() || !aria.is_empty() {
-                                let display = if !aria.is_empty() && aria != text {
-                                    format!("{} ({})", text, aria)
-                                } else {
-                                    text.to_string()
-                                };
-                                let href_info = if !href.is_empty() {
-                                    format!(" (href={})", href.chars().take(40).collect::<String>())
-                                } else {
-                                    String::new()
-                                };
-                                output.push_str(&format!("[{}] {}: \"{}\"{}\n", id, tag, display, href_info));
-                            }
-                        }
-                        if elements.len() > 50 {
-                            output.push_str(&format!("\n... 还有 {} 个元素未显示\n", elements.len() - 50));
-                        }
-                        output
-                    }
-                }
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-                    } else {
-                        format!("ERROR: 获取页面元素失败: {}", e)
-                    }
-                }
-            }
-        }
-
-        "browser_click" => {
-            let element_id = args.get("element_id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| AppError::InternalError("Missing 'element_id' argument for browser_click".to_string()))?;
-
-            let result = web::cdp_click(element_id, browser_state).await;
-
-            match result {
-                Ok(_) => {
-                    // Wait briefly for page to update
-                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-                    format!("已点击元素 {}，页面可能已更新，请使用 browser_get_page 查看新状态", element_id)
-                }
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-                    } else {
-                        format!("ERROR: 点击元素 {} 失败: {}", element_id, e)
-                    }
-                }
-            }
-        }
-
-        "browser_type" => {
-            let element_id = args.get("element_id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| AppError::InternalError("Missing 'element_id' argument for browser_type".to_string()))?;
-            let text = args.get("text")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'text' argument for browser_type".to_string()))?;
-
-            let result = web::cdp_type(element_id, text.to_string(), browser_state).await;
-
-            match result {
-                Ok(msg) => msg,
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-                    } else {
-                        format!("ERROR: 输入失败: {}", e)
-                    }
-                }
-            }
-        }
-
-        "browser_scroll" => {
-            let direction = args.get("direction")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'direction' argument for browser_scroll".to_string()))?;
-            let pixels = args.get("pixels")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(600);
-
-            let result = web::cdp_scroll(direction.to_string(), pixels, browser_state).await;
-
-            match result {
-                Ok(_) => format!("已向{}滚动 {}px", direction, pixels),
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-                    } else {
-                        format!("ERROR: 滚动失败: {}", e)
-                    }
-                }
-            }
-        }
-
-        "browser_get_text" => {
-            let max_length = args.get("max_length")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(3000) as usize;
-
-            let script = format!(r#"(function() {{ return document.body.innerText.substring(0, {}); }})()"#, max_length);
-            let result = web::cdp_execute_script(script, browser_state).await;
-
-            match result {
-                Ok(text) => {
-                    if text.is_empty() {
-                        "页面没有文本内容".to_string()
-                    } else {
-                        text
-                    }
-                }
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-                    } else {
-                        format!("ERROR: 获取页面文本失败: {}", e)
-                    }
-                }
-            }
-        }
-
-        "browser_screenshot" => {
-            let result = web::cdp_screenshot(browser_state).await;
-
-            match result {
-                Ok(base64_data) => {
-                    format!("截图已捕获（base64 PNG，长度 {} 字符）。图片数据已保存，可直接展示给用户。", base64_data.len())
-                }
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-                    } else {
-                        format!("ERROR: 截图失败: {}", e)
-                    }
-                }
-            }
-        }
-
-        "browser_extract_content" => {
-            let result = web::cdp_extract_content(browser_state).await;
-
-            match result {
-                Ok(content) => content,
-                Err(e) => {
-                    if e.contains("未连接") || e.contains("not connected") {
-                        "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-                    } else {
-                        format!("ERROR: 提取内容失败: {}", e)
-                    }
-                }
-            }
-        }
-
-        "browser_press_key" => {
-            let key = args.get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'key' argument for browser_press_key".to_string()))?;
-
-            let script = format!(r#"
-                (function() {{
-                    var event = new KeyboardEvent('keydown', {{
-                        key: '{}',
-                        code: '{}',
-                        keyCode: {},
-                        which: {},
-                        bubbles: true
-                    }});
-                    document.activeElement.dispatchEvent(event);
-                    // Also fire keyup
-                    var eventUp = new KeyboardEvent('keyup', {{
-                        key: '{}',
-                        code: '{}',
-                        bubbles: true
-                    }});
-                    document.activeElement.dispatchEvent(eventUp);
-                    return 'ok';
-                }})();
-            "#,
-                key.replace('\'', "\\'"),
-                key.replace('\'', "\\'"),
-                match key { "Enter" => 13, "Tab" => 9, "Escape" => 27, "Backspace" => 8, "ArrowDown" => 40, "ArrowUp" => 38, _ => 0 },
-                match key { "Enter" => 13, "Tab" => 9, "Escape" => 27, "Backspace" => 8, "ArrowDown" => 40, "ArrowUp" => 38, _ => 0 },
-                key.replace('\'', "\\'"),
-                key.replace('\'', "\\'"),
-            );
-
-            let result = web::cdp_execute_script(script, browser_state).await;
-            match result {
-                Ok(_) => format!("已按下键 '{}'", key),
-                Err(e) => format!("ERROR: 按键失败: {}", e),
-            }
-        }
-
-        "browser_wait" => {
-            let seconds = args.get("seconds")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(2);
-            let capped = seconds.min(10); // Cap at 10 seconds
-            tokio::time::sleep(std::time::Duration::from_secs(capped)).await;
-            format!("已等待 {} 秒", capped)
-        }
-
         "Skill" => {
             let skill_name = args.get("skill")
                 .and_then(|v| v.as_str())
@@ -718,7 +894,7 @@ pub async fn execute_tool(
                         // Return the SKILL.md content directly so the AI can read and follow it
                         res.output.unwrap_or_else(|| format!("Skill '{}' loaded but has no content.", skill_name))
                     } else {
-                        format!("Skill '{}' not found. Available skills: resume, pdf, docx, xlsx. Error: {}",
+                        format!("Skill '{}' not found. Available skills: autoresearch, resume, pdf, docx, xlsx, web_research, form_fill. Error: {}",
                             skill_name,
                             res.error.unwrap_or_else(|| "unknown".to_string()))
                     }
@@ -856,4 +1032,827 @@ pub async fn execute_tool(
     };
 
     Ok(result_json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::browser::actions;
+    use crate::browser::actions::test_support::{CheckoutFlowServer, LiveActionHarness, load_page_state_fixture, FixtureActionHarness};
+    use crate::browser::actions::ElementReference;
+    use crate::browser::actions::common::BrowserActionError;
+    use crate::browser::dom::InteractiveElement;
+    use anyhow::Result as AnyhowResult;
+    use std::sync::Mutex as StdMutex;
+
+    #[test]
+    fn browser_target_from_args_accepts_navigation_id_aliases() {
+        let args = serde_json::json!({
+            "elementId": 7,
+            "backendNodeId": 701,
+            "navigationId": "nav-42"
+        });
+
+        let target = browser_target_from_args(&args, "browser_click").unwrap();
+
+        assert_eq!(target, (Some(7), Some(701), Some("nav-42".to_string())));
+    }
+
+    #[test]
+    fn parse_browser_wait_accepts_selector_aliases() {
+        let args = serde_json::json!({
+            "waitSelector": ".checkout-ready"
+        });
+
+        let call = parse_browser_chat_tool_call("browser_wait", &args)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(call, BrowserChatToolCall::Wait {
+            seconds: None,
+            wait_selector: Some(".checkout-ready".to_string()),
+        });
+    }
+
+    #[test]
+    fn serialize_page_state_for_chat_emits_pretty_json() {
+        let page_state = sample_page_state();
+
+        let rendered = serialize_page_state_for_chat(&page_state);
+
+        assert!(rendered.starts_with("{\n"));
+        assert!(rendered.contains("\"navigation_id\": \"nav-42\""));
+        assert!(rendered.contains("\"backend_node_id\": 101"));
+        assert!(rendered.contains("\"warnings\": [\n    \"cross_origin_iframe_partial\"\n  ]"));
+    }
+
+    #[tokio::test]
+    async fn browser_get_page_returns_pretty_json_through_chat_dispatcher() {
+        let runtime = FakeBrowserChatRuntime::default();
+
+        let rendered = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+
+        assert!(rendered.contains("\"title\": \"Dashboard\""));
+        assert!(rendered.contains("\"backend_node_id\": 101"));
+    }
+
+    #[tokio::test]
+    async fn browser_click_formats_backend_node_target_labels() {
+        let runtime = FakeBrowserChatRuntime::default();
+        let call = parse_browser_chat_tool_call(
+            "browser_click",
+            &serde_json::json!({
+                "backendNodeId": 701,
+                "navigationId": "nav-42"
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let rendered = execute_browser_chat_tool_call(call, &runtime).await;
+
+        assert_eq!(
+            rendered,
+            "已点击backend_node_id 701，页面可能已更新，请使用 browser_get_page 查看新状态"
+        );
+        assert_eq!(
+            runtime.last_click_target.lock().unwrap().clone(),
+            Some(BrowserToolTarget {
+                element_id: None,
+                backend_node_id: Some(701),
+                navigation_id: Some("nav-42".to_string()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_type_reports_targeted_failures_for_chat_tools() {
+        let runtime = FakeBrowserChatRuntime {
+            type_result: Err("browser.page_state_stale".to_string()),
+            ..FakeBrowserChatRuntime::default()
+        };
+        let call = parse_browser_chat_tool_call(
+            "browser_type",
+            &serde_json::json!({
+                "element_id": 7,
+                "backend_node_id": 701,
+                "text": "hello"
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let rendered = execute_browser_chat_tool_call(call, &runtime).await;
+
+        assert_eq!(
+            rendered,
+            "ERROR: 向元素 7 / backend_node_id 701输入失败: browser.page_state_stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_get_page_maps_not_connected_errors_to_user_guidance() {
+        let runtime = FakeBrowserChatRuntime {
+            page_state_result: Err("Browser not connected".to_string()),
+            ..FakeBrowserChatRuntime::default()
+        };
+
+        let rendered = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+
+        assert_eq!(rendered, browser_not_connected_message());
+    }
+
+    #[tokio::test]
+    async fn browser_navigate_uses_page_state_title_after_resync_warning() {
+        let runtime = FakeBrowserChatRuntime {
+            resync_result: Err("page replaced".to_string()),
+            ..FakeBrowserChatRuntime::default()
+        };
+
+        let rendered = execute_browser_chat_tool_call(
+            BrowserChatToolCall::Navigate {
+                url: "https://example.com/checkout".to_string(),
+                wait_selector: Some(".checkout-ready".to_string()),
+            },
+            &runtime,
+        )
+        .await;
+
+        assert_eq!(rendered, "已导航到: https://example.com/checkout，页面标题: Dashboard");
+    }
+
+    #[tokio::test]
+    async fn browser_type_retries_with_fresh_iframe_fixture_through_action_context_harness() {
+        let runtime = FixtureBrowserChatRuntime::new(
+            Some(load_page_state_fixture("iframe-retry-cache")),
+            vec![load_page_state_fixture("iframe-shadow")],
+        )
+        .await;
+        let call = parse_browser_chat_tool_call(
+            "browser_type",
+            &serde_json::json!({
+                "backendNodeId": 310,
+                "navigationId": "loader-root-1",
+                "text": "4242"
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let rendered = execute_browser_chat_tool_call(call, &runtime).await;
+
+        assert_eq!(rendered, "输入成功: backend_node_id 310，共 4 个字符");
+        assert_eq!(runtime.capture_count().await, 1);
+        assert_eq!(
+            runtime.last_resolved_element().as_ref().map(|element| element.frame_id.as_str()),
+            Some("frame-checkout")
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_click_recovers_after_refreshing_navigation_id_from_browser_get_page() {
+        let refreshed_page_state = load_page_state_fixture("navigation-refresh");
+        let runtime = FixtureBrowserChatRuntime::new(
+            Some(refreshed_page_state.clone()),
+            vec![refreshed_page_state.clone(), refreshed_page_state.clone()],
+        )
+        .await;
+        let stale_click = parse_browser_chat_tool_call(
+            "browser_click",
+            &serde_json::json!({
+                "backendNodeId": 200,
+                "navigationId": "loader-root-1"
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let stale_rendered = execute_browser_chat_tool_call(stale_click, &runtime).await;
+
+        assert!(stale_rendered.contains("browser.page_state_stale"));
+        assert!(stale_rendered.contains("loader-root-2"));
+
+        let page_state_json = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+        assert!(page_state_json.contains("\"navigation_id\": \"loader-root-2\""));
+        assert!(page_state_json.contains("\"title\": \"Review Order\""));
+
+        let fresh_click = parse_browser_chat_tool_call(
+            "browser_click",
+            &serde_json::json!({
+                "backendNodeId": 200,
+                "navigationId": "loader-root-2"
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let fresh_rendered = execute_browser_chat_tool_call(fresh_click, &runtime).await;
+
+        assert_eq!(
+            fresh_rendered,
+            "已点击backend_node_id 200，页面可能已更新，请使用 browser_get_page 查看新状态"
+        );
+        assert_eq!(runtime.capture_count().await, 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a local Chrome/Chromium binary for Chromiumoxide Browser::launch"]
+    async fn live_browser_chat_tools_render_shadow_success_messages() -> AnyhowResult<()> {
+        let server = CheckoutFlowServer::start().await?;
+        let harness = LiveActionHarness::launch().await?;
+
+        let live_result = async {
+            let runtime = LiveHarnessBrowserChatRuntime::new(&harness);
+            let navigate_url = server.shadow_checkout_url();
+            let navigate_rendered = execute_browser_chat_tool_call(
+                BrowserChatToolCall::Navigate {
+                    url: navigate_url.clone(),
+                    wait_selector: Some("#page-ready.ready".to_string()),
+                },
+                &runtime,
+            )
+            .await;
+            assert_eq!(
+                navigate_rendered,
+                format!("已导航到: {}，页面标题: Shadow Checkout Flow", navigate_url)
+            );
+
+            let page_state = actions::get_page_state(harness.ctx())
+                .await
+                .map_err(anyhow::Error::msg)?;
+            let shadow_input = find_live_element(&page_state, "shadow chat input", |element| {
+                element.frame_id != "root"
+                    && element.is_editable
+                    && element.selector_hint.as_deref() == Some("#shadow-card-number")
+            })?;
+            let shadow_button = find_live_element(&page_state, "shadow chat button", |element| {
+                element.frame_id != "root"
+                    && element.is_clickable
+                    && element.tag_name.as_deref() == Some("button")
+                    && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
+            })?;
+
+            let get_page_rendered = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+            assert!(get_page_rendered.contains("\"title\": \"Shadow Checkout Flow\""));
+            assert!(get_page_rendered.contains("\"selector_hint\": \"#shadow-confirm-payment\""));
+
+            let typed_value = "7777 8888 9999 0000".to_string();
+            let type_rendered = execute_browser_chat_tool_call(
+                parse_browser_chat_tool_call(
+                    "browser_type",
+                    &serde_json::json!({
+                        "backendNodeId": shadow_input.backend_node_id,
+                        "navigationId": page_state.navigation_id,
+                        "text": typed_value,
+                    }),
+                )
+                .unwrap()
+                .unwrap(),
+                &runtime,
+            )
+            .await;
+            assert_eq!(
+                type_rendered,
+                format!(
+                    "输入成功: backend_node_id {}，共 {} 个字符",
+                    shadow_input.backend_node_id,
+                    19
+                )
+            );
+
+            let click_rendered = execute_browser_chat_tool_call(
+                parse_browser_chat_tool_call(
+                    "browser_click",
+                    &serde_json::json!({
+                        "backendNodeId": shadow_button.backend_node_id,
+                        "navigationId": page_state.navigation_id,
+                    }),
+                )
+                .unwrap()
+                .unwrap(),
+                &runtime,
+            )
+            .await;
+            assert_eq!(
+                click_rendered,
+                format!(
+                    "已点击backend_node_id {}，页面可能已更新，请使用 browser_get_page 查看新状态",
+                    shadow_button.backend_node_id
+                )
+            );
+
+            let wait_rendered = execute_browser_chat_tool_call(
+                BrowserChatToolCall::Wait {
+                    seconds: None,
+                    wait_selector: Some("#payment-status.ready".to_string()),
+                },
+                &runtime,
+            )
+            .await;
+            assert!(wait_rendered.starts_with("等待完成，目标选择器已出现（"));
+
+            let status_text = read_selector_text_live(&harness, "#payment-status").await?;
+            assert!(status_text.contains("confirmed:"));
+            assert!(status_text.contains("7777"));
+
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let harness_shutdown = harness.shutdown().await;
+        let server_shutdown = server.shutdown().await;
+
+        live_result?;
+        harness_shutdown?;
+        server_shutdown?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a local Chrome/Chromium binary for Chromiumoxide Browser::launch"]
+    async fn live_browser_chat_tools_map_shadow_stale_navigation_errors() -> AnyhowResult<()> {
+        let server = CheckoutFlowServer::start().await?;
+        let harness = LiveActionHarness::launch().await?;
+
+        let live_result = async {
+            let runtime = LiveHarnessBrowserChatRuntime::new(&harness);
+            let navigate_rendered = execute_browser_chat_tool_call(
+                BrowserChatToolCall::Navigate {
+                    url: server.shadow_checkout_url(),
+                    wait_selector: Some("#page-ready.ready".to_string()),
+                },
+                &runtime,
+            )
+            .await;
+            assert!(navigate_rendered.contains("Shadow Checkout Flow"));
+
+            let stale_page_state = actions::get_page_state(harness.ctx())
+                .await
+                .map_err(anyhow::Error::msg)?;
+            let stale_button = find_live_element(&stale_page_state, "stale shadow button", |element| {
+                element.frame_id != "root"
+                    && element.is_clickable
+                    && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
+            })?;
+
+            harness.page().reload().await.map_err(anyhow::Error::from)?;
+
+            let reload_wait_rendered = execute_browser_chat_tool_call(
+                BrowserChatToolCall::Wait {
+                    seconds: None,
+                    wait_selector: Some("#page-ready.ready".to_string()),
+                },
+                &runtime,
+            )
+            .await;
+            assert!(reload_wait_rendered.starts_with("等待完成，目标选择器已出现（"));
+
+            let refreshed_page_state = actions::get_page_state(harness.ctx())
+                .await
+                .map_err(anyhow::Error::msg)?;
+            assert_ne!(refreshed_page_state.navigation_id, stale_page_state.navigation_id);
+
+            let stale_click_rendered = execute_browser_chat_tool_call(
+                parse_browser_chat_tool_call(
+                    "browser_click",
+                    &serde_json::json!({
+                        "backendNodeId": stale_button.backend_node_id,
+                        "navigationId": stale_page_state.navigation_id,
+                    }),
+                )
+                .unwrap()
+                .unwrap(),
+                &runtime,
+            )
+            .await;
+            assert!(stale_click_rendered.contains(&format!("ERROR: 点击backend_node_id {}失败:", stale_button.backend_node_id)));
+            assert!(stale_click_rendered.contains("browser.page_state_stale"));
+            assert!(stale_click_rendered.contains(&refreshed_page_state.navigation_id));
+
+            let get_page_rendered = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+            assert!(get_page_rendered.contains(&format!("\"navigation_id\": \"{}\"", refreshed_page_state.navigation_id)));
+
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let harness_shutdown = harness.shutdown().await;
+        let server_shutdown = server.shutdown().await;
+
+        live_result?;
+        harness_shutdown?;
+        server_shutdown?;
+        Ok(())
+    }
+
+    fn find_live_element<F>(
+        page_state: &PageState,
+        label: &str,
+        predicate: F,
+    ) -> AnyhowResult<InteractiveElement>
+    where
+        F: Fn(&InteractiveElement) -> bool,
+    {
+        let element_debug = serde_json::to_string_pretty(&page_state.elements)
+            .unwrap_or_else(|_| format!("{:?}", page_state.elements));
+
+        page_state
+            .elements
+            .iter()
+            .find(|element| predicate(element))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("expected {} in live page state; elements={}", label, element_debug))
+    }
+
+    async fn read_selector_text_live(harness: &LiveActionHarness, selector: &str) -> AnyhowResult<String> {
+        let script = format!(
+            "(function() {{ const node = document.querySelector({selector:?}); return node ? node.textContent : ''; }})()",
+        );
+        harness
+            .page()
+            .evaluate(script)
+            .await
+            .map_err(anyhow::Error::from)?
+            .into_value::<String>()
+            .map_err(anyhow::Error::from)
+    }
+
+    fn sample_page_state() -> PageState {
+        PageState {
+            url: "https://example.com/dashboard".to_string(),
+            title: "Dashboard".to_string(),
+            navigation_id: "nav-42".to_string(),
+            frame_count: 2,
+            warnings: vec!["cross_origin_iframe_partial".to_string()],
+            elements: vec![InteractiveElement {
+                index: 1,
+                backend_node_id: 101,
+                frame_id: "root".to_string(),
+                role: "button".to_string(),
+                name: "Sync Now".to_string(),
+                tag_name: Some("button".to_string()),
+                bounds: None,
+                is_visible: true,
+                is_clickable: true,
+                is_editable: false,
+                selector_hint: Some("button[data-action=\"sync\"]".to_string()),
+                text_hint: None,
+                href: None,
+                input_type: None,
+            }],
+            screenshot: None,
+        }
+    }
+
+    struct FixtureBrowserChatRuntime {
+        harness: FixtureActionHarness,
+        last_resolved_element: StdMutex<Option<InteractiveElement>>,
+    }
+
+    impl FixtureBrowserChatRuntime {
+        async fn new(cached_page_state: Option<PageState>, queued_page_states: Vec<PageState>) -> Self {
+            Self {
+                harness: FixtureActionHarness::new(cached_page_state, queued_page_states).await,
+                last_resolved_element: StdMutex::new(None),
+            }
+        }
+
+        async fn capture_count(&self) -> usize {
+            self.harness.capture_count().await
+        }
+
+        fn last_resolved_element(&self) -> Option<InteractiveElement> {
+            self.last_resolved_element.lock().unwrap().clone()
+        }
+
+        fn to_element_reference(target: &BrowserToolTarget) -> ElementReference {
+            ElementReference {
+                index: target.element_id,
+                backend_node_id: target.backend_node_id,
+                navigation_id: target.navigation_id.clone(),
+            }
+        }
+
+        async fn resolve_target(&self, target: &BrowserToolTarget) -> Result<InteractiveElement, String> {
+            let element = self
+                .harness
+                .resolve_element(Self::to_element_reference(target))
+                .await
+                .map_err(|error| error.to_string())?;
+            *self.last_resolved_element.lock().unwrap() = Some(element.clone());
+            Ok(element)
+        }
+    }
+
+    struct LiveHarnessBrowserChatRuntime<'a> {
+        harness: &'a LiveActionHarness,
+    }
+
+    impl<'a> LiveHarnessBrowserChatRuntime<'a> {
+        fn new(harness: &'a LiveActionHarness) -> Self {
+            Self { harness }
+        }
+
+        fn to_element_reference(target: &BrowserToolTarget) -> ElementReference {
+            ElementReference {
+                index: target.element_id,
+                backend_node_id: target.backend_node_id,
+                navigation_id: target.navigation_id.clone(),
+            }
+        }
+    }
+
+    struct FakeBrowserChatRuntime {
+        navigate_result: Result<(), String>,
+        resync_result: Result<(), String>,
+        page_state_result: Result<PageState, String>,
+        click_result: Result<String, String>,
+        type_result: Result<String, String>,
+        scroll_result: Result<String, String>,
+        text_result: Result<String, String>,
+        screenshot_result: Result<String, String>,
+        extract_result: Result<String, String>,
+        press_key_result: Result<String, String>,
+        wait_result: Result<String, String>,
+        last_click_target: StdMutex<Option<BrowserToolTarget>>,
+    }
+
+    impl Default for FakeBrowserChatRuntime {
+        fn default() -> Self {
+            Self {
+                navigate_result: Ok(()),
+                resync_result: Ok(()),
+                page_state_result: Ok(sample_page_state()),
+                click_result: Ok("clicked".to_string()),
+                type_result: Ok("输入成功: backend_node_id 701，共 5 个字符".to_string()),
+                scroll_result: Ok("scrolled".to_string()),
+                text_result: Ok("Page content".to_string()),
+                screenshot_result: Ok("base64-image".to_string()),
+                extract_result: Ok("structured content".to_string()),
+                press_key_result: Ok("pressed".to_string()),
+                wait_result: Ok("等待完成，目标选择器已出现（250ms）".to_string()),
+                last_click_target: StdMutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BrowserChatRuntime for FakeBrowserChatRuntime {
+        async fn navigate_and_wait(&self, _url: String, _wait_selector: Option<String>) -> Result<(), String> {
+            self.navigate_result.clone()
+        }
+
+        async fn resync_page(&self) -> Result<(), String> {
+            self.resync_result.clone()
+        }
+
+        async fn get_page_state(&self) -> Result<PageState, String> {
+            self.page_state_result.clone()
+        }
+
+        async fn click(&self, target: &BrowserToolTarget) -> Result<String, String> {
+            *self.last_click_target.lock().unwrap() = Some(target.clone());
+            self.click_result.clone()
+        }
+
+        async fn type_text(&self, _target: &BrowserToolTarget, _text: String) -> Result<String, String> {
+            self.type_result.clone()
+        }
+
+        async fn scroll(&self, _direction: String, _pixels: i64) -> Result<String, String> {
+            self.scroll_result.clone()
+        }
+
+        async fn get_text(&self, _max_length: Option<u64>) -> Result<String, String> {
+            self.text_result.clone()
+        }
+
+        async fn screenshot(&self) -> Result<String, String> {
+            self.screenshot_result.clone()
+        }
+
+        async fn extract_content(&self) -> Result<String, String> {
+            self.extract_result.clone()
+        }
+
+        async fn press_key(&self, _key: String) -> Result<String, String> {
+            self.press_key_result.clone()
+        }
+
+        async fn wait(&self, _seconds: Option<u64>, _wait_selector: Option<String>) -> Result<String, String> {
+            self.wait_result.clone()
+        }
+
+        async fn delay_after_click(&self) {}
+    }
+
+    #[async_trait]
+    impl BrowserChatRuntime for FixtureBrowserChatRuntime {
+        async fn navigate_and_wait(&self, _url: String, _wait_selector: Option<String>) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn resync_page(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn get_page_state(&self) -> Result<PageState, String> {
+            crate::browser::actions::get_page_state(self.harness.ctx())
+                .await
+                .map_err(|error| error.to_string())
+        }
+
+        async fn click(&self, target: &BrowserToolTarget) -> Result<String, String> {
+            let element = self.resolve_target(target).await?;
+            if !element.is_visible || !element.is_clickable {
+                return Err(BrowserActionError::element_not_interactable(format!(
+                    "{} is not a visible clickable element.",
+                    Self::to_element_reference(target).description()
+                ))
+                .to_string());
+            }
+
+            Ok(format!(
+                "点击成功: backend_node_id {}{}",
+                element.backend_node_id,
+                element
+                    .tag_name
+                    .as_ref()
+                    .map(|tag| format!(" <{}>", tag))
+                    .unwrap_or_default()
+            ))
+        }
+
+        async fn type_text(&self, target: &BrowserToolTarget, text: String) -> Result<String, String> {
+            let element = self.resolve_target(target).await?;
+            if !element.is_visible || !element.is_editable {
+                return Err(BrowserActionError::element_not_interactable(format!(
+                    "{} is not an editable visible element.",
+                    Self::to_element_reference(target).description()
+                ))
+                .to_string());
+            }
+
+            Ok(format!(
+                "输入成功: backend_node_id {}，共 {} 个字符",
+                element.backend_node_id,
+                text.chars().count()
+            ))
+        }
+
+        async fn scroll(&self, direction: String, pixels: i64) -> Result<String, String> {
+            Ok(format!("滚动: {} {}px", direction, pixels))
+        }
+
+        async fn get_text(&self, _max_length: Option<u64>) -> Result<String, String> {
+            Ok(String::new())
+        }
+
+        async fn screenshot(&self) -> Result<String, String> {
+            Ok("fixture-screenshot".to_string())
+        }
+
+        async fn extract_content(&self) -> Result<String, String> {
+            Ok("fixture-content".to_string())
+        }
+
+        async fn press_key(&self, key: String) -> Result<String, String> {
+            Ok(format!("已按下键 '{}'", key))
+        }
+
+        async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String> {
+            if wait_selector.is_some() {
+                Ok("等待完成，目标选择器已出现（0ms）".to_string())
+            } else {
+                Ok(format!("已等待 {} 秒", seconds.unwrap_or(2)))
+            }
+        }
+
+        async fn delay_after_click(&self) {}
+    }
+
+    #[async_trait]
+    impl BrowserChatRuntime for LiveHarnessBrowserChatRuntime<'_> {
+        async fn navigate_and_wait(&self, url: String, wait_selector: Option<String>) -> Result<(), String> {
+            actions::navigate(
+                self.harness.ctx(),
+                actions::NavigateInput {
+                    url: Some(url),
+                    wait_selector,
+                    timeout_ms: None,
+                },
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        }
+
+        async fn resync_page(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn get_page_state(&self) -> Result<PageState, String> {
+            actions::get_page_state(self.harness.ctx())
+                .await
+                .map_err(|error| error.to_string())
+        }
+
+        async fn click(&self, target: &BrowserToolTarget) -> Result<String, String> {
+            let output = actions::click(
+                self.harness.ctx(),
+                actions::ClickInput {
+                    target: Self::to_element_reference(target),
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+
+            Ok(format!(
+                "点击成功: backend_node_id {}{}",
+                output.backend_node_id,
+                output
+                    .tag_name
+                    .as_ref()
+                    .map(|tag| format!(" <{}>", tag))
+                    .unwrap_or_default()
+            ))
+        }
+
+        async fn type_text(&self, target: &BrowserToolTarget, text: String) -> Result<String, String> {
+            let text_len = text.chars().count();
+            let output = actions::type_text(
+                self.harness.ctx(),
+                actions::TypeTextInput {
+                    target: Self::to_element_reference(target),
+                    text,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+
+            Ok(format!(
+                "输入成功: backend_node_id {}，共 {} 个字符",
+                output.backend_node_id, text_len
+            ))
+        }
+
+        async fn scroll(&self, direction: String, pixels: i64) -> Result<String, String> {
+            actions::scroll(self.harness.ctx(), actions::ScrollInput { direction, pixels })
+                .await
+                .map(|_| "ok".to_string())
+                .map_err(|error| error.to_string())
+        }
+
+        async fn get_text(&self, max_length: Option<u64>) -> Result<String, String> {
+            actions::get_text_content(
+                self.harness.ctx(),
+                actions::GetTextContentInput {
+                    max_length: max_length.unwrap_or(3_000) as usize,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())
+        }
+
+        async fn screenshot(&self) -> Result<String, String> {
+            actions::screenshot(self.harness.ctx())
+                .await
+                .map(|screenshot| screenshot.value)
+                .map_err(|error| error.to_string())
+        }
+
+        async fn extract_content(&self) -> Result<String, String> {
+            actions::extract_content(self.harness.ctx(), actions::ExtractContentInput)
+                .await
+                .map_err(|error| error.to_string())
+        }
+
+        async fn press_key(&self, key: String) -> Result<String, String> {
+            actions::press_key(self.harness.ctx(), actions::PressKeyInput { key })
+                .await
+                .map(|output| format!("已按下键 '{}'", output.key))
+                .map_err(|error| error.to_string())
+        }
+
+        async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String> {
+            let output = actions::wait(
+                self.harness.ctx(),
+                actions::WaitInput {
+                    seconds,
+                    wait_selector,
+                    timeout_ms: None,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+
+            if output.selector_matched {
+                Ok(format!("等待完成，目标选择器已出现（{}ms）", output.waited_ms))
+            } else {
+                Ok(format!("已等待 {} 秒", output.waited_ms / 1_000))
+            }
+        }
+
+        async fn delay_after_click(&self) {}
+    }
 }

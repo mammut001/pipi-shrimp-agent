@@ -15,6 +15,7 @@
 import { useEffect, lazy, Suspense } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
+import { setupBrowserObservabilityWiring } from '@/store/browserObservabilityWiring';
 import { useSwarmStore } from '@/store/swarmStore';
 import { initializeTelegramStore } from '@/store/telegramStore';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
@@ -59,6 +60,11 @@ export default function App() {
 
     init();
   }, [getApiConfig, initChat]);
+
+  useEffect(() => {
+    const cleanup = setupBrowserObservabilityWiring();
+    return cleanup;
+  }, []);
 
   // Render active page based on currentView
   // Note: 'browser' view is deprecated - browser is now a dock mode in chat view

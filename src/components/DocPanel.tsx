@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { DOCS_CHANGED_EVENT, type DocsChangedEventDetail } from '@/services/browserBenchmarkArtifacts';
 import { listDocs, readDoc, openFileExternal, openFileWithApp, DocMeta, DocContent } from '@/services/docService';
 import { invoke } from '@tauri-apps/api/core';
 import { Section } from './ui/Section';
@@ -44,6 +45,22 @@ export function DocPanel({ workDir }: DocPanelProps) {
   useEffect(() => {
     loadDocs();
   }, [loadDocs]);
+
+  useEffect(() => {
+    if (!workDir || typeof window === 'undefined') {
+      return;
+    }
+
+    const handleDocsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<DocsChangedEventDetail>).detail;
+      if (!detail || detail.workDir === workDir) {
+        void loadDocs();
+      }
+    };
+
+    window.addEventListener(DOCS_CHANGED_EVENT, handleDocsChanged);
+    return () => window.removeEventListener(DOCS_CHANGED_EVENT, handleDocsChanged);
+  }, [loadDocs, workDir]);
 
   // Close menu when clicking outside
   useEffect(() => {

@@ -31,11 +31,16 @@ export function ChromeConnectPrompt() {
     setConnecting(true);
     setConnectError(null);
     try {
-      await launchChromeAndConnect();
-      // launchChromeAndConnect sets cdpStatus → 'connected' on success
-      resolveChromePrompt(true);
+      const connected = await launchChromeAndConnect();
+      if (connected) {
+        resolveChromePrompt(true);
+        return;
+      }
+
+      setConnectError(useCdpStore.getState().errorMessage ?? '连接失败，请重试');
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : '连接失败，请重试');
+    } finally {
       setConnecting(false);
     }
   };

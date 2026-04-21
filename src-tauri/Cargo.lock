@@ -4219,6 +4219,7 @@ dependencies = [
  "futures",
  "glob",
  "jsonschema",
+ "libc",
  "once_cell",
  "open",
  "portable-pty",

@@ -77,6 +77,7 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
   const selectedResumeTemplates = useUIStore((s) => s.selectedResumeTemplates);
   const setSelectedResumeTemplate = useUIStore((s) => s.setSelectedResumeTemplate);
   const selectedId = currentSessionId ? selectedResumeTemplates[currentSessionId] ?? null : null;
+  const hasSelectedTemplate = selectedId !== null;
   const isSessionBusy = Boolean(currentSessionId && isStreaming && streamingSessionId === currentSessionId);
 
   // Scroll helpers
@@ -89,11 +90,11 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
 
   // User picks a template → send message back to the AI
   const handleSelect = useCallback((tpl: ResumeTemplate) => {
-    if (!currentSessionId || isSessionBusy || selectedId === tpl.id) return;
+    if (!currentSessionId || isSessionBusy || hasSelectedTemplate) return;
 
     setSelectedResumeTemplate(currentSessionId, tpl.id);
     sendMessage(`I'd like to use the **${tpl.name}** template (id: \`${tpl.id}\`). Please call Skill("resume") first to load the template code examples before writing any files.`);
-  }, [currentSessionId, isSessionBusy, selectedId, sendMessage, setSelectedResumeTemplate]);
+  }, [currentSessionId, hasSelectedTemplate, isSessionBusy, sendMessage, setSelectedResumeTemplate]);
 
   // Lightbox navigation
   const lightboxPrev = useCallback(() => {
@@ -133,13 +134,17 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
         >
           {templates.map((tpl, idx) => {
             const isSelected = selectedId === tpl.id;
+            const selectionLocked = hasSelectedTemplate && !isSelected;
+
             return (
               <div
                 key={tpl.id}
-                className={`snap-start flex-shrink-0 w-[200px] rounded-xl border-2 overflow-hidden cursor-pointer transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 ${
+                className={`snap-start flex-shrink-0 w-[200px] rounded-xl border-2 overflow-hidden cursor-pointer transition-all duration-200 ${
                   isSelected
                     ? 'border-blue-500 ring-2 ring-blue-200 shadow-blue-100'
-                    : 'border-gray-200 hover:border-gray-300'
+                    : selectionLocked
+                      ? 'border-gray-200 opacity-70'
+                      : 'border-gray-200 hover:border-gray-300 hover:shadow-lg hover:-translate-y-0.5'
                 }`}
               >
                 {/* Preview thumbnail — click to open lightbox */}
@@ -175,16 +180,16 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleSelect(tpl); }}
-                    disabled={isSelected || isSessionBusy}
+                    disabled={hasSelectedTemplate || isSessionBusy}
                     className={`w-full py-1.5 text-[11px] font-medium rounded-lg transition-colors ${
                       isSelected
                         ? 'bg-blue-500 text-white cursor-default'
-                        : isSessionBusy
+                        : selectionLocked || isSessionBusy
                           ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                           : 'bg-gray-900 text-white hover:bg-gray-800'
                     }`}
                   >
-                    {isSelected ? '✓ Selected' : isSessionBusy ? 'Processing...' : 'Use This Template'}
+                    {isSelected ? '✓ Selected' : selectionLocked ? 'Locked' : isSessionBusy ? 'Processing...' : 'Use This Template'}
                   </button>
                 </div>
               </div>

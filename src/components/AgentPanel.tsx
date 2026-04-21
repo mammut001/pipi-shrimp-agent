@@ -10,11 +10,9 @@ import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
 import { invoke } from '@tauri-apps/api/core';
 import { CdpConnectorModal } from './CdpConnectorModal';
-import { TypstPreview } from './index';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { DocPanel } from './DocPanel';
 import { ChatImage } from './ChatImage';
-import { getLatestTypstBlock } from '@/utils/typst';
 import { Section } from './ui/Section';
 import { FileIcon } from './ui/FileIcon';
 import { AutoResearchPanel } from './AutoResearchPanel';
@@ -48,6 +46,8 @@ export const AgentPanel: React.FC = () => {
   const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode, isStreaming, pendingToolCalls } = useChatStore();
   const { status: browserStatus } = useBrowserAgentStore();
   const cdpStatus = useCdpStore(s => s.status);
+  const cdpConnectionState = useCdpStore(s => s.connectionState);
+  const setupCdpConnectionMonitor = useCdpStore(s => s.setupConnectionMonitor);
   const [showCdpModal, setShowCdpModal] = useState(false);
 
   // Get session-level working files and permissionMode for current session
@@ -68,26 +68,20 @@ export const AgentPanel: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [pendingModeChange, setPendingModeChange] = useState<string | null>(null);
 
-  // Preview related state
-  const [previewContent, setPreviewContent] = useState('');
-  const [autoSync, setAutoSync] = useState(true);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
-
   // Synchronized workspace files
   const [syncedFiles, setSyncedFiles] = useState<SyncedWorkspaceEntry[]>([]);
 
   useEffect(() => {
+    return setupCdpConnectionMonitor();
+  }, [setupCdpConnectionMonitor]);
+
+  useEffect(() => {
     if (!currentSessionId) {
-      setPreviewContent('');
       setSyncedFiles([]);
-      setIsInitialLoad(true);
-      setAutoSync(true);
       return;
     }
 
-    setPreviewContent('');
     setSyncedFiles([]);
-    setIsInitialLoad(true);
   }, [currentSessionId]);
 
   useEffect(() => {
@@ -196,38 +190,6 @@ export const AgentPanel: React.FC = () => {
     }
   }, [activeSkill, setActiveTab]);
 
-  // Sync on mount (immediate, not debounced)
-  useEffect(() => {
-    if (autoSync && messages.length > 0) {
-      const latestBlock = getLatestTypstBlock(messages);
-      if (latestBlock && isInitialLoad) {
-        setPreviewContent(latestBlock);
-        setIsInitialLoad(false);
-      }
-    }
-  }, []); // Only run on mount
-
-
-  // Sync immediately when switching to typst-preview tab
-  useEffect(() => {
-    if (activeTab === 'typst-preview' && autoSync && messages.length > 0) {
-      const latestBlock = getLatestTypstBlock(messages);
-      if (latestBlock) {
-        setPreviewContent(latestBlock);
-      }
-    }
-  }, [activeTab]); // Run when tab changes
-
-  // Auto-sync latest Typst block from messages (for new messages while on tab)
-  useEffect(() => {
-    if (autoSync && messages.length > 0) {
-      const latestBlock = getLatestTypstBlock(messages);
-      if (latestBlock) {
-        setPreviewContent(latestBlock);
-      }
-    }
-  }, [messages, autoSync]);
-
   React.useEffect(() => {
     setLocalInstructions(agentInstructions);
   }, [agentInstructions]);
@@ -257,6 +219,16 @@ export const AgentPanel: React.FC = () => {
     setShowPermissionWarning(false);
     setPendingModeChange(null);
   };
+
+  const cdpHealthLabel = (cdpConnectionState?.health_status ?? cdpStatus)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  const cdpLaunchLabel = cdpConnectionState?.launch_mode === 'launch'
+    ? 'Launched by PiPi'
+    : cdpConnectionState?.launch_mode === 'attach'
+      ? 'Attached to Existing Chrome'
+      : null;
 
   const confirmBypass = () => {
     if (currentSessionId) {
@@ -315,40 +287,6 @@ export const AgentPanel: React.FC = () => {
           </svg>
         </button>
 
-        {/* Typst Preview tab */}
-        <button
-          onClick={() => setActiveTab('typst-preview')}
-          className={`p-1.5 rounded-lg transition-all ${
-            activeTab === 'typst-preview'
-              ? 'bg-gray-100 text-gray-900'
-              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-          }`}
-          title="Typst Preview"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
-        </button>
-
-        {/* Typst Code tab */}
-        <button
-          onClick={() => setActiveTab('typst-code')}
-          className={`p-1.5 rounded-lg transition-all ${
-            activeTab === 'typst-code'
-              ? 'bg-gray-100 text-gray-900'
-              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-          }`}
-          title="Typst Code"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-          </svg>
-        </button>
-
         {/* Artifact Preview tab (only if artifact exists) */}
         {currentArtifactId && (
           <button
@@ -382,51 +320,12 @@ export const AgentPanel: React.FC = () => {
         </button>
 
         {/* Roadmap tab - TODO: re-implement with proper state management */}
-
-        {/* Sync toggle (only relevant for Typst tabs) */}
-        {(activeTab === 'typst-preview' || activeTab === 'typst-code') && (
-          <button
-            onClick={() => setAutoSync(!autoSync)}
-            className={`ml-auto px-2 py-1 text-[9px] font-bold rounded-lg uppercase tracking-tight flex items-center gap-1 transition-all ${
-              autoSync ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-            }`}
-            title={autoSync ? 'Auto-sync on' : 'Auto-sync off'}
-          >
-            <svg className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
-            </svg>
-            Sync
-          </button>
-        )}
       </div>
 
       {/* Tab content: Browser - Always show mini browser + task + logs */}
       {activeTab === 'browser' && (
         <div className="flex-1 min-h-0 overflow-hidden">
           <BrowserMiniPreview />
-        </div>
-      )}
-
-      {/* Tab content: Typst Preview */}
-      {activeTab === 'typst-preview' && (
-        <div className="flex-1 overflow-hidden p-3">
-          <TypstPreview rawContent={previewContent} className="h-full" outputDir={currentSession?.outputDir} />
-        </div>
-      )}
-
-      {/* Tab content: Typst Code */}
-      {activeTab === 'typst-code' && (
-        <div className="flex-1 overflow-hidden p-3">
-          <textarea
-            value={previewContent}
-            onChange={(e) => {
-              setPreviewContent(e.target.value);
-              setAutoSync(false);
-            }}
-            className="w-full h-full resize-none font-mono text-xs p-3 border border-gray-200 rounded-xl focus:outline-none focus:border-gray-400 bg-white"
-            placeholder="Enter Typst source code..."
-            spellCheck={false}
-          />
         </div>
       )}
 
@@ -741,11 +640,30 @@ export const AgentPanel: React.FC = () => {
                         {cdpStatus === 'connected' ? 'Pipi Shrimp in Chrome' : 'Chrome Browser'}
                       </p>
                       <p className="text-[9px] text-gray-400 font-medium uppercase tracking-tight">
-                        {cdpStatus === 'connected' && 'Active Connection'}
+                        {cdpStatus === 'connected' && cdpHealthLabel}
                         {cdpStatus === 'connecting' && 'Connecting...'}
                         {cdpStatus === 'disconnected' && 'Click to Connect'}
                         {cdpStatus === 'error' && 'Connection Failed — Retry'}
                       </p>
+                      {cdpConnectionState && (
+                        <div className="mt-1 space-y-0.5">
+                          {cdpLaunchLabel && (
+                            <p className="text-[9px] text-gray-500 truncate">
+                              {cdpLaunchLabel}
+                            </p>
+                          )}
+                          {cdpConnectionState.current_url && (
+                            <p className="max-w-[180px] truncate text-[9px] text-gray-500">
+                              {cdpConnectionState.current_url}
+                            </p>
+                          )}
+                          {cdpConnectionState.health_failures > 0 && (
+                            <p className="text-[9px] text-amber-600">
+                              {cdpConnectionState.health_failures} recent health failures
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className={`h-1.5 w-1.5 rounded-full shadow-sm ${

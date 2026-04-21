@@ -532,14 +532,11 @@ export function Sidebar() {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col bg-[#fbfbfa] text-[#37352f]">
       {/* Header */}
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-xl font-bold text-gray-900 tracking-tight">🦐 PiPi Shrimp Agent</h1>
-          <div className="flex items-center gap-2">
-            {/* Status Indicator or other top-right actions can go here */}
-          </div>
+      <div className="border-b border-[#ececea] p-4">
+        <div className="mb-4 flex items-center justify-between">
+          <h1 className="text-xl font-bold text-[#191919] tracking-tight">🦐 PiPi Shrimp Agent</h1>
         </div>
 
         {/* New Chat / New Workflow Button (context-aware) */}
