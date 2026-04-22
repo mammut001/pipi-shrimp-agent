@@ -33,8 +33,19 @@ function generateConfigId(): string {
 
 /**
  * Minimal obfuscation for API keys in localStorage.
- * NOT encryption — prevents casual shoulder-surfing and accidental log exposure.
- * Full security requires Tauri secure store plugin (P2).
+ * 
+ * ⚠️ SECURITY WARNING ⚠️
+ * This is NOT real encryption. btoa() creates easily reversible base64 encoding.
+ * Anyone can decode with: atob(encodedKey)
+ * 
+ * Current protection: prevents casual shoulder-surfing and accidental log exposure
+ * 
+ * P2 TODO: Implement proper encryption using:
+ *   - @tauri-apps/plugin-secure-store (when available), OR
+ *   - Use OS keychain via tauri-plugin-os
+ *   
+ * Current fallback: if secure storage unavailable, API keys are stored with this
+ * basic obfuscation only.
  */
 function obfuscate(value: string): string {
   return btoa(unescape(encodeURIComponent(value)));

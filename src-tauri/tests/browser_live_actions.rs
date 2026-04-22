@@ -381,7 +381,7 @@ async fn live_browser_invalidates_snapshot_cache_from_direct_cdp_navigation_even
         let navigate_output = action_result(navigate(
             harness.ctx(),
             NavigateInput {
-                url: Some(server.dom_rewrite_url()),
+                url: Some(server.checkout_url()),
                 wait_selector: Some("#page-ready.ready".to_string()),
                 timeout_ms: Some(5_000),
             },
@@ -434,6 +434,15 @@ async fn live_browser_invalidates_snapshot_cache_from_direct_cdp_navigation_even
         .context("timed out waiting for CDP runtime events to invalidate cached page state")?;
 
         let observability = manager.lock().await.observability_snapshot();
+        let expected_navigation_invalidation_detail = format!("frameNavigated | {}", server.checkout_url());
+        let recent_invalidation_event_details: Vec<_> = observability
+            .recent_events
+            .iter()
+            .filter(|event| {
+                event.kind == pipi_shrimp_agent::browser::observability::BrowserEventKind::SnapshotCacheInvalidate
+            })
+            .map(|event| event.detail.clone())
+            .collect();
         assert_eq!(observability.snapshot_cache.invalidation_count, 1);
         assert_eq!(observability.snapshot_cache.active_key, None);
         assert!(observability.snapshot_cache.entries.iter().any(|entry| {
@@ -443,6 +452,15 @@ async fn live_browser_invalidates_snapshot_cache_from_direct_cdp_navigation_even
                 .map(|reason| reason.starts_with("cdp_"))
                 .unwrap_or(false)
         }));
+        assert!(
+            observability.recent_events.iter().any(|event| {
+                event.kind == pipi_shrimp_agent::browser::observability::BrowserEventKind::SnapshotCacheInvalidate
+                    && event.detail.as_deref() == Some(expected_navigation_invalidation_detail.as_str())
+            }),
+            "expected navigation invalidation detail {:?}, got {:?}",
+            expected_navigation_invalidation_detail,
+            recent_invalidation_event_details
+        );
 
         Ok::<(), anyhow::Error>(())
     }
@@ -469,7 +487,7 @@ async fn live_browser_invalidates_snapshot_cache_from_dom_document_updated_event
         let navigate_output = action_result(navigate(
             harness.ctx(),
             NavigateInput {
-                url: Some(server.checkout_url()),
+                url: Some(server.dom_rewrite_url()),
                 wait_selector: Some("#page-ready.ready".to_string()),
                 timeout_ms: Some(5_000),
             },
@@ -544,6 +562,15 @@ async fn live_browser_invalidates_snapshot_cache_from_dom_document_updated_event
             .iter()
             .map(|entry| entry.invalidation_reason.clone())
             .collect();
+        let expected_dom_invalidation_detail = format!("domDocumentUpdated | {}", server.dom_rewrite_url());
+        let recent_invalidation_event_details: Vec<_> = observability
+            .recent_events
+            .iter()
+            .filter(|event| {
+                event.kind == pipi_shrimp_agent::browser::observability::BrowserEventKind::SnapshotCacheInvalidate
+            })
+            .map(|event| event.detail.clone())
+            .collect();
         assert_eq!(observability.snapshot_cache.invalidation_count, 1);
         assert_eq!(observability.snapshot_cache.active_key, None);
         assert!(
@@ -552,6 +579,15 @@ async fn live_browser_invalidates_snapshot_cache_from_dom_document_updated_event
             }),
             "expected cdp_dom_document_updated invalidation, got {:?}",
             invalidation_reasons
+        );
+        assert!(
+            observability.recent_events.iter().any(|event| {
+                event.kind == pipi_shrimp_agent::browser::observability::BrowserEventKind::SnapshotCacheInvalidate
+                    && event.detail.as_deref() == Some(expected_dom_invalidation_detail.as_str())
+            }),
+            "expected DOM invalidation detail {:?}, got {:?}",
+            expected_dom_invalidation_detail,
+            recent_invalidation_event_details
         );
 
         Ok::<(), anyhow::Error>(())

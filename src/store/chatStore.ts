@@ -112,6 +112,10 @@ async function runSMCompactAfterStreaming(
           }),
         }));
         return; // SM Compact 成功，不需要继续
+      } else if (smResult.error) {
+        // SM Compact 失败但继续到 Legacy Compact
+        console.warn('[SM Compact] Failed:', smResult.error);
+        // 不单独通知，因为会继续尝试 Legacy Compact
       }
     }
     
@@ -149,10 +153,20 @@ async function runSMCompactAfterStreaming(
         }));
       } else if (legacyResult.error) {
         console.warn('[Legacy Compact] Failed:', legacyResult.error);
+        useUIStore.getState().addNotification(
+          'warning',
+          `Context compression failed: ${legacyResult.error}. Context window may fill up.`,
+          sessionId
+        );
       }
     }
   } catch (e) {
     console.warn('[Compact] Check failed:', e);
+    useUIStore.getState().addNotification(
+      'warning',
+      'Context compression check failed. Consider freeing up space.',
+      sessionId
+    );
   }
 }
 
@@ -302,24 +316,37 @@ async function ensureSessionWorkDir(
   if (!session) return null;
   if (session.workDir) return session.workDir;
 
-  try {
-    const defaultDir = await invoke<string>('get_app_default_dir', { sessionId });
-    await invoke('create_directory', { path: defaultDir });
+  const maxRetries = 3;
+  const baseDelayMs = 1000;
 
-    const latestSession = get().sessions.find((s) => s.id === sessionId) ?? session;
-    const updated = { ...latestSession, workDir: defaultDir, updatedAt: Date.now() };
-    await invoke('db_save_session', { session: sessionToDb(updated) });
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const defaultDir = await invoke<string>('get_app_default_dir', { sessionId });
+      await invoke('create_directory', { path: defaultDir });
 
-    set((state) => ({
-      sessions: state.sessions.map((s) => (s.id === sessionId ? updated : s)),
-    }));
+      const latestSession = get().sessions.find((s) => s.id === sessionId) ?? session;
+      const updated = { ...latestSession, workDir: defaultDir, updatedAt: Date.now() };
+      await invoke('db_save_session', { session: sessionToDb(updated) });
 
-    console.log(`📂 Auto-assigned workDir for session: ${defaultDir}`);
-    return defaultDir;
-  } catch (error) {
-    console.error('[workDir] Failed to auto-assign default directory:', error);
-    return null;
+      set((state) => ({
+        sessions: state.sessions.map((s) => (s.id === sessionId ? updated : s)),
+      }));
+
+      console.log(`📂 Auto-assigned workDir for session: ${defaultDir}`);
+      return defaultDir;
+    } catch (error) {
+      const isLastAttempt = attempt === maxRetries;
+      if (isLastAttempt) {
+        console.error('[workDir] Failed to auto-assign default directory after retries:', error);
+        return null;
+      }
+      // Exponential backoff: 1s, 2s, 4s
+      const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+      console.warn(`[workDir] Attempt ${attempt} failed, retrying in ${delayMs}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
   }
+  return null;
 }
 
 /**

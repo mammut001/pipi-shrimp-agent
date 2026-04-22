@@ -147,6 +147,9 @@ const buildPageStateElementPreview = (element: BrowserInteractiveElement): Brows
     id: `element-${element.backend_node_id}`,
     label: getBrowserElementLabel(element),
     role: element.role || element.tag_name || 'element',
+    index: element.index,
+    backendNodeId: element.backend_node_id,
+    bounds: element.bounds ?? null,
     selector,
     status: getBrowserElementStatus(element),
   };
@@ -200,8 +203,10 @@ const toBackendSnapshot = (pageState: BrowserPageState) => {
     cacheKey: [targetId, pageState.navigation_id, viewportSignature, domVersion].join(':'),
     url: pageState.url,
     title: pageState.title,
+    viewport: pageState.viewport ?? null,
     warnings: Array.from(warningMap.values()).slice(0, 8),
     elements,
+    screenshot: pageState.screenshot ?? null,
     navigationId: pageState.navigation_id,
     domVersion,
     viewportSignature,
@@ -221,6 +226,11 @@ const mapBackendEventKind = (kind: BrowserBackendEvent['kind']): BrowserDebugEve
     case 'health_changed':
     case 'navigation':
     case 'page_state_updated':
+    case 'snapshot_cache_store':
+    case 'snapshot_cache_hit':
+    case 'snapshot_cache_miss':
+    case 'snapshot_cache_evict':
+    case 'snapshot_cache_invalidate':
     case 'idle_cleanup':
       return kind;
     case 'action_started':
@@ -265,6 +275,9 @@ const ingestBackendEvent = (event: BrowserBackendEvent) => {
     kind: mapBackendEventKind(event.kind),
     title: event.title,
     detail: event.detail ?? event.benchmark?.detail ?? undefined,
+    cacheKey: event.cache_key ?? undefined,
+    cacheUrl: event.cache_url ?? undefined,
+    cacheReason: event.cache_reason ?? undefined,
     level: event.level,
     occurredAt: event.occurred_at_ms,
     source: 'backend',

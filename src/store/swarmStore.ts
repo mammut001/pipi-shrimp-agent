@@ -34,6 +34,19 @@ import {
 } from '../services/swarm/transcript';
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/** Maximum messages to keep in memory to prevent unbounded growth */
+const MAX_MESSAGES = 500;
+
+/** Maximum agents to keep in memory */
+const MAX_AGENTS = 200;
+
+/** Maximum tasks to keep in memory */
+const MAX_TASKS = 500;
+
+// =============================================================================
 // State interface
 // =============================================================================
 
@@ -89,6 +102,33 @@ export interface SwarmStoreState {
   getAgentInboxSummary: (agentId: string) => ReturnType<typeof getInboxSummary>;
   /** Get transcript summary for an agent */
   getAgentTranscriptSummary: (agentId: string) => ReturnType<typeof getTranscriptSummary>;
+}
+
+// =============================================================================
+// Helper: Trim arrays to prevent memory leaks
+// =============================================================================
+
+/**
+ * Trim array to max length, keeping most recent items
+ */
+function trimArray<T>(arr: T[], maxLength: number): T[] {
+  if (arr.length <= maxLength) return arr;
+  return arr.slice(-maxLength);
+}
+
+/**
+ * Enforce memory limits on store arrays
+ */
+function enforceMemoryLimits(state: {
+  messages: SwarmMessage[];
+  agents: SwarmAgent[];
+  tasks: SwarmTask[];
+}): { messages: SwarmMessage[]; agents: SwarmAgent[]; tasks: SwarmTask[] } {
+  return {
+    messages: trimArray(state.messages, MAX_MESSAGES),
+    agents: trimArray(state.agents, MAX_AGENTS),
+    tasks: trimArray(state.tasks, MAX_TASKS),
+  };
 }
 
 // =============================================================================
@@ -150,12 +190,24 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       ? true
       : get().panelExpanded;
 
+    // Get raw data from repository
+    const rawMessages = repo.getAllMessages();
+    const rawAgents = allAgents;
+    const rawTasks = repo.getAllTasks();
+
+    // Enforce memory limits to prevent unbounded growth
+    const { messages, agents, tasks } = enforceMemoryLimits({
+      messages: rawMessages,
+      agents: rawAgents,
+      tasks: rawTasks,
+    });
+
     set({
       runs: repo.getAllRuns(),
       teams: repo.getAllTeams(),
-      agents: allAgents,
-      tasks: repo.getAllTasks(),
-      messages: repo.getAllMessages(),
+      agents,
+      tasks,
+      messages,
       pendingPermissions: pendingPerms,
       totalUnreadCount: totalUnread,
       totalPendingPermissions: pendingPerms.length,

@@ -2,7 +2,7 @@
  * Skill - Skill Market page component
  *
  * Features:
- * - Display 4 core skills in a clean grid
+ * - Display built-in skills in a clean grid
  * - Simple black/gray design (Vercel style)
  */
 
@@ -142,6 +142,79 @@ const defaultSkills: Skill[] = [
     icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
   },
   {
+    id: 'web_research',
+    name: 'Web Research',
+    description: 'Research live websites with PageState navigation, extraction, and source-backed summaries.',
+    documentation: `# Web Research
+
+Research a topic in a live browser using the PageState-aware browser toolchain.
+
+## Best For
+
+- Comparing information across public websites
+- Following search results to the primary source
+- Summarizing page content with the source URL preserved
+
+## Preferred Tool Loop
+
+- browser_navigate
+- browser_get_page
+- browser_click / browser_type / browser_press_key
+- browser_wait
+- browser_extract_content or browser_get_text
+
+## Demo Prompts
+
+- Research the current release notes for Tauri 2 and summarize the top 3 changes.
+- Find the official documentation page for Chromiumoxide screenshot capture and extract the key API details.
+- Open a product page, identify the price and delivery text, and report both with the source URL.
+
+## Validation Flow
+
+1. Open the target page or a search engine.
+2. Re-read browser_get_page after each meaningful DOM change.
+3. Extract only the page needed to answer the question.
+4. Return a concise answer plus the title and URL.
+`,
+    icon: 'M10.5 3a7.5 7.5 0 015.906 12.141l2.476 2.476a1 1 0 01-1.414 1.414l-2.476-2.476A7.5 7.5 0 1110.5 3zm0 2a5.5 5.5 0 100 11 5.5 5.5 0 000-11z',
+  },
+  {
+    id: 'form_fill',
+    name: 'Form Fill',
+    description: 'Fill web forms with backend_node_id targeting, verification reads, and guarded submission.',
+    documentation: `# Form Fill
+
+Fill structured browser forms while re-checking PageState before risky actions.
+
+## Best For
+
+- Checkout and signup forms
+- Support or application forms
+- Multi-step flows that change after typing
+
+## Preferred Tool Loop
+
+- browser_get_page
+- browser_type
+- browser_click
+- browser_wait
+- browser_get_page again before submit
+
+## Demo Prompts
+
+- Open the checkout demo, fill the card field with a test number, and stop before submission.
+- Find the login form, type the provided email, and confirm which field is still empty.
+- Fill every required field you can confidently identify, then list exactly what changed.
+
+## Guardrails
+
+1. Do not submit unless the user explicitly asked to submit.
+2. Stop when a field is ambiguous instead of guessing.
+3. Re-read browser_get_page after any large DOM update.
+`,
+    icon: 'M7 3h10a2 2 0 012 2v10a2 2 0 01-2 2h-3.586L10 22.414 6.586 19H3a2 2 0 01-2-2V5a2 2 0 012-2h4zm1 5v2h8V8H8zm0 4v2h5v-2H8z',
+  },
+  {
     id: 'skill-creator',
     name: 'skill.skillCreator.name',
     description: 'skill.skillCreator.description',
@@ -172,7 +245,7 @@ const getSkillDocumentation = (skill: Skill): string => {
 };
 
 /**
- * Skill page component - displays 4 core skills
+ * Skill page component - displays built-in skills
  */
 export function Skill() {
   const { setCurrentView, setActiveSkill } = useUIStore();
@@ -284,6 +357,7 @@ export function Skill() {
     skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     skill.description.toLowerCase().includes(searchQuery.toLowerCase())
   );
+  const chatLaunchableSkillIds = new Set(['autoresearch', 'web_research', 'form_fill']);
 
   return (
     <div className="h-screen flex flex-col bg-white">
@@ -428,17 +502,17 @@ export function Skill() {
             <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-white flex-shrink-0">
               <div className="flex items-center gap-2 min-w-0">
                 <h2 className="font-semibold text-gray-900 truncate">{getSkillDisplayName(selectedSkill)}</h2>
-                {selectedSkill.id === 'autoresearch' && (
+                {chatLaunchableSkillIds.has(selectedSkill.id) && (
                   <button
                     onClick={() => {
-                      setActiveSkill('autoresearch');
+                      setActiveSkill(selectedSkill.id);
                       setCurrentView('chat');
                       setSelectedSkill(null);
                     }}
                     className="px-2 py-1 text-[11px] font-medium rounded-md bg-gray-900 text-white hover:bg-gray-800 transition-colors"
-                    title={t('skill.autoresearch.openInChat')}
+                    title={selectedSkill.id === 'autoresearch' ? t('skill.autoresearch.openInChat') : 'Open in Chat'}
                   >
-                    {t('skill.autoresearch.openInChat')}
+                    {selectedSkill.id === 'autoresearch' ? t('skill.autoresearch.openInChat') : 'Open in Chat'}
                   </button>
                 )}
               </div>

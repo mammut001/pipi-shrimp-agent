@@ -6,11 +6,13 @@ pub mod snapshot;
 
 use std::time::Duration;
 
+use base64::Engine;
+use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, CaptureScreenshotParams};
 use chromiumoxide::page::Page;
 
-use crate::browser::cdp::CdpError;
+use crate::browser::cdp::{run_with_timeout, CdpError};
 
-pub use page_state::{InteractiveElement, PageState, ScreenshotRef};
+pub use page_state::{InteractiveElement, PageState, PageViewport, ScreenshotRef};
 pub(crate) use page_state::{PageStateCacheMetadata, PageStateCapture};
 pub use snapshot::{
     AccessibilityNodeSnapshot, CapturedPageSnapshot, DomNodeSnapshot, SnapshotFrame,
@@ -28,7 +30,21 @@ pub(crate) async fn capture_page_state_capture(
     timeout: Duration,
 ) -> Result<PageStateCapture, CdpError> {
     let source = CdpPageSnapshotSource::new(timeout);
-    capture_page_state_capture_with_source(page, &source).await
+    let mut capture = capture_page_state_capture_with_source(page, &source).await?;
+
+    match capture_page_screenshot(page, timeout).await {
+        Ok(screenshot) => {
+            capture.page_state.screenshot = Some(screenshot);
+        }
+        Err(error) => {
+            capture
+                .page_state
+                .warnings
+                .push(format!("screenshot_unavailable: {}", error));
+        }
+    }
+
+    Ok(capture)
 }
 
 pub async fn capture_page_state_with_source<S>(
@@ -54,4 +70,23 @@ where
 
 pub fn build_page_state_from_snapshot(snapshot: CapturedPageSnapshot) -> PageState {
     page_state::build_page_state(snapshot)
+}
+
+async fn capture_page_screenshot(page: &Page, timeout: Duration) -> Result<ScreenshotRef, CdpError> {
+    let params = CaptureScreenshotParams::builder()
+        .format(CaptureScreenshotFormat::Png)
+        .build();
+
+    let screenshot = run_with_timeout(
+        "Page.captureScreenshot",
+        timeout,
+        page.execute(params),
+    )
+    .await?
+    .map_err(|error| CdpError::Session(format!("Unable to capture page screenshot: {}", error)))?;
+
+    Ok(ScreenshotRef {
+        kind: "base64_png".to_string(),
+        value: base64::engine::general_purpose::STANDARD.encode(&screenshot.data),
+    })
 }

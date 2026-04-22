@@ -63,8 +63,17 @@ const pageState: BrowserPageState = {
   title: 'Dashboard',
   navigation_id: 'nav-42',
   frame_count: 2,
+  viewport: {
+    page_x: 0,
+    page_y: 120,
+    width: 1280,
+    height: 720,
+  },
   warnings: ['cross_origin_iframe_partial'],
-  screenshot: null,
+  screenshot: {
+    kind: 'base64_png',
+    value: 'ZmFrZS1pbWFnZQ==',
+  },
   elements: [
     {
       index: 1,
@@ -73,7 +82,12 @@ const pageState: BrowserPageState = {
       role: 'button',
       name: 'Sync Now',
       tag_name: 'button',
-      bounds: null,
+      bounds: {
+        x: 24,
+        y: 144,
+        width: 128,
+        height: 36,
+      },
       is_visible: true,
       is_clickable: true,
       is_editable: false,
@@ -110,12 +124,82 @@ describe('browserObservabilityWiring', () => {
         {
           id: 'backend-event-1',
           sequence: 1,
+          kind: 'snapshot_cache_miss',
+          title: 'Snapshot cache miss',
+          detail: 'https://example.com/dashboard',
+          cache_key: 'target-1:nav-42:mini:dom-backend',
+          cache_url: 'https://example.com/dashboard',
+          cache_reason: null,
+          level: 'info',
+          occurred_at_ms: Date.now() - 1_700,
+          action_name: null,
+          benchmark: null,
+        },
+        {
+          id: 'backend-event-2',
+          sequence: 2,
+          kind: 'snapshot_cache_store',
+          title: 'Snapshot cache stored',
+          detail: 'https://example.com/dashboard',
+          cache_key: 'target-1:nav-42:mini:dom-backend',
+          cache_url: 'https://example.com/dashboard',
+          cache_reason: null,
+          level: 'success',
+          occurred_at_ms: Date.now() - 1_600,
+          action_name: null,
+          benchmark: null,
+        },
+        {
+          id: 'backend-event-3',
+          sequence: 3,
+          kind: 'snapshot_cache_hit',
+          title: 'Snapshot cache hit',
+          detail: 'https://example.com/dashboard',
+          cache_key: 'target-1:nav-42:mini:dom-backend',
+          cache_url: 'https://example.com/dashboard',
+          cache_reason: null,
+          level: 'success',
+          occurred_at_ms: Date.now() - 1_500,
+          action_name: null,
+          benchmark: null,
+        },
+        {
+          id: 'backend-event-4',
+          sequence: 4,
+          kind: 'snapshot_cache_evict',
+          title: 'Snapshot cache evicted',
+          detail: 'target-1:nav-41:mini:dom-old | https://example.com/previous',
+          cache_key: 'target-1:nav-41:mini:dom-old',
+          cache_url: 'https://example.com/previous',
+          cache_reason: null,
+          level: 'warning',
+          occurred_at_ms: Date.now() - 1_100,
+          action_name: null,
+          benchmark: null,
+        },
+        {
+          id: 'backend-event-5',
+          sequence: 5,
           kind: 'action_completed',
           title: 'click completed',
           detail: 'button[data-action="sync"]',
           level: 'success',
           occurred_at_ms: Date.now() - 1000,
           action_name: 'click',
+          benchmark: null,
+        },
+        {
+          id: 'backend-event-6',
+          sequence: 6,
+          kind: 'snapshot_cache_invalidate',
+          title: 'Snapshot cache invalidated',
+          detail: 'domDocumentUpdated | https://example.com/dashboard',
+          cache_key: 'target-1:nav-42:mini:dom-backend',
+          cache_url: 'https://example.com/dashboard',
+          cache_reason: 'cdp_dom_document_updated',
+          level: 'warning',
+          occurred_at_ms: Date.now() - 500,
+          action_name: null,
           benchmark: null,
         },
       ],
@@ -239,11 +323,31 @@ describe('browserObservabilityWiring', () => {
     expect(state.latestPageState?.source).toBe('backend');
     expect(state.latestPageState?.navigationId).toBe('nav-42');
     expect(state.latestPageState?.elements[0]?.selector).toContain('button[data-action="sync"]');
+    expect(state.latestPageState?.screenshot?.kind).toBe('base64_png');
+    expect(state.latestPageState?.viewport?.height).toBe(720);
+    expect(state.latestPageState?.elements[0]?.bounds?.width).toBe(128);
     expect(state.snapshotCache.activeKey).toBe('target-1:nav-42:mini:dom-backend');
     expect(state.snapshotCache.entries[0]?.key).toBe('target-1:nav-42:mini:dom-backend');
     expect(state.snapshotCache.hitCount).toBe(4);
     expect(state.benchmarkReport?.metrics[0]?.key).toBe('action.click');
     expect(state.recentActions[0]?.name).toBe('click');
+    expect(state.timeline.some((event) => event.kind === 'snapshot_cache_store')).toBe(true);
+    expect(state.timeline.some((event) => event.kind === 'snapshot_cache_hit')).toBe(true);
+    expect(state.timeline.some((event) => event.kind === 'snapshot_cache_miss')).toBe(true);
+    expect(state.timeline.some((event) => event.kind === 'snapshot_cache_evict')).toBe(true);
+    expect(state.timeline.find((event) => event.kind === 'snapshot_cache_store')?.cacheKey).toBe(
+      'target-1:nav-42:mini:dom-backend',
+    );
+    expect(state.timeline.find((event) => event.kind === 'snapshot_cache_invalidate')?.cacheReason).toBe(
+      'cdp_dom_document_updated',
+    );
+    expect(
+      state.timeline.some(
+        (event) =>
+          event.kind === 'snapshot_cache_invalidate' &&
+          event.detail === 'domDocumentUpdated | https://example.com/dashboard',
+      ),
+    ).toBe(true);
 
     cleanup();
   });

@@ -9,6 +9,13 @@ export interface BrowserScreenshotRef {
   value: string;
 }
 
+export interface BrowserPageViewport {
+  page_x: number;
+  page_y: number;
+  width: number;
+  height: number;
+}
+
 export interface BrowserElementBounds {
   x: number;
   y: number;
@@ -38,6 +45,7 @@ export interface BrowserPageState {
   title: string;
   navigation_id: string;
   frame_count: number;
+  viewport?: BrowserPageViewport | null;
   warnings: string[];
   elements: BrowserInteractiveElement[];
   screenshot?: BrowserScreenshotRef | null;

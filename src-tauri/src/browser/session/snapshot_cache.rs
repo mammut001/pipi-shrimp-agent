@@ -47,6 +47,12 @@ pub struct SnapshotCacheEntry {
     pub invalidation_reason: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SnapshotCacheStoreResult {
+    pub entry: SnapshotCacheEntry,
+    pub evicted_entry: Option<SnapshotCacheEntry>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SnapshotCacheEntrySnapshot {
     pub key: String,
@@ -127,6 +133,15 @@ impl SnapshotCache {
         self.active_entry().is_some()
     }
 
+    pub fn latest_invalidated_entry(&self) -> Option<SnapshotCacheEntry> {
+        self.order
+            .iter()
+            .rev()
+            .filter_map(|key| self.entries.get(key))
+            .find(|entry| entry.invalidated_at_ms.is_some())
+            .cloned()
+    }
+
     pub fn record_miss(&mut self) {
         self.miss_count = self.miss_count.saturating_add(1);
     }
@@ -160,7 +175,7 @@ impl SnapshotCache {
         }
     }
 
-    pub fn store(&mut self, key: SnapshotCacheKey, page_state: PageState) -> SnapshotCacheEntry {
+    pub fn store(&mut self, key: SnapshotCacheKey, page_state: PageState) -> SnapshotCacheStoreResult {
         let key_string = key.as_string();
         self.remove_order_key(&key_string);
         let captured_at_ms = Utc::now().timestamp_millis();
@@ -177,8 +192,8 @@ impl SnapshotCache {
         self.entries.insert(key_string.clone(), entry.clone());
         self.order.push_back(key_string.clone());
         self.active_key = Some(key_string);
-        self.evict_over_limit();
-        entry
+        let evicted_entry = self.evict_over_limit();
+        SnapshotCacheStoreResult { entry, evicted_entry }
     }
 
     pub fn invalidate_active(&mut self, reason: impl Into<String>) -> Option<SnapshotCacheEntry> {
@@ -229,18 +244,21 @@ impl SnapshotCache {
         self.order.retain(|existing| existing != key);
     }
 
-    fn evict_over_limit(&mut self) {
+    fn evict_over_limit(&mut self) -> Option<SnapshotCacheEntry> {
+        let mut last_evicted_entry = None;
         while self.entries.len() > self.entry_limit {
             let Some(oldest_key) = self.order.pop_front() else {
                 break;
             };
-            if self.entries.remove(&oldest_key).is_some() {
+            if let Some(entry) = self.entries.remove(&oldest_key) {
                 self.eviction_count = self.eviction_count.saturating_add(1);
+                last_evicted_entry = Some(entry);
             }
             if self.active_key.as_deref() == Some(oldest_key.as_str()) {
                 self.active_key = None;
             }
         }
+        last_evicted_entry
     }
 }
 
@@ -307,6 +325,7 @@ mod tests {
             title: navigation_id.to_string(),
             navigation_id: navigation_id.to_string(),
             frame_count: 1,
+            viewport: None,
             warnings: Vec::new(),
             elements: vec![InteractiveElement {
                 index: 0,

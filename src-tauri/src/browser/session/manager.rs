@@ -25,7 +25,9 @@ use crate::browser::observability::{
     BrowserEventLevel, BrowserObservabilitySnapshot,
 };
 use crate::browser::session::reconnect::next_reconnect_delay;
-use crate::browser::session::snapshot_cache::{SnapshotCache, SnapshotCacheKey};
+use crate::browser::session::snapshot_cache::{
+    SnapshotCache, SnapshotCacheEntry, SnapshotCacheKey,
+};
 
 use super::state::{BrowserLaunchMode, BrowserSession};
 use super::BrowserConnectionState;
@@ -106,12 +108,18 @@ impl BrowserSessionManager {
     }
 
     pub fn consume_cached_page_state(&mut self) -> Option<PageState> {
-        self.snapshot_cache.active_page_state()
+        let active_key = self.snapshot_cache.active_key().map(str::to_string);
+        let page_state = self.snapshot_cache.active_page_state();
+        if let (Some(cache_key), Some(page_state)) = (active_key.as_deref(), page_state.as_ref()) {
+            self.record_snapshot_cache_hit_event(cache_key, &page_state.url);
+        }
+        page_state
     }
 
     pub(crate) fn set_cached_page_state_for_test(&mut self, page_state: PageState) {
         let cache_metadata = PageStateCacheMetadata::from_page_state(&page_state, "viewport:test");
-        self.store_page_state_in_cache(&page_state, &cache_metadata);
+        let cache_key = self.build_snapshot_cache_key(&page_state, &cache_metadata);
+        self.store_page_state_in_cache(cache_key, &page_state);
     }
 
     pub(crate) fn enqueue_page_state_capture_for_test(&mut self, result: Result<PageState, CdpError>) {
@@ -169,7 +177,15 @@ impl BrowserSessionManager {
 
     fn invalidate_page_state_for_runtime_event(&mut self, reason: &'static str) -> bool {
         self.touch_activity();
-        self.snapshot_cache.invalidate_active(reason).is_some()
+        let invalidated = self.snapshot_cache.invalidate_active(reason);
+        if let Some(entry) = invalidated.as_ref() {
+            self.record_snapshot_cache_invalidation_event(
+                reason,
+                &entry.key.as_string(),
+                &entry.page_state.url,
+            );
+        }
+        invalidated.is_some()
     }
 
     fn upgrade_runtime_event_invalidation_reason(
@@ -178,8 +194,96 @@ impl BrowserSessionManager {
         to_reason: &'static str,
     ) -> bool {
         self.touch_activity();
-        self.snapshot_cache
-            .upgrade_latest_invalidation_reason(from_reason, to_reason)
+        let upgraded = self
+            .snapshot_cache
+            .upgrade_latest_invalidation_reason(from_reason, to_reason);
+        if upgraded {
+            if let Some(entry) = self.cached_invalidated_entry() {
+                self.record_snapshot_cache_invalidation_event(
+                    to_reason,
+                    &entry.key.as_string(),
+                    &entry.page_state.url,
+                );
+            }
+        }
+        upgraded
+    }
+
+    fn cached_invalidated_entry(&self) -> Option<SnapshotCacheEntry> {
+        self.snapshot_cache.latest_invalidated_entry()
+    }
+
+    fn record_snapshot_cache_invalidation_event(&self, reason: &'static str, cache_key: &str, url: &str) {
+        self.event_bus.publish_snapshot_cache_event(
+            BrowserEventKind::SnapshotCacheInvalidate,
+            BrowserEventLevel::Warning,
+            "Snapshot cache invalidated".to_string(),
+            Some(format!("{} | {}", runtime_invalidation_reason_label(reason), url)),
+            cache_key,
+            url,
+            Some(reason.to_string()),
+        );
+    }
+
+    fn record_snapshot_cache_hit_event(&self, cache_key: &str, url: &str) {
+        self.event_bus.publish_snapshot_cache_event(
+            BrowserEventKind::SnapshotCacheHit,
+            BrowserEventLevel::Success,
+            "Snapshot cache hit".to_string(),
+            Some(url.to_string()),
+            cache_key,
+            url,
+            None,
+        );
+    }
+
+    fn record_snapshot_cache_miss_event(&self, cache_key: Option<&str>, url: Option<&str>) {
+        let detail = url.map(str::to_string);
+        if let (Some(cache_key), Some(url)) = (cache_key, url) {
+            self.event_bus.publish_snapshot_cache_event(
+                BrowserEventKind::SnapshotCacheMiss,
+                BrowserEventLevel::Info,
+                "Snapshot cache miss".to_string(),
+                detail,
+                cache_key,
+                url,
+                None,
+            );
+            return;
+        }
+
+        self.event_bus.publish(
+            BrowserEventKind::SnapshotCacheMiss,
+            BrowserEventLevel::Info,
+            "Snapshot cache miss".to_string(),
+            detail,
+            None,
+            None,
+        );
+    }
+
+    fn record_snapshot_cache_store_event(&self, cache_key: &str, url: &str) {
+        self.event_bus.publish_snapshot_cache_event(
+            BrowserEventKind::SnapshotCacheStore,
+            BrowserEventLevel::Success,
+            "Snapshot cache stored".to_string(),
+            Some(url.to_string()),
+            cache_key,
+            url,
+            None,
+        );
+    }
+
+    fn record_snapshot_cache_evict_event(&self, key: &str, url: &str) {
+        self.event_bus.publish_snapshot_cache_event(
+            BrowserEventKind::SnapshotCacheEvict,
+            BrowserEventLevel::Warning,
+            "Snapshot cache evicted".to_string(),
+            Some(format!("{} | {}", key, url)),
+            key,
+            url,
+            None,
+        );
     }
 
     pub fn worker_snapshot(&self) -> Option<WorkerSnapshot> {
@@ -350,11 +454,18 @@ impl BrowserSessionManager {
     async fn capture_page_state_with_mode(&mut self, emit_observability: bool) -> Result<PageState, CdpError> {
         let capture_started_at = Instant::now();
         let memory_before = sample_process_memory_bytes();
+        let current_url = self.session.as_ref().and_then(|session| session.current_url.clone());
         self.snapshot_cache.record_miss();
 
         if let Some(result) = self.test_page_state_captures.pop_front() {
             self.test_page_state_capture_count += 1;
-            let page_state = result?;
+            let page_state = match result {
+                Ok(page_state) => page_state,
+                Err(error) => {
+                    self.record_snapshot_cache_miss_event(None, current_url.as_deref());
+                    return Err(error);
+                }
+            };
             let memory_after = sample_process_memory_bytes();
             let cache_metadata = PageStateCacheMetadata::from_page_state(&page_state, "viewport:test");
             return Ok(self.record_captured_page_state(
@@ -371,7 +482,13 @@ impl BrowserSessionManager {
             .page
             .as_ref()
             .ok_or_else(|| CdpError::Session("Browser not connected".to_string()))?;
-        let capture = dom::capture_page_state_capture(page, self.config.timeout).await?;
+        let capture = match dom::capture_page_state_capture(page, self.config.timeout).await {
+            Ok(capture) => capture,
+            Err(error) => {
+                self.record_snapshot_cache_miss_event(None, current_url.as_deref());
+                return Err(error);
+            }
+        };
         let memory_after = sample_process_memory_bytes();
 
         Ok(self.record_captured_page_state(
@@ -399,7 +516,10 @@ impl BrowserSessionManager {
             session.health = self.health.clone();
         }
 
-        self.store_page_state_in_cache(&page_state, &cache_metadata);
+        let cache_key = self.build_snapshot_cache_key(&page_state, &cache_metadata);
+        let cache_key_string = cache_key.as_string();
+        self.record_snapshot_cache_miss_event(Some(cache_key_string.as_str()), Some(page_state.url.as_str()));
+        self.store_page_state_in_cache(cache_key, &page_state);
         if emit_observability {
             let benchmark = self.build_benchmark_sample(
                 "page_state".to_string(),
@@ -431,11 +551,18 @@ impl BrowserSessionManager {
 
     fn store_page_state_in_cache(
         &mut self,
+        cache_key: SnapshotCacheKey,
         page_state: &PageState,
-        cache_metadata: &PageStateCacheMetadata,
     ) {
-        let cache_key = self.build_snapshot_cache_key(page_state, cache_metadata);
-        self.snapshot_cache.store(cache_key, page_state.clone());
+        let store_result = self.snapshot_cache.store(cache_key, page_state.clone());
+        let stored_key = store_result.entry.key.as_string();
+        self.record_snapshot_cache_store_event(&stored_key, &store_result.entry.page_state.url);
+        if let Some(evicted_entry) = store_result.evicted_entry.as_ref() {
+            self.record_snapshot_cache_evict_event(
+                &evicted_entry.key.as_string(),
+                &evicted_entry.page_state.url,
+            );
+        }
     }
 
     fn build_snapshot_cache_key(
@@ -895,6 +1022,18 @@ fn duration_as_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u64::MAX as u128) as u64
 }
 
+fn runtime_invalidation_reason_label(reason: &str) -> &'static str {
+    match reason {
+        "cdp_frame_navigated" => "frameNavigated",
+        "cdp_same_document_navigation" => "sameDocumentNavigation",
+        "cdp_frame_detached" => "frameDetached",
+        "cdp_document_opened" => "documentOpened",
+        "cdp_dom_document_updated" => "domDocumentUpdated",
+        "manual_invalidation" => "manualInvalidation",
+        _ => "unknownInvalidation",
+    }
+}
+
 fn spawn_health_worker(
     manager_handle: Arc<Mutex<BrowserSessionManager>>,
     mut shutdown_rx: watch::Receiver<bool>,
@@ -1284,6 +1423,7 @@ mod tests {
             title: format!("Page {}", navigation_id),
             navigation_id: navigation_id.to_string(),
             frame_count: 1,
+            viewport: None,
             warnings: Vec::new(),
             elements: vec![InteractiveElement {
                 index: 0,
@@ -1487,7 +1627,15 @@ mod tests {
             .expect("session should be present")
             .target_id = Some("target-main".to_string());
 
-        manager.set_cached_page_state_for_test(sample_page_state("nav-1", 101));
+        let page_state = sample_page_state("nav-1", 101);
+        let expected_key = manager
+            .build_snapshot_cache_key(
+                &page_state,
+                &PageStateCacheMetadata::from_page_state(&page_state, "viewport:test"),
+            )
+            .as_string();
+
+        manager.set_cached_page_state_for_test(page_state);
 
         assert!(manager.invalidate_page_state_for_runtime_event("cdp_frame_navigated"));
         assert!(manager.cached_page_state().is_none());
@@ -1499,5 +1647,95 @@ mod tests {
             snapshot.snapshot_cache.entries[0].invalidation_reason.as_deref(),
             Some("cdp_frame_navigated")
         );
+        assert!(snapshot.recent_events.iter().any(|event| {
+            event.kind == BrowserEventKind::SnapshotCacheInvalidate
+                && event.detail.as_deref() == Some("frameNavigated | https://example.com/nav-1")
+                && event.cache_key.as_deref() == Some(expected_key.as_str())
+                && event.cache_url.as_deref() == Some("https://example.com/nav-1")
+                && event.cache_reason.as_deref() == Some("cdp_frame_navigated")
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_cache_hit_miss_and_evict_events_are_recorded() {
+        let mut config = CdpConfig::default();
+        config.snapshot_cache_limit = 1;
+        let mut manager = BrowserSessionManager::new(config);
+        manager.session = Some(BrowserSession::new(
+            "ws://127.0.0.1:9222/devtools/browser/test".to_string(),
+            BrowserLaunchMode::Attach,
+            manager.health.clone(),
+        ));
+        manager
+            .session
+            .as_mut()
+            .expect("session should be present")
+            .target_id = Some("target-main".to_string());
+        manager
+            .session
+            .as_mut()
+            .expect("session should be present")
+            .current_url = Some("https://example.com/nav-1".to_string());
+
+        let cached_page_state = sample_page_state("nav-1", 101);
+        let expected_hit_key = manager
+            .build_snapshot_cache_key(
+                &cached_page_state,
+                &PageStateCacheMetadata::from_page_state(&cached_page_state, "viewport:test"),
+            )
+            .as_string();
+        let captured_page_state_fixture = sample_page_state("nav-2", 202);
+        let expected_store_key = manager
+            .build_snapshot_cache_key(
+                &captured_page_state_fixture,
+                &PageStateCacheMetadata::from_page_state(&captured_page_state_fixture, "viewport:test"),
+            )
+            .as_string();
+
+        manager.set_cached_page_state_for_test(cached_page_state);
+        let hit_page_state = manager.consume_cached_page_state();
+        assert_eq!(
+            hit_page_state
+                .as_ref()
+                .map(|page_state| page_state.navigation_id.as_str()),
+            Some("nav-1")
+        );
+
+        manager.enqueue_page_state_capture_for_test(Ok(captured_page_state_fixture));
+        let captured_page_state = manager
+            .capture_page_state()
+            .await
+            .expect("page state capture should succeed");
+        assert_eq!(captured_page_state.navigation_id, "nav-2");
+
+        let snapshot = manager.observability_snapshot();
+        assert!(snapshot.recent_events.iter().any(|event| {
+            event.kind == BrowserEventKind::SnapshotCacheHit
+                && event.detail.as_deref() == Some("https://example.com/nav-1")
+                && event.cache_key.as_deref() == Some(expected_hit_key.as_str())
+                && event.cache_url.as_deref() == Some("https://example.com/nav-1")
+        }));
+        assert!(snapshot.recent_events.iter().any(|event| {
+            event.kind == BrowserEventKind::SnapshotCacheMiss
+                && event.detail.as_deref() == Some("https://example.com/nav-2")
+                && event.cache_key.as_deref() == Some(expected_store_key.as_str())
+                && event.cache_url.as_deref() == Some("https://example.com/nav-2")
+        }));
+        assert!(snapshot.recent_events.iter().any(|event| {
+            event.kind == BrowserEventKind::SnapshotCacheStore
+                && event.detail.as_deref() == Some("https://example.com/nav-2")
+                && event.cache_key.as_deref() == Some(expected_store_key.as_str())
+                && event.cache_url.as_deref() == Some("https://example.com/nav-2")
+        }));
+        assert!(snapshot.recent_events.iter().any(|event| {
+            event.kind == BrowserEventKind::SnapshotCacheEvict
+                && event.cache_key.as_deref() == Some(expected_hit_key.as_str())
+                && event.cache_url.as_deref() == Some("https://example.com/nav-1")
+                && event
+                    .detail
+                    .as_deref()
+                    .map(|detail| detail.ends_with("https://example.com/nav-1"))
+                    .unwrap_or(false)
+        }));
     }
 }

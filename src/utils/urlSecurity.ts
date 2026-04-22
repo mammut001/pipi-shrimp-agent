@@ -9,7 +9,7 @@ const BLOCKED_HOSTNAMES = [
   'localhost',
   '127.0.0.1',
   '0.0.0.0',
-  '[::1]',
+  '::1',         // IPv6 loopback
   'metadata.google.internal',
 ];
 
@@ -33,7 +33,11 @@ export function isBlockedUrl(urlStr: string): string | null {
     return 'Invalid URL';
   }
 
-  const hostname = parsed.hostname.toLowerCase();
+  // Strip brackets from IPv6 addresses for proper checking
+  let hostname = parsed.hostname.toLowerCase();
+  if (hostname.startsWith('[') && hostname.includes(']')) {
+    hostname = hostname.slice(1, hostname.indexOf(']'));
+  }
 
   // Block known dangerous hostnames
   if (BLOCKED_HOSTNAMES.includes(hostname)) {

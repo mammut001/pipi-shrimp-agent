@@ -204,12 +204,16 @@ const appendTimelineEvent = (
   source: BrowserDebugSource,
   detail?: string,
   occurredAt = Date.now(),
+  metadata?: Pick<BrowserDebugEvent, 'cacheKey' | 'cacheUrl' | 'cacheReason'>,
 ): BrowserDebugEvent[] => {
   const event: BrowserDebugEvent = {
     id: createId('browser-event'),
     kind,
     title,
     detail,
+    cacheKey: metadata?.cacheKey,
+    cacheUrl: metadata?.cacheUrl,
+    cacheReason: metadata?.cacheReason,
     level,
     occurredAt,
     source,
@@ -466,6 +470,11 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
           source,
           input.detail,
           input.occurredAt,
+          {
+            cacheKey: input.cacheKey,
+            cacheUrl: input.cacheUrl,
+            cacheReason: input.cacheReason,
+          },
         ),
       };
     });

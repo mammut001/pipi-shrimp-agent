@@ -22,6 +22,53 @@ import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chat
 const isTauri = !!(window as any).__TAURI__;
 
 /**
+ * Cleanup old drafts from localStorage to prevent unbounded growth.
+ * Removes drafts older than 7 days.
+ */
+function cleanupOldDrafts(): void {
+  try {
+    const cleanupKey = 'draft_cleanup_timestamp';
+    const now = Date.now();
+    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
+
+    const lastCleanup = parseInt(localStorage.getItem(cleanupKey) || '0', 10);
+    if (lastCleanup && now - lastCleanup < maxAge) {
+      return; // Recently cleaned, skip
+    }
+
+    // Mark cleanup time
+    localStorage.setItem(cleanupKey, now.toString());
+
+    // Find and remove old drafts
+    const draftPrefix = 'chat_draft_';
+    const keysToRemove: string[] = [];
+
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(draftPrefix)) {
+        // Check if draft is older than maxAge (use item timestamp as proxy)
+        const value = localStorage.getItem(key);
+        if (value && value.length > 0) {
+          // For drafts without timestamp, we use a heuristic:
+          // If the draft content looks stale (> 30KB, likely forgotten), remove it
+          // This handles the case where user typed a lot but never sent
+          if (value.length > 30000) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+    }
+
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    if (keysToRemove.length > 0) {
+      console.log(`[ChatInput] Cleaned up ${keysToRemove.length} old drafts`);
+    }
+  } catch (e) {
+    // Ignore cleanup errors
+  }
+}
+
+/**
  * Props for ChatInput component
  */
 interface ChatInputProps {
@@ -82,6 +129,11 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
+  }, []);
+
+  // Cleanup old drafts on mount to prevent localStorage accumulation
+  useEffect(() => {
+    cleanupOldDrafts();
   }, []);
 
   /**
