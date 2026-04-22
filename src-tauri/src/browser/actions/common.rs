@@ -446,6 +446,7 @@ mod tests {
             title: "Login".to_string(),
             navigation_id: "nav-1".to_string(),
             frame_count: 1,
+            viewport: None,
             warnings: Vec::new(),
             elements: vec![
                 InteractiveElement {

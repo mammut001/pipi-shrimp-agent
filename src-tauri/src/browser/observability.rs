@@ -20,6 +20,11 @@ pub enum BrowserEventKind {
     HealthChanged,
     Navigation,
     PageStateUpdated,
+    SnapshotCacheStore,
+    SnapshotCacheHit,
+    SnapshotCacheMiss,
+    SnapshotCacheEvict,
+    SnapshotCacheInvalidate,
     ActionStarted,
     ActionCompleted,
     ActionFailed,
@@ -68,6 +73,9 @@ pub struct BrowserEvent {
     pub kind: BrowserEventKind,
     pub title: String,
     pub detail: Option<String>,
+    pub cache_key: Option<String>,
+    pub cache_url: Option<String>,
+    pub cache_reason: Option<String>,
     pub level: BrowserEventLevel,
     pub occurred_at_ms: i64,
     pub action_name: Option<String>,
@@ -146,6 +154,44 @@ impl BrowserEventBus {
         action_name: Option<String>,
         benchmark: Option<BrowserBenchmarkSample>,
     ) -> BrowserEvent {
+        self.publish_with_metadata(kind, level, title, detail, None, None, None, action_name, benchmark)
+    }
+
+    pub fn publish_snapshot_cache_event(
+        &self,
+        kind: BrowserEventKind,
+        level: BrowserEventLevel,
+        title: impl Into<String>,
+        detail: Option<String>,
+        cache_key: impl Into<String>,
+        cache_url: impl Into<String>,
+        cache_reason: Option<String>,
+    ) -> BrowserEvent {
+        self.publish_with_metadata(
+            kind,
+            level,
+            title,
+            detail,
+            Some(cache_key.into()),
+            Some(cache_url.into()),
+            cache_reason,
+            None,
+            None,
+        )
+    }
+
+    fn publish_with_metadata(
+        &self,
+        kind: BrowserEventKind,
+        level: BrowserEventLevel,
+        title: impl Into<String>,
+        detail: Option<String>,
+        cache_key: Option<String>,
+        cache_url: Option<String>,
+        cache_reason: Option<String>,
+        action_name: Option<String>,
+        benchmark: Option<BrowserBenchmarkSample>,
+    ) -> BrowserEvent {
         let sequence = self.inner.next_sequence.fetch_add(1, Ordering::Relaxed);
         let event = BrowserEvent {
             id: format!("browser-event-{}", sequence),
@@ -153,6 +199,9 @@ impl BrowserEventBus {
             kind,
             title: title.into(),
             detail,
+            cache_key,
+            cache_url,
+            cache_reason,
             level,
             occurred_at_ms: Utc::now().timestamp_millis(),
             action_name,

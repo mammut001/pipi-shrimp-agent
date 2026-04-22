@@ -62,7 +62,17 @@ const inferAttachFailureReason = (message: string | null): AttachFailureReason |
     return 'debug_port_unavailable';
   }
 
-  if (message.includes('connect') || message.includes('连接')) {
+  const lowerMessage = message.toLowerCase();
+  // Check for various connection failure patterns
+  if (
+    lowerMessage.includes('connect') ||
+    lowerMessage.includes('连接') ||
+    lowerMessage.includes('connection refused') ||
+    lowerMessage.includes('econnrefused') ||
+    lowerMessage.includes('etimedout') ||
+    lowerMessage.includes('network unreachable') ||
+    lowerMessage.includes('timed out')
+  ) {
     return 'connect_failed';
   }
 

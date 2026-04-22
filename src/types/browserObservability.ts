@@ -1,3 +1,5 @@
+import type { BrowserElementBounds, BrowserPageViewport, BrowserScreenshotRef } from '@/types/browserPageState';
+
 export type BrowserDebugSource = 'mock' | 'derived' | 'frontend' | 'backend';
 
 export type BrowserDebugEventLevel = 'info' | 'success' | 'warning' | 'error';
@@ -11,6 +13,7 @@ export type BrowserDebugEventKind =
   | 'page_state_updated'
   | 'action'
   | 'command'
+  | 'snapshot_cache_store'
   | 'snapshot_cache_hit'
   | 'snapshot_cache_miss'
   | 'snapshot_cache_evict'
@@ -22,6 +25,9 @@ export interface BrowserDebugEvent {
   kind: BrowserDebugEventKind;
   title: string;
   detail?: string;
+  cacheKey?: string;
+  cacheUrl?: string;
+  cacheReason?: string;
   level: BrowserDebugEventLevel;
   occurredAt: number;
   source: BrowserDebugSource;
@@ -58,6 +64,9 @@ export interface BrowserPageElementPreview {
   id: string;
   label: string;
   role: string;
+  index?: number;
+  backendNodeId?: number;
+  bounds?: BrowserElementBounds | null;
   selector?: string;
   status?: string;
 }
@@ -67,8 +76,10 @@ export interface BrowserPageStateSnapshot {
   cacheKey: string;
   url: string;
   title: string;
+  viewport?: BrowserPageViewport | null;
   warnings: BrowserPageWarning[];
   elements: BrowserPageElementPreview[];
+  screenshot?: BrowserScreenshotRef | null;
   createdAt: number;
   navigationId: string;
   domVersion: string;
@@ -125,6 +136,11 @@ export type BrowserBackendEventKind =
   | 'health_changed'
   | 'navigation'
   | 'page_state_updated'
+  | 'snapshot_cache_store'
+  | 'snapshot_cache_hit'
+  | 'snapshot_cache_miss'
+  | 'snapshot_cache_evict'
+  | 'snapshot_cache_invalidate'
   | 'action_started'
   | 'action_completed'
   | 'action_failed'
@@ -175,6 +191,9 @@ export interface BrowserBackendEvent {
   kind: BrowserBackendEventKind;
   title: string;
   detail?: string | null;
+  cache_key?: string | null;
+  cache_url?: string | null;
+  cache_reason?: string | null;
   level: BrowserDebugEventLevel;
   occurred_at_ms: number;
   action_name?: string | null;

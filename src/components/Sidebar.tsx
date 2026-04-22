@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useChatStore, useUIStore, useWorkflowStore, useSettingsStore } from '@/store';
 import type { Session } from '@/types/chat';
 import { t } from '@/i18n';
@@ -529,6 +530,13 @@ export function Sidebar() {
     const lastMessage = session.messages[session.messages.length - 1];
     const preview = lastMessage.content.substring(0, 50);
     return preview + (lastMessage.content.length > 50 ? '...' : '');
+  };
+
+  const renderSidebarModal = (isOpen: boolean, content: React.ReactNode) => {
+    if (!isOpen || typeof document === 'undefined') {
+      return null;
+    }
+    return createPortal(content, document.body);
   };
 
   return (
@@ -1238,8 +1246,8 @@ export function Sidebar() {
       </div>
 
       {/* New Project Modal */}
-      {showNewProjectModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowNewProjectModal(false)}>
+      {renderSidebarModal(showNewProjectModal, (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowNewProjectModal(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900 mb-4">New Project</h3>
             <input
@@ -1270,11 +1278,11 @@ export function Sidebar() {
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* New Chat Modal - Select Project */}
-      {showNewChatModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowNewChatModal(false)}>
+      {renderSidebarModal(showNewChatModal, (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowNewChatModal(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900 mb-4">New Chat</h3>
             <div className="mb-4">
@@ -1309,11 +1317,11 @@ export function Sidebar() {
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Move Chat Modal */}
-      {showMoveChatModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowMoveChatModal(false)}>
+      {renderSidebarModal(showMoveChatModal, (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowMoveChatModal(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Move Chat</h3>
             <div className="mb-4">
@@ -1365,11 +1373,11 @@ export function Sidebar() {
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowDeleteConfirm(false)}>
+      {renderSidebarModal(showDeleteConfirm, (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowDeleteConfirm(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Chat</h3>
             <p className="text-sm text-gray-600 mb-4">Are you sure you want to delete this conversation? This action cannot be undone.</p>
@@ -1392,11 +1400,11 @@ export function Sidebar() {
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Batch Delete Confirmation Modal */}
-      {showBatchDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowBatchDeleteConfirm(false)}>
+      {renderSidebarModal(showBatchDeleteConfirm, (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowBatchDeleteConfirm(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Chats</h3>
             <p className="text-sm text-gray-600 mb-4">
@@ -1418,11 +1426,11 @@ export function Sidebar() {
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Workflow Delete Confirmation Modal */}
-      {showWorkflowDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowWorkflowDeleteConfirm(false)}>
+      {renderSidebarModal(showWorkflowDeleteConfirm, (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowWorkflowDeleteConfirm(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               {isWorkflowMultiSelectMode
@@ -1455,7 +1463,7 @@ export function Sidebar() {
             </div>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Context Menu */}
       {contextMenu && (

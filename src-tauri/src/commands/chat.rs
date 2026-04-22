@@ -1483,6 +1483,7 @@ mod tests {
             title: "Dashboard".to_string(),
             navigation_id: "nav-42".to_string(),
             frame_count: 2,
+            viewport: None,
             warnings: vec!["cross_origin_iframe_partial".to_string()],
             elements: vec![InteractiveElement {
                 index: 1,

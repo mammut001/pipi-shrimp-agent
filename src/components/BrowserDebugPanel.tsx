@@ -1,8 +1,23 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type CSSProperties } from 'react';
 
+import {
+  buildSnapshotCacheFlowGroups,
+  eventLevelBadgeClass,
+  formatSnapshotCacheEventKind,
+  snapshotCacheFlowStatus,
+  snapshotCacheFlowStepClass,
+  snapshotCachePageStateRelation,
+  snapshotCacheReasonBadge,
+  SnapshotCacheKeyLabel,
+  SnapshotCacheReasonBadgePill,
+  snapshotCacheTimelineEventMeta,
+  SnapshotBadge,
+  SnapshotCacheRelationLine,
+} from '@/components/browserDebugSnapshotCache';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { useChatStore } from '@/store/chatStore';
 import { useCdpStore } from '@/store/cdpStore';
+import type { BrowserElementBounds, BrowserPageViewport, BrowserScreenshotRef } from '@/types/browserPageState';
 import { saveBrowserBenchmarkArtifact } from '@/services/browserBenchmarkArtifacts';
 import { exportBrowserBenchmarkReport } from '@/utils/browserObservabilityClient';
 
@@ -13,7 +28,7 @@ function formatRelativeTime(timestamp: number | null): string {
 
   const diffMs = Date.now() - timestamp;
   if (diffMs < 1_000) {
-    return 'just now';
+    return 'Just now';
   }
   if (diffMs < 60_000) {
     return `${Math.floor(diffMs / 1_000)}s ago`;
@@ -47,6 +62,52 @@ function formatTimeout(timeoutMs?: number | null): string {
     return `${timeoutMs}ms`;
   }
   return `${Math.round(timeoutMs / 1_000)}s`;
+}
+
+function browserScreenshotUrl(screenshot?: BrowserScreenshotRef | null): string | null {
+  if (!screenshot?.value) {
+    return null;
+  }
+
+  if (screenshot.kind === 'base64_png') {
+    return `data:image/png;base64,${screenshot.value}`;
+  }
+
+  if (screenshot.kind === 'data_url') {
+    return screenshot.value;
+  }
+
+  return null;
+}
+
+function viewportHighlightStyle(
+  bounds: BrowserElementBounds | null | undefined,
+  viewport: BrowserPageViewport | null | undefined,
+): CSSProperties | null {
+  if (!bounds || !viewport || viewport.width <= 0 || viewport.height <= 0) {
+    return null;
+  }
+
+  const left = ((bounds.x - viewport.page_x) / viewport.width) * 100;
+  const top = ((bounds.y - viewport.page_y) / viewport.height) * 100;
+  const width = (bounds.width / viewport.width) * 100;
+  const height = (bounds.height / viewport.height) * 100;
+
+  const clippedLeft = Math.max(0, Math.min(100, left));
+  const clippedTop = Math.max(0, Math.min(100, top));
+  const clippedWidth = Math.max(0, Math.min(100 - clippedLeft, width));
+  const clippedHeight = Math.max(0, Math.min(100 - clippedTop, height));
+
+  if (clippedWidth <= 0 || clippedHeight <= 0) {
+    return null;
+  }
+
+  return {
+    left: `${clippedLeft}%`,
+    top: `${clippedTop}%`,
+    width: `${clippedWidth}%`,
+    height: `${clippedHeight}%`,
+  };
 }
 
 function DebugCard({ title, children }: { title: string; children: React.ReactNode }) {
@@ -96,8 +157,31 @@ export function BrowserDebugPanel() {
   const visibleActions = useMemo(() => recentActions.slice(0, 6), [recentActions]);
   const visibleElements = useMemo(() => latestPageState?.elements.slice(0, 8) ?? [], [latestPageState]);
   const visibleCacheEntries = useMemo(() => snapshotCache.entries.slice(0, 5), [snapshotCache.entries]);
+  const snapshotCacheFlowGroups = useMemo(
+    () => buildSnapshotCacheFlowGroups(snapshotCache, timeline),
+    [snapshotCache, timeline],
+  );
   const visibleBenchmarkMetrics = useMemo(() => benchmarkReport?.metrics.slice(0, 6) ?? [], [benchmarkReport]);
   const visibleBenchmarkSamples = useMemo(() => benchmarkReport?.recent_samples.slice(0, 4) ?? [], [benchmarkReport]);
+  const latestPageStateScreenshotUrl = useMemo(
+    () => browserScreenshotUrl(latestPageState?.screenshot),
+    [latestPageState?.screenshot],
+  );
+  const latestPageStateHighlights = useMemo(() => {
+    if (!latestPageState?.viewport) {
+      return [];
+    }
+
+    return visibleElements
+      .map((element) => ({
+        element,
+        style: viewportHighlightStyle(element.bounds, latestPageState.viewport),
+      }))
+      .filter(
+        (entry): entry is { element: (typeof visibleElements)[number]; style: CSSProperties } => entry.style != null,
+      )
+      .slice(0, 6);
+  }, [latestPageState?.viewport, visibleElements]);
   const currentWorkDir = currentSession?.workDir ?? null;
 
   const handleExportBenchmarks = async () => {
@@ -221,30 +305,65 @@ export function BrowserDebugPanel() {
             <p className="text-[11px] text-slate-500">No events yet.</p>
           ) : (
             <div className="space-y-2">
-              {visibleTimeline.map((event) => (
-                <div key={event.id} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[11px] font-medium text-slate-100">{event.title}</p>
-                      {event.detail && <p className="mt-1 break-words text-[10px] text-slate-400">{event.detail}</p>}
-                    </div>
-                    <div className="text-right">
-                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] ${
-                        event.level === 'error'
-                          ? 'bg-red-500/20 text-red-300'
-                          : event.level === 'warning'
-                            ? 'bg-amber-500/20 text-amber-300'
-                            : event.level === 'success'
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-cyan-500/20 text-cyan-300'
-                      }`}>
-                        {event.kind}
-                      </span>
-                      <p className="mt-1 text-[9px] text-slate-500">{formatRelativeTime(event.occurredAt)}</p>
+              {visibleTimeline.map((event) => {
+                const snapshotMeta = snapshotCacheTimelineEventMeta(event, latestPageState);
+
+                return (
+                  <div key={event.id} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-100">{event.title}</p>
+                        {snapshotMeta ? (
+                          <>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <SnapshotBadge className={eventLevelBadgeClass(event.level)} strong>
+                                {snapshotMeta.kindLabel}
+                              </SnapshotBadge>
+                              {snapshotMeta.relation && (
+                                <SnapshotBadge className={snapshotMeta.relation.badgeClass}>
+                                  {snapshotMeta.relation.badge}
+                                </SnapshotBadge>
+                              )}
+                              {snapshotMeta.reasonBadge && (
+                                <SnapshotCacheReasonBadgePill
+                                  reasonLabel={snapshotMeta.reasonBadge}
+                                  reasonCode={snapshotMeta.reasonBadge}
+                                />
+                              )}
+                            </div>
+                            {snapshotMeta.entrySummary && (
+                              <p className="mt-1 text-[10px] text-slate-300">{snapshotMeta.entrySummary}</p>
+                            )}
+                            {snapshotMeta.compactCacheKey && (
+                              <p className="mt-1 break-words text-[10px] text-slate-400">
+                                cache key{' '}
+                                <SnapshotCacheKeyLabel
+                                  cacheKey={snapshotMeta.cacheKey ?? snapshotMeta.compactCacheKey}
+                                  className="text-[10px] text-slate-400"
+                                />
+                              </p>
+                             )}
+                            {snapshotMeta.cacheUrl && (
+                              <p className="mt-1 break-all text-[10px] text-slate-500">cache url {snapshotMeta.cacheUrl}</p>
+                            )}
+                            {snapshotMeta.relation && (
+                              <SnapshotCacheRelationLine relation={snapshotMeta.relation} />
+                            )}
+                          </>
+                        ) : (
+                          event.detail && <p className="mt-1 break-words text-[10px] text-slate-400">{event.detail}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] ${eventLevelBadgeClass(event.level)}`}>
+                          {snapshotMeta?.kindLabel ?? event.kind}
+                        </span>
+                        <p className="mt-1 text-[9px] text-slate-500">{formatRelativeTime(event.occurredAt)}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </DebugCard>
@@ -383,6 +502,42 @@ export function BrowserDebugPanel() {
                 <StatCell label="DOM Version" value={latestPageState.domVersion} />
               </div>
 
+              {latestPageStateScreenshotUrl && latestPageState.viewport && (
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Screenshot Preview</p>
+                    <p className="text-[10px] text-slate-500">
+                      Viewport {Math.round(latestPageState.viewport.width)}x{Math.round(latestPageState.viewport.height)}
+                    </p>
+                  </div>
+                  <div className="mt-2 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/70">
+                    <div className="relative">
+                      <img
+                        src={latestPageStateScreenshotUrl}
+                        alt={`PageState screenshot for ${latestPageState.title}`}
+                        className="block w-full"
+                      />
+                      <div className="pointer-events-none absolute inset-0">
+                        {latestPageStateHighlights.map(({ element, style }) => (
+                          <div
+                            key={`highlight-${element.id}`}
+                            className="absolute rounded border border-cyan-300/80 bg-cyan-400/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]"
+                            style={style}
+                          >
+                            <span className="absolute -left-px -top-5 rounded bg-cyan-300 px-1.5 py-0.5 text-[9px] font-bold text-slate-950">
+                              #{element.index ?? '?'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[10px] text-slate-500">
+                    Highlighted {latestPageStateHighlights.length} interactive elements with captured bounds.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Warnings</p>
                 {latestPageState.warnings.length === 0 ? (
@@ -414,6 +569,11 @@ export function BrowserDebugPanel() {
                         <div>
                           <p className="text-[11px] font-medium text-slate-100">{element.label}</p>
                           {element.selector && <p className="mt-1 text-[10px] text-slate-400">{element.selector}</p>}
+                          {(element.index != null || element.backendNodeId != null) && (
+                            <p className="mt-1 text-[10px] text-slate-500">
+                              #{element.index ?? 'n/a'} · backend_node_id {element.backendNodeId ?? 'n/a'}
+                            </p>
+                          )}
                         </div>
                         <div className="text-right text-[10px] text-slate-400">
                           <p>{element.role}</p>
@@ -432,7 +592,12 @@ export function BrowserDebugPanel() {
 
         <DebugCard title="Snapshot Cache">
           <div className="grid grid-cols-2 gap-2">
-            <StatCell label="Active Key" value={snapshotCache.activeKey ?? 'n/a'} />
+            <StatCell
+              label="Active Key"
+              value={snapshotCache.activeKey ? (
+                <SnapshotCacheKeyLabel cacheKey={snapshotCache.activeKey} />
+              ) : 'n/a'}
+            />
             <StatCell
               label="Entries"
               value={`${snapshotCache.entries.length}${snapshotCache.entryLimit ? ` / ${snapshotCache.entryLimit}` : ''}`}
@@ -442,7 +607,127 @@ export function BrowserDebugPanel() {
             <StatCell label="Evictions" value={snapshotCache.evictionCount} />
             <StatCell label="Invalidations" value={snapshotCache.invalidationCount} />
           </div>
+          <div className="mt-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Recent Lifecycle</p>
+              <p className="text-[10px] text-slate-500">Grouped by cache key</p>
+            </div>
+            {snapshotCacheFlowGroups.length === 0 ? (
+              <p className="text-[11px] text-slate-500">No cache lifecycle events yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {snapshotCacheFlowGroups.map((group) => {
+                  const status = snapshotCacheFlowStatus(group);
+                  const accessCountLabel = group.accessCount != null ? `${group.accessCount}x` : 'n/a';
+                  const lastAccessedLabel = group.lastAccessedAt
+                    ? formatRelativeTime(group.lastAccessedAt)
+                    : group.isPresent
+                      ? 'Never'
+                      : 'not cached';
+                  const capturedLabel = group.createdAt
+                    ? formatRelativeTime(group.createdAt)
+                    : group.isPresent
+                      ? 'n/a'
+                      : 'not cached';
+                  const latestPageStateLabel = latestPageState
+                    ? `${latestPageState.title} · ${latestPageState.navigationId}`
+                    : 'n/a';
+                  const pageStateRelation = snapshotCachePageStateRelation(group, latestPageState);
+                  const invalidationBadge = snapshotCacheReasonBadge(
+                    group.latestReasonLabel,
+                    group.invalidationReason,
+                  );
+
+                  return (
+                    <div key={`snapshot-cache-flow-${group.key}`} className={`rounded-lg border px-3 py-2 ${status.cardClass}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.16em] ${status.badgeClass}`}>
+                              {status.label}
+                            </span>
+                            {status.accentBadge && (
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] ${status.accentClass ?? 'text-slate-300'}`}>
+                                {status.accentBadge}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1">
+                            <SnapshotCacheKeyLabel
+                              cacheKey={group.key}
+                              className="break-words text-[11px] font-medium text-slate-100"
+                            />
+                          </div>
+                          {group.url && <p className="mt-1 break-all text-[10px] text-slate-400">{group.url}</p>}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[9px] uppercase tracking-[0.16em] text-slate-500">Latest {formatSnapshotCacheEventKind(group.latestKind)}</p>
+                          <p className="mt-1 shrink-0 text-[9px] text-slate-500">{formatRelativeTime(group.latestAt)}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 rounded-lg border border-slate-800/80 bg-slate-950/60 px-2.5 py-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Entry Nav</p>
+                            <p className="mt-1 text-[10px] font-medium text-slate-100">{group.navigationId ?? 'n/a'}</p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Latest PageState</p>
+                            <p className="mt-1 break-words text-[10px] font-medium text-slate-100">{latestPageStateLabel}</p>
+                          </div>
+                        </div>
+                        <SnapshotCacheRelationLine relation={pageStateRelation} />
+                      </div>
+
+                      <div className="mt-2 grid grid-cols-3 gap-2">
+                        <div className="rounded-lg border border-slate-800/80 bg-slate-950/60 px-2 py-1.5">
+                          <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Access Count</p>
+                          <p className="mt-1 text-[10px] font-medium text-slate-100">{accessCountLabel}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-800/80 bg-slate-950/60 px-2 py-1.5">
+                          <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Last Access</p>
+                          <p className="mt-1 text-[10px] font-medium text-slate-100">{lastAccessedLabel}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-800/80 bg-slate-950/60 px-2 py-1.5">
+                          <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Captured</p>
+                          <p className="mt-1 text-[10px] font-medium text-slate-100">{capturedLabel}</p>
+                        </div>
+                      </div>
+
+                      {group.invalidatedAt && group.latestKind !== 'snapshot_cache_evict' && (
+                        <p className="mt-2 text-[10px] text-amber-300">
+                          Invalidated {formatRelativeTime(group.invalidatedAt)}
+                          {invalidationBadge ? ` · ${invalidationBadge}` : ''}
+                        </p>
+                      )}
+
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {group.steps.map((step, index) => (
+                          <Fragment key={step.id}>
+                            {index > 0 && <span className="text-[9px] text-slate-600">-&gt;</span>}
+                            <span className={snapshotCacheFlowStepClass(step.level, {
+                              isTerminal: index === group.steps.length - 1,
+                              kind: index === group.steps.length - 1 ? group.latestKind : undefined,
+                            })}>
+                              {step.label}
+                            </span>
+                          </Fragment>
+                        ))}
+                      </div>
+
+                      {status.label === 'Evicted' && (
+                        <p className="mt-2 text-[10px] text-rose-300">Entry no longer present in cache.</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="mt-3 space-y-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Entries</p>
             {visibleCacheEntries.length === 0 ? (
               <p className="text-[11px] text-slate-500">Cache is empty.</p>
             ) : (
@@ -450,10 +735,11 @@ export function BrowserDebugPanel() {
                 <div key={entry.key} className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="break-all text-[11px] font-medium text-slate-100">
-                        {entry.key}
-                        {snapshotCache.activeKey === entry.key ? ' (active)' : ''}
-                      </p>
+                      <SnapshotCacheKeyLabel
+                        cacheKey={entry.key}
+                        suffix={snapshotCache.activeKey === entry.key ? ' (active)' : undefined}
+                        className="break-words text-[11px] font-medium text-slate-100"
+                      />
                       <p className="mt-1 break-all text-[10px] text-slate-400">{entry.url}</p>
                     </div>
                     <div className="text-right text-[10px] text-slate-400">
@@ -462,9 +748,13 @@ export function BrowserDebugPanel() {
                     </div>
                   </div>
                   {entry.invalidatedAt && (
-                    <p className="mt-2 text-[10px] text-amber-300">
-                      invalidated: {entry.invalidationReason ?? 'unknown'}
-                    </p>
+                    <div className="mt-2 flex items-center gap-2 text-[10px] text-amber-300">
+                      <span>invalidated</span>
+                      <SnapshotCacheReasonBadgePill
+                        reasonLabel={entry.invalidationReason ?? null}
+                        reasonCode={entry.invalidationReason}
+                      />
+                    </div>
                   )}
                 </div>
               ))

@@ -18,6 +18,25 @@ pub struct ScreenshotRef {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PageViewport {
+    pub page_x: f64,
+    pub page_y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl From<&SnapshotViewport> for PageViewport {
+    fn from(viewport: &SnapshotViewport) -> Self {
+        Self {
+            page_x: viewport.page_x,
+            page_y: viewport.page_y,
+            width: viewport.width,
+            height: viewport.height,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InteractiveElement {
     pub index: u32,
@@ -42,6 +61,7 @@ pub struct PageState {
     pub title: String,
     pub navigation_id: String,
     pub frame_count: usize,
+    pub viewport: Option<PageViewport>,
     pub warnings: Vec<String>,
     pub elements: Vec<InteractiveElement>,
     pub screenshot: Option<ScreenshotRef>,
@@ -73,6 +93,13 @@ pub(crate) fn build_page_state(snapshot: CapturedPageSnapshot) -> PageState {
 }
 
 pub(crate) fn build_page_state_capture(snapshot: CapturedPageSnapshot) -> PageStateCapture {
+    build_page_state_capture_with_screenshot(snapshot, None)
+}
+
+pub(crate) fn build_page_state_capture_with_screenshot(
+    snapshot: CapturedPageSnapshot,
+    screenshot: Option<ScreenshotRef>,
+) -> PageStateCapture {
     let merged_nodes = merge_snapshot(&snapshot);
     let elements = collect_interactive_elements(&snapshot, merged_nodes);
 
@@ -81,9 +108,10 @@ pub(crate) fn build_page_state_capture(snapshot: CapturedPageSnapshot) -> PageSt
         title: snapshot.title,
         navigation_id: snapshot.navigation_id,
         frame_count: snapshot.frames.len().max(1),
+        viewport: Some(PageViewport::from(&snapshot.viewport)),
         warnings: snapshot.warnings,
         elements,
-        screenshot: None,
+        screenshot,
     };
 
     PageStateCapture {
@@ -266,6 +294,7 @@ mod tests {
             title: "Sign in".to_string(),
             navigation_id: "loader-1".to_string(),
             frame_count: 1,
+            viewport: None,
             warnings: vec!["cross_origin_iframe_partial".to_string()],
             elements: vec![InteractiveElement {
                 index: 0,
@@ -300,6 +329,7 @@ mod tests {
             title: "Sign in".to_string(),
             navigation_id: "loader-1".to_string(),
             frame_count: 1,
+            viewport: None,
             warnings: Vec::new(),
             elements: vec![InteractiveElement {
                 index: 0,
@@ -325,6 +355,37 @@ mod tests {
                 .find_element_by_backend_node_id(42)
                 .map(|element| element.name.as_str()),
             Some("Continue")
+        );
+    }
+
+    #[test]
+    fn build_page_state_capture_preserves_viewport_and_screenshot() {
+        let snapshot = CapturedPageSnapshot {
+            url: "https://example.com/checkout".to_string(),
+            title: "Checkout".to_string(),
+            navigation_id: "loader-2".to_string(),
+            frames: Vec::new(),
+            viewport: SnapshotViewport::new(12.0, 48.0, 1280.0, 720.0),
+            dom_nodes: Vec::new(),
+            ax_nodes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let screenshot = ScreenshotRef {
+            kind: "base64_png".to_string(),
+            value: "ZmFrZS1wbmc=".to_string(),
+        };
+
+        let capture = build_page_state_capture_with_screenshot(snapshot, Some(screenshot.clone()));
+
+        assert_eq!(capture.page_state.screenshot, Some(screenshot));
+        assert_eq!(
+            capture.page_state.viewport,
+            Some(PageViewport {
+                page_x: 12.0,
+                page_y: 48.0,
+                width: 1280.0,
+                height: 720.0,
+            })
         );
     }
 }

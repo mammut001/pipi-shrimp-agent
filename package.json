@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "jest",
     "test:coverage": "jest --coverage",
+    "test:browser-gate": "bash tests/browser/release-gate.sh",
     "tauri": "cargo-tauri",
     "tauri:dev": "cargo-tauri dev",
     "tauri:build": "cargo-tauri build"
@@ -48,6 +49,7 @@
     "@vitejs/plugin-react": "^4.1.0",
     "autoprefixer": "^10.4.0",
     "jest": "^30.3.0",
+    "jsdom": "^29.0.2",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.3.0",
     "ts-jest": "^29.4.9",
