@@ -95,14 +95,24 @@ function AutoResearchView() {
 
   const [showSetup, setShowSetup] = useState(!sshConfig);
   const [setupForm, setSetupForm] = useState<SshConfig>({
-    host: '', user: 'root', keyPath: '~/.ssh/id_rsa', port: 22, remoteWorkDir: '~/autoresearch',
+    mode: 'ssh',
+    host: '', user: 'root', keyPath: '', port: 22, remoteWorkDir: '~/autoresearch',
+    authMode: 'agent', password: '',
   });
   const [maxIter, setMaxIter] = useState(50);
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
 
   const handleStart = useCallback(async () => {
-    if (!sshConfig && !setupForm.host) return;
+    if (!sshConfig) {
+      if (setupForm.mode === 'ssh') {
+        if (!setupForm.host || !setupForm.user) return;
+        if (setupForm.authMode === 'password' && !setupForm.password) return;
+        if (setupForm.authMode === 'key' && !setupForm.keyPath) return;
+      } else if (!setupForm.remoteWorkDir) {
+        return;
+      }
+    }
 
     const cfg = sshConfig || setupForm;
     if (!sshConfig) {
@@ -152,40 +162,79 @@ function AutoResearchView() {
         <div className="w-full max-w-md space-y-4">
           <h2 className="text-xl font-bold text-gray-800">AutoResearch Setup</h2>
           <p className="text-sm text-gray-500">
-            Configure SSH connection to your VPS and experiment parameters.
+            Run the loop on this Mac (Local) or on a remote machine via SSH. Password auth requires <code className="px-1 py-0.5 bg-gray-100 rounded text-xs">sshpass</code>.
           </p>
 
           <div className="space-y-3">
-            <input
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder="VPS Host (e.g. 123.45.67.89)"
-              value={setupForm.host}
-              onChange={e => setSetupForm(f => ({ ...f, host: e.target.value }))}
-            />
-            <div className="flex gap-2">
-              <input
-                className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                placeholder="User (default: root)"
-                value={setupForm.user}
-                onChange={e => setSetupForm(f => ({ ...f, user: e.target.value }))}
-              />
-              <input
-                className="w-20 px-3 py-2 border rounded-lg text-sm"
-                placeholder="Port"
-                type="number"
-                value={setupForm.port}
-                onChange={e => setSetupForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
-              />
+            {/* Mode toggle */}
+            <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setSetupForm(f => ({ ...f, mode: 'ssh' }))}
+                className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all ${setupForm.mode === 'ssh' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+              >SSH</button>
+              <button
+                type="button"
+                onClick={() => setSetupForm(f => ({ ...f, mode: 'local' }))}
+                className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all ${setupForm.mode === 'local' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+              >Local</button>
             </div>
+
+            {setupForm.mode === 'ssh' && (
+              <>
+                <input
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                  placeholder="Host (e.g. 192.168.1.10 or connect.westd.seetacloud.com)"
+                  value={setupForm.host}
+                  onChange={e => setSetupForm(f => ({ ...f, host: e.target.value }))}
+                />
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                    placeholder="User (default: root)"
+                    value={setupForm.user}
+                    onChange={e => setSetupForm(f => ({ ...f, user: e.target.value }))}
+                  />
+                  <input
+                    className="w-20 px-3 py-2 border rounded-lg text-sm"
+                    placeholder="Port"
+                    type="number"
+                    value={setupForm.port}
+                    onChange={e => setSetupForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
+                  />
+                </div>
+                <select
+                  className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
+                  value={setupForm.authMode}
+                  onChange={e => setSetupForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
+                >
+                  <option value="agent">Auth: Agent (~/.ssh/config or authorized_keys)</option>
+                  <option value="password">Auth: Password (sshpass)</option>
+                  <option value="key">Auth: Private key</option>
+                </select>
+                {setupForm.authMode === 'password' && (
+                  <input
+                    className="w-full px-3 py-2 border rounded-lg text-sm"
+                    placeholder="Password (kept in memory only)"
+                    type="password"
+                    autoComplete="off"
+                    value={setupForm.password}
+                    onChange={e => setSetupForm(f => ({ ...f, password: e.target.value }))}
+                  />
+                )}
+                {setupForm.authMode === 'key' && (
+                  <input
+                    className="w-full px-3 py-2 border rounded-lg text-sm"
+                    placeholder="SSH key path (e.g. ~/.ssh/id_rsa)"
+                    value={setupForm.keyPath}
+                    onChange={e => setSetupForm(f => ({ ...f, keyPath: e.target.value }))}
+                  />
+                )}
+              </>
+            )}
             <input
               className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder="SSH Key Path (default: ~/.ssh/id_rsa)"
-              value={setupForm.keyPath}
-              onChange={e => setSetupForm(f => ({ ...f, keyPath: e.target.value }))}
-            />
-            <input
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder="Remote Work Dir (default: ~/autoresearch)"
+              placeholder={setupForm.mode === 'local' ? 'Local work dir (absolute path)' : 'Remote work dir (default: ~/autoresearch)'}
               value={setupForm.remoteWorkDir}
               onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
             />
@@ -219,7 +268,13 @@ function AutoResearchView() {
 
           <button
             className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            disabled={!setupForm.host}
+            disabled={
+              setupForm.mode === 'ssh'
+                ? (!setupForm.host || !setupForm.user
+                    || (setupForm.authMode === 'password' && !setupForm.password)
+                    || (setupForm.authMode === 'key' && !setupForm.keyPath))
+                : !setupForm.remoteWorkDir
+            }
             onClick={handleStart}
           >
             Start AutoResearch
