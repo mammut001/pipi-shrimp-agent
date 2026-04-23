@@ -23,12 +23,40 @@ export interface ExperimentEntry {
   durationMs: number;
 }
 
+export type ExecMode = 'local' | 'ssh';
+export type SshAuthMode = 'agent' | 'password' | 'key';
+
 export interface SshConfig {
+  /** Execution mode. Defaults to 'ssh' for backward compatibility. */
+  mode: ExecMode;
   host: string;
   user: string;
+  /** Used only when mode='ssh' && authMode='key'. */
   keyPath: string;
   port: number;
+  /** Target working directory (remote for mode=ssh, local for mode=local). */
   remoteWorkDir: string;
+  /** SSH auth strategy. Defaults to 'agent' (plain `ssh user@host`). */
+  authMode: SshAuthMode;
+  /**
+   * Password for authMode='password'. Held in-memory only (Zustand store);
+   * never persisted to disk, never sent to remote commands via argv.
+   */
+  password: string;
+}
+
+/** Merge partial config with defaults; also normalizes legacy sessions. */
+export function withSshConfigDefaults(partial: Partial<SshConfig> | null | undefined): SshConfig {
+  return {
+    mode: partial?.mode ?? 'ssh',
+    host: partial?.host ?? '',
+    user: partial?.user ?? '',
+    keyPath: partial?.keyPath ?? '',
+    port: partial?.port ?? 22,
+    remoteWorkDir: partial?.remoteWorkDir ?? '',
+    authMode: partial?.authMode ?? 'agent',
+    password: partial?.password ?? '',
+  };
 }
 
 export interface TelegramNotifyConfig {
@@ -148,7 +176,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     sessionFilePath: opts.sessionFilePath || '',
     startedAt: new Date().toISOString(),
     experiments: [],
-    sshConfig: opts.sshConfig,
+    sshConfig: withSshConfigDefaults(opts.sshConfig),
     telegramConfig: { ...defaultTelegramConfig, ...opts.telegramConfig },
     liveOutput: '',
     selectedExperiment: -1,
@@ -178,7 +206,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   appendLiveOutput: (chunk) => set((s) => ({ liveOutput: s.liveOutput + chunk })),
   setSelectedExperiment: (idx) => set({ selectedExperiment: idx }),
 
-  setSshConfig: (cfg) => set({ sshConfig: cfg }),
+  setSshConfig: (cfg) => set({ sshConfig: withSshConfigDefaults(cfg) }),
   setTelegramConfig: (cfg) => set((s) => ({
     telegramConfig: { ...s.telegramConfig, ...cfg },
   })),

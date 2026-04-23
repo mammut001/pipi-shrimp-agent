@@ -1,11 +1,13 @@
 /**
- * AutoResearch Rollback — Git-based revert/commit logic on remote VPS.
+ * AutoResearch Rollback — Git-based revert/commit logic on the target.
  *
- * All operations execute via ssh_exec on the remote machine.
+ * Works transparently for both local and SSH modes via the shared
+ * remoteExec helpers.
  */
 
 import { invoke } from '@tauri-apps/api/core';
 import type { SshConfig } from '@/store/autoresearchStore';
+import { buildRemoteBashCommand, shellEscape } from '@/utils/remoteExec';
 
 interface RawBashResult {
   stdout?: string;
@@ -13,20 +15,9 @@ interface RawBashResult {
   exit_code?: number;
 }
 
-/**
- * Build a full SSH command string.
- */
-function sshCmd(cfg: SshConfig, remoteCmd: string): string {
-  const port = cfg.port || 22;
-  const esc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
-  const prefix = `ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p ${port} -i ${esc(cfg.keyPath)} ${esc(cfg.user)}@${esc(cfg.host)}`;
-  const wrapped = `cd ${esc(cfg.remoteWorkDir)} && ${remoteCmd}`;
-  return `${prefix} ${esc(wrapped)}`;
-}
-
 async function runRemote(cfg: SshConfig, cmd: string, timeout = 30): Promise<RawBashResult> {
   return invoke<RawBashResult>('execute_bash', {
-    command: sshCmd(cfg, cmd),
+    command: buildRemoteBashCommand(cfg, cmd),
     timeoutSecs: timeout,
   });
 }
@@ -78,13 +69,14 @@ export async function commitExperiment(
   metricValue: number,
 ): Promise<{ success: boolean; commitHash?: string; message: string }> {
   const msg = `exp-${iteration}: ${description} | ${metricName}=${metricValue}`;
-  const escapedMsg = msg.replace(/'/g, "'\\''");
 
   // Stage all
   await runRemote(cfg, 'git add -A');
 
-  // Commit
-  const result = await runRemote(cfg, `git commit -m '${escapedMsg}'`);
+  // Commit — shell-escape the message to survive the local bash wrapper
+  // and (if SSH) the second shell on the remote side.
+  const escapedMsg = shellEscape(msg);
+  const result = await runRemote(cfg, `git commit -m ${escapedMsg}`);
   const exitCode = result.exit_code ?? 0;
 
   if (exitCode !== 0) {

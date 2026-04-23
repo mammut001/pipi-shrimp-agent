@@ -17,6 +17,7 @@ import { useAutoResearchStore, type ExperimentEntry, type SshConfig } from '@/st
 import { logExperiment } from './expLogger';
 import { rollback, isRemoteClean } from './rollback';
 import { createNotifier } from './notifier';
+import { describeTarget, ensureSshpassAvailable } from '@/utils/remoteExec';
 
 // ============== System prompt builder ==============
 
@@ -32,17 +33,25 @@ function buildSystemPrompt(
       ).join('\n')
     : 'No experiments run yet.';
 
+  const isLocal = sshConfig.mode === 'local';
+  const envLine = isLocal
+    ? `Executing directly on the local machine (no SSH). Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
+    : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
+  const toolCfgHint = isLocal
+    ? `When calling ssh_exec / ssh_upload_file / ssh_read_file, pass mode="local" and remoteWorkDir="${sshConfig.remoteWorkDir}". Do not set host/user/password.`
+    : `When calling ssh_exec / ssh_upload_file / ssh_read_file, pass mode="ssh", host="${sshConfig.host}", user="${sshConfig.user}", port=${sshConfig.port}, authMode="${sshConfig.authMode}"${sshConfig.authMode === 'key' ? `, keyPath="${sshConfig.keyPath}"` : ''}, remoteWorkDir="${sshConfig.remoteWorkDir}". The host will inject the password for you — never ask the user for it and never echo it in your output.`;
+
   return `# AutoResearch Agent — System Prompt
 
 ## Role
 You are an autonomous machine learning research agent running inside Pipi-Shrimp Agent.
-Your job is to run a fully automated experiment loop on a remote VPS via SSH, guided by the user's research session file.
+Your job is to run a fully automated experiment loop, guided by the user's research session file.
 You operate without human intervention between iterations. You think step-by-step, act through tools, and maintain a rigorous experiment log.
 
 ## Environment
-- **Local machine**: macOS (Pipi-Shrimp Agent client)
-- **Remote machine**: VPS accessible via SSH
-- **SSH Config**: host=${sshConfig.host}, user=${sshConfig.user}, keyPath=${sshConfig.keyPath}, port=${sshConfig.port}, remoteWorkDir=${sshConfig.remoteWorkDir}
+- **Local client**: macOS (Pipi-Shrimp Agent)
+- **Execution target**: ${envLine}
+- **Tool config**: ${toolCfgHint}
 - **Available tools**: ssh_exec, ssh_upload_file, ssh_read_file, file_write, file_read, Bash
 
 ## Session File Content
@@ -56,7 +65,7 @@ ${historyBlock}
 Execute exactly ONE experiment cycle:
 
 ### Step 1 — Read Context
-Read the current training code from VPS: use ssh_read_file to read the main training script.
+Read the current training code: use ssh_read_file on the main training script.
 Identify the current best metric from the history above.
 
 ### Step 2 — Generate Hypothesis
@@ -66,11 +75,11 @@ Do NOT repeat failed experiments unless you have a new reason.
 
 ### Step 3 — Apply Code Change
 Generate the modified file content. Use ssh_upload_file or ssh_exec to apply the change.
-Before uploading, verify the baseline is clean with: ssh_exec("git status --porcelain")
-After uploading, verify the diff with: ssh_exec("git diff")
+Before uploading, verify the baseline is clean: ssh_exec("git status --porcelain").
+After uploading, verify the diff: ssh_exec("git diff").
 
 ### Step 4 — Run Experiment
-Execute the training script. Use ssh_exec with the training command from the session file.
+Execute the training script via ssh_exec using the command from the session file.
 Wrap with timeout to prevent hanging.
 
 ### Step 5 — Parse Result
@@ -89,6 +98,7 @@ If not improved or failed: git checkout -- . && git clean -fd
 - Never modify dataset loading or tokenizer unless session file permits it
 - Never exceed the max training time from session file
 - Always revert failed experiments before finishing
+- Never echo the SSH password or keyPath in output
 - Be concise in tool calls, detailed in reasoning
 `;
 }
@@ -161,7 +171,17 @@ export async function startExperimentLoop(
     return;
   }
 
-  // Verify remote is clean before starting
+  // Preflight: sshpass required when using password auth over SSH.
+  if (store.sshConfig.mode === 'ssh' && store.sshConfig.authMode === 'password') {
+    const avail = await ensureSshpassAvailable();
+    if (!avail.ok) {
+      useAutoResearchStore.getState().setError(avail.hint ?? 'sshpass unavailable');
+      return;
+    }
+  }
+
+  // Verify target is clean before starting. For local mode this just
+  // checks `git status --porcelain` in the local workdir.
   try {
     const clean = await isRemoteClean(store.sshConfig);
     if (!clean) {
@@ -169,7 +189,8 @@ export async function startExperimentLoop(
       await rollback(store.sshConfig);
     }
   } catch (e) {
-    useAutoResearchStore.getState().setError(`Cannot connect to VPS: ${e}`);
+    const where = store.sshConfig.mode === 'local' ? 'local workdir' : 'VPS';
+    useAutoResearchStore.getState().setError(`Cannot reach ${where}: ${e}`);
     return;
   }
 

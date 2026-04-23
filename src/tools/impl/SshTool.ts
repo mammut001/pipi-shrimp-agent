@@ -1,34 +1,25 @@
 import { z } from 'zod';
 import { invoke } from '@tauri-apps/api/core';
 import { BaseTool, ToolContext, ToolResult } from '../base/Tool';
+import {
+  buildRemoteBashCommand,
+  buildUploadCommand,
+  ensureSshpassAvailable,
+  type ExecMode,
+  type SshAuthMode,
+} from '../../utils/remoteExec';
 
-// ============== SSH Config ==============
+// ============== SSH Config (legacy shape — kept for callers) ==============
 
 export interface SshConfig {
+  mode: ExecMode;
   host: string;
   user: string;
   keyPath: string;
   port: number;
   remoteWorkDir: string;
-}
-
-/**
- * Resolve SSH config from settings store or environment.
- * In a real flow the config lives in settingsStore.sshConfig — here we
- * read it from the tool arguments (each call may override), falling back
- * to a default ~/.ssh/id_rsa key.
- */
-function buildSshPrefix(cfg: SshConfig): string {
-  const port = cfg.port || 22;
-  return `ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p ${port} -i ${shellEscape(cfg.keyPath)} ${shellEscape(cfg.user)}@${shellEscape(cfg.host)}`;
-}
-
-/**
- * Minimal POSIX shell escape — wraps value in single quotes and escapes
- * embedded single quotes (the standard '\'' trick).
- */
-function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
+  authMode: SshAuthMode;
+  password: string;
 }
 
 // ============== Dangerous-pattern guard ==============
@@ -38,26 +29,72 @@ const DANGEROUS_PATTERNS = [
   /:\(\)\s*:\s*\|:\s*&/,
   /mkfs/,
   /dd\s+if=.*of=\/dev\//,
-  /curl\s+.*\$\(/,                    // data exfiltration via curl + command substitution
-  /wget\s+.*\$\(/,                    // data exfiltration via wget
-  /nc\s+-[elp]/,                      // netcat listeners
-  />\s*\/dev\/[sh]d/,                 // write to disk devices
-  /chmod\s+777\s+\//,                 // chmod 777 on root paths
+  /curl\s+.*\$\(/,
+  /wget\s+.*\$\(/,
+  /nc\s+-[elp]/,
+  />\s*\/dev\/[sh]d/,
+  /chmod\s+777\s+\//,
+  // Block `sshpass -p '<pw>'` so free-form commands can't leak passwords.
+  /\bsshpass\s+-p\b/,
 ];
 
 function isDangerous(cmd: string): boolean {
   return DANGEROUS_PATTERNS.some(p => p.test(cmd));
 }
 
+// Common schema fragment for target/auth fields. All optional so older
+// callers (just host/user) keep working; AutoResearch fills in the rest.
+const TargetFields = {
+  mode: z.enum(['local', 'ssh']).optional().describe("Execution mode: 'local' runs on this machine, 'ssh' on a remote host. Defaults to 'ssh'."),
+  host: z.string().optional().describe('Remote host (required when mode=ssh).'),
+  user: z.string().optional().describe('SSH user (required when mode=ssh).'),
+  port: z.number().optional().describe('SSH port (default: 22).'),
+  authMode: z.enum(['agent', 'password', 'key']).optional().describe("SSH auth: 'agent' (default, uses ssh-agent / ~/.ssh/config), 'password', or 'key'."),
+  keyPath: z.string().optional().describe("Private key path (only when authMode='key')."),
+  password: z.string().optional().describe("SSH password (only when authMode='password'; kept in memory)."),
+  remoteWorkDir: z.string().optional().describe('Working directory on the target (cd-ed into before running the command).'),
+};
+
+function toCfg(input: any): Partial<SshConfig> {
+  return {
+    mode: input.mode ?? 'ssh',
+    host: input.host ?? '',
+    user: input.user ?? '',
+    port: input.port ?? 22,
+    authMode: input.authMode ?? 'agent',
+    keyPath: input.keyPath ?? '',
+    password: input.password ?? '',
+    remoteWorkDir: input.remoteWorkDir ?? '',
+  };
+}
+
+async function preflight(cfg: Partial<SshConfig>): Promise<{ ok: true } | { ok: false; error: string }> {
+  if ((cfg.mode ?? 'ssh') === 'ssh') {
+    if (!cfg.host) return { ok: false, error: 'host is required for ssh mode' };
+    if (!cfg.user) return { ok: false, error: 'user is required for ssh mode' };
+    if ((cfg.authMode ?? 'agent') === 'password') {
+      if (!cfg.password) return { ok: false, error: 'password is required for authMode=password' };
+      const avail = await ensureSshpassAvailable();
+      if (!avail.ok) return { ok: false, error: avail.hint ?? 'sshpass unavailable' };
+    }
+    if (cfg.authMode === 'key' && !cfg.keyPath) {
+      return { ok: false, error: 'keyPath is required for authMode=key' };
+    }
+  }
+  return { ok: true };
+}
+
+interface RawBashResult {
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+}
+
 // ============== ssh_exec ==============
 
 const SshExecInputSchema = z.object({
-  command: z.string().describe('The command to execute on the remote host'),
-  host: z.string().describe('Remote host IP or hostname'),
-  user: z.string().describe('SSH user'),
-  keyPath: z.string().optional().describe('Path to SSH private key (default: ~/.ssh/id_rsa)'),
-  port: z.number().optional().describe('SSH port (default: 22)'),
-  remoteWorkDir: z.string().optional().describe('Remote working directory (default: ~/autoresearch)'),
+  command: z.string().describe('The command to execute on the target'),
+  ...TargetFields,
   timeout: z.number().optional().describe('Timeout in seconds (default: 300, max: 600)'),
 });
 
@@ -70,16 +107,10 @@ const SshExecOutputSchema = z.object({
 type SshExecInput = z.infer<typeof SshExecInputSchema>;
 type SshExecOutput = z.infer<typeof SshExecOutputSchema>;
 
-interface RawBashResult {
-  stdout?: string;
-  stderr?: string;
-  exit_code?: number;
-}
-
 export class SshExecTool extends BaseTool<SshExecInput, SshExecOutput> {
   readonly name = 'ssh_exec';
   readonly aliases = ['SshExec', 'RemoteExec'];
-  readonly searchHint = 'ssh remote execute command server vps';
+  readonly searchHint = 'ssh remote execute command server vps local bash';
   readonly maxResultSizeChars = 50000;
   readonly shouldDefer = false;
 
@@ -91,21 +122,12 @@ export class SshExecTool extends BaseTool<SshExecInput, SshExecOutput> {
       return { success: false, error: `Dangerous command blocked: ${input.command.substring(0, 80)}` };
     }
 
-    const cfg: SshConfig = {
-      host: input.host,
-      user: input.user,
-      keyPath: input.keyPath || '~/.ssh/id_rsa',
-      port: input.port || 22,
-      remoteWorkDir: input.remoteWorkDir || '~/autoresearch',
-    };
+    const cfg = toCfg(input);
+    const check = await preflight(cfg);
+    if (!check.ok) return { success: false, error: check.error };
 
     const timeout = Math.min(input.timeout || 300, 600);
-    const prefix = buildSshPrefix(cfg);
-    // Wrap the remote command: cd into workdir, then execute.
-    // The entire remote command string (including user command) is shell-escaped
-    // for the outer ssh invocation to prevent injection.
-    const remoteCmd = `cd ${shellEscape(cfg.remoteWorkDir)} && ${input.command}`;
-    const fullCmd = `${prefix} ${shellEscape(remoteCmd)}`;
+    const fullCmd = buildRemoteBashCommand(cfg, input.command);
 
     try {
       const result = await invoke<RawBashResult>('execute_bash', {
@@ -126,7 +148,7 @@ export class SshExecTool extends BaseTool<SshExecInput, SshExecOutput> {
   }
 
   async describe(): Promise<string> {
-    return 'Execute a command on a remote server via SSH.';
+    return 'Execute a command on the target (local or remote via SSH).';
   }
 
   isReadOnly(): boolean { return false; }
@@ -136,12 +158,9 @@ export class SshExecTool extends BaseTool<SshExecInput, SshExecOutput> {
 // ============== ssh_upload_file ==============
 
 const SshUploadInputSchema = z.object({
-  localPath: z.string().describe('Local file path to upload'),
-  remotePath: z.string().describe('Remote destination path'),
-  host: z.string().describe('Remote host'),
-  user: z.string().describe('SSH user'),
-  keyPath: z.string().optional(),
-  port: z.number().optional(),
+  localPath: z.string().describe('Local source file path'),
+  remotePath: z.string().describe('Destination path (remote for mode=ssh, local for mode=local)'),
+  ...TargetFields,
 });
 
 const SshUploadOutputSchema = z.object({
@@ -154,8 +173,8 @@ type SshUploadOutput = z.infer<typeof SshUploadOutputSchema>;
 
 export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput> {
   readonly name = 'ssh_upload_file';
-  readonly aliases = ['SshUpload', 'ScpUpload'];
-  readonly searchHint = 'ssh scp upload file remote server';
+  readonly aliases = ['SshUpload', 'ScpUpload', 'RemoteUpload'];
+  readonly searchHint = 'ssh scp upload file remote server local copy';
   readonly maxResultSizeChars = 10000;
   readonly shouldDefer = false;
 
@@ -163,9 +182,11 @@ export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput>
   readonly outputSchema = SshUploadOutputSchema;
 
   async execute(input: SshUploadInput, _context: ToolContext): Promise<ToolResult<SshUploadOutput>> {
-    const port = input.port || 22;
-    const keyPath = input.keyPath || '~/.ssh/id_rsa';
-    const cmd = `scp -o StrictHostKeyChecking=accept-new -P ${port} -i ${shellEscape(keyPath)} ${shellEscape(input.localPath)} ${shellEscape(input.user)}@${shellEscape(input.host)}:${shellEscape(input.remotePath)}`;
+    const cfg = toCfg(input);
+    const check = await preflight(cfg);
+    if (!check.ok) return { success: false, error: check.error };
+
+    const cmd = buildUploadCommand(cfg, input.localPath, input.remotePath);
 
     try {
       const result = await invoke<RawBashResult>('execute_bash', {
@@ -176,7 +197,7 @@ export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput>
       if (exitCode !== 0) {
         return {
           success: false,
-          error: `scp failed (exit ${exitCode}): ${result.stderr || result.stdout || 'unknown error'}`,
+          error: `upload failed (exit ${exitCode}): ${result.stderr || result.stdout || 'unknown error'}`,
         };
       }
       return {
@@ -189,7 +210,7 @@ export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput>
   }
 
   async describe(): Promise<string> {
-    return 'Upload a local file to a remote server via SCP.';
+    return 'Upload a local file to the target (scp for SSH, cp for local).';
   }
 
   isReadOnly(): boolean { return false; }
@@ -198,11 +219,8 @@ export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput>
 // ============== ssh_read_file ==============
 
 const SshReadFileInputSchema = z.object({
-  remotePath: z.string().describe('Remote file path to read'),
-  host: z.string().describe('Remote host'),
-  user: z.string().describe('SSH user'),
-  keyPath: z.string().optional(),
-  port: z.number().optional(),
+  remotePath: z.string().describe('File path on the target'),
+  ...TargetFields,
   maxLines: z.number().optional().describe('Max lines to return (default: all)'),
 });
 
@@ -217,7 +235,7 @@ type SshReadFileOutput = z.infer<typeof SshReadFileOutputSchema>;
 export class SshReadFileTool extends BaseTool<SshReadFileInput, SshReadFileOutput> {
   readonly name = 'ssh_read_file';
   readonly aliases = ['SshReadFile', 'RemoteReadFile'];
-  readonly searchHint = 'ssh read file remote cat';
+  readonly searchHint = 'ssh read file remote cat local';
   readonly maxResultSizeChars = 100000;
   readonly shouldDefer = false;
 
@@ -225,15 +243,19 @@ export class SshReadFileTool extends BaseTool<SshReadFileInput, SshReadFileOutpu
   readonly outputSchema = SshReadFileOutputSchema;
 
   async execute(input: SshReadFileInput, _context: ToolContext): Promise<ToolResult<SshReadFileOutput>> {
-    const port = input.port || 22;
-    const keyPath = input.keyPath || '~/.ssh/id_rsa';
-    const prefix = `ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p ${port} -i ${shellEscape(keyPath)} ${shellEscape(input.user)}@${shellEscape(input.host)}`;
+    const cfg = toCfg(input);
+    const check = await preflight(cfg);
+    if (!check.ok) return { success: false, error: check.error };
 
-    let remoteCmd = `cat ${shellEscape(input.remotePath)}`;
-    if (input.maxLines) {
-      remoteCmd = `head -n ${input.maxLines} ${shellEscape(input.remotePath)}`;
-    }
-    const fullCmd = `${prefix} ${shellEscape(remoteCmd)}`;
+    // Build remote subcommand. Escape path for the remote side.
+    const esc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
+    const remoteCmd = input.maxLines
+      ? `head -n ${Math.max(1, Math.floor(input.maxLines))} ${esc(input.remotePath)}`
+      : `cat ${esc(input.remotePath)}`;
+
+    // For reads don't cd into remoteWorkDir — the target path might be absolute.
+    const readCfg = { ...cfg, remoteWorkDir: '' };
+    const fullCmd = buildRemoteBashCommand(readCfg, remoteCmd);
 
     try {
       const result = await invoke<RawBashResult>('execute_bash', {
@@ -244,7 +266,7 @@ export class SshReadFileTool extends BaseTool<SshReadFileInput, SshReadFileOutpu
       if (exitCode !== 0) {
         return {
           success: false,
-          error: `Failed to read remote file (exit ${exitCode}): ${result.stderr || 'unknown error'}`,
+          error: `Failed to read file (exit ${exitCode}): ${result.stderr || 'unknown error'}`,
         };
       }
       const content = result.stdout || '';
@@ -261,7 +283,7 @@ export class SshReadFileTool extends BaseTool<SshReadFileInput, SshReadFileOutpu
   }
 
   async describe(): Promise<string> {
-    return 'Read the content of a file on a remote server via SSH.';
+    return 'Read the content of a file on the target (local or remote via SSH).';
   }
 
   isReadOnly(): boolean { return true; }

@@ -26,11 +26,14 @@ export function AutoResearchSetupModal() {
   const modalRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState<SshConfig>({
+    mode: sshConfig?.mode || 'ssh',
     host: sshConfig?.host || '',
     user: sshConfig?.user || 'root',
-    keyPath: sshConfig?.keyPath || '~/.ssh/id_rsa',
+    keyPath: sshConfig?.keyPath || '',
     port: sshConfig?.port || 22,
     remoteWorkDir: sshConfig?.remoteWorkDir || '~/autoresearch',
+    authMode: sshConfig?.authMode || 'agent',
+    password: sshConfig?.password || '',
   });
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
@@ -93,7 +96,14 @@ export function AutoResearchSetupModal() {
   }, [showSetupModal, setShowSetupModal]);
 
   const handleStart = useCallback(async () => {
-    if (!form.host) return;
+    // Mode-specific validation
+    if (form.mode === 'ssh') {
+      if (!form.host || !form.user) return;
+      if (form.authMode === 'password' && !form.password) return;
+      if (form.authMode === 'key' && !form.keyPath) return;
+    } else {
+      if (!form.remoteWorkDir) return;
+    }
 
     let resolvedSessionFilePath = sessionFile.trim();
     if (!resolvedSessionFilePath) {
@@ -164,41 +174,88 @@ export function AutoResearchSetupModal() {
 
         {/* Body */}
         <div className="px-5 pb-5 space-y-3">
-          {/* SSH Section */}
+          {/* Target Section */}
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">SSH Connection</label>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-                placeholder="host (e.g. 123.45.67.89)"
-                value={form.host}
-                onChange={e => setForm(f => ({ ...f, host: e.target.value }))}
-              />
-              <input
-                className="w-16 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-                placeholder="port"
-                type="number"
-                value={form.port}
-                onChange={e => setForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
-              />
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Execution Target</label>
+
+            {/* Mode toggle */}
+            <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setForm(f => ({ ...f, mode: 'ssh' }))}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${form.mode === 'ssh' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+              >SSH</button>
+              <button
+                type="button"
+                onClick={() => setForm(f => ({ ...f, mode: 'local' }))}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${form.mode === 'local' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+              >Local</button>
             </div>
-            <div className="flex gap-2">
-              <input
-                className="w-24 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-                placeholder="user"
-                value={form.user}
-                onChange={e => setForm(f => ({ ...f, user: e.target.value }))}
-              />
-              <input
-                className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-                placeholder="key path"
-                value={form.keyPath}
-                onChange={e => setForm(f => ({ ...f, keyPath: e.target.value }))}
-              />
-            </div>
+
+            {form.mode === 'ssh' && (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    placeholder="host (e.g. 192.168.1.10 or connect.westd.seetacloud.com)"
+                    value={form.host}
+                    onChange={e => setForm(f => ({ ...f, host: e.target.value }))}
+                  />
+                  <input
+                    className="w-16 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    placeholder="port"
+                    type="number"
+                    value={form.port}
+                    onChange={e => setForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    className="w-24 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    placeholder="user"
+                    value={form.user}
+                    onChange={e => setForm(f => ({ ...f, user: e.target.value }))}
+                  />
+                  <select
+                    className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white"
+                    value={form.authMode}
+                    onChange={e => setForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
+                  >
+                    <option value="agent">Auth: Agent (~/.ssh/config)</option>
+                    <option value="password">Auth: Password</option>
+                    <option value="key">Auth: Private key</option>
+                  </select>
+                </div>
+                {form.authMode === 'password' && (
+                  <>
+                    <input
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                      placeholder="password"
+                      type="password"
+                      autoComplete="off"
+                      value={form.password}
+                      onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                    />
+                    <p className="text-[10px] text-gray-400 leading-snug">
+                      Kept in memory only (not saved to disk). Requires <code className="px-1 py-0.5 bg-gray-100 rounded">sshpass</code>:<br/>
+                      <code className="px-1 py-0.5 bg-gray-100 rounded">brew install hudochenkov/sshpass/sshpass</code>
+                    </p>
+                  </>
+                )}
+                {form.authMode === 'key' && (
+                  <input
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    placeholder="key path (e.g. ~/.ssh/id_rsa)"
+                    value={form.keyPath}
+                    onChange={e => setForm(f => ({ ...f, keyPath: e.target.value }))}
+                  />
+                )}
+              </>
+            )}
+
             <input
               className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-              placeholder="remote work dir"
+              placeholder={form.mode === 'local' ? 'local work dir (absolute path)' : 'remote work dir'}
               value={form.remoteWorkDir}
               onChange={e => setForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
             />
@@ -241,7 +298,13 @@ export function AutoResearchSetupModal() {
           {/* Start Button */}
           <button
             className="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-40 transition-all mt-1"
-            disabled={!form.host}
+            disabled={
+              form.mode === 'ssh'
+                ? (!form.host || !form.user
+                    || (form.authMode === 'password' && !form.password)
+                    || (form.authMode === 'key' && !form.keyPath))
+                : !form.remoteWorkDir
+            }
             onClick={handleStart}
           >
             Start Experiment Loop
