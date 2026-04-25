@@ -6,9 +6,19 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { DOCS_CHANGED_EVENT, type DocsChangedEventDetail } from '@/services/browserBenchmarkArtifacts';
-import { listDocs, readDoc, openFileExternal, openFileWithApp, DocMeta, DocContent } from '@/services/docService';
+import {
+  listDocs,
+  readDoc,
+  openFileExternal,
+  openFileWithApp,
+  type DocMeta,
+  type DocContent,
+} from '@/services/docService';
 import { invoke } from '@tauri-apps/api/core';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Section } from './ui/Section';
 import { DocListSkeleton } from './ui/Skeleton';
 
@@ -19,6 +29,28 @@ interface DocPanelProps {
 interface MenuState {
   doc: DocMeta;
   position: { x: number; y: number };
+}
+
+const docPreviewProseClassName = [
+  'prose prose-stone prose-sm md:prose-base max-w-none',
+  'prose-headings:font-semibold prose-headings:tracking-tight prose-headings:text-[#2f251a]',
+  'prose-p:text-[#4f463d] prose-li:text-[#4f463d] prose-strong:text-[#2f251a]',
+  'prose-a:text-[#0f766e] prose-a:no-underline hover:prose-a:text-[#115e59]',
+  'prose-blockquote:border-l-[#d6d3d1] prose-blockquote:text-[#57534e]',
+  'prose-hr:border-[#ece6dc]',
+  'prose-table:text-[0.92em] prose-th:border-b prose-th:border-[#e7e1d7] prose-th:text-[#57534e]',
+  'prose-td:border-b prose-td:border-[#f1ede6]',
+  'prose-code:rounded prose-code:bg-[#f5f5f4] prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[#7c2d12]',
+  'prose-code:before:hidden prose-code:after:hidden',
+  'prose-pre:rounded-2xl prose-pre:border prose-pre:border-[#2c303a] prose-pre:bg-[#111827] prose-pre:shadow-none',
+].join(' ');
+
+export function DocMarkdownPreview({ body }: { body: string }) {
+  return (
+    <article className={docPreviewProseClassName}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+    </article>
+  );
 }
 
 export function DocPanel({ workDir }: DocPanelProps) {
@@ -76,6 +108,27 @@ export function DocPanel({ workDir }: DocPanelProps) {
     }
   }, [menuState]);
 
+  useEffect(() => {
+    if (!selectedDoc || typeof document === 'undefined') {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedDoc(null);
+      }
+    };
+
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedDoc]);
+
   const filteredDocs = docs.filter(doc => 
     doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     doc.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -127,6 +180,15 @@ export function DocPanel({ workDir }: DocPanelProps) {
       console.error('Failed to reveal in finder:', error);
     }
     setMenuState(null);
+  };
+
+  const handleOpenSelectedDocDefault = async () => {
+    if (!selectedDoc) return;
+    try {
+      await openFileExternal(selectedDoc.meta.path);
+    } catch (error) {
+      console.error('Failed to open selected doc:', error);
+    }
   };
 
   const formatDate = (isoString: string) => {
@@ -277,69 +339,124 @@ export function DocPanel({ workDir }: DocPanelProps) {
           </div>
         )}
 
-        {/* Doc preview modal */}
-        {selectedDoc && (
-          <div 
-            className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/50"
-            onClick={() => setSelectedDoc(null)}
-          >
-            <div 
-              className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+      </div>
+      {selectedDoc && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[1000] overflow-y-auto bg-[#1c1917]/58 backdrop-blur-[6px]"
+          onClick={() => setSelectedDoc(null)}
+        >
+          <div className="min-h-full sm:p-4">
+            <div
+              className="flex min-h-screen w-full flex-col bg-[#f6f1e8] shadow-[0_32px_120px_rgba(15,23,42,0.3)] sm:min-h-[calc(100vh-2rem)] sm:rounded-[28px] sm:border sm:border-white/70"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                <div>
-                  <span className="text-[9px] font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded mr-2">
-                    {selectedDoc.meta.number}
-                  </span>
-                  <h3 className="text-sm font-bold text-gray-800 inline">
-                    {selectedDoc.meta.title}
-                  </h3>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => openFileExternal(selectedDoc.meta.path)}
-                    className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-                    title="Open in default editor"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => setSelectedDoc(null)}
-                    className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  </button>
+              <div className="sticky top-0 z-10 border-b border-[#e7ded1] bg-[linear-gradient(135deg,rgba(255,255,255,0.95),rgba(246,241,232,0.98))] px-4 py-4 sm:px-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <button
+                      onClick={() => setSelectedDoc(null)}
+                      className="inline-flex items-center gap-2 rounded-full bg-white/85 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6f665c] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)] transition-colors hover:text-[#2f251a]"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                      Back to Docs
+                    </button>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-[#dceeea] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
+                        Doc {selectedDoc.meta.number}
+                      </span>
+                      <span className="text-[11px] text-[#8a7f72]" title={selectedDoc.meta.path}>
+                        {selectedDoc.meta.filename}
+                      </span>
+                    </div>
+                    <h3 className="mt-3 text-xl font-semibold tracking-tight text-[#2f251a] sm:text-3xl">
+                      {selectedDoc.meta.title}
+                    </h3>
+                    {selectedDoc.meta.summary && (
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-[#655a4f]">
+                        {selectedDoc.meta.summary}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start">
+                    <button
+                      onClick={() => void handleOpenSelectedDocDefault()}
+                      className="rounded-xl border border-[#e7ded1] bg-white/90 px-3 py-2 text-[12px] font-medium text-[#6f665c] transition-colors hover:border-[#d8cfc1] hover:text-[#2f251a]"
+                      title="Open in default editor"
+                    >
+                      Open
+                    </button>
+                    <button
+                      onClick={() => setSelectedDoc(null)}
+                      className="rounded-xl border border-[#e7ded1] bg-white/90 p-2 text-[#6f665c] transition-colors hover:border-[#d8cfc1] hover:text-[#2f251a]"
+                      title="Close document preview"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="text-xs text-gray-500 mb-3 flex items-center gap-3">
-                  <span>Created: {formatDate(selectedDoc.meta.created)}</span>
-                  {selectedDoc.meta.updated && (
-                    <span>Updated: {formatDate(selectedDoc.meta.updated)}</span>
-                  )}
-                </div>
-                {selectedDoc.meta.tags.length > 0 && (
-                  <div className="flex gap-1 mb-3">
-                    {selectedDoc.meta.tags.map(tag => (
-                      <span key={tag} className="text-[9px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                        {tag}
-                      </span>
-                    ))}
+
+              <div className="grid flex-1 lg:grid-cols-[260px_minmax(0,1fr)]">
+                <aside className="border-b border-[#e7ded1] bg-[#f1eadf]/85 px-4 py-5 lg:border-b-0 lg:border-r sm:px-6">
+                  <div className="space-y-5 text-sm text-[#5c5247]">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8f8375]">Timeline</p>
+                      <div className="mt-3 space-y-3">
+                        <div className="rounded-2xl bg-white/80 px-3 py-2 shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#998c7e]">Created</p>
+                          <p className="mt-1 text-sm font-medium text-[#2f251a]">{formatDate(selectedDoc.meta.created)}</p>
+                        </div>
+                        {selectedDoc.meta.updated && (
+                          <div className="rounded-2xl bg-white/80 px-3 py-2 shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#998c7e]">Updated</p>
+                            <p className="mt-1 text-sm font-medium text-[#2f251a]">{formatDate(selectedDoc.meta.updated)}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8f8375]">Path</p>
+                      <p className="mt-3 break-all rounded-2xl bg-white/80 px-3 py-3 text-[12px] leading-5 text-[#5c5247] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+                        {selectedDoc.meta.path}
+                      </p>
+                    </div>
+
+                    {selectedDoc.meta.tags.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8f8375]">Tags</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {selectedDoc.meta.tags.map(tag => (
+                            <span
+                              key={tag}
+                              className="rounded-full bg-[#e7ddd0] px-2.5 py-1 text-[11px] font-medium text-[#67584a]"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-                <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap font-mono text-[11px] leading-relaxed bg-gray-50 p-3 rounded-lg border border-gray-100">
-                  {selectedDoc.body}
+                </aside>
+
+                <div className="px-4 py-5 sm:px-6 sm:py-6">
+                  <div className="min-h-full rounded-[26px] border border-[#ebe4d9] bg-white px-5 py-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] sm:px-8 sm:py-8">
+                    <DocMarkdownPreview body={selectedDoc.body} />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        )}
-      </div>
+        </div>,
+        document.body,
+      )}
     </Section>
   );
 }
