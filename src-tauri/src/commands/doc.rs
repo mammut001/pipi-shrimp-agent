@@ -118,6 +118,19 @@ tags: [{}]
     fm
 }
 
+fn sanitize_doc_body(body: &str) -> String {
+    let generated_time_line = Regex::new(
+        r"(?m)^[>\-*\s]*(?:\*\*|__)?\s*(?:文档生成时间|生成时间|生成日期)(?:\*\*|__)?\s*[:：].*$",
+    )
+    .expect("generated-time regex should compile");
+    let blank_line_runs = Regex::new(r"\n{3,}").expect("blank-line regex should compile");
+
+    let stripped = generated_time_line.replace_all(body, "");
+    let collapsed = blank_line_runs.replace_all(stripped.as_ref(), "\n\n");
+
+    collapsed.trim().to_string()
+}
+
 /// Slugify a title for filename
 fn slugify(text: &str) -> String {
     let text = text
@@ -200,9 +213,11 @@ pub async fn create_doc(
     let tags = tags.unwrap_or_default();
     let related = related.unwrap_or_default();
 
+    let sanitized_body = sanitize_doc_body(&body);
+
     // Generate content with frontmatter
     let frontmatter = generate_frontmatter(&title, &created, &tags, &related, &summary);
-    let content = format!("{}{}", frontmatter, body);
+    let content = format!("{}{}", frontmatter, sanitized_body);
 
     // Write document
     fs::write(&doc_path, &content)
@@ -420,7 +435,7 @@ pub fn read_doc(work_dir: String, number: String) -> AppResult<DocContent> {
         path: path.to_string_lossy().to_string(),
     };
 
-    Ok(DocContent { meta, body: body.to_string() })
+    Ok(DocContent { meta, body: sanitize_doc_body(body) })
 }
 
 /// Delete a document
@@ -639,7 +654,7 @@ pub async fn update_doc(
     let frontmatter = generate_frontmatter_with_updated(&new_title, &created, &updated, &new_tags, &new_related, &new_summary);
     
     // Use new body if provided, otherwise keep existing
-    let final_body = body.unwrap_or(_existing_body.to_string());
+    let final_body = sanitize_doc_body(&body.unwrap_or(_existing_body.to_string()));
     let new_content = format!("{}{}", frontmatter, final_body);
 
     // Write updated content
