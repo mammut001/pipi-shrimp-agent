@@ -26,14 +26,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_timeout_wrapper_returns_timeout_error() {
-        let result = run_with_timeout(
-            "pending-op",
-            Duration::from_millis(10),
-            async {
-                tokio::time::sleep(Duration::from_millis(30)).await;
-                42_u8
-            },
-        )
+        let result = run_with_timeout("pending-op", Duration::from_millis(10), async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            42_u8
+        })
         .await;
 
         assert_eq!(
@@ -49,14 +45,10 @@ mod tests {
     async fn test_timeout_wrapper_returns_before_future_completes() {
         let started_at = Instant::now();
 
-        let result = run_with_timeout(
-            "pending-op",
-            Duration::from_millis(25),
-            async {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                42_u8
-            },
-        )
+        let result = run_with_timeout("pending-op", Duration::from_millis(25), async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            42_u8
+        })
         .await;
 
         assert!(matches!(result, Err(CdpError::Timeout { .. })));

@@ -33,9 +33,7 @@ pub async fn mcp_disconnect_server(
 }
 
 #[tauri::command]
-pub async fn mcp_disconnect_all(
-    state: tauri::State<'_, MCPState>,
-) -> Result<(), String> {
+pub async fn mcp_disconnect_all(state: tauri::State<'_, MCPState>) -> Result<(), String> {
     let mut mgr = state.manager.lock().await;
     mgr.disconnect_all().await.map_err(|e| e.to_string())
 }

@@ -4,10 +4,9 @@
  * Handles web automation and browser control
  * (Placeholder for future Page-Agent integration)
  */
-
 use crate::browser::actions::{
-    self, ActionContext, ClickInput, ElementReference, ExtractContentInput,
-    GetTextContentInput, NavigateInput, PressKeyInput, ScrollInput, TypeTextInput, WaitInput,
+    self, ActionContext, ClickInput, ElementReference, ExtractContentInput, GetTextContentInput,
+    NavigateInput, PressKeyInput, ScrollInput, TypeTextInput, WaitInput,
 };
 use crate::browser::dom::PageState;
 use crate::browser::observability::BrowserObservabilitySnapshot;
@@ -40,9 +39,7 @@ async fn clone_manager_handle(
     state.lock().await.manager.clone()
 }
 
-async fn action_context(
-    state: &tauri::State<'_, Arc<Mutex<BrowserController>>>,
-) -> ActionContext {
+async fn action_context(state: &tauri::State<'_, Arc<Mutex<BrowserController>>>) -> ActionContext {
     ActionContext::new(clone_manager_handle(state).await)
 }
 
@@ -88,7 +85,10 @@ async fn browser_wait_with_ctx(
     )?;
 
     if output.selector_matched {
-        Ok(format!("等待完成，目标选择器已出现（{}ms）", output.waited_ms))
+        Ok(format!(
+            "等待完成，目标选择器已出现（{}ms）",
+            output.waited_ms
+        ))
     } else {
         Ok(format!("已等待 {} 秒", output.waited_ms / 1_000))
     }
@@ -167,7 +167,7 @@ struct LegacySemanticElement {
 // 核心命令：开启并接管用户的本地 Chrome
 #[tauri::command]
 pub async fn connect_browser(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let manager = clone_manager_handle(&state).await;
     let mut manager_guard = manager.lock().await;
@@ -176,17 +176,23 @@ pub async fn connect_browser(
         return Ok("浏览器已连接（复用现有连接）".to_string());
     }
 
-    let session = manager_guard.connect_attach().await.map_err(|e| e.to_string())?;
+    let session = manager_guard
+        .connect_attach()
+        .await
+        .map_err(|e| e.to_string())?;
     manager_guard.start_background_workers(manager.clone());
-    Ok(format!("成功接管浏览器！模式: {}", session.launch_mode.as_str()))
+    Ok(format!(
+        "成功接管浏览器！模式: {}",
+        session.launch_mode.as_str()
+    ))
 }
 
 // 高级功能：智能等待导航
 #[tauri::command]
 pub async fn navigate_and_wait(
-    url: String, 
+    url: String,
     wait_selector: Option<String>,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     navigate_and_wait_with_ctx(&ctx, url, wait_selector).await
@@ -211,7 +217,7 @@ pub async fn get_page_state_text(
 // 兼容层：保留旧 Semantic Tree 结构，内部转发到 PageState。
 #[tauri::command]
 pub async fn get_semantic_tree(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let page_state = get_page_state(state).await?;
     let legacy_elements: Vec<LegacySemanticElement> = page_state
@@ -235,8 +241,7 @@ pub async fn get_semantic_tree(
         })
         .collect();
 
-    serde_json::to_string(&legacy_elements)
-        .map_err(|e| format!("序列化语义树失败: {}", e))
+    serde_json::to_string(&legacy_elements).map_err(|e| format!("序列化语义树失败: {}", e))
 }
 
 /**
@@ -244,8 +249,7 @@ pub async fn get_semantic_tree(
  */
 #[tauri::command]
 pub async fn open_url(url: String) -> AppResult<String> {
-    open::that(&url)
-        .map_err(|e| format!("Failed to open URL: {}", e))?;
+    open::that(&url).map_err(|e| format!("Failed to open URL: {}", e))?;
 
     Ok(format!("Opened URL: {}", url))
 }
@@ -258,7 +262,7 @@ pub async fn browser_click(
     element_id: Option<u64>,
     backend_node_id: Option<i64>,
     navigation_id: Option<String>,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     browser_click_with_ctx(&ctx, element_id, backend_node_id, navigation_id).await
@@ -268,7 +272,7 @@ pub async fn browser_click(
 #[tauri::command]
 pub async fn cdp_click(
     element_id: u64,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     browser_click(Some(element_id), None, None, state).await
 }
@@ -280,7 +284,7 @@ pub async fn browser_type(
     backend_node_id: Option<i64>,
     navigation_id: Option<String>,
     text: String,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     browser_type_with_ctx(&ctx, element_id, backend_node_id, navigation_id, text).await
@@ -291,7 +295,7 @@ pub async fn browser_type(
 pub async fn cdp_type(
     element_id: u64,
     text: String,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     browser_type(Some(element_id), None, None, text, state).await
 }
@@ -301,19 +305,10 @@ pub async fn cdp_type(
 pub async fn browser_scroll(
     direction: String,
     pixels: i64,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
-    let output = action_result(
-        actions::scroll(
-            &ctx,
-            ScrollInput {
-                direction,
-                pixels,
-            },
-        )
-        .await,
-    )?;
+    let output = action_result(actions::scroll(&ctx, ScrollInput { direction, pixels }).await)?;
 
     Ok(format!("滚动: {} {}px", output.direction, output.pixels))
 }
@@ -323,7 +318,7 @@ pub async fn browser_scroll(
 pub async fn cdp_scroll(
     direction: String,
     pixels: i64,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     browser_scroll(direction, pixels, state).await
 }
@@ -331,7 +326,7 @@ pub async fn cdp_scroll(
 #[tauri::command]
 pub async fn browser_press_key(
     key: String,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     let output = action_result(actions::press_key(&ctx, PressKeyInput { key }).await)?;
@@ -342,7 +337,7 @@ pub async fn browser_press_key(
 pub async fn browser_wait(
     seconds: Option<u64>,
     wait_selector: Option<String>,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     browser_wait_with_ctx(&ctx, seconds, wait_selector).await
@@ -351,7 +346,7 @@ pub async fn browser_wait(
 #[tauri::command]
 pub async fn browser_get_text(
     max_length: Option<u64>,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     action_result(
@@ -368,7 +363,9 @@ pub async fn browser_get_text(
 // ============= CDP Connector UI Commands =============
 
 async fn chrome_debug_port_ready() -> bool {
-    reqwest::get("http://127.0.0.1:9222/json/version").await.is_ok()
+    reqwest::get("http://127.0.0.1:9222/json/version")
+        .await
+        .is_ok()
 }
 
 async fn ensure_chrome_debug_process() -> Result<ChromeDebugLaunchOutcome, String> {
@@ -490,7 +487,7 @@ async fn ensure_chrome_debug_process() -> Result<ChromeDebugLaunchOutcome, Strin
 /// Launch Chrome with remote debugging enabled and connect through the shared session manager.
 #[tauri::command]
 pub async fn launch_chrome_debug(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let manager = clone_manager_handle(&state).await;
 
@@ -512,10 +509,16 @@ pub async fn launch_chrome_debug(
 
     Ok(match launch_outcome {
         ChromeDebugLaunchOutcome::DebugPortReady => {
-            format!("Chrome 调试端口已就绪，已接管浏览器（模式: {}）", session.launch_mode.as_str())
+            format!(
+                "Chrome 调试端口已就绪，已接管浏览器（模式: {}）",
+                session.launch_mode.as_str()
+            )
         }
         ChromeDebugLaunchOutcome::Launched => {
-            format!("Chrome 已启动并接管浏览器（模式: {}）", session.launch_mode.as_str())
+            format!(
+                "Chrome 已启动并接管浏览器（模式: {}）",
+                session.launch_mode.as_str()
+            )
         }
     })
 }
@@ -525,18 +528,21 @@ pub async fn launch_chrome_debug(
 /// which is correct for GitHub-style "target=_blank" links.
 #[tauri::command]
 pub async fn resync_page(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let manager = clone_manager_handle(&state).await;
     let mut manager_guard = manager.lock().await;
-    manager_guard.resync_page().await.map_err(|e| e.to_string())?;
+    manager_guard
+        .resync_page()
+        .await
+        .map_err(|e| e.to_string())?;
     Ok("页面已重新同步".to_string())
 }
 
 /// Disconnect browser - clears BrowserController state
 #[tauri::command]
 pub async fn disconnect_browser(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let manager = clone_manager_handle(&state).await;
     let mut manager_guard = manager.lock().await;
@@ -546,7 +552,7 @@ pub async fn disconnect_browser(
 
 #[tauri::command]
 pub async fn get_browser_connection_state(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<BrowserConnectionState, String> {
     let manager = clone_manager_handle(&state).await;
     let manager_guard = manager.lock().await;
@@ -555,7 +561,7 @@ pub async fn get_browser_connection_state(
 
 #[tauri::command]
 pub async fn get_browser_observability_snapshot(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<BrowserObservabilitySnapshot, String> {
     let manager = clone_manager_handle(&state).await;
     let manager_guard = manager.lock().await;
@@ -564,7 +570,7 @@ pub async fn get_browser_observability_snapshot(
 
 #[tauri::command]
 pub async fn export_browser_benchmark_report(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let manager = clone_manager_handle(&state).await;
     let manager_guard = manager.lock().await;
@@ -576,18 +582,22 @@ pub async fn export_browser_benchmark_report(
 #[tauri::command]
 pub async fn cdp_execute_script(
     script: String,
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let manager = clone_manager_handle(&state).await;
     let page = {
         let manager_guard = manager.lock().await;
         manager_guard.page_cloned().ok_or("CDP 未连接")?
     };
-    let result = page.evaluate(script)
+    let result = page
+        .evaluate(script)
         .await
-        .map(|v| v.into_value::<serde_json::Value>().ok()
-            .map(|val| val.to_string())
-            .unwrap_or_default())
+        .map(|v| {
+            v.into_value::<serde_json::Value>()
+                .ok()
+                .map(|val| val.to_string())
+                .unwrap_or_default()
+        })
         .map_err(|e| e.to_string())?;
 
     let mut manager_guard = manager.lock().await;
@@ -600,7 +610,7 @@ pub async fn cdp_execute_script(
 /// Returns the base64 string (without data:image/png;base64, prefix).
 #[tauri::command]
 pub async fn browser_screenshot(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     action_result(actions::screenshot(&ctx).await).map(|screenshot| screenshot.value)
@@ -610,7 +620,7 @@ pub async fn browser_screenshot(
 /// Returns the base64 string (without data:image/png;base64, prefix).
 #[tauri::command]
 pub async fn cdp_screenshot(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     browser_screenshot(state).await
 }
@@ -619,7 +629,7 @@ pub async fn cdp_screenshot(
 /// Returns readable content with headers, links, and key data.
 #[tauri::command]
 pub async fn browser_extract_content(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     let ctx = action_context(&state).await;
     action_result(actions::extract_content(&ctx, ExtractContentInput).await)
@@ -629,7 +639,7 @@ pub async fn browser_extract_content(
 /// Returns readable content with headers, links, and key data.
 #[tauri::command]
 pub async fn cdp_extract_content(
-    state: tauri::State<'_, Arc<Mutex<BrowserController>>>
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
     browser_extract_content(state).await
 }
@@ -671,7 +681,8 @@ pub async fn web_search(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let response = client.get(&search_url)
+    let response = client
+        .get(&search_url)
         .send()
         .await
         .map_err(|e| format!("Search request failed: {}", e))?;
@@ -680,15 +691,19 @@ pub async fn web_search(
 
     // DuckDuckGo Lite uses <a class="result-link"> for result URLs/titles
     // and <td class="result-snippet"> for snippets.
-    let result_pattern = regex::Regex::new(r#"(?i)<a[^>]*class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>"#)
-        .map_err(|e| format!("Regex error: {}", e))?;
-    let snippet_pattern = regex::Regex::new(r#"(?i)<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)</td>"#)
-        .map_err(|e| format!("Regex error: {}", e))?;
+    let result_pattern = regex::Regex::new(
+        r#"(?i)<a[^>]*class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>"#,
+    )
+    .map_err(|e| format!("Regex error: {}", e))?;
+    let snippet_pattern =
+        regex::Regex::new(r#"(?i)<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)</td>"#)
+            .map_err(|e| format!("Regex error: {}", e))?;
 
     let strip_tags = regex::Regex::new(r"<[^>]+>").map_err(|e| format!("Regex error: {}", e))?;
 
     let mut results = Vec::new();
-    let snippets: Vec<String> = snippet_pattern.captures_iter(&html)
+    let snippets: Vec<String> = snippet_pattern
+        .captures_iter(&html)
         .map(|c| {
             let raw = c.get(1).map(|m| m.as_str()).unwrap_or("");
             strip_tags.replace_all(raw, "").trim().to_string()
@@ -710,10 +725,8 @@ pub async fn web_search(
         let passes_filter = match (&allowed_domains, &blocked_domains) {
             (Some(allowed), _) if !allowed.is_empty() => {
                 allowed.iter().any(|d| url.contains(d.as_str()))
-            },
-            (_, Some(blocked)) => {
-                !blocked.iter().any(|d| url.contains(d.as_str()))
-            },
+            }
+            (_, Some(blocked)) => !blocked.iter().any(|d| url.contains(d.as_str())),
             _ => true,
         };
 
@@ -744,7 +757,7 @@ pub async fn web_search(
 #[tauri::command]
 pub async fn web_fetch(
     url: String,
-    _prompt: String,  // Reserved for future LLM extraction
+    _prompt: String, // Reserved for future LLM extraction
 ) -> Result<FetchResult, String> {
     // If browser is connected, use it for better rendering
     // For now, use HTTP client as fallback
@@ -754,12 +767,14 @@ pub async fn web_fetch(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let response = client.get(&url)
+    let response = client
+        .get(&url)
         .send()
         .await
         .map_err(|e| format!("Fetch request failed: {}", e))?;
 
-    let content_type = response.headers()
+    let content_type = response
+        .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("text/html")
@@ -806,7 +821,7 @@ fn extract_relevant_content(html: &str) -> String {
         let c = chars[i];
 
         if i + 6 < len {
-            let tag: String = chars[i..i+7].iter().collect();
+            let tag: String = chars[i..i + 7].iter().collect();
             let tag_lower = tag.to_lowercase();
             if tag_lower.starts_with("<script") || tag_lower == "<script" {
                 in_script = true;
@@ -844,7 +859,7 @@ fn extract_relevant_content(html: &str) -> String {
         .collect::<Vec<&str>>()
         .join(" ")
         .chars()
-        .take(50000)  // Limit to 50k chars
+        .take(50000) // Limit to 50k chars
         .collect();
 
     cleaned
@@ -874,7 +889,13 @@ mod tests {
             .iter()
             .find(|element| predicate(element))
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("expected {} in live page state; elements={}", label, element_debug))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "expected {} in live page state; elements={}",
+                    label,
+                    element_debug
+                )
+            })
     }
 
     async fn read_payment_status_text(harness: &LiveActionHarness) -> Result<String> {
@@ -918,13 +939,10 @@ mod tests {
             .map_err(anyhow::Error::msg)?;
             assert_eq!(navigate_message, "页面加载并渲染完全");
 
-            let wait_message = browser_wait_with_ctx(
-                harness.ctx(),
-                None,
-                Some("#late-ready.ready".to_string()),
-            )
-            .await
-            .map_err(anyhow::Error::msg)?;
+            let wait_message =
+                browser_wait_with_ctx(harness.ctx(), None, Some("#late-ready.ready".to_string()))
+                    .await
+                    .map_err(anyhow::Error::msg)?;
             assert!(wait_message.starts_with("等待完成，目标选择器已出现（"));
             assert!(wait_message.ends_with("ms）"));
 
@@ -966,12 +984,13 @@ mod tests {
                     && element.is_editable
                     && element.selector_hint.as_deref() == Some("#shadow-card-number")
             })?;
-            let shadow_button = find_live_element(&page_state, "shadow iframe button", |element| {
-                element.frame_id != "root"
-                    && element.is_clickable
-                    && element.tag_name.as_deref() == Some("button")
-                    && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
-            })?;
+            let shadow_button =
+                find_live_element(&page_state, "shadow iframe button", |element| {
+                    element.frame_id != "root"
+                        && element.is_clickable
+                        && element.tag_name.as_deref() == Some("button")
+                        && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
+                })?;
 
             let typed_value = "1010 2020 3030 4040".to_string();
             let type_message = browser_type_with_ctx(
@@ -1002,7 +1021,10 @@ mod tests {
             .map_err(anyhow::Error::msg)?;
             assert_eq!(
                 click_message,
-                format!("点击成功: backend_node_id {} <BUTTON>", shadow_button.backend_node_id)
+                format!(
+                    "点击成功: backend_node_id {} <BUTTON>",
+                    shadow_button.backend_node_id
+                )
             );
 
             let wait_message = browser_wait_with_ctx(
@@ -1033,7 +1055,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "requires a local Chrome/Chromium binary for Chromiumoxide Browser::launch"]
-    async fn browser_wrappers_preserve_root_actions_when_cross_frame_partial_warning_exists() -> Result<()> {
+    async fn browser_wrappers_preserve_root_actions_when_cross_frame_partial_warning_exists(
+    ) -> Result<()> {
         let server = CheckoutFlowServer::start().await?;
         let harness = LiveActionHarness::launch_site_isolated().await?;
 
@@ -1057,10 +1080,11 @@ mod tests {
                 .warnings
                 .contains(&"closed_shadow_root_partial".to_string()));
 
-            let root_button = find_live_element(&page_state, "partial warning root button", |element| {
-                element.is_clickable
-                    && element.selector_hint.as_deref() == Some("#warning-root-action")
-            })?;
+            let root_button =
+                find_live_element(&page_state, "partial warning root button", |element| {
+                    element.is_clickable
+                        && element.selector_hint.as_deref() == Some("#warning-root-action")
+                })?;
 
             let click_message = browser_click_with_ctx(
                 harness.ctx(),
@@ -1072,7 +1096,10 @@ mod tests {
             .map_err(anyhow::Error::msg)?;
             assert_eq!(
                 click_message,
-                format!("点击成功: backend_node_id {} <BUTTON>", root_button.backend_node_id)
+                format!(
+                    "点击成功: backend_node_id {} <BUTTON>",
+                    root_button.backend_node_id
+                )
             );
 
             let wait_message = browser_wait_with_ctx(

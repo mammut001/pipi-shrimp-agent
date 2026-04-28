@@ -177,13 +177,15 @@ function shouldSuppressDelegation(msg: string): string | null {
     return `Message too short (${msg.length} chars < ${MIN_DELEGATION_LENGTH})`;
   }
 
-  // Too few words
+  // Too few words — BEFORE pattern check so that short phrases get caught here
+  // rather than accidentally matching a suppression pattern
   const wordCount = msg.split(/\s+/).filter(Boolean).length;
   if (wordCount <= MAX_TRIVIAL_WORD_COUNT) {
     return `Too few words (${wordCount} ≤ ${MAX_TRIVIAL_WORD_COUNT})`;
   }
 
-  // Matches a trivial/atomic task pattern
+  // Matches a trivial/atomic task pattern — checked LAST so pattern matches
+  // only apply to non-trivial messages (long enough and wordy enough)
   for (const pattern of SUPPRESSION_PATTERNS) {
     if (pattern.test(msg)) {
       return `Matches suppression pattern: ${pattern.source}`;

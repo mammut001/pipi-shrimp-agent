@@ -11,7 +11,11 @@ impl BrowserAction for GetPageStateAction {
     type Input = ();
     type Output = PageState;
 
-    async fn execute(&self, ctx: &ActionContext, _input: Self::Input) -> ActionResult<Self::Output> {
+    async fn execute(
+        &self,
+        ctx: &ActionContext,
+        _input: Self::Input,
+    ) -> ActionResult<Self::Output> {
         ctx.capture_page_state().await
     }
 }

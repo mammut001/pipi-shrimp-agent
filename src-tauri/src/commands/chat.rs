@@ -1,21 +1,20 @@
+use crate::browser::dom::PageState;
+use crate::commands::web::{self, BrowserController};
 /**
  * Chat commands
  *
  * Handles chat session management and message sending using SQLite
  */
-
-use crate::database::{self, DbSession, DbMessage};
+use crate::database::{self, DbMessage, DbSession};
 use crate::models::{SendMessageRequest, SendMessageResponse};
 use crate::utils::{AppError, AppResult};
-use crate::commands::web::{self, BrowserController};
 use async_trait::async_trait;
-use crate::browser::dom::PageState;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
-use uuid::Uuid;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::AppHandle;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 /**
  * Session data structure for API responses
@@ -114,7 +113,8 @@ struct BrowserToolTarget {
 
 impl BrowserToolTarget {
     fn from_args(args: &serde_json::Value, tool_name: &str) -> AppResult<Self> {
-        let (element_id, backend_node_id, navigation_id) = browser_target_from_args(args, tool_name)?;
+        let (element_id, backend_node_id, navigation_id) =
+            browser_target_from_args(args, tool_name)?;
         Ok(Self {
             element_id,
             backend_node_id,
@@ -160,8 +160,7 @@ enum BrowserChatToolCall {
 }
 
 fn browser_wait_selector_from_args(args: &serde_json::Value) -> Option<String> {
-    args
-        .get("selector")
+    args.get("selector")
         .or_else(|| args.get("wait_selector"))
         .or_else(|| args.get("waitSelector"))
         .and_then(|value| value.as_str())
@@ -176,9 +175,9 @@ fn parse_browser_chat_tool_call(
 ) -> AppResult<Option<BrowserChatToolCall>> {
     let call = match tool_name {
         "browser_navigate" => {
-            let url = args.get("url")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'url' argument for browser_navigate".to_string()))?;
+            let url = args.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+                AppError::InternalError("Missing 'url' argument for browser_navigate".to_string())
+            })?;
 
             Some(BrowserChatToolCall::Navigate {
                 url: url.to_string(),
@@ -190,9 +189,9 @@ fn parse_browser_chat_tool_call(
             target: BrowserToolTarget::from_args(args, "browser_click")?,
         }),
         "browser_type" => {
-            let text = args.get("text")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'text' argument for browser_type".to_string()))?;
+            let text = args.get("text").and_then(|v| v.as_str()).ok_or_else(|| {
+                AppError::InternalError("Missing 'text' argument for browser_type".to_string())
+            })?;
 
             Some(BrowserChatToolCall::Type {
                 target: BrowserToolTarget::from_args(args, "browser_type")?,
@@ -200,12 +199,15 @@ fn parse_browser_chat_tool_call(
             })
         }
         "browser_scroll" => {
-            let direction = args.get("direction")
+            let direction = args
+                .get("direction")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'direction' argument for browser_scroll".to_string()))?;
-            let pixels = args.get("pixels")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(600);
+                .ok_or_else(|| {
+                    AppError::InternalError(
+                        "Missing 'direction' argument for browser_scroll".to_string(),
+                    )
+                })?;
+            let pixels = args.get("pixels").and_then(|v| v.as_i64()).unwrap_or(600);
 
             Some(BrowserChatToolCall::Scroll {
                 direction: direction.to_string(),
@@ -213,24 +215,24 @@ fn parse_browser_chat_tool_call(
             })
         }
         "browser_get_text" => Some(BrowserChatToolCall::GetText {
-            max_length: args.get("max_length")
+            max_length: args
+                .get("max_length")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(3000) as usize,
         }),
         "browser_screenshot" => Some(BrowserChatToolCall::Screenshot),
         "browser_extract_content" => Some(BrowserChatToolCall::ExtractContent),
         "browser_press_key" => {
-            let key = args.get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'key' argument for browser_press_key".to_string()))?;
+            let key = args.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+                AppError::InternalError("Missing 'key' argument for browser_press_key".to_string())
+            })?;
 
             Some(BrowserChatToolCall::PressKey {
                 key: key.to_string(),
             })
         }
         "browser_wait" => Some(BrowserChatToolCall::Wait {
-            seconds: args.get("seconds")
-                .and_then(|v| v.as_u64()),
+            seconds: args.get("seconds").and_then(|v| v.as_u64()),
             wait_selector: browser_wait_selector_from_args(args),
         }),
         _ => None,
@@ -241,7 +243,11 @@ fn parse_browser_chat_tool_call(
 
 #[async_trait]
 trait BrowserChatRuntime {
-    async fn navigate_and_wait(&self, url: String, wait_selector: Option<String>) -> Result<(), String>;
+    async fn navigate_and_wait(
+        &self,
+        url: String,
+        wait_selector: Option<String>,
+    ) -> Result<(), String>;
     async fn resync_page(&self) -> Result<(), String>;
     async fn get_page_state(&self) -> Result<PageState, String>;
     async fn click(&self, target: &BrowserToolTarget) -> Result<String, String>;
@@ -251,7 +257,11 @@ trait BrowserChatRuntime {
     async fn screenshot(&self) -> Result<String, String>;
     async fn extract_content(&self) -> Result<String, String>;
     async fn press_key(&self, key: String) -> Result<String, String>;
-    async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String>;
+    async fn wait(
+        &self,
+        seconds: Option<u64>,
+        wait_selector: Option<String>,
+    ) -> Result<String, String>;
 
     async fn delay_after_click(&self) {
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
@@ -264,14 +274,20 @@ struct LiveBrowserChatRuntime<'a> {
 
 #[async_trait]
 impl BrowserChatRuntime for LiveBrowserChatRuntime<'_> {
-    async fn navigate_and_wait(&self, url: String, wait_selector: Option<String>) -> Result<(), String> {
+    async fn navigate_and_wait(
+        &self,
+        url: String,
+        wait_selector: Option<String>,
+    ) -> Result<(), String> {
         web::navigate_and_wait(url, wait_selector, self.browser_state.clone())
             .await
             .map(|_| ())
     }
 
     async fn resync_page(&self) -> Result<(), String> {
-        web::resync_page(self.browser_state.clone()).await.map(|_| ())
+        web::resync_page(self.browser_state.clone())
+            .await
+            .map(|_| ())
     }
 
     async fn get_page_state(&self) -> Result<PageState, String> {
@@ -319,15 +335,16 @@ impl BrowserChatRuntime for LiveBrowserChatRuntime<'_> {
         web::browser_press_key(key, self.browser_state.clone()).await
     }
 
-    async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String> {
+    async fn wait(
+        &self,
+        seconds: Option<u64>,
+        wait_selector: Option<String>,
+    ) -> Result<String, String> {
         web::browser_wait(seconds, wait_selector, self.browser_state.clone()).await
     }
 }
 
-async fn execute_browser_chat_tool_call<R>(
-    call: BrowserChatToolCall,
-    runtime: &R,
-) -> String
+async fn execute_browser_chat_tool_call<R>(call: BrowserChatToolCall, runtime: &R) -> String
 where
     R: BrowserChatRuntime + Sync,
 {
@@ -349,30 +366,34 @@ where
                     if is_browser_not_connected_error(&e) {
                         browser_not_connected_message()
                     } else {
-                        format!("ERROR: 导航失败（{}s）。URL: {}。可能是网络问题或页面需要认证。", 30, url)
+                        format!(
+                            "ERROR: 导航失败（{}s）。URL: {}。可能是网络问题或页面需要认证。",
+                            30, url
+                        )
                     }
                 }
             }
         }
-        BrowserChatToolCall::GetPage => {
-            match runtime.get_page_state().await {
-                Ok(page_state) => serialize_page_state_for_chat(&page_state),
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 获取页面元素失败: {}", e)
-                    }
+        BrowserChatToolCall::GetPage => match runtime.get_page_state().await {
+            Ok(page_state) => serialize_page_state_for_chat(&page_state),
+            Err(e) => {
+                if is_browser_not_connected_error(&e) {
+                    browser_not_connected_message()
+                } else {
+                    format!("ERROR: 获取页面元素失败: {}", e)
                 }
             }
-        }
+        },
         BrowserChatToolCall::Click { target } => {
             let target_label = target.label();
 
             match runtime.click(&target).await {
                 Ok(_) => {
                     runtime.delay_after_click().await;
-                    format!("已点击{}，页面可能已更新，请使用 browser_get_page 查看新状态", target_label)
+                    format!(
+                        "已点击{}，页面可能已更新，请使用 browser_get_page 查看新状态",
+                        target_label
+                    )
                 }
                 Err(e) => {
                     if is_browser_not_connected_error(&e) {
@@ -441,42 +462,39 @@ where
                 }
             }
         }
-        BrowserChatToolCall::ExtractContent => {
-            match runtime.extract_content().await {
-                Ok(content) => content,
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 提取内容失败: {}", e)
-                    }
+        BrowserChatToolCall::ExtractContent => match runtime.extract_content().await {
+            Ok(content) => content,
+            Err(e) => {
+                if is_browser_not_connected_error(&e) {
+                    browser_not_connected_message()
+                } else {
+                    format!("ERROR: 提取内容失败: {}", e)
                 }
             }
-        }
-        BrowserChatToolCall::PressKey { key } => {
-            match runtime.press_key(key.clone()).await {
-                Ok(_) => format!("已按下键 '{}'", key),
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 按键失败: {}", e)
-                    }
+        },
+        BrowserChatToolCall::PressKey { key } => match runtime.press_key(key.clone()).await {
+            Ok(_) => format!("已按下键 '{}'", key),
+            Err(e) => {
+                if is_browser_not_connected_error(&e) {
+                    browser_not_connected_message()
+                } else {
+                    format!("ERROR: 按键失败: {}", e)
                 }
             }
-        }
-        BrowserChatToolCall::Wait { seconds, wait_selector } => {
-            match runtime.wait(seconds, wait_selector).await {
-                Ok(message) => message,
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 等待失败: {}", e)
-                    }
+        },
+        BrowserChatToolCall::Wait {
+            seconds,
+            wait_selector,
+        } => match runtime.wait(seconds, wait_selector).await {
+            Ok(message) => message,
+            Err(e) => {
+                if is_browser_not_connected_error(&e) {
+                    browser_not_connected_message()
+                } else {
+                    format!("ERROR: 等待失败: {}", e)
                 }
             }
-        }
+        },
     }
 }
 
@@ -545,7 +563,10 @@ pub async fn start_session(_app: AppHandle) -> AppResult<String> {
  * Saves message to database and returns assistant's response
  */
 #[tauri::command]
-pub async fn send_message(_app: AppHandle, req: SendMessageRequest) -> AppResult<SendMessageResponse> {
+pub async fn send_message(
+    _app: AppHandle,
+    req: SendMessageRequest,
+) -> AppResult<SendMessageResponse> {
     let timestamp = get_timestamp() as i64;
     let message_id = Uuid::new_v4().to_string();
 
@@ -588,6 +609,7 @@ pub async fn send_message(_app: AppHandle, req: SendMessageRequest) -> AppResult
  */
 #[allow(dead_code)]
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn save_message_to_db(
     _app: AppHandle,
     session_id: String,
@@ -721,11 +743,7 @@ pub async fn update_session_title(
  */
 #[allow(dead_code)]
 #[tauri::command]
-pub async fn update_session_cwd(
-    _app: AppHandle,
-    session_id: String,
-    cwd: String,
-) -> AppResult<()> {
+pub async fn update_session_cwd(_app: AppHandle, session_id: String, cwd: String) -> AppResult<()> {
     let sessions = database::get_all_sessions()
         .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
 
@@ -887,7 +905,7 @@ pub async fn execute_tool(
             let skill_name = args.get("skill")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'skill' argument for Skill".to_string()))?;
-            
+
             match crate::commands::skill::execute_skill(skill_name.to_string(), work_dir.clone()).await {
                 Ok(res) => {
                     if res.success {
@@ -949,7 +967,7 @@ pub async fn execute_tool(
                 }
                 AppError::InternalError(msg)
             })?;
-            std::fs::write(&file_path, pdf_bytes)
+            std::fs::write(file_path, pdf_bytes)
                 .map_err(|e| AppError::InternalError(format!("Failed to write PDF: {}", e)))?;
             serde_json::json!({ "file_path": file_path, "message": format!("PDF saved to {}", file_path) }).to_string()
         }
@@ -1038,9 +1056,11 @@ pub async fn execute_tool(
 mod tests {
     use super::*;
     use crate::browser::actions;
-    use crate::browser::actions::test_support::{CheckoutFlowServer, LiveActionHarness, load_page_state_fixture, FixtureActionHarness};
-    use crate::browser::actions::ElementReference;
     use crate::browser::actions::common::BrowserActionError;
+    use crate::browser::actions::test_support::{
+        load_page_state_fixture, CheckoutFlowServer, FixtureActionHarness, LiveActionHarness,
+    };
+    use crate::browser::actions::ElementReference;
     use crate::browser::dom::InteractiveElement;
     use anyhow::Result as AnyhowResult;
     use std::sync::Mutex as StdMutex;
@@ -1068,10 +1088,13 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(call, BrowserChatToolCall::Wait {
-            seconds: None,
-            wait_selector: Some(".checkout-ready".to_string()),
-        });
+        assert_eq!(
+            call,
+            BrowserChatToolCall::Wait {
+                seconds: None,
+                wait_selector: Some(".checkout-ready".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -1178,7 +1201,10 @@ mod tests {
         )
         .await;
 
-        assert_eq!(rendered, "已导航到: https://example.com/checkout，页面标题: Dashboard");
+        assert_eq!(
+            rendered,
+            "已导航到: https://example.com/checkout，页面标题: Dashboard"
+        );
     }
 
     #[tokio::test]
@@ -1204,7 +1230,10 @@ mod tests {
         assert_eq!(rendered, "输入成功: backend_node_id 310，共 4 个字符");
         assert_eq!(runtime.capture_count().await, 1);
         assert_eq!(
-            runtime.last_resolved_element().as_ref().map(|element| element.frame_id.as_str()),
+            runtime
+                .last_resolved_element()
+                .as_ref()
+                .map(|element| element.frame_id.as_str()),
             Some("frame-checkout")
         );
     }
@@ -1232,7 +1261,8 @@ mod tests {
         assert!(stale_rendered.contains("browser.page_state_stale"));
         assert!(stale_rendered.contains("loader-root-2"));
 
-        let page_state_json = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+        let page_state_json =
+            execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
         assert!(page_state_json.contains("\"navigation_id\": \"loader-root-2\""));
         assert!(page_state_json.contains("\"title\": \"Review Order\""));
 
@@ -1292,7 +1322,8 @@ mod tests {
                     && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
             })?;
 
-            let get_page_rendered = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+            let get_page_rendered =
+                execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
             assert!(get_page_rendered.contains("\"title\": \"Shadow Checkout Flow\""));
             assert!(get_page_rendered.contains("\"selector_hint\": \"#shadow-confirm-payment\""));
 
@@ -1315,8 +1346,7 @@ mod tests {
                 type_rendered,
                 format!(
                     "输入成功: backend_node_id {}，共 {} 个字符",
-                    shadow_input.backend_node_id,
-                    19
+                    shadow_input.backend_node_id, 19
                 )
             );
 
@@ -1389,11 +1419,12 @@ mod tests {
             let stale_page_state = actions::get_page_state(harness.ctx())
                 .await
                 .map_err(anyhow::Error::msg)?;
-            let stale_button = find_live_element(&stale_page_state, "stale shadow button", |element| {
-                element.frame_id != "root"
-                    && element.is_clickable
-                    && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
-            })?;
+            let stale_button =
+                find_live_element(&stale_page_state, "stale shadow button", |element| {
+                    element.frame_id != "root"
+                        && element.is_clickable
+                        && element.selector_hint.as_deref() == Some("#shadow-confirm-payment")
+                })?;
 
             harness.page().reload().await.map_err(anyhow::Error::from)?;
 
@@ -1410,7 +1441,10 @@ mod tests {
             let refreshed_page_state = actions::get_page_state(harness.ctx())
                 .await
                 .map_err(anyhow::Error::msg)?;
-            assert_ne!(refreshed_page_state.navigation_id, stale_page_state.navigation_id);
+            assert_ne!(
+                refreshed_page_state.navigation_id,
+                stale_page_state.navigation_id
+            );
 
             let stale_click_rendered = execute_browser_chat_tool_call(
                 parse_browser_chat_tool_call(
@@ -1425,12 +1459,19 @@ mod tests {
                 &runtime,
             )
             .await;
-            assert!(stale_click_rendered.contains(&format!("ERROR: 点击backend_node_id {}失败:", stale_button.backend_node_id)));
+            assert!(stale_click_rendered.contains(&format!(
+                "ERROR: 点击backend_node_id {}失败:",
+                stale_button.backend_node_id
+            )));
             assert!(stale_click_rendered.contains("browser.page_state_stale"));
             assert!(stale_click_rendered.contains(&refreshed_page_state.navigation_id));
 
-            let get_page_rendered = execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
-            assert!(get_page_rendered.contains(&format!("\"navigation_id\": \"{}\"", refreshed_page_state.navigation_id)));
+            let get_page_rendered =
+                execute_browser_chat_tool_call(BrowserChatToolCall::GetPage, &runtime).await;
+            assert!(get_page_rendered.contains(&format!(
+                "\"navigation_id\": \"{}\"",
+                refreshed_page_state.navigation_id
+            )));
 
             Ok::<(), anyhow::Error>(())
         }
@@ -1461,10 +1502,19 @@ mod tests {
             .iter()
             .find(|element| predicate(element))
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("expected {} in live page state; elements={}", label, element_debug))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "expected {} in live page state; elements={}",
+                    label,
+                    element_debug
+                )
+            })
     }
 
-    async fn read_selector_text_live(harness: &LiveActionHarness, selector: &str) -> AnyhowResult<String> {
+    async fn read_selector_text_live(
+        harness: &LiveActionHarness,
+        selector: &str,
+    ) -> AnyhowResult<String> {
         let script = format!(
             "(function() {{ const node = document.querySelector({selector:?}); return node ? node.textContent : ''; }})()",
         );
@@ -1511,7 +1561,10 @@ mod tests {
     }
 
     impl FixtureBrowserChatRuntime {
-        async fn new(cached_page_state: Option<PageState>, queued_page_states: Vec<PageState>) -> Self {
+        async fn new(
+            cached_page_state: Option<PageState>,
+            queued_page_states: Vec<PageState>,
+        ) -> Self {
             Self {
                 harness: FixtureActionHarness::new(cached_page_state, queued_page_states).await,
                 last_resolved_element: StdMutex::new(None),
@@ -1534,7 +1587,10 @@ mod tests {
             }
         }
 
-        async fn resolve_target(&self, target: &BrowserToolTarget) -> Result<InteractiveElement, String> {
+        async fn resolve_target(
+            &self,
+            target: &BrowserToolTarget,
+        ) -> Result<InteractiveElement, String> {
             let element = self
                 .harness
                 .resolve_element(Self::to_element_reference(target))
@@ -1599,7 +1655,11 @@ mod tests {
 
     #[async_trait]
     impl BrowserChatRuntime for FakeBrowserChatRuntime {
-        async fn navigate_and_wait(&self, _url: String, _wait_selector: Option<String>) -> Result<(), String> {
+        async fn navigate_and_wait(
+            &self,
+            _url: String,
+            _wait_selector: Option<String>,
+        ) -> Result<(), String> {
             self.navigate_result.clone()
         }
 
@@ -1616,7 +1676,11 @@ mod tests {
             self.click_result.clone()
         }
 
-        async fn type_text(&self, _target: &BrowserToolTarget, _text: String) -> Result<String, String> {
+        async fn type_text(
+            &self,
+            _target: &BrowserToolTarget,
+            _text: String,
+        ) -> Result<String, String> {
             self.type_result.clone()
         }
 
@@ -1640,7 +1704,11 @@ mod tests {
             self.press_key_result.clone()
         }
 
-        async fn wait(&self, _seconds: Option<u64>, _wait_selector: Option<String>) -> Result<String, String> {
+        async fn wait(
+            &self,
+            _seconds: Option<u64>,
+            _wait_selector: Option<String>,
+        ) -> Result<String, String> {
             self.wait_result.clone()
         }
 
@@ -1649,7 +1717,11 @@ mod tests {
 
     #[async_trait]
     impl BrowserChatRuntime for FixtureBrowserChatRuntime {
-        async fn navigate_and_wait(&self, _url: String, _wait_selector: Option<String>) -> Result<(), String> {
+        async fn navigate_and_wait(
+            &self,
+            _url: String,
+            _wait_selector: Option<String>,
+        ) -> Result<(), String> {
             Ok(())
         }
 
@@ -1684,7 +1756,11 @@ mod tests {
             ))
         }
 
-        async fn type_text(&self, target: &BrowserToolTarget, text: String) -> Result<String, String> {
+        async fn type_text(
+            &self,
+            target: &BrowserToolTarget,
+            text: String,
+        ) -> Result<String, String> {
             let element = self.resolve_target(target).await?;
             if !element.is_visible || !element.is_editable {
                 return Err(BrowserActionError::element_not_interactable(format!(
@@ -1721,7 +1797,11 @@ mod tests {
             Ok(format!("已按下键 '{}'", key))
         }
 
-        async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String> {
+        async fn wait(
+            &self,
+            seconds: Option<u64>,
+            wait_selector: Option<String>,
+        ) -> Result<String, String> {
             if wait_selector.is_some() {
                 Ok("等待完成，目标选择器已出现（0ms）".to_string())
             } else {
@@ -1734,7 +1814,11 @@ mod tests {
 
     #[async_trait]
     impl BrowserChatRuntime for LiveHarnessBrowserChatRuntime<'_> {
-        async fn navigate_and_wait(&self, url: String, wait_selector: Option<String>) -> Result<(), String> {
+        async fn navigate_and_wait(
+            &self,
+            url: String,
+            wait_selector: Option<String>,
+        ) -> Result<(), String> {
             actions::navigate(
                 self.harness.ctx(),
                 actions::NavigateInput {
@@ -1779,7 +1863,11 @@ mod tests {
             ))
         }
 
-        async fn type_text(&self, target: &BrowserToolTarget, text: String) -> Result<String, String> {
+        async fn type_text(
+            &self,
+            target: &BrowserToolTarget,
+            text: String,
+        ) -> Result<String, String> {
             let text_len = text.chars().count();
             let output = actions::type_text(
                 self.harness.ctx(),
@@ -1798,10 +1886,13 @@ mod tests {
         }
 
         async fn scroll(&self, direction: String, pixels: i64) -> Result<String, String> {
-            actions::scroll(self.harness.ctx(), actions::ScrollInput { direction, pixels })
-                .await
-                .map(|_| "ok".to_string())
-                .map_err(|error| error.to_string())
+            actions::scroll(
+                self.harness.ctx(),
+                actions::ScrollInput { direction, pixels },
+            )
+            .await
+            .map(|_| "ok".to_string())
+            .map_err(|error| error.to_string())
         }
 
         async fn get_text(&self, max_length: Option<u64>) -> Result<String, String> {
@@ -1835,7 +1926,11 @@ mod tests {
                 .map_err(|error| error.to_string())
         }
 
-        async fn wait(&self, seconds: Option<u64>, wait_selector: Option<String>) -> Result<String, String> {
+        async fn wait(
+            &self,
+            seconds: Option<u64>,
+            wait_selector: Option<String>,
+        ) -> Result<String, String> {
             let output = actions::wait(
                 self.harness.ctx(),
                 actions::WaitInput {
@@ -1848,7 +1943,10 @@ mod tests {
             .map_err(|error| error.to_string())?;
 
             if output.selector_matched {
-                Ok(format!("等待完成，目标选择器已出现（{}ms）", output.waited_ms))
+                Ok(format!(
+                    "等待完成，目标选择器已出现（{}ms）",
+                    output.waited_ms
+                ))
             } else {
                 Ok(format!("已等待 {} 秒", output.waited_ms / 1_000))
             }

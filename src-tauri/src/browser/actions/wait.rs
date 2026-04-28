@@ -26,7 +26,11 @@ pub struct WaitOutput {
 
 pub struct WaitAction;
 
-pub(crate) async fn wait_for_selector(page: &Page, selector: &str, timeout_ms: u64) -> ActionResult<u64> {
+pub(crate) async fn wait_for_selector(
+    page: &Page,
+    selector: &str,
+    timeout_ms: u64,
+) -> ActionResult<u64> {
     let started_at = Instant::now();
     loop {
         if page.find_element(selector).await.is_ok() {

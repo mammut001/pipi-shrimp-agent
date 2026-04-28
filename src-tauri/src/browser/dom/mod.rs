@@ -7,7 +7,9 @@ pub mod snapshot;
 use std::time::Duration;
 
 use base64::Engine;
-use chromiumoxide::cdp::browser_protocol::page::{CaptureScreenshotFormat, CaptureScreenshotParams};
+use chromiumoxide::cdp::browser_protocol::page::{
+    CaptureScreenshotFormat, CaptureScreenshotParams,
+};
 use chromiumoxide::page::Page;
 
 use crate::browser::cdp::{run_with_timeout, CdpError};
@@ -54,7 +56,9 @@ pub async fn capture_page_state_with_source<S>(
 where
     S: StablePageSnapshotSource + Sync,
 {
-    Ok(capture_page_state_capture_with_source(page, source).await?.page_state)
+    Ok(capture_page_state_capture_with_source(page, source)
+        .await?
+        .page_state)
 }
 
 pub(crate) async fn capture_page_state_capture_with_source<S>(
@@ -72,18 +76,19 @@ pub fn build_page_state_from_snapshot(snapshot: CapturedPageSnapshot) -> PageSta
     page_state::build_page_state(snapshot)
 }
 
-async fn capture_page_screenshot(page: &Page, timeout: Duration) -> Result<ScreenshotRef, CdpError> {
+async fn capture_page_screenshot(
+    page: &Page,
+    timeout: Duration,
+) -> Result<ScreenshotRef, CdpError> {
     let params = CaptureScreenshotParams::builder()
         .format(CaptureScreenshotFormat::Png)
         .build();
 
-    let screenshot = run_with_timeout(
-        "Page.captureScreenshot",
-        timeout,
-        page.execute(params),
-    )
-    .await?
-    .map_err(|error| CdpError::Session(format!("Unable to capture page screenshot: {}", error)))?;
+    let screenshot = run_with_timeout("Page.captureScreenshot", timeout, page.execute(params))
+        .await?
+        .map_err(|error| {
+            CdpError::Session(format!("Unable to capture page screenshot: {}", error))
+        })?;
 
     Ok(ScreenshotRef {
         kind: "base64_png".to_string(),

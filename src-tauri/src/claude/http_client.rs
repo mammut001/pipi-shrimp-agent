@@ -4,8 +4,7 @@
  * Pure Rust implementation for calling Anthropic API directly
  * Replaces Node.js subprocess approach
  */
-
-use crate::utils::{AppResult, AppError};
+use crate::utils::{AppError, AppResult};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
@@ -13,8 +12,8 @@ use tauri::{Emitter, Window};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use super::message::{Artifact, ChatResponse, ErrorResponse, Message, ToolCall, UsageInfo};
 use super::composer::normalize_messages;
+use super::message::{Artifact, ChatResponse, ErrorResponse, Message, ToolCall, UsageInfo};
 
 /// Per-session cancellation tokens for supporting concurrent requests
 static CANCEL_TOKENS: Lazy<Mutex<std::collections::HashMap<String, CancellationToken>>> =
@@ -131,7 +130,11 @@ You have access to browser tools for web automation. Use these when the user ask
 
 /// Helper function to merge user system prompt with global security constraints
 pub fn merge_system_prompt(user_prompt: Option<&str>, browser_connected: bool) -> String {
-    let mut base_prompt = format!("{}\n\n{}", GLOBAL_SECURITY_CONSTRAINT.trim(), TOOL_EFFICIENCY_GUIDE.trim());
+    let mut base_prompt = format!(
+        "{}\n\n{}",
+        GLOBAL_SECURITY_CONSTRAINT.trim(),
+        TOOL_EFFICIENCY_GUIDE.trim()
+    );
 
     // Add browser tools guide if browser is connected
     if browser_connected {
@@ -140,8 +143,11 @@ pub fn merge_system_prompt(user_prompt: Option<&str>, browser_connected: bool) -
 
     match user_prompt {
         Some(user) if !user.is_empty() => {
-            format!("{}\n\n---\n\n## User-Provided Instructions\n\n{}",
-                base_prompt, user.trim())
+            format!(
+                "{}\n\n---\n\n## User-Provided Instructions\n\n{}",
+                base_prompt,
+                user.trim()
+            )
         }
         _ => base_prompt,
     }
@@ -158,10 +164,13 @@ fn estimate_tokens(text: &str) -> i32 {
 /// Each message adds ~4 overhead tokens (role, delimiters) plus its content.
 /// The whole request adds ~2 framing tokens.
 fn estimate_messages_tokens(messages: &[serde_json::Value]) -> i32 {
-    let per_message: i32 = messages.iter().map(|msg| {
-        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        estimate_tokens(content) + 4
-    }).sum();
+    let per_message: i32 = messages
+        .iter()
+        .map(|msg| {
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            estimate_tokens(content) + 4
+        })
+        .sum();
     per_message + 2
 }
 
@@ -682,27 +691,35 @@ pub fn get_tools(browser_connected: bool) -> Vec<serde_json::Value> {
  * OpenAI:    { "type": "function", "function": { "name", "description", "parameters": {...} } }
  */
 pub fn convert_tools_to_openai_format(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    tools.iter().map(|tool| {
-        let name = tool["name"].clone();
-        let description = tool["description"].clone();
-        let parameters = tool.get("input_schema").cloned()
-            .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
-        serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-                "parameters": parameters,
-                "strict": true
-            }
+    tools
+        .iter()
+        .map(|tool| {
+            let name = tool["name"].clone();
+            let description = tool["description"].clone();
+            let parameters = tool
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                    "strict": true
+                }
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Pre-compiled regexes for artifact detection (compiled once at startup)
-static ARTIFACT_CODE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"```(\w+)?\n([\s\S]*?)\n```").unwrap());
-static ARTIFACT_HTML_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"<html[\s\S]*?</html>").unwrap());
-static ARTIFACT_MERMAID_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"```mermaid\n([\s\S]*?)\n```").unwrap());
+static ARTIFACT_CODE_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"```(\w+)?\n([\s\S]*?)\n```").unwrap());
+static ARTIFACT_HTML_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<html[\s\S]*?</html>").unwrap());
+static ARTIFACT_MERMAID_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"```mermaid\n([\s\S]*?)\n```").unwrap());
 
 /**
  * Detect artifacts from response content
@@ -765,10 +782,13 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<serde_json::Va
 
     for msg in messages {
         // 1. Handle tool results (role: user with tool_call_id or __TOOL_RESULT__: prefix)
-        if msg.role == "user" && (msg.content.starts_with("__TOOL_RESULT__:") || msg.tool_call_id.is_some()) {
+        if msg.role == "user"
+            && (msg.content.starts_with("__TOOL_RESULT__:") || msg.tool_call_id.is_some())
+        {
             let (tool_call_id, content) = if let Some(ref id) = msg.tool_call_id {
                 // tool_call_id is set — extract clean content, stripping __TOOL_RESULT__: prefix if present
-                let clean_content = if let Some(rest) = msg.content.strip_prefix("__TOOL_RESULT__:") {
+                let clean_content = if let Some(rest) = msg.content.strip_prefix("__TOOL_RESULT__:")
+                {
                     // Format: "__TOOL_RESULT__:{id}:{result}" — skip the id part and take result
                     if let Some(colon_pos) = rest.find(':') {
                         rest[colon_pos + 1..].to_string()
@@ -806,8 +826,7 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<serde_json::Va
         }
 
         // 2. Handle assistant messages with tool calls
-        if msg.role == "assistant" && msg.tool_calls.is_some() {
-            let tool_calls = msg.tool_calls.as_ref().unwrap();
+        if let Some(ref tool_calls) = msg.tool_calls {
             let mut content = Vec::new();
 
             if !msg.content.is_empty() {
@@ -818,8 +837,8 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<serde_json::Va
             }
 
             for tc in tool_calls {
-                let input: serde_json::Value = serde_json::from_str(&tc.arguments)
-                    .unwrap_or(serde_json::json!({}));
+                let input: serde_json::Value =
+                    serde_json::from_str(&tc.arguments).unwrap_or(serde_json::json!({}));
                 content.push(serde_json::json!({
                     "type": "tool_use",
                     "id": tc.tool_call_id,
@@ -853,10 +872,13 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<serde_json::Value
 
     for msg in messages {
         // 1. Handle tool results
-        if msg.role == "user" && (msg.content.starts_with("__TOOL_RESULT__:") || msg.tool_call_id.is_some()) {
+        if msg.role == "user"
+            && (msg.content.starts_with("__TOOL_RESULT__:") || msg.tool_call_id.is_some())
+        {
             let (tool_call_id, content) = if let Some(ref id) = msg.tool_call_id {
                 // tool_call_id is set — extract clean content, stripping __TOOL_RESULT__: prefix if present
-                let clean_content = if let Some(rest) = msg.content.strip_prefix("__TOOL_RESULT__:") {
+                let clean_content = if let Some(rest) = msg.content.strip_prefix("__TOOL_RESULT__:")
+                {
                     if let Some(colon_pos) = rest.find(':') {
                         rest[colon_pos + 1..].to_string()
                     } else {
@@ -888,8 +910,7 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<serde_json::Value
         }
 
         // 2. Handle assistant messages with tool calls
-        if msg.role == "assistant" && msg.tool_calls.is_some() {
-            let tool_calls = msg.tool_calls.as_ref().unwrap();
+        if let Some(ref tool_calls) = msg.tool_calls {
             formatted.push(serde_json::json!({
                 "role": "assistant",
                 // MiniMax (and many OpenAI-compatible APIs) REQUIRE content=null when tool_calls
@@ -1159,8 +1180,8 @@ fn split_think_content(input: &str, in_think: &mut bool) -> Vec<(String, bool)> 
                     // Now remaining = "think>好的..." is actually the continuation of the
                     // opening tag — strip "think" prefix so we're left with ">好的..."
                     // and process that as normal content (no <think> opened yet).
-                    if after_tag.starts_with("think") {
-                        remaining = &after_tag["think".len()..];
+                    if let Some(stripped) = after_tag.strip_prefix("think") {
+                        remaining = stripped;
                         // Fall through: remaining now starts with ">" (not <think>), so the
                         // else-branch below will emit it as regular content.
                         if !remaining.is_empty() {
@@ -1249,10 +1270,34 @@ impl ClaudeClient {
 
         match api_format {
             super::provider::ApiFormat::Anthropic => {
-                self.chat_anthropic(&normalized, &api_key, &model, base_url.as_deref(), system_prompt.as_deref(), false, false, None, browser_connected, "").await
+                self.chat_anthropic(
+                    &normalized,
+                    &api_key,
+                    &model,
+                    base_url.as_deref(),
+                    system_prompt.as_deref(),
+                    false,
+                    false,
+                    None,
+                    browser_connected,
+                    "",
+                )
+                .await
             }
             super::provider::ApiFormat::OpenAI => {
-                self.chat_openai(&normalized, &api_key, &model, base_url, system_prompt.as_deref(), false, false, None, browser_connected, "").await
+                self.chat_openai(
+                    &normalized,
+                    &api_key,
+                    &model,
+                    base_url,
+                    system_prompt.as_deref(),
+                    false,
+                    false,
+                    None,
+                    browser_connected,
+                    "",
+                )
+                .await
             }
         }
     }
@@ -1260,6 +1305,7 @@ impl ClaudeClient {
     /**
      * Send a chat message with streaming (emits events to window)
      */
+    #[allow(clippy::too_many_arguments)]
     pub async fn chat_streaming(
         &self,
         messages: Vec<Message>,
@@ -1284,7 +1330,10 @@ impl ClaudeClient {
             )));
         }
         if !validation.warnings.is_empty() {
-            eprintln!("[chat_streaming] Validation warnings: {:?}", validation.warnings);
+            eprintln!(
+                "[chat_streaming] Validation warnings: {:?}",
+                validation.warnings
+            );
         }
 
         // Create cancellation token and store per-session
@@ -1336,6 +1385,7 @@ impl ClaudeClient {
     /**
      * Call Anthropic API
      */
+    #[allow(clippy::too_many_arguments)]
     async fn chat_anthropic(
         &self,
         messages: &[Message],
@@ -1374,10 +1424,16 @@ impl ClaudeClient {
             "max_tokens": max_tokens,
             "stream": streaming,
             "messages": format_messages_for_anthropic(messages),
-        }).as_object().cloned().unwrap();
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
 
         if !no_tools {
-            body.insert("tools".to_string(), serde_json::json!(get_tools(browser_connected)));
+            body.insert(
+                "tools".to_string(),
+                serde_json::json!(get_tools(browser_connected)),
+            );
         }
 
         // ALWAYS inject global security constraints (Layer 2 defense)
@@ -1385,22 +1441,33 @@ impl ClaudeClient {
         body.insert("system".to_string(), serde_json::json!(merged_system));
 
         if thinking {
-            body.insert("thinking".to_string(), serde_json::json!({
-                "type": "enabled",
-                "budget_tokens": thinking_budget
-            }));
+            body.insert(
+                "thinking".to_string(),
+                serde_json::json!({
+                    "type": "enabled",
+                    "budget_tokens": thinking_budget
+                }),
+            );
         }
 
         // Build headers
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-api-key", api_key.parse().map_err(|_| AppError::ProcessError(
-            "Invalid API key: contains characters not allowed in HTTP headers".to_string()
-        ))?);
+        headers.insert(
+            "x-api-key",
+            api_key.parse().map_err(|_| {
+                AppError::ProcessError(
+                    "Invalid API key: contains characters not allowed in HTTP headers".to_string(),
+                )
+            })?,
+        );
         headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
         headers.insert("content-type", "application/json".parse().unwrap());
 
         if thinking {
-            headers.insert("anthropic-beta", "interleaved-thinking-2025-05-14".parse().unwrap());
+            headers.insert(
+                "anthropic-beta",
+                "interleaved-thinking-2025-05-14".parse().unwrap(),
+            );
         }
 
         // Estimate input tokens from the formatted messages (used as fallback if API returns 0)
@@ -1413,33 +1480,37 @@ impl ClaudeClient {
             .map(|u| format!("{}/v1/messages", u.trim_end_matches('/')))
             .unwrap_or_else(|| "https://api.anthropic.com/v1/messages".to_string());
 
-        let request = self.client
-            .post(&endpoint)
-            .headers(headers)
-            .json(&body);
+        let request = self.client.post(&endpoint).headers(headers).json(&body);
 
         if streaming {
-            let response = request.send().await.map_err(|e| {
-                AppError::ProcessError(format!("Failed to send request: {}", e))
-            })?;
+            let response = request
+                .send()
+                .await
+                .map_err(|e| AppError::ProcessError(format!("Failed to send request: {}", e)))?;
 
             // Check response status
             let status = response.status();
             if !status.is_success() {
                 let error_text = response.text().await.unwrap_or_default();
-                return Err(AppError::ProcessError(format!("Anthropic API error ({}): {}", status, error_text)));
+                return Err(AppError::ProcessError(format!(
+                    "Anthropic API error ({}): {}",
+                    status, error_text
+                )));
             }
 
-            self.stream_anthropic_response(response, window, estimated_input, session_id).await
+            self.stream_anthropic_response(response, window, estimated_input, session_id)
+                .await
         } else {
-            let response = request.send().await.map_err(|e| {
-                AppError::ProcessError(format!("Failed to send request: {}", e))
-            })?;
+            let response = request
+                .send()
+                .await
+                .map_err(|e| AppError::ProcessError(format!("Failed to send request: {}", e)))?;
 
             // Parse non-streaming response
-            let value: serde_json::Value = response.json().await.map_err(|e| {
-                AppError::InternalError(format!("Failed to parse response: {}", e))
-            })?;
+            let value: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| AppError::InternalError(format!("Failed to parse response: {}", e)))?;
 
             // Check for errors
             if let Ok(error_resp) = serde_json::from_value::<ErrorResponse>(value.clone()) {
@@ -1554,26 +1625,36 @@ impl ClaudeClient {
                             if let Some(text) = delta_obj.get("text").and_then(|v| v.as_str()) {
                                 full_content.push_str(text);
                                 if let Some(ref w) = window {
-                                    let _ = w.emit("claude-token", serde_json::json!({
-                                        "session_id": session_id,
-                                        "content": text,
-                                    }));
+                                    let _ = w.emit(
+                                        "claude-token",
+                                        serde_json::json!({
+                                            "session_id": session_id,
+                                            "content": text,
+                                        }),
+                                    );
                                 }
                             }
 
                             // Thinking delta
-                            if let Some(thinking) = delta_obj.get("thinking").and_then(|v| v.as_str()) {
+                            if let Some(thinking) =
+                                delta_obj.get("thinking").and_then(|v| v.as_str())
+                            {
                                 full_reasoning.push_str(thinking);
                                 if let Some(ref w) = window {
-                                    let _ = w.emit("claude-reasoning", serde_json::json!({
-                                        "session_id": session_id,
-                                        "content": thinking,
-                                    }));
+                                    let _ = w.emit(
+                                        "claude-reasoning",
+                                        serde_json::json!({
+                                            "session_id": session_id,
+                                            "content": thinking,
+                                        }),
+                                    );
                                 }
                             }
 
                             // Input JSON delta (tool call arguments)
-                            if let Some(input_json) = delta_obj.get("input_json").and_then(|v| v.as_str()) {
+                            if let Some(input_json) =
+                                delta_obj.get("input_json").and_then(|v| v.as_str())
+                            {
                                 if let Some(ref mut tc) = current_tool_call {
                                     tc.2.push_str(input_json);
                                 }
@@ -1584,8 +1665,16 @@ impl ClaudeClient {
                         if let Some(block) = json.get("content_block") {
                             if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
                                 current_tool_call = Some((
-                                    block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                    block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    block
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    block
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
                                     String::new(),
                                 ));
                             }
@@ -1600,12 +1689,15 @@ impl ClaudeClient {
                             };
                             tool_calls.push(tool_call.clone());
                             if let Some(ref w) = window {
-                                let _ = w.emit("claude-tool-use", serde_json::json!({
-                                    "session_id": session_id,
-                                    "tool_call_id": tool_call.tool_call_id,
-                                    "name": tool_call.name,
-                                    "arguments": tool_call.arguments,
-                                }));
+                                let _ = w.emit(
+                                    "claude-tool-use",
+                                    serde_json::json!({
+                                        "session_id": session_id,
+                                        "tool_call_id": tool_call.tool_call_id,
+                                        "name": tool_call.name,
+                                        "arguments": tool_call.arguments,
+                                    }),
+                                );
                             }
                         }
                     }
@@ -1618,8 +1710,16 @@ impl ClaudeClient {
                             }
                             if let Some(u) = msg.get("usage") {
                                 usage = UsageInfo {
-                                    input_tokens: u.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                                    output_tokens: u.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                                    input_tokens: u
+                                        .get("input_tokens")
+                                        .and_then(|v| v.as_i64())
+                                        .unwrap_or(0)
+                                        as i32,
+                                    output_tokens: u
+                                        .get("output_tokens")
+                                        .and_then(|v| v.as_i64())
+                                        .unwrap_or(0)
+                                        as i32,
                                 };
                             }
                         }
@@ -1638,10 +1738,13 @@ impl ClaudeClient {
         // Emit final reasoning content as a single event for clients that need it
         if !full_reasoning.is_empty() {
             if let Some(ref w) = window {
-                let _ = w.emit("claude-reasoning", serde_json::json!({
-                    "session_id": session_id,
-                    "content": &full_reasoning,
-                }));
+                let _ = w.emit(
+                    "claude-reasoning",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "content": &full_reasoning,
+                    }),
+                );
             }
         }
 
@@ -1668,6 +1771,7 @@ impl ClaudeClient {
     /**
      * Call OpenAI-compatible API (Minimax, etc.)
      */
+    #[allow(clippy::too_many_arguments)]
     async fn chat_openai(
         &self,
         messages: &[Message],
@@ -1685,23 +1789,29 @@ impl ClaudeClient {
         let tools = if no_tools {
             None
         } else {
-            Some(convert_tools_to_openai_format(&get_tools(browser_connected)))
+            Some(convert_tools_to_openai_format(&get_tools(
+                browser_connected,
+            )))
         };
 
         // Build messages list，system prompt 放到 messages 数组的第一条（OpenAI 兼容格式）
         // ALWAYS inject global security constraints (Layer 2 defense)
         let mut openai_messages = format_messages_for_openai(messages);
         let merged_system = merge_system_prompt(system_prompt, browser_connected);
-        openai_messages.insert(0, serde_json::json!({
-            "role": "system",
-            "content": merged_system
-        }));
+        openai_messages.insert(
+            0,
+            serde_json::json!({
+                "role": "system",
+                "content": merged_system
+            }),
+        );
 
         // Build request body
         // Use provider-specific max_tokens cap. DeepSeek allows at most 8192; most others
         // support up to 32768. Fetching the cap from ProviderCapabilities ensures we never
         // send a value outside the valid range for the target provider.
-        let resolved = super::provider::ResolvedProviderConfig::resolve(model, api_key, Some(&base_url), None);
+        let resolved =
+            super::provider::ResolvedProviderConfig::resolve(model, api_key, Some(&base_url), None);
         let max_tokens = resolved.capabilities.max_output_tokens.unwrap_or(32768);
 
         let mut body: serde_json::Map<String, serde_json::Value> = serde_json::json!({
@@ -1709,7 +1819,10 @@ impl ClaudeClient {
             "messages": openai_messages,
             "max_tokens": max_tokens,
             "stream": streaming,
-        }).as_object().cloned().unwrap();
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
 
         if let Some(ref t) = tools {
             if !t.is_empty() {
@@ -1732,9 +1845,14 @@ impl ClaudeClient {
         // Build headers
         let mut headers = reqwest::header::HeaderMap::new();
         let bearer_token = format!("Bearer {}", api_key);
-        headers.insert("Authorization", bearer_token.parse().map_err(|_| AppError::ProcessError(
-            "Invalid API key: contains characters not allowed in HTTP headers".to_string()
-        ))?);
+        headers.insert(
+            "Authorization",
+            bearer_token.parse().map_err(|_| {
+                AppError::ProcessError(
+                    "Invalid API key: contains characters not allowed in HTTP headers".to_string(),
+                )
+            })?,
+        );
         headers.insert("Content-Type", "application/json".parse().unwrap());
 
         // Estimate input tokens before the request (used as fallback if API returns 0)
@@ -1743,7 +1861,8 @@ impl ClaudeClient {
         // Send request
         let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
         println!("📡 Sending request to: {}", url);
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .headers(headers)
             .json(&body)
@@ -1755,16 +1874,21 @@ impl ClaudeClient {
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::ProcessError(format!("API error ({}): {}", status, error_text)));
+            return Err(AppError::ProcessError(format!(
+                "API error ({}): {}",
+                status, error_text
+            )));
         }
 
         if streaming {
-            self.stream_openai_response(response, window, estimated_input, session_id).await
+            self.stream_openai_response(response, window, estimated_input, session_id)
+                .await
         } else {
             // Non-streaming response
-            let value: serde_json::Value = response.json().await.map_err(|e| {
-                AppError::InternalError(format!("Failed to parse response: {}", e))
-            })?;
+            let value: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| AppError::InternalError(format!("Failed to parse response: {}", e)))?;
 
             let message = value["choices"]
                 .as_array()
@@ -1884,32 +2008,39 @@ impl ClaudeClient {
                                 if !thinking.is_empty() {
                                     full_reasoning.push_str(thinking);
                                     if let Some(ref w) = window {
-                                        let _ = w.emit("claude-reasoning", serde_json::json!({
-                                            "session_id": session_id,
-                                            "content": thinking,
-                                        }));
+                                        let _ = w.emit(
+                                            "claude-reasoning",
+                                            serde_json::json!({
+                                                "session_id": session_id,
+                                                "content": thinking,
+                                            }),
+                                        );
                                     }
                                 }
                             }
 
                             // DeepSeek/other reasoning format: "reasoning_content" field
-                            if let Some(reasoning) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
+                            if let Some(reasoning) =
+                                delta.get("reasoning_content").and_then(|v| v.as_str())
+                            {
                                 if !reasoning.is_empty() {
                                     full_reasoning.push_str(reasoning);
                                     if let Some(ref w) = window {
-                                        let _ = w.emit("claude-reasoning", serde_json::json!({
-                                            "session_id": session_id,
-                                            "content": reasoning,
-                                        }));
+                                        let _ = w.emit(
+                                            "claude-reasoning",
+                                            serde_json::json!({
+                                                "session_id": session_id,
+                                                "content": reasoning,
+                                            }),
+                                        );
                                     }
                                 }
                             }
 
                             // Content field — may contain inline <think>...</think> reasoning
                             // from MiniMax. Use state machine to split and route correctly.
-                            let raw_content = delta.get("content")
-                                .and_then(|v| v.as_str())
-                                .or_else(|| {
+                            let raw_content =
+                                delta.get("content").and_then(|v| v.as_str()).or_else(|| {
                                     // "text" field fallback (only if "content" absent)
                                     if delta.get("content").is_none() {
                                         delta.get("text").and_then(|v| v.as_str())
@@ -1919,22 +2050,30 @@ impl ClaudeClient {
                                 });
 
                             if let Some(raw) = raw_content {
-                                for (segment, is_reasoning) in split_think_content(raw, &mut in_think) {
+                                for (segment, is_reasoning) in
+                                    split_think_content(raw, &mut in_think)
+                                {
                                     if is_reasoning {
                                         full_reasoning.push_str(&segment);
                                         if let Some(ref w) = window {
-                                            let _ = w.emit("claude-reasoning", serde_json::json!({
-                                                "session_id": session_id,
-                                                "content": segment,
-                                            }));
+                                            let _ = w.emit(
+                                                "claude-reasoning",
+                                                serde_json::json!({
+                                                    "session_id": session_id,
+                                                    "content": segment,
+                                                }),
+                                            );
                                         }
                                     } else {
                                         full_content.push_str(&segment);
                                         if let Some(ref w) = window {
-                                            let _ = w.emit("claude-token", serde_json::json!({
-                                                "session_id": session_id,
-                                                "content": segment,
-                                            }));
+                                            let _ = w.emit(
+                                                "claude-token",
+                                                serde_json::json!({
+                                                    "session_id": session_id,
+                                                    "content": segment,
+                                                }),
+                                            );
                                         }
                                     }
                                 }
@@ -1945,9 +2084,12 @@ impl ClaudeClient {
                             // Format: delta.tool_calls = [{index, id?, function: {name?, arguments}}]
                             // The id and name appear only in the FIRST chunk for that index;
                             // subsequent chunks only carry the incremental arguments string.
-                            if let Some(tc_array) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                            if let Some(tc_array) =
+                                delta.get("tool_calls").and_then(|v| v.as_array())
+                            {
                                 for tc in tc_array {
-                                    let idx = tc.get("index")
+                                    let idx = tc
+                                        .get("index")
                                         .and_then(|v| v.as_u64())
                                         .map(|v| v as usize)
                                         .unwrap_or_else(|| {
@@ -1959,8 +2101,9 @@ impl ClaudeClient {
                                         });
 
                                     // Get or create entry for this index
-                                    let entry = tool_call_map.entry(idx)
-                                        .or_insert_with(|| (String::new(), String::new(), String::new()));
+                                    let entry = tool_call_map.entry(idx).or_insert_with(|| {
+                                        (String::new(), String::new(), String::new())
+                                    });
 
                                     // id: only present in the first chunk for this tool call
                                     if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
@@ -1971,13 +2114,17 @@ impl ClaudeClient {
 
                                     if let Some(func) = tc.get("function") {
                                         // name: only in first chunk
-                                        if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                                        if let Some(name) =
+                                            func.get("name").and_then(|v| v.as_str())
+                                        {
                                             if !name.is_empty() {
                                                 entry.1 = name.to_string();
                                             }
                                         }
                                         // arguments: incremental across chunks — APPEND not overwrite
-                                        if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                                        if let Some(args) =
+                                            func.get("arguments").and_then(|v| v.as_str())
+                                        {
                                             entry.2.push_str(args);
                                         }
                                     }
@@ -1999,7 +2146,12 @@ impl ClaudeClient {
                     if name.is_empty() {
                         continue; // Skip incomplete entries
                     }
-                    println!("🔧 OpenAI tool call finalized: id={} name={} args_len={}", id, name, args.len());
+                    println!(
+                        "🔧 OpenAI tool call finalized: id={} name={} args_len={}",
+                        id,
+                        name,
+                        args.len()
+                    );
                     let tool_call = ToolCall {
                         tool_call_id: id.clone(),
                         name: name.clone(),
@@ -2007,12 +2159,15 @@ impl ClaudeClient {
                     };
                     tool_calls.push(tool_call.clone());
                     if let Some(ref w) = window {
-                        let _ = w.emit("claude-tool-use", serde_json::json!({
-                            "session_id": session_id,
-                            "tool_call_id": tool_call.tool_call_id,
-                            "name": tool_call.name,
-                            "arguments": tool_call.arguments,
-                        }));
+                        let _ = w.emit(
+                            "claude-tool-use",
+                            serde_json::json!({
+                                "session_id": session_id,
+                                "tool_call_id": tool_call.tool_call_id,
+                                "name": tool_call.name,
+                                "arguments": tool_call.arguments,
+                            }),
+                        );
                     }
                 }
             }
@@ -2022,7 +2177,9 @@ impl ClaudeClient {
         // Always run this cleanup regardless of whether full_reasoning was populated
         // during streaming — some models may send reasoning inline even when a separate
         // reasoning field was also used.
-        if !full_content.is_empty() && (full_content.contains("<think>") || full_content.contains("</think>")) {
+        if !full_content.is_empty()
+            && (full_content.contains("<think>") || full_content.contains("</think>"))
+        {
             let think_regex = regex::Regex::new(r"<think>([\s\S]*?)<\/think>").unwrap();
             // Extract any reasoning we might have missed during streaming
             if full_reasoning.is_empty() {
@@ -2097,7 +2254,8 @@ mod tests {
     #[test]
     fn test_browser_tools_present_when_connected() {
         let tools = get_tools(true);
-        let tool_names: Vec<&str> = tools.iter()
+        let tool_names: Vec<&str> = tools
+            .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
         assert!(tool_names.contains(&"browser_navigate"));
@@ -2111,7 +2269,8 @@ mod tests {
     #[test]
     fn test_browser_click_tool_schema_supports_backend_node_targets() {
         let tools = get_tools(true);
-        let click_tool = tools.iter()
+        let click_tool = tools
+            .iter()
             .find(|tool| tool.get("name").and_then(|value| value.as_str()) == Some("browser_click"))
             .expect("browser_click tool should exist");
         let properties = click_tool
@@ -2132,26 +2291,35 @@ mod tests {
     #[test]
     fn test_browser_type_and_wait_tool_schema_support_latest_inputs() {
         let tools = get_tools(true);
-        let type_tool = tools.iter()
+        let type_tool = tools
+            .iter()
             .find(|tool| tool.get("name").and_then(|value| value.as_str()) == Some("browser_type"))
             .expect("browser_type tool should exist");
-        let wait_tool = tools.iter()
+        let wait_tool = tools
+            .iter()
             .find(|tool| tool.get("name").and_then(|value| value.as_str()) == Some("browser_wait"))
             .expect("browser_wait tool should exist");
 
-        assert!(type_tool["input_schema"]["properties"].get("backend_node_id").is_some());
-        assert!(type_tool["input_schema"]["properties"].get("navigation_id").is_some());
+        assert!(type_tool["input_schema"]["properties"]
+            .get("backend_node_id")
+            .is_some());
+        assert!(type_tool["input_schema"]["properties"]
+            .get("navigation_id")
+            .is_some());
         assert_eq!(
             type_tool["input_schema"]["required"],
             serde_json::json!(["text"])
         );
-        assert!(wait_tool["input_schema"]["properties"].get("selector").is_some());
+        assert!(wait_tool["input_schema"]["properties"]
+            .get("selector")
+            .is_some());
     }
 
     #[test]
     fn test_browser_tools_absent_when_disconnected() {
         let tools = get_tools(false);
-        let tool_names: Vec<&str> = tools.iter()
+        let tool_names: Vec<&str> = tools
+            .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
         assert!(!tool_names.contains(&"browser_navigate"));
@@ -2263,14 +2431,12 @@ mod tests {
 
     #[test]
     fn test_format_messages_tool_result() {
-        let messages = vec![
-            Message {
-                role: "user".to_string(),
-                content: "file content".to_string(),
-                tool_calls: None,
-                tool_call_id: Some("tool_123".to_string()),
-            },
-        ];
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: "file content".to_string(),
+            tool_calls: None,
+            tool_call_id: Some("tool_123".to_string()),
+        }];
         let formatted = format_messages_for_anthropic(&messages);
         assert_eq!(formatted.len(), 1);
         let msg = &formatted[0];
@@ -2280,20 +2446,16 @@ mod tests {
 
     #[test]
     fn test_format_messages_assistant_tool_calls() {
-        let messages = vec![
-            Message {
-                role: "assistant".to_string(),
-                content: "I'll read that file.".to_string(),
-                tool_calls: Some(vec![
-                    ToolCall {
-                        tool_call_id: "tool_123".to_string(),
-                        name: "read_file".to_string(),
-                        arguments: r#"{"path": "/test.txt"}"#.to_string(),
-                    }
-                ]),
-                tool_call_id: None,
-            },
-        ];
+        let messages = vec![Message {
+            role: "assistant".to_string(),
+            content: "I'll read that file.".to_string(),
+            tool_calls: Some(vec![ToolCall {
+                tool_call_id: "tool_123".to_string(),
+                name: "read_file".to_string(),
+                arguments: r#"{"path": "/test.txt"}"#.to_string(),
+            }]),
+            tool_call_id: None,
+        }];
         let formatted = format_messages_for_anthropic(&messages);
         assert_eq!(formatted.len(), 1);
         let msg = &formatted[0];

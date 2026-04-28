@@ -3,7 +3,6 @@
  *
  * Defines all request types that can be received from the frontend
  */
-
 use serde::Deserialize;
 
 /**

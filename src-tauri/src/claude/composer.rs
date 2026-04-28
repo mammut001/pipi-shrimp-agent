@@ -11,7 +11,6 @@
  * - Reorder parallel tool_results to match tool_calls order
  * - Validate message sequence integrity
  */
-
 use super::message::Message;
 
 /// Result of validating a message sequence
@@ -119,8 +118,7 @@ fn extract_tool_call_ids(msg: &Message) -> Vec<String> {
 /// Check if a message is a tool result
 fn is_tool_result(msg: &Message) -> bool {
     msg.role == "user"
-        && (msg.content.starts_with("__TOOL_RESULT__:")
-            || msg.tool_call_id.is_some())
+        && (msg.content.starts_with("__TOOL_RESULT__:") || msg.tool_call_id.is_some())
 }
 
 /// Extract tool call ID from a tool result message
@@ -316,13 +314,11 @@ pub fn check_tool_chain_integrity(messages: &[Message]) -> Result<(), String> {
     // Check: tool_calls should come before their results
     for (call_index, call_id) in &tool_calls {
         for (result_index, result_id) in &tool_results {
-            if call_id == result_id {
-                if result_index < call_index {
-                    return Err(format!(
-                        "Tool result at index {} comes before its tool_call at index {}",
-                        result_index, call_index
-                    ));
-                }
+            if call_id == result_id && result_index < call_index {
+                return Err(format!(
+                    "Tool result at index {} comes before its tool_call at index {}",
+                    result_index, call_index
+                ));
             }
         }
     }
@@ -367,9 +363,7 @@ mod tests {
     #[test]
     fn test_normalize_removes_orphaned_tool_result() {
         // Tool result without a corresponding tool call
-        let messages = vec![
-            make_message("user", "__TOOL_RESULT__:call_123:result"),
-        ];
+        let messages = vec![make_message("user", "__TOOL_RESULT__:call_123:result")];
 
         let (normalized, result) = normalize_messages(&messages);
         assert!(result.is_valid); // Still valid, just drops orphaned
@@ -380,7 +374,11 @@ mod tests {
     #[test]
     fn test_normalize_preserves_valid_tool_chain() {
         let messages = vec![
-            make_message("assistant", "").with_tool_calls(vec![make_tool_call("call_1", "read_file", "{}")]),
+            make_message("assistant", "").with_tool_calls(vec![make_tool_call(
+                "call_1",
+                "read_file",
+                "{}",
+            )]),
             make_message("user", "__TOOL_RESULT__:call_1:file content"),
         ];
 
@@ -392,7 +390,11 @@ mod tests {
     #[test]
     fn test_check_tool_chain_integrity_valid() {
         let messages = vec![
-            make_message("assistant", "").with_tool_calls(vec![make_tool_call("call_1", "read_file", "{}")]),
+            make_message("assistant", "").with_tool_calls(vec![make_tool_call(
+                "call_1",
+                "read_file",
+                "{}",
+            )]),
             make_message("user", "__TOOL_RESULT__:call_1:file content"),
         ];
 
@@ -401,9 +403,7 @@ mod tests {
 
     #[test]
     fn test_check_tool_chain_integrity_orphaned_result() {
-        let messages = vec![
-            make_message("user", "__TOOL_RESULT__:call_999:orphan"),
-        ];
+        let messages = vec![make_message("user", "__TOOL_RESULT__:call_999:orphan")];
 
         assert!(check_tool_chain_integrity(&messages).is_err());
     }
@@ -414,10 +414,7 @@ mod tests {
             strip_tool_result_prefix("__TOOL_RESULT__:call_123:file content"),
             "file content"
         );
-        assert_eq!(
-            strip_tool_result_prefix("plain text"),
-            "plain text"
-        );
+        assert_eq!(strip_tool_result_prefix("plain text"), "plain text");
     }
 
     // Helper to set tool_calls

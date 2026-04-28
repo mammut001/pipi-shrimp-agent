@@ -5,8 +5,8 @@ pub mod navigate;
 pub mod press_key;
 pub mod screenshot;
 pub mod scroll;
-pub mod test_support;
 pub mod state;
+pub mod test_support;
 pub mod type_text;
 pub mod wait;
 

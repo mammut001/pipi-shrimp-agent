@@ -7,12 +7,11 @@
  * - Computing the next dated output folder (e.g. 2025-01-15-2)
  * - Listing the index of all previously generated output folders
  */
-
-use crate::utils::{AppResult, AppError};
-use std::fs;
-use std::path::PathBuf;
+use crate::utils::{AppError, AppResult};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 use tauri_plugin_dialog::DialogExt;
 
 /// Summary of one dated output folder inside .pipi-shrimp/
@@ -39,8 +38,7 @@ pub async fn open_folder_dialog(app: tauri::AppHandle) -> Option<String> {
         let _ = tx.send(path);
     });
 
-    rx.await.ok().flatten()
-        .map(|p| p.to_string())
+    rx.await.ok().flatten().map(|p| p.to_string())
 }
 
 /// Initialise the `.pipi-shrimp/` directory inside `work_dir`.
@@ -55,7 +53,10 @@ pub async fn open_folder_dialog(app: tauri::AppHandle) -> Option<String> {
 pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
     let base = PathBuf::from(&work_dir);
     if !base.exists() {
-        return Err(AppError::FileError(format!("Work dir does not exist: {}", work_dir)));
+        return Err(AppError::FileError(format!(
+            "Work dir does not exist: {}",
+            work_dir
+        )));
     }
 
     // 1. Create .pipi-shrimp/
@@ -106,8 +107,7 @@ pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
         let entry = ".pipi-shrimp/\n";
 
         let existing = if gitignore_path.exists() {
-            fs::read_to_string(&gitignore_path)
-                .map_err(|e| AppError::FileError(e.to_string()))?
+            fs::read_to_string(&gitignore_path).map_err(|e| AppError::FileError(e.to_string()))?
         } else {
             String::new()
         };
@@ -119,8 +119,7 @@ pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
                 content.push('\n');
             }
             content.push_str(entry);
-            fs::write(&gitignore_path, content)
-                .map_err(|e| AppError::FileError(e.to_string()))?;
+            fs::write(&gitignore_path, content).map_err(|e| AppError::FileError(e.to_string()))?;
             println!("Added .pipi-shrimp/ to .gitignore");
         }
     }
@@ -147,8 +146,7 @@ pub fn get_next_output_dir(work_dir: String) -> AppResult<String> {
     let pipi_dir = PathBuf::from(&work_dir).join(".pipi-shrimp");
 
     // Ensure .pipi-shrimp exists (idempotent)
-    fs::create_dir_all(&pipi_dir)
-        .map_err(|e| AppError::FileError(e.to_string()))?;
+    fs::create_dir_all(&pipi_dir).map_err(|e| AppError::FileError(e.to_string()))?;
 
     // Find highest existing index for today
     let mut max_i: u32 = 0;
@@ -223,7 +221,10 @@ pub fn list_pipi_shrimp_index(work_dir: String) -> AppResult<Vec<OutputFolder>> 
 pub fn create_workflow_run_directory(run_id: String) -> AppResult<String> {
     let home = std::env::var("HOME")
         .map_err(|e| AppError::FileError(format!("Cannot get HOME directory: {}", e)))?;
-    let base_dir = PathBuf::from(&home).join("pipi-shrimp-agent").join("workflows").join(&run_id);
+    let base_dir = PathBuf::from(&home)
+        .join("pipi-shrimp-agent")
+        .join("workflows")
+        .join(&run_id);
     fs::create_dir_all(&base_dir)
         .map_err(|e| AppError::FileError(format!("Failed to create run directory: {}", e)))?;
     Ok(base_dir.to_string_lossy().to_string())
@@ -246,13 +247,11 @@ pub fn delete_workflow_run_directory(path: String) -> AppResult<()> {
         return Ok(());
     }
 
-    let canonical_target = target
-        .canonicalize()
-        .map_err(|e| AppError::FileError(format!("Failed to resolve workflow run directory: {}", e)))?;
+    let canonical_target = target.canonicalize().map_err(|e| {
+        AppError::FileError(format!("Failed to resolve workflow run directory: {}", e))
+    })?;
 
-    let canonical_root = workflows_root
-        .canonicalize()
-        .unwrap_or(workflows_root);
+    let canonical_root = workflows_root.canonicalize().unwrap_or(workflows_root);
 
     if !canonical_target.starts_with(&canonical_root) {
         return Err(AppError::FileError(format!(
@@ -272,7 +271,10 @@ pub fn delete_workflow_run_directory(path: String) -> AppResult<()> {
 pub fn reveal_in_finder(path: String) -> AppResult<()> {
     let path_buf = PathBuf::from(&path);
     if !path_buf.exists() {
-        return Err(AppError::FileError(format!("Path does not exist: {}", path)));
+        return Err(AppError::FileError(format!(
+            "Path does not exist: {}",
+            path
+        )));
     }
 
     #[cfg(target_os = "macos")]
@@ -286,15 +288,18 @@ pub fn reveal_in_finder(path: String) -> AppResult<()> {
     #[cfg(target_os = "linux")]
     {
         // Try xdg-open first, fallback to dbus-send for file managers
-        let result = std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn();
+        let result = std::process::Command::new("xdg-open").arg(&path).spawn();
 
         if result.is_err() {
             std::process::Command::new("dbus-send")
-                .args(["--session", "--dest=org.freedesktop.FileManager1", "--type=method_call",
-                    "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems",
-                    format!("array:string:file://{}", path).as_str()])
+                .args([
+                    "--session",
+                    "--dest=org.freedesktop.FileManager1",
+                    "--type=method_call",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    format!("array:string:file://{}", path).as_str(),
+                ])
                 .spawn()
                 .map_err(|e| AppError::FileError(format!("Failed to open file manager: {}", e)))?;
         }
@@ -314,8 +319,7 @@ pub fn reveal_in_finder(path: String) -> AppResult<()> {
 /// Open a file with the system's default application
 #[tauri::command]
 pub fn open_file_external(path: String) -> AppResult<()> {
-    open::that(&path)
-        .map_err(|e| AppError::FileError(format!("Failed to open file: {}", e)))?;
+    open::that(&path).map_err(|e| AppError::FileError(format!("Failed to open file: {}", e)))?;
     Ok(())
 }
 
@@ -332,7 +336,9 @@ pub fn open_file_with_app(path: String, app_name: String) -> AppResult<()> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        return Err(AppError::FileError("open_file_with_app is only supported on macOS".to_string()));
+        return Err(AppError::FileError(
+            "open_file_with_app is only supported on macOS".to_string(),
+        ));
     }
 
     Ok(())
@@ -443,9 +449,7 @@ pub fn delete_session_work_dir(path: String) -> AppResult<bool> {
         .join("PiPi-Shrimp")
         .join("chats");
 
-    let canonical_root = managed_root
-        .canonicalize()
-        .unwrap_or(managed_root);
+    let canonical_root = managed_root.canonicalize().unwrap_or(managed_root);
 
     if !canonical_target.starts_with(&canonical_root) {
         return Err(AppError::FileError(format!(

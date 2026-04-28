@@ -76,7 +76,10 @@ impl CdpConfig {
                 env_get("PIPI_CDP_PORT"),
                 defaults.remote_debugging_port,
             ),
-            prefer_attach: parse_bool_env(env_get("PIPI_CDP_PREFER_ATTACH"), defaults.prefer_attach),
+            prefer_attach: parse_bool_env(
+                env_get("PIPI_CDP_PREFER_ATTACH"),
+                defaults.prefer_attach,
+            ),
             idle_timeout: Duration::from_secs(parse_u64_env(
                 env_get("PIPI_CDP_IDLE_TIMEOUT_S"),
                 defaults.idle_timeout.as_secs(),

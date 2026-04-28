@@ -18,7 +18,8 @@ pub(crate) fn collect_interactive_elements(
         .filter(|node| seen_backend_nodes.insert(node.backend_node_id))
         .collect();
 
-    candidates.sort_by(|left, right| compare_candidates(left, right, &snapshot.viewport, &frame_depths));
+    candidates
+        .sort_by(|left, right| compare_candidates(left, right, &snapshot.viewport, &frame_depths));
 
     candidates
         .into_iter()
@@ -53,14 +54,44 @@ fn compare_candidates(
 ) -> Ordering {
     let left_visible = left.is_visible;
     let right_visible = right.is_visible;
-    let left_in_view = left.bounds.as_ref().map(|bounds| in_viewport(bounds, viewport)).unwrap_or(false);
-    let right_in_view = right.bounds.as_ref().map(|bounds| in_viewport(bounds, viewport)).unwrap_or(false);
-    let left_top = left.bounds.as_ref().map(|bounds| bounds.y).unwrap_or(f64::MAX);
-    let right_top = right.bounds.as_ref().map(|bounds| bounds.y).unwrap_or(f64::MAX);
-    let left_left = left.bounds.as_ref().map(|bounds| bounds.x).unwrap_or(f64::MAX);
-    let right_left = right.bounds.as_ref().map(|bounds| bounds.x).unwrap_or(f64::MAX);
-    let left_depth = frame_depths.get(&left.frame_id).copied().unwrap_or(usize::MAX);
-    let right_depth = frame_depths.get(&right.frame_id).copied().unwrap_or(usize::MAX);
+    let left_in_view = left
+        .bounds
+        .as_ref()
+        .map(|bounds| in_viewport(bounds, viewport))
+        .unwrap_or(false);
+    let right_in_view = right
+        .bounds
+        .as_ref()
+        .map(|bounds| in_viewport(bounds, viewport))
+        .unwrap_or(false);
+    let left_top = left
+        .bounds
+        .as_ref()
+        .map(|bounds| bounds.y)
+        .unwrap_or(f64::MAX);
+    let right_top = right
+        .bounds
+        .as_ref()
+        .map(|bounds| bounds.y)
+        .unwrap_or(f64::MAX);
+    let left_left = left
+        .bounds
+        .as_ref()
+        .map(|bounds| bounds.x)
+        .unwrap_or(f64::MAX);
+    let right_left = right
+        .bounds
+        .as_ref()
+        .map(|bounds| bounds.x)
+        .unwrap_or(f64::MAX);
+    let left_depth = frame_depths
+        .get(&left.frame_id)
+        .copied()
+        .unwrap_or(usize::MAX);
+    let right_depth = frame_depths
+        .get(&right.frame_id)
+        .copied()
+        .unwrap_or(usize::MAX);
 
     right_visible
         .cmp(&left_visible)
@@ -111,7 +142,12 @@ fn preferred_label(node: &MergedNode) -> String {
         return node.name.trim().to_string();
     }
 
-    if let Some(text_hint) = node.text_hint.as_ref().map(|text| text.trim()).filter(|text| !text.is_empty()) {
+    if let Some(text_hint) = node
+        .text_hint
+        .as_ref()
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
+    {
         return text_hint.to_string();
     }
 

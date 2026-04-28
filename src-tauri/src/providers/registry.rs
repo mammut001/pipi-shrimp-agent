@@ -41,7 +41,7 @@ pub const PROVIDERS: &[ProviderEntry] = &[
     ProviderEntry {
         id: "anthropic-compatible",
         endpoint_style: EndpointStyle::Anthropic,
-        default_base_url: "",  // must be supplied by user
+        default_base_url: "", // must be supplied by user
         fallback_models: &[],
     },
     ProviderEntry {
@@ -60,7 +60,7 @@ pub const PROVIDERS: &[ProviderEntry] = &[
     ProviderEntry {
         id: "openai-compatible",
         endpoint_style: EndpointStyle::OpenAI,
-        default_base_url: "",  // must be supplied by user
+        default_base_url: "", // must be supplied by user
         fallback_models: &[],
     },
     ProviderEntry {

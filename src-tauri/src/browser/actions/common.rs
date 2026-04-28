@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use chromiumoxide::cdp::browser_protocol::dom::{BackendNodeId, GetBoxModelParams, ResolveNodeParams};
+use chromiumoxide::cdp::browser_protocol::dom::{
+    BackendNodeId, GetBoxModelParams, ResolveNodeParams,
+};
 use chromiumoxide::cdp::js_protocol::runtime::CallFunctionOnParams;
 use chromiumoxide::page::Page;
 use serde::{Deserialize, Serialize};
@@ -81,7 +83,10 @@ impl BrowserActionError {
             "browser.element_not_found",
             format!("Element not found: {}", reference.into()),
             true,
-            Some("Call browser_get_page to refresh the page state and inspect the latest elements.".to_string()),
+            Some(
+                "Call browser_get_page to refresh the page state and inspect the latest elements."
+                    .to_string(),
+            ),
         )
     }
 
@@ -90,7 +95,9 @@ impl BrowserActionError {
             "browser.element_not_interactable",
             message,
             true,
-            Some("Wait for the page to settle or choose a visible interactive element.".to_string()),
+            Some(
+                "Wait for the page to settle or choose a visible interactive element.".to_string(),
+            ),
         )
     }
 
@@ -187,7 +194,9 @@ impl ActionContext {
 
     pub async fn page(&self) -> ActionResult<Page> {
         let manager = self.manager.lock().await;
-        manager.page_cloned().ok_or_else(BrowserActionError::not_connected)
+        manager
+            .page_cloned()
+            .ok_or_else(BrowserActionError::not_connected)
     }
 
     pub async fn capture_page_state(&self) -> ActionResult<PageState> {
@@ -198,7 +207,10 @@ impl ActionContext {
             .map_err(|error| BrowserActionError::session(error.to_string()))
     }
 
-    pub async fn cached_or_capture_page_state(&self, force_refresh: bool) -> ActionResult<PageState> {
+    pub async fn cached_or_capture_page_state(
+        &self,
+        force_refresh: bool,
+    ) -> ActionResult<PageState> {
         let mut manager = self.manager.lock().await;
         if force_refresh {
             manager
@@ -223,7 +235,10 @@ impl ActionContext {
             .map_err(|error| BrowserActionError::page_state_stale(error.to_string()))
     }
 
-    pub async fn resolve_element(&self, reference: &ElementReference) -> ActionResult<InteractiveElement> {
+    pub async fn resolve_element(
+        &self,
+        reference: &ElementReference,
+    ) -> ActionResult<InteractiveElement> {
         if reference.is_empty() {
             return Err(BrowserActionError::invalid_input(
                 "click/type actions require either index or backend_node_id.",
@@ -295,7 +310,10 @@ impl ActionContext {
     }
 }
 
-fn match_in_page_state(page_state: &PageState, reference: &ElementReference) -> Option<InteractiveElement> {
+fn match_in_page_state(
+    page_state: &PageState,
+    reference: &ElementReference,
+) -> Option<InteractiveElement> {
     if let Some(backend_node_id) = reference.backend_node_id {
         return page_state
             .find_element_by_backend_node_id(backend_node_id)
@@ -344,19 +362,21 @@ pub async fn call_backend_node_function(
         .map_err(|error| {
             BrowserActionError::execution_failed(
                 "browser.element_not_found",
-                format!("Unable to resolve backend_node_id {}: {}", backend_node_id, error),
+                format!(
+                    "Unable to resolve backend_node_id {}: {}",
+                    backend_node_id, error
+                ),
             )
         })?;
-    let object_id = resolved
-        .result
-        .object
-        .object_id
-        .ok_or_else(|| {
-            BrowserActionError::execution_failed(
-                "browser.element_not_found",
-                format!("backend_node_id {} did not return an object id", backend_node_id),
-            )
-        })?;
+    let object_id = resolved.result.object.object_id.ok_or_else(|| {
+        BrowserActionError::execution_failed(
+            "browser.element_not_found",
+            format!(
+                "backend_node_id {} did not return an object id",
+                backend_node_id
+            ),
+        )
+    })?;
     let response = page
         .execute(
             CallFunctionOnParams::builder()
@@ -395,7 +415,10 @@ pub async fn call_backend_node_function(
     })
 }
 
-pub async fn backend_node_click_point(page: &Page, backend_node_id: i64) -> ActionResult<(f64, f64)> {
+pub async fn backend_node_click_point(
+    page: &Page,
+    backend_node_id: i64,
+) -> ActionResult<(f64, f64)> {
     let box_model = page
         .execute(
             GetBoxModelParams::builder()
@@ -437,8 +460,8 @@ pub trait BrowserAction {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::test_support::{load_page_state_fixture, FixtureActionHarness};
+    use super::*;
 
     fn sample_page_state() -> PageState {
         PageState {
@@ -589,7 +612,10 @@ mod tests {
             .await
             .expect("invalidating the active cache should force a fresh capture");
 
-        assert_eq!(refreshed_capture.navigation_id, refreshed_page_state.navigation_id);
+        assert_eq!(
+            refreshed_capture.navigation_id,
+            refreshed_page_state.navigation_id
+        );
         assert_eq!(harness.capture_count().await, 2);
     }
 }

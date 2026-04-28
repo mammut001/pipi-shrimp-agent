@@ -1,3 +1,7 @@
+use crate::utils::{AppError, AppResult};
+use reqwest::Client as ReqwestClient;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 /**
  * Browser commands for second WebviewWindow approach
  *
@@ -6,21 +10,17 @@
  *
  * Uses Tauri v2 API (WebviewWindowBuilder)
  */
-
 use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::Mutex;
 use tauri::{
-    Listener, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder, Url,
+    Listener, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewBuilder, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
-use serde::{Deserialize, Serialize};
-use reqwest::Client as ReqwestClient;
-use crate::utils::{AppError, AppResult};
+use tokio::sync::Mutex;
 
 /// Inline page-agent IIFE bundle — embedded at compile time so we never load from CDN.
 /// Tauri's eval() is native-level injection that bypasses any page CSP (unlike <script src>).
-const PAGE_AGENT_IIFE: &str = include_str!("../../../node_modules/page-agent/dist/iife/page-agent.demo.js");
+const PAGE_AGENT_IIFE: &str =
+    include_str!("../../../node_modules/page-agent/dist/iife/page-agent.demo.js");
 
 /// Represents which browser surface is currently active.
 /// This eliminates ambiguity in dual-track execution environment.
@@ -69,12 +69,16 @@ impl BrowserState {
         if let Some(ref window) = self.browser_window {
             // WebviewWindow.webviews() returns Vec<(label, Webview)> in Tauri v2
             let webviews = window.webviews();
-            let (_, webview) = webviews.into_iter().next()
+            let (_, webview) = webviews
+                .into_iter()
+                .next()
                 .ok_or_else(|| AppError::InternalError("No webview in window".to_string()))?;
             return Ok((webview, ActiveSurface::StandaloneWindow));
         }
 
-        Err(AppError::InvalidInput("No browser surface open".to_string()))
+        Err(AppError::InvalidInput(
+            "No browser surface open".to_string(),
+        ))
     }
 
     /// Activate embedded surface mode
@@ -139,13 +143,13 @@ pub async fn open_browser_window(
 
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(AppError::InvalidInput(
-            "URL must start with http:// or https://".to_string()
+            "URL must start with http:// or https://".to_string(),
         ));
     }
 
     // Parse URL to validate it
-    let parsed_url = Url::parse(&url)
-        .map_err(|e| AppError::InvalidInput(format!("Invalid URL: {}", e)))?;
+    let parsed_url =
+        Url::parse(&url).map_err(|e| AppError::InvalidInput(format!("Invalid URL: {}", e)))?;
 
     let mut state = state.lock().await;
 
@@ -155,19 +159,18 @@ pub async fn open_browser_window(
     }
 
     // Create new browser window using Tauri v2 WebviewWindowBuilder API
-    let window = WebviewWindowBuilder::new(
-        &app,
-        "browser-window",
-        WebviewUrl::External(parsed_url),
-    )
-    .title("Browser Agent")
-    .inner_size(1200.0, 800.0)
-    .min_inner_size(800.0, 600.0)
-    .center()
-    .visible(false)
-    .focused(false)
-    .build()
-    .map_err(|e| AppError::InternalError(format!("Failed to create browser window: {}", e)))?;
+    let window =
+        WebviewWindowBuilder::new(&app, "browser-window", WebviewUrl::External(parsed_url))
+            .title("Browser Agent")
+            .inner_size(1200.0, 800.0)
+            .min_inner_size(800.0, 600.0)
+            .center()
+            .visible(false)
+            .focused(false)
+            .build()
+            .map_err(|e| {
+                AppError::InternalError(format!("Failed to create browser window: {}", e))
+            })?;
 
     state.activate_standalone(window);
 
@@ -210,21 +213,25 @@ pub async fn open_embedded_surface(
     state.deactivate_all();
 
     // Get the main window
-    let main_window = app.get_window(&state.main_window_label)
+    let main_window = app
+        .get_window(&state.main_window_label)
         .ok_or_else(|| AppError::InternalError("Main window not found".to_string()))?;
 
-    let webview_builder = WebviewBuilder::new("embedded-browser-surface", WebviewUrl::External(parsed_url));
+    let webview_builder =
+        WebviewBuilder::new("embedded-browser-surface", WebviewUrl::External(parsed_url));
     let webview = main_window
         .add_child(
             webview_builder,
             LogicalPosition::new(100.0, 100.0),
             LogicalSize::new(800.0, 600.0),
         )
-        .map_err(|e| AppError::InternalError(format!("Failed to create embedded surface: {}", e)))?;
+        .map_err(|e| {
+            AppError::InternalError(format!("Failed to create embedded surface: {}", e))
+        })?;
 
-    webview
-        .hide()
-        .map_err(|e| AppError::InternalError(format!("Failed to hide embedded surface initially: {}", e)))?;
+    webview.hide().map_err(|e| {
+        AppError::InternalError(format!("Failed to hide embedded surface initially: {}", e))
+    })?;
 
     state.activate_embedded(webview);
 
@@ -244,7 +251,9 @@ pub async fn move_browser_surface(
     let (webview, browser_window) = {
         let mut state = state.lock().await;
         state.embedded_mode = true;
-        let webview = state.embedded_webview.as_ref()
+        let webview = state
+            .embedded_webview
+            .as_ref()
             .ok_or_else(|| AppError::InvalidInput("No embedded browser surface open".to_string()))?
             .clone();
         let browser_window = state.browser_window.clone();
@@ -260,20 +269,25 @@ pub async fn move_browser_surface(
                 }
                 _ => {
                     return Err(AppError::InvalidInput(
-                        "Bounds are required when moving browser surface to mini or expanded mode".to_string(),
+                        "Bounds are required when moving browser surface to mini or expanded mode"
+                            .to_string(),
                     ));
                 }
             };
 
             webview
                 .set_position(LogicalPosition::new(x, y))
-                .map_err(|e| AppError::InternalError(format!("Failed to move browser surface: {}", e)))?;
+                .map_err(|e| {
+                    AppError::InternalError(format!("Failed to move browser surface: {}", e))
+                })?;
             webview
                 .set_size(LogicalSize::new(width, height))
-                .map_err(|e| AppError::InternalError(format!("Failed to resize browser surface: {}", e)))?;
-            webview
-                .show()
-                .map_err(|e| AppError::InternalError(format!("Failed to show browser surface: {}", e)))?;
+                .map_err(|e| {
+                    AppError::InternalError(format!("Failed to resize browser surface: {}", e))
+                })?;
+            webview.show().map_err(|e| {
+                AppError::InternalError(format!("Failed to show browser surface: {}", e))
+            })?;
 
             if let Some(window) = browser_window {
                 let _ = window.hide();
@@ -289,13 +303,15 @@ pub async fn move_browser_surface(
             ))
         }
         "hidden" => {
-            webview
-                .hide()
-                .map_err(|e| AppError::InternalError(format!("Failed to hide browser surface: {}", e)))?;
+            webview.hide().map_err(|e| {
+                AppError::InternalError(format!("Failed to hide browser surface: {}", e))
+            })?;
             println!("[Browser] Browser surface hidden");
             Ok("Browser surface hidden".to_string())
         }
-        _ => Err(AppError::InvalidInput("Invalid mode. Use 'mini', 'expanded', or 'hidden'".to_string()))
+        _ => Err(AppError::InvalidInput(
+            "Invalid mode. Use 'mini', 'expanded', or 'hidden'".to_string(),
+        )),
     }
 }
 
@@ -311,16 +327,19 @@ pub async fn set_embedded_surface_visibility(
     };
 
     if visible {
-        webview
-            .show()
-            .map_err(|e| AppError::InternalError(format!("Failed to show browser surface: {}", e)))?;
+        webview.show().map_err(|e| {
+            AppError::InternalError(format!("Failed to show browser surface: {}", e))
+        })?;
     } else {
-        webview
-            .hide()
-            .map_err(|e| AppError::InternalError(format!("Failed to hide browser surface: {}", e)))?;
+        webview.hide().map_err(|e| {
+            AppError::InternalError(format!("Failed to hide browser surface: {}", e))
+        })?;
     }
 
-    Ok(format!("Browser surface ({:?}) visibility set to {}", surface_type, visible))
+    Ok(format!(
+        "Browser surface ({:?}) visibility set to {}",
+        surface_type, visible
+    ))
 }
 
 /// Get the current browser surface URL using unified routing.
@@ -334,10 +353,14 @@ pub async fn get_embedded_surface_url(
         state.get_target()?
     };
 
-    let url = webview.url()
+    let url = webview
+        .url()
         .map_err(|e| AppError::InternalError(format!("Failed to get URL: {}", e)))?;
-    
-    println!("[Browser] get_embedded_surface_url: surface={:?}, url={}", surface_type, url);
+
+    println!(
+        "[Browser] get_embedded_surface_url: surface={:?}, url={}",
+        surface_type, url
+    );
     Ok(url.to_string())
 }
 
@@ -345,13 +368,10 @@ pub async fn get_embedded_surface_url(
 #[tauri::command]
 pub async fn execute_on_embedded_surface(
     task: String,
-    #[allow(non_snake_case)]
-    baseUrl: Option<String>,
-    #[allow(non_snake_case)]
-    apiKey: String,
+    #[allow(non_snake_case)] baseUrl: Option<String>,
+    #[allow(non_snake_case)] apiKey: String,
     model: String,
-    #[allow(non_snake_case)]
-    systemPrompt: Option<String>,
+    #[allow(non_snake_case)] systemPrompt: Option<String>,
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
     let page_agent_script = build_page_agent_script(&task, baseUrl, &apiKey, &model, systemPrompt);
@@ -360,7 +380,9 @@ pub async fn execute_on_embedded_surface(
         let mut st = state.lock().await;
 
         if st.is_busy {
-            return Err(AppError::InvalidInput("Agent is already running".to_string()));
+            return Err(AppError::InvalidInput(
+                "Agent is already running".to_string(),
+            ));
         }
 
         let result = st.get_target()?;
@@ -368,16 +390,22 @@ pub async fn execute_on_embedded_surface(
         result
     };
 
-    println!("[Browser] Executing on {:?} surface: {}", surface_type, task);
+    println!(
+        "[Browser] Executing on {:?} surface: {}",
+        surface_type, task
+    );
     println!("[Browser] Script size: {} bytes", page_agent_script.len());
-    
+
     match webview.eval(&page_agent_script) {
         Ok(_) => println!("[Browser] ✅ eval() succeeded on {:?}", surface_type),
         Err(e) => {
             println!("[Browser] ❌ eval() FAILED: {}", e);
             let mut st = state.lock().await;
             st.is_busy = false;
-            return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
+            return Err(AppError::InternalError(format!(
+                "Failed to inject script: {}",
+                e
+            )));
         }
     }
 
@@ -386,7 +414,10 @@ pub async fn execute_on_embedded_surface(
         st.is_busy = false;
     }
 
-    Ok(format!("Task execution started on {:?} surface", surface_type))
+    Ok(format!(
+        "Task execution started on {:?} surface",
+        surface_type
+    ))
 }
 
 /// Inspect browser state on the current active surface using unified routing.
@@ -403,7 +434,7 @@ pub async fn inspect_embedded_surface(
         let st = state.lock().await;
         st.get_target()?
     };
-    
+
     println!("[Browser] Inspecting {:?} surface", surface_type);
 
     let (tx, rx) = oneshot::channel::<Result<RawBrowserInspection, String>>();
@@ -426,7 +457,11 @@ pub async fn inspect_embedded_surface(
         let payload = event.payload().to_string();
         let message = serde_json::from_str::<serde_json::Value>(&payload)
             .ok()
-            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+            .and_then(|v| {
+                v.get("message")
+                    .and_then(|m| m.as_str())
+                    .map(str::to_string)
+            })
             .unwrap_or_else(|| format!("Browser inspection failed: {}", payload));
 
         if let Ok(mut sender) = error_tx.lock() {
@@ -567,13 +602,18 @@ pub async fn inspect_embedded_surface(
 })();
 "#;
 
-    webview.eval(inspection_script)
-        .map_err(|e| AppError::InternalError(format!("Failed to inject inspection script: {}", e)))?;
+    webview.eval(inspection_script).map_err(|e| {
+        AppError::InternalError(format!("Failed to inject inspection script: {}", e))
+    })?;
 
     let inspection = tokio::time::timeout(Duration::from_secs(5), rx)
         .await
-        .map_err(|_| AppError::InternalError("Timed out waiting for browser inspection result".to_string()))?
-        .map_err(|_| AppError::InternalError("Browser inspection channel closed unexpectedly".to_string()))?
+        .map_err(|_| {
+            AppError::InternalError("Timed out waiting for browser inspection result".to_string())
+        })?
+        .map_err(|_| {
+            AppError::InternalError("Browser inspection channel closed unexpectedly".to_string())
+        })?
         .map_err(AppError::InternalError)?;
 
     app.unlisten(success_listener);
@@ -581,8 +621,7 @@ pub async fn inspect_embedded_surface(
 
     println!(
         "[Browser] Inspection result: {} - markers: {:?}",
-        inspection.url,
-        inspection.text_markers
+        inspection.url, inspection.text_markers
     );
     Ok(inspection)
 }
@@ -604,12 +643,22 @@ pub async fn navigate_embedded_surface(
         format!("https://{}", url)
     };
 
-    let script = format!("window.location.href = '{}';", normalized_url.replace('\'', "\\'"));
-    webview.eval(&script)
+    let script = format!(
+        "window.location.href = '{}';",
+        normalized_url.replace('\'', "\\'")
+    );
+    webview
+        .eval(&script)
         .map_err(|e| AppError::InternalError(format!("Failed to navigate: {}", e)))?;
 
-    println!("[Browser] Navigating {:?} surface to: {}", surface_type, normalized_url);
-    Ok(format!("Navigated to: {} (via {:?})", normalized_url, surface_type))
+    println!(
+        "[Browser] Navigating {:?} surface to: {}",
+        surface_type, normalized_url
+    );
+    Ok(format!(
+        "Navigated to: {} (via {:?})",
+        normalized_url, surface_type
+    ))
 }
 
 /// Reload using unified routing.
@@ -622,7 +671,8 @@ pub async fn reload_embedded_surface(
         state.get_target()?
     };
 
-    webview.eval("window.location.reload();")
+    webview
+        .eval("window.location.reload();")
         .map_err(|e| AppError::InternalError(format!("Failed to reload: {}", e)))?;
 
     println!("[Browser] {:?} surface reloaded", surface_type);
@@ -637,7 +687,9 @@ pub async fn close_embedded_surface(
     let mut state = state.lock().await;
 
     if let Some(webview) = state.embedded_webview.take() {
-        webview.close().map_err(|e| AppError::InternalError(format!("Failed to close: {}", e)))?;
+        webview
+            .close()
+            .map_err(|e| AppError::InternalError(format!("Failed to close: {}", e)))?;
         println!("[Browser] Embedded surface closed");
     }
 
@@ -660,17 +712,19 @@ pub async fn show_browser_window(
         } else if state.embedded_webview.is_some() {
             None
         } else {
-            return Err(AppError::InvalidInput("No browser surface open".to_string()));
+            return Err(AppError::InvalidInput(
+                "No browser surface open".to_string(),
+            ));
         }
     };
 
     if let Some(browser_window) = maybe_target {
-        browser_window
-            .show()
-            .map_err(|e| AppError::InternalError(format!("Failed to show browser window: {}", e)))?;
-        browser_window
-            .set_focus()
-            .map_err(|e| AppError::InternalError(format!("Failed to focus browser window: {}", e)))?;
+        browser_window.show().map_err(|e| {
+            AppError::InternalError(format!("Failed to show browser window: {}", e))
+        })?;
+        browser_window.set_focus().map_err(|e| {
+            AppError::InternalError(format!("Failed to focus browser window: {}", e))
+        })?;
         Ok("Browser window shown".to_string())
     } else {
         Ok("Embedded browser surface is already visible in-app".to_string())
@@ -688,7 +742,7 @@ pub async fn close_browser_window(
         st.deactivate_all();
         desc
     };
-    
+
     println!("[Browser] All surfaces closed (was: {})", surface_type);
     Ok(format!("Browser surface closed (type: {})", surface_type))
 }
@@ -699,13 +753,10 @@ pub async fn close_browser_window(
 #[tauri::command]
 pub async fn execute_agent_task(
     task: String,
-    #[allow(non_snake_case)]
-    baseUrl: Option<String>,
-    #[allow(non_snake_case)]
-    apiKey: String,
+    #[allow(non_snake_case)] baseUrl: Option<String>,
+    #[allow(non_snake_case)] apiKey: String,
     model: String,
-    #[allow(non_snake_case)]
-    systemPrompt: Option<String>,
+    #[allow(non_snake_case)] systemPrompt: Option<String>,
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<String> {
     // Build the script before locking state to avoid borrow issues
@@ -716,7 +767,9 @@ pub async fn execute_agent_task(
         let mut st = state.lock().await;
 
         if st.is_busy {
-            return Err(AppError::InvalidInput("Agent is already running".to_string()));
+            return Err(AppError::InvalidInput(
+                "Agent is already running".to_string(),
+            ));
         }
 
         // Use unified get_target() - Embedded first, then StandaloneWindow
@@ -725,7 +778,10 @@ pub async fn execute_agent_task(
         target
     };
 
-    println!("[Browser] Executing agent task on {:?} surface: {}", surface_type, task);
+    println!(
+        "[Browser] Executing agent task on {:?} surface: {}",
+        surface_type, task
+    );
     println!("[Browser] Script size: {} bytes", page_agent_script.len());
 
     match webview.eval(&page_agent_script) {
@@ -734,7 +790,10 @@ pub async fn execute_agent_task(
             println!("[Browser] ❌ eval() FAILED: {}", e);
             let mut st = state.lock().await;
             st.is_busy = false;
-            return Err(AppError::InternalError(format!("Failed to inject script: {}", e)));
+            return Err(AppError::InternalError(format!(
+                "Failed to inject script: {}",
+                e
+            )));
         }
     }
 
@@ -762,22 +821,30 @@ fn build_page_agent_script(
     };
 
     let system_prompt_js = match systemPrompt {
-        Some(prompt) => format!("\"{}\"", prompt
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")),
+        Some(prompt) => format!(
+            "\"{}\"",
+            prompt
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+        ),
         None => "undefined".to_string(),
     };
 
-    let escaped_task = task.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
+    let escaped_task = task
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
     let escaped_api_key = apiKey.replace('\\', "\\\\").replace('"', "\\\"");
     let escaped_model = model.replace('\\', "\\\\").replace('"', "\\\"");
 
     // The IIFE bundle sets window.PageAgent when it runs.
     // We suppress its demo auto-start by temporarily replacing setTimeout.
     // We also override fetch() to proxy LLM API calls through Tauri backend (bypass CSP connect-src).
-    format!(r#"
+    format!(
+        r#"
 (function() {{
     console.log('[PageAgent] Script injected. __TAURI_INTERNALS__ exists:', !!window.__TAURI_INTERNALS__);
     // --- Override fetch to proxy LLM API calls (bypass CSP connect-src) ---
@@ -1022,9 +1089,7 @@ fn strip_thinking_content(body: String) -> String {
 /// Needed because fetch() from within a CSP-restricted page is blocked for external APIs,
 /// but Tauri backend requests are not subject to page CSP.
 #[tauri::command]
-pub async fn proxy_http_request(
-    request: HttpProxyRequest,
-) -> AppResult<HttpProxyResponse> {
+pub async fn proxy_http_request(request: HttpProxyRequest) -> AppResult<HttpProxyResponse> {
     let client = ReqwestClient::new();
 
     let method = request.method.to_uppercase();
@@ -1061,7 +1126,11 @@ pub async fn proxy_http_request(
         .map_err(|e| AppError::InternalError(format!("HTTP request failed: {}", e)))?;
 
     let status = response.status().as_u16();
-    let status_text = response.status().canonical_reason().unwrap_or("").to_string();
+    let status_text = response
+        .status()
+        .canonical_reason()
+        .unwrap_or("")
+        .to_string();
 
     // Extract headers
     let mut headers = HashMap::new();
@@ -1072,10 +1141,7 @@ pub async fn proxy_http_request(
     }
 
     // Read response body and strip thinking traces to keep IPC payload small
-    let raw_body = response
-        .text()
-        .await
-        .unwrap_or_else(|_| String::new());
+    let raw_body = response.text().await.unwrap_or_else(|_| String::new());
 
     let body = strip_thinking_content(raw_body);
 
@@ -1089,9 +1155,7 @@ pub async fn proxy_http_request(
 
 /// Open DevTools for debugging (development only)
 #[tauri::command]
-pub async fn open_devtools(
-    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
-) -> AppResult<()> {
+pub async fn open_devtools(state: tauri::State<'_, Arc<Mutex<BrowserState>>>) -> AppResult<()> {
     let state = state.lock().await;
 
     if let Some(webview) = &state.embedded_webview {
@@ -1102,11 +1166,15 @@ pub async fn open_devtools(
         }
         #[cfg(not(debug_assertions))]
         {
-            return Err(AppError::InvalidInput("DevTools only available in debug mode".to_string()));
+            return Err(AppError::InvalidInput(
+                "DevTools only available in debug mode".to_string(),
+            ));
         }
     }
 
-    Err(AppError::InvalidInput("No embedded webview open".to_string()))
+    Err(AppError::InvalidInput(
+        "No embedded webview open".to_string(),
+    ))
 }
 
 /// Get current browser window URL
@@ -1116,11 +1184,14 @@ pub async fn get_browser_url(
 ) -> AppResult<String> {
     let state = state.lock().await;
 
-    let browser_window = state.browser_window.as_ref()
+    let browser_window = state
+        .browser_window
+        .as_ref()
         .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?;
 
     // tauri::Url has a to_string method
-    let url = browser_window.url()
+    let url = browser_window
+        .url()
         .map_err(|e| AppError::InternalError(format!("Failed to get URL: {}", e)))?;
     Ok(url.to_string())
 }
@@ -1133,12 +1204,15 @@ pub async fn inject_script(
 ) -> AppResult<String> {
     let browser_window = {
         let state = state.lock().await;
-        state.browser_window.as_ref()
+        state
+            .browser_window
+            .as_ref()
             .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
             .clone()
     };
 
-    browser_window.eval(&script)
+    browser_window
+        .eval(&script)
         .map_err(|e| AppError::InternalError(format!("Failed to inject script: {}", e)))?;
 
     Ok("Script injected successfully".to_string())
@@ -1146,9 +1220,7 @@ pub async fn inject_script(
 
 /// Check if browser window is busy
 #[tauri::command]
-pub async fn is_agent_busy(
-    state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
-) -> AppResult<bool> {
+pub async fn is_agent_busy(state: tauri::State<'_, Arc<Mutex<BrowserState>>>) -> AppResult<bool> {
     let state = state.lock().await;
     Ok(state.is_busy)
 }
@@ -1168,7 +1240,8 @@ pub async fn browser_go_back(
     };
 
     // Use eval to call window.history.back()
-    target.eval("window.history.back();")
+    target
+        .eval("window.history.back();")
         .map_err(|e| AppError::InternalError(format!("Failed to go back: {}", e)))?;
 
     Ok("Navigated back".to_string())
@@ -1207,7 +1280,9 @@ pub async fn inspect_browser_state(
 
     let browser_window = {
         let state = state.lock().await;
-        state.browser_window.as_ref()
+        state
+            .browser_window
+            .as_ref()
             .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?
             .clone()
     };
@@ -1232,7 +1307,11 @@ pub async fn inspect_browser_state(
         let payload = event.payload().to_string();
         let message = serde_json::from_str::<serde_json::Value>(&payload)
             .ok()
-            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+            .and_then(|v| {
+                v.get("message")
+                    .and_then(|m| m.as_str())
+                    .map(str::to_string)
+            })
             .unwrap_or_else(|| format!("Browser inspection failed: {}", payload));
 
         if let Ok(mut sender) = error_tx.lock() {
@@ -1369,13 +1448,18 @@ pub async fn inspect_browser_state(
 "#;
 
     // Inject the inspection script
-    browser_window.eval(inspection_script)
-        .map_err(|e| AppError::InternalError(format!("Failed to inject inspection script: {}", e)))?;
+    browser_window.eval(inspection_script).map_err(|e| {
+        AppError::InternalError(format!("Failed to inject inspection script: {}", e))
+    })?;
 
     let inspection = tokio::time::timeout(Duration::from_secs(2), rx)
         .await
-        .map_err(|_| AppError::InternalError("Timed out waiting for browser inspection result".to_string()))?
-        .map_err(|_| AppError::InternalError("Browser inspection channel closed unexpectedly".to_string()))?
+        .map_err(|_| {
+            AppError::InternalError("Timed out waiting for browser inspection result".to_string())
+        })?
+        .map_err(|_| {
+            AppError::InternalError("Browser inspection channel closed unexpectedly".to_string())
+        })?
         .map_err(AppError::InternalError)?;
 
     app.unlisten(success_listener);
@@ -1383,8 +1467,7 @@ pub async fn inspect_browser_state(
 
     println!(
         "[Browser] Inspection result: {} - markers: {:?}",
-        inspection.url,
-        inspection.text_markers
+        inspection.url, inspection.text_markers
     );
     Ok(inspection)
 }
@@ -1416,8 +1499,12 @@ pub async fn browser_navigate(
     };
 
     // Use eval to navigate
-    let script = format!("window.location.href = '{}';", normalized_url.replace('\'', "\\'"));
-    target.eval(&script)
+    let script = format!(
+        "window.location.href = '{}';",
+        normalized_url.replace('\'', "\\'")
+    );
+    target
+        .eval(&script)
         .map_err(|e| AppError::InternalError(format!("Failed to navigate: {}", e)))?;
 
     println!("[Browser] Navigating to: {}", normalized_url);
@@ -1438,7 +1525,8 @@ pub async fn browser_reload(
             .clone()
     };
 
-    target.eval("window.location.reload();")
+    target
+        .eval("window.location.reload();")
         .map_err(|e| AppError::InternalError(format!("Failed to reload: {}", e)))?;
 
     println!("[Browser] Page reloaded");
@@ -1526,7 +1614,8 @@ pub async fn capture_screenshot(
         })();
     "#;
 
-    target.eval(script)
+    target
+        .eval(script)
         .map_err(|e| AppError::InternalError(format!("Failed to capture screenshot: {}", e)))?;
 
     Ok("Screenshot capture initiated".to_string())
@@ -1538,10 +1627,13 @@ pub async fn get_browser_dimensions(
     state: tauri::State<'_, Arc<Mutex<BrowserState>>>,
 ) -> AppResult<(u32, u32)> {
     let state = state.lock().await;
-    let browser_window = state.browser_window.as_ref()
+    let browser_window = state
+        .browser_window
+        .as_ref()
         .ok_or_else(|| AppError::InvalidInput("No browser window open".to_string()))?;
 
-    let size = browser_window.inner_size()
+    let size = browser_window
+        .inner_size()
         .map_err(|e| AppError::InternalError(format!("Failed to get dimensions: {}", e)))?;
 
     Ok((size.width, size.height))

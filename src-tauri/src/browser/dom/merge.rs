@@ -45,7 +45,10 @@ pub(crate) fn merge_snapshot(snapshot: &CapturedPageSnapshot) -> Vec<MergedNode>
         .collect()
 }
 
-fn merge_dom_node(dom_node: &DomNodeSnapshot, ax_node: Option<&AccessibilityNodeSnapshot>) -> MergedNode {
+fn merge_dom_node(
+    dom_node: &DomNodeSnapshot,
+    ax_node: Option<&AccessibilityNodeSnapshot>,
+) -> MergedNode {
     let tag_name = dom_node.tag_name.clone();
     let input_type = dom_node
         .attributes
@@ -149,7 +152,9 @@ fn infer_role(dom_node: &DomNodeSnapshot, input_type: Option<&str>) -> String {
             Some("checkbox") => "checkbox".to_string(),
             Some("radio") => "radio".to_string(),
             Some("range") => "slider".to_string(),
-            Some("email" | "search" | "tel" | "text" | "url" | "password") | None => "textbox".to_string(),
+            Some("email" | "search" | "tel" | "text" | "url" | "password") | None => {
+                "textbox".to_string()
+            }
             Some(other) => other.to_string(),
         },
         Some(tag_name) => tag_name.to_string(),
@@ -241,7 +246,7 @@ fn has_editable_attr(dom_node: &DomNodeSnapshot) -> bool {
         .unwrap_or(false)
 }
 
-    fn has_onclick(dom_node: &DomNodeSnapshot) -> bool {
+fn has_onclick(dom_node: &DomNodeSnapshot) -> bool {
     dom_node.attributes.contains_key("onclick")
 }
 
@@ -327,7 +332,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::browser::dom::snapshot::{AccessibilityNodeSnapshot, CapturedPageSnapshot, SnapshotViewport};
+    use crate::browser::dom::snapshot::{
+        AccessibilityNodeSnapshot, CapturedPageSnapshot, SnapshotViewport,
+    };
 
     #[test]
     fn merge_prefers_accessibility_role_name_and_flags() {

@@ -1,6 +1,6 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use chromiumoxide::browser::{Browser, BrowserConfig};
@@ -14,9 +14,11 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::browser::cdp::CdpConfig;
-use crate::browser::dom::{build_page_state_from_snapshot, CapturedPageSnapshot, InteractiveElement, PageState};
-use crate::browser::session::BrowserSessionManager;
+use crate::browser::dom::{
+    build_page_state_from_snapshot, CapturedPageSnapshot, InteractiveElement, PageState,
+};
 use crate::browser::session::state::BrowserLaunchMode;
+use crate::browser::session::BrowserSessionManager;
 
 use super::{ActionContext, ActionResult, ElementReference};
 
@@ -58,7 +60,10 @@ pub struct FixtureActionHarness {
 }
 
 impl FixtureActionHarness {
-    pub async fn new(cached_page_state: Option<PageState>, queued_page_states: Vec<PageState>) -> Self {
+    pub async fn new(
+        cached_page_state: Option<PageState>,
+        queued_page_states: Vec<PageState>,
+    ) -> Self {
         let manager = Arc::new(Mutex::new(BrowserSessionManager::new(CdpConfig::default())));
         {
             let mut manager_guard = manager.lock().await;
@@ -80,12 +85,18 @@ impl FixtureActionHarness {
         &self.ctx
     }
 
-    pub async fn resolve_element(&self, reference: ElementReference) -> ActionResult<InteractiveElement> {
+    pub async fn resolve_element(
+        &self,
+        reference: ElementReference,
+    ) -> ActionResult<InteractiveElement> {
         self.ctx.resolve_element(&reference).await
     }
 
     pub async fn capture_count(&self) -> usize {
-        self.manager.lock().await.page_state_capture_count_for_test()
+        self.manager
+            .lock()
+            .await
+            .page_state_capture_count_for_test()
     }
 }
 
@@ -107,7 +118,8 @@ impl CheckoutFlowServer {
         let port = address.port();
         let base_url = format!("http://{}", address);
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-        let partial_warning_frame_origin = format!("http://{}:{}", PARTIAL_WARNING_FRAME_HOST, port);
+        let partial_warning_frame_origin =
+            format!("http://{}:{}", PARTIAL_WARNING_FRAME_HOST, port);
         let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -177,7 +189,7 @@ impl CheckoutFlowServer {
                                 "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                                 status,
                                 content_type,
-                                body.as_bytes().len(),
+                                body.len(),
                                 body,
                             );
 
@@ -212,9 +224,7 @@ impl CheckoutFlowServer {
     pub fn partial_warning_checkout_url(&self) -> String {
         format!(
             "http://{}:{}{}",
-            PARTIAL_WARNING_ROOT_HOST,
-            self.port,
-            "/partial-warning-checkout"
+            PARTIAL_WARNING_ROOT_HOST, self.port, "/partial-warning-checkout"
         )
     }
 
@@ -234,7 +244,8 @@ impl CheckoutFlowServer {
             let _ = shutdown_tx.send(());
         }
 
-        task.await.context("checkout flow test server task failed")?;
+        task.await
+            .context("checkout flow test server task failed")?;
         Ok(())
     }
 }
@@ -256,8 +267,7 @@ impl LiveActionHarness {
     pub async fn launch_site_isolated() -> Result<Self> {
         let host_resolver_rules = format!(
             "MAP {} 127.0.0.1,MAP {} 127.0.0.1",
-            PARTIAL_WARNING_ROOT_HOST,
-            PARTIAL_WARNING_FRAME_HOST
+            PARTIAL_WARNING_ROOT_HOST, PARTIAL_WARNING_FRAME_HOST
         );
 
         Self::launch_with_args(vec![
@@ -272,8 +282,12 @@ impl LiveActionHarness {
             "pipi-shrimp-browser-action-test-{}",
             Uuid::new_v4()
         ));
-        std::fs::create_dir_all(&user_data_dir)
-            .with_context(|| format!("failed to create browser test profile dir {}", user_data_dir.display()))?;
+        std::fs::create_dir_all(&user_data_dir).with_context(|| {
+            format!(
+                "failed to create browser test profile dir {}",
+                user_data_dir.display()
+            )
+        })?;
 
         let mut config_builder = BrowserConfig::builder()
             .no_sandbox()
@@ -284,15 +298,14 @@ impl LiveActionHarness {
             config_builder = config_builder.args(args);
         }
 
-        let config = config_builder
-            .build()
-            .map_err(|error| anyhow::anyhow!("failed to build Chromiumoxide browser config: {}", error))?;
+        let config = config_builder.build().map_err(|error| {
+            anyhow::anyhow!("failed to build Chromiumoxide browser config: {}", error)
+        })?;
 
         let (browser, mut handler) = Browser::launch(config)
             .await
-            .map_err(|error| {
+            .inspect_err(|_| {
                 let _ = std::fs::remove_dir_all(&user_data_dir);
-                error
             })
             .context("failed to launch Chromiumoxide browser")?;
 
@@ -369,7 +382,8 @@ impl LiveActionHarness {
 }
 
 fn checkout_flow_root_html(title: &str, iframe_src: &str) -> String {
-        format!(r#"<!doctype html>
+    format!(
+        r#"<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -410,7 +424,10 @@ fn checkout_flow_root_html(title: &str, iframe_src: &str) -> String {
     </script>
   </body>
 </html>
-"#, title = title, iframe_src = iframe_src)
+"#,
+        title = title,
+        iframe_src = iframe_src
+    )
 }
 
 fn checkout_flow_iframe_html() -> &'static str {
@@ -443,7 +460,7 @@ fn checkout_flow_iframe_html() -> &'static str {
 }
 
 fn dom_rewrite_root_html() -> &'static str {
-        r#"<!doctype html>
+    r#"<!doctype html>
 <html>
     <head>
         <meta charset="utf-8" />
@@ -470,7 +487,7 @@ fn dom_rewrite_root_html() -> &'static str {
 }
 
 fn shadow_checkout_flow_iframe_html() -> &'static str {
-        r#"<!doctype html>
+    r#"<!doctype html>
 <html>
     <head>
         <meta charset="utf-8" />
@@ -510,7 +527,8 @@ fn shadow_checkout_flow_iframe_html() -> &'static str {
 }
 
 fn partial_warning_root_html(frame_origin: &str) -> String {
-    format!(r#"<!doctype html>
+    format!(
+        r#"<!doctype html>
 <html>
     <head>
         <meta charset="utf-8" />
@@ -548,5 +566,7 @@ fn partial_warning_root_html(frame_origin: &str) -> String {
         </script>
     </body>
 </html>
-"#, frame_origin = frame_origin)
+"#,
+        frame_origin = frame_origin
+    )
 }

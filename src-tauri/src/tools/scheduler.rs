@@ -17,11 +17,10 @@
  *   → Batch 2: [C]     (not safe → serial)
  *   → Batch 3: [D]     (not safe because C broke the chain → serial)
  */
-
 use tauri::Emitter;
 
-use super::{ToolCallRequest, ToolCallResult};
 use super::registry::ToolRegistry;
+use super::{ToolCallRequest, ToolCallResult};
 
 /// A batch of tool calls that share the same concurrency safety property
 struct Batch {
@@ -42,7 +41,7 @@ fn partition_tool_calls(requests: &[ToolCallRequest], registry: &ToolRegistry) -
     for req in requests {
         let is_safe = registry.is_concurrency_safe(&req.name);
 
-        if is_safe && batches.last().map_or(false, |b| b.is_concurrency_safe) {
+        if is_safe && batches.last().is_some_and(|b| b.is_concurrency_safe) {
             // Merge into existing concurrent-safe batch
             batches.last_mut().unwrap().requests.push(req.clone());
         } else {
@@ -66,11 +65,14 @@ async fn execute_single(
 ) -> ToolCallResult {
     // Emit tool-start event
     if let Some(w) = window {
-        let _ = w.emit("tool-start", serde_json::json!({
-            "session_id": session_id,
-            "tool_call_id": req.id,
-            "name": req.name,
-        }));
+        let _ = w.emit(
+            "tool-start",
+            serde_json::json!({
+                "session_id": session_id,
+                "tool_call_id": req.id,
+                "name": req.name,
+            }),
+        );
     }
 
     let result = registry.execute(req);
@@ -79,12 +81,15 @@ async fn execute_single(
         Ok(tool_result) => {
             // Emit tool-complete event
             if let Some(w) = window {
-                let _ = w.emit("tool-complete", serde_json::json!({
-                    "session_id": session_id,
-                    "tool_call_id": tool_result.id,
-                    "name": tool_result.name,
-                    "is_error": tool_result.is_error,
-                }));
+                let _ = w.emit(
+                    "tool-complete",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "tool_call_id": tool_result.id,
+                        "name": tool_result.name,
+                        "is_error": tool_result.is_error,
+                    }),
+                );
             }
             tool_result
         }
@@ -96,12 +101,15 @@ async fn execute_single(
                 is_error: true,
             };
             if let Some(w) = window {
-                let _ = w.emit("tool-error", serde_json::json!({
-                    "session_id": session_id,
-                    "tool_call_id": req.id,
-                    "name": req.name,
-                    "error": e.to_string(),
-                }));
+                let _ = w.emit(
+                    "tool-error",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "tool_call_id": req.id,
+                        "name": req.name,
+                        "error": e.to_string(),
+                    }),
+                );
             }
             error_result
         }
@@ -118,7 +126,9 @@ async fn execute_batch(
 ) -> Vec<ToolCallResult> {
     if batch.is_concurrency_safe && batch.requests.len() > 1 {
         // Parallel execution: all read-only tools start simultaneously
-        let futures: Vec<_> = batch.requests.iter()
+        let futures: Vec<_> = batch
+            .requests
+            .iter()
             .map(|req| execute_single(req, registry, window, session_id))
             .collect();
         futures::future::join_all(futures).await
@@ -160,13 +170,14 @@ pub async fn execute_tool_calls(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::ToolMetadata;
+    use super::*;
     use std::sync::Arc;
 
     fn make_registry() -> ToolRegistry {
         let mut reg = ToolRegistry::new();
-        reg.register("read_file",
+        reg.register(
+            "read_file",
             Arc::new(|_| Ok("content".to_string())),
             ToolMetadata {
                 name: "read_file".to_string(),
@@ -176,7 +187,8 @@ mod tests {
                 input_schema: serde_json::json!({}),
             },
         );
-        reg.register("write_file",
+        reg.register(
+            "write_file",
             Arc::new(|_| Ok("ok".to_string())),
             ToolMetadata {
                 name: "write_file".to_string(),
@@ -186,7 +198,8 @@ mod tests {
                 input_schema: serde_json::json!({}),
             },
         );
-        reg.register("list_files",
+        reg.register(
+            "list_files",
             Arc::new(|_| Ok("files".to_string())),
             ToolMetadata {
                 name: "list_files".to_string(),
@@ -203,12 +216,28 @@ mod tests {
     fn test_partition_all_read_only() {
         let reg = make_registry();
         let requests = vec![
-            ToolCallRequest { id: "1".into(), name: "read_file".into(), arguments: "{}".into() },
-            ToolCallRequest { id: "2".into(), name: "read_file".into(), arguments: "{}".into() },
-            ToolCallRequest { id: "3".into(), name: "list_files".into(), arguments: "{}".into() },
+            ToolCallRequest {
+                id: "1".into(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+            ToolCallRequest {
+                id: "2".into(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+            ToolCallRequest {
+                id: "3".into(),
+                name: "list_files".into(),
+                arguments: "{}".into(),
+            },
         ];
         let batches = partition_tool_calls(&requests, &reg);
-        assert_eq!(batches.len(), 1, "All read-only tools should be in one batch");
+        assert_eq!(
+            batches.len(),
+            1,
+            "All read-only tools should be in one batch"
+        );
         assert!(batches[0].is_concurrency_safe);
         assert_eq!(batches[0].requests.len(), 3);
     }
@@ -217,10 +246,26 @@ mod tests {
     fn test_partition_mixed() {
         let reg = make_registry();
         let requests = vec![
-            ToolCallRequest { id: "1".into(), name: "read_file".into(), arguments: "{}".into() },
-            ToolCallRequest { id: "2".into(), name: "read_file".into(), arguments: "{}".into() },
-            ToolCallRequest { id: "3".into(), name: "write_file".into(), arguments: "{}".into() },
-            ToolCallRequest { id: "4".into(), name: "read_file".into(), arguments: "{}".into() },
+            ToolCallRequest {
+                id: "1".into(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+            ToolCallRequest {
+                id: "2".into(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+            ToolCallRequest {
+                id: "3".into(),
+                name: "write_file".into(),
+                arguments: "{}".into(),
+            },
+            ToolCallRequest {
+                id: "4".into(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
         ];
         let batches = partition_tool_calls(&requests, &reg);
         assert_eq!(batches.len(), 3, "write_file should break the chain");
@@ -236,11 +281,23 @@ mod tests {
     fn test_partition_all_write() {
         let reg = make_registry();
         let requests = vec![
-            ToolCallRequest { id: "1".into(), name: "write_file".into(), arguments: "{}".into() },
-            ToolCallRequest { id: "2".into(), name: "write_file".into(), arguments: "{}".into() },
+            ToolCallRequest {
+                id: "1".into(),
+                name: "write_file".into(),
+                arguments: "{}".into(),
+            },
+            ToolCallRequest {
+                id: "2".into(),
+                name: "write_file".into(),
+                arguments: "{}".into(),
+            },
         ];
         let batches = partition_tool_calls(&requests, &reg);
-        assert_eq!(batches.len(), 2, "Each write tool should be in its own batch");
+        assert_eq!(
+            batches.len(),
+            2,
+            "Each write tool should be in its own batch"
+        );
         assert!(!batches[0].is_concurrency_safe);
         assert!(!batches[1].is_concurrency_safe);
     }

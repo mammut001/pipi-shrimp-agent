@@ -3,7 +3,6 @@
  *
  * Handles reading, writing, and file system operations
  */
-
 use crate::models::FileResponse;
 use crate::utils::{AppError, AppResult};
 use std::fs;
@@ -42,16 +41,23 @@ fn resolve_existing_ancestor(path: &Path) -> AppResult<(PathBuf, PathBuf)> {
 
     while !ancestor.exists() {
         let name = ancestor.file_name().ok_or_else(|| {
-            AppError::FileError(format!("Cannot resolve path '{}': no existing parent", path.display()))
+            AppError::FileError(format!(
+                "Cannot resolve path '{}': no existing parent",
+                path.display()
+            ))
         })?;
         suffix.push(PathBuf::from(name));
         ancestor = ancestor.parent().ok_or_else(|| {
-            AppError::FileError(format!("Cannot resolve path '{}': no existing parent", path.display()))
+            AppError::FileError(format!(
+                "Cannot resolve path '{}': no existing parent",
+                path.display()
+            ))
         })?;
     }
 
-    let mut canonical = ancestor.canonicalize()
-        .map_err(|e| AppError::FileError(format!("Cannot resolve path '{}': {}", path.display(), e)))?;
+    let mut canonical = ancestor.canonicalize().map_err(|e| {
+        AppError::FileError(format!("Cannot resolve path '{}': {}", path.display(), e))
+    })?;
 
     for part in suffix.iter().rev() {
         canonical.push(part);
@@ -60,7 +66,11 @@ fn resolve_existing_ancestor(path: &Path) -> AppResult<(PathBuf, PathBuf)> {
     Ok((canonical, ancestor.to_path_buf()))
 }
 
-fn validate_in_scope(canonical: &Path, scope_root: Option<&Path>, original_path: &str) -> AppResult<()> {
+fn validate_in_scope(
+    canonical: &Path,
+    scope_root: Option<&Path>,
+    original_path: &str,
+) -> AppResult<()> {
     if let Some(root) = scope_root {
         if !canonical.starts_with(root) {
             return Err(AppError::FileError(format!(
@@ -85,11 +95,9 @@ fn validate_in_scope(canonical: &Path, scope_root: Option<&Path>, original_path:
 
 pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
     let scope_root = match work_dir {
-        Some(dir) => Some(
-            expand_home(dir)
-                .canonicalize()
-                .map_err(|e| AppError::FileError(format!("Cannot resolve work directory '{}': {}", dir, e)))?
-        ),
+        Some(dir) => Some(expand_home(dir).canonicalize().map_err(|e| {
+            AppError::FileError(format!("Cannot resolve work directory '{}': {}", dir, e))
+        })?),
         None => None,
     };
 
@@ -115,8 +123,8 @@ pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
 #[tauri::command]
 pub async fn read_file(path: String, work_dir: Option<String>) -> AppResult<FileResponse> {
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
-    let content = fs::read_to_string(&expanded_path)
-        .map_err(|e| AppError::FileError(e.to_string()))?;
+    let content =
+        fs::read_to_string(&expanded_path).map_err(|e| AppError::FileError(e.to_string()))?;
 
     Ok(FileResponse {
         content,
@@ -131,12 +139,11 @@ pub async fn read_file(path: String, work_dir: Option<String>) -> AppResult<File
  */
 #[tauri::command]
 pub async fn read_binary_file(path: String, work_dir: Option<String>) -> AppResult<FileResponse> {
-    use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine;
 
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
-    let bytes = fs::read(&expanded_path)
-        .map_err(|e| AppError::FileError(e.to_string()))?;
+    let bytes = fs::read(&expanded_path).map_err(|e| AppError::FileError(e.to_string()))?;
 
     let base64_content = BASE64.encode(&bytes);
 
@@ -152,10 +159,13 @@ pub async fn read_binary_file(path: String, work_dir: Option<String>) -> AppResu
  * Creates the file if it doesn't exist, overwrites if it does
  */
 #[tauri::command]
-pub async fn write_file(path: String, content: String, work_dir: Option<String>) -> AppResult<String> {
+pub async fn write_file(
+    path: String,
+    content: String,
+    work_dir: Option<String>,
+) -> AppResult<String> {
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
-    fs::write(&expanded_path, &content)
-        .map_err(|e| AppError::FileError(e.to_string()))?;
+    fs::write(&expanded_path, &content).map_err(|e| AppError::FileError(e.to_string()))?;
 
     Ok("File written successfully".to_string())
 }
@@ -175,8 +185,7 @@ pub async fn path_exists(path: String, work_dir: Option<String>) -> AppResult<bo
 #[tauri::command]
 pub async fn create_directory(path: String, work_dir: Option<String>) -> AppResult<String> {
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
-    fs::create_dir_all(&expanded_path)
-        .map_err(|e| AppError::FileError(e.to_string()))?;
+    fs::create_dir_all(&expanded_path).map_err(|e| AppError::FileError(e.to_string()))?;
 
     Ok("Directory created successfully".to_string())
 }
@@ -200,7 +209,8 @@ pub async fn scan_memory_files(memory_dir: String) -> AppResult<Vec<MemoryFileMe
     let base = expand_home(&memory_dir);
 
     // Enforce sandbox: only allow paths within HOME or /tmp
-    let (canonical_base, _) = resolve_existing_ancestor(&base).unwrap_or_else(|_| (base.clone(), base.clone()));
+    let (canonical_base, _) =
+        resolve_existing_ancestor(&base).unwrap_or_else(|_| (base.clone(), base.clone()));
     validate_in_scope(&canonical_base, None, &memory_dir)?;
 
     if !canonical_base.exists() {
@@ -227,10 +237,11 @@ pub async fn scan_memory_files(memory_dir: String) -> AppResult<Vec<MemoryFileMe
         };
 
         // Strip frontmatter (--- ... ---) for preview
-        let body = if content.starts_with("---") {
-            match content[3..].find("\n---") {
-                Some(end) => content[3 + end + 4..].trim_start().to_string(),
-                None => content.clone(),
+        let body = if let Some(after_frontmatter) = content.strip_prefix("---\n") {
+            if let Some(end) = after_frontmatter.find("\n---") {
+                after_frontmatter[end + 4..].trim_start().to_string()
+            } else {
+                content.clone()
             }
         } else {
             content.clone()
@@ -263,11 +274,17 @@ pub async fn list_files(
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
 
     if !expanded_path.exists() {
-        return Err(AppError::FileError(format!("Path does not exist: {}", path)));
+        return Err(AppError::FileError(format!(
+            "Path does not exist: {}",
+            path
+        )));
     }
 
     if !expanded_path.is_dir() {
-        return Err(AppError::FileError(format!("Path is not a directory: {}", path)));
+        return Err(AppError::FileError(format!(
+            "Path is not a directory: {}",
+            path
+        )));
     }
 
     let mut files = Vec::new();
@@ -284,59 +301,56 @@ pub async fn list_files(
 
             for entry in glob::glob(&full_pattern)
                 .map_err(|e| AppError::FileError(e.to_string()))?
+                .flatten()
             {
-                if let Ok(path_buf) = entry {
-                    if let Some(file_name) = path_buf.file_name() {
-                        let metadata = path_buf.metadata().ok();
-                        let modified = metadata.as_ref()
-                            .and_then(|m| m.modified().ok())
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        files.push(FileInfo {
-                            name: file_name.to_string_lossy().to_string(),
-                            path: path_buf.to_string_lossy().to_string(),
-                            is_directory: path_buf.is_dir(),
-                            size: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
-                            modified,
-                        });
-                    }
-                }
+                let file_name = entry.file_name().unwrap().to_string_lossy().to_string();
+                let metadata = entry.metadata().ok();
+                let modified = metadata
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                files.push(FileInfo {
+                    name: file_name.clone(),
+                    path: entry.to_string_lossy().to_string(),
+                    is_directory: entry.is_dir(),
+                    size: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
+                    modified,
+                });
             }
         }
         None => {
             // List all entries in directory
             for entry in fs::read_dir(&expanded_path)
                 .map_err(|e| AppError::FileError(e.to_string()))?
+                .flatten()
             {
-                if let Ok(entry) = entry {
-                    let file_name = entry.file_name().to_string_lossy().to_string();
-                    let file_path = entry.path();
-                    let metadata = entry.metadata().ok();
-                    let modified = metadata.as_ref()
-                        .and_then(|m| m.modified().ok())
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    files.push(FileInfo {
-                        name: file_name,
-                        path: file_path.to_string_lossy().to_string(),
-                        is_directory: file_path.is_dir(),
-                        size: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
-                        modified,
-                    });
-                }
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let file_path = entry.path();
+                let metadata = entry.metadata().ok();
+                let modified = metadata
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                files.push(FileInfo {
+                    name: file_name.clone(),
+                    path: file_path.to_string_lossy().to_string(),
+                    is_directory: file_path.is_dir(),
+                    size: metadata.as_ref().map(|m| m.len()).unwrap_or(0),
+                    modified,
+                });
             }
         }
     }
 
     // Sort: directories first, then files, alphabetically
-    files.sort_by(|a, b| {
-        match (a.is_directory, b.is_directory) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    files.sort_by(|a, b| match (a.is_directory, b.is_directory) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     Ok(files)
@@ -381,7 +395,10 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
 
     let base = std::path::PathBuf::from(&work_dir);
     if !base.exists() {
-        return Err(AppError::FileError(format!("Work dir does not exist: {}", work_dir)));
+        return Err(AppError::FileError(format!(
+            "Work dir does not exist: {}",
+            work_dir
+        )));
     }
 
     let mut tech_stack = Vec::new();
@@ -414,8 +431,7 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
     ];
 
     // Detect tech stack from key files
-    let entries = fs::read_dir(&base)
-        .map_err(|e| AppError::FileError(e.to_string()))?;
+    let entries = fs::read_dir(&base).map_err(|e| AppError::FileError(e.to_string()))?;
 
     for entry in entries.flatten() {
         let file_name = entry.file_name().to_string_lossy().to_string();
@@ -431,7 +447,8 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
             if file_name == *pattern {
                 tech_stack.push(tech.to_string());
                 let meta = file_path.metadata().ok();
-                let modified = meta.as_ref()
+                let modified = meta
+                    .as_ref()
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
@@ -498,13 +515,11 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
         if readme_path.exists() {
             if let Ok(content) = fs::read_to_string(&readme_path) {
                 // Get first 500 chars as description
-                let first_lines: String = content.lines()
-                    .take(10)
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let first_lines: String = content.lines().take(10).collect::<Vec<_>>().join(" ");
                 description = first_lines.chars().take(500).collect();
                 let meta = readme_path.metadata().ok();
-                let modified = meta.as_ref()
+                let modified = meta
+                    .as_ref()
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
@@ -522,7 +537,8 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
     }
 
     // Project name from directory
-    let name = base.file_name()
+    let name = base
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "Unknown Project".to_string());
 
@@ -540,22 +556,30 @@ pub async fn analyze_project_structure(work_dir: String) -> AppResult<ProjectFin
 /// in the specified working directory
 #[allow(dead_code)]
 #[tauri::command]
-pub async fn get_workspace_info(path: String, work_dir: Option<String>) -> AppResult<WorkspaceInfo> {
+pub async fn get_workspace_info(
+    path: String,
+    work_dir: Option<String>,
+) -> AppResult<WorkspaceInfo> {
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
 
     if !expanded_path.exists() {
-        return Err(AppError::FileError(format!("Path does not exist: {}", path)));
+        return Err(AppError::FileError(format!(
+            "Path does not exist: {}",
+            path
+        )));
     }
 
     if !expanded_path.is_dir() {
-        return Err(AppError::FileError(format!("Path is not a directory: {}", path)));
+        return Err(AppError::FileError(format!(
+            "Path is not a directory: {}",
+            path
+        )));
     }
 
     let mut files = Vec::new();
     let mut subdirs = Vec::new();
 
-    let entries = fs::read_dir(&expanded_path)
-        .map_err(|e| AppError::FileError(e.to_string()))?;
+    let entries = fs::read_dir(&expanded_path).map_err(|e| AppError::FileError(e.to_string()))?;
 
     for entry in entries.flatten() {
         let file_name = entry.file_name().to_string_lossy().to_string();
@@ -563,7 +587,8 @@ pub async fn get_workspace_info(path: String, work_dir: Option<String>) -> AppRe
         let is_dir = file_path.is_dir();
 
         let meta = file_path.metadata().ok();
-        let modified = meta.as_ref()
+        let modified = meta
+            .as_ref()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())

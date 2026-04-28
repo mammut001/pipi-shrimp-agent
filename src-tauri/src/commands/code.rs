@@ -1,25 +1,23 @@
+use crate::commands::file::resolve_path;
 /**
  * Code execution commands
  *
  * Handles bash, python, and other code execution
  * Includes persistent REPL session support
  */
-
 use crate::models::ExecuteCodeResponse;
-use crate::commands::file::resolve_path;
 use crate::utils::{AppError, AppResult};
-use std::collections::HashMap;
-use std::process::Command;
-use std::sync::Mutex;
 use once_cell::sync::Lazy;
-use std::process::Stdio;
+use std::collections::HashMap;
 use std::io::Write;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::Mutex;
 
 // Global session manager for persistent REPL sessions
 // Maps session_id -> Python REPL process
-static PYTHON_SESSIONS: Lazy<Mutex<HashMap<String, PythonSession>>> = Lazy::new(|| {
-    Mutex::new(HashMap::new())
-});
+static PYTHON_SESSIONS: Lazy<Mutex<HashMap<String, PythonSession>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 struct PythonSession {
     process: std::process::Child,
@@ -78,7 +76,7 @@ fn check_command_safety(command: &str) -> AppResult<()> {
         "mkfs",
         "dd if=",
         "> /dev/sda",
-        ":(){ :|:& };",  // fork bomb
+        ":(){ :|:& };", // fork bomb
         "chmod -r 777 /",
         "chown -r",
         "shutdown",
@@ -115,7 +113,7 @@ pub async fn execute_bash(
     // Check if bash exists
     if !command_exists("bash") {
         return Err(AppError::ProcessError(
-            "Bash is not installed on your system".to_string()
+            "Bash is not installed on your system".to_string(),
         ));
     }
 
@@ -149,7 +147,8 @@ pub async fn execute_python(
     // Check if python3 is installed
     if !command_exists("python3") {
         return Err(AppError::ProcessError(
-            "Python 3 is not installed on your system. Please install Python 3 to run Python code.".to_string()
+            "Python 3 is not installed on your system. Please install Python 3 to run Python code."
+                .to_string(),
         ));
     }
 
@@ -184,7 +183,7 @@ pub async fn execute_python_session(
 
     if !command_exists("python3") {
         return Err(AppError::ProcessError(
-            "Python 3 is not installed on your system".to_string()
+            "Python 3 is not installed on your system".to_string(),
         ));
     }
 
@@ -192,9 +191,9 @@ pub async fn execute_python_session(
     let sentinel = uuid::Uuid::new_v4().to_string().replace('-', "");
     let sentinel_marker = format!("__PIPI_DONE_{}__", sentinel);
 
-    let mut sessions = PYTHON_SESSIONS.lock().map_err(|e| {
-        AppError::ProcessError(format!("Failed to lock sessions: {}", e))
-    })?;
+    let mut sessions = PYTHON_SESSIONS
+        .lock()
+        .map_err(|e| AppError::ProcessError(format!("Failed to lock sessions: {}", e)))?;
 
     // Launch persistent REPL process if not already running
     if !sessions.contains_key(&session_id) {
@@ -225,7 +224,7 @@ for raw_line in sys.stdin:
 "#;
 
         let child = Command::new("python3")
-            .arg("-u")  // unbuffered stdout/stderr
+            .arg("-u") // unbuffered stdout/stderr
             .arg("-c")
             .arg(repl_script)
             .current_dir(&work_dir)
@@ -233,7 +232,9 @@ for raw_line in sys.stdin:
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| AppError::ProcessError(format!("Failed to start Python session: {}", e)))?;
+            .map_err(|e| {
+                AppError::ProcessError(format!("Failed to start Python session: {}", e))
+            })?;
 
         sessions.insert(session_id.clone(), PythonSession { process: child });
     }
@@ -244,7 +245,9 @@ for raw_line in sys.stdin:
     if let Ok(Some(status)) = session.process.try_wait() {
         sessions.remove(&session_id);
         return Err(AppError::ProcessError(format!(
-            "Python session {} has ended (exit code {:?})", session_id, status.code()
+            "Python session {} has ended (exit code {:?})",
+            session_id,
+            status.code()
         )));
     }
     // Re-borrow after the check (the remove path returned early)
@@ -257,19 +260,28 @@ for raw_line in sys.stdin:
     let sentinel_line = format!("__SENTINEL__:{}\n", sentinel_marker);
 
     {
-        let stdin = session.process.stdin.as_mut()
+        let stdin = session
+            .process
+            .stdin
+            .as_mut()
             .ok_or_else(|| AppError::ProcessError("stdin unavailable".to_string()))?;
-        stdin.write_all(exec_line.as_bytes())
+        stdin
+            .write_all(exec_line.as_bytes())
             .map_err(|e| AppError::ProcessError(format!("Write error: {}", e)))?;
-        stdin.write_all(sentinel_line.as_bytes())
+        stdin
+            .write_all(sentinel_line.as_bytes())
             .map_err(|e| AppError::ProcessError(format!("Write sentinel error: {}", e)))?;
-        stdin.flush()
+        stdin
+            .flush()
             .map_err(|e| AppError::ProcessError(format!("Flush error: {}", e)))?;
     }
 
     // Read stdout lines until the sentinel line appears
     use std::io::BufRead;
-    let stdout = session.process.stdout.as_mut()
+    let stdout = session
+        .process
+        .stdout
+        .as_mut()
         .ok_or_else(|| AppError::ProcessError("stdout unavailable".to_string()))?;
     let reader = std::io::BufReader::new(stdout);
     let mut output_lines: Vec<String> = Vec::new();
@@ -298,9 +310,9 @@ for raw_line in sys.stdin:
  */
 #[tauri::command]
 pub async fn close_python_session(session_id: String) -> AppResult<bool> {
-    let mut sessions = PYTHON_SESSIONS.lock().map_err(|e| {
-        AppError::ProcessError(format!("Failed to lock sessions: {}", e))
-    })?;
+    let mut sessions = PYTHON_SESSIONS
+        .lock()
+        .map_err(|e| AppError::ProcessError(format!("Failed to lock sessions: {}", e)))?;
 
     if let Some(mut session) = sessions.remove(&session_id) {
         let _ = session.process.kill();
@@ -390,25 +402,27 @@ pub async fn lsp_operation(
                     "TypeScript language server not found. Install with: npm install -g typescript-language-server".to_string()
                 ));
             }
-        },
+        }
         "rs" => {
             if command_exists("rust-analyzer") {
                 ("rust-analyzer", vec![])
             } else {
                 return Err(AppError::ProcessError(
-                    "rust-analyzer not found. Install rust-analyzer for Rust LSP support.".to_string()
+                    "rust-analyzer not found. Install rust-analyzer for Rust LSP support."
+                        .to_string(),
                 ));
             }
-        },
+        }
         "py" => {
             if command_exists("pylsp") {
                 ("pylsp", vec![])
             } else {
                 return Err(AppError::ProcessError(
-                    "Python language server not found. Install with: pip install python-lsp-server".to_string()
+                    "Python language server not found. Install with: pip install python-lsp-server"
+                        .to_string(),
                 ));
             }
-        },
+        }
         _ => {
             return Err(AppError::ProcessError(
                 format!("No LSP server configured for .{ext} files. Supported: ts, tsx, js, jsx, json, rs, py").to_string()

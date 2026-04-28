@@ -3,8 +3,10 @@
 /// Two adapter functions handle the two API endpoint styles (OpenAI and Anthropic).
 /// `fetch_available_models` in `commands/models.rs` routes to the right adapter
 /// via the provider registry — no per-provider branches needed there.
-
-use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE}};
+use reqwest::{
+    header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE},
+    Client,
+};
 use serde::{Deserialize, Serialize};
 
 // ── Wire types ───────────────────────────────────────────────────────────────
@@ -34,9 +36,9 @@ pub struct AnthropicModel {
 /// Fetch models from an OpenAI-compatible `/models` endpoint.
 ///
 /// * `base_url` — must end with `/v1` or be otherwise path-complete
-/// * `api_key`  — Bearer token
+/// * `api_key` — Bearer token
 /// * `fallback_models` — returned as-is when the endpoint is unreachable or returns
-///    an empty list; pass an empty slice if no fallback is desired.
+///   an empty list; pass an empty slice if no fallback is desired.
 pub async fn fetch_openai_models(
     client: &Client,
     base_url: &str,

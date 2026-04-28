@@ -3,7 +3,6 @@
  *
  * High-performance text searching using ripgrep (rg)
  */
-
 use crate::commands::file::resolve_path;
 use crate::utils::{AppError, AppResult};
 use std::process::Command;
@@ -28,7 +27,7 @@ fn check_ripgrep() -> AppResult<String> {
     }
 
     Err(AppError::InternalError(
-        "ripgrep not found, please install rg to use advanced search".to_string()
+        "ripgrep not found, please install rg to use advanced search".to_string(),
     ))
 }
 
@@ -58,23 +57,23 @@ pub async fn search_files(
     // Build rg command
     let mut cmd = Command::new(rg_path);
     cmd.arg("--json")
-       .arg("--line-number")
-       .arg(&pattern)
-       .arg(&expanded_path);
+        .arg("--line-number")
+        .arg(&pattern)
+        .arg(&expanded_path);
 
     // Add extension filters if provided
     if let Some(exts) = extensions {
         if !exts.is_empty() {
             let ext_args: Vec<String> = exts.iter().map(|e| format!(".{}", e)).collect();
             cmd.arg("--type-add")
-               .arg(format!("custom:{}",
-                   ext_args.iter().cloned().collect::<Vec<_>>().join(",")));
+                .arg(format!("custom:{}", ext_args.join(",")));
             cmd.arg("--type");
             cmd.arg("custom");
         }
     }
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|e| AppError::InternalError(format!("Failed to execute ripgrep: {}", e)))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -120,21 +119,26 @@ pub async fn search_files(
  * A JSON string with list of matching file paths
  */
 #[tauri::command]
-pub async fn glob_search(pattern: String, path: String, work_dir: Option<String>) -> AppResult<String> {
+pub async fn glob_search(
+    pattern: String,
+    path: String,
+    work_dir: Option<String>,
+) -> AppResult<String> {
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
     let full_pattern = format!("{}/{}", expanded_path.to_string_lossy(), pattern);
 
     let mut files = Vec::new();
-    
+
     // Use glob crate for true globbing
     for entry in glob::glob(&full_pattern)
-        .map_err(|e| AppError::InternalError(format!("Invalid glob pattern: {}", e)))? {
+        .map_err(|e| AppError::InternalError(format!("Invalid glob pattern: {}", e)))?
+    {
         match entry {
             Ok(path) => {
                 if path.is_file() {
                     files.push(path.to_string_lossy().to_string());
                 }
-            },
+            }
             Err(e) => println!("Warning: Glob match error: {:?}", e),
         }
     }
@@ -154,7 +158,11 @@ pub async fn glob_search(pattern: String, path: String, work_dir: Option<String>
  * A JSON string with search results
  */
 #[tauri::command]
-pub async fn grep_files(pattern: String, path: String, work_dir: Option<String>) -> AppResult<String> {
+pub async fn grep_files(
+    pattern: String,
+    path: String,
+    work_dir: Option<String>,
+) -> AppResult<String> {
     let expanded_path = resolve_path(&path, work_dir.as_deref())?;
 
     let output = Command::new("grep")

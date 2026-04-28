@@ -1,40 +1,42 @@
+pub mod browser;
+mod claude;
 /**
  * Tauri AI Agent - Main entry point
  *
  * This is the main library that gets compiled into the Tauri application.
  * The actual binary entry point is in main.rs which calls run().
  */
-
 mod commands;
-pub mod browser;
+mod database;
+mod mcp;
 mod models;
 mod providers;
-mod utils;
-mod claude;
-mod database;
 mod tools;
-mod mcp;
+mod utils;
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tauri::Manager;
+use tokio::sync::Mutex;
 
-use claude::{ClaudeClient, ChatResponse, Message};
+use claude::{ChatResponse, ClaudeClient, Message};
 use commands::browser::BrowserState;
-use commands::web::BrowserController;
 use commands::telegram::TelegramState;
-use database::{DbSession, DbMessage, DbProject, DbTokenUsage, DbTelegramBinding, DbTelegramTask,
-               DailyTokenStats, ModelTokenStats, init_database, get_all_sessions, save_session,
-               delete_session, save_message, delete_message, get_messages_for_session,
-               save_project, get_all_projects, delete_project, update_project, save_token_usage,
-               get_daily_token_stats, get_monthly_token_stats, get_model_token_stats,
-               get_total_token_stats, save_swarm_snapshot, load_swarm_snapshot,
-               clear_swarm_snapshots, save_telegram_binding, get_telegram_binding,
-               list_telegram_bindings, save_telegram_task, get_telegram_task,
-               list_telegram_tasks_for_chat, list_telegram_tasks_by_statuses,
-               find_telegram_task_by_source, set_telegram_runtime_state,
-               get_telegram_runtime_state};
-use utils::{PrebuiltFonts, init_font_database, build_fonts, compile_typst_to_svg_with_prebuilt, compile_typst_to_pdf_with_prebuilt};
+use commands::web::BrowserController;
+use database::{
+    clear_swarm_snapshots, delete_message, delete_project, delete_session,
+    find_telegram_task_by_source, get_all_projects, get_all_sessions, get_daily_token_stats,
+    get_messages_for_session, get_model_token_stats, get_monthly_token_stats, get_telegram_binding,
+    get_telegram_runtime_state, get_telegram_task, get_total_token_stats, init_database,
+    list_telegram_bindings, list_telegram_tasks_by_statuses, list_telegram_tasks_for_chat,
+    load_swarm_snapshot, save_message, save_project, save_session, save_swarm_snapshot,
+    save_telegram_binding, save_telegram_task, save_token_usage, set_telegram_runtime_state,
+    update_project, DailyTokenStats, DbMessage, DbProject, DbSession, DbTelegramBinding,
+    DbTelegramTask, DbTokenUsage, ModelTokenStats,
+};
+use utils::{
+    build_fonts, compile_typst_to_pdf_with_prebuilt, compile_typst_to_svg_with_prebuilt,
+    init_font_database, PrebuiltFonts,
+};
 
 /**
  * State for Claude SDK client
@@ -61,8 +63,7 @@ async fn send_claude_sdk_chat(
     model: String,
     base_url: Option<String>,
     system_prompt: Option<String>,
-    #[allow(non_snake_case)]
-    browserConnected: Option<bool>,
+    #[allow(non_snake_case)] browserConnected: Option<bool>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<ChatResponse, String> {
     // Convert empty string to None for custom API
@@ -75,7 +76,14 @@ async fn send_claude_sdk_chat(
         state.client.clone()
     };
     client
-        .chat(messages, api_key, model, base_url, system_prompt, browser_connected)
+        .chat(
+            messages,
+            api_key,
+            model,
+            base_url,
+            system_prompt,
+            browser_connected,
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -84,25 +92,19 @@ async fn send_claude_sdk_chat(
  * Send a chat message using Claude SDK with streaming (emits events)
  */
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn send_claude_sdk_chat_streaming(
     messages: Vec<Message>,
-    #[allow(non_snake_case)]
-    apiKey: String,
+    #[allow(non_snake_case)] apiKey: String,
     model: String,
-    #[allow(non_snake_case)]
-    baseUrl: Option<String>,
-    #[allow(non_snake_case)]
-    systemPrompt: Option<String>,
-    #[allow(non_snake_case)]
-    noTools: Option<bool>,
-    #[allow(non_snake_case)]
-    browserConnected: Option<bool>,
-    #[allow(non_snake_case)]
-    sessionId: String,
+    #[allow(non_snake_case)] baseUrl: Option<String>,
+    #[allow(non_snake_case)] systemPrompt: Option<String>,
+    #[allow(non_snake_case)] noTools: Option<bool>,
+    #[allow(non_snake_case)] browserConnected: Option<bool>,
+    #[allow(non_snake_case)] sessionId: String,
     // Optional explicit API format override: "anthropic" or "openai".
     // When absent the format is auto-detected from key / model / base URL.
-    #[allow(non_snake_case)]
-    apiFormat: Option<String>,
+    #[allow(non_snake_case)] apiFormat: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: tauri::Window,
 ) -> Result<ChatResponse, String> {
@@ -117,7 +119,18 @@ async fn send_claude_sdk_chat_streaming(
         state.client.clone()
     };
     client
-        .chat_streaming(messages, apiKey, model, base_url, systemPrompt, no_tools, window, browser_connected, sessionId, api_format)
+        .chat_streaming(
+            messages,
+            apiKey,
+            model,
+            base_url,
+            systemPrompt,
+            no_tools,
+            window,
+            browser_connected,
+            sessionId,
+            api_format,
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -138,11 +151,9 @@ async fn stop_subprocess(sessionId: Option<String>) -> Result<(), String> {
  */
 #[tauri::command]
 async fn test_connection(
-    #[allow(non_snake_case)]
-    apiKey: String,
+    #[allow(non_snake_case)] apiKey: String,
     model: String,
-    #[allow(non_snake_case)]
-    baseUrl: Option<String>,
+    #[allow(non_snake_case)] baseUrl: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<bool, String> {
     // Convert empty string to None for custom API
@@ -227,7 +238,10 @@ struct CompactBoundaryPayload {
 
 #[tauri::command]
 #[allow(non_snake_case)]
-fn save_compact_boundary(sessionId: String, boundary: CompactBoundaryPayload) -> Result<(), String> {
+fn save_compact_boundary(
+    sessionId: String,
+    boundary: CompactBoundaryPayload,
+) -> Result<(), String> {
     let artifacts = serde_json::to_string(&boundary).ok();
     let message = database::DbMessage {
         id: boundary.id,
@@ -296,19 +310,40 @@ fn db_get_telegram_task(task_id: String) -> Result<Option<DbTelegramTask>, Strin
 }
 
 #[tauri::command]
-fn db_find_telegram_task_by_source(chat_id: i64, source_message_id: i64) -> Result<Option<DbTelegramTask>, String> {
+fn db_find_telegram_task_by_source(
+    chat_id: i64,
+    source_message_id: i64,
+) -> Result<Option<DbTelegramTask>, String> {
     find_telegram_task_by_source(chat_id, source_message_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_list_telegram_tasks_for_chat(chat_id: i64, limit: Option<i64>) -> Result<Vec<DbTelegramTask>, String> {
-    let normalized_limit = limit.and_then(|value| if value > 0 { Some(value as usize) } else { None });
+fn db_list_telegram_tasks_for_chat(
+    chat_id: i64,
+    limit: Option<i64>,
+) -> Result<Vec<DbTelegramTask>, String> {
+    let normalized_limit = limit.and_then(|value| {
+        if value > 0 {
+            Some(value as usize)
+        } else {
+            None
+        }
+    });
     list_telegram_tasks_for_chat(chat_id, normalized_limit).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_list_telegram_tasks_by_statuses(statuses: Vec<String>, limit: Option<i64>) -> Result<Vec<DbTelegramTask>, String> {
-    let normalized_limit = limit.and_then(|value| if value > 0 { Some(value as usize) } else { None });
+fn db_list_telegram_tasks_by_statuses(
+    statuses: Vec<String>,
+    limit: Option<i64>,
+) -> Result<Vec<DbTelegramTask>, String> {
+    let normalized_limit = limit.and_then(|value| {
+        if value > 0 {
+            Some(value as usize)
+        } else {
+            None
+        }
+    });
     list_telegram_tasks_by_statuses(&statuses, normalized_limit).map_err(|e| e.to_string())
 }
 
@@ -334,7 +369,10 @@ fn db_save_token_usage(usage: DbTokenUsage) -> Result<(), String> {
  * Get daily token stats for a specific month (YYYY-MM format)
  */
 #[tauri::command]
-fn db_get_daily_token_stats(year_month: String, api_config_id: Option<String>) -> Result<Vec<DailyTokenStats>, String> {
+fn db_get_daily_token_stats(
+    year_month: String,
+    api_config_id: Option<String>,
+) -> Result<Vec<DailyTokenStats>, String> {
     get_daily_token_stats(&year_month, api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 
@@ -342,7 +380,9 @@ fn db_get_daily_token_stats(year_month: String, api_config_id: Option<String>) -
  * Get monthly token stats
  */
 #[tauri::command]
-fn db_get_monthly_token_stats(api_config_id: Option<String>) -> Result<Vec<DailyTokenStats>, String> {
+fn db_get_monthly_token_stats(
+    api_config_id: Option<String>,
+) -> Result<Vec<DailyTokenStats>, String> {
     get_monthly_token_stats(api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 
@@ -381,7 +421,8 @@ fn swarm_load_snapshot() -> Result<Option<serde_json::Value>, String> {
     let result = load_swarm_snapshot().map_err(|e| e.to_string())?;
     match result {
         Some(json_str) => {
-            let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+            let value: serde_json::Value =
+                serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
             Ok(Some(value))
         }
         None => Ok(None),
@@ -412,13 +453,16 @@ fn read_project_file(relative_path: String, base_dir: Option<String>) -> Result<
         _ => project_root(),
     };
     let full = root.join(&relative_path);
-    std::fs::read_to_string(&full)
-        .map_err(|e| format!("Cannot read '{}': {}", full.display(), e))
+    std::fs::read_to_string(&full).map_err(|e| format!("Cannot read '{}': {}", full.display(), e))
 }
 
 /// Write a file relative to a base directory (or project root if None).
 #[tauri::command]
-fn write_project_file(relative_path: String, content: String, base_dir: Option<String>) -> Result<(), String> {
+fn write_project_file(
+    relative_path: String,
+    content: String,
+    base_dir: Option<String>,
+) -> Result<(), String> {
     let root = match base_dir {
         Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
         _ => project_root(),
@@ -475,8 +519,7 @@ async fn render_typst_to_pdf(
     .map_err(|e| format!("Thread error: {}", e))??;
 
     // Write PDF to file
-    std::fs::write(&file_path, pdf_bytes)
-        .map_err(|e| format!("Failed to write PDF: {}", e))?;
+    std::fs::write(&file_path, pdf_bytes).map_err(|e| format!("Failed to write PDF: {}", e))?;
 
     Ok(file_path)
 }
@@ -527,7 +570,7 @@ pub fn run() {
 
             // Initialize BrowserState for second WebviewWindow approach
             app.manage(Arc::new(Mutex::new(BrowserState::default())));
-            
+
             // Initialize BrowserController for CDP execution
             app.manage(Arc::new(Mutex::new(BrowserController::default())));
             println!("🌐 Browser state initialized");

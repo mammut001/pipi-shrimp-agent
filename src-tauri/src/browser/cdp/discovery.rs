@@ -6,19 +6,31 @@ pub async fn discover_browser_ws_url(config: &CdpConfig) -> Result<String, CdpEr
         config.remote_debugging_port
     );
 
-    let response = run_with_timeout("discover_browser_ws_url", config.timeout, reqwest::get(&version_url))
-        .await?
-        .map_err(|error| CdpError::Discovery(format!(
+    let response = run_with_timeout(
+        "discover_browser_ws_url",
+        config.timeout,
+        reqwest::get(&version_url),
+    )
+    .await?
+    .map_err(|error| {
+        CdpError::Discovery(format!(
             "Unable to access Chrome debugging endpoint at {}: {}",
             version_url, error
-        )))?;
+        ))
+    })?;
 
-    let json = run_with_timeout("discover_browser_ws_url.json", config.timeout, response.json::<serde_json::Value>())
-        .await?
-        .map_err(|error| CdpError::InvalidResponse(format!(
+    let json = run_with_timeout(
+        "discover_browser_ws_url.json",
+        config.timeout,
+        response.json::<serde_json::Value>(),
+    )
+    .await?
+    .map_err(|error| {
+        CdpError::InvalidResponse(format!(
             "Unable to parse Chrome debugging metadata: {}",
             error
-        )))?;
+        ))
+    })?;
 
     extract_websocket_debugger_url(&json)
 }
@@ -54,7 +66,8 @@ mod tests {
     fn test_extract_websocket_debugger_url_rejects_missing_value() {
         let payload = serde_json::json!({ "Browser": "Chrome/136.0" });
 
-        let error = extract_websocket_debugger_url(&payload).expect_err("should reject missing websocket url");
+        let error = extract_websocket_debugger_url(&payload)
+            .expect_err("should reject missing websocket url");
         assert_eq!(
             error,
             CdpError::InvalidResponse(

@@ -171,9 +171,7 @@ impl StablePageSnapshotSource for CdpPageSnapshotSource {
         let dom_nodes = flatten_dom_nodes(&dom_snapshot)?;
         let mut warnings = Vec::new();
 
-        if frames.len() > dom_snapshot.documents.len()
-            || has_partial_iframe_documents(&dom_nodes)
-        {
+        if frames.len() > dom_snapshot.documents.len() || has_partial_iframe_documents(&dom_nodes) {
             warnings.push("cross_origin_iframe_partial".to_string());
         }
 
@@ -184,7 +182,10 @@ impl StablePageSnapshotSource for CdpPageSnapshotSource {
             warnings.push("closed_shadow_root_partial".to_string());
         }
 
-        let ax_nodes = match self.capture_ax_nodes(page, Some(root_frame.id.clone())).await {
+        let ax_nodes = match self
+            .capture_ax_nodes(page, Some(root_frame.id.clone()))
+            .await
+        {
             Ok(nodes) => nodes,
             Err(error) => {
                 warnings.push(format!("ax_tree_unavailable: {}", error));
@@ -199,8 +200,8 @@ impl StablePageSnapshotSource for CdpPageSnapshotSource {
         })?;
         let url = string_from_index(&dom_snapshot.strings, &root_document.document_url)
             .unwrap_or_else(|| root_frame.url.clone());
-        let title = string_from_index(&dom_snapshot.strings, &root_document.title)
-            .unwrap_or_default();
+        let title =
+            string_from_index(&dom_snapshot.strings, &root_document.title).unwrap_or_default();
 
         Ok(CapturedPageSnapshot {
             url,
@@ -379,7 +380,10 @@ fn decode_attributes(attributes: &ArrayOfStrings, strings: &[String]) -> BTreeMa
     let values = attributes.inner();
 
     for pair in values.chunks(2) {
-        let Some(name) = pair.first().and_then(|name| string_from_index(strings, name)) else {
+        let Some(name) = pair
+            .first()
+            .and_then(|name| string_from_index(strings, name))
+        else {
             continue;
         };
         let value = pair
@@ -400,8 +404,8 @@ fn rare_string_map(data: Option<&RareStringData>, strings: &[String]) -> HashMap
             if *index < 0 {
                 continue;
             }
-            if let Some(value) = string_from_index(strings, value_index)
-                .filter(|value| !value.trim().is_empty())
+            if let Some(value) =
+                string_from_index(strings, value_index).filter(|value| !value.trim().is_empty())
             {
                 values.insert(*index as usize, value.trim().to_string());
             }
@@ -465,8 +469,16 @@ mod tests {
 
     #[test]
     fn partial_iframe_detection_requires_missing_content_document() {
-        let iframe_without_document = dom_node(Some("iframe"), Some("https://warning-frame.test/iframe-payment"), None);
-        let iframe_with_document = dom_node(Some("iframe"), Some("https://warning-frame.test/iframe-payment"), Some(1));
+        let iframe_without_document = dom_node(
+            Some("iframe"),
+            Some("https://warning-frame.test/iframe-payment"),
+            None,
+        );
+        let iframe_with_document = dom_node(
+            Some("iframe"),
+            Some("https://warning-frame.test/iframe-payment"),
+            Some(1),
+        );
 
         assert!(has_partial_iframe_documents(&[iframe_without_document]));
         assert!(!has_partial_iframe_documents(&[iframe_with_document]));
@@ -477,10 +489,17 @@ mod tests {
         let button_node = dom_node(Some("button"), None, None);
         let blank_src_iframe = dom_node(Some("iframe"), Some("   "), None);
 
-        assert!(!has_partial_iframe_documents(&[button_node, blank_src_iframe]));
+        assert!(!has_partial_iframe_documents(&[
+            button_node,
+            blank_src_iframe
+        ]));
     }
 
-    fn dom_node(tag_name: Option<&str>, src: Option<&str>, content_document_index: Option<usize>) -> DomNodeSnapshot {
+    fn dom_node(
+        tag_name: Option<&str>,
+        src: Option<&str>,
+        content_document_index: Option<usize>,
+    ) -> DomNodeSnapshot {
         let mut attributes = BTreeMap::new();
         if let Some(src) = src {
             attributes.insert("src".to_string(), src.to_string());

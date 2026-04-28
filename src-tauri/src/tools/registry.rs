@@ -264,13 +264,12 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let mut entries: Vec<String> = Vec::new();
             for entry in std::fs::read_dir(dir)
                 .map_err(|e| anyhow::anyhow!("Cannot read directory '{}': {}", path, e))?
+                .flatten()
             {
-                if let Ok(entry) = entry {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let is_dir = entry.path().is_dir();
-                    let prefix = if is_dir { "📁 " } else { "📄 " };
-                    entries.push(format!("{}{}", prefix, name));
-                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                let is_dir = entry.path().is_dir();
+                let prefix = if is_dir { "📁 " } else { "📄 " };
+                entries.push(format!("{}{}", prefix, name));
             }
             entries.sort();
             Ok(entries.join("\n"))

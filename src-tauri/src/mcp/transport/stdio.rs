@@ -6,15 +6,14 @@ use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 use tracing::debug;
 
-use crate::mcp::protocol::{JsonRpcRequest, JsonRpcNotification, JsonRpcResponse};
-use crate::mcp::types::MCPError;
 use super::Transport;
+use crate::mcp::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
+use crate::mcp::types::MCPError;
 
 /// Commands allowed for MCP stdio transport.
 /// Only well-known package runners and MCP server executables are permitted.
 const ALLOWED_COMMANDS: &[&str] = &[
-    "npx", "node", "python", "python3", "uvx", "uv",
-    "deno", "bun", "docker",
+    "npx", "node", "python", "python3", "uvx", "uv", "deno", "bun", "docker",
 ];
 
 /// Validate that a command is safe to execute.
@@ -24,13 +23,19 @@ fn validate_command(command: &str) -> Result<(), MCPError> {
         return Err(MCPError::ConfigError("Empty command".into()));
     }
     // Reject shell metacharacters that could enable injection
-    if command.contains(';') || command.contains('|') || command.contains('&')
-        || command.contains('`') || command.contains('$') || command.contains('>')
-        || command.contains('<') || command.contains('\n')
+    if command.contains(';')
+        || command.contains('|')
+        || command.contains('&')
+        || command.contains('`')
+        || command.contains('$')
+        || command.contains('>')
+        || command.contains('<')
+        || command.contains('\n')
     {
-        return Err(MCPError::ConfigError(
-            format!("Command '{}' contains disallowed shell metacharacters", command),
-        ));
+        return Err(MCPError::ConfigError(format!(
+            "Command '{}' contains disallowed shell metacharacters",
+            command
+        )));
     }
     // Extract the base command name (handle paths like /usr/bin/npx)
     let base = std::path::Path::new(command)
@@ -38,9 +43,10 @@ fn validate_command(command: &str) -> Result<(), MCPError> {
         .and_then(|n| n.to_str())
         .unwrap_or(command);
     if !ALLOWED_COMMANDS.contains(&base) {
-        return Err(MCPError::ConfigError(
-            format!("Command '{}' is not in the allowed list: {:?}", command, ALLOWED_COMMANDS),
-        ));
+        return Err(MCPError::ConfigError(format!(
+            "Command '{}' is not in the allowed list: {:?}",
+            command, ALLOWED_COMMANDS
+        )));
     }
     Ok(())
 }
@@ -85,12 +91,16 @@ impl Transport for StdioTransport {
 
         // Also validate args don't contain shell metacharacters
         for arg in &self.args {
-            if arg.contains(';') || arg.contains('|') || arg.contains('&')
-                || arg.contains('`') || arg.contains('$')
+            if arg.contains(';')
+                || arg.contains('|')
+                || arg.contains('&')
+                || arg.contains('`')
+                || arg.contains('$')
             {
-                return Err(MCPError::ConfigError(
-                    format!("Argument '{}' contains disallowed shell metacharacters", arg),
-                ));
+                return Err(MCPError::ConfigError(format!(
+                    "Argument '{}' contains disallowed shell metacharacters",
+                    arg
+                )));
             }
         }
 
@@ -108,10 +118,7 @@ impl Transport for StdioTransport {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            MCPError::ConnectionFailed(format!(
-                "Failed to spawn '{}': {}",
-                self.command, e
-            ))
+            MCPError::ConnectionFailed(format!("Failed to spawn '{}': {}", self.command, e))
         })?;
 
         // Drain stderr in background to prevent buffer deadlock.
@@ -130,30 +137,39 @@ impl Transport for StdioTransport {
         Ok(())
     }
 
-    async fn send_request(&mut self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, MCPError> {
-        let child = self.child.as_mut().ok_or_else(|| {
-            MCPError::TransportError("Not connected".into())
-        })?;
+    async fn send_request(
+        &mut self,
+        request: &JsonRpcRequest,
+    ) -> Result<JsonRpcResponse, MCPError> {
+        let child = self
+            .child
+            .as_mut()
+            .ok_or_else(|| MCPError::TransportError("Not connected".into()))?;
 
-        let stdin = child.stdin.as_mut().ok_or_else(|| {
-            MCPError::TransportError("stdin not available".into())
-        })?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| MCPError::TransportError("stdin not available".into()))?;
 
-        let stdout = child.stdout.as_mut().ok_or_else(|| {
-            MCPError::TransportError("stdout not available".into())
-        })?;
+        let stdout = child
+            .stdout
+            .as_mut()
+            .ok_or_else(|| MCPError::TransportError("stdout not available".into()))?;
 
         // Write JSON-RPC request as a single line
         let json = serde_json::to_string(request)?;
-        stdin.write_all(json.as_bytes()).await.map_err(|e| {
-            MCPError::TransportError(format!("Failed to write to stdin: {}", e))
-        })?;
-        stdin.write_all(b"\n").await.map_err(|e| {
-            MCPError::TransportError(format!("Failed to write newline: {}", e))
-        })?;
-        stdin.flush().await.map_err(|e| {
-            MCPError::TransportError(format!("Failed to flush stdin: {}", e))
-        })?;
+        stdin
+            .write_all(json.as_bytes())
+            .await
+            .map_err(|e| MCPError::TransportError(format!("Failed to write to stdin: {}", e)))?;
+        stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| MCPError::TransportError(format!("Failed to write newline: {}", e)))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| MCPError::TransportError(format!("Failed to flush stdin: {}", e)))?;
 
         // Read response line from stdout
         let mut reader = BufReader::new(stdout);
@@ -176,25 +192,32 @@ impl Transport for StdioTransport {
         }
     }
 
-    async fn send_notification(&mut self, notification: &JsonRpcNotification) -> Result<(), MCPError> {
-        let child = self.child.as_mut().ok_or_else(|| {
-            MCPError::TransportError("Not connected".into())
-        })?;
+    async fn send_notification(
+        &mut self,
+        notification: &JsonRpcNotification,
+    ) -> Result<(), MCPError> {
+        let child = self
+            .child
+            .as_mut()
+            .ok_or_else(|| MCPError::TransportError("Not connected".into()))?;
 
-        let stdin = child.stdin.as_mut().ok_or_else(|| {
-            MCPError::TransportError("stdin not available".into())
-        })?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| MCPError::TransportError("stdin not available".into()))?;
 
         let json = serde_json::to_string(notification)?;
         stdin.write_all(json.as_bytes()).await.map_err(|e| {
             MCPError::TransportError(format!("Failed to write notification: {}", e))
         })?;
-        stdin.write_all(b"\n").await.map_err(|e| {
-            MCPError::TransportError(format!("Failed to write newline: {}", e))
-        })?;
-        stdin.flush().await.map_err(|e| {
-            MCPError::TransportError(format!("Failed to flush stdin: {}", e))
-        })?;
+        stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| MCPError::TransportError(format!("Failed to write newline: {}", e)))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| MCPError::TransportError(format!("Failed to flush stdin: {}", e)))?;
 
         Ok(())
     }
@@ -204,11 +227,7 @@ impl Transport for StdioTransport {
             // Close stdin to signal the child
             drop(child.stdin.take());
             // Give it a moment to exit gracefully
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                child.wait(),
-            )
-            .await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await;
             // Force kill if still alive
             let _ = child.kill().await;
         }

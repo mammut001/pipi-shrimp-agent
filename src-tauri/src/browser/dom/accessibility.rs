@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use chromiumoxide::cdp::browser_protocol::accessibility::{AxNode, AxProperty, AxPropertyName, AxValue};
+use chromiumoxide::cdp::browser_protocol::accessibility::{
+    AxNode, AxProperty, AxPropertyName, AxValue,
+};
 use serde_json::Value;
 
 use super::snapshot::AccessibilityNodeSnapshot;
@@ -31,8 +33,12 @@ pub(crate) fn ax_value_to_string(value: Option<&AxValue>) -> Option<String> {
         Some(Value::String(text)) if !text.trim().is_empty() => Some(text.trim().to_string()),
         Some(Value::Bool(flag)) => Some(flag.to_string()),
         Some(Value::Number(number)) => Some(number.to_string()),
-        Some(Value::Array(items)) if !items.is_empty() => Some(Value::Array(items.clone()).to_string()),
-        Some(Value::Object(object)) if !object.is_empty() => Some(Value::Object(object.clone()).to_string()),
+        Some(Value::Array(items)) if !items.is_empty() => {
+            Some(Value::Array(items.clone()).to_string())
+        }
+        Some(Value::Object(object)) if !object.is_empty() => {
+            Some(Value::Object(object.clone()).to_string())
+        }
         Some(Value::Null) | None => None,
         Some(other) => {
             let rendered = other.to_string();

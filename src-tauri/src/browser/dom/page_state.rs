@@ -125,10 +125,15 @@ pub(crate) fn build_page_state_capture_with_screenshot(
 
 impl PageState {
     pub fn find_element(&self, index: u64) -> Option<&InteractiveElement> {
-        self.elements.iter().find(|element| element.index as u64 == index)
+        self.elements
+            .iter()
+            .find(|element| element.index as u64 == index)
     }
 
-    pub fn find_element_by_backend_node_id(&self, backend_node_id: i64) -> Option<&InteractiveElement> {
+    pub fn find_element_by_backend_node_id(
+        &self,
+        backend_node_id: i64,
+    ) -> Option<&InteractiveElement> {
         self.elements
             .iter()
             .find(|element| element.backend_node_id == backend_node_id)

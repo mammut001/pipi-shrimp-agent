@@ -3,7 +3,6 @@
  *
  * Defines all response types that are sent back to the frontend
  */
-
 use serde::Serialize;
 
 /**

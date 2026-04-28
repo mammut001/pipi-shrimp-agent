@@ -21,6 +21,23 @@ interface InvokeParams {
   apiFormat?: string;
 }
 
+/** Default timeout for a single streaming API call (60s). */
+const STREAM_TIMEOUT_MS = 60_000;
+
+/**
+ * Wraps a Promise with a timeout. If the timeout fires first, the returned
+ * promise rejects with a descriptive Error so the existing .catch() handler
+ * in invokeRustAPIStream can handle it gracefully.
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(message)), timeoutMs)
+    ),
+  ]);
+}
+
 /**
  * Converts Tauri event-based IPC streaming into a neat AsyncGenerator.
  * This adapter makes it possible to consume API chunks in a straight `for await` loop,
@@ -69,7 +86,12 @@ export async function* invokeRustAPIStream(
   try {
     // Fire off the background Rust operation without `await`ing it yet.
     // That way, we can start draining the events it fires via `yield`.
-    const requestPromise = invoke('send_claude_sdk_chat_streaming', params)
+    // Timeout wrapper ensures the generator never hangs if the Rust side stalls.
+    const requestPromise = withTimeout(
+      invoke('send_claude_sdk_chat_streaming', params),
+      STREAM_TIMEOUT_MS,
+      `Streaming call timed out after ${STREAM_TIMEOUT_MS / 1000}s`
+    )
       .then((finalResponse: any) => {
         isDone = true;
         if (resolveNext) resolveNext();

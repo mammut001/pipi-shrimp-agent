@@ -11,7 +11,6 @@
  * - Capability-based routing
  * - Consistent baseURL resolution
  */
-
 use serde::{Deserialize, Serialize};
 
 /// Provider identifier
@@ -161,8 +160,8 @@ impl ResolvedProviderConfig {
         provider_hint: Option<ProviderId>,
     ) -> Self {
         // Detect or use hinted provider
-        let provider_id = provider_hint
-            .unwrap_or_else(|| ProviderId::detect(base_url, model, api_key));
+        let provider_id =
+            provider_hint.unwrap_or_else(|| ProviderId::detect(base_url, model, api_key));
 
         // Determine API format
         let api_format = ApiFormat::for_provider(provider_id);
@@ -223,8 +222,8 @@ impl ResolvedProviderConfig {
             }
             ProviderId::OpenAI => {
                 // OpenAI models: tool calls supported on most models
-                let supports_tool_calls = !model_lower.contains("o1-preview")
-                    && !model_lower.contains("o1-mini");
+                let supports_tool_calls =
+                    !model_lower.contains("o1-preview") && !model_lower.contains("o1-mini");
 
                 ProviderCapabilities {
                     supports_thinking: false, // OpenAI reasoning is separate
@@ -262,7 +261,8 @@ impl ResolvedProviderConfig {
             }
             ProviderId::DeepSeek => {
                 // DeepSeek: OpenAI-compatible, max_tokens capped at 8192
-                let supports_thinking = model_lower.contains("reasoner") || model_lower.contains("r1");
+                let supports_thinking =
+                    model_lower.contains("reasoner") || model_lower.contains("r1");
                 ProviderCapabilities {
                     supports_thinking,
                     supports_tool_calls: true,
@@ -345,12 +345,8 @@ mod tests {
 
     #[test]
     fn test_resolve_anthropic_default() {
-        let config = ResolvedProviderConfig::resolve(
-            "claude-3-5-sonnet-20241022",
-            "sk-ant-...",
-            None,
-            None,
-        );
+        let config =
+            ResolvedProviderConfig::resolve("claude-3-5-sonnet-20241022", "sk-ant-...", None, None);
 
         assert_eq!(config.provider_id, ProviderId::Anthropic);
         assert_eq!(config.api_format, ApiFormat::Anthropic);
@@ -360,12 +356,8 @@ mod tests {
 
     #[test]
     fn test_resolve_anthropic_thinking_model() {
-        let config = ResolvedProviderConfig::resolve(
-            "claude-3-7-sonnet-20250219",
-            "sk-ant-...",
-            None,
-            None,
-        );
+        let config =
+            ResolvedProviderConfig::resolve("claude-3-7-sonnet-20250219", "sk-ant-...", None, None);
 
         assert_eq!(config.provider_id, ProviderId::Anthropic);
         assert!(config.capabilities.supports_thinking);
@@ -374,12 +366,7 @@ mod tests {
 
     #[test]
     fn test_resolve_openai() {
-        let config = ResolvedProviderConfig::resolve(
-            "gpt-4o",
-            "sk-...",
-            None,
-            None,
-        );
+        let config = ResolvedProviderConfig::resolve("gpt-4o", "sk-...", None, None);
 
         assert_eq!(config.provider_id, ProviderId::OpenAI);
         assert_eq!(config.api_format, ApiFormat::OpenAI);

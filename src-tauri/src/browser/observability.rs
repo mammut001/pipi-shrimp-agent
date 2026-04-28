@@ -154,9 +154,20 @@ impl BrowserEventBus {
         action_name: Option<String>,
         benchmark: Option<BrowserBenchmarkSample>,
     ) -> BrowserEvent {
-        self.publish_with_metadata(kind, level, title, detail, None, None, None, action_name, benchmark)
+        self.publish_with_metadata(
+            kind,
+            level,
+            title,
+            detail,
+            None,
+            None,
+            None,
+            action_name,
+            benchmark,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn publish_snapshot_cache_event(
         &self,
         kind: BrowserEventKind,
@@ -180,6 +191,7 @@ impl BrowserEventBus {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn publish_with_metadata(
         &self,
         kind: BrowserEventKind,
@@ -213,6 +225,7 @@ impl BrowserEventBus {
         event
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn build_benchmark_sample(
         &self,
         key: impl Into<String>,
@@ -296,7 +309,12 @@ impl BrowserEventBus {
                 let max_duration_ms = entries.iter().map(|sample| sample.duration_ms).max();
                 let budget_ms = entries.first().and_then(|sample| sample.budget_ms);
                 let over_budget_count = budget_ms
-                    .map(|budget| entries.iter().filter(|sample| sample.duration_ms > budget).count())
+                    .map(|budget| {
+                        entries
+                            .iter()
+                            .filter(|sample| sample.duration_ms > budget)
+                            .count()
+                    })
                     .unwrap_or(0);
                 let attach_samples = entries
                     .iter()
@@ -365,10 +383,12 @@ impl BrowserEventBus {
                 "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
                 metric.label,
                 metric.sample_count,
-                metric.average_duration_ms
+                metric
+                    .average_duration_ms
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "n/a".to_string()),
-                metric.max_duration_ms
+                metric
+                    .max_duration_ms
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "n/a".to_string()),
                 metric.success_count,

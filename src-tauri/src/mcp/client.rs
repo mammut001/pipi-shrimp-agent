@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tracing::{error, warn, info, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::mcp::protocol::*;
-use crate::mcp::transport::stdio::StdioTransport;
 use crate::mcp::transport::http::HttpTransport;
+use crate::mcp::transport::stdio::StdioTransport;
 use crate::mcp::transport::Transport;
 use crate::mcp::types::*;
 
@@ -33,7 +33,11 @@ impl MCPConnection {
         ServerRuntime {
             id: self.server.id.clone(),
             name: self.server.name.clone(),
-            display_name: self.server.display_name.clone().unwrap_or_else(|| self.server.name.clone()),
+            display_name: self
+                .server
+                .display_name
+                .clone()
+                .unwrap_or_else(|| self.server.name.clone()),
             status: self.status.clone(),
             tool_count: self.tools.len(),
             resource_count: self.resources.len(),
@@ -45,13 +49,14 @@ impl MCPConnection {
     /// Build transport from server config
     fn build_transport(config: &ServerConfig) -> Result<Box<dyn Transport>, MCPError> {
         match config {
-            ServerConfig::Stdio { command, args, env, cwd } => {
-                let t = StdioTransport::new(
-                    command.clone(),
-                    args.clone(),
-                    env.clone(),
-                    cwd.clone(),
-                );
+            ServerConfig::Stdio {
+                command,
+                args,
+                env,
+                cwd,
+            } => {
+                let t =
+                    StdioTransport::new(command.clone(), args.clone(), env.clone(), cwd.clone());
                 Ok(Box::new(t))
             }
             ServerConfig::Http { url, headers, auth } => {
@@ -84,7 +89,9 @@ impl MCPConnection {
             Some(serde_json::to_value(InitializeParams {
                 protocol_version: "2024-11-05".into(),
                 capabilities: ClientCapabilities {
-                    roots: Some(RootCapability { list_changed: false }),
+                    roots: Some(RootCapability {
+                        list_changed: false,
+                    }),
                 },
                 client_info: ClientInfo {
                     name: "pipi-shrimp-agent".into(),
@@ -107,7 +114,9 @@ impl MCPConnection {
 
         // Send initialized notification
         let initialized_notification = JsonRpcNotification::new("notifications/initialized", None);
-        transport.send_notification(&initialized_notification).await?;
+        transport
+            .send_notification(&initialized_notification)
+            .await?;
 
         Ok(result)
     }
@@ -134,7 +143,9 @@ impl MCPConnection {
         match transport.send_request(&resources_request).await {
             Ok(resp) => {
                 if let Some(result) = resp.result {
-                    if let Ok(resources_result) = serde_json::from_value::<ResourcesListResult>(result) {
+                    if let Ok(resources_result) =
+                        serde_json::from_value::<ResourcesListResult>(result)
+                    {
                         return resources_result.resources;
                     }
                 }
@@ -200,8 +211,8 @@ impl MCPClientManager {
             reconnect_attempts: 0,
         };
 
-        if conn.error_message.is_some() {
-            warn!(server_id = %server_id, error = %conn.error_message.as_ref().unwrap(), "Connected but failed to list tools");
+        if let Some(error) = &conn.error_message {
+            warn!(server_id = %server_id, error = %error, "Connected but failed to list tools");
         }
 
         let runtime = conn.runtime();
@@ -212,12 +223,16 @@ impl MCPClientManager {
     /// Reconnect to a server with exponential backoff
     pub async fn reconnect(&mut self, server_id: &str) -> Result<ServerRuntime, MCPError> {
         let server = {
-            let conn = self.connections.get(server_id)
+            let conn = self
+                .connections
+                .get(server_id)
                 .ok_or_else(|| MCPError::ServerNotFound(server_id.into()))?;
             conn.server.clone()
         };
 
-        let mut conn = self.connections.remove(server_id)
+        let mut conn = self
+            .connections
+            .remove(server_id)
             .ok_or_else(|| MCPError::ServerNotFound(server_id.into()))?;
 
         let mut attempt = conn.reconnect_attempts;
@@ -228,46 +243,47 @@ impl MCPClientManager {
 
             // Build new transport
             match MCPConnection::build_transport(&server.config) {
-                Ok(mut transport) => {
-                    match transport.connect().await {
-                        Ok(()) => {
-                            match MCPConnection::initialize(&mut *transport).await {
-                                Ok(_) => {
-                                    let (tools, tools_error) = MCPConnection::fetch_tools(&mut *transport).await;
-                                    let resources = MCPConnection::fetch_resources(&mut *transport).await;
+                Ok(mut transport) => match transport.connect().await {
+                    Ok(()) => match MCPConnection::initialize(&mut *transport).await {
+                        Ok(_) => {
+                            // Close the OLD transport before replacing with new one
+                            // This ensures proper cleanup before we return success
+                            let _ = conn.transport.close().await;
 
-                                    let now = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_secs();
+                            let (tools, tools_error) =
+                                MCPConnection::fetch_tools(&mut *transport).await;
+                            let resources = MCPConnection::fetch_resources(&mut *transport).await;
 
-                                    conn = MCPConnection {
-                                        server,
-                                        transport,
-                                        status: ServerStatus::Connected,
-                                        tools,
-                                        resources,
-                                        connected_at: Some(now),
-                                        error_message: tools_error,
-                                        reconnect_attempts: 0,
-                                    };
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
 
-                                    let runtime = conn.runtime();
-                                    self.connections.insert(server_id.to_string(), conn);
-                                    info!(server_id = %server_id, "Successfully reconnected to MCP server");
-                                    return Ok(runtime);
-                                }
-                                Err(e) => {
-                                    warn!(server_id = %server_id, error = %e, "Reinitialize failed, will retry");
-                                    let _ = transport.close().await;
-                                }
-                            }
+                            conn = MCPConnection {
+                                server,
+                                transport,
+                                status: ServerStatus::Connected,
+                                tools,
+                                resources,
+                                connected_at: Some(now),
+                                error_message: tools_error,
+                                reconnect_attempts: 0,
+                            };
+
+                            let runtime = conn.runtime();
+                            self.connections.insert(server_id.to_string(), conn);
+                            info!(server_id = %server_id, "Successfully reconnected to MCP server");
+                            return Ok(runtime);
                         }
                         Err(e) => {
-                            warn!(server_id = %server_id, error = %e, "Transport connection failed, will retry");
+                            warn!(server_id = %server_id, error = %e, "Reinitialize failed, will retry");
+                            let _ = transport.close().await;
                         }
+                    },
+                    Err(e) => {
+                        warn!(server_id = %server_id, error = %e, "Transport connection failed, will retry");
                     }
-                }
+                },
                 Err(e) => {
                     error!(server_id = %server_id, error = %e, "Failed to build transport");
                     return Err(e);
@@ -277,7 +293,10 @@ impl MCPClientManager {
             attempt += 1;
             if attempt >= MAX_RECONNECT_ATTEMPTS {
                 conn.status = ServerStatus::Error;
-                conn.error_message = Some(format!("Max reconnection attempts ({}) exhausted", MAX_RECONNECT_ATTEMPTS));
+                conn.error_message = Some(format!(
+                    "Max reconnection attempts ({}) exhausted",
+                    MAX_RECONNECT_ATTEMPTS
+                ));
                 error!(server_id = %server_id, attempts = attempt, "Max reconnection attempts exhausted");
                 self.connections.insert(server_id.to_string(), conn);
                 return Err(MCPError::ConnectionFailed(format!(
@@ -323,9 +342,10 @@ impl MCPClientManager {
 
     /// List tools for a specific server
     pub fn list_tools(&self, server_id: &str) -> Result<Vec<MCPTool>, MCPError> {
-        let conn = self.connections.get(server_id).ok_or_else(|| {
-            MCPError::ServerNotFound(server_id.into())
-        })?;
+        let conn = self
+            .connections
+            .get(server_id)
+            .ok_or_else(|| MCPError::ServerNotFound(server_id.into()))?;
         Ok(conn.tools.clone())
     }
 
@@ -340,9 +360,10 @@ impl MCPClientManager {
 
     /// List resources for a specific server
     pub fn list_resources(&self, server_id: &str) -> Result<Vec<MCPResource>, MCPError> {
-        let conn = self.connections.get(server_id).ok_or_else(|| {
-            MCPError::ServerNotFound(server_id.into())
-        })?;
+        let conn = self
+            .connections
+            .get(server_id)
+            .ok_or_else(|| MCPError::ServerNotFound(server_id.into()))?;
         Ok(conn.resources.clone())
     }
 
@@ -353,9 +374,10 @@ impl MCPClientManager {
         tool_name: &str,
         args: serde_json::Value,
     ) -> Result<ToolResult, MCPError> {
-        let conn = self.connections.get_mut(server_id).ok_or_else(|| {
-            MCPError::ServerNotFound(server_id.into())
-        })?;
+        let conn = self
+            .connections
+            .get_mut(server_id)
+            .ok_or_else(|| MCPError::ServerNotFound(server_id.into()))?;
 
         if conn.status != ServerStatus::Connected {
             return Err(MCPError::ConnectionFailed(format!(
@@ -368,7 +390,11 @@ impl MCPClientManager {
             "tools/call",
             Some(serde_json::to_value(CallToolParams {
                 name: tool_name.into(),
-                arguments: if args.is_null() { None } else { Some(args.clone()) },
+                arguments: if args.is_null() {
+                    None
+                } else {
+                    Some(args.clone())
+                },
             })?),
         );
 
@@ -384,14 +410,19 @@ impl MCPClientManager {
                 match self.reconnect(server_id).await {
                     Ok(_) => {
                         // Retry the tool call
-                        let conn = self.connections.get_mut(server_id).ok_or_else(|| {
-                            MCPError::ServerNotFound(server_id.into())
-                        })?;
+                        let conn = self
+                            .connections
+                            .get_mut(server_id)
+                            .ok_or_else(|| MCPError::ServerNotFound(server_id.into()))?;
                         let request = JsonRpcRequest::new(
                             "tools/call",
                             Some(serde_json::to_value(CallToolParams {
                                 name: tool_name.into(),
-                                arguments: if args.is_null() { None } else { Some(args.clone()) },
+                                arguments: if args.is_null() {
+                                    None
+                                } else {
+                                    Some(args.clone())
+                                },
                             })?),
                         );
                         conn.transport.send_request(&request).await?
@@ -418,14 +449,11 @@ impl MCPClientManager {
     }
 
     /// Read a resource from a specific server
-    pub async fn read_resource(
-        &mut self,
-        server_id: &str,
-        uri: &str,
-    ) -> Result<String, MCPError> {
-        let conn = self.connections.get_mut(server_id).ok_or_else(|| {
-            MCPError::ServerNotFound(server_id.into())
-        })?;
+    pub async fn read_resource(&mut self, server_id: &str, uri: &str) -> Result<String, MCPError> {
+        let conn = self
+            .connections
+            .get_mut(server_id)
+            .ok_or_else(|| MCPError::ServerNotFound(server_id.into()))?;
 
         let request = JsonRpcRequest::new(
             "resources/read",

@@ -7,7 +7,6 @@
  * - Getting updates
  * - Managing bot configuration
  */
-
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -191,10 +190,7 @@ pub async fn telegram_connect(
     }
 
     // Validate token by calling getMe
-    let url = format!(
-        "https://api.telegram.org/bot{}/getMe",
-        trimmed_token
-    );
+    let url = format!("https://api.telegram.org/bot{}/getMe", trimmed_token);
 
     let client = reqwest::Client::new();
     let response = client
@@ -276,7 +272,9 @@ pub async fn telegram_send_message(
 ) -> Result<TelegramMessage, String> {
     let s = state.lock().await;
 
-    let token = s.token.clone()
+    let token = s
+        .token
+        .clone()
         .ok_or_else(|| "Not connected to Telegram".to_string())?;
 
     if s.status != ConnectionStatus::Connected {
@@ -358,9 +356,7 @@ pub async fn telegram_get_bot_info(
 
 /// Validate a bot token without connecting
 #[tauri::command]
-pub async fn telegram_validate_token(
-    token: String,
-) -> Result<TelegramBotInfo, String> {
+pub async fn telegram_validate_token(token: String) -> Result<TelegramBotInfo, String> {
     let trimmed_token = token.trim();
     if trimmed_token.is_empty() {
         return Err("Token is required".to_string());
@@ -427,7 +423,9 @@ pub async fn telegram_send_chat_action(
 ) -> Result<(), String> {
     let s = state.lock().await;
 
-    let token = s.token.clone()
+    let token = s
+        .token
+        .clone()
         .ok_or_else(|| "Not connected to Telegram".to_string())?;
 
     if s.status != ConnectionStatus::Connected {
@@ -471,7 +469,9 @@ pub async fn telegram_answer_callback_query(
 ) -> Result<(), String> {
     let s = state.lock().await;
 
-    let token = s.token.clone()
+    let token = s
+        .token
+        .clone()
         .ok_or_else(|| "Not connected to Telegram".to_string())?;
 
     if s.status != ConnectionStatus::Connected {
@@ -530,7 +530,9 @@ pub async fn telegram_get_file_url(
 ) -> Result<String, String> {
     let s = state.lock().await;
 
-    let token = s.token.clone()
+    let token = s
+        .token
+        .clone()
         .ok_or_else(|| "Not connected to Telegram".to_string())?;
 
     drop(s);
@@ -576,8 +578,7 @@ pub async fn telegram_get_file_url(
     // Construct the full file URL
     let file_url = format!(
         "https://api.telegram.org/file/bot{}/{}",
-        token,
-        file_response.result.file_path
+        token, file_response.result.file_path
     );
 
     Ok(file_url)
@@ -592,15 +593,14 @@ pub async fn telegram_get_updates(
 ) -> Result<Vec<TelegramUpdate>, String> {
     let s = state.lock().await;
 
-    let token = s.token.clone()
+    let token = s
+        .token
+        .clone()
         .ok_or_else(|| "Not connected to Telegram".to_string())?;
 
     drop(s);
 
-    let mut url = format!(
-        "https://api.telegram.org/bot{}/getUpdates?timeout=0",
-        token
-    );
+    let mut url = format!("https://api.telegram.org/bot{}/getUpdates?timeout=0", token);
 
     if let Some(off) = offset {
         url.push_str(&format!("&offset={}", off));

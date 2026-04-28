@@ -5,7 +5,6 @@
  *
  * Defines all message, response, and artifact structures
  */
-
 use serde::{Deserialize, Serialize};
 
 /**
@@ -100,16 +99,12 @@ pub struct ChatRequest {
 
 impl ChatRequest {
     /// Create a new chat request
-    pub fn new(
-        api_key: String,
-        model: String,
-        messages: Vec<Message>,
-    ) -> Self {
+    pub fn new(api_key: String, model: String, messages: Vec<Message>) -> Self {
         Self {
             request_type: "chat".to_string(),
             apiKey: api_key,
-            model: model,
-            messages: messages,
+            model,
+            messages,
             baseURL: None,
             systemPrompt: None,
             maxTokens: None,
