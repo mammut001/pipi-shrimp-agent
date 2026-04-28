@@ -3,8 +3,7 @@
  *
  * Handles app configuration storage and retrieval
  */
-
-use crate::utils::{AppResult, AppError};
+use crate::utils::{AppError, AppResult};
 use std::fs;
 use std::path::PathBuf;
 
@@ -12,9 +11,14 @@ use std::path::PathBuf;
 /// Prevents path traversal attacks via key injection (e.g. "../../etc/passwd").
 fn validate_config_key(key: &str) -> AppResult<()> {
     if key.is_empty() {
-        return Err(AppError::InvalidInput("Config key cannot be empty".to_string()));
+        return Err(AppError::InvalidInput(
+            "Config key cannot be empty".to_string(),
+        ));
     }
-    if !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !key
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(AppError::InvalidInput(format!(
             "Invalid config key '{}': only alphanumeric characters, underscores, and hyphens are allowed",
             key
@@ -52,8 +56,8 @@ pub async fn get_config(key: String) -> AppResult<String> {
         return Ok("{}".to_string());
     }
 
-    let content = fs::read_to_string(&config_file)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
+    let content =
+        fs::read_to_string(&config_file).map_err(|e| format!("Failed to read config: {}", e))?;
 
     Ok(content)
 }
@@ -69,8 +73,7 @@ pub async fn set_config(key: String, value: String) -> AppResult<String> {
     let config_dir = get_config_dir()?;
     let config_file = config_dir.join(format!("{}.json", key));
 
-    fs::write(&config_file, &value)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    fs::write(&config_file, &value).map_err(|e| format!("Failed to write config: {}", e))?;
 
     Ok("Config saved".to_string())
 }
@@ -85,8 +88,7 @@ pub async fn delete_config(key: String) -> AppResult<String> {
     let config_file = config_dir.join(format!("{}.json", key));
 
     if config_file.exists() {
-        fs::remove_file(&config_file)
-            .map_err(|e| format!("Failed to delete config: {}", e))?;
+        fs::remove_file(&config_file).map_err(|e| format!("Failed to delete config: {}", e))?;
     }
 
     Ok("Config deleted".to_string())

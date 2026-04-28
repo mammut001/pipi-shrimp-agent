@@ -1,18 +1,17 @@
+use serde::Serialize;
 /**
  * Session Memory Commands
- * 
+ *
  * Session Memory 文件系统管理
  * 存储位置: {workDir}/.pipi-shrimp/session-memory.md
  * Fallback: {Documents|HOME}/PiPi-Shrimp/session-memory/session-memory.md
- * 
+ *
  * 源码参考:
  * - restored-src/src/services/SessionMemory/sessionMemoryUtils.ts
  * - restored-src/src/utils/permissions/filesystem.ts: getSessionMemoryPath()
  */
-
 use std::fs;
 use std::path::PathBuf;
-use serde::Serialize;
 
 // ============================================================================
 // 常量
@@ -61,7 +60,7 @@ _一步一步，尝试了什么，做了什么？每一步非常简短的总结�
 
 /**
  * 获取 Session Memory 文件路径
- * 
+ *
  * 优先级: {workDir}/.pipi-shrimp > {Documents|HOME}/PiPi-Shrimp/session-memory
  */
 fn get_memory_path(work_dir: Option<&str>) -> PathBuf {
@@ -88,10 +87,10 @@ fn get_memory_dir(work_dir: Option<&str>) -> PathBuf {
 
 /**
  * 初始化 Session Memory 文件
- * 
+ *
  * 如果文件不存在，创建目录和文件（mode 0o700/0o600）
  * 如果文件已存在，直接返回路径
- * 
+ *
  * 源码参考: setupSessionMemoryFile() 在 sessionMemory.ts
  */
 #[derive(Debug, Serialize)]
@@ -104,11 +103,10 @@ pub struct InitResult {
 pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, String> {
     let dir = get_memory_dir(work_dir.as_deref());
     let path = get_memory_path(work_dir.as_deref());
-    
+
     // 创建目录（0o700）
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create session memory dir: {}", e))?;
-    
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create session memory dir: {}", e))?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -116,14 +114,14 @@ pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, Strin
         fs::set_permissions(&dir, perms)
             .map_err(|e| format!("Failed to set dir permissions: {}", e))?;
     }
-    
+
     let is_new = !path.exists();
-    
+
     if is_new {
         // 创建文件并写入模板（0o600）
         fs::write(&path, DEFAULT_TEMPLATE)
             .map_err(|e| format!("Failed to write session memory: {}", e))?;
-        
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -131,12 +129,12 @@ pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, Strin
             fs::set_permissions(&path, perms)
                 .map_err(|e| format!("Failed to set file permissions: {}", e))?;
         }
-        
+
         println!("💾 Session memory initialized (NEW): {}", path.display());
     } else {
         println!("💾 Session memory exists: {}", path.display());
     }
-    
+
     Ok(InitResult {
         path: path.to_string_lossy().to_string(),
         is_new,
@@ -145,18 +143,18 @@ pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, Strin
 
 /**
  * 读取 Session Memory 内容
- * 
+ *
  * 源码参考: getSessionMemoryContent() 在 sessionMemoryUtils.ts
  * - 返回 None 如果文件不存在（不抛异常）
  */
 #[tauri::command]
 pub fn get_session_memory(work_dir: Option<String>) -> Result<Option<String>, String> {
     let path = get_memory_path(work_dir.as_deref());
-    
+
     if !path.exists() {
         return Ok(None);
     }
-    
+
     fs::read_to_string(&path)
         .map(Some)
         .map_err(|e| format!("Failed to read session memory: {}", e))
@@ -164,46 +162,40 @@ pub fn get_session_memory(work_dir: Option<String>) -> Result<Option<String>, St
 
 /**
  * 写入 Session Memory 完整内容
- * 
+ *
  * 源码参考: writeFile(memoryPath, content) 在 sessionMemory.ts
  */
 #[tauri::command]
-pub fn write_session_memory(
-    content: String,
-    work_dir: Option<String>,
-) -> Result<(), String> {
+pub fn write_session_memory(content: String, work_dir: Option<String>) -> Result<(), String> {
     let path = get_memory_path(work_dir.as_deref());
-    
+
     // 确保目录存在
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create dir: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
     }
-    
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write session memory: {}", e))?;
-    
+
+    fs::write(&path, &content).map_err(|e| format!("Failed to write session memory: {}", e))?;
+
     println!("💾 Session memory saved ({} bytes)", content.len());
     Ok(())
 }
 
 /**
  * 检查 Session Memory 是否为空（只有模板）
- * 
+ *
  * 源码参考: isSessionMemoryEmpty() 在 prompts.ts
  * 比较 content.trim() === DEFAULT_TEMPLATE.trim()
  */
 #[tauri::command]
 pub fn is_session_memory_empty(work_dir: Option<String>) -> Result<bool, String> {
     let path = get_memory_path(work_dir.as_deref());
-    
+
     if !path.exists() {
         return Ok(true);
     }
-    
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read: {}", e))?;
-    
+
+    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read: {}", e))?;
+
     Ok(content.trim() == DEFAULT_TEMPLATE.trim())
 }
 
@@ -243,20 +235,19 @@ pub fn get_session_memory_path(work_dir: Option<String>) -> String {
 #[tauri::command]
 pub fn get_session_memory_sections(work_dir: Option<String>) -> Result<Vec<String>, String> {
     let path = get_memory_path(work_dir.as_deref());
-    
+
     if !path.exists() {
         return Err("Session memory not initialized".to_string());
     }
-    
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read: {}", e))?;
-    
+
+    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read: {}", e))?;
+
     let sections: Vec<String> = content
         .lines()
         .filter(|l| l.starts_with("# "))
         .map(|l| l.trim_start_matches("# ").to_string())
         .collect();
-    
+
     Ok(sections)
 }
 
@@ -269,27 +260,27 @@ pub fn estimate_session_memory_tokens(work_dir: Option<String>) -> Result<usize,
         Some(c) => c,
         None => return Ok(0),
     };
-    
+
     let mut cjk_chars = 0usize;
     let mut other_chars = 0usize;
-    
+
     for c in content.chars() {
         if c.is_whitespace() {
             continue;
         }
         let code = c as u32;
-        let is_cjk = (0x4E00 <= code && code <= 0x9FFF)
-            || (0x3400 <= code && code <= 0x4DBF)
-            || (0xF900 <= code && code <= 0xFAFF)
-            || (0x3040 <= code && code <= 0x30FF)
-            || (0xAC00 <= code && code <= 0xD7AF);
+        let is_cjk = (0x4E00..=0x9FFF).contains(&code)
+            || (0x3400..=0x4DBF).contains(&code)
+            || (0xF900..=0xFAFF).contains(&code)
+            || (0x3040..=0x30FF).contains(&code)
+            || (0xAC00..=0xD7AF).contains(&code);
         if is_cjk {
             cjk_chars += 1;
         } else {
             other_chars += 1;
         }
     }
-    
+
     Ok((other_chars / 4) + (cjk_chars / 2))
 }
 
@@ -307,39 +298,46 @@ pub struct SessionMemoryInfo {
 }
 
 #[tauri::command]
-pub fn get_session_memory_info(work_dir: Option<String>) -> Result<Option<SessionMemoryInfo>, String> {
+pub fn get_session_memory_info(
+    work_dir: Option<String>,
+) -> Result<Option<SessionMemoryInfo>, String> {
     let path = get_memory_path(work_dir.as_deref());
-    
+
     if !path.exists() {
         return Ok(None);
     }
-    
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read: {}", e))?;
-    
+
+    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read: {}", e))?;
+
     let is_empty = content.trim() == DEFAULT_TEMPLATE.trim();
-    
+
     let sections: Vec<String> = content
         .lines()
         .filter(|l| l.starts_with("# "))
         .map(|l| l.trim_start_matches("# ").to_string())
         .collect();
-    
+
     // 估算 tokens
     let mut cjk_chars = 0usize;
     let mut other_chars = 0usize;
     for c in content.chars() {
-        if c.is_whitespace() { continue; }
+        if c.is_whitespace() {
+            continue;
+        }
         let code = c as u32;
-        let is_cjk = (0x4E00 <= code && code <= 0x9FFF)
-            || (0x3400 <= code && code <= 0x4DBF)
-            || (0xF900 <= code && code <= 0xFAFF)
-            || (0x3040 <= code && code <= 0x30FF)
-            || (0xAC00 <= code && code <= 0xD7AF);
-        if is_cjk { cjk_chars += 1; } else { other_chars += 1; }
+        let is_cjk = (0x4E00..=0x9FFF).contains(&code)
+            || (0x3400..=0x4DBF).contains(&code)
+            || (0xF900..=0xFAFF).contains(&code)
+            || (0x3040..=0x30FF).contains(&code)
+            || (0xAC00..=0xD7AF).contains(&code);
+        if is_cjk {
+            cjk_chars += 1;
+        } else {
+            other_chars += 1;
+        }
     }
     let tokens = (other_chars / 4) + (cjk_chars / 2);
-    
+
     Ok(Some(SessionMemoryInfo {
         path: path.to_string_lossy().to_string(),
         content,

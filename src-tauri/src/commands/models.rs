@@ -1,6 +1,6 @@
-use crate::utils::AppResult;
+use crate::providers::adapters::{fetch_anthropic_models, fetch_openai_models};
 use crate::providers::registry::{find_provider, EndpointStyle};
-use crate::providers::adapters::{fetch_openai_models, fetch_anthropic_models};
+use crate::utils::AppResult;
 use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
@@ -13,15 +13,13 @@ pub struct ModelInfo {
 #[tauri::command]
 pub async fn fetch_available_models(
     provider: String,
-    #[allow(non_snake_case)]
-    apiKey: String,
-    #[allow(non_snake_case)]
-    baseUrl: Option<String>,
+    #[allow(non_snake_case)] apiKey: String,
+    #[allow(non_snake_case)] baseUrl: Option<String>,
 ) -> AppResult<Vec<String>> {
     let client = reqwest::Client::new();
 
-    let entry = find_provider(&provider)
-        .ok_or_else(|| format!("Unknown provider: {}", provider))?;
+    let entry =
+        find_provider(&provider).ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
     // Resolve effective base URL: user-supplied > registry default > error
     let base_url = if let Some(url) = &baseUrl {
@@ -42,16 +40,11 @@ pub async fn fetch_available_models(
     let fallback: &[&str] = entry.fallback_models;
 
     match entry.endpoint_style {
-        EndpointStyle::OpenAI => {
-            fetch_openai_models(&client, &base_url, &apiKey, fallback)
-                .await
-                .map_err(|e| e.into())
-        }
-        EndpointStyle::Anthropic => {
-            fetch_anthropic_models(&client, &base_url, &apiKey, fallback)
-                .await
-                .map_err(|e| e.into())
-        }
+        EndpointStyle::OpenAI => fetch_openai_models(&client, &base_url, &apiKey, fallback)
+            .await
+            .map_err(|e| e.into()),
+        EndpointStyle::Anthropic => fetch_anthropic_models(&client, &base_url, &apiKey, fallback)
+            .await
+            .map_err(|e| e.into()),
     }
 }
-

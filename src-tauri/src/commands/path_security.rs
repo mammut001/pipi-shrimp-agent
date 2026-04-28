@@ -9,7 +9,6 @@
  * 2. System directory blocking (/etc/, /usr/, /sys/, etc.)
  * 3. Sensitive file blocking (/etc/shadow, /etc/passwd, etc.)
  */
-
 use std::path::Path;
 
 /// System directories that are blocked from access
@@ -143,7 +142,10 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
                 let blocked_path = format!("{}{}", home, suffix);
                 if canonical_str.starts_with(&blocked_path) {
                     return Err(PathSecurityError {
-                        message: format!("Access to sensitive directory '{}' is not allowed", suffix),
+                        message: format!(
+                            "Access to sensitive directory '{}' is not allowed",
+                            suffix
+                        ),
                     });
                 }
             }
@@ -177,7 +179,8 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
                     return Err(PathSecurityError {
                         message: format!(
                             "Path traversal detected: '{}' would escape work directory '{}'",
-                            path, work_dir.unwrap()
+                            path,
+                            work_dir.unwrap()
                         ),
                     });
                 }
@@ -200,7 +203,10 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
 
 /// Normalize path by resolving . and ..
 fn normalize_path(p: &str) -> String {
-    let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+    let parts: Vec<&str> = p
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
     let mut resolved: Vec<&str> = Vec::new();
 
     for part in parts {
@@ -225,19 +231,43 @@ fn normalize_path(p: &str) -> String {
 /// This is a backup to the TypeScript-side dangerousPatterns check
 pub fn validate_command(command: &str) -> Result<(), PathSecurityError> {
     let dangerous_patterns: &[(&str, &str)] = &[
-        (r"\brm\s+(-rf?|--force)\s+/\s*$", "Attempting to delete root filesystem"),
-        (r"\brm\s+(-rf?|--force)\s+~\s*$", "Attempting to delete home directory"),
+        (
+            r"\brm\s+(-rf?|--force)\s+/\s*$",
+            "Attempting to delete root filesystem",
+        ),
+        (
+            r"\brm\s+(-rf?|--force)\s+~\s*$",
+            "Attempting to delete home directory",
+        ),
         (r"\bmkfs\b", "Filesystem creation command"),
         (r"\bdd\s+if=\S+\s+of=/dev", "Writing to block device"),
         (r"\bshred\b", "Secure file deletion"),
-        (r"\bchmod\s+(-R\s+)?777\s+/\s*$", "Making root filesystem world-writable"),
-        (r"\bchmod\s+(-R\s+)?777\s+~\s*$", "Making home directory world-writable"),
-        (r"\bchown\s+(-R\s+)?root:root\s+/\s*$", "Changing root ownership"),
+        (
+            r"\bchmod\s+(-R\s+)?777\s+/\s*$",
+            "Making root filesystem world-writable",
+        ),
+        (
+            r"\bchmod\s+(-R\s+)?777\s+~\s*$",
+            "Making home directory world-writable",
+        ),
+        (
+            r"\bchown\s+(-R\s+)?root:root\s+/\s*$",
+            "Changing root ownership",
+        ),
         (r"\bnmap\b", "Network scanning tool"),
         (r"\bnc\s+-[el]", "Netcat listener"),
-        (r"\bcurl\s+.*\|\s*(bash|sh|zsh)", "Piping remote script to shell"),
-        (r"\bwget\s+.*\|\s*(bash|sh|zsh)", "Piping remote script to shell"),
-        (r"\bcat\s+/etc/(shadow|passwd|sudoers)\b", "Reading sensitive system files"),
+        (
+            r"\bcurl\s+.*\|\s*(bash|sh|zsh)",
+            "Piping remote script to shell",
+        ),
+        (
+            r"\bwget\s+.*\|\s*(bash|sh|zsh)",
+            "Piping remote script to shell",
+        ),
+        (
+            r"\bcat\s+/etc/(shadow|passwd|sudoers)\b",
+            "Reading sensitive system files",
+        ),
         (r"\bkill\s+-9\s+1\b", "Killing init process"),
         (r"\bpkill\s+-9\s+-u\s+root\b", "Killing root processes"),
     ];

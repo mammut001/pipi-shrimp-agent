@@ -3,7 +3,6 @@
  *
  * Defines custom error types for the application
  */
-
 use serde::Serialize;
 use std::fmt;
 

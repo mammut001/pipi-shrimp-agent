@@ -5,13 +5,12 @@
  *
  * Manages communication with Claude Code via subprocess
  */
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::BufReader;
+use std::process::{Child, ChildStdin, ChildStdout};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use std::io::{BufReader};
-use std::process::{Child, ChildStdout, ChildStdin};
 
 /// Claude process state
 pub struct ClaudeState {

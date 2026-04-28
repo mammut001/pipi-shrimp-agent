@@ -83,7 +83,7 @@ describe('Follow-Through Router', () => {
 
       const result = resolveFollowThrough(plan);
       expect(result.mode).toBe('produce_fix_plan');
-      expect(result.description).toContain('root cause and fix plan');
+      expect(result.description).toContain('Identify root cause');
     });
 
     it('routes fix intent messages to produce fix plan', () => {

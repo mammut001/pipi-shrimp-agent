@@ -23,14 +23,14 @@ impl ChromiumoxideCdpClient {
             Browser::connect(ws_url),
         )
         .await?
-        .map_err(|error| CdpError::Connection(format!(
-            "Unable to connect to CDP websocket {}: {}",
-            ws_url, error
-        )))?;
+        .map_err(|error| {
+            CdpError::Connection(format!(
+                "Unable to connect to CDP websocket {}: {}",
+                ws_url, error
+            ))
+        })?;
 
-        let handle = tokio::spawn(async move {
-            while let Some(_event) = handler.next().await {}
-        });
+        let handle = tokio::spawn(async move { while let Some(_event) = handler.next().await {} });
 
         Ok((browser, handle))
     }
@@ -42,18 +42,28 @@ impl ChromiumoxideCdpClient {
     }
 
     pub async fn fetch_targets(&self, browser: &mut Browser) -> Result<Vec<TargetInfo>, CdpError> {
-        run_with_timeout("Browser::fetch_targets", self.config.timeout, browser.fetch_targets())
-            .await?
-            .map_err(|error| CdpError::Session(format!("Unable to fetch browser targets: {}", error)))
+        run_with_timeout(
+            "Browser::fetch_targets",
+            self.config.timeout,
+            browser.fetch_targets(),
+        )
+        .await?
+        .map_err(|error| CdpError::Session(format!("Unable to fetch browser targets: {}", error)))
     }
 
     pub async fn new_page(&self, browser: &Browser, url: &str) -> Result<Page, CdpError> {
-        run_with_timeout("Browser::new_page", self.config.timeout, browser.new_page(url))
-            .await?
-            .map_err(|error| CdpError::Session(format!(
+        run_with_timeout(
+            "Browser::new_page",
+            self.config.timeout,
+            browser.new_page(url),
+        )
+        .await?
+        .map_err(|error| {
+            CdpError::Session(format!(
                 "Unable to create browser page '{}': {}",
                 url, error
-            )))
+            ))
+        })
     }
 
     pub async fn page_url(&self, page: &Page) -> Result<Option<String>, CdpError> {

@@ -3,12 +3,12 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::time::timeout;
 
+use pipi_shrimp_agent::browser::actions::test_support::{CheckoutFlowServer, LiveActionHarness};
 use pipi_shrimp_agent::browser::actions::{
-    click, get_page_state, navigate, type_text, wait, ClickInput, ElementReference,
-    NavigateInput, TypeTextInput, WaitInput,
+    click, get_page_state, navigate, type_text, wait, ClickInput, ElementReference, NavigateInput,
+    TypeTextInput, WaitInput,
 };
 use pipi_shrimp_agent::browser::dom::{InteractiveElement, PageState};
-use pipi_shrimp_agent::browser::actions::test_support::{CheckoutFlowServer, LiveActionHarness};
 
 fn action_result<T>(result: pipi_shrimp_agent::browser::actions::ActionResult<T>) -> Result<T> {
     result.map_err(|error| anyhow::anyhow!(error.to_string()))
@@ -30,7 +30,12 @@ where
         .iter()
         .find(|element| predicate(element))
         .cloned()
-        .with_context(|| format!("expected {} in live page state; elements={}", label, element_debug))
+        .with_context(|| {
+            format!(
+                "expected {} in live page state; elements={}",
+                label, element_debug
+            )
+        })
 }
 
 async fn run_checkout_flow(
@@ -41,15 +46,17 @@ async fn run_checkout_flow(
     button_selector_hint: &str,
     typed_value: &str,
 ) -> Result<String> {
-    let navigate_output = action_result(navigate(
-        harness.ctx(),
-        NavigateInput {
-            url: Some(checkout_url),
-            wait_selector: Some("#page-ready.ready".to_string()),
-            timeout_ms: Some(5_000),
-        },
-    )
-    .await)?;
+    let navigate_output = action_result(
+        navigate(
+            harness.ctx(),
+            NavigateInput {
+                url: Some(checkout_url),
+                wait_selector: Some("#page-ready.ready".to_string()),
+                timeout_ms: Some(5_000),
+            },
+        )
+        .await,
+    )?;
 
     assert!(navigate_output.waited_for_selector);
     assert_eq!(navigate_output.title.as_deref(), Some(expected_title));
@@ -74,7 +81,6 @@ async fn complete_checkout_flow_from_page_state(
     button_selector_hint: &str,
     typed_value: &str,
 ) -> Result<String> {
-
     let navigation_id = page_state.navigation_id.clone();
     let iframe_input = find_live_element(&page_state, "iframe input element", |element| {
         element.frame_id != "root"
@@ -88,42 +94,48 @@ async fn complete_checkout_flow_from_page_state(
             && element.selector_hint.as_deref() == Some(button_selector_hint)
     })?;
 
-    let type_output = action_result(type_text(
-        harness.ctx(),
-        TypeTextInput {
-            target: ElementReference {
-                index: Some(iframe_input.index as u64),
-                backend_node_id: Some(iframe_input.backend_node_id),
-                navigation_id: Some(navigation_id.clone()),
+    let type_output = action_result(
+        type_text(
+            harness.ctx(),
+            TypeTextInput {
+                target: ElementReference {
+                    index: Some(iframe_input.index as u64),
+                    backend_node_id: Some(iframe_input.backend_node_id),
+                    navigation_id: Some(navigation_id.clone()),
+                },
+                text: typed_value.to_string(),
             },
-            text: typed_value.to_string(),
-        },
-    )
-    .await)?;
+        )
+        .await,
+    )?;
     assert_eq!(type_output.backend_node_id, iframe_input.backend_node_id);
 
-    let click_output = action_result(click(
-        harness.ctx(),
-        ClickInput {
-            target: ElementReference {
-                index: Some(iframe_button.index as u64),
-                backend_node_id: Some(iframe_button.backend_node_id),
-                navigation_id: Some(navigation_id),
+    let click_output = action_result(
+        click(
+            harness.ctx(),
+            ClickInput {
+                target: ElementReference {
+                    index: Some(iframe_button.index as u64),
+                    backend_node_id: Some(iframe_button.backend_node_id),
+                    navigation_id: Some(navigation_id),
+                },
             },
-        },
-    )
-    .await)?;
+        )
+        .await,
+    )?;
     assert_eq!(click_output.backend_node_id, iframe_button.backend_node_id);
 
-    let wait_output = action_result(wait(
-        harness.ctx(),
-        WaitInput {
-            seconds: None,
-            wait_selector: Some("#payment-status.ready".to_string()),
-            timeout_ms: Some(5_000),
-        },
-    )
-    .await)?;
+    let wait_output = action_result(
+        wait(
+            harness.ctx(),
+            WaitInput {
+                seconds: None,
+                wait_selector: Some("#payment-status.ready".to_string()),
+                timeout_ms: Some(5_000),
+            },
+        )
+        .await,
+    )?;
     assert!(wait_output.selector_matched);
 
     harness
@@ -209,18 +221,23 @@ async fn live_browser_recovers_shadow_dom_targets_after_navigation_refresh() -> 
     let harness = LiveActionHarness::launch().await?;
 
     let recovery_result = async {
-        let navigate_output = action_result(navigate(
-            harness.ctx(),
-            NavigateInput {
-                url: Some(server.shadow_checkout_url()),
-                wait_selector: Some("#page-ready.ready".to_string()),
-                timeout_ms: Some(5_000),
-            },
-        )
-        .await)?;
+        let navigate_output = action_result(
+            navigate(
+                harness.ctx(),
+                NavigateInput {
+                    url: Some(server.shadow_checkout_url()),
+                    wait_selector: Some("#page-ready.ready".to_string()),
+                    timeout_ms: Some(5_000),
+                },
+            )
+            .await,
+        )?;
 
         assert!(navigate_output.waited_for_selector);
-        assert_eq!(navigate_output.title.as_deref(), Some("Shadow Checkout Flow"));
+        assert_eq!(
+            navigate_output.title.as_deref(),
+            Some("Shadow Checkout Flow")
+        );
 
         let initial_page_state = action_result(get_page_state(harness.ctx()).await)?;
         let initial_navigation_id = initial_page_state.navigation_id.clone();
@@ -241,15 +258,17 @@ async fn live_browser_recovers_shadow_dom_targets_after_navigation_refresh() -> 
             .await
             .context("failed to reload shadow checkout page")?;
 
-        let reload_wait = action_result(wait(
-            harness.ctx(),
-            WaitInput {
-                seconds: None,
-                wait_selector: Some("#page-ready.ready".to_string()),
-                timeout_ms: Some(5_000),
-            },
-        )
-        .await)?;
+        let reload_wait = action_result(
+            wait(
+                harness.ctx(),
+                WaitInput {
+                    seconds: None,
+                    wait_selector: Some("#page-ready.ready".to_string()),
+                    timeout_ms: Some(5_000),
+                },
+            )
+            .await,
+        )?;
         assert!(reload_wait.selector_matched);
 
         let refreshed_page_state = action_result(get_page_state(harness.ctx()).await)?;
@@ -300,23 +319,29 @@ async fn live_browser_recovers_shadow_dom_targets_after_navigation_refresh() -> 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a local Chrome/Chromium binary for Chromiumoxide Browser::launch"]
-async fn live_browser_preserves_root_actions_when_cross_frame_partial_warning_exists() -> Result<()> {
+async fn live_browser_preserves_root_actions_when_cross_frame_partial_warning_exists() -> Result<()>
+{
     let server = CheckoutFlowServer::start().await?;
     let harness = LiveActionHarness::launch_site_isolated().await?;
 
     let flow_result = async {
-        let navigate_output = action_result(navigate(
-            harness.ctx(),
-            NavigateInput {
-                url: Some(server.partial_warning_checkout_url()),
-                wait_selector: Some("#frame-ready.ready".to_string()),
-                timeout_ms: Some(5_000),
-            },
-        )
-        .await)?;
+        let navigate_output = action_result(
+            navigate(
+                harness.ctx(),
+                NavigateInput {
+                    url: Some(server.partial_warning_checkout_url()),
+                    wait_selector: Some("#frame-ready.ready".to_string()),
+                    timeout_ms: Some(5_000),
+                },
+            )
+            .await,
+        )?;
 
         assert!(navigate_output.waited_for_selector);
-        assert_eq!(navigate_output.title.as_deref(), Some("Partial Warning Checkout"));
+        assert_eq!(
+            navigate_output.title.as_deref(),
+            Some("Partial Warning Checkout")
+        );
 
         let page_state = action_result(get_page_state(harness.ctx()).await)?;
         assert!(page_state
@@ -326,33 +351,38 @@ async fn live_browser_preserves_root_actions_when_cross_frame_partial_warning_ex
             .warnings
             .contains(&"closed_shadow_root_partial".to_string()));
 
-        let root_button = find_live_element(&page_state, "root warning action button", |element| {
-            element.is_clickable
-                && element.selector_hint.as_deref() == Some("#warning-root-action")
-        })?;
+        let root_button =
+            find_live_element(&page_state, "root warning action button", |element| {
+                element.is_clickable
+                    && element.selector_hint.as_deref() == Some("#warning-root-action")
+            })?;
 
-        let click_output = action_result(click(
-            harness.ctx(),
-            ClickInput {
-                target: ElementReference {
-                    index: Some(root_button.index as u64),
-                    backend_node_id: Some(root_button.backend_node_id),
-                    navigation_id: Some(page_state.navigation_id.clone()),
+        let click_output = action_result(
+            click(
+                harness.ctx(),
+                ClickInput {
+                    target: ElementReference {
+                        index: Some(root_button.index as u64),
+                        backend_node_id: Some(root_button.backend_node_id),
+                        navigation_id: Some(page_state.navigation_id.clone()),
+                    },
                 },
-            },
-        )
-        .await)?;
+            )
+            .await,
+        )?;
         assert_eq!(click_output.backend_node_id, root_button.backend_node_id);
 
-        let wait_output = action_result(wait(
-            harness.ctx(),
-            WaitInput {
-                seconds: None,
-                wait_selector: Some("#warning-status.ready".to_string()),
-                timeout_ms: Some(5_000),
-            },
-        )
-        .await)?;
+        let wait_output = action_result(
+            wait(
+                harness.ctx(),
+                WaitInput {
+                    seconds: None,
+                    wait_selector: Some("#warning-status.ready".to_string()),
+                    timeout_ms: Some(5_000),
+                },
+            )
+            .await,
+        )?;
         assert!(wait_output.selector_matched);
 
         read_selector_text(&harness, "#warning-status").await

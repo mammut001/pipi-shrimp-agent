@@ -120,8 +120,9 @@ impl BrowserAction for PressKeyAction {
 
     async fn execute(&self, ctx: &ActionContext, input: Self::Input) -> ActionResult<Self::Output> {
         let page = ctx.page().await?;
-        let spec = resolve_key_dispatch_spec(&input.key)
-            .ok_or_else(|| BrowserActionError::invalid_input(format!("Unsupported key '{}'.", input.key)))?;
+        let spec = resolve_key_dispatch_spec(&input.key).ok_or_else(|| {
+            BrowserActionError::invalid_input(format!("Unsupported key '{}'.", input.key))
+        })?;
 
         let mut builder = DispatchKeyEventParams::builder()
             .key(spec.key.clone())
@@ -140,18 +141,22 @@ impl BrowserAction for PressKeyAction {
             .clone()
             .r#type(key_down_type)
             .build()
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
+            .map_err(|error| {
+                BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+            })?;
         let key_up = builder
             .r#type(DispatchKeyEventType::KeyUp)
             .build()
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
+            .map_err(|error| {
+                BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+            })?;
 
-        page.execute(key_down)
-            .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
-        page.execute(key_up)
-            .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
+        page.execute(key_down).await.map_err(|error| {
+            BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+        })?;
+        page.execute(key_up).await.map_err(|error| {
+            BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+        })?;
 
         ctx.invalidate_page_state().await;
         Ok(PressKeyOutput { key: input.key })

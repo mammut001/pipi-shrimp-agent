@@ -38,9 +38,9 @@ impl BrowserAction for ScrollAction {
         };
 
         let script = format!("window.scrollBy({}, {});", dx, dy);
-        page.evaluate(script)
-            .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
+        page.evaluate(script).await.map_err(|error| {
+            BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+        })?;
 
         ctx.invalidate_page_state().await;
         Ok(ScrollOutput {

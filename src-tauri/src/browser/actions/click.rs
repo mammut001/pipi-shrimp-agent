@@ -61,7 +61,11 @@ impl BrowserAction for ClickAction {
         )
         .await
         {
-            if response.get("ok").and_then(|value| value.as_bool()).unwrap_or(false) {
+            if response
+                .get("ok")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
                 ctx.invalidate_page_state().await;
                 return Ok(ClickOutput {
                     backend_node_id: element.backend_node_id,
@@ -110,13 +114,13 @@ impl BrowserAction for ClickAction {
                 )
             })?;
 
-        page.execute(params_down)
-            .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
+        page.execute(params_down).await.map_err(|error| {
+            BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+        })?;
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        page.execute(params_up)
-            .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
+        page.execute(params_up).await.map_err(|error| {
+            BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+        })?;
 
         ctx.invalidate_page_state().await;
         Ok(ClickOutput {

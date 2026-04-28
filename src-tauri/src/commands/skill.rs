@@ -1,14 +1,13 @@
+use serde::{Deserialize, Serialize};
 /**
  * Skill execution commands
  *
  * Executes skills from src/skills/{category}/SKILL.md
  */
-
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 /// Result type for skill execution
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SkillResult {
     pub success: bool,
     #[serde(rename = "status")]
@@ -31,17 +30,6 @@ struct SkillFrontmatter {
     official: Option<bool>,
 }
 
-impl Default for SkillResult {
-    fn default() -> Self {
-        Self {
-            success: false,
-            status: None,
-            output: None,
-            error: None,
-        }
-    }
-}
-
 /**
  * Execute a skill by reading its SKILL.md file.
  *
@@ -54,7 +42,10 @@ pub async fn execute_skill(
     #[allow(non_snake_case)] workDir: Option<String>,
 ) -> Result<SkillResult, String> {
     // Validate skill name - only alphanumeric, dash, underscore allowed
-    if !skillName.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if !skillName
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Ok(SkillResult {
             success: false,
             error: Some(format!("Invalid skill name: {}", skillName)),
@@ -86,10 +77,7 @@ pub async fn execute_skill(
         bases
     };
 
-    let name_variants = vec![
-        skillName.clone(),
-        skillName.replace('-', "_"),
-    ];
+    let name_variants = vec![skillName.clone(), skillName.replace('-', "_")];
 
     for base in &candidate_bases {
         for variant in &name_variants {
@@ -110,7 +98,8 @@ pub async fn execute_skill(
         error: Some(format!(
             "Skill '{}' not found. Searched in: {}",
             skillName,
-            candidate_bases.iter()
+            candidate_bases
+                .iter()
                 .map(|b| b.join(&skillName).join("SKILL.md").display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")

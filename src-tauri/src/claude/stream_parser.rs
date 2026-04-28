@@ -12,7 +12,6 @@
  * - Semantic parsing is delegated to adapter's parse_stream_chunk
  * - Unified event format: claude-token / claude-reasoning / claude-tool-use
  */
-
 use futures::stream::StreamExt;
 use reqwest::Response;
 use tauri::Window;
@@ -107,7 +106,10 @@ pub async fn stream_response(
                                 return adapter.finalize_stream(ctx, config);
                             }
                             StreamEvent::Error(msg) => {
-                                return Err(AppError::ProcessError(format!("Stream error: {}", msg)));
+                                return Err(AppError::ProcessError(format!(
+                                    "Stream error: {}",
+                                    msg
+                                )));
                             }
                             _ => {}
                         }
@@ -167,12 +169,12 @@ impl<'a> Iterator for ThinkSegmentIter<'a> {
                 let segment = &self.content[self.pos..self.pos + end];
                 self.pos += end + 8; // Skip </think>
                 self.in_think = false;
-                return Some((segment, true));
+                Some((segment, true))
             } else {
                 // No closing tag, rest is thinking
                 let segment = &self.content[self.pos..];
                 self.pos = self.content.len();
-                return Some((segment, true));
+                Some((segment, true))
             }
         } else {
             // Looking for <think>
@@ -186,12 +188,12 @@ impl<'a> Iterator for ThinkSegmentIter<'a> {
                 // <think> at current position
                 self.pos += 7; // Skip <think>
                 self.in_think = true;
-                return self.next(); // Recurse to handle think content
+                self.next() // Recurse to handle think content
             } else {
                 // No more <think>, rest is text
                 let segment = &self.content[self.pos..];
                 self.pos = self.content.len();
-                return Some((segment, false));
+                Some((segment, false))
             }
         }
     }
@@ -244,10 +246,9 @@ pub fn split_think_content(content: &str, in_think: &mut bool) -> Vec<(String, b
     result
 }
 
-
 // Think tag constants - using string constants to avoid HTML rendering issues
-const THINK_OPEN: &str = "\u{003c}think\u{003e}";   // <think>
-const THINK_CLOSE: &str = "\u{003c}\u{002f}think\u{003e}";  // </think>
+const THINK_OPEN: &str = "\u{003c}think\u{003e}"; // <think>
+const THINK_CLOSE: &str = "\u{003c}\u{002f}think\u{003e}"; // </think>
 
 #[cfg(test)]
 mod tests {
@@ -255,16 +256,25 @@ mod tests {
 
     #[test]
     fn test_parse_sse_data_line() {
-        assert_eq!(parse_sse_data_line("data: hello"), Some("hello".to_string()));
+        assert_eq!(
+            parse_sse_data_line("data: hello"),
+            Some("hello".to_string())
+        );
         assert_eq!(parse_sse_data_line("data: "), None);
         assert_eq!(parse_sse_data_line("data: [DONE]"), None);
         assert_eq!(parse_sse_data_line("hello"), None);
-        assert_eq!(parse_sse_data_line("  data: hello  "), Some("hello".to_string()));
+        assert_eq!(
+            parse_sse_data_line("  data: hello  "),
+            Some("hello".to_string())
+        );
     }
 
     #[test]
     fn test_think_segment_iter() {
-        let content = format!("Hello {} think1 {} world {} think2 {} end", THINK_OPEN, THINK_CLOSE, THINK_OPEN, THINK_CLOSE);
+        let content = format!(
+            "Hello {} think1 {} world {} think2 {} end",
+            THINK_OPEN, THINK_CLOSE, THINK_OPEN, THINK_CLOSE
+        );
         let segments: Vec<(&str, bool)> = ThinkSegmentIter::new(&content).collect();
         assert_eq!(segments.len(), 5);
         assert_eq!(segments[0], ("Hello ", false));

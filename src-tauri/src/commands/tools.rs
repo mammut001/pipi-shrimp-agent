@@ -3,11 +3,10 @@
  *
  * Exposes the tool pipeline to the frontend via Tauri invoke.
  */
-
 use crate::tools::{ToolCallRequest, ToolCallResult};
+use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
-use std::sync::Arc;
 
 /// Shared state carrying the tool registry
 pub struct ToolRegistryState(pub Arc<Mutex<crate::tools::registry::ToolRegistry>>);
@@ -34,7 +33,8 @@ pub async fn execute_tool_batch(
         &registry,
         Some(&window),
         &sessionId,
-    ).await;
+    )
+    .await;
     Ok(results)
 }
 

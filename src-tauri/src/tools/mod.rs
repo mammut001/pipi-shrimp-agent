@@ -10,7 +10,6 @@
  * - Layer 3: Concurrent scheduler (scheduler.rs)
  * - Layer 4: Tauri command exposure (commands/tools.rs)
  */
-
 pub mod registry;
 pub mod scheduler;
 

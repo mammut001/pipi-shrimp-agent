@@ -33,7 +33,11 @@ pub struct BrowserSession {
 }
 
 impl BrowserSession {
-    pub fn new(browser_ws_url: String, launch_mode: BrowserLaunchMode, health: CdpHealthSnapshot) -> Self {
+    pub fn new(
+        browser_ws_url: String,
+        launch_mode: BrowserLaunchMode,
+        health: CdpHealthSnapshot,
+    ) -> Self {
         Self {
             browser_ws_url,
             target_id: None,

@@ -6,13 +6,12 @@
  * - Maintaining INDEX.md automatically
  * - Reading, listing, and deleting documents
  */
-
-use crate::utils::{AppResult, AppError};
+use crate::utils::{AppError, AppResult};
 use chrono::Local;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const DOCS_DIR: &str = "docs";
 const INDEX_FILE: &str = "INDEX.md";
@@ -151,7 +150,7 @@ fn slugify(text: &str) -> String {
 }
 
 /// Ensure docs directory exists
-fn ensure_docs_dir(pipi_dir: &PathBuf) -> AppResult<PathBuf> {
+fn ensure_docs_dir(pipi_dir: &Path) -> AppResult<PathBuf> {
     let docs_dir = pipi_dir.join(DOCS_DIR);
     fs::create_dir_all(&docs_dir)
         .map_err(|e| AppError::FileError(format!("Failed to create docs directory: {}", e)))?;
@@ -224,7 +223,9 @@ pub async fn create_doc(
         .map_err(|e| AppError::FileError(format!("Failed to write document: {}", e)))?;
 
     // Update index
-    let index_updated = update_index_internal(&pipi_dir, &number, &filename, &title, &created, &tags, &summary)?;
+    let index_updated = update_index_internal(
+        &pipi_dir, &number, &filename, &title, &created, &tags, &summary,
+    )?;
 
     Ok(DocResult {
         number,
@@ -236,7 +237,7 @@ pub async fn create_doc(
 
 /// Internal function to update INDEX.md
 fn update_index_internal(
-    pipi_dir: &PathBuf,
+    pipi_dir: &Path,
     number: &str,
     filename: &str,
     title: &str,
@@ -247,11 +248,12 @@ fn update_index_internal(
     let index_path = pipi_dir.join(DOCS_DIR).join(INDEX_FILE);
 
     let created_date = created.split('T').next().unwrap_or(created);
+    let title_link = format!("[{}]({})", title, filename);
 
     let new_entry = format!(
         "| {} | {} | {} | {} |\n",
         number,
-        format!("[{}]({})", title, filename),
+        title_link,
         created_date,
         summary.as_deref().unwrap_or("-")
     );
@@ -268,7 +270,8 @@ fn update_index_internal(
     }
 
     // Find the last table row and insert before any separator
-    let insert_pos = content.rfind("\n---")
+    let insert_pos = content
+        .rfind("\n---")
         .or_else(|| content.rfind("\n|"))
         .map(|pos| pos + 1)
         .unwrap_or(content.len());
@@ -324,30 +327,38 @@ pub fn list_docs(work_dir: String) -> AppResult<Vec<DocMeta>> {
                     }
 
                     if let Some(number) = extract_number(filename) {
-                        let content = fs::read_to_string(&path)
-                            .unwrap_or_default();
+                        let content = fs::read_to_string(&path).unwrap_or_default();
                         let (fm, _) = parse_frontmatter(&content);
 
-                        let title = fm.get("title")
+                        let title = fm
+                            .get("title")
                             .and_then(|v| v.as_str())
                             .unwrap_or(&filename.replace(".md", ""))
                             .to_string();
 
-                        let created = fm.get("created")
+                        let created = fm
+                            .get("created")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
 
-                        let updated = fm.get("updated")
+                        let updated = fm
+                            .get("updated")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
 
-                        let tags: Vec<String> = fm.get("tags")
+                        let tags: Vec<String> = fm
+                            .get("tags")
                             .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default();
 
-                        let summary = fm.get("summary")
+                        let summary = fm
+                            .get("summary")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
 
@@ -392,41 +403,53 @@ pub fn read_doc(work_dir: String, number: String) -> AppResult<DocContent> {
         }
     }
 
-    let path = found_path.ok_or_else(|| {
-        AppError::FileError(format!("Document {} not found", number))
-    })?;
+    let path =
+        found_path.ok_or_else(|| AppError::FileError(format!("Document {} not found", number)))?;
 
     let content = fs::read_to_string(&path)
         .map_err(|e| AppError::FileError(format!("Failed to read document: {}", e)))?;
 
     let (fm, body) = parse_frontmatter(&content);
 
-    let title = fm.get("title")
+    let title = fm
+        .get("title")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
-    let created = fm.get("created")
+    let created = fm
+        .get("created")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
-    let updated = fm.get("updated")
+    let updated = fm
+        .get("updated")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let tags: Vec<String> = fm.get("tags")
+    let tags: Vec<String> = fm
+        .get("tags")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
-    let summary = fm.get("summary")
+    let summary = fm
+        .get("summary")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
     let meta = DocMeta {
         number,
-        filename: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+        filename: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
         title,
         created,
         updated,
@@ -435,7 +458,10 @@ pub fn read_doc(work_dir: String, number: String) -> AppResult<DocContent> {
         path: path.to_string_lossy().to_string(),
     };
 
-    Ok(DocContent { meta, body: sanitize_doc_body(body) })
+    Ok(DocContent {
+        meta,
+        body: sanitize_doc_body(body),
+    })
 }
 
 /// Delete a document
@@ -497,11 +523,16 @@ fn rebuild_index(docs_dir: &PathBuf) -> AppResult<()> {
 
     for doc in docs {
         let summary = doc.summary.as_deref().unwrap_or("-");
-        let updated = doc.updated.as_ref().map(|s| format!(" (更新: {})", s.split('T').next().unwrap_or(s))).unwrap_or_default();
+        let updated = doc
+            .updated
+            .as_ref()
+            .map(|s| format!(" (更新: {})", s.split('T').next().unwrap_or(s)))
+            .unwrap_or_default();
+        let title_link = format!("[{}]({})", doc.title, doc.filename);
         content.push_str(&format!(
             "| {} | {} | {} | {}{} |\n",
             doc.number,
-            format!("[{}]({})", doc.title, doc.filename),
+            title_link,
             doc.created.split('T').next().unwrap_or(&doc.created),
             summary,
             updated
@@ -533,30 +564,38 @@ fn list_docs_internal(docs_dir: &PathBuf) -> AppResult<Vec<DocMeta>> {
                     }
 
                     if let Some(number) = extract_number(filename) {
-                        let content = fs::read_to_string(&path)
-                            .unwrap_or_default();
+                        let content = fs::read_to_string(&path).unwrap_or_default();
                         let (fm, _) = parse_frontmatter(&content);
 
-                        let title = fm.get("title")
+                        let title = fm
+                            .get("title")
                             .and_then(|v| v.as_str())
                             .unwrap_or(&filename.replace(".md", ""))
                             .to_string();
 
-                        let created = fm.get("created")
+                        let created = fm
+                            .get("created")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
 
-                        let updated = fm.get("updated")
+                        let updated = fm
+                            .get("updated")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
 
-                        let tags: Vec<String> = fm.get("tags")
+                        let tags: Vec<String> = fm
+                            .get("tags")
                             .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default();
 
-                        let summary = fm.get("summary")
+                        let summary = fm
+                            .get("summary")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
 
@@ -616,9 +655,8 @@ pub async fn update_doc(
         }
     }
 
-    let path = found_path.ok_or_else(|| {
-        AppError::FileError(format!("Document {} not found", number))
-    })?;
+    let path =
+        found_path.ok_or_else(|| AppError::FileError(format!("Document {} not found", number)))?;
 
     // Read existing content
     let content = fs::read_to_string(&path)
@@ -627,23 +665,36 @@ pub async fn update_doc(
     let (fm, _existing_body) = parse_frontmatter(&content);
 
     // Get existing values or use new ones
-    let new_title = title.unwrap_or_else(|| 
-        fm.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string()
-    );
-    let new_tags = tags.unwrap_or_else(|| 
-        fm.get("tags").and_then(|v| v.as_array()).map(|arr| 
-            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-        ).unwrap_or_default()
-    );
-    let new_related = related.unwrap_or_else(|| 
-        fm.get("related").and_then(|v| v.as_array()).map(|arr| 
-            arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-        ).unwrap_or_default()
-    );
-    let new_summary = summary.or_else(|| 
-        fm.get("summary").and_then(|v| v.as_str()).map(String::from)
-    );
-    let created = fm.get("created")
+    let new_title = title.unwrap_or_else(|| {
+        fm.get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    });
+    let new_tags = tags.unwrap_or_else(|| {
+        fm.get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    });
+    let new_related = related.unwrap_or_else(|| {
+        fm.get("related")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    });
+    let new_summary =
+        summary.or_else(|| fm.get("summary").and_then(|v| v.as_str()).map(String::from));
+    let created = fm
+        .get("created")
         .and_then(|v| v.as_str())
         .map(String::from)
         .unwrap_or_else(|| chrono::Local::now().to_rfc3339());
@@ -651,8 +702,15 @@ pub async fn update_doc(
     let updated = chrono::Local::now().to_rfc3339();
 
     // Generate new frontmatter
-    let frontmatter = generate_frontmatter_with_updated(&new_title, &created, &updated, &new_tags, &new_related, &new_summary);
-    
+    let frontmatter = generate_frontmatter_with_updated(
+        &new_title,
+        &created,
+        &updated,
+        &new_tags,
+        &new_related,
+        &new_summary,
+    );
+
     // Use new body if provided, otherwise keep existing
     let final_body = sanitize_doc_body(&body.unwrap_or(_existing_body.to_string()));
     let new_content = format!("{}{}", frontmatter, final_body);
@@ -662,7 +720,11 @@ pub async fn update_doc(
         .map_err(|e| AppError::FileError(format!("Failed to update document: {}", e)))?;
 
     // Update index
-    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let filename = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     rebuild_index(&docs_dir)?;
 
     Ok(DocResult {

@@ -14,7 +14,11 @@ impl BrowserAction for ScreenshotAction {
     type Input = ();
     type Output = ScreenshotOutput;
 
-    async fn execute(&self, ctx: &ActionContext, _input: Self::Input) -> ActionResult<Self::Output> {
+    async fn execute(
+        &self,
+        ctx: &ActionContext,
+        _input: Self::Input,
+    ) -> ActionResult<Self::Output> {
         let page = ctx.page().await?;
 
         use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
@@ -24,10 +28,12 @@ impl BrowserAction for ScreenshotAction {
             .format(CaptureScreenshotFormat::Png)
             .build();
 
-        let screenshot = page
-            .execute(params)
-            .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", format!("Screenshot failed: {}", error)))?;
+        let screenshot = page.execute(params).await.map_err(|error| {
+            BrowserActionError::execution_failed(
+                "browser.action_failed",
+                format!("Screenshot failed: {}", error),
+            )
+        })?;
 
         Ok(ScreenshotRef {
             kind: "base64_png".to_string(),

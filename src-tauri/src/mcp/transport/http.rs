@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use tracing::warn;
 
-use crate::mcp::protocol::{JsonRpcRequest, JsonRpcNotification, JsonRpcResponse};
-use crate::mcp::types::MCPError;
 use super::Transport;
+use crate::mcp::protocol::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
+use crate::mcp::types::MCPError;
 
 /// HTTP transport — sends JSON-RPC requests over HTTP POST.
 ///
@@ -50,24 +50,22 @@ impl Transport for HttpTransport {
         Ok(())
     }
 
-    async fn send_request(&mut self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, MCPError> {
+    async fn send_request(
+        &mut self,
+        request: &JsonRpcRequest,
+    ) -> Result<JsonRpcResponse, MCPError> {
         let mut req = self.client.post(&self.url);
 
         for (k, v) in &self.headers {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        req = req
-            .header("Content-Type", "application/json")
-            .json(request);
+        req = req.header("Content-Type", "application/json").json(request);
 
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            req.send(),
-        )
-        .await
-        .map_err(|_| MCPError::Timeout)?
-        .map_err(|e| MCPError::TransportError(format!("HTTP request failed: {}", e)))?;
+        let response = tokio::time::timeout(std::time::Duration::from_secs(30), req.send())
+            .await
+            .map_err(|_| MCPError::Timeout)?
+            .map_err(|e| MCPError::TransportError(format!("HTTP request failed: {}", e)))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -78,16 +76,18 @@ impl Transport for HttpTransport {
             )));
         }
 
-        let text = response
-            .text()
-            .await
-            .map_err(|e| MCPError::TransportError(format!("Failed to read response body: {}", e)))?;
+        let text = response.text().await.map_err(|e| {
+            MCPError::TransportError(format!("Failed to read response body: {}", e))
+        })?;
 
         let rpc_response: JsonRpcResponse = serde_json::from_str(&text)?;
         Ok(rpc_response)
     }
 
-    async fn send_notification(&mut self, notification: &JsonRpcNotification) -> Result<(), MCPError> {
+    async fn send_notification(
+        &mut self,
+        notification: &JsonRpcNotification,
+    ) -> Result<(), MCPError> {
         let mut req = self.client.post(&self.url);
 
         for (k, v) in &self.headers {
@@ -98,16 +98,13 @@ impl Transport for HttpTransport {
             .header("Content-Type", "application/json")
             .json(notification);
 
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            req.send(),
-        )
-        .await
-        .map_err(|_| MCPError::Timeout)?
-        .map_err(|e| {
-            warn!(error = %e, "HTTP notification failed");
-            MCPError::TransportError(format!("HTTP notification failed: {}", e))
-        })?;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), req.send())
+            .await
+            .map_err(|_| MCPError::Timeout)?
+            .map_err(|e| {
+                warn!(error = %e, "HTTP notification failed");
+                MCPError::TransportError(format!("HTTP notification failed: {}", e))
+            })?;
 
         Ok(())
     }

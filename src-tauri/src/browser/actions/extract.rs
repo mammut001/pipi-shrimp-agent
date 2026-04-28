@@ -28,9 +28,13 @@ impl BrowserAction for GetTextContentAction {
         );
         page.evaluate(script)
             .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?
+            .map_err(|error| {
+                BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+            })?
             .into_value::<String>()
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))
+            .map_err(|error| {
+                BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+            })
     }
 }
 
@@ -39,7 +43,11 @@ impl BrowserAction for ExtractContentAction {
     type Input = ExtractContentInput;
     type Output = String;
 
-    async fn execute(&self, ctx: &ActionContext, _input: Self::Input) -> ActionResult<Self::Output> {
+    async fn execute(
+        &self,
+        ctx: &ActionContext,
+        _input: Self::Input,
+    ) -> ActionResult<Self::Output> {
         let page = ctx.page().await?;
         let extract_script = r#"
             (() => {
@@ -109,19 +117,37 @@ impl BrowserAction for ExtractContentAction {
 
         page.evaluate(extract_script)
             .await
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?
+            .map_err(|error| {
+                BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+            })?
             .into_value::<String>()
-            .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))
+            .map_err(|error| {
+                BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+            })
     }
 }
 
-pub async fn get_text_content(ctx: &ActionContext, input: GetTextContentInput) -> ActionResult<String> {
+pub async fn get_text_content(
+    ctx: &ActionContext,
+    input: GetTextContentInput,
+) -> ActionResult<String> {
     let detail = Some(format!("max_length={}", input.max_length));
-    ctx.run_instrumented("get_text_content", detail, GetTextContentAction.execute(ctx, input))
-        .await
+    ctx.run_instrumented(
+        "get_text_content",
+        detail,
+        GetTextContentAction.execute(ctx, input),
+    )
+    .await
 }
 
-pub async fn extract_content(ctx: &ActionContext, input: ExtractContentInput) -> ActionResult<String> {
-    ctx.run_instrumented("extract_content", None, ExtractContentAction.execute(ctx, input))
-        .await
+pub async fn extract_content(
+    ctx: &ActionContext,
+    input: ExtractContentInput,
+) -> ActionResult<String> {
+    ctx.run_instrumented(
+        "extract_content",
+        None,
+        ExtractContentAction.execute(ctx, input),
+    )
+    .await
 }

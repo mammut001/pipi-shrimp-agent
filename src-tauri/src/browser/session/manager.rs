@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
 use chromiumoxide::browser::Browser;
 use chromiumoxide::cdp::browser_protocol::dom::EventDocumentUpdated;
 use chromiumoxide::cdp::browser_protocol::page::{
@@ -10,6 +9,7 @@ use chromiumoxide::cdp::browser_protocol::page::{
 };
 use chromiumoxide::cdp::browser_protocol::target::{TargetId, TargetInfo};
 use chromiumoxide::page::Page;
+use chrono::Utc;
 use futures::StreamExt;
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
@@ -65,7 +65,8 @@ impl Default for BrowserSessionManager {
 
 impl BrowserSessionManager {
     pub fn new(config: CdpConfig) -> Self {
-        let event_bus = BrowserEventBus::new(config.event_history_limit, config.benchmark_sample_limit);
+        let event_bus =
+            BrowserEventBus::new(config.event_history_limit, config.benchmark_sample_limit);
         let client = ChromiumoxideCdpClient::new(config.clone());
         let snapshot_cache = SnapshotCache::new(config.snapshot_cache_limit);
         Self {
@@ -122,7 +123,10 @@ impl BrowserSessionManager {
         self.store_page_state_in_cache(cache_key, &page_state);
     }
 
-    pub(crate) fn enqueue_page_state_capture_for_test(&mut self, result: Result<PageState, CdpError>) {
+    pub(crate) fn enqueue_page_state_capture_for_test(
+        &mut self,
+        result: Result<PageState, CdpError>,
+    ) {
         self.test_page_state_captures.push_back(result);
     }
 
@@ -213,12 +217,21 @@ impl BrowserSessionManager {
         self.snapshot_cache.latest_invalidated_entry()
     }
 
-    fn record_snapshot_cache_invalidation_event(&self, reason: &'static str, cache_key: &str, url: &str) {
+    fn record_snapshot_cache_invalidation_event(
+        &self,
+        reason: &'static str,
+        cache_key: &str,
+        url: &str,
+    ) {
         self.event_bus.publish_snapshot_cache_event(
             BrowserEventKind::SnapshotCacheInvalidate,
             BrowserEventLevel::Warning,
             "Snapshot cache invalidated".to_string(),
-            Some(format!("{} | {}", runtime_invalidation_reason_label(reason), url)),
+            Some(format!(
+                "{} | {}",
+                runtime_invalidation_reason_label(reason),
+                url
+            )),
             cache_key,
             url,
             Some(reason.to_string()),
@@ -304,11 +317,23 @@ impl BrowserSessionManager {
             health_status: self.health.status.as_str().to_string(),
             health_failures: self.health.consecutive_failures,
             health_last_transition_at_ms: self.health.last_transition_at_ms,
-            websocket_url: self.session.as_ref().map(|session| session.browser_ws_url.clone()),
-            current_url: self.session.as_ref().and_then(|session| session.current_url.clone()),
+            websocket_url: self
+                .session
+                .as_ref()
+                .map(|session| session.browser_ws_url.clone()),
+            current_url: self
+                .session
+                .as_ref()
+                .and_then(|session| session.current_url.clone()),
             last_error: self.health.last_error.clone(),
-            target_id: self.session.as_ref().and_then(|session| session.target_id.clone()),
-            session_id: self.session.as_ref().and_then(|session| session.session_id.clone()),
+            target_id: self
+                .session
+                .as_ref()
+                .and_then(|session| session.target_id.clone()),
+            session_id: self
+                .session
+                .as_ref()
+                .and_then(|session| session.session_id.clone()),
             last_activity_at_ms: self.last_activity_at_ms,
             idle_timeout_ms: duration_as_ms(self.config.idle_timeout),
         }
@@ -317,7 +342,9 @@ impl BrowserSessionManager {
     pub async fn connect_attach(&mut self) -> Result<BrowserSession, CdpError> {
         if self.has_connection() {
             return self.session_snapshot().ok_or_else(|| {
-                CdpError::Session("Manager is connected but session metadata is missing".to_string())
+                CdpError::Session(
+                    "Manager is connected but session metadata is missing".to_string(),
+                )
             });
         }
 
@@ -329,7 +356,8 @@ impl BrowserSessionManager {
 
         let result: Result<BrowserSession, CdpError> = async {
             let ws_url = discover_browser_ws_url(&self.config).await?;
-            self.connect_with_ws_url(ws_url, BrowserLaunchMode::Attach).await
+            self.connect_with_ws_url(ws_url, BrowserLaunchMode::Attach)
+                .await
         }
         .await;
 
@@ -359,7 +387,9 @@ impl BrowserSessionManager {
     pub async fn connect_launch(&mut self) -> Result<BrowserSession, CdpError> {
         if self.has_connection() {
             return self.session_snapshot().ok_or_else(|| {
-                CdpError::Session("Manager is connected but session metadata is missing".to_string())
+                CdpError::Session(
+                    "Manager is connected but session metadata is missing".to_string(),
+                )
             });
         }
 
@@ -373,7 +403,9 @@ impl BrowserSessionManager {
         let timeout_error = loop {
             match discover_browser_ws_url(&self.config).await {
                 Ok(ws_url) => {
-                    let result = self.connect_with_ws_url(ws_url, BrowserLaunchMode::Launch).await;
+                    let result = self
+                        .connect_with_ws_url(ws_url, BrowserLaunchMode::Launch)
+                        .await;
                     if let Err(error) = &result {
                         let previous_status = self.health.status;
                         self.health.mark_failed(error.to_string());
@@ -436,11 +468,13 @@ impl BrowserSessionManager {
 
         let active_page = self.select_active_page(browser).await?;
         self.page = Some(active_page);
-    self.restart_runtime_event_worker_if_running();
+        self.restart_runtime_event_worker_if_running();
         self.refresh_session_metadata().await?;
         self.touch_activity();
         self.record_navigation_event(
-            self.session.as_ref().and_then(|session| session.current_url.clone()),
+            self.session
+                .as_ref()
+                .and_then(|session| session.current_url.clone()),
             Some("Page reference re-synced".to_string()),
         );
         self.invalidate_page_state();
@@ -451,10 +485,16 @@ impl BrowserSessionManager {
         self.capture_page_state_with_mode(true).await
     }
 
-    async fn capture_page_state_with_mode(&mut self, emit_observability: bool) -> Result<PageState, CdpError> {
+    async fn capture_page_state_with_mode(
+        &mut self,
+        emit_observability: bool,
+    ) -> Result<PageState, CdpError> {
         let capture_started_at = Instant::now();
         let memory_before = sample_process_memory_bytes();
-        let current_url = self.session.as_ref().and_then(|session| session.current_url.clone());
+        let current_url = self
+            .session
+            .as_ref()
+            .and_then(|session| session.current_url.clone());
         self.snapshot_cache.record_miss();
 
         if let Some(result) = self.test_page_state_captures.pop_front() {
@@ -467,7 +507,8 @@ impl BrowserSessionManager {
                 }
             };
             let memory_after = sample_process_memory_bytes();
-            let cache_metadata = PageStateCacheMetadata::from_page_state(&page_state, "viewport:test");
+            let cache_metadata =
+                PageStateCacheMetadata::from_page_state(&page_state, "viewport:test");
             return Ok(self.record_captured_page_state(
                 page_state,
                 cache_metadata,
@@ -518,7 +559,10 @@ impl BrowserSessionManager {
 
         let cache_key = self.build_snapshot_cache_key(&page_state, &cache_metadata);
         let cache_key_string = cache_key.as_string();
-        self.record_snapshot_cache_miss_event(Some(cache_key_string.as_str()), Some(page_state.url.as_str()));
+        self.record_snapshot_cache_miss_event(
+            Some(cache_key_string.as_str()),
+            Some(page_state.url.as_str()),
+        );
         self.store_page_state_in_cache(cache_key, &page_state);
         if emit_observability {
             let benchmark = self.build_benchmark_sample(
@@ -549,11 +593,7 @@ impl BrowserSessionManager {
         page_state
     }
 
-    fn store_page_state_in_cache(
-        &mut self,
-        cache_key: SnapshotCacheKey,
-        page_state: &PageState,
-    ) {
+    fn store_page_state_in_cache(&mut self, cache_key: SnapshotCacheKey, page_state: &PageState) {
         let store_result = self.snapshot_cache.store(cache_key, page_state.clone());
         let stored_key = store_result.entry.key.as_string();
         self.record_snapshot_cache_store_event(&stored_key, &store_result.entry.page_state.url);
@@ -724,7 +764,8 @@ impl BrowserSessionManager {
     }
 
     pub async fn disconnect(&mut self) {
-        self.disconnect_with_reason("manual_disconnect", false).await;
+        self.disconnect_with_reason("manual_disconnect", false)
+            .await;
     }
 
     fn stop_background_workers(&mut self) {
@@ -754,9 +795,12 @@ impl BrowserSessionManager {
             BrowserLaunchMode::Launch => self.select_active_page(&browser).await?,
         };
 
-        self.replace_runtime(browser, page, handler, ws_url, launch_mode).await?;
+        self.replace_runtime(browser, page, handler, ws_url, launch_mode)
+            .await?;
         self.session_snapshot().ok_or_else(|| {
-            CdpError::Session("Connected to browser but failed to materialize session metadata".to_string())
+            CdpError::Session(
+                "Connected to browser but failed to materialize session metadata".to_string(),
+            )
         })
     }
 
@@ -786,7 +830,11 @@ impl BrowserSessionManager {
         self.handler = Some(handler);
         self.health.mark_healthy();
         self.snapshot_cache.clear();
-        self.session = Some(BrowserSession::new(ws_url, launch_mode, self.health.clone()));
+        self.session = Some(BrowserSession::new(
+            ws_url,
+            launch_mode,
+            self.health.clone(),
+        ));
         self.restart_runtime_event_worker_if_running();
         self.touch_activity();
         self.refresh_session_metadata().await?;
@@ -795,7 +843,9 @@ impl BrowserSessionManager {
             BrowserEventKind::Connected,
             BrowserEventLevel::Success,
             format!("Browser connected ({})", launch_mode.as_str()),
-            self.session.as_ref().and_then(|session| session.current_url.clone()),
+            self.session
+                .as_ref()
+                .and_then(|session| session.current_url.clone()),
             None,
             None,
         );
@@ -847,6 +897,7 @@ impl BrowserSessionManager {
         duration_as_ms(self.last_activity.elapsed())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_benchmark_sample(
         &self,
         key: String,
@@ -1004,7 +1055,11 @@ impl BrowserSessionManager {
         let Some(manager_handle) = self.manager_handle.as_ref().and_then(Weak::upgrade) else {
             return;
         };
-        let Some(shutdown_rx) = self.worker_shutdown.as_ref().map(|shutdown| shutdown.subscribe()) else {
+        let Some(shutdown_rx) = self
+            .worker_shutdown
+            .as_ref()
+            .map(|shutdown| shutdown.subscribe())
+        else {
             return;
         };
 
@@ -1141,10 +1196,11 @@ fn spawn_runtime_event_worker(
             Ok(stream) => stream,
             Err(_) => return,
         };
-        let mut navigated_within_document = match page.event_listener::<EventNavigatedWithinDocument>().await {
-            Ok(stream) => stream,
-            Err(_) => return,
-        };
+        let mut navigated_within_document =
+            match page.event_listener::<EventNavigatedWithinDocument>().await {
+                Ok(stream) => stream,
+                Err(_) => return,
+            };
         let mut frame_detached = match page.event_listener::<EventFrameDetached>().await {
             Ok(stream) => stream,
             Err(_) => return,
@@ -1359,7 +1415,8 @@ async fn select_active_page_with_client(
 
     for page in pages {
         let page_url = client.page_url(&page).await.ok().flatten();
-        if matches!(page_url.as_deref(), Some(url) if !url.trim().is_empty() && url != "about:blank") {
+        if matches!(page_url.as_deref(), Some(url) if !url.trim().is_empty() && url != "about:blank")
+        {
             return Ok(page);
         }
 
@@ -1389,7 +1446,9 @@ fn select_attach_target_id(targets: &[TargetInfo]) -> Option<TargetId> {
 }
 
 fn select_attach_target(targets: &[TargetInfo]) -> Option<&TargetInfo> {
-    targets.iter().min_by_key(|target| attach_target_sort_key(target))
+    targets
+        .iter()
+        .min_by_key(|target| attach_target_sort_key(target))
 }
 
 fn attach_target_sort_key(target: &TargetInfo) -> (u8, u8, u8, u8, &str, &str) {
@@ -1464,15 +1523,29 @@ mod tests {
             builder = builder.opener_id(TargetId::new(opener_id));
         }
 
-        builder.build().expect("target info fixture should be valid")
+        builder
+            .build()
+            .expect("target info fixture should be valid")
     }
 
     #[test]
     fn test_select_attach_target_prefers_non_blank_top_level_page() {
         let targets = vec![
             target_info("blank", "page", "about:blank", "", None),
-            target_info("popup", "page", "https://accounts.example.com", "Sign in", Some("root")),
-            target_info("main", "page", "https://github.com/copilot", "Copilot", None),
+            target_info(
+                "popup",
+                "page",
+                "https://accounts.example.com",
+                "Sign in",
+                Some("root"),
+            ),
+            target_info(
+                "main",
+                "page",
+                "https://github.com/copilot",
+                "Copilot",
+                None,
+            ),
         ];
 
         let selected = select_attach_target(&targets).expect("should select a target");
@@ -1503,12 +1576,18 @@ mod tests {
         assert!(!manager.record_ping_failure("first ping timeout"));
         assert_eq!(manager.health.status, CdpHealthStatus::Healthy);
         assert_eq!(manager.health.consecutive_failures, 1);
-        assert_eq!(manager.health.last_error.as_deref(), Some("first ping timeout"));
+        assert_eq!(
+            manager.health.last_error.as_deref(),
+            Some("first ping timeout")
+        );
 
         assert!(manager.record_ping_failure("second ping timeout"));
         assert_eq!(manager.health.status, CdpHealthStatus::Degraded);
         assert_eq!(manager.health.consecutive_failures, 2);
-        assert_eq!(manager.health.last_error.as_deref(), Some("second ping timeout"));
+        assert_eq!(
+            manager.health.last_error.as_deref(),
+            Some("second ping timeout")
+        );
 
         manager.mark_reconnecting("reconnect started");
         assert_eq!(manager.health.status, CdpHealthStatus::Reconnecting);
@@ -1518,16 +1597,25 @@ mod tests {
         assert_eq!(manager.health.consecutive_failures, 0);
         assert_eq!(manager.health.last_error, None);
 
-        let session = manager.session.as_ref().expect("session should remain present");
+        let session = manager
+            .session
+            .as_ref()
+            .expect("session should remain present");
         assert_eq!(session.health.status, CdpHealthStatus::Healthy);
         assert_eq!(session.health.consecutive_failures, 0);
         assert_eq!(session.health.last_error, None);
-        assert_eq!(session.current_url.as_deref(), Some("https://github.com/copilot"));
+        assert_eq!(
+            session.current_url.as_deref(),
+            Some("https://github.com/copilot")
+        );
 
         let state = manager.connection_state();
         assert_eq!(state.health_status, "healthy");
         assert_eq!(state.health_failures, 0);
-        assert_eq!(state.current_url.as_deref(), Some("https://github.com/copilot"));
+        assert_eq!(
+            state.current_url.as_deref(),
+            Some("https://github.com/copilot")
+        );
     }
 
     #[test]
@@ -1644,7 +1732,9 @@ mod tests {
         assert_eq!(snapshot.snapshot_cache.invalidation_count, 1);
         assert_eq!(snapshot.snapshot_cache.active_key, None);
         assert_eq!(
-            snapshot.snapshot_cache.entries[0].invalidation_reason.as_deref(),
+            snapshot.snapshot_cache.entries[0]
+                .invalidation_reason
+                .as_deref(),
             Some("cdp_frame_navigated")
         );
         assert!(snapshot.recent_events.iter().any(|event| {
@@ -1688,7 +1778,10 @@ mod tests {
         let expected_store_key = manager
             .build_snapshot_cache_key(
                 &captured_page_state_fixture,
-                &PageStateCacheMetadata::from_page_state(&captured_page_state_fixture, "viewport:test"),
+                &PageStateCacheMetadata::from_page_state(
+                    &captured_page_state_fixture,
+                    "viewport:test",
+                ),
             )
             .as_string();
 

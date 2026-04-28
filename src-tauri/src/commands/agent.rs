@@ -7,14 +7,13 @@
  * - Custom system prompts
  * - Optional background execution
  */
-
 use crate::claude::{ClaudeClient, Message};
-use tauri::Emitter;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tauri::Emitter;
 use tauri::State;
 use tokio::sync::Mutex;
-use std::sync::Arc;
-use std::collections::HashMap;
 
 /// Agent request from frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,13 +80,16 @@ pub async fn run_agent(
             }
 
             // Emit completion event
-            let _ = window_clone.emit("agent-complete", serde_json::json!({
-                "agent_id": agent_id_clone,
-                "session_id": request_clone.session_id,
-                "content": result.content,
-                "success": result.success,
-                "error": result.error,
-            }));
+            let _ = window_clone.emit(
+                "agent-complete",
+                serde_json::json!({
+                    "agent_id": agent_id_clone,
+                    "session_id": request_clone.session_id,
+                    "content": result.content,
+                    "success": result.success,
+                    "error": result.error,
+                }),
+            );
         });
 
         Ok(AgentResponse {
@@ -135,13 +137,17 @@ pub async fn get_agent_result(
  */
 async fn execute_agent(request: &AgentRequest) -> AgentResponse {
     let api_key = request.api_key.clone().unwrap_or_default();
-    let model = request.model.clone().unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+    let model = request
+        .model
+        .clone()
+        .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
     let base_url = request.base_url.clone();
 
     // Build subagent system prompt
-    let system_prompt = request.system_prompt.clone().unwrap_or_else(|| {
-        build_subagent_system_prompt(request)
-    });
+    let system_prompt = request
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| build_subagent_system_prompt(request));
 
     // Build messages
     let messages = vec![Message {
@@ -155,14 +161,17 @@ async fn execute_agent(request: &AgentRequest) -> AgentResponse {
     let client = ClaudeClient::new();
 
     // Call the API (non-streaming for subagents)
-    match client.chat(
-        messages,
-        api_key,
-        model,
-        base_url,
-        Some(system_prompt),
-        false, // browser_connected
-    ).await {
+    match client
+        .chat(
+            messages,
+            api_key,
+            model,
+            base_url,
+            Some(system_prompt),
+            false, // browser_connected
+        )
+        .await
+    {
         Ok(response) => AgentResponse {
             agent_id: String::new(),
             success: true,
@@ -182,9 +191,8 @@ async fn execute_agent(request: &AgentRequest) -> AgentResponse {
  * Build a system prompt for a subagent.
  */
 fn build_subagent_system_prompt(request: &AgentRequest) -> String {
-    let mut prompt = String::from(
-        "You are a specialized AI assistant working on a specific task.\n\n",
-    );
+    let mut prompt =
+        String::from("You are a specialized AI assistant working on a specific task.\n\n");
 
     if !request.description.is_empty() {
         prompt.push_str(&format!("## Your Role\n{}\n\n", request.description));
@@ -197,7 +205,10 @@ fn build_subagent_system_prompt(request: &AgentRequest) -> String {
     prompt.push_str("4. Summarize your findings or work at the end\n");
 
     if let Some(team_name) = &request.team_name {
-        prompt.push_str(&format!("\n## Team\nYou are part of team '{}'.\n", team_name));
+        prompt.push_str(&format!(
+            "\n## Team\nYou are part of team '{}'.\n",
+            team_name
+        ));
     }
 
     prompt

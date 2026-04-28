@@ -84,9 +84,9 @@ impl BrowserAction for TypeTextAction {
                         format!("Failed to build text key event: {}", error),
                     )
                 })?;
-            page.execute(key_event)
-                .await
-                .map_err(|error| BrowserActionError::execution_failed("browser.action_failed", error.to_string()))?;
+            page.execute(key_event).await.map_err(|error| {
+                BrowserActionError::execution_failed("browser.action_failed", error.to_string())
+            })?;
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
 
@@ -99,7 +99,11 @@ impl BrowserAction for TypeTextAction {
 }
 
 pub async fn type_text(ctx: &ActionContext, input: TypeTextInput) -> ActionResult<TypeTextOutput> {
-    let detail = Some(format!("{} len={}", input.target.description(), input.text.chars().count()));
+    let detail = Some(format!(
+        "{} len={}",
+        input.target.description(),
+        input.text.chars().count()
+    ));
     ctx.run_instrumented("type_text", detail, TypeTextAction.execute(ctx, input))
         .await
 }

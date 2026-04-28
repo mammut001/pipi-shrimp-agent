@@ -5,7 +5,6 @@
  * Uses portable-pty for cross-platform PTY allocation and streams
  * output to the frontend via Tauri events.
  */
-
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Mutex;
@@ -37,9 +36,8 @@ struct TerminalSession {
     _reader_handle: std::thread::JoinHandle<()>,
 }
 
-static TERMINAL_SESSIONS: Lazy<Mutex<HashMap<String, TerminalSession>>> = Lazy::new(|| {
-    Mutex::new(HashMap::new())
-});
+static TERMINAL_SESSIONS: Lazy<Mutex<HashMap<String, TerminalSession>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Detect the user's preferred shell.
 fn detect_shell() -> String {
@@ -160,10 +158,7 @@ pub async fn terminal_create(
 
 /// Write user input to an existing terminal session.
 #[tauri::command]
-pub async fn terminal_input(
-    session_id: String,
-    data: String,
-) -> Result<(), String> {
+pub async fn terminal_input(session_id: String, data: String) -> Result<(), String> {
     let mut sessions = TERMINAL_SESSIONS.lock().map_err(|e| e.to_string())?;
     let session = sessions
         .get_mut(&session_id)
@@ -183,11 +178,7 @@ pub async fn terminal_input(
 
 /// Resize an existing terminal session.
 #[tauri::command]
-pub async fn terminal_resize(
-    session_id: String,
-    rows: u16,
-    cols: u16,
-) -> Result<(), String> {
+pub async fn terminal_resize(session_id: String, rows: u16, cols: u16) -> Result<(), String> {
     let sessions = TERMINAL_SESSIONS.lock().map_err(|e| e.to_string())?;
     let session = sessions
         .get(&session_id)

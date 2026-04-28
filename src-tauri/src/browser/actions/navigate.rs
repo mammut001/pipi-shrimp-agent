@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::common::{ActionContext, ActionResult, ActionTimeoutPolicy, BrowserAction, BrowserActionError};
+use super::common::{
+    ActionContext, ActionResult, ActionTimeoutPolicy, BrowserAction, BrowserActionError,
+};
 use super::wait::wait_for_selector;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,10 +91,7 @@ impl BrowserAction for NavigateAction {
 }
 
 pub async fn navigate(ctx: &ActionContext, input: NavigateInput) -> ActionResult<NavigateOutput> {
-    let detail = input
-        .url
-        .clone()
-        .or_else(|| input.wait_selector.clone());
+    let detail = input.url.clone().or_else(|| input.wait_selector.clone());
     let result = ctx
         .run_instrumented("navigate", detail, NavigateAction.execute(ctx, input))
         .await;

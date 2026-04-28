@@ -10,7 +10,6 @@
  * - Provider-specific response parsing
  * - Unified error handling
  */
-
 use crate::utils::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Window};
@@ -33,14 +32,14 @@ pub enum StreamEvent {
         arguments: String,
     },
     /// Tool use complete
-    ToolCallComplete {
-        id: String,
-        name: String,
-    },
+    ToolCallComplete { id: String, name: String },
     /// Artifact detected
     Artifact(Artifact),
     /// Usage information
-    Usage { input_tokens: i32, output_tokens: i32 },
+    Usage {
+        input_tokens: i32,
+        output_tokens: i32,
+    },
     /// Error occurred
     Error(String),
     /// Stream complete
@@ -164,12 +163,11 @@ pub trait ProviderAdapter: Send + Sync {
 
     /// Get max tokens for this provider
     fn get_max_tokens(&self, config: &ResolvedProviderConfig) -> i32 {
-        let base = if config.capabilities.supports_thinking {
+        if config.capabilities.supports_thinking {
             config.capabilities.thinking_budget.unwrap_or(5000) + 1000
         } else {
             2048
-        };
-        base
+        }
     }
 }
 
@@ -183,7 +181,8 @@ fn detect_artifacts(content: &str) -> Vec<Artifact> {
     // Detect HTML artifacts
     if content.contains("<html") || content.contains("<!DOCTYPE") {
         if let Some(start) = content.find("<html") {
-            let end = content[start..].find("</html>")
+            let end = content[start..]
+                .find("</html>")
                 .map(|i| start + i + 7)
                 .unwrap_or(content.len());
             let html = &content[start..end];
@@ -248,7 +247,10 @@ impl ProviderAdapter for AnthropicAdapter {
         headers.insert("content-type", "application/json".parse().unwrap());
 
         if config.capabilities.supports_thinking {
-            headers.insert("anthropic-beta", "interleaved-thinking-2025-05-14".parse().unwrap());
+            headers.insert(
+                "anthropic-beta",
+                "interleaved-thinking-2025-05-14".parse().unwrap(),
+            );
         }
 
         headers
@@ -399,10 +401,14 @@ impl ProviderAdapter for AnthropicAdapter {
                             arguments: String::new(),
                         });
 
-                        ctx.emit("claude-tool-use", &serde_json::json!({
-                            "id": id,
-                            "name": name
-                        }).to_string());
+                        ctx.emit(
+                            "claude-tool-use",
+                            &serde_json::json!({
+                                "id": id,
+                                "name": name
+                            })
+                            .to_string(),
+                        );
 
                         events.push(StreamEvent::ToolCall {
                             id,
@@ -427,9 +433,13 @@ impl ProviderAdapter for AnthropicAdapter {
             "message_delta" => {
                 if let Some(usage) = json.get("usage") {
                     ctx.usage.output_tokens = usage["output_tokens"].as_i64().unwrap_or(0) as i32;
-                    ctx.emit("claude-usage", &serde_json::json!({
-                        "output_tokens": ctx.usage.output_tokens
-                    }).to_string());
+                    ctx.emit(
+                        "claude-usage",
+                        &serde_json::json!({
+                            "output_tokens": ctx.usage.output_tokens
+                        })
+                        .to_string(),
+                    );
                 }
             }
             "message_stop" => {
@@ -473,15 +483,21 @@ impl OpenAIAdapter {
     }
 
     pub fn minimax() -> Self {
-        Self { provider: ProviderId::MiniMax }
+        Self {
+            provider: ProviderId::MiniMax,
+        }
     }
 
     pub fn openai() -> Self {
-        Self { provider: ProviderId::OpenAI }
+        Self {
+            provider: ProviderId::OpenAI,
+        }
     }
 
     pub fn custom() -> Self {
-        Self { provider: ProviderId::Custom }
+        Self {
+            provider: ProviderId::Custom,
+        }
     }
 }
 
@@ -500,7 +516,10 @@ impl ProviderAdapter for OpenAIAdapter {
 
     fn build_headers(&self, config: &ResolvedProviderConfig) -> reqwest::header::HeaderMap {
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("Authorization", format!("Bearer {}", config.api_key).parse().unwrap());
+        headers.insert(
+            "Authorization",
+            format!("Bearer {}", config.api_key).parse().unwrap(),
+        );
         headers.insert("content-type", "application/json".parse().unwrap());
         headers
     }
@@ -512,9 +531,13 @@ impl ProviderAdapter for OpenAIAdapter {
         system_prompt: Option<&str>,
         browser_connected: bool,
     ) -> serde_json::Value {
-        use super::http_client::{convert_tools_to_openai_format, format_messages_for_openai, get_tools};
+        use super::http_client::{
+            convert_tools_to_openai_format, format_messages_for_openai, get_tools,
+        };
 
-        let tools = Some(convert_tools_to_openai_format(&get_tools(browser_connected)));
+        let tools = Some(convert_tools_to_openai_format(&get_tools(
+            browser_connected,
+        )));
         let openai_messages = format_messages_for_openai(messages);
 
         // Build request body
@@ -527,10 +550,13 @@ impl ProviderAdapter for OpenAIAdapter {
         if let Some(system) = system_prompt {
             // Add system message at the front
             if let Some(msgs) = body["messages"].as_array_mut() {
-                msgs.insert(0, serde_json::json!({
-                    "role": "system",
-                    "content": system
-                }));
+                msgs.insert(
+                    0,
+                    serde_json::json!({
+                        "role": "system",
+                        "content": system
+                    }),
+                );
             }
         }
 
@@ -601,9 +627,23 @@ impl ProviderAdapter for OpenAIAdapter {
                     if let Some(calls) = tool_call.as_array() {
                         for call in calls {
                             tool_calls.push(ToolCall {
-                                tool_call_id: call.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                name: call.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                arguments: call.get("function").and_then(|f| f.get("arguments")).and_then(|v| v.as_str()).unwrap_or("{}").to_string(),
+                                tool_call_id: call
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                name: call
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                arguments: call
+                                    .get("function")
+                                    .and_then(|f| f.get("arguments"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("{}")
+                                    .to_string(),
                             });
                         }
                     }
@@ -661,7 +701,10 @@ impl ProviderAdapter for OpenAIAdapter {
                         for tc in tool_calls {
                             let id = tc["id"].as_str().unwrap_or("").to_string();
                             let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
-                            let args = tc["function"]["arguments"].as_str().unwrap_or("{}").to_string();
+                            let args = tc["function"]["arguments"]
+                                .as_str()
+                                .unwrap_or("{}")
+                                .to_string();
 
                             // Check if this is a continuation
                             if let Some(last) = ctx.tool_calls.last_mut() {
@@ -679,10 +722,14 @@ impl ProviderAdapter for OpenAIAdapter {
                                 arguments: args,
                             });
 
-                            ctx.emit("claude-tool-use", &serde_json::json!({
-                                "id": id,
-                                "name": name
-                            }).to_string());
+                            ctx.emit(
+                                "claude-tool-use",
+                                &serde_json::json!({
+                                    "id": id,
+                                    "name": name
+                                })
+                                .to_string(),
+                            );
 
                             events.push(StreamEvent::ToolCall {
                                 id,
@@ -709,8 +756,14 @@ impl ProviderAdapter for OpenAIAdapter {
 
         // Handle usage
         if let Some(usage) = json.get("usage").and_then(|v| v.as_object()) {
-            ctx.usage.input_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-            ctx.usage.output_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            ctx.usage.input_tokens = usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
+            ctx.usage.output_tokens = usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
         }
 
         Ok(events)

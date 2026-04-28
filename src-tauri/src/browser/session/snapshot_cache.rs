@@ -129,6 +129,10 @@ impl SnapshotCache {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn has_active_entry(&self) -> bool {
         self.active_entry().is_some()
     }
@@ -175,7 +179,11 @@ impl SnapshotCache {
         }
     }
 
-    pub fn store(&mut self, key: SnapshotCacheKey, page_state: PageState) -> SnapshotCacheStoreResult {
+    pub fn store(
+        &mut self,
+        key: SnapshotCacheKey,
+        page_state: PageState,
+    ) -> SnapshotCacheStoreResult {
         let key_string = key.as_string();
         self.remove_order_key(&key_string);
         let captured_at_ms = Utc::now().timestamp_millis();
@@ -193,7 +201,10 @@ impl SnapshotCache {
         self.order.push_back(key_string.clone());
         self.active_key = Some(key_string);
         let evicted_entry = self.evict_over_limit();
-        SnapshotCacheStoreResult { entry, evicted_entry }
+        SnapshotCacheStoreResult {
+            entry,
+            evicted_entry,
+        }
     }
 
     pub fn invalidate_active(&mut self, reason: impl Into<String>) -> Option<SnapshotCacheEntry> {
@@ -206,7 +217,11 @@ impl SnapshotCache {
         Some(entry.clone())
     }
 
-    pub fn upgrade_latest_invalidation_reason(&mut self, from_reason: &str, to_reason: &str) -> bool {
+    pub fn upgrade_latest_invalidation_reason(
+        &mut self,
+        from_reason: &str,
+        to_reason: &str,
+    ) -> bool {
         let Some(latest_key) = self.order.back() else {
             return false;
         };
@@ -214,7 +229,9 @@ impl SnapshotCache {
             return false;
         };
 
-        if entry.invalidated_at_ms.is_none() || entry.invalidation_reason.as_deref() != Some(from_reason) {
+        if entry.invalidated_at_ms.is_none()
+            || entry.invalidation_reason.as_deref() != Some(from_reason)
+        {
             return false;
         }
 
@@ -271,14 +288,29 @@ mod tests {
     fn snapshot_cache_evicts_oldest_entries_when_limit_is_exceeded() {
         let mut cache = SnapshotCache::new(2);
 
-        cache.store(make_key("target-1", "nav-1", "viewport-1", "dom-1"), make_page_state("nav-1", 11));
-        cache.store(make_key("target-1", "nav-2", "viewport-1", "dom-2"), make_page_state("nav-2", 22));
-        cache.store(make_key("target-1", "nav-3", "viewport-1", "dom-3"), make_page_state("nav-3", 33));
+        cache.store(
+            make_key("target-1", "nav-1", "viewport-1", "dom-1"),
+            make_page_state("nav-1", 11),
+        );
+        cache.store(
+            make_key("target-1", "nav-2", "viewport-1", "dom-2"),
+            make_page_state("nav-2", 22),
+        );
+        cache.store(
+            make_key("target-1", "nav-3", "viewport-1", "dom-3"),
+            make_page_state("nav-3", 33),
+        );
 
         assert_eq!(cache.len(), 2);
         assert_eq!(cache.active_key(), Some("target-1:nav-3:viewport-1:dom-3"));
         assert_eq!(cache.eviction_count, 1);
-        assert_eq!(cache.active_page_state().as_ref().map(|page_state| page_state.navigation_id.as_str()), Some("nav-3"));
+        assert_eq!(
+            cache
+                .active_page_state()
+                .as_ref()
+                .map(|page_state| page_state.navigation_id.as_str()),
+            Some("nav-3")
+        );
         assert_eq!(cache.hit_count, 1);
     }
 
@@ -286,10 +318,18 @@ mod tests {
     fn snapshot_cache_invalidate_active_only_clears_the_current_entry() {
         let mut cache = SnapshotCache::new(3);
 
-        cache.store(make_key("target-1", "nav-1", "viewport-1", "dom-1"), make_page_state("nav-1", 11));
-        cache.store(make_key("target-1", "nav-2", "viewport-1", "dom-2"), make_page_state("nav-2", 22));
+        cache.store(
+            make_key("target-1", "nav-1", "viewport-1", "dom-1"),
+            make_page_state("nav-1", 11),
+        );
+        cache.store(
+            make_key("target-1", "nav-2", "viewport-1", "dom-2"),
+            make_page_state("nav-2", 22),
+        );
 
-        let invalidated = cache.invalidate_active("navigation").expect("active entry should be removed");
+        let invalidated = cache
+            .invalidate_active("navigation")
+            .expect("active entry should be removed");
 
         assert_eq!(invalidated.page_state.navigation_id, "nav-2");
         assert_eq!(cache.len(), 2);
@@ -305,17 +345,28 @@ mod tests {
     fn snapshot_cache_snapshot_reports_active_key_and_miss_count() {
         let mut cache = SnapshotCache::new(3);
         cache.record_miss();
-        cache.store(make_key("target-1", "nav-1", "viewport-1", "dom-1"), make_page_state("nav-1", 11));
+        cache.store(
+            make_key("target-1", "nav-1", "viewport-1", "dom-1"),
+            make_page_state("nav-1", 11),
+        );
 
         let snapshot = cache.snapshot();
 
-        assert_eq!(snapshot.active_key.as_deref(), Some("target-1:nav-1:viewport-1:dom-1"));
+        assert_eq!(
+            snapshot.active_key.as_deref(),
+            Some("target-1:nav-1:viewport-1:dom-1")
+        );
         assert_eq!(snapshot.entry_limit, 3);
         assert_eq!(snapshot.entries.len(), 1);
         assert_eq!(snapshot.miss_count, 1);
     }
 
-    fn make_key(target_id: &str, navigation_id: &str, viewport_signature: &str, dom_version: &str) -> SnapshotCacheKey {
+    fn make_key(
+        target_id: &str,
+        navigation_id: &str,
+        viewport_signature: &str,
+        dom_version: &str,
+    ) -> SnapshotCacheKey {
         SnapshotCacheKey::new(target_id, navigation_id, viewport_signature, dom_version)
     }
 

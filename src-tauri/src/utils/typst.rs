@@ -13,23 +13,22 @@
  * - Bundled `@preview` packages are resolved from `src/skills/resume/templates/{name}/`
  * - Local files (toml, images, sub-files) resolved from a root directory
  */
-
 use chrono::{Datelike, Timelike};
 use comemo::Prehashed;
 use fontdb::Database as FontDatabase;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use typst::text::{Font, FontBook};
-use typst::syntax::{FileId, Source, VirtualPath};
-use typst::World;
 use typst::compile;
-use typst::foundations::Smart;
-use typst::eval::Tracer;
-use typst_svg::svg;
-use typst::foundations::{Bytes, Datetime};
-use typst::Library;
 use typst::diag::FileError;
+use typst::eval::Tracer;
+use typst::foundations::Smart;
+use typst::foundations::{Bytes, Datetime};
+use typst::syntax::{FileId, Source, VirtualPath};
+use typst::text::{Font, FontBook};
+use typst::Library;
+use typst::World;
+use typst_svg::svg;
 
 // ---------------------------------------------------------------------------
 // PrebuiltFonts — built once at app startup, cloned cheaply on each render
@@ -156,16 +155,27 @@ impl TypstWorld {
             // Try name-version first (e.g. "fontawesome-0.5.0"), then name only (e.g. "basic-resume")
             let pkg_name = package.name.as_str();
             let versioned_key = format!("{}-{}", pkg_name, package.version);
-            let pkg_dir = self.package_dirs.get(&versioned_key)
+            let pkg_dir = self
+                .package_dirs
+                .get(&versioned_key)
                 .or_else(|| self.package_dirs.get(pkg_name))
-                .ok_or_else(|| FileError::NotFound(PathBuf::from(format!("@{}/{}", package.namespace, pkg_name))))?;
-            id.vpath().resolve(pkg_dir)
+                .ok_or_else(|| {
+                    FileError::NotFound(PathBuf::from(format!(
+                        "@{}/{}",
+                        package.namespace, pkg_name
+                    )))
+                })?;
+            id.vpath()
+                .resolve(pkg_dir)
                 .ok_or_else(|| FileError::AccessDenied)
         } else {
             // Local file: resolve from root_dir
-            let root = self.root_dir.as_ref()
+            let root = self
+                .root_dir
+                .as_ref()
                 .ok_or_else(|| FileError::NotFound(PathBuf::new()))?;
-            id.vpath().resolve(root)
+            id.vpath()
+                .resolve(root)
                 .ok_or_else(|| FileError::AccessDenied)
         }
     }
@@ -173,19 +183,15 @@ impl TypstWorld {
     /// Compile the source to SVG pages joined by newline.
     pub fn compile_to_svg(&self) -> Result<String, String> {
         let mut tracer = Tracer::new();
-        let document = compile(self, &mut tracer)
-            .map_err(|errors| {
-                errors
-                    .iter()
-                    .map(|d| d.message.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
+        let document = compile(self, &mut tracer).map_err(|errors| {
+            errors
+                .iter()
+                .map(|d| d.message.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
 
-        let svg_outputs: Vec<String> = document.pages
-            .iter()
-            .map(|page| svg(&page.frame))
-            .collect();
+        let svg_outputs: Vec<String> = document.pages.iter().map(|page| svg(&page.frame)).collect();
 
         Ok(svg_outputs.join("\n"))
     }
@@ -206,15 +212,13 @@ impl World for TypstWorld {
 
     fn source(&self, id: FileId) -> typst::diag::FileResult<Source> {
         let path = self.resolve_file_path(id)?;
-        let text = fs::read_to_string(&path)
-            .map_err(|e| FileError::from_io(e, &path))?;
+        let text = fs::read_to_string(&path).map_err(|e| FileError::from_io(e, &path))?;
         Ok(Source::new(id, text))
     }
 
     fn file(&self, id: FileId) -> typst::diag::FileResult<Bytes> {
         let path = self.resolve_file_path(id)?;
-        let data = fs::read(&path)
-            .map_err(|e| FileError::from_io(e, &path))?;
+        let data = fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
         Ok(Bytes::from(data))
     }
 
@@ -261,24 +265,20 @@ pub fn init_font_database() -> FontDatabase {
 
     let mut latin_loaded = false;
     for path in &times_new_roman_paths {
-        let expanded_path = if path.starts_with('~') {
-            if let Some(home) = std::env::var_os("HOME") {
-                let home_path = std::path::Path::new(&home);
-                let relative = path.strip_prefix("~/").unwrap_or(path);
-                home_path.join(relative)
+        let expanded_path =
+            if let Some(home) = std::env::var_os("HOME").filter(|_| path.starts_with('~')) {
+                std::path::PathBuf::from(home).join(&path[2..])
             } else {
-                continue;
-            }
-        } else {
-            std::path::PathBuf::from(path)
-        };
+                std::path::PathBuf::from(path)
+            };
 
-        if expanded_path.exists() {
-            if db.load_font_file(&expanded_path).is_ok() {
-                println!("✅ Loaded Times New Roman from: {}", expanded_path.display());
-                latin_loaded = true;
-                break;
-            }
+        if expanded_path.exists() && db.load_font_file(&expanded_path).is_ok() {
+            println!(
+                "✅ Loaded Times New Roman from: {}",
+                expanded_path.display()
+            );
+            latin_loaded = true;
+            break;
         }
     }
 
@@ -308,23 +308,16 @@ pub fn init_font_database() -> FontDatabase {
 
     let mut cjk_loaded = 0usize;
     for path in cjk_font_paths {
-        let expanded_path = if path.starts_with('~') {
-            if let Some(home) = std::env::var_os("HOME") {
-                let home_path = std::path::Path::new(&home);
-                let relative = path.strip_prefix("~/").unwrap_or(path);
-                home_path.join(relative)
+        let expanded_path =
+            if let Some(home) = std::env::var_os("HOME").filter(|_| path.starts_with('~')) {
+                std::path::PathBuf::from(home).join(&path[2..])
             } else {
-                continue;
-            }
-        } else {
-            std::path::PathBuf::from(path)
-        };
+                std::path::PathBuf::from(path)
+            };
 
-        if expanded_path.exists() {
-            if db.load_font_file(&expanded_path).is_ok() {
-                println!("✅ Loaded CJK font from: {}", expanded_path.display());
-                cjk_loaded += 1;
-            }
+        if expanded_path.exists() && db.load_font_file(&expanded_path).is_ok() {
+            println!("✅ Loaded CJK font from: {}", expanded_path.display());
+            cjk_loaded += 1;
         }
     }
 
@@ -335,31 +328,38 @@ pub fn init_font_database() -> FontDatabase {
         println!("⚠️ No bundled fonts found, falling back to full system font scan");
         db.load_system_fonts();
     } else if cjk_loaded == 0 {
-        println!("⚠️ No CJK fonts found on this system — Chinese/Japanese/Korean text may not render");
+        println!(
+            "⚠️ No CJK fonts found on this system — Chinese/Japanese/Korean text may not render"
+        );
     }
 
     db
 }
 
 /// Compile using pre-built fonts (the fast path used by the Tauri command).
-pub fn compile_typst_to_svg_with_prebuilt(source: &str, prebuilt: &PrebuiltFonts) -> Result<String, String> {
+pub fn compile_typst_to_svg_with_prebuilt(
+    source: &str,
+    prebuilt: &PrebuiltFonts,
+) -> Result<String, String> {
     let world = TypstWorld::new_with_prebuilt(source, prebuilt);
     world.compile_to_svg()
 }
 
 /// Compile to PDF using pre-built fonts.
-pub fn compile_typst_to_pdf_with_prebuilt(source: &str, prebuilt: &PrebuiltFonts) -> Result<Vec<u8>, String> {
+pub fn compile_typst_to_pdf_with_prebuilt(
+    source: &str,
+    prebuilt: &PrebuiltFonts,
+) -> Result<Vec<u8>, String> {
     let world = TypstWorld::new_with_prebuilt(source, prebuilt);
 
     let mut tracer = Tracer::new();
-    let document = compile(&world, &mut tracer)
-        .map_err(|errors| {
-            errors
-                .iter()
-                .map(|d| d.message.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        })?;
+    let document = compile(&world, &mut tracer).map_err(|errors| {
+        errors
+            .iter()
+            .map(|d| d.message.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
 
     // Render to PDF bytes
     let pdf_bytes = typst_pdf::pdf(&document, Smart::Auto, None);
@@ -408,28 +408,26 @@ pub fn compile_typst_file(
     prebuilt: &PrebuiltFonts,
     templates_dir: Option<&Path>,
 ) -> Result<(String, Vec<u8>), String> {
-    let root_dir = file_path.parent()
+    let root_dir = file_path
+        .parent()
         .ok_or_else(|| "Cannot determine parent directory of .typ file".to_string())?;
-    let filename = file_path.file_name()
+    let filename = file_path
+        .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| "Invalid .typ filename".to_string())?;
 
     let world = TypstWorld::new_rooted(root_dir, filename, prebuilt, templates_dir)?;
 
     let mut tracer = Tracer::new();
-    let document = compile(&world, &mut tracer)
-        .map_err(|errors| {
-            errors
-                .iter()
-                .map(|d| d.message.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        })?;
+    let document = compile(&world, &mut tracer).map_err(|errors| {
+        errors
+            .iter()
+            .map(|d| d.message.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
 
-    let svg_outputs: Vec<String> = document.pages
-        .iter()
-        .map(|page| svg(&page.frame))
-        .collect();
+    let svg_outputs: Vec<String> = document.pages.iter().map(|page| svg(&page.frame)).collect();
     let svg_string = svg_outputs.join("\n");
 
     let pdf_bytes = typst_pdf::pdf(&document, Smart::Auto, None);
@@ -540,7 +538,11 @@ mod tests {
         let prebuilt = build_fonts(&font_db);
 
         let result = compile_typst_file(&typ_path, &prebuilt, None);
-        assert!(result.is_ok(), "compile with local include failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "compile with local include failed: {:?}",
+            result.err()
+        );
 
         let (svg, _) = result.unwrap();
         assert!(svg.contains("<svg"), "SVG should contain <svg tag");
@@ -563,7 +565,9 @@ mod tests {
         fs::create_dir_all(&tmp).unwrap();
 
         // Write info.toml (from SKILL.md inline example)
-        fs::write(tmp.join("info.toml"), r##"[personal]
+        fs::write(
+            tmp.join("info.toml"),
+            r##"[personal]
 first_name = "Test"
 last_name = "User"
 profile_image = ""
@@ -628,7 +632,9 @@ cv_document_name = "Resume"
 
 [import]
 fontawesome = "@preview/fontawesome:0.5.0"
-"##).unwrap();
+"##,
+        )
+        .unwrap();
 
         // Write resume.typ (from SKILL.md inline example)
         fs::write(tmp.join("resume.typ"), r##"#import "@preview/grotesk-cv:1.0.5": cv, experience-entry, education-entry, skill-entry
@@ -679,12 +685,12 @@ fontawesome = "@preview/fontawesome:0.5.0"
         let font_db = init_font_database();
         let prebuilt = build_fonts(&font_db);
 
-        let result = compile_typst_file(
-            &tmp.join("resume.typ"),
-            &prebuilt,
-            Some(&templates_dir),
+        let result = compile_typst_file(&tmp.join("resume.typ"), &prebuilt, Some(&templates_dir));
+        assert!(
+            result.is_ok(),
+            "grotesk-cv inline example failed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "grotesk-cv inline example failed: {:?}", result.err());
 
         let (svg, pdf) = result.unwrap();
         assert!(svg.contains("<svg"), "SVG should contain <svg tag");
@@ -706,7 +712,9 @@ fontawesome = "@preview/fontawesome:0.5.0"
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
-        fs::write(tmp.join("resume.typ"), r##"#import "@preview/basic-resume:0.2.9": *
+        fs::write(
+            tmp.join("resume.typ"),
+            r##"#import "@preview/basic-resume:0.2.9": *
 
 #show: resume.with(
   author: "Test User",
@@ -740,16 +748,14 @@ fontawesome = "@preview/fontawesome:0.5.0"
 == Skills
 
 Languages: Python, TypeScript, Go
-"##).unwrap();
+"##,
+        )
+        .unwrap();
 
         let font_db = init_font_database();
         let prebuilt = build_fonts(&font_db);
 
-        let result = compile_typst_file(
-            &tmp.join("resume.typ"),
-            &prebuilt,
-            Some(&templates_dir),
-        );
+        let result = compile_typst_file(&tmp.join("resume.typ"), &prebuilt, Some(&templates_dir));
         match &result {
             Ok((svg, pdf)) => {
                 assert!(svg.contains("<svg"), "SVG should contain <svg tag");
@@ -782,7 +788,9 @@ Languages: Python, TypeScript, Go
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
-        fs::write(tmp.join("resume.typ"), r##"#import "@preview/calligraphics:1.0.0": *
+        fs::write(
+            tmp.join("resume.typ"),
+            r##"#import "@preview/calligraphics:1.0.0": *
 
 #resume(
   author: (
@@ -817,16 +825,14 @@ Languages: Python, TypeScript, Go
     - Built features and shipped code
   ]
 ]
-"##).unwrap();
+"##,
+        )
+        .unwrap();
 
         let font_db = init_font_database();
         let prebuilt = build_fonts(&font_db);
 
-        let result = compile_typst_file(
-            &tmp.join("resume.typ"),
-            &prebuilt,
-            Some(&templates_dir),
-        );
+        let result = compile_typst_file(&tmp.join("resume.typ"), &prebuilt, Some(&templates_dir));
         match &result {
             Ok((svg, pdf)) => {
                 assert!(svg.contains("<svg"), "SVG should contain <svg tag");

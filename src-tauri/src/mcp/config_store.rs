@@ -63,9 +63,10 @@ impl MCPConfigStore {
     /// Update an existing server configuration
     pub fn update(&self, server: MCPServer) -> Result<MCPServer, MCPError> {
         let mut servers = self.load()?;
-        let pos = servers.iter().position(|s| s.id == server.id).ok_or_else(|| {
-            MCPError::ServerNotFound(server.id.clone())
-        })?;
+        let pos = servers
+            .iter()
+            .position(|s| s.id == server.id)
+            .ok_or_else(|| MCPError::ServerNotFound(server.id.clone()))?;
         servers[pos] = server.clone();
         self.save(&servers)?;
         Ok(server)
