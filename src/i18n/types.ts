@@ -436,6 +436,40 @@ export type TranslationKeys = {
   'browserMiniPreview.skipVerification': string;
   'browserMiniPreview.forceContinue': string;
 
+  // Browser Bridge (chat progress messages)
+  'browserBridge.status.opening': string;
+  'browserBridge.status.inspecting': string;
+  'browserBridge.status.needsLogin': string;
+  'browserBridge.status.waitingUserResume': string;
+  'browserBridge.status.readyForAgent': string;
+  'browserBridge.status.running': string;
+  'browserBridge.status.completed': string;
+  'browserBridge.status.error': string;
+  'browserBridge.status.blockedAuth': string;
+  'browserBridge.status.blockedCaptcha': string;
+  'browserBridge.status.blockedManualStep': string;
+  'browserBridge.statusMessage.opening': string;
+  'browserBridge.statusMessage.inspecting': string;
+  'browserBridge.statusMessage.needsLogin': string;
+  'browserBridge.statusMessage.waitingUserResume': string;
+  'browserBridge.statusMessage.readyForAgent': string;
+  'browserBridge.statusMessage.running': string;
+  'browserBridge.statusMessage.blockedAuth': string;
+  'browserBridge.statusMessage.blockedCaptcha': string;
+  'browserBridge.statusMessage.blockedManualStep': string;
+  'browserBridge.statusMessage.completed': string;
+  'browserBridge.statusMessage.error': string;
+  'browserBridge.statusMessage.default': string;
+  'browserBridge.progressHeaderComplete': string;
+  'browserBridge.progressHeaderInProgress': string;
+  'browserBridge.complexity.simple': string;
+  'browserBridge.complexity.medium': string;
+  'browserBridge.complexity.complex': string;
+  'browserBridge.initialMessage': string;
+  'browserBridge.taskCompletedNoResult': string;
+  'browserBridge.defaultTaskDescription': string;
+  'browserBridge.browseTaskDescription': string;
+
   // Skill Page
   'skill.title': string;
   'skill.marketplace': string;
@@ -786,4 +820,21 @@ export type TranslationKeys = {
   'autoresearch.newSession': string;
   'autoresearch.emptyIdle': string;
   'autoresearch.emptyWaiting': string;
+
+  // Error Boundary
+  'errorBoundary.title': string;
+  'errorBoundary.description': string;
+  'errorBoundary.reload': string;
+  'errorBoundary.backToChat': string;
+  'errorBoundary.copyDiagnostics': string;
+  'errorBoundary.copySuccess': string;
+
+  // Settings - Test Connection Enhanced
+  'settings.testConnectionSuccess': string;
+  'settings.testConnectionLatency': string;
+  'settings.testConnectionErrorNetwork': string;
+  'settings.testConnectionErrorAuth': string;
+  'settings.testConnectionErrorModel': string;
+  'settings.testConnectionErrorTimeout': string;
+  'settings.testConnectionErrorUnknown': string;
 };

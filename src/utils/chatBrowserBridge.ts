@@ -13,6 +13,7 @@ import { useBrowserAgentStore } from '../store/browserAgentStore';
 import { useUIStore } from '../store/uiStore';
 import { useChatStore } from '../store/chatStore';
 import { useCdpStore } from '../store/cdpStore';
+import { t } from '@/i18n';
 
 // Track browser workflow listener lifecycle between tasks
 let _browserStateUnsubscribe: (() => void) | null = null;
@@ -24,21 +25,18 @@ let activeBrowserMessageId: string | null = null;
 let browserSteps: Array<{ status: string; label: string; done: boolean }> = [];
 
 /**
- * Status to step label mapping
+ * Status to step label mapping (i18n-aware).
+ * Called at render time so t() picks up the current locale.
  */
-const STATUS_LABELS: Record<string, string> = {
-  opening: '打开浏览器',
-  inspecting: '检查页面状态',
-  needs_login: '等待登录',
-  waiting_user_resume: '等待用户操作',
-  ready_for_agent: '页面就绪',
-  running: '执行任务',
-  completed: '任务完成',
-  error: '任务出错',
-  blocked_auth: '认证被阻止',
-  blocked_captcha: '遇到验证码',
-  blocked_manual_step: '需要手动操作',
-};
+function getStatusLabel(status: string): string {
+  const key = `browserBridge.status.${status}` as Parameters<typeof t>[0];
+  // Fall back to the status string itself if key is missing
+  try {
+    return t(key);
+  } catch {
+    return status;
+  }
+}
 
 /**
  * States that should trigger a chat progress update
@@ -331,7 +329,7 @@ export async function createTaskEnvelopeFromChat(
 
   // Default task if nothing meaningful remains
   if (!taskDescription) {
-    taskDescription = intent.kind === 'browser_open_only' ? '浏览网页内容' : '执行浏览器任务';
+    taskDescription = intent.kind === 'browser_open_only' ? t('browserBridge.browseTaskDescription') : t('browserBridge.defaultTaskDescription');
   }
 
   // Add context for login-gated tasks
@@ -429,48 +427,17 @@ export function addChatProgressMessage(
 }
 
 /**
- * Get browser status message for chat
+ * Get browser status message for chat (i18n-aware)
  */
 export function getBrowserStatusMessage(
   status: string,
   _siteProfileId?: string
 ): string {
-  switch (status) {
-    case 'opening':
-      return '我正在打开浏览器并准备目标网站...';
-
-    case 'inspecting':
-      return '正在检查页面状态...';
-
-    case 'needs_login':
-      return '我已经打开目标网站。请先完成登录，登录后点击"我已登录"，我会继续。';
-
-    case 'waiting_user_resume':
-      return '等待您完成登录。登录后请点击"我已登录"按钮。';
-
-    case 'ready_for_agent':
-      return '页面已就绪，我可以继续执行浏览器任务。';
-
-    case 'running':
-      return '我正在浏览器中执行这个任务...';
-
-    case 'blocked_auth':
-      return '会话已失效或页面重新要求登录。请先完成登录后继续。';
-
-    case 'blocked_captcha':
-      return '遇到了验证码或人工验证步骤。请先在浏览器中完成验证。';
-
-    case 'blocked_manual_step':
-      return '这个步骤需要您手动确认。请在浏览器中完成操作后继续。';
-
-    case 'completed':
-      return '浏览器任务已完成。';
-
-    case 'error':
-      return '浏览器任务执行出错。请检查浏览器窗口状态。';
-
-    default:
-      return '正在处理浏览器任务...';
+  const key = `browserBridge.statusMessage.${status}` as Parameters<typeof t>[0];
+  try {
+    return t(key);
+  } catch {
+    return t('browserBridge.statusMessage.default');
   }
 }
 
@@ -481,8 +448,8 @@ export function getBrowserStatusMessage(
 function buildProgressContent(steps: Array<{ status: string; label: string; done: boolean }>, isFinal: boolean): string {
   const allDone = isFinal || steps.every(s => s.done);
   const header = allDone
-    ? '🌐 **浏览器任务** · ✅ 已完成'
-    : '🌐 **浏览器任务** · ⏳ 进行中';
+    ? t('browserBridge.progressHeaderComplete')
+    : t('browserBridge.progressHeaderInProgress');
 
   const lastStep = steps[steps.length - 1];
   const hasInProgressStep = !allDone && lastStep && !lastStep.done;
@@ -547,7 +514,7 @@ function startBrowserStateListener() {
       // Always generate a response — if result is empty, use a fallback so the user
       // doesn't see a completed progress bubble with no AI reply.
       chatStore.generateBrowserResultResponse(
-        taskResult || '（浏览器任务已完成，但未获取到具体内容，可能页面为空或任务未返回数据）',
+        taskResult || t('browserBridge.taskCompletedNoResult'),
         originalQuery
       );
       return;
@@ -560,7 +527,7 @@ function startBrowserStateListener() {
       const steps = [...browserSteps];
 
       stopBrowserStateListener();
-      const errorStep = STATUS_LABELS['error'] || '任务出错';
+      const errorStep = getStatusLabel('error');
       steps.push({ status: 'error', label: errorStep, done: false });
 
       if (msgId) {
@@ -599,7 +566,7 @@ function startBrowserStateListener() {
     if (currentStatus !== lastStatus && PROGRESS_TRIGGER_STATES.includes(currentStatus)) {
       lastStatus = currentStatus;
 
-      const label = STATUS_LABELS[currentStatus] || getBrowserStatusMessage(currentStatus);
+      const label = getStatusLabel(currentStatus);
       const isDone = currentStatus !== 'running';
 
       // Add/update step in the steps array
@@ -689,13 +656,12 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
   const complexity = estimateTaskComplexity(envelope);
 
   // Add initial progress message to chat (this is tracked by the listener for consolidation)
-  const complexityText: Record<string, string> = {
-    simple: '简单任务',
-    medium: '中等复杂度任务',
-    complex: '复杂任务',
-  };
-
-  const initialMessage = `我将打开 ${envelope.metadata?.profileLabel || envelope.siteProfileId} ${complexityText[complexity] || '任务'}。`;
+  const complexityKey = `browserBridge.complexity.${complexity}` as Parameters<typeof t>[0];
+  const complexityLabel = `${t(complexityKey)}`;
+  const profile = `${envelope.metadata?.profileLabel || envelope.siteProfileId || ''}`;
+  const initialMessage = `${t('browserBridge.initialMessage')}`
+    .replace('{profile}', profile)
+    .replace('{complexity}', complexityLabel);
 
   // Start listening to browser state changes BEFORE adding the initial message
   // so the listener can track/consolidate all bubbles from the start
@@ -713,7 +679,7 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
   if (initialMsgId && useBrowserAgentStore.getState().status === 'idle') {
     activeBrowserMessageId = initialMsgId;
     // Add 'opening' to steps as done so the bubble starts with context
-    browserSteps.push({ status: 'opening', label: STATUS_LABELS['opening'] || '打开浏览器', done: true });
+    browserSteps.push({ status: 'opening', label: getStatusLabel('opening'), done: true });
   }
 
   // Switch to browser panel

@@ -63,11 +63,14 @@ export default function App() {
     let cleanupBrowserObservability: (() => void) | null = null;
 
     const startBackgroundInitialization = () => {
-      void initializeTelegramStore().catch((error) => {
+      // Wrap in Promise.resolve().then() to safely handle functions that may
+      // return void, throw synchronously, or return a rejected Promise.
+      // Direct `fn().catch()` would throw if fn returns void (not a Promise).
+      Promise.resolve().then(() => initializeTelegramStore()).catch((error) => {
         console.warn('Telegram background initialization failed:', error);
       });
 
-      void initSwarm().catch((error) => {
+      Promise.resolve().then(() => initSwarm()).catch((error) => {
         console.warn('Swarm background initialization failed:', error);
       });
 
