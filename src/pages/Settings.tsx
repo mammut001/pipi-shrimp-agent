@@ -407,7 +407,7 @@ export function Settings() {
   };
 
   /**
-   * Handle test connection
+   * Handle test connection with latency measurement and error classification
    */
   const handleTestConnection = async () => {
     const providerErrors = validateProviderFields(formData.provider, formData.apiKey, formData.baseUrl);
@@ -419,6 +419,8 @@ export function Settings() {
     setIsTesting(true);
     setTestResult(null);
 
+    const startTime = Date.now();
+
     try {
       const providerDef = getProvider(formData.provider);
       const result = await invoke<boolean>('test_connection', {
@@ -427,13 +429,35 @@ export function Settings() {
         baseUrl: providerDef?.requiresBaseUrl ? formData.baseUrl : null,
       });
 
+      const latency = Date.now() - startTime;
+
       if (result) {
-        setTestResult({ success: true, message: t('settings.connectionSuccessful') });
+        const successMsg = t('settings.testConnectionSuccess')
+          .replace('{provider}', formData.provider)
+          .replace('{model}', formData.model)
+          .replace('{latency}', String(latency));
+        setTestResult({ success: true, message: successMsg });
         addNotification('success', t('settings.connectionTestPassed'));
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setTestResult({ success: false, message: errorMessage });
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      const lower = rawMsg.toLowerCase();
+
+      // Classify the error for a friendly message
+      let friendlyMsg: string;
+      if (lower.includes('timeout') || lower.includes('timed out')) {
+        friendlyMsg = t('settings.testConnectionErrorTimeout');
+      } else if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized') || lower.includes('auth') || lower.includes('invalid api key') || lower.includes('incorrect api key')) {
+        friendlyMsg = t('settings.testConnectionErrorAuth');
+      } else if (lower.includes('model') && (lower.includes('not found') || lower.includes('not available') || lower.includes('does not exist') || lower.includes('invalid'))) {
+        friendlyMsg = t('settings.testConnectionErrorModel');
+      } else if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection') || lower.includes('dns') || lower.includes('enotfound')) {
+        friendlyMsg = t('settings.testConnectionErrorNetwork');
+      } else {
+        friendlyMsg = `${t('settings.testConnectionErrorUnknown')} (${rawMsg.slice(0, 120)})`;
+      }
+
+      setTestResult({ success: false, message: friendlyMsg });
       addNotification('error', t('settings.connectionTestFailed'));
     } finally {
       setIsTesting(false);

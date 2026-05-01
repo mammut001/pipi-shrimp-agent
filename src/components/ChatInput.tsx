@@ -183,9 +183,13 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
       const targetSessionId = await resolveChatTargetSessionId(currentSessionId, startSession);
 
       onSend?.(message);
-      const sendPromise = sendMessage(message, targetSessionId);
+      await sendMessage(message, targetSessionId);
+      // Only clear draft after successful send
       clearInputDraft();
-      await sendPromise;
+    } catch (error) {
+      // Preserve input on failure so user can retry
+      console.error('[ChatInput] sendMessage failed, preserving input:', error);
+      setInput(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -197,10 +201,17 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
       const handled = await handleChatBrowserWorkflow(message);
       if (shouldClearDraftAfterBrowserWorkflow(handled)) {
         clearInputDraft();
+      } else if (!handled) {
+        // Browser handoff declined — preserve input and show fallback prompt
+        setInput(message);
+        setBrowserIntentCandidate(message);
       }
       return handled;
     } catch (error) {
       console.error('[ChatInput] Failed to hand off browser workflow:', error);
+      // Preserve input and re-show intent confirm so user can choose "send as normal"
+      setInput(message);
+      setBrowserIntentCandidate(message);
       return false;
     } finally {
       setIsSubmitting(false);

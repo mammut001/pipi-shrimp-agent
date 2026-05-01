@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke, safeInvokeOrNull } from '../utils/safeInvoke';
 import type { ChatState, Session, Message, Project, OutputFolder } from '../types/chat';
 import { createSession, createMessage, createProject } from '../types/chat';
 import { useArtifactsStore } from './artifactsStore';
@@ -321,12 +322,12 @@ async function ensureSessionWorkDir(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const defaultDir = await invoke<string>('get_app_default_dir', { sessionId });
-      await invoke('create_directory', { path: defaultDir });
+      const defaultDir = await safeInvoke<string>('get_app_default_dir', { sessionId });
+      await safeInvoke('create_directory', { path: defaultDir });
 
       const latestSession = get().sessions.find((s) => s.id === sessionId) ?? session;
       const updated = { ...latestSession, workDir: defaultDir, updatedAt: Date.now() };
-      await invoke('db_save_session', { session: sessionToDb(updated) });
+      await safeInvoke('db_save_session', { session: sessionToDb(updated) });
 
       set((state) => ({
         sessions: state.sessions.map((s) => (s.id === sessionId ? updated : s)),
@@ -492,7 +493,7 @@ async function scrubDanglingToolCalls(
   }));
 
   try {
-    await invoke('db_save_message', { message: messageToDb(cleanedMessage, sessionId) });
+    await safeInvoke('db_save_message', { message: messageToDb(cleanedMessage, sessionId) });
   } catch (error) {
     console.error('Failed to scrub dangling tool_calls from database:', error);
   }
@@ -1024,7 +1025,7 @@ export const useChatStore = create<ChatState>()(
 
       // Save to database
       try {
-        await invoke('db_save_session', { session: sessionToDb(newSession) });
+        await safeInvoke('db_save_session', { session: sessionToDb(newSession) });
       } catch (error) {
         console.error('Failed to save session to database:', error);
       }
@@ -1071,7 +1072,7 @@ export const useChatStore = create<ChatState>()(
       }));
 
       // Persist to database
-      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+      await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
     },
 
     /**
@@ -1093,7 +1094,7 @@ export const useChatStore = create<ChatState>()(
       }));
 
       // Persist to database
-      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+      await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
     },
 
     /**
@@ -1115,7 +1116,7 @@ export const useChatStore = create<ChatState>()(
       }));
 
       // Persist to database
-      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+      await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
     },
 
     /**
@@ -1141,7 +1142,7 @@ export const useChatStore = create<ChatState>()(
       }));
 
       // Persist to database
-      await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+      await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
 
       if (!hasPendingAskFlow) return;
 
@@ -1180,7 +1181,7 @@ export const useChatStore = create<ChatState>()(
       }));
 
       // Persist to database
-      await invoke('update_session_title', { sessionId, title: newTitle });
+      await safeInvoke('update_session_title', { sessionId, title: newTitle });
     },
 
     /**
@@ -1218,7 +1219,7 @@ export const useChatStore = create<ChatState>()(
           if (get().isStreaming) {
             setStreaming(false);
             set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-            invoke('stop_subprocess', { sessionId: currentSessionId }).catch(console.error);
+            safeInvokeOrNull('stop_subprocess', { sessionId: currentSessionId });
           }
         }, 300_000);
 
@@ -1433,7 +1434,7 @@ export const useChatStore = create<ChatState>()(
             setStreaming(false);
             set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
             setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded). Please try again.`);
-            invoke('stop_subprocess', { sessionId: activeSessionId }).catch(console.error);
+            safeInvokeOrNull('stop_subprocess', { sessionId: activeSessionId });
           }
         }, STREAMING_TIMEOUT_MS);
 
@@ -1457,8 +1458,8 @@ export const useChatStore = create<ChatState>()(
         // Auto-create output directory for this session if workDir is bound and no outputDir yet
         if (sessionWorkDir && !currentSession?.outputDir) {
           try {
-            const outputDir = await invoke<string>('get_next_output_dir', { workDir: sessionWorkDir });
-            await invoke('create_directory', { path: outputDir });
+            const outputDir = await safeInvoke<string>('get_next_output_dir', { workDir: sessionWorkDir });
+            await safeInvoke('create_directory', { path: outputDir });
             const updated = { ...currentSession!, outputDir, updatedAt: Date.now() };
             set(state => ({
               sessions: state.sessions.map(s => s.id === activeSessionId ? updated : s)
@@ -1951,7 +1952,7 @@ export const useChatStore = create<ChatState>()(
         if (tokenUsage) {
           const now = new Date();
           const date = now.toISOString().split('T')[0];
-          await invoke('db_save_token_usage', {
+          await safeInvoke('db_save_token_usage', {
             usage: {
               id: crypto.randomUUID(),
               session_id: activeSessionId,
@@ -2055,7 +2056,7 @@ export const useChatStore = create<ChatState>()(
       try {
         // Call the Rust backend to kill the subprocess
         console.log('stopGeneration: calling stop_subprocess');
-        await invoke('stop_subprocess', { sessionId: currentSessionId });
+        await safeInvoke('stop_subprocess', { sessionId: currentSessionId }, { silent: true });
         console.log('stopGeneration: stop_subprocess completed');
       } catch (error) {
         console.error('Failed to stop subprocess:', error);
@@ -2127,9 +2128,7 @@ export const useChatStore = create<ChatState>()(
         // Await all deletes before resending to avoid duplicate user messages in DB.
         await Promise.allSettled(
           messagesToDelete.map(msg =>
-            invoke('db_delete_message', { messageId: msg.id }).catch(e =>
-              console.error(`Failed to delete orphaned message ${msg.id} from DB:`, e)
-            )
+            safeInvokeOrNull('db_delete_message', { messageId: msg.id })
           )
         );
 
@@ -2152,7 +2151,7 @@ export const useChatStore = create<ChatState>()(
       // so they'd re-appear without the hidden flag on reload and pass through the UI filter)
       if (!message.metadata?.hidden) {
         try {
-          await invoke('db_save_message', { message: messageToDb(message, currentSessionId) });
+          await safeInvoke('db_save_message', { message: messageToDb(message, currentSessionId) });
         } catch (error) {
           console.error('Failed to save message to database:', error);
         }
@@ -2174,7 +2173,7 @@ export const useChatStore = create<ChatState>()(
     addMessageToSession: async (sessionId: string, message: Message) => {
       if (!message.metadata?.hidden) {
         try {
-          await invoke('db_save_message', { message: messageToDb(message, sessionId) });
+          await safeInvoke('db_save_message', { message: messageToDb(message, sessionId) });
         } catch (e) {
           console.warn('[addMessageToSession] DB persist failed:', e);
         }
@@ -2228,7 +2227,7 @@ export const useChatStore = create<ChatState>()(
       // Persist to database
       if (messageToUpdate) {
         try {
-          await invoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
+          await safeInvoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
         } catch (error) {
           console.error('Failed to persist streaming update to database:', error);
         }
@@ -2269,7 +2268,7 @@ export const useChatStore = create<ChatState>()(
       // Persist to database
       if (messageToUpdate) {
         try {
-          await invoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
+          await safeInvoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
         } catch (error) {
           console.error('Failed to persist updateMessageContent to database:', error);
         }
@@ -2357,9 +2356,7 @@ export const useChatStore = create<ChatState>()(
           const { setStreaming, currentSessionId, streamingSessionId } = get();
           const owningSessionId = streamingSessionId || currentSessionId;
           if (owningSessionId) {
-            invoke('stop_subprocess', { sessionId: owningSessionId }).catch((e: unknown) =>
-              console.error('Failed to stop subprocess after generic streaming timeout:', e)
-            );
+            safeInvokeOrNull('stop_subprocess', { sessionId: owningSessionId });
           }
           setStreaming(false);
           set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
@@ -2407,7 +2404,7 @@ export const useChatStore = create<ChatState>()(
         // Stop any in-progress streaming request for the previous session
         // to avoid wasting API tokens and receiving orphaned events
         if (previousSessionId && previousSessionId !== sessionId && get().isStreaming) {
-          invoke('stop_subprocess', { sessionId: previousSessionId }).catch(() => {});
+          safeInvokeOrNull('stop_subprocess', { sessionId: previousSessionId });
         }
 
         // Clear any stale ASK-mode permission dialogs from the previous session.

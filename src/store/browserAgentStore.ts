@@ -17,6 +17,11 @@ import { listen } from '@tauri-apps/api/event';
 // function that decrements the count; the last one to clean up actually unlisten()s.
 let _listenerRefCount = 0;
 let _listenerCleanup: (() => void) | null = null;
+// Guard against concurrent async registration: if two callers invoke
+// setupEventListeners() before the first await completes, both would see
+// _listenerCleanup as null and register duplicate listeners. We store the
+// in-flight promise so subsequent callers await the same registration.
+let _listenerSetupPromise: Promise<() => void> | null = null;
 
 // Timer tracking to prevent race conditions between tasks
 let _completionTimerId: ReturnType<typeof setTimeout> | null = null;
@@ -234,6 +239,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
    * Uses a ref-count so multiple callers (ChatBrowserWorkspaceShell, BrowserPanel,
    * BrowserMiniPreview) share a single set of Tauri listeners instead of registering
    * duplicate handlers that fire multiple times per event.
+   *
+   * Also guards against concurrent async registration: if two callers invoke
+   * setupEventListeners() before the first await completes, both will share the
+   * same in-flight promise instead of registering duplicate listeners.
    */
   setupEventListeners: async () => {
     _listenerRefCount += 1;
@@ -245,78 +254,105 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       };
     }
 
+    // If registration is already in-flight, await the same promise
+    if (_listenerSetupPromise) {
+      await _listenerSetupPromise;
+      // Return a wrapper that decrements our ref count
+      return () => {
+        _listenerRefCount = Math.max(0, _listenerRefCount - 1);
+        if (_listenerRefCount === 0 && _listenerCleanup) {
+          _listenerCleanup();
+        }
+      };
+    }
+
     const { addLog } = get();
 
-    // Listen for agent log events from the browser window
-    const unlistenLog = await listen<AgentLog>('agent_log', (event) => {
-      const { level, message } = event.payload;
-      console.log(`[BrowserAgent ${level}]`, message);
-      addLog(level, message);
-    });
+    // Create the setup promise so concurrent callers can await it
+    _listenerSetupPromise = (async () => {
+      // Listen for agent log events from the browser window
+      const unlistenLog = await listen<AgentLog>('agent_log', (event) => {
+        const { level, message } = event.payload;
+        console.log(`[BrowserAgent ${level}]`, message);
+        addLog(level, message);
+      });
 
-    // Listen for task completion events
-    const unlistenComplete = await listen<AgentTaskComplete>('agent_task_complete', (event) => {
-      const { success, final_url, result } = event.payload;
-      if (success) {
-        addLog('success', `任务完成！最终URL: ${final_url}`);
-        const completedTaskId = get().pendingTask?.id || null;
-        set(() => ({
-          status: 'completed',
-          lastCompletedTaskId: completedTaskId,
-          lastTaskResult: result || null,
-        }));
-        // Auto-reset to idle after 5s so the next task can start cleanly.
-        // 'completed' blocks direct executeTask() calls; resetting ensures
-        // manual Run and any other entry points work without stale state.
-        // Clear any pending timers first to prevent race conditions.
-        clearPendingTimers(completedTaskId);
-        _completionTimerId = setTimeout(() => {
-          // Only reset if still in completed state AND this timer belongs to the current task
-          if (get().status === 'completed' && _completionTimerTaskId === completedTaskId) {
-            set({ status: 'idle', pendingTask: null });
-            _completionTimerTaskId = null;
-          }
-          _completionTimerId = null;
-        }, 5000);
-        _completionTimerTaskId = completedTaskId;
-      } else {
-        addLog('error', `任务失败: ${result}`);
-        const failedTaskId = get().pendingTask?.id || null;
-        set({ status: 'error', error: result, lastTaskResult: null });
-        // Also reset error state after 5s so next task isn't blocked
-        clearPendingTimers(failedTaskId);
-        _errorTimerId = setTimeout(() => {
-          if (get().status === 'error' && _errorTimerTaskId === failedTaskId) {
-            set({ status: 'idle', error: null });
-            _errorTimerTaskId = null;
-          }
-          _errorTimerId = null;
-        }, 5000);
-        _errorTimerTaskId = failedTaskId;
-      }
-    });
+      // Listen for task completion events
+      const unlistenComplete = await listen<AgentTaskComplete>('agent_task_complete', (event) => {
+        const { success, final_url, result } = event.payload;
+        if (success) {
+          addLog('success', `任务完成！最终URL: ${final_url}`);
+          const completedTaskId = get().pendingTask?.id || null;
+          set(() => ({
+            status: 'completed',
+            lastCompletedTaskId: completedTaskId,
+            lastTaskResult: result || null,
+          }));
+          // Auto-reset to idle after 5s so the next task can start cleanly.
+          // 'completed' blocks direct executeTask() calls; resetting ensures
+          // manual Run and any other entry points work without stale state.
+          // Clear any pending timers first to prevent race conditions.
+          clearPendingTimers(completedTaskId);
+          _completionTimerId = setTimeout(() => {
+            // Only reset if still in completed state AND this timer belongs to the current task
+            if (get().status === 'completed' && _completionTimerTaskId === completedTaskId) {
+              set({ status: 'idle', pendingTask: null });
+              _completionTimerTaskId = null;
+            }
+            _completionTimerId = null;
+          }, 5000);
+          _completionTimerTaskId = completedTaskId;
+        } else {
+          addLog('error', `任务失败: ${result}`);
+          const failedTaskId = get().pendingTask?.id || null;
+          set({ status: 'error', error: result, lastTaskResult: null });
+          // Also reset error state after 5s so next task isn't blocked
+          clearPendingTimers(failedTaskId);
+          _errorTimerId = setTimeout(() => {
+            if (get().status === 'error' && _errorTimerTaskId === failedTaskId) {
+              set({ status: 'idle', error: null });
+              _errorTimerTaskId = null;
+            }
+            _errorTimerId = null;
+          }, 5000);
+          _errorTimerTaskId = failedTaskId;
+        }
+      });
 
-    // Listen for screenshot events from the backend (dataUrl)
-    const unlistenScreenshot = await listen<{ dataUrl: string }>('screenshot_captured', (event) => {
-      const url = event.payload?.dataUrl;
-      if (typeof url === 'string' && url.length > 0) {
-        set((state) => ({ screenshots: [...state.screenshots, url].slice(-20) }));
-      }
-    });
+      // Listen for screenshot events from the backend (dataUrl)
+      const unlistenScreenshot = await listen<{ dataUrl: string }>('screenshot_captured', (event) => {
+        const url = event.payload?.dataUrl;
+        if (typeof url === 'string' && url.length > 0) {
+          set((state) => ({ screenshots: [...state.screenshots, url].slice(-20) }));
+        }
+      });
 
-    const unlistenScreenshotError = await listen<{ message: string }>('screenshot_error', (event) => {
-      const message = event.payload?.message ?? 'unknown';
-      addLog('error', `截图错误: ${message}`);
-    });
+      const unlistenScreenshotError = await listen<{ message: string }>('screenshot_error', (event) => {
+        const message = event.payload?.message ?? 'unknown';
+        addLog('error', `截图错误: ${message}`);
+      });
 
-    // Store the real cleanup so subsequent callers can share it
-    _listenerCleanup = () => {
-      unlistenLog();
-      unlistenComplete();
-      unlistenScreenshot();
-      unlistenScreenshotError();
-      _listenerCleanup = null;
-    };
+      // Store the real cleanup so subsequent callers can share it
+      _listenerCleanup = () => {
+        unlistenLog();
+        unlistenComplete();
+        unlistenScreenshot();
+        unlistenScreenshotError();
+        _listenerCleanup = null;
+        _listenerSetupPromise = null;
+      };
+
+      return _listenerCleanup;
+    })();
+
+    try {
+      await _listenerSetupPromise;
+    } catch (err) {
+      // Registration failed — reset guard so next caller can retry
+      _listenerSetupPromise = null;
+      _listenerRefCount = Math.max(0, _listenerRefCount - 1);
+      throw err;
+    }
 
     // Return cleanup function — only the last ref actually tears down listeners
     return () => {

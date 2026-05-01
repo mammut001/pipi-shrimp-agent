@@ -486,6 +486,40 @@ const enUS: TranslationKeys = {
   'browserMiniPreview.skipVerification': 'Skip verification and continue',
   'browserMiniPreview.forceContinue': 'Force continue',
 
+  // Browser Bridge (chat progress messages)
+  'browserBridge.status.opening': 'Opening browser',
+  'browserBridge.status.inspecting': 'Inspecting page',
+  'browserBridge.status.needsLogin': 'Waiting for login',
+  'browserBridge.status.waitingUserResume': 'Waiting for user',
+  'browserBridge.status.readyForAgent': 'Page ready',
+  'browserBridge.status.running': 'Executing task',
+  'browserBridge.status.completed': 'Task completed',
+  'browserBridge.status.error': 'Task error',
+  'browserBridge.status.blockedAuth': 'Auth blocked',
+  'browserBridge.status.blockedCaptcha': 'Captcha encountered',
+  'browserBridge.status.blockedManualStep': 'Manual step required',
+  'browserBridge.statusMessage.opening': 'Opening browser and preparing the target site...',
+  'browserBridge.statusMessage.inspecting': 'Inspecting page status...',
+  'browserBridge.statusMessage.needsLogin': 'Target site is open. Please complete login, then click "I have logged in" to continue.',
+  'browserBridge.statusMessage.waitingUserResume': 'Waiting for you to complete login. Click "I have logged in" after logging in.',
+  'browserBridge.statusMessage.readyForAgent': 'Page is ready. I can continue executing the browser task.',
+  'browserBridge.statusMessage.running': 'Executing the task in the browser...',
+  'browserBridge.statusMessage.blockedAuth': 'Session expired or login required again. Please complete login first.',
+  'browserBridge.statusMessage.blockedCaptcha': 'A CAPTCHA or manual verification step was encountered. Please complete it in the browser.',
+  'browserBridge.statusMessage.blockedManualStep': 'This step requires manual confirmation. Please complete the operation in the browser.',
+  'browserBridge.statusMessage.completed': 'Browser task completed.',
+  'browserBridge.statusMessage.error': 'Browser task encountered an error. Please check the browser window.',
+  'browserBridge.statusMessage.default': 'Processing browser task...',
+  'browserBridge.progressHeaderComplete': '🌐 **Browser Task** · ✅ Completed',
+  'browserBridge.progressHeaderInProgress': '🌐 **Browser Task** · ⏳ In progress',
+  'browserBridge.complexity.simple': 'simple task',
+  'browserBridge.complexity.medium': 'medium complexity task',
+  'browserBridge.complexity.complex': 'complex task',
+  'browserBridge.initialMessage': 'I will open {profile} {complexity}.',
+  'browserBridge.taskCompletedNoResult': '(Browser task completed, but no content was retrieved. The page may be empty or the task did not return data.)',
+  'browserBridge.defaultTaskDescription': 'Execute browser task',
+  'browserBridge.browseTaskDescription': 'Browse web content',
+
   // Skill Page
   'skill.title': 'Skills',
   'skill.marketplace': 'Marketplace',
@@ -952,6 +986,23 @@ Fill structured browser forms while re-checking PageState before risky actions.
   'notification.runCompleted': 'Workflow completed',
   'notification.runFailed': 'Workflow failed',
   'notification.stopped': 'Stopped',
+
+  // Error Boundary
+  'errorBoundary.title': 'Something went wrong',
+  'errorBoundary.description': 'An unexpected error occurred. You can try reloading the page or go back to the chat.',
+  'errorBoundary.reload': 'Reload',
+  'errorBoundary.backToChat': 'Back to Chat',
+  'errorBoundary.copyDiagnostics': 'Copy Diagnostics',
+  'errorBoundary.copySuccess': 'Copied to clipboard ✓',
+
+  // Settings - Test Connection Enhanced
+  'settings.testConnectionSuccess': 'Connection successful! {provider} / {model}, latency {latency}ms',
+  'settings.testConnectionLatency': 'Latency',
+  'settings.testConnectionErrorNetwork': 'Network connection failed. Please check your network and Base URL.',
+  'settings.testConnectionErrorAuth': 'Authentication failed. Please check your API Key.',
+  'settings.testConnectionErrorModel': 'Model not available. Please check the model name or verify it requires additional permissions.',
+  'settings.testConnectionErrorTimeout': 'Connection timed out. Please check your network or try again later.',
+  'settings.testConnectionErrorUnknown': 'Connection test failed. Please check your configuration and try again.',
 };
 
 export default enUS;

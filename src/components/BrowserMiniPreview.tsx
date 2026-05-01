@@ -308,7 +308,9 @@ export function BrowserMiniPreview() {
       }
 
       if (cdpConnected) {
-        if (!cdpUrl.trim()) {
+        // Use explicit cdpUrl input, or fall back to the current page URL from CDP connection state
+        const effectiveUrl = cdpUrl.trim() || cdpConnectionState?.current_url || '';
+        if (!effectiveUrl) {
           setInlineNotice({
             tone: 'amber',
             titleKey: 'browser.notice.enterTargetUrlTitle',
@@ -319,9 +321,9 @@ export function BrowserMiniPreview() {
           return;
         }
 
-        const url = cdpUrl.trim().startsWith('http')
-          ? cdpUrl.trim()
-          : `https://${cdpUrl.trim()}`;
+        const url = effectiveUrl.startsWith('http')
+          ? effectiveUrl
+          : `https://${effectiveUrl}`;
         const envelope = createTaskEnvelope(url, submittedTask, submittedTask);
         envelope.executionMode = 'cdp';
         await executeTaskEnvelope(envelope);

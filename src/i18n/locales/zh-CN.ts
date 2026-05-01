@@ -486,6 +486,40 @@ const zhCN: TranslationKeys = {
   'browserMiniPreview.skipVerification': '跳过验证，直接继续执行',
   'browserMiniPreview.forceContinue': '强制继续',
 
+  // Browser Bridge (chat progress messages)
+  'browserBridge.status.opening': '打开浏览器',
+  'browserBridge.status.inspecting': '检查页面状态',
+  'browserBridge.status.needsLogin': '等待登录',
+  'browserBridge.status.waitingUserResume': '等待用户操作',
+  'browserBridge.status.readyForAgent': '页面就绪',
+  'browserBridge.status.running': '执行任务',
+  'browserBridge.status.completed': '任务完成',
+  'browserBridge.status.error': '任务出错',
+  'browserBridge.status.blockedAuth': '认证被阻止',
+  'browserBridge.status.blockedCaptcha': '遇到验证码',
+  'browserBridge.status.blockedManualStep': '需要手动操作',
+  'browserBridge.statusMessage.opening': '我正在打开浏览器并准备目标网站...',
+  'browserBridge.statusMessage.inspecting': '正在检查页面状态...',
+  'browserBridge.statusMessage.needsLogin': '我已经打开目标网站。请先完成登录，登录后点击"我已登录"，我会继续。',
+  'browserBridge.statusMessage.waitingUserResume': '等待您完成登录。登录后请点击"我已登录"按钮。',
+  'browserBridge.statusMessage.readyForAgent': '页面已就绪，我可以继续执行浏览器任务。',
+  'browserBridge.statusMessage.running': '我正在浏览器中执行这个任务...',
+  'browserBridge.statusMessage.blockedAuth': '会话已失效或页面重新要求登录。请先完成登录后继续。',
+  'browserBridge.statusMessage.blockedCaptcha': '遇到了验证码或人工验证步骤。请先在浏览器中完成验证。',
+  'browserBridge.statusMessage.blockedManualStep': '这个步骤需要您手动确认。请在浏览器中完成操作后继续。',
+  'browserBridge.statusMessage.completed': '浏览器任务已完成。',
+  'browserBridge.statusMessage.error': '浏览器任务执行出错。请检查浏览器窗口状态。',
+  'browserBridge.statusMessage.default': '正在处理浏览器任务...',
+  'browserBridge.progressHeaderComplete': '🌐 **浏览器任务** · ✅ 已完成',
+  'browserBridge.progressHeaderInProgress': '🌐 **浏览器任务** · ⏳ 进行中',
+  'browserBridge.complexity.simple': '简单任务',
+  'browserBridge.complexity.medium': '中等复杂度任务',
+  'browserBridge.complexity.complex': '复杂任务',
+  'browserBridge.initialMessage': '我将打开 {profile} {complexity}。',
+  'browserBridge.taskCompletedNoResult': '（浏览器任务已完成，但未获取到具体内容，可能页面为空或任务未返回数据）',
+  'browserBridge.defaultTaskDescription': '执行浏览器任务',
+  'browserBridge.browseTaskDescription': '浏览网页内容',
+
   // Skill Page
   'skill.title': '技能',
   'skill.marketplace': '技能市场',
@@ -952,6 +986,23 @@ const zhCN: TranslationKeys = {
   'notification.runCompleted': '工作流运行完成',
   'notification.runFailed': '工作流运行失败',
   'notification.stopped': '已停止',
+
+  // Error Boundary
+  'errorBoundary.title': '应用遇到了问题',
+  'errorBoundary.description': '发生了意外错误。您可以尝试重新加载页面，或返回聊天界面。',
+  'errorBoundary.reload': '重新加载',
+  'errorBoundary.backToChat': '返回聊天',
+  'errorBoundary.copyDiagnostics': '复制诊断信息',
+  'errorBoundary.copySuccess': '已复制到剪贴板 ✓',
+
+  // Settings - Test Connection Enhanced
+  'settings.testConnectionSuccess': '连接成功！{provider} / {model}，延迟 {latency}ms',
+  'settings.testConnectionLatency': '延迟',
+  'settings.testConnectionErrorNetwork': '网络连接失败，请检查网络状态和 Base URL 是否正确。',
+  'settings.testConnectionErrorAuth': '认证失败，请检查 API Key 是否正确。',
+  'settings.testConnectionErrorModel': '模型不可用，请检查模型名称是否正确，或该模型是否需要额外权限。',
+  'settings.testConnectionErrorTimeout': '连接超时，请检查网络状态或稍后重试。',
+  'settings.testConnectionErrorUnknown': '连接测试失败，请检查配置后重试。',
 };
 
 export default zhCN;
