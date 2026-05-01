@@ -17,6 +17,7 @@ import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard, TerminalPan
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, processMessagesForDisplay } from '@/utils/chat';
+import { getHiddenMessageCount, getVisibleMessageWindow } from '@/components/chat/messageWindowing';
 
 /**
  * Chat page component
@@ -25,6 +26,7 @@ export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
+  const [showFullHistory, setShowFullHistory] = useState(false);
 
   const {
     currentMessages,
@@ -64,7 +66,7 @@ export function Chat() {
   // permissionQueue is FIFO — we always show the front item.
   const permissionQueue = useUIStore((s) => s.permissionQueue);
   const pendingPermission = permissionQueue[0];   // undefined when queue is empty
-  const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
+  const resolvePermissionRequest = useUIStore((s) => s.resolvePermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
 
   // Questionnaire state
@@ -87,7 +89,16 @@ export function Chat() {
     () => processMessagesForDisplay(rawMessages),
     [rawMessages]
   );
+  const visibleMessages = useMemo(
+    () => showFullHistory ? displayMessages : getVisibleMessageWindow(displayMessages),
+    [displayMessages, showFullHistory],
+  );
+  const hiddenMessageCount = getHiddenMessageCount(displayMessages, visibleMessages);
   const hasMessages = displayMessages.length > 0;
+
+  useEffect(() => {
+    setShowFullHistory(false);
+  }, [currentSessionData?.id]);
 
   // Detect if user has scrolled up (away from bottom)
   const handleScroll = useCallback(() => {
@@ -134,8 +145,7 @@ export function Chat() {
    */
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
-    pendingPermission._resolve?.(true);
-    clearPermissionRequest();
+    resolvePermissionRequest(true);
   };
 
   /**
@@ -144,8 +154,7 @@ export function Chat() {
   const handleDenyPermission = () => {
     if (!pendingPermission) return;
     addNotification('info', t('permission.deniedMessage'));
-    pendingPermission._resolve?.(false);
-    clearPermissionRequest();
+    resolvePermissionRequest(false);
   };
 
   /**
@@ -170,11 +179,22 @@ export function Chat() {
             >
             {hasMessages ? (
               <div className="divide-y divide-gray-100 max-w-full overflow-hidden">
+                {hiddenMessageCount > 0 && (
+                  <div className="flex justify-center bg-gray-50 px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowFullHistory(true)}
+                      className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50"
+                    >
+                      {t('chat.showEarlierMessages').replace('{count}', String(hiddenMessageCount))}
+                    </button>
+                  </div>
+                )}
                 {/* Filter out intermediate tool-dispatch assistant messages:
                     these are rounds where the AI called tools but wrote no visible text.
                     They show up as "(N chars) thinking" bubbles with no final content.
                     Only the final answer (or the actively-streaming last message) is shown. */}
-                {displayMessages.map((message, index, filtered) => (
+                {visibleMessages.map((message, index, filtered) => (
                   <ChatMessage
                     key={message.id}
                     message={message}

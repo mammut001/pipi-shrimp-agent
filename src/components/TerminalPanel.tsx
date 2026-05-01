@@ -118,6 +118,7 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
 
     let unlistenOutput: UnlistenFn | null = null;
     let unlistenExit: UnlistenFn | null = null;
+    let cwdSetupTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     // Wire up user input / resize forwarding (safe to register before open)
     const onDataDisposable = terminal.onData((data) => {
@@ -192,10 +193,11 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
         // fully initialized. The `clear` keeps the terminal looking clean.
         if (cwd && !disposed) {
           const escapedCwd = cwd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-          setTimeout(() => {
+          cwdSetupTimeoutId = setTimeout(() => {
             if (!disposed) {
               invoke('terminal_input', { sessionId, data: `cd "${escapedCwd}" && clear\r` }).catch(() => {});
             }
+            cwdSetupTimeoutId = null;
           }, 350);
         }
       } catch (err) {
@@ -215,6 +217,10 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
 
     return () => {
       disposed = true;
+      if (cwdSetupTimeoutId) {
+        clearTimeout(cwdSetupTimeoutId);
+        cwdSetupTimeoutId = null;
+      }
       window.removeEventListener('resize', onWindowResize);
       onDataDisposable.dispose();
       onResizeDisposable.dispose();

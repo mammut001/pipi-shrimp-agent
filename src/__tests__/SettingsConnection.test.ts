@@ -10,13 +10,18 @@
  * 6. Sensitive data (Bearer token, api_key, access_token) → UI shows redacted, logs are sanitized
  * 7. Success case → shows latency/metrics but no sensitive config in logs
  *
- * These tests focus on the pure error classification and sanitization logic.
- * Component-level tests are minimal since Settings.tsx is complex.
+ * These tests use the real classifyConnectionError and getConnectionErrorMessage
+ * from src/utils/settingsConnection.ts (extracted from Settings.tsx).
  */
 
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import {
+  classifyConnectionError,
+  getConnectionErrorMessage,
+} from '../services/settings/settingsConnection';
+import { validateProviderFields } from '../shared/providers';
 
-// ─── Mock localStorage ────────────────────────────────────────────────────────
+// ─── Sanitization (delegates to errorLogger) ─────────────────────────────────
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -33,44 +38,10 @@ beforeEach(() => {
   localStorageMock.clear();
 });
 
-// ─── Error Classification Helper ──────────────────────────────────────────────
+// classifyConnectionError and getConnectionErrorMessage are imported from
+// ../utils/settingsConnection.ts — no local copy here.
 
-/**
- * Classify an error message from test_connection into a user-friendly kind.
- * Mirrors the logic in Settings.tsx handleTestConnection.
- */
-type ConnectionErrorKind =
-  | 'network'
-  | 'timeout'
-  | 'auth'
-  | 'model_not_found'
-  | 'base_url'
-  | 'unknown';
-
-function classifyConnectionError(rawMsg: string): ConnectionErrorKind {
-  const lower = rawMsg.toLowerCase();
-
-  if (lower.includes('timeout') || lower.includes('timed out')) return 'timeout';
-  if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection') || lower.includes('dns') || lower.includes('enotfound')) return 'network';
-  if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized') || lower.includes('auth') || lower.includes('invalid api key') || lower.includes('incorrect api key')) return 'auth';
-  if (lower.includes('model') && (lower.includes('not found') || lower.includes('not available') || lower.includes('does not exist') || lower.includes('invalid'))) return 'model_not_found';
-  if (lower.includes('base url') || lower.includes('baseurl') || lower.includes('url format') || lower.includes('invalid url')) return 'base_url';
-  return 'unknown';
-}
-
-function getConnectionErrorMessage(kind: ConnectionErrorKind): string {
-  const messages: Record<ConnectionErrorKind, string> = {
-    network: '网络连接失败，请检查您的网络或代理设置。',
-    timeout: '连接超时，请稍后重试。',
-    auth: 'API 密钥无效或权限不足，请检查您的 API Key。',
-    model_not_found: '模型不可用，可能已被禁用或不支持当前区域。',
-    base_url: 'API 地址格式有误，请检查 Base URL 配置。',
-    unknown: '连接失败，请稍后重试。',
-  };
-  return messages[kind];
-}
-
-// ─── Sanitization (delegates to errorLogger) ─────────────────────────────────
+// ─── errorLogger ─────────────────────────────────────────────────────────────
 
 let errorLogger: typeof import('../utils/errorLogger');
 beforeEach(async () => {
@@ -122,6 +93,13 @@ describe('getConnectionErrorMessage', () => {
     expect(getConnectionErrorMessage('model_not_found')).toContain('模型');
     expect(getConnectionErrorMessage('base_url')).toContain('API 地址');
     expect(getConnectionErrorMessage('unknown')).toContain('连接失败');
+  });
+
+  it('uses the provided translator for UI-visible messages', () => {
+    const translate = jest.fn((key: string) => `translated:${key}`);
+
+    expect(getConnectionErrorMessage('base_url', translate as any)).toBe('translated:settings.testConnectionErrorBaseUrl');
+    expect(translate).toHaveBeenCalledWith('settings.testConnectionErrorBaseUrl');
   });
 
   it('network message does not contain raw error text', () => {
@@ -181,28 +159,16 @@ describe('sensitive data sanitization in error context', () => {
 });
 
 describe('provider/model field validation', () => {
-  it('missing apiKey triggers field-level error', () => {
-    // Simulate validateProviderFields behavior
-    const fields = { provider: 'anthropic', apiKey: '', baseUrl: '' };
-    const errors: Record<string, string> = {};
-
-    if (!fields.apiKey.trim()) {
-      errors.apiKey = 'API Key 为必填项';
-    }
-
+  it('missing apiKey triggers a real field-level provider validation error', () => {
+    const errors = validateProviderFields('anthropic', '', '');
     expect(errors).toHaveProperty('apiKey');
-    expect(errors.apiKey).toContain('必填');
+    expect(errors.apiKey).toContain('required');
   });
 
-  it('missing model triggers field-level error', () => {
-    const fields = { provider: 'anthropic', apiKey: 'sk-test', baseUrl: '', model: '' };
-    const errors: Record<string, string> = {};
-
-    if (!fields.model.trim()) {
-      errors.model = '模型 ID 为必填项';
-    }
-
-    expect(errors).toHaveProperty('model');
+  it('missing required baseUrl triggers a real field-level provider validation error', () => {
+    const errors = validateProviderFields('openai-compatible', 'sk-test', '');
+    expect(errors).toHaveProperty('baseUrl');
+    expect(errors.baseUrl).toContain('required');
   });
 });
 
@@ -253,16 +219,10 @@ describe('successful test connection', () => {
     expect(successMsg).toContain('150ms');
   });
 
-  it('success notification does not log sensitive config', () => {
-    // When test succeeds, we call addNotification('success', ...) but we should NOT
-    // log the raw apiKey or full config to errorLogger. Only failure path logs.
-    // Success: no errorLogger.logError call expected.
-    const shouldNotLog = true; // Simulates success path
-    if (shouldNotLog) {
-      // No logError call — nothing to verify
-    }
-    // This test documents the invariant: success path skips errorLogger logging
-    expect(true).toBe(true);
+  it('success notification message contains only user-facing latency information', () => {
+    const successMsg = '连接成功 (延迟: 150ms)';
+    expect(successMsg).toMatch(/延迟: 150ms/);
+    expect(successMsg).not.toMatch(/api[_-]?key|Bearer|token/i);
   });
 });
 

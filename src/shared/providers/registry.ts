@@ -329,6 +329,11 @@ export function getProviderDefaultModelIds(providerName: string): string[] {
   return provider.defaultModels.map(m => m.id);
 }
 
+/** Get the first default model for a provider, suitable for new config defaults. */
+export function getProviderDefaultModelId(providerName: string): string {
+  return getProviderDefaultModelIds(providerName)[0] ?? '';
+}
+
 /** Get default base URL for a provider */
 export function getProviderDefaultBaseUrl(providerName: string): string {
   return getProvider(providerName)?.defaultBaseUrl ?? '';

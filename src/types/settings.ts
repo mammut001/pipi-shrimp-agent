@@ -3,6 +3,14 @@
  * Includes ApiConfig and SettingsState interfaces
  */
 
+import {
+  buildFlatPricingMap,
+  buildProviderModelsMap,
+  getProviderDefaultModelId,
+  getProviderNames,
+  type ProviderName,
+} from '@/shared/providers';
+
 // ============= Type Definitions =============
 
 /** Model pricing configuration for cost estimation */
@@ -21,7 +29,7 @@ export interface ModelPricing {
 export interface ApiConfig {
   id: string;              // Unique identifier
   name: string;            // User-friendly name (e.g., "My Anthropic", "Minimax Pro")
-  provider: 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'anthropic-compatible' | 'openai-compatible';
+  provider: ProviderName;
   apiKey: string;
   baseUrl?: string;        // Custom API endpoint
   model: string;           // Model name to use
@@ -53,7 +61,7 @@ export interface BudgetSettings {
 
 /** Agent behavior settings */
 export interface AgentSettings {
-  maxToolRounds: number;  // Maximum tool loop rounds (default: 10)
+  maxToolRounds: number;  // Maximum tool loop rounds (default: 50)
 }
 
 /** Default agent settings */
@@ -191,19 +199,17 @@ export const DEFAULT_API_CONFIG: ApiConfig = {
   name: 'Anthropic',
   provider: 'anthropic',
   apiKey: '',
-  model: 'claude-3-5-sonnet-20241022',
+  model: getProviderDefaultModelId('anthropic'),
 };
 
 /** Supported API providers */
-export const API_PROVIDERS = ['anthropic', 'openai', 'minimax', 'deepseek', 'anthropic-compatible', 'openai-compatible'] as const;
+export const API_PROVIDERS = getProviderNames() as readonly ApiConfig['provider'][];
 
 /**
  * Supported models per provider.
  * @deprecated Use PROVIDER_REGISTRY from '@/shared/providers' instead.
  * Now auto-derived from the registry for backward compatibility.
  */
-import { buildProviderModelsMap, buildFlatPricingMap } from '@/shared/providers';
-
 export const PROVIDER_MODELS: Record<ApiConfig['provider'], string[]> = buildProviderModelsMap() as Record<ApiConfig['provider'], string[]>;
 
 /**

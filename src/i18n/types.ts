@@ -104,6 +104,7 @@ export type TranslationKeys = {
   'chat.hideTerminal': string;
   'chat.enterHint': string;
   'chat.newLineHint': string;
+  'chat.showEarlierMessages': string;
 
   // 工具执行
   'tool.executing': string;
@@ -836,6 +837,7 @@ export type TranslationKeys = {
   'settings.testConnectionErrorNetwork': string;
   'settings.testConnectionErrorAuth': string;
   'settings.testConnectionErrorModel': string;
+  'settings.testConnectionErrorBaseUrl': string;
   'settings.testConnectionErrorTimeout': string;
   'settings.testConnectionErrorUnknown': string;
 

@@ -9,7 +9,7 @@
  * - Timestamp display
  */
 
-import { memo, useState, useCallback, lazy, Suspense } from 'react';
+import { memo, useState, useCallback, lazy, Suspense, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -84,15 +84,28 @@ function normalizeResumeTemplateMarkdown(content: string): string {
 export const ChatMessage = memo(function ChatMessage({ message, isLatest = false, isStreaming = false }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
+  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const normalizedMessageContent = isUser
     ? message.content
     : normalizeResumeTemplateMarkdown(message.content);
+
+  useEffect(() => () => {
+    if (copyResetTimeoutRef.current) {
+      clearTimeout(copyResetTimeoutRef.current);
+    }
+  }, []);
 
   const handleCopyMessage = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(message.content);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = setTimeout(() => {
+        setCopied(false);
+        copyResetTimeoutRef.current = null;
+      }, 2000);
     } catch (err) {
       console.error('Failed to copy message:', err);
     }

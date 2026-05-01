@@ -1,0 +1,7 @@
+{
+  "largeAssetPrefixes": [
+    "public/resume-previews/",
+    "src/skills/resume/assets/previews/"
+  ],
+  "largeAssets": []
+}

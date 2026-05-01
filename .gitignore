@@ -30,7 +30,15 @@ node-scripts/.env
 
 # Vite build cache files
 vite.config.ts.timestamp-*.mjs
+*.timestamp-*
 *.timestamp-*.mjs
+*.patch
+fix_*.mjs
+patch_*.mjs
+test_output.*
+debug_*.mjs
+/test_*.mjs
+/test.typ
 RELEASE_0.0.2.md
 check_browser.cjs
 check_browser.js

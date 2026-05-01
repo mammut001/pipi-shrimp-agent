@@ -230,6 +230,20 @@ pub struct DbTelegramTask {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbDiagnostics {
+    pub path: String,
+    pub initialized: bool,
+    pub schema_version: i64,
+    pub integrity_check: String,
+    pub sessions_count: i64,
+    pub messages_count: i64,
+    pub projects_count: i64,
+    pub token_usage_count: i64,
+    pub telegram_bindings_count: i64,
+    pub telegram_tasks_count: i64,
+}
+
 /**
  * Get the database path in app data directory
  */
@@ -240,6 +254,65 @@ fn get_db_path() -> PathBuf {
 
     std::fs::create_dir_all(&app_data_dir).ok();
     app_data_dir.join("data.db")
+}
+
+fn table_count(conn: &Connection, table_name: &str) -> SqliteResult<i64> {
+    let exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![table_name],
+        |row| row.get(0),
+    )?;
+
+    if exists == 0 {
+        return Ok(0);
+    }
+
+    let sql = format!("SELECT COUNT(*) FROM {}", table_name);
+    conn.query_row(&sql, [], |row| row.get(0))
+}
+
+pub fn get_database_diagnostics() -> SqliteResult<DbDiagnostics> {
+    let path = get_db_path();
+    let path_string = path.display().to_string();
+    let guard = get_db()?;
+    let Some(conn) = guard.as_ref() else {
+        return Ok(DbDiagnostics {
+            path: path_string,
+            initialized: false,
+            schema_version: 0,
+            integrity_check: "not_initialized".to_string(),
+            sessions_count: 0,
+            messages_count: 0,
+            projects_count: 0,
+            token_usage_count: 0,
+            telegram_bindings_count: 0,
+            telegram_tasks_count: 0,
+        });
+    };
+
+    let schema_version = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let integrity_check = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+        .unwrap_or_else(|e| format!("error: {}", e));
+
+    Ok(DbDiagnostics {
+        path: path_string,
+        initialized: true,
+        schema_version,
+        integrity_check,
+        sessions_count: table_count(conn, "sessions")?,
+        messages_count: table_count(conn, "messages")?,
+        projects_count: table_count(conn, "projects")?,
+        token_usage_count: table_count(conn, "token_usage")?,
+        telegram_bindings_count: table_count(conn, "telegram_bindings")?,
+        telegram_tasks_count: table_count(conn, "telegram_tasks")?,
+    })
 }
 
 /**

@@ -154,6 +154,7 @@ const enUS: TranslationKeys = {
   'chat.hideTerminal': 'Hide Terminal',
   'chat.enterHint': 'Press Enter to send',
   'chat.newLineHint': 'Shift + Enter for new line',
+  'chat.showEarlierMessages': 'Show {count} earlier messages',
 
   // Tool execution
   'tool.executing': 'Executing tool...',
@@ -1002,6 +1003,7 @@ Fill structured browser forms while re-checking PageState before risky actions.
   'settings.testConnectionErrorNetwork': 'Network connection failed. Please check your network and Base URL.',
   'settings.testConnectionErrorAuth': 'Authentication failed. Please check your API Key.',
   'settings.testConnectionErrorModel': 'Model not available. Please check the model name or verify it requires additional permissions.',
+  'settings.testConnectionErrorBaseUrl': 'Base URL format is invalid. Please check your API address.',
   'settings.testConnectionErrorTimeout': 'Connection timed out. Please check your network or try again later.',
   'settings.testConnectionErrorUnknown': 'Connection test failed. Please check your configuration and try again.',
 

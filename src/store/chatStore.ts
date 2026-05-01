@@ -12,6 +12,7 @@ import { useArtifactsStore } from './artifactsStore';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
 import { usePromptStore } from './promptStore';
+import { createToolTaskSteps } from './taskLifecycle';
 import { runPreToolUseHooks } from '../services/tools/preToolUseHooks';
 import { runPostToolUseHooks } from '../services/tools/postToolUseHooks';
 import type { PostHookContext } from '../services/tools/postToolUseHooks';
@@ -37,13 +38,45 @@ import {
   type DbMessage,
   type DbProject,
 } from '../utils/chatHelpers';
+import { shouldRemoveEmptyAssistantPlaceholder } from './chat/chatActions';
+import { registerArtifactsFromToolResults } from './chat/chatArtifacts';
+import {
+  appendBrowserResultToSystemPrompt,
+  createBrowserResultMessages,
+  mapBrowserResponseArtifacts,
+} from './chat/chatBrowserHandoff';
+import { CHAT_ERROR_MESSAGES, normalizeCaughtErrorMessage } from './chat/chatErrors';
+import { shouldPersistMessage } from './chat/chatPersistence';
+import {
+  normalizeCompileTypstArgs,
+  normalizeResumeWorkspaceToolArgs,
+} from './chat/chatResumeTools';
+import {
+  filterSessionsByProject,
+  selectCurrentMessages,
+  selectCurrentSession,
+} from './chat/chatSelectors';
+import {
+  resolveStreamingOwnerSessionId,
+  shouldFlushStreamingUpdate,
+  STREAMING_TIMEOUT_MS,
+} from './chat/chatStreaming';
 
+type RuntimeListenerCleanup = () => void;
 
-/**
- * Streaming timeout - 300 seconds
- * If the API doesn't respond within this time, we'll force stop the streaming
- */
-const STREAMING_TIMEOUT_MS = 300000;
+let runtimeListenerCleanups: RuntimeListenerCleanup[] = [];
+
+function clearRuntimeListeners() {
+  for (const cleanup of runtimeListenerCleanups) {
+    try {
+      cleanup();
+    } catch (error) {
+      console.warn('Failed to cleanup runtime listener:', error);
+    }
+  }
+  runtimeListenerCleanups = [];
+}
+
 
 /**
  * Run microcompact check after streaming completes.
@@ -360,174 +393,6 @@ function resetRightPanelStateAfterSessionRemoval(
   }
 }
 
-type FileListEntry = {
-  name: string;
-  is_directory: boolean;
-  path: string;
-};
-
-const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, '');
-
-const parentDirOf = (value: string): string => {
-  const normalized = trimTrailingSlash(value);
-  const idx = normalized.lastIndexOf('/');
-  return idx > 0 ? normalized.slice(0, idx) : normalized;
-};
-
-const normalizeResumeWorkspacePath = (value: string, workDir: string): string => {
-  const normalizedWorkDir = trimTrailingSlash(workDir);
-  const normalizedValue = trimTrailingSlash(value);
-  const absoluteResumeRoot = `${normalizedWorkDir}/resume`;
-
-  if (normalizedValue === absoluteResumeRoot) {
-    return normalizedWorkDir;
-  }
-
-  if (normalizedValue.startsWith(`${absoluteResumeRoot}/`)) {
-    return `${normalizedWorkDir}/${normalizedValue.slice(absoluteResumeRoot.length + 1)}`;
-  }
-
-  if (normalizedValue === 'resume') {
-    return normalizedWorkDir;
-  }
-
-  if (normalizedValue.startsWith('resume/')) {
-    return `${normalizedWorkDir}/${normalizedValue.slice('resume/'.length)}`;
-  }
-
-  return value;
-};
-
-function normalizeResumeWorkspaceToolArgs(
-  toolName: string,
-  toolArgs: string,
-  workDir?: string | null,
-  activeSkill?: string | null,
-): string {
-  if (!workDir || activeSkill !== 'resume') {
-    return toolArgs;
-  }
-
-  let parsedArgs: Record<string, unknown>;
-  try {
-    parsedArgs = JSON.parse(toolArgs);
-  } catch {
-    return toolArgs;
-  }
-
-  let changed = false;
-  const normalizedArgs: Record<string, unknown> = { ...parsedArgs };
-
-  for (const key of ['path', 'file_path', 'output_dir']) {
-    const rawValue = normalizedArgs[key];
-    if (typeof rawValue !== 'string' || !rawValue.trim()) {
-      continue;
-    }
-
-    const normalizedValue = normalizeResumeWorkspacePath(rawValue, workDir);
-    if (normalizedValue !== rawValue) {
-      normalizedArgs[key] = normalizedValue;
-      changed = true;
-    }
-  }
-
-  if (!changed) {
-    return toolArgs;
-  }
-
-  console.info('[resume] Flattened nested resume workspace path', {
-    toolName,
-    originalArgs: parsedArgs,
-    normalizedArgs,
-  });
-
-  return JSON.stringify(normalizedArgs);
-}
-
-async function findNestedResumeTyp(workDir: string): Promise<string | null> {
-  try {
-    const entries = await invoke<FileListEntry[]>('list_files', { path: workDir });
-    const visibleDirs = entries.filter((entry) => entry.is_directory && !entry.name.startsWith('.'));
-    const candidates: string[] = [];
-
-    for (const dir of visibleDirs) {
-      const candidate = `${trimTrailingSlash(dir.path)}/resume.typ`;
-      const exists = await invoke<boolean>('path_exists', { path: candidate, workDir });
-      if (exists) {
-        candidates.push(candidate);
-      }
-    }
-
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    return candidates.find((candidate) => candidate.endsWith('/resume/resume.typ')) ?? candidates[0];
-  } catch {
-    return null;
-  }
-}
-
-async function normalizeCompileTypstArgs(toolArgs: string, workDir?: string | null): Promise<string> {
-  if (!workDir) {
-    return toolArgs;
-  }
-
-  let parsedArgs: Record<string, unknown>;
-  try {
-    parsedArgs = JSON.parse(toolArgs);
-  } catch {
-    return toolArgs;
-  }
-
-  const rawFilePath = typeof parsedArgs.file_path === 'string' ? parsedArgs.file_path : '';
-  const rawOutputDir = typeof parsedArgs.output_dir === 'string' ? parsedArgs.output_dir : '';
-  if (!rawFilePath || !rawOutputDir) {
-    return toolArgs;
-  }
-
-  let filePath = rawFilePath;
-  let outputDir = rawOutputDir;
-  let changed = false;
-
-  try {
-    const fileExists = await invoke<boolean>('path_exists', { path: filePath, workDir });
-    if (!fileExists) {
-      const nestedResumeTyp = await findNestedResumeTyp(workDir);
-      if (nestedResumeTyp) {
-        filePath = nestedResumeTyp;
-        changed = true;
-      }
-    }
-  } catch {
-    return toolArgs;
-  }
-
-  const normalizedWorkDir = trimTrailingSlash(workDir);
-  const fileDir = parentDirOf(filePath);
-  if (fileDir && trimTrailingSlash(outputDir) === normalizedWorkDir && trimTrailingSlash(fileDir) !== normalizedWorkDir) {
-    outputDir = fileDir;
-    changed = true;
-  }
-
-  if (!changed) {
-    return toolArgs;
-  }
-
-  console.info('[resume] Normalized compile_typst_file args', {
-    originalFilePath: rawFilePath,
-    normalizedFilePath: filePath,
-    originalOutputDir: rawOutputDir,
-    normalizedOutputDir: outputDir,
-  });
-
-  return JSON.stringify({
-    ...parsedArgs,
-    file_path: filePath,
-    output_dir: outputDir,
-  });
-}
-
 /**
  * Chat store using Zustand
  */
@@ -551,22 +416,17 @@ export const useChatStore = create<ChatState>()(
     // ========== Computed Properties ==========
     currentSession: () => {
       const { sessions, currentSessionId } = get();
-      if (!currentSessionId) return null;
-      return sessions.find((s) => s.id === currentSessionId) || null;
+      return selectCurrentSession(sessions, currentSessionId);
     },
 
     currentMessages: () => {
-      const session = get().currentSession();
-      return session?.messages || [];
+      const { sessions, currentSessionId } = get();
+      return selectCurrentMessages(sessions, currentSessionId);
     },
 
     getSessionsByProject: (projectId: string | null) => {
       const { sessions } = get();
-      if (projectId === null) {
-        // Return sessions without a project
-        return sessions.filter((s) => !s.projectId);
-      }
-      return sessions.filter((s) => s.projectId === projectId);
+      return filterSessionsByProject(sessions, projectId);
     },
 
     // ========== Action Methods ==========
@@ -650,10 +510,11 @@ export const useChatStore = create<ChatState>()(
         set({ isInitialized: true, error: null });
 
         // === Subagent event listeners ===
+        clearRuntimeListeners();
         const { listen } = await import('@tauri-apps/api/event');
 
         // Listen for subagent completion events
-        await listen<{ agentId: string; sessionId: string; content: string; success: boolean; error?: string }>(
+        const unlistenSubagentComplete = await listen<{ agentId: string; sessionId: string; content: string; success: boolean; error?: string }>(
           'subagent-complete',
           (event) => {
             console.log(`[Subagent] Complete: ${event.payload.agentId}`, event.payload.success ? '✅' : '❌');
@@ -666,9 +527,10 @@ export const useChatStore = create<ChatState>()(
             );
           },
         );
+        runtimeListenerCleanups.push(unlistenSubagentComplete);
 
         // Listen for subagent error events
-        await listen<{ agentId: string; sessionId: string; error: string }>(
+        const unlistenSubagentError = await listen<{ agentId: string; sessionId: string; error: string }>(
           'subagent-error',
           (event) => {
             console.error(`[Subagent] Error: ${event.payload.agentId}`, event.payload.error);
@@ -676,6 +538,7 @@ export const useChatStore = create<ChatState>()(
             uiStore.addNotification('error', `Agent ${event.payload.agentId.slice(0, 12)}... failed: ${event.payload.error}`, event.payload.sessionId);
           },
         );
+        runtimeListenerCleanups.push(unlistenSubagentError);
 
         // Listen for swarm teammate task_result messages.
         //
@@ -688,7 +551,7 @@ export const useChatStore = create<ChatState>()(
         // original behavior: inject the result as a visible context message so the LLM can
         // read it in the next turn.
         const swarmModule = await import('../services/swarm');
-        swarmModule.swarmEvents.on('task_result_received', async (detail) => {
+        const unsubscribeSwarmTaskResults = swarmModule.swarmEvents.on('task_result_received', async (detail) => {
           // Check if this agent belongs to an active auto-delegation plan.
           // If so, its result is already being collected by runDelegationPlan — skip injection.
           try {
@@ -721,6 +584,7 @@ export const useChatStore = create<ChatState>()(
 
           useUIStore.getState().addNotification('success', `Teammate "${agentName}" finished: ${taskDesc}`, sessionId);
         });
+        runtimeListenerCleanups.push(unsubscribeSwarmTaskResults);
       } catch (error) {
         console.error('❌ Failed to load sessions:', error);
         console.error('Error details:', {
@@ -935,7 +799,7 @@ export const useChatStore = create<ChatState>()(
 
       const apiConfig = useSettingsStore.getState().getActiveConfig();
       if (!apiConfig?.apiKey) {
-        setError('API key not configured.');
+        setError(CHAT_ERROR_MESSAGES.missingApiKeyShort);
         return;
       }
 
@@ -951,16 +815,14 @@ export const useChatStore = create<ChatState>()(
             set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
             safeInvokeOrNull('stop_subprocess', { sessionId: currentSessionId });
           }
-        }, 300_000);
+        }, STREAMING_TIMEOUT_MS);
 
         // Use ONLY the original query as context — do NOT send full conversation history.
         // When the conversation has many turns with tool calls, sending all 55+ messages
         // causes the model to continue the prior task pattern ("我将打开 GitHub...") instead
         // of simply reporting the browser result that is injected into the system prompt.
         // A single user message is all the model needs: system prompt has the data.
-        const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
-          { role: 'user', content: originalQuery || '请根据浏览器获取到的数据回答问题。' },
-        ];
+        const messages = createBrowserResultMessages(originalQuery);
         console.log('[generateBrowserResultResponse] messages to API:', messages.length, messages.map(m => `${m.role}:${m.content?.substring(0,40)}`));
         const assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
@@ -968,13 +830,15 @@ export const useChatStore = create<ChatState>()(
         // Inject browser result into system prompt instead of as a user message.
         // Adding it as a user message creates consecutive user messages (original query +
         // context), which MiniMax and other APIs reject → stuck "思考中..." with 0 output tokens.
-        let systemPrompt = useUIStore.getState().agentInstructions;
+        const baseSystemPrompt = useUIStore.getState().agentInstructions;
         const currentSession = get().sessions.find(s => s.id === currentSessionId);
         const sessionWorkDir = currentSession?.workDir;
-        if (sessionWorkDir) {
-          systemPrompt += `\n\n## Working Directory\n\nYour working directory: \`${sessionWorkDir}\``;
-        }
-        systemPrompt += `\n\n---\n## 浏览器代理任务结果\n用户的问题是："${originalQuery}"\n\n浏览器代理获取到的数据：\n${browserResult}\n\n请根据以上数据，用自然的语言直接回答用户的问题。不要提及"浏览器代理"或内部流程，直接给出结果即可。`;
+        const systemPrompt = appendBrowserResultToSystemPrompt(
+          baseSystemPrompt,
+          originalQuery,
+          browserResult,
+          sessionWorkDir,
+        );
 
         console.log('[generateBrowserResultResponse] invoking API with systemPrompt length:', systemPrompt.length);
         const response = await invoke<{
@@ -1012,13 +876,7 @@ export const useChatStore = create<ChatState>()(
 
         await updateLastMessage(
           cleanContent,
-          response.artifacts?.map((a) => ({
-            id: crypto.randomUUID(),
-            type: a.type as 'html' | 'svg' | 'mermaid' | 'react' | 'code',
-            content: a.content,
-            title: a.title,
-            language: a.language,
-          })),
+          mapBrowserResponseArtifacts(response.artifacts, () => crypto.randomUUID()),
           mergeReasoningParts(streamingReasoning, parsedReasoning),
           tokenUsage
         );
@@ -1027,7 +885,7 @@ export const useChatStore = create<ChatState>()(
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
       } catch (error) {
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-        const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to generate response');
+        const errorMsg = normalizeCaughtErrorMessage(error, CHAT_ERROR_MESSAGES.browserResponseFailed);
         setError(errorMsg);
 
         // Save any accumulated content before clearing
@@ -1047,7 +905,7 @@ export const useChatStore = create<ChatState>()(
             sessions: state.sessions.map((s) => {
               if (s.id !== sid || s.messages.length === 0) return s;
               const last = s.messages[s.messages.length - 1];
-              if (last.role === 'assistant' && !last.content && !last.reasoning) {
+              if (shouldRemoveEmptyAssistantPlaceholder(last)) {
                 return { ...s, messages: s.messages.slice(0, -1) };
               }
               return s;
@@ -1074,7 +932,7 @@ export const useChatStore = create<ChatState>()(
       const activeSessionId = targetSessionId || currentSessionId;
 
       if (!activeSessionId) {
-        setError('No active session');
+        setError(CHAT_ERROR_MESSAGES.noActiveSession);
         return;
       }
 
@@ -1087,7 +945,7 @@ export const useChatStore = create<ChatState>()(
 
       const apiConfig = useSettingsStore.getState().getActiveConfig();
       if (!apiConfig?.apiKey) {
-        setError('API key not configured. Please set up your API key in Settings.');
+        setError(CHAT_ERROR_MESSAGES.missingApiKey);
         return;
       }
 
@@ -1300,6 +1158,8 @@ export const useChatStore = create<ChatState>()(
               }
             }
 
+            uiStore.setTaskProgress(createToolTaskSteps(chunk.tools));
+
             const allResults: { id: string; content: string; toolName?: string; toolArgs?: string }[] = [];
             const normalizedToolArgsById = new Map<string, string>();
 
@@ -1331,6 +1191,9 @@ export const useChatStore = create<ChatState>()(
             // === 1. Concurrent read-only tools — execute in parallel (no permission check) ===
             // Rust-side path validation in execute_tool provides defense-in-depth.
             if (concurrent.length > 0) {
+              for (const req of concurrent) {
+                uiStore.updateTaskStep(req.id, 'running');
+              }
               try {
                 const executor = new StreamingToolExecutor();
                 const batchResult = await executor.executeBatch(concurrent, {
@@ -1339,6 +1202,7 @@ export const useChatStore = create<ChatState>()(
                 });
                 for (const result of batchResult.results) {
                   const req = concurrent.find(r => r.id === result.id);
+                  uiStore.updateTaskStep(result.id, result.is_error ? 'failed' : 'done');
                   allResults.push({ id: result.id, content: result.content, toolName: req?.name, toolArgs: normalizedToolArgsById.get(result.id) ?? '{}' });
                   if (req) {
                     const postCtx: PostHookContext = {
@@ -1354,6 +1218,7 @@ export const useChatStore = create<ChatState>()(
                 }
               } catch (concurrentErr) {
                 for (const req of concurrent) {
+                  uiStore.updateTaskStep(req.id, 'failed');
                   allResults.push({ id: req.id, content: `Error: batch execution failed: ${concurrentErr instanceof Error ? concurrentErr.message : String(concurrentErr)}`, toolName: req.name, toolArgs: normalizedToolArgsById.get(req.id) ?? '{}' });
                 }
               }
@@ -1363,6 +1228,7 @@ export const useChatStore = create<ChatState>()(
             for (const tool of chunk.tools) {
               if (!serialIds.has(tool.id)) continue;
 
+              uiStore.updateTaskStep(tool.id, 'running');
               const normalizedToolArgs = normalizedToolArgsById.get(tool.id) ?? tool.arguments;
 
               // === AskUserQuestion: frontend-only interactive tool ===
@@ -1380,6 +1246,7 @@ export const useChatStore = create<ChatState>()(
                 } catch (err) {
                   toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
                 }
+                uiStore.updateTaskStep(tool.id, toolResultContent.startsWith('Error:') ? 'failed' : 'done');
                 allResults.push({ id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: normalizedToolArgs });
                 continue;
               }
@@ -1633,16 +1500,12 @@ export const useChatStore = create<ChatState>()(
 
             // === Artifact detection: scan tool results for generated files ===
             try {
-              const { detectAndRegisterArtifacts } = await import('../services/artifactDetector');
-              for (const result of allResults) {
-                detectAndRegisterArtifacts({
-                  messageId: assistantMessage.id,
-                  toolName: result.toolName || '',
-                  toolArgs: result.toolArgs || '',
-                  toolResultText: result.content,
-                  workDir: workDir || undefined,
-                });
-              }
+              await registerArtifactsFromToolResults(
+                () => import('../services/artifactDetector'),
+                assistantMessage.id,
+                allResults,
+                workDir,
+              );
             } catch (e) { /* artifact detection is best-effort */ }
 
             chunk._resolveAll(allResults.map(({id, content}) => ({id, content})));
@@ -1737,7 +1600,7 @@ export const useChatStore = create<ChatState>()(
         }
 
         console.error('Failed to send message:', error);
-        const errorMsg = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'Failed to send message');
+        const errorMsg = normalizeCaughtErrorMessage(error, CHAT_ERROR_MESSAGES.sendFailed);
         setError(errorMsg);
 
         const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
@@ -1758,7 +1621,7 @@ export const useChatStore = create<ChatState>()(
             sessions: state.sessions.map((s) => {
               if (s.id !== activeSessionId || s.messages.length === 0) return s;
               const last = s.messages[s.messages.length - 1];
-              if (last.role === 'assistant' && !last.content && !last.reasoning) {
+              if (shouldRemoveEmptyAssistantPlaceholder(last)) {
                 return { ...s, messages: s.messages.slice(0, -1) };
               }
               return s;
@@ -1879,7 +1742,7 @@ export const useChatStore = create<ChatState>()(
 
       // Persist to database — skip hidden/transient messages (metadata not serialized to DB,
       // so they'd re-appear without the hidden flag on reload and pass through the UI filter)
-      if (!message.metadata?.hidden) {
+      if (shouldPersistMessage(message)) {
         try {
           await safeInvoke('db_save_message', { message: messageToDb(message, currentSessionId) });
         } catch (error) {
@@ -1901,7 +1764,7 @@ export const useChatStore = create<ChatState>()(
      * Used by the swarm inbox feedback loop to inject teammate results into the parent conversation.
      */
     addMessageToSession: async (sessionId: string, message: Message) => {
-      if (!message.metadata?.hidden) {
+      if (shouldPersistMessage(message)) {
         try {
           await safeInvoke('db_save_message', { message: messageToDb(message, sessionId) });
         } catch (e) {
@@ -2017,7 +1880,7 @@ export const useChatStore = create<ChatState>()(
       set({ streamingContent: newContent });
 
       // Throttle UI updates to every 100ms
-      if (now - lastUiUpdateTime >= 100 && currentSessionId) {
+      if (shouldFlushStreamingUpdate(now, lastUiUpdateTime) && currentSessionId) {
         const { streamingReasoning } = get();
         // Parse <think> tags from streaming content
         const parsed = parseThinkContent(newContent);
@@ -2084,13 +1947,13 @@ export const useChatStore = create<ChatState>()(
         const timeoutId = setTimeout(() => {
           console.warn('Streaming timeout (300s) reached, stopping...');
           const { setStreaming, currentSessionId, streamingSessionId } = get();
-          const owningSessionId = streamingSessionId || currentSessionId;
+          const owningSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
           if (owningSessionId) {
             safeInvokeOrNull('stop_subprocess', { sessionId: owningSessionId });
           }
           setStreaming(false);
           set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-        }, 300000);
+        }, STREAMING_TIMEOUT_MS);
         // Reset microcompact state at the start of each new streaming turn
         resetMicrocompactForNewTurn();
         set({ isStreaming: true, streamingTimeoutId: timeoutId });

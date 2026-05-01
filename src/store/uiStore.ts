@@ -6,6 +6,13 @@ import { create } from 'zustand';
 import { getCurrentLocale } from '@/i18n';
 import type { UIState, PermissionRequest, Notification, BrowserDockMode, SplitFocus, QuestionnaireData } from '../types/ui';
 import { NOTIFICATION_HISTORY_LIMIT, NOTIFICATION_TIMEOUT } from '../types/ui';
+import { normalizePersistedCurrentView, type PersistedCurrentView } from '@/utils/storageMigrations';
+import { addOrReplaceTaskStep, dedupeTaskSteps, updateTaskStepStatus } from './taskLifecycle';
+import {
+  createPermissionLedgerEntry,
+  createPermissionRequest,
+  prependPermissionLedgerEntry,
+} from './permissionLedger';
 
 /**
  * Storage key for persisting agent instructions
@@ -25,27 +32,9 @@ const DEFAULT_AGENT_INSTRUCTIONS = {
 const getDefaultAgentInstructions = (): string => DEFAULT_AGENT_INSTRUCTIONS[getCurrentLocale()];
 
 type CurrentView = 'chat' | 'workflow' | 'skill' | 'browser';
-type PersistedCurrentView = Exclude<CurrentView, 'browser'>;
 
 const persistCurrentView = (view: PersistedCurrentView): void => {
   localStorage.setItem(CURRENT_VIEW_STORAGE_KEY, view);
-};
-
-const normalizeCurrentView = (view: CurrentView): {
-  currentView: PersistedCurrentView;
-  migratedFromBrowser: boolean;
-} => {
-  if (view === 'browser') {
-    return {
-      currentView: 'chat',
-      migratedFromBrowser: true,
-    };
-  }
-
-  return {
-    currentView: view,
-    migratedFromBrowser: false,
-  };
 };
 
 /**
@@ -53,19 +42,14 @@ const normalizeCurrentView = (view: CurrentView): {
  */
 const getInitialCurrentView = (): PersistedCurrentView => {
   const saved = localStorage.getItem(CURRENT_VIEW_STORAGE_KEY);
+  const { currentView, migratedFromBrowser } = normalizePersistedCurrentView(saved);
 
-  if (saved === 'chat' || saved === 'workflow' || saved === 'skill' || saved === 'browser') {
-    const { currentView, migratedFromBrowser } = normalizeCurrentView(saved);
-
-    if (migratedFromBrowser) {
-      console.warn('Migrating deprecated browser view from localStorage to chat.');
-      persistCurrentView(currentView);
-    }
-
-    return currentView;
+  if (migratedFromBrowser) {
+    console.warn('Migrating deprecated browser view from localStorage to chat.');
+    persistCurrentView(currentView);
   }
 
-  return 'chat';
+  return currentView;
 };
 
 // Promise resolver for the Chrome connect prompt (module-level, one at a time)
@@ -84,6 +68,7 @@ export const useUIStore = create<UIState>((set) => ({
   currentView: getInitialCurrentView(),
   currentArtifactId: undefined,
   permissionQueue: [],
+  permissionLedger: [],
   notifications: [],
   notificationHistory: [],
   showApiKey: false,
@@ -127,7 +112,7 @@ export const useUIStore = create<UIState>((set) => ({
    * Set current view. Deprecated browser requests are redirected to chat.
    */
   setCurrentView: (view: CurrentView) => {
-    const { currentView, migratedFromBrowser } = normalizeCurrentView(view);
+    const { currentView, migratedFromBrowser } = normalizePersistedCurrentView(view);
 
     persistCurrentView(currentView);
 
@@ -179,7 +164,7 @@ export const useUIStore = create<UIState>((set) => ({
    * Enqueue a permission request (supports multiple concurrent tool calls)
    */
   setPermissionRequest: (req: PermissionRequest) =>
-    set((state) => ({ permissionQueue: [...state.permissionQueue, req] })),
+    set((state) => ({ permissionQueue: [...state.permissionQueue, createPermissionRequest(req)] })),
 
   /**
    * Dequeue the front permission request (called after approve or deny)
@@ -190,8 +175,39 @@ export const useUIStore = create<UIState>((set) => ({
   /**
    * Clear ALL pending permission requests (used when switching sessions)
    */
-  clearAllPermissions: () =>
-    set({ permissionQueue: [] }),
+  clearAllPermissions: () => {
+    const pendingPermissions = useUIStore.getState().permissionQueue;
+    for (const permission of pendingPermissions) {
+      permission._resolve?.(false);
+    }
+
+    set((state) => ({
+      permissionQueue: [],
+      permissionLedger: pendingPermissions.reduce(
+        (ledger, permission) => prependPermissionLedgerEntry(
+          ledger,
+          createPermissionLedgerEntry(permission, 'cancelled'),
+        ),
+        state.permissionLedger,
+      ),
+    }));
+  },
+
+  resolvePermissionRequest: (approved: boolean) => {
+    const permission = useUIStore.getState().permissionQueue[0];
+    if (!permission) return;
+
+    permission._resolve?.(approved);
+    set((state) => ({
+      permissionQueue: state.permissionQueue.slice(1),
+      permissionLedger: prependPermissionLedgerEntry(
+        state.permissionLedger,
+        createPermissionLedgerEntry(permission, approved ? 'approved' : 'denied'),
+      ),
+    }));
+  },
+
+  clearPermissionLedger: () => set({ permissionLedger: [] }),
 
   /**
    * Block and wait for user's permission (used by QueryEngine's generator)
@@ -201,13 +217,13 @@ export const useUIStore = create<UIState>((set) => ({
       set((state) => ({
         permissionQueue: [
           ...state.permissionQueue,
-          {
+          createPermissionRequest({
             id: tool.id,
             toolName: tool.name,
             toolInput: tool.arguments,
             description: `Execute ${tool.name}?`,
             _resolve: resolve, // Stores the promise resolver
-          },
+          }),
         ],
       }));
     });
@@ -271,12 +287,12 @@ export const useUIStore = create<UIState>((set) => ({
   toggleTerminalPanel: () => set((state) => ({ terminalPanelVisible: !state.terminalPanelVisible })),
   setTerminalPanelHeight: (terminalPanelHeight: number) => set({ terminalPanelHeight }),
   addTaskStep: (label, id) => set((state) => ({
-    taskProgress: [...state.taskProgress, { id: id ?? crypto.randomUUID(), label, status: 'pending' }]
+    taskProgress: addOrReplaceTaskStep(state.taskProgress, label, id),
   })),
   updateTaskStep: (id, status) => set((state) => ({
-    taskProgress: state.taskProgress.map(step => step.id === id ? { ...step, status } : step)
+    taskProgress: updateTaskStepStatus(state.taskProgress, id, status),
   })),
-  setTaskProgress: (steps) => set({ taskProgress: steps }),
+  setTaskProgress: (steps) => set({ taskProgress: dedupeTaskSteps(steps) }),
   clearTaskProgress: () => set({ taskProgress: [] }),
   setAgentPanelTab: (tab) => set({ agentPanelTab: tab }),
 
@@ -408,12 +424,24 @@ export const useUIStore = create<UIState>((set) => ({
    * Resets transient UI that may have caused the crash while preserving user data.
    */
   recoverToChatView: () => {
+    const pendingPermissions = useUIStore.getState().permissionQueue;
+    for (const permission of pendingPermissions) {
+      permission._resolve?.(false);
+    }
+
     persistCurrentView('chat');
-    set({
+    set((state) => ({
       currentView: 'chat',
       settingsOpen: false,
       currentArtifactId: undefined,
       permissionQueue: [],
+      permissionLedger: pendingPermissions.reduce(
+        (ledger, permission) => prependPermissionLedgerEntry(
+          ledger,
+          createPermissionLedgerEntry(permission, 'cancelled'),
+        ),
+        state.permissionLedger,
+      ),
       activeQuestionnaire: null,
       activeQuestionnaireSessionId: null,
       chromePromptVisible: false,
@@ -421,8 +449,8 @@ export const useUIStore = create<UIState>((set) => ({
       browserDockMode: 'hidden' as BrowserDockMode,
       browserPaneVisible: false,
       terminalPanelVisible: false,
-    });
+    }));
   },
 }));
 
-export type { PermissionRequest, Notification, TaskStep, BrowserDockMode, SplitFocus } from '../types/ui';
+export type { PermissionRequest, PermissionLedgerEntry, Notification, TaskStep, BrowserDockMode, SplitFocus } from '../types/ui';

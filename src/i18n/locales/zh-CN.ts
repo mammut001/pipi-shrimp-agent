@@ -154,6 +154,7 @@ const zhCN: TranslationKeys = {
   'chat.hideTerminal': '隐藏终端',
   'chat.enterHint': '回车发送',
   'chat.newLineHint': 'Shift + Enter 换行',
+  'chat.showEarlierMessages': '显示前面的 {count} 条消息',
 
   // 工具执行
   'tool.executing': '正在执行工具...',
@@ -1002,6 +1003,7 @@ const zhCN: TranslationKeys = {
   'settings.testConnectionErrorNetwork': '网络连接失败，请检查网络状态和 Base URL 是否正确。',
   'settings.testConnectionErrorAuth': '认证失败，请检查 API Key 是否正确。',
   'settings.testConnectionErrorModel': '模型不可用，请检查模型名称是否正确，或该模型是否需要额外权限。',
+  'settings.testConnectionErrorBaseUrl': 'API 地址格式有误，请检查 Base URL 配置。',
   'settings.testConnectionErrorTimeout': '连接超时，请检查网络状态或稍后重试。',
   'settings.testConnectionErrorUnknown': '连接测试失败，请检查配置后重试。',
 

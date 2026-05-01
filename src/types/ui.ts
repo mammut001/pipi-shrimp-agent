@@ -21,7 +21,20 @@ export interface PermissionRequest {
   toolName: string;        // Tool name (e.g., "execute_code")
   toolInput: string;       // Tool input (JSON string)
   description?: string;    // User-friendly description
+  requestedAt?: number;
   _resolve?: (approved: boolean) => void; // Used by QueryEngine to wait for user decision
+}
+
+/** In-memory audit record for permission decisions in the current app session. */
+export interface PermissionLedgerEntry {
+  id: string;
+  toolName: string;
+  description?: string;
+  decision: 'approved' | 'denied' | 'cancelled';
+  requestedAt: number;
+  resolvedAt: number;
+  toolInputPreview: string;
+  toolInputLength: number;
 }
 
 /** Notification item */
@@ -79,6 +92,7 @@ export interface UIState {
   currentView: 'chat' | 'workflow' | 'skill' | 'browser';
   currentArtifactId?: string;
   permissionQueue: PermissionRequest[];  // FIFO queue — supports multiple concurrent tool calls
+  permissionLedger: PermissionLedgerEntry[];
   notifications: Notification[];
   notificationHistory: Notification[];
   showApiKey: boolean;
@@ -171,6 +185,12 @@ export interface UIState {
    * Clear ALL pending permission requests (used when switching sessions)
    */
   clearAllPermissions: () => void;
+
+  /** Resolve the front permission request and record the decision. */
+  resolvePermissionRequest: (approved: boolean) => void;
+
+  /** Clear permission decision history for the current app session. */
+  clearPermissionLedger: () => void;
 
   /**
    * Wait for user permission for a specific tool call. Resolves with true if approved.

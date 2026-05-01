@@ -14,6 +14,8 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import {
   decideChatInputSubmission,
+  isStaleChatDraftValue,
+  MAX_CHAT_DRAFT_CHARS,
   shouldDismissBrowserIntentConfirm,
   shouldClearDraftAfterBrowserWorkflow,
 } from '@/components/chatInputFlow';
@@ -217,36 +219,17 @@ describe('draft preservation semantics', () => {
     expect(localStorageMock.getItem(key)).toBeNull();
   });
 
-  it('long draft content (>30KB) is treated as potentially stale', () => {
-    // This mirrors the cleanupOldDrafts heuristic in ChatInput.tsx
-    // Drafts with content > 30000 chars are considered stale
-    const staleDraft = 'x'.repeat(30001);
-    localStorageMock.setItem('chat_draft_stale', staleDraft);
-    expect(localStorageMock.getItem('chat_draft_stale')!.length).toBe(30001);
-    // The cleanup logic would remove this on next mount
+  it('long draft content uses the production stale-draft helper', () => {
+    const staleDraft = 'x'.repeat(MAX_CHAT_DRAFT_CHARS + 1);
+    const freshDraft = 'x'.repeat(MAX_CHAT_DRAFT_CHARS);
+
+    expect(isStaleChatDraftValue(staleDraft)).toBe(true);
+    expect(isStaleChatDraftValue(freshDraft)).toBe(false);
   });
 });
 
 describe('send-as-regular fallback', () => {
-  it('a browser intent that was declined (handled=false) should preserve input', () => {
-    // This mirrors the logic in ChatInput sendToBrowserWorkflow:
-    // if (!handled) { setInput(message); setBrowserIntentCandidate(message); }
-    const handled = false;
-    const message = '打开网页';
-
-    // The caller should keep the input as-is, not clear it
-    const shouldPreserveInput = !handled;
-    expect(shouldPreserveInput).toBe(true);
-  });
-
-  it('browser handoff error also preserves input', () => {
-    // If handleChatBrowserWorkflow throws, sendToBrowserWorkflow catches it
-    // and preserves input via setInput(message)
-    const threwError = true;
-    const message = '打开网页';
-
-    // Error path: input is preserved via setInput(message)
-    const shouldPreserveInput = threwError;
-    expect(shouldPreserveInput).toBe(true);
+  it('declined browser workflow does not clear the draft', () => {
+    expect(shouldClearDraftAfterBrowserWorkflow(false)).toBe(false);
   });
 });
