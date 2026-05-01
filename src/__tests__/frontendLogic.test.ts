@@ -226,18 +226,23 @@ describe('BrowserAgentStore Timer Race Conditions', () => {
     // When tasks complete rapidly, timers should be properly managed
     let status = 'idle';
     let pendingTaskId: string | null = null;
+    let completionTimerId: ReturnType<typeof setTimeout> | null = null;
 
     const completeTask = (taskId: string) => {
       // Clear any existing timer
+      if (completionTimerId) {
+        clearTimeout(completionTimerId);
+      }
       pendingTaskId = taskId;
       status = 'completed';
 
       // Set auto-reset timer
-      setTimeout(() => {
+      completionTimerId = setTimeout(() => {
         if (pendingTaskId === taskId && status === 'completed') {
           status = 'idle';
           pendingTaskId = null;
         }
+        completionTimerId = null;
       }, 5000);
     };
 
@@ -249,6 +254,10 @@ describe('BrowserAgentStore Timer Race Conditions', () => {
     completeTask('task-2');
     expect(status).toBe('completed');
     expect(pendingTaskId).toBe('task-2');
+
+    if (completionTimerId) {
+      clearTimeout(completionTimerId);
+    }
   });
 
   it('should handle listener ref-count correctly', () => {

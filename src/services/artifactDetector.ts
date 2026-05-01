@@ -49,6 +49,24 @@ function fileName(filePath: string): string {
 }
 
 /**
+ * Create a preview URL when browser APIs are available.
+ * In non-browser environments like Jest/node, keep the absolute path so
+ * artifact registration stays side-effect free and testable.
+ */
+function getArtifactUrl(filePath: string): string {
+  if (typeof window === 'undefined') {
+    return filePath;
+  }
+
+  try {
+    return convertFileSrc(filePath);
+  } catch (error) {
+    console.warn('[artifactDetector] Failed to convert file path for preview:', error);
+    return filePath;
+  }
+}
+
+/**
  * Patterns for extracting file paths from tool output text.
  * Matches absolute paths that look like generated output files.
  */
@@ -105,7 +123,7 @@ export function registerFileArtifacts(messageId: string, filePaths: string[]): v
     .map(filePath => ({
       name: fileName(filePath),
       filePath,
-      url: convertFileSrc(filePath),
+      url: getArtifactUrl(filePath),
       fileType: detectFileType(filePath),
       mimeType: getMimeType(filePath),
       messageId,
@@ -173,7 +191,7 @@ export function addFileArtifact(messageId: string, filePath: string, name?: stri
   return store.addArtifact({
     name: name ?? fileName(filePath),
     filePath,
-    url: convertFileSrc(filePath),
+    url: getArtifactUrl(filePath),
     fileType: detectFileType(filePath),
     mimeType: getMimeType(filePath),
     messageId,

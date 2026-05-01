@@ -56,11 +56,11 @@ export function Sidebar() {
     () => apiConfigs.find((c) => c.id === activeConfigId) || apiConfigs[0] || null,
     [apiConfigs, activeConfigId],
   );
-  const profileName = activeApiConfig?.name?.trim() || 'Local User';
+  const profileName = activeApiConfig?.name?.trim() || t('sidebar.localUser');
   const providerLabel = activeApiConfig
     ? (getProvider(activeApiConfig.provider)?.label ?? activeApiConfig.provider)
     : null;
-  const profileSubtitle = providerLabel ? `${providerLabel} Account` : 'No API Config';
+  const profileSubtitle = providerLabel ? `${providerLabel} ${t('sidebar.accountSuffix')}` : t('sidebar.noApiConfig');
   const profileInitial = (profileName.charAt(0) || 'U').toUpperCase();
 
   // Projects state
@@ -209,14 +209,14 @@ export function Sidebar() {
       // Add an idle run entry so it appears in the history list
       addWorkflowRun({
         id: runId,
-        title: '新工作流',
+        title: t('sidebar.newWorkflow'),
         projectGoal: '',
         status: 'idle',
         startTime: Date.now(),
         agents: [],
         runDirectory: dir,
       });
-      useUIStore.getState().addNotification('success', `新工作流已创建`);
+      useUIStore.getState().addNotification('success', t('notification.workflowCreated'));
     } catch (e) {
       console.warn('Failed to create workflow directory:', e);
     }
@@ -246,7 +246,7 @@ export function Sidebar() {
    * Handle delete project
    */
   const handleDeleteProject = useCallback(async (projectId: string) => {
-    if (confirm('Are you sure you want to delete this project and all its conversations?')) {
+    if (confirm(t('sidebar.deleteProjectConfirm'))) {
       await deleteProject(projectId);
     }
     setContextMenu(null);
@@ -451,7 +451,7 @@ export function Sidebar() {
     const instance = workflowInstances.find((i) => i.id === instanceId);
     if (instance) {
       setRenamingWorkflowInstanceId(instanceId);
-      setWorkflowRenameInput(instance.name || 'Untitled Workflow');
+      setWorkflowRenameInput(instance.name || t('sidebar.untitledWorkflow'));
     }
   }, [workflowInstances]);
 
@@ -492,10 +492,10 @@ export function Sidebar() {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return t('sidebar.justNow');
+    if (diffMins < 60) return `${diffMins}${t('sidebar.minutesAgo')}`;
+    if (diffHours < 24) return `${diffHours}${t('sidebar.hoursAgo')}`;
+    if (diffDays < 7) return `${diffDays}${t('sidebar.daysAgo')}`;
     return date.toLocaleDateString();
   };
 
@@ -511,7 +511,7 @@ export function Sidebar() {
    */
   const getSessionPreview = (session: Session): string => {
     if (session.messages.length === 0) {
-      return 'Chat';
+      return t('sidebar.chatFallback');
     }
     const lastMessage = session.messages[session.messages.length - 1];
     const preview = lastMessage.content.substring(0, 50);
@@ -546,7 +546,7 @@ export function Sidebar() {
           >
             <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
           </svg>
-          {currentView === 'workflow' ? '新工作流' : t('nav.newChat')}
+          {currentView === 'workflow' ? t('sidebar.newWorkflow') : t('nav.newChat')}
         </button>
 
         {/* Skill Button - Opens Skill Market */}
@@ -600,17 +600,17 @@ export function Sidebar() {
                   ? 'bg-blue-100 text-blue-700 shadow-sm ring-1 ring-blue-300'
                   : 'bg-gray-50 text-gray-600 hover:bg-gray-200/50 active:bg-gray-200'
                 }`}
-              title={isMultiSelectMode ? 'Exit multi-select' : 'Multi-select'}
+              title={isMultiSelectMode ? t('sidebar.exitSelection') : t('sidebar.select')}
             >
               {isMultiSelectMode ? (
                 <span className="flex items-center gap-1.5">
                   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
-                  Selecting
+                  {t('sidebar.selecting')}
                 </span>
               ) : (
-                'Select'
+                t('sidebar.select')
               )}
             </button>
           )}
@@ -629,17 +629,17 @@ export function Sidebar() {
                   ? 'bg-blue-100 text-blue-700 shadow-sm ring-1 ring-blue-300'
                   : 'bg-gray-50 text-gray-600 hover:bg-gray-200/50 active:bg-gray-200'
                 }`}
-              title={isWorkflowMultiSelectMode ? 'Exit multi-select' : 'Multi-select'}
+              title={isWorkflowMultiSelectMode ? t('sidebar.exitSelection') : t('sidebar.select')}
             >
               {isWorkflowMultiSelectMode ? (
                 <span className="flex items-center gap-1.5">
                   <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
-                  Selecting
+                  {t('sidebar.selecting')}
                 </span>
               ) : (
-                'Select'
+                t('sidebar.select')
               )}
             </button>
           )}
@@ -660,7 +660,7 @@ export function Sidebar() {
                 className="flex-shrink-0 w-6 h-6 flex items-center justify-center
                            rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100
                            active:scale-95 transition-all duration-150"
-                title="Exit selection"
+                title={t('sidebar.exitSelection')}
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -669,7 +669,7 @@ export function Sidebar() {
 
               {/* Count */}
               <span className="text-xs font-semibold text-gray-700 tabular-nums whitespace-nowrap">
-                {selectedSessions.size} selected
+                {selectedSessions.size} {t('sidebar.selected')}
               </span>
 
               {/* Right-side actions — ml-auto keeps them in-container */}
@@ -682,7 +682,7 @@ export function Sidebar() {
                              active:scale-95 rounded-lg transition-all duration-150 whitespace-nowrap"
                 >
                   {ungroupedSessions.every(s => selectedSessions.has(s.id)) && selectedSessions.size > 0
-                    ? 'None' : 'All'}
+                    ? t('common.none') : t('common.all')}
                 </button>
 
                 {/* Delete */}
@@ -698,7 +698,7 @@ export function Sidebar() {
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
-                  Delete
+                  {t('common.delete')}
                 </button>
               </div>
             </div>
@@ -713,7 +713,7 @@ export function Sidebar() {
               <button
                 onClick={() => { setIsWorkflowMultiSelectMode(false); setSelectedWorkflows(new Set()); }}
                 className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 active:scale-95 transition-all duration-150"
-                title="Exit selection"
+                title={t('sidebar.exitSelection')}
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -722,7 +722,7 @@ export function Sidebar() {
 
               {/* Count */}
               <span className="text-xs font-semibold text-gray-700 tabular-nums whitespace-nowrap">
-                {selectedWorkflows.size} selected
+                {selectedWorkflows.size} {t('sidebar.selected')}
               </span>
 
               {/* Right-side actions */}
@@ -733,7 +733,7 @@ export function Sidebar() {
                   className="px-2 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-lg transition-all duration-150 whitespace-nowrap"
                 >
                   {workflowInstances.every(i => selectedWorkflows.has(i.id)) && selectedWorkflows.size > 0
-                    ? 'None' : 'All'}
+                    ? t('common.none') : t('common.all')}
                 </button>
 
                 {/* Delete */}
@@ -745,7 +745,7 @@ export function Sidebar() {
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
-                  Delete
+                  {t('common.delete')}
                 </button>
               </div>
             </div>
@@ -764,7 +764,7 @@ export function Sidebar() {
                 value={searchQuery}
                 onChange={setSearchQuery}
                 onClear={() => setSearchQuery('')}
-                placeholder="Search chats..."
+                placeholder={t('sidebar.searchChats')}
               />
             </div>
 
@@ -772,7 +772,7 @@ export function Sidebar() {
             {filteredSessions !== null && (
               <ul className="py-2 space-y-1 px-2">
                 {filteredSessions.length === 0 ? (
-                  <li className="px-3 py-4 text-xs text-gray-400 text-center">No results</li>
+                  <li className="px-3 py-4 text-xs text-gray-400 text-center">{t('sidebar.noResults')}</li>
                 ) : (
                   filteredSessions.map((session) => (
                     <li key={session.id}>
@@ -785,7 +785,7 @@ export function Sidebar() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
                             <h3 className="font-semibold text-gray-900 truncate text-sm">
-                              {session.title || 'Chat'}
+                              {session.title || t('sidebar.chatFallback')}
                             </h3>
                             <p className="text-xs text-gray-500 truncate mt-0.5">
                               {getSessionPreview(session)}
@@ -806,7 +806,7 @@ export function Sidebar() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                   </svg>
                 </div>
-                <p>No conversations yet</p>
+                <p>{t('sidebar.noConversations')}</p>
               </div>
             ) : (
               <ul className="py-2 space-y-1 px-2">
@@ -860,9 +860,9 @@ export function Sidebar() {
                               <h3
                                 className="font-semibold text-gray-900 truncate text-sm cursor-text hover:bg-gray-100 rounded px-1 -mx-1 transition-colors"
                                 onDoubleClick={() => handleStartRename(session.id)}
-                                title="Double-click to rename"
+                                title={t('sidebar.doubleClickToRename')}
                               >
-                                {session.title || 'Chat'}
+                                {session.title || t('sidebar.chatFallback')}
                                 {session.workDir && (
                                   <span title={session.workDir} className="inline-flex">
                                     <svg
@@ -887,7 +887,7 @@ export function Sidebar() {
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                                   <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
                                 </svg>
-                                <span>{formatTokenCount(tokenUsageMap.get(session.id)?.total ?? 0)} tokens</span>
+                                <span>{formatTokenCount(tokenUsageMap.get(session.id)?.total ?? 0)} {t('token.tokens')}</span>
                               </p>
                             )}
                             {session.cwd && (
@@ -906,7 +906,7 @@ export function Sidebar() {
                               onClick={(e) => { e.stopPropagation(); handleOpenMoveChatModal(session.id); }}
                               className={`opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all ${session.cwd ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'
                                 }`}
-                              title="Move to project"
+                              title={t('sidebar.moveToProjectAction')}
                             >
                               <svg
                                 xmlns="http://www.w3.org/2000/svg"
@@ -923,7 +923,7 @@ export function Sidebar() {
                             <button
                               onClick={(e) => { e.stopPropagation(); handleOpenDeleteConfirm(session.id); }}
                               className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-red-500"
-                              title="Delete chat"
+                              title={t('sidebar.deleteChatAction')}
                             >
                               <svg
                                 xmlns="http://www.w3.org/2000/svg"
@@ -952,11 +952,11 @@ export function Sidebar() {
             <ul className="py-2 space-y-1 px-2 mt-auto">
                 <li className="pt-4 pb-2">
                   <div className="flex items-center justify-between px-3">
-                    <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Projects</h2>
+                    <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('sidebar.projects')}</h2>
                     <button
                       onClick={() => setShowNewProjectModal(true)}
                       className="p-1 hover:bg-gray-200 rounded-lg text-gray-400 hover:text-gray-600 transition-colors"
-                      title="New Project"
+                      title={t('sidebar.newProjectAction')}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
@@ -967,7 +967,7 @@ export function Sidebar() {
 
                 {/* Project List */}
                 {projects.length === 0 ? (
-                  <li className="px-3 py-2 text-xs text-gray-400">No projects yet</li>
+                  <li className="px-3 py-2 text-xs text-gray-400">{t('sidebar.noProjectsYet')}</li>
                 ) : (
                   projects.map((project) => (
                     <li key={project.id}>
@@ -1029,16 +1029,16 @@ export function Sidebar() {
                                     <h3
                                       className="font-semibold text-gray-900 truncate text-sm cursor-text hover:bg-gray-100 rounded px-1 -mx-1 transition-colors"
                                       onDoubleClick={() => handleStartRename(session.id)}
-                                      title="Double-click to rename"
+                                      title={t('sidebar.doubleClickToRename')}
                                     >
-                                      {session.title || 'Chat'}
+                                      {session.title || t('sidebar.chatFallback')}
                                     </h3>
                                   </div>
                                   <div className="flex items-center gap-1">
                                     <button
                                       onClick={(e) => { e.stopPropagation(); handleOpenMoveChatModal(session.id); }}
                                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-blue-500"
-                                      title="Move to project"
+                                      title={t('sidebar.moveToProjectAction')}
                                     >
                                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                                         <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
@@ -1066,7 +1066,7 @@ export function Sidebar() {
                 value={workflowSearchQuery}
                 onChange={setWorkflowSearchQuery}
                 onClear={() => setWorkflowSearchQuery('')}
-                placeholder="Search workflows..."
+                placeholder={t('sidebar.searchWorkflows')}
               />
             </div>
 
@@ -1074,7 +1074,7 @@ export function Sidebar() {
               // Search results
               <ul className="py-2 space-y-1 px-2">
                 {filteredWorkflows.length === 0 ? (
-                  <li className="px-3 py-4 text-xs text-gray-400 text-center">No results</li>
+                  <li className="px-3 py-4 text-xs text-gray-400 text-center">{t('sidebar.noResults')}</li>
                 ) : (
                   filteredWorkflows.map((instance) => (
                     <li key={instance.id}>
@@ -1088,15 +1088,15 @@ export function Sidebar() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
                             <h3 className="font-semibold text-gray-900 truncate text-sm">
-                              {instance.name || 'Untitled Workflow'}
+                              {instance.name || t('sidebar.untitledWorkflow')}
                             </h3>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className="text-xs text-gray-400">
-                                {instance.agents.length} agents
+                                {instance.agents.length} {t('sidebar.agentsLabel')}
                               </span>
                               <span className="text-xs text-gray-400">·</span>
                               <span className="text-xs text-gray-400">
-                                {instance.workflowRuns.length} runs
+                                {instance.workflowRuns.length} {t('sidebar.runsLabel')}
                               </span>
                             </div>
                           </div>
@@ -1113,7 +1113,7 @@ export function Sidebar() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
                   </svg>
                 </div>
-                <p>No workflows yet</p>
+                <p>{t('sidebar.noWorkflows')}</p>
               </div>
             ) : (
               <ul className="py-2 space-y-1 px-2">
@@ -1167,18 +1167,18 @@ export function Sidebar() {
                                 e.stopPropagation();
                                 handleStartWorkflowRename(instance.id);
                               }}
-                              title="Double-click to rename"
+                              title={t('sidebar.doubleClickToRename')}
                             >
-                              {instance.name || 'Untitled Workflow'}
+                              {instance.name || t('sidebar.untitledWorkflow')}
                             </h3>
                           )}
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-xs text-gray-400">
-                              {instance.agents.length} agents
+                              {instance.agents.length} {t('sidebar.agentsLabel')}
                             </span>
                             <span className="text-xs text-gray-400">·</span>
                             <span className="text-xs text-gray-400">
-                              {instance.workflowRuns.length} runs
+                              {instance.workflowRuns.length} {t('sidebar.runsLabel')}
                             </span>
                           </div>
                           <p className="text-xs text-gray-400 mt-0.5">
@@ -1195,7 +1195,7 @@ export function Sidebar() {
                                 handleOpenWorkflowDeleteConfirm(instance.id);
                               }}
                               className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded-lg transition-all text-gray-400 hover:text-red-500"
-                              title="Delete workflow"
+                              title={t('sidebar.deleteWorkflow')}
                             >
                               <svg
                                 xmlns="http://www.w3.org/2000/svg"
@@ -1235,12 +1235,12 @@ export function Sidebar() {
       {renderSidebarModal(showNewProjectModal, (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowNewProjectModal(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">New Project</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('sidebar.newProjectTitle')}</h3>
             <input
               type="text"
               value={newProjectName}
               onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="Project name"
+              placeholder={t('sidebar.projectName')}
               className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               autoFocus
               onKeyDown={(e) => {
@@ -1253,13 +1253,13 @@ export function Sidebar() {
                 onClick={() => setShowNewProjectModal(false)}
                 className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleCreateProject}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
               >
-                Create
+                {t('common.create')}
               </button>
             </div>
           </div>
@@ -1270,30 +1270,30 @@ export function Sidebar() {
       {renderSidebarModal(showMoveChatModal, (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowMoveChatModal(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Move Chat</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('sidebar.moveChat')}</h3>
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Select Chat</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('sidebar.selectChat')}</label>
               <select
                 value={sessionToMove || ''}
                 onChange={(e) => setSessionToMove(e.target.value || null)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="">Select a chat...</option>
+                <option value="">{t('sidebar.selectChatPlaceholder')}</option>
                 {sessions.map((session) => (
                   <option key={session.id} value={session.id}>
-                    {session.title || 'Chat'}
+                    {session.title || t('sidebar.chatFallback')}
                   </option>
                 ))}
               </select>
             </div>
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Move to Project</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('sidebar.moveToProject')}</label>
               <select
                 value={targetProjectForMove || ''}
                 onChange={(e) => setTargetProjectForMove(e.target.value || null)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="">No project (root)</option>
+                <option value="">{t('chat.noProjectRoot')}</option>
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>{project.name}</option>
                 ))}
@@ -1308,14 +1308,14 @@ export function Sidebar() {
                 }}
                 className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleMoveSession}
                 disabled={!sessionToMove}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Move
+                {t('common.move')}
               </button>
             </div>
           </div>
@@ -1326,8 +1326,8 @@ export function Sidebar() {
       {renderSidebarModal(showDeleteConfirm, (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowDeleteConfirm(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Chat</h3>
-            <p className="text-sm text-gray-600 mb-4">Are you sure you want to delete this conversation? This action cannot be undone.</p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('sidebar.deleteChat')}</h3>
+            <p className="text-sm text-gray-600 mb-4">{t('sidebar.deleteConversationConfirm')}</p>
             <div className="flex gap-2">
               <button
                 onClick={() => {
@@ -1336,13 +1336,13 @@ export function Sidebar() {
                 }}
                 className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleConfirmDelete}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
               >
-                Delete
+                {t('common.delete')}
               </button>
             </div>
           </div>
@@ -1353,22 +1353,22 @@ export function Sidebar() {
       {renderSidebarModal(showBatchDeleteConfirm, (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowBatchDeleteConfirm(false)}>
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Chats</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('sidebar.deleteChats')}</h3>
             <p className="text-sm text-gray-600 mb-4">
-              Are you sure you want to delete {selectedSessions.size} conversation(s)? This action cannot be undone.
+              {t('sidebar.deleteConversationsConfirm')} ({selectedSessions.size})
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowBatchDeleteConfirm(false)}
                 className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleConfirmBatchDelete}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
               >
-                Delete
+                {t('common.delete')}
               </button>
             </div>
           </div>
@@ -1381,13 +1381,13 @@ export function Sidebar() {
           <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               {isWorkflowMultiSelectMode
-                ? `Delete ${selectedWorkflows.size} Workflows`
-                : 'Delete Workflow'}
+                ? `${t('sidebar.deleteWorkflows')} (${selectedWorkflows.size})`
+                : t('sidebar.deleteWorkflow')}
             </h3>
             <p className="text-sm text-gray-600 mb-4">
               {isWorkflowMultiSelectMode
-                ? `Are you sure you want to delete ${selectedWorkflows.size} workflows? All agents, connections, and run history will be lost. This action cannot be undone.`
-                : 'Are you sure you want to delete this workflow? All agents, connections, and run history will be lost. This action cannot be undone.'}
+                ? `${t('sidebar.deleteWorkflowsConfirm')} (${selectedWorkflows.size})`
+                : t('sidebar.deleteWorkflowConfirm')}
             </p>
             <div className="flex gap-2">
               <button
@@ -1399,13 +1399,13 @@ export function Sidebar() {
                 }}
                 className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={isWorkflowMultiSelectMode ? handleConfirmBatchDeleteWorkflows : handleConfirmWorkflowDelete}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
               >
-                Delete
+                {t('common.delete')}
               </button>
             </div>
           </div>
@@ -1423,7 +1423,7 @@ export function Sidebar() {
               onClick={() => handleDeleteProject(contextMenu.id)}
               className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100"
             >
-              Delete Project
+              {t('sidebar.deleteProject')}
             </button>
           )}
         </div>

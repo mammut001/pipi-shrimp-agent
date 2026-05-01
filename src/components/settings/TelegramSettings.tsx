@@ -13,6 +13,7 @@ import { useTelegramStore, useTelegramBotInfo, useTelegramConnected, useTelegram
 import { useUIStore } from '@/store';
 import { telegramValidateToken } from '@/services/telegramService';
 import type { TelegramBotInfo } from '@/types/telegram';
+import { t } from '@/i18n';
 
 /**
  * Telegram Settings Component
@@ -45,7 +46,7 @@ export function TelegramSettings() {
   const handleValidate = async () => {
     const trimmed = tokenInput.trim();
     if (!trimmed) {
-      setValidationResult({ success: false, error: 'Token is required' });
+      setValidationResult({ success: false, error: t('telegram.tokenRequired') });
       return;
     }
 
@@ -56,7 +57,7 @@ export function TelegramSettings() {
       const info = await telegramValidateToken(trimmed);
       setValidationResult({ success: true, botInfo: info });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid token';
+      const message = error instanceof Error ? error.message : t('telegram.invalidToken');
       setValidationResult({ success: false, error: message });
     } finally {
       setIsValidating(false);
@@ -69,15 +70,15 @@ export function TelegramSettings() {
   const handleConnect = async () => {
     const trimmed = tokenInput.trim();
     if (!trimmed) {
-      addNotification('error', 'Please enter a bot token');
+      addNotification('error', t('telegram.enterBotToken'));
       return;
     }
 
     try {
       await store.connect(trimmed);
-      addNotification('success', 'Connected to Telegram!');
+      addNotification('success', t('telegram.connectedSuccess'));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to connect';
+      const message = error instanceof Error ? error.message : t('telegram.failedToConnect');
       addNotification('error', message);
     }
   };
@@ -88,7 +89,7 @@ export function TelegramSettings() {
   const handleDisconnect = async () => {
     try {
       await store.disconnect();
-      addNotification('info', 'Disconnected from Telegram');
+      addNotification('info', t('telegram.disconnectedInfo'));
     } catch (error) {
       console.error('Disconnect error:', error);
     }
@@ -119,8 +120,8 @@ export function TelegramSettings() {
           </svg>
         </div>
         <div>
-          <h2 className="text-sm font-semibold text-gray-900">Telegram Integration</h2>
-          <p className="text-xs text-gray-500">Connect your bot to receive and send messages</p>
+          <h2 className="text-sm font-semibold text-gray-900">{t('telegram.title')}</h2>
+          <p className="text-xs text-gray-500">{t('telegram.description')}</p>
         </div>
       </div>
 
@@ -145,12 +146,12 @@ export function TelegramSettings() {
               : 'bg-gray-400'
           }`} />
           {isConnected
-            ? 'Connected'
+            ? t('telegram.connected')
             : status === 'connecting'
-            ? 'Connecting...'
+            ? t('telegram.connecting')
             : status === 'error'
-            ? 'Error'
-            : 'Disconnected'}
+            ? t('common.error')
+            : t('telegram.disconnected')}
         </div>
 
         {isConnected && botInfo && (
@@ -171,7 +172,7 @@ export function TelegramSettings() {
       {/* Token Input */}
       <div className="mb-4">
         <label className="block text-xs font-medium text-gray-700 mb-1.5">
-          Bot Token
+          {t('telegram.botToken')}
         </label>
         <div className="flex gap-2">
           <input
@@ -181,7 +182,7 @@ export function TelegramSettings() {
               setTokenInput(e.target.value);
               setValidationResult(null);
             }}
-            placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+            placeholder={t('telegram.botToken')}
             className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-transparent"
           />
           <button
@@ -190,7 +191,7 @@ export function TelegramSettings() {
             disabled={!tokenInput.trim() || isValidating}
             className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isValidating ? 'Checking...' : 'Check'}
+            {isValidating ? t('telegram.checking') : t('telegram.check')}
           </button>
         </div>
 
@@ -203,7 +204,7 @@ export function TelegramSettings() {
           }`}>
             {validationResult.success && validationResult.botInfo ? (
               <div>
-                <span className="font-medium">Valid token for @{validationResult.botInfo.username}</span>
+                <span className="font-medium">{t('telegram.validTokenFor')} @{validationResult.botInfo.username}</span>
                 <span className="mx-1">•</span>
                 <span>{validationResult.botInfo.firstName}</span>
               </div>
@@ -216,13 +217,13 @@ export function TelegramSettings() {
 
       {/* Quick Setup Instructions */}
       <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-        <h3 className="text-xs font-semibold text-gray-700 mb-2">Quick Setup</h3>
+        <h3 className="text-xs font-semibold text-gray-700 mb-2">{t('telegram.quickSetup')}</h3>
         <ol className="text-xs text-gray-600 space-y-1 list-decimal pl-4">
-          <li>Open Telegram and search for <span className="font-medium">@BotFather</span></li>
-          <li>Send <span className="font-mono bg-gray-200 px-1 rounded">/newbot</span> to create a new bot</li>
-          <li>Follow the instructions and copy your bot token</li>
-          <li>Paste the token above and click "Check" to validate</li>
-          <li>Click "Connect" to start receiving messages</li>
+          <li>{t('telegram.setupStep1')}</li>
+          <li>{t('telegram.setupStep2')}</li>
+          <li>{t('telegram.setupStep3')}</li>
+          <li>{t('telegram.setupStep4')}</li>
+          <li>{t('telegram.setupStep5')}</li>
         </ol>
       </div>
 
@@ -242,10 +243,10 @@ export function TelegramSettings() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  Connecting...
+                  {t('telegram.connecting')}
                 </span>
               ) : (
-                'Connect'
+                t('telegram.connect')
               )}
             </button>
             {tokenInput && (
@@ -254,7 +255,7 @@ export function TelegramSettings() {
                 onClick={handleClear}
                 className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 transition-colors"
               >
-                Clear
+                {t('telegram.clear')}
               </button>
             )}
           </>
@@ -264,7 +265,7 @@ export function TelegramSettings() {
             onClick={handleDisconnect}
             className="flex-1 px-4 py-2 text-sm font-medium rounded-lg border border-red-300 bg-white hover:bg-red-50 text-red-600 transition-colors"
           >
-            Disconnect
+            {t('telegram.disconnect')}
           </button>
         )}
       </div>
@@ -272,19 +273,19 @@ export function TelegramSettings() {
       {/* Connected Features Info */}
       {isConnected && (
         <div className="mt-4 pt-4 border-t border-gray-200">
-          <h3 className="text-xs font-semibold text-gray-700 mb-2">Connected Features</h3>
+          <h3 className="text-xs font-semibold text-gray-700 mb-2">{t('telegram.connectedFeatures')}</h3>
           <ul className="text-xs text-gray-600 space-y-1">
             <li className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              Send messages to any chat
+              {t('telegram.featureSendMessages')}
             </li>
             <li className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              Receive messages from users
+              {t('telegram.featureReceiveMessages')}
             </li>
             <li className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              Real-time message notifications
+              {t('telegram.featureRealtimeNotifications')}
             </li>
           </ul>
         </div>
