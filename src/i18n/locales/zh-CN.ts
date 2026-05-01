@@ -42,6 +42,58 @@ const zhCN: TranslationKeys = {
   'common.inputParameters': '输入参数',
   'common.requiredField': '此字段为必填项',
 
+  // Artifacts
+  'artifacts.singleFileGenerated': '已生成 {count} 个文件',
+  'artifacts.multipleFilesGenerated': '已生成 {count} 个文件',
+
+  // AutoResearch
+  'autoresearch.selectExperimentForDetails': '点击左侧实验条目查看详情',
+  'autoresearch.experiment': '实验',
+  'autoresearch.experimentShort': '实验',
+  'autoresearch.hypothesis': '假设',
+  'autoresearch.change': '变更',
+  'autoresearch.result': '结果',
+  'autoresearch.reasoning': '推理',
+  'autoresearch.notAvailable': '暂无',
+  'autoresearch.emptyValue': '—',
+  'autoresearch.secondsShort': '秒',
+  'autoresearch.statusImproved': '已改善',
+  'autoresearch.statusNotImproved': '未改善',
+  'autoresearch.statusFailed': '失败',
+  'autoresearch.failedToResolveSessionFilePath': '无法解析 AutoResearch 会话文件路径：{message}',
+  'autoresearch.setupTitle': 'AutoResearch 设置',
+  'autoresearch.setupDescription': '在这台 Mac 上本地运行循环，或通过 SSH 在远程机器上运行。密码认证需要 sshpass。',
+  'autoresearch.modeLocal': '本地',
+  'autoresearch.hostPlaceholder': '主机地址（例如 192.168.1.10 或 connect.westd.seetacloud.com）',
+  'autoresearch.userPlaceholder': '用户（默认：root）',
+  'autoresearch.portPlaceholder': '端口',
+  'autoresearch.authAgent': '认证：Agent（~/.ssh/config 或 authorized_keys）',
+  'autoresearch.authPassword': '认证：密码（sshpass）',
+  'autoresearch.authKey': '认证：私钥',
+  'autoresearch.passwordPlaceholder': '密码（仅保存在内存中）',
+  'autoresearch.sshKeyPathPlaceholder': 'SSH 密钥路径（例如 ~/.ssh/id_rsa）',
+  'autoresearch.localWorkDirPlaceholder': '本地工作目录（绝对路径）',
+  'autoresearch.remoteWorkDirPlaceholder': '远程工作目录（默认：~/autoresearch）',
+  'autoresearch.metricNamePlaceholder': '指标名（例如 val_bpb）',
+  'autoresearch.lowerIsBetter': '越低越好',
+  'autoresearch.higherIsBetter': '越高越好',
+  'autoresearch.maxIterationsPlaceholder': '最大迭代次数（默认：50）',
+  'autoresearch.start': '开始 AutoResearch',
+  'autoresearch.loopStateIdle': '空闲',
+  'autoresearch.loopStateRunning': '运行中',
+  'autoresearch.loopStatePaused': '已暂停',
+  'autoresearch.loopStateStopped': '已停止',
+  'autoresearch.loopStateError': '出错',
+  'autoresearch.best': '最佳结果',
+  'autoresearch.consecutiveFailures': '{count} 次连续失败',
+  'autoresearch.setupAndStart': '配置并开始',
+  'autoresearch.pause': '暂停',
+  'autoresearch.stop': '停止',
+  'autoresearch.resume': '继续',
+  'autoresearch.newSession': '新会话',
+  'autoresearch.emptyIdle': '请先完成配置并启动实验会话。',
+  'autoresearch.emptyWaiting': '正在等待第一个实验结果...',
+
   // 导航
   'nav.chat': '对话',
   'nav.workflow': '工作流',
@@ -311,6 +363,15 @@ const zhCN: TranslationKeys = {
   'browser.openWindow': '打开浏览器',
   'browser.currentPage': '当前页面:',
   'browser.statusSummary': '当前状态',
+  'browser.currentTask': '当前任务',
+  'browser.recentActivity': '最近动态',
+  'browser.noActiveTask': '暂无任务',
+  'browser.noBrowserSurface': '浏览器画面尚未创建',
+  'browser.loginRequired': '需要先完成登录或人工处理',
+  'browser.loggedIn': '已登录',
+  'browser.notLoggedIn': '未登录',
+  'browser.pendingPageMetadata': '页面信息获取中',
+  'browser.collapseToMini': '收起到迷你模式',
   'browser.quickSites': '快捷网站',
   'browser.quickTasks': '快捷任务',
   'browser.hideHistory': '隐藏历史',
@@ -330,6 +391,11 @@ const zhCN: TranslationKeys = {
   'browser.forceContinue': '强制继续',
   'browser.executeAfterLogin': '完成登录后继续',
   'browser.executeAfterManualStep': '完成操作后继续',
+  'browser.logs': '日志',
+  'browser.debug': '调试',
+  'browser.copyAll': '复制全部',
+  'browser.copied': '已复制',
+  'browser.observability': '观测信息',
   'browser.skipVerificationAndContinue': '跳过验证，直接继续执行',
   'browser.operationBlocked': '操作被阻止',
   'browser.pleaseCompleteOperationInBrowser': '请在浏览器窗口中完成必要的操作，然后重试。',
@@ -352,6 +418,10 @@ const zhCN: TranslationKeys = {
   'browser.matchedSignals': '匹配信号',
   'browser.notice.openWindowFirstTitle': '请先打开网页',
   'browser.notice.openWindowFirstDescription': '先输入或粘贴 URL 并打开网页，然后再执行任务。任务内容会保留。',
+  'browser.notice.taskContextRequiredTitle': '缺少可执行的任务上下文',
+  'browser.notice.taskContextRequiredDescription': '请先从聊天发起浏览器任务，或连接 CDP 并填写目标 URL。',
+  'browser.notice.enterTargetUrlTitle': '请先输入目标 URL',
+  'browser.notice.enterTargetUrlDescription': '连接 CDP 后，需要先填写目标 URL，系统才能开始执行任务。',
   'browser.guidance.openWindowTitle': '先打开一个网页',
   'browser.guidance.openWindowDescription': '输入或粘贴 URL，打开网页后就可以直接输入任务。系统会在执行前自动检查页面状态。',
   'browser.guidance.openingTitle': '正在打开网页',
@@ -569,6 +639,71 @@ const zhCN: TranslationKeys = {
 - Agent 使用 ssh_exec / ssh_upload_file 工具执行实验
 - 解析结果并记录；改进的实验提交，失败的回滚`,
   'skill.autoresearch.openInChat': '在 Chat 中打开',
+  'skill.webResearch.name': '网页研究',
+  'skill.webResearch.description': '使用 PageState 导航、内容提取和带来源摘要来研究实时网站。',
+  'skill.webResearch.documentation': `# 网页研究
+
+使用具备 PageState 感知能力的浏览器工具链，在真实浏览器中研究某个主题。
+
+## 适用场景
+
+- 对比多个公开网站上的信息
+- 从搜索结果追到原始来源
+- 在保留来源 URL 的前提下总结页面内容
+
+## 推荐工具循环
+
+- browser_navigate
+- browser_get_page
+- browser_click / browser_type / browser_press_key
+- browser_wait
+- browser_extract_content 或 browser_get_text
+
+## 示例提示词
+
+- 研究 Tauri 2 当前版本的发布说明，并总结最重要的 3 个变化。
+- 找到 Chromiumoxide 截图能力的官方文档页面，并提取关键 API 细节。
+- 打开一个商品页，识别价格和配送文案，并连同来源 URL 一起汇报。
+
+## 校验流程
+
+1. 打开目标页面或搜索引擎。
+2. 每次发生有意义的 DOM 变化后，重新读取 browser_get_page。
+3. 只提取回答问题所需的页面内容。
+4. 返回简洁结论，并附上页面标题和 URL。
+`,
+  'skill.formFill.name': '表单填写',
+  'skill.formFill.description': '使用 backend_node_id 定位、验证读取和受保护提交流程来填写网页表单。',
+  'skill.formFill.documentation': `# 表单填写
+
+在执行高风险动作前重新检查 PageState，安全地填写结构化网页表单。
+
+## 适用场景
+
+- 结账和注册表单
+- 支持工单或申请表单
+- 输入后页面会变化的多步骤流程
+
+## 推荐工具循环
+
+- browser_get_page
+- browser_type
+- browser_click
+- browser_wait
+- 提交前再次调用 browser_get_page
+
+## 示例提示词
+
+- 打开结账演示页面，用测试卡号填充卡片字段，并在提交前停止。
+- 找到登录表单，输入提供的邮箱，并确认还有哪个字段为空。
+- 尽可能填写所有你能明确识别的必填字段，然后列出具体发生了哪些变化。
+
+## 护栏
+
+- 每次高风险点击前都确认当前页面状态。
+- 除非用户明确要求继续，否则在不可逆提交前停止。
+- 遇到不确定或缺失的字段时直接说明，不要猜测。
+`,
 
   // Typst Preview
   'typst.title': '文档预览',
@@ -596,6 +731,7 @@ const zhCN: TranslationKeys = {
   'chat.input.filesAddedToSession': '{count} 个文件已添加到当前 session',
   'chat.input.filesImported': '{count} 个文件已导入',
   'chat.input.filesSelected': '已选择文件',
+  'chat.input.filesCount': '{count} 个文件',
   'chat.input.dragFilesHere': '拖放文件到此处',
   'chat.input.filesWillBeAddedToList': '松手后文件将添加到列表',
   'chat.input.removeFile': '移除文件',
@@ -651,8 +787,8 @@ const zhCN: TranslationKeys = {
   'sidebar.deleteWorkflows': '删除工作流',
   'sidebar.deleteConversationConfirm': '确定要删除这条对话吗？此操作不可撤销。',
   'sidebar.deleteConversationsConfirm': '确定要删除所选对话吗？此操作不可撤销。',
-  'sidebar.deleteWorkflowConfirm': '确定要删除这个工作流吗？所有 Agent、连接和运行历史都会丢失。此操作不可撤销。',
-  'sidebar.deleteWorkflowsConfirm': '确定要删除所选工作流吗？所有 Agent、连接和运行历史都会丢失。此操作不可撤销。',
+  'sidebar.deleteWorkflowConfirm': '确定要删除这个工作流吗？所有智能体、连接和运行历史都会丢失。此操作不可撤销。',
+  'sidebar.deleteWorkflowsConfirm': '确定要删除所选工作流吗？所有智能体、连接和运行历史都会丢失。此操作不可撤销。',
   'sidebar.doubleClickToRename': '双击重命名',
   'sidebar.moveToProjectAction': '移动到项目',
   'sidebar.deleteChatAction': '删除对话',
@@ -661,7 +797,7 @@ const zhCN: TranslationKeys = {
   'sidebar.deleteProjectConfirm': '确定要删除此项目及其所有对话吗？',
   'sidebar.noProjectsYet': '暂无项目',
   'sidebar.untitledWorkflow': '未命名工作流',
-  'sidebar.agentsLabel': '个 Agent',
+  'sidebar.agentsLabel': '个智能体',
   'sidebar.runsLabel': '次运行',
 
   // Permission Modal Extended
@@ -685,7 +821,7 @@ const zhCN: TranslationKeys = {
   'settings.nameRequired': '名称不能为空',
   'settings.configNamePlaceholder': '我的 Anthropic API',
   'settings.provider': '提供商',
-  'settings.baseUrl': 'Base URL',
+  'settings.baseUrl': '接口地址',
   'settings.hideApiKey': '隐藏 API Key',
   'settings.showApiKey': '显示 API Key',
   'settings.fetchModels': '获取模型',
@@ -694,18 +830,18 @@ const zhCN: TranslationKeys = {
   'settings.defaultAvailable': '可用默认值',
   'settings.configure': '配置',
   'settings.pricingDescription': '设置自定义价格以便更准确地估算成本；留空则使用默认值。',
-  'settings.inputPricePerMillion': '输入（$/100万 tokens）',
-  'settings.outputPricePerMillion': '输出（$/100万 tokens）',
+  'settings.inputPricePerMillion': '输入（$/100万令牌）',
+  'settings.outputPricePerMillion': '输出（$/100万令牌）',
   'settings.useDefault': '使用默认值',
   'settings.clearCustom': '清除自定义',
-  'settings.estimatedCostPerThousand': '每 1K tokens 的预估成本',
+  'settings.estimatedCostPerThousand': '每 1K 令牌的预估成本',
   'settings.testConnection': '测试连接',
   'settings.testingConnection': '测试中...',
   'settings.test': '测试',
   'settings.save': '保存',
   'settings.add': '添加',
   'settings.saving': '保存中...',
-  'settings.agentBehavior': 'Agent 行为',
+  'settings.agentBehavior': '智能体行为',
   'settings.maxToolLoopRounds': '最大工具循环轮数',
   'settings.maxToolLoopRoundsDescription': '每条消息最多允许的工具调用轮数。值越高，AI 在回复前可串联更多工具调用。',
   'settings.promptTemplates': '提示词模板',
@@ -714,8 +850,8 @@ const zhCN: TranslationKeys = {
   'settings.cached': '已缓存',
   'settings.dynamic': '动态',
   'settings.chars': '字符',
-  'settings.tokensEstimate': 'tokens（估算）',
-  'settings.tokenAnalysis': 'Token 分析',
+  'settings.tokensEstimate': '令牌（估算）',
+  'settings.tokenAnalysis': '令牌分析',
   'settings.appearance': '外观',
   'settings.connectionSuccessful': '连接成功！',
   'settings.connectionTestPassed': 'API 连接测试已通过',
@@ -738,7 +874,7 @@ const zhCN: TranslationKeys = {
   // MCP
   'mcp.title': 'MCP 服务器',
   'mcp.connected': '已连接',
-  'mcp.description': 'Model Context Protocol 服务器可以为 Agent 扩展额外工具。',
+  'mcp.description': 'Model Context Protocol 服务器可以为智能体扩展额外工具。',
   'mcp.addServer': '添加服务器',
   'mcp.loading': '加载中…',
   'mcp.noServers': '未配置 MCP 服务器。',

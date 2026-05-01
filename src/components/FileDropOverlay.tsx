@@ -355,7 +355,7 @@ export function FileDropOverlay() {
                 {hasPendingFiles ? t('chat.input.filesSelected') : t('chat.input.dragFilesHere')}
               </h2>
               {hasPendingFiles && (
-                <p className="text-xs text-gray-500">{pendingFiles.length} files</p>
+                <p className="text-xs text-gray-500">{t('chat.input.filesCount').replace('{count}', String(pendingFiles.length))}</p>
               )}
             </div>
           </div>

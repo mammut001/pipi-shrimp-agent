@@ -626,13 +626,13 @@ export const BrowserPanel: React.FC = () => {
                   }`}
                 >
                   <span>{site.icon}</span>
-                  <span>{site.name}</span>
+                  <span>{t(site.nameKey as Parameters<typeof t>[0])}</span>
                 </button>
               ))}
             </div>
           </div>
         )}
-                  {site.icon} {t(site.nameKey as Parameters<typeof t>[0])}
+      </div>
 
       <div className="px-4 py-4 border-b border-gray-200 bg-white">
         <div className={`rounded-xl border p-4 ${statusToneClass.container}`}>

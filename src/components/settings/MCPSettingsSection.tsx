@@ -3,6 +3,7 @@ import { useMCPStore } from '@/store/mcpStore';
 import { MCPStatusIndicator } from '@/components/mcp/MCPStatusIndicator';
 import { MCPAddDialog } from '@/components/mcp/MCPAddDialog';
 import type { ServerRuntime } from '@/services/mcp/types';
+import { t } from '@/i18n';
 
 /**
  * Inline MCP settings section rendered inside the Settings page.
@@ -37,38 +38,38 @@ export function MCPSettingsSection() {
       <div className="flex items-center justify-between mb-3">
         <div>
           <h2 className="text-sm font-semibold text-gray-900">
-            MCP Servers
+            {t('mcp.title')}
             {connectedCount > 0 && (
               <span className="ml-2 text-xs font-normal text-green-600 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded-full">
-                {connectedCount} connected
+                {connectedCount} {t('mcp.connected')}
               </span>
             )}
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            Model Context Protocol servers extend the agent with additional tools.
+            {t('mcp.description')}
           </p>
         </div>
         <button
           onClick={() => setShowAddDialog(true)}
           className="px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg hover:bg-gray-700 transition-colors"
         >
-          + Add Server
+          + {t('mcp.addServer')}
         </button>
       </div>
 
       {/* Server list */}
       {loading && (
-        <p className="text-xs text-gray-400 text-center py-6">Loading…</p>
+        <p className="text-xs text-gray-400 text-center py-6">{t('mcp.loading')}</p>
       )}
 
       {!loading && servers.length === 0 && (
         <div className="border border-dashed border-gray-200 rounded-lg py-6 text-center">
-          <p className="text-xs text-gray-400">No MCP servers configured.</p>
+          <p className="text-xs text-gray-400">{t('mcp.noServers')}</p>
           <button
             onClick={() => setShowAddDialog(true)}
             className="mt-2 text-xs text-blue-600 hover:underline"
           >
-            Add your first server
+            {t('mcp.addFirstServer')}
           </button>
         </div>
       )}
@@ -95,7 +96,7 @@ export function MCPSettingsSection() {
                       <p className="text-xs text-gray-400 truncate">{server.description}</p>
                     )}
                     {runtime && (
-                      <p className="text-xs text-gray-400">{runtime.tool_count} tools</p>
+                      <p className="text-xs text-gray-400">{runtime.tool_count} {t('mcp.tools')}</p>
                     )}
                     {runtime?.error_message && (
                       <p className="text-xs text-red-500 mt-0.5">{runtime.error_message}</p>
@@ -115,10 +116,10 @@ export function MCPSettingsSection() {
                   }`}
                 >
                   {status === 'connecting'
-                    ? 'Connecting…'
+                    ? t('mcp.connecting')
                     : isConnected
-                    ? 'Disconnect'
-                    : 'Connect'}
+                    ? t('mcp.disconnect')
+                    : t('mcp.connect')}
                 </button>
               </div>
             );

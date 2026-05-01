@@ -321,6 +321,15 @@ export type TranslationKeys = {
   'browser.openWindow': string;
   'browser.currentPage': string;
   'browser.statusSummary': string;
+  'browser.currentTask': string;
+  'browser.recentActivity': string;
+  'browser.noActiveTask': string;
+  'browser.noBrowserSurface': string;
+  'browser.loginRequired': string;
+  'browser.loggedIn': string;
+  'browser.notLoggedIn': string;
+  'browser.pendingPageMetadata': string;
+  'browser.collapseToMini': string;
   'browser.quickSites': string;
   'browser.quickTasks': string;
   'browser.hideHistory': string;
@@ -340,6 +349,11 @@ export type TranslationKeys = {
   'browser.forceContinue': string;
   'browser.executeAfterLogin': string;
   'browser.executeAfterManualStep': string;
+  'browser.logs': string;
+  'browser.debug': string;
+  'browser.copyAll': string;
+  'browser.copied': string;
+  'browser.observability': string;
   'browser.skipVerificationAndContinue': string;
   'browser.operationBlocked': string;
   'browser.pleaseCompleteOperationInBrowser': string;
@@ -362,6 +376,10 @@ export type TranslationKeys = {
   'browser.matchedSignals': string;
   'browser.notice.openWindowFirstTitle': string;
   'browser.notice.openWindowFirstDescription': string;
+  'browser.notice.taskContextRequiredTitle': string;
+  'browser.notice.taskContextRequiredDescription': string;
+  'browser.notice.enterTargetUrlTitle': string;
+  'browser.notice.enterTargetUrlDescription': string;
   'browser.guidance.openWindowTitle': string;
   'browser.guidance.openWindowDescription': string;
   'browser.guidance.openingTitle': string;
@@ -464,6 +482,12 @@ export type TranslationKeys = {
   'skill.autoresearch.description': string;
   'skill.autoresearch.documentation': string;
   'skill.autoresearch.openInChat': string;
+  'skill.webResearch.name': string;
+  'skill.webResearch.description': string;
+  'skill.webResearch.documentation': string;
+  'skill.formFill.name': string;
+  'skill.formFill.description': string;
+  'skill.formFill.documentation': string;
 
   // Typst Preview
   'typst.title': string;
@@ -498,6 +522,7 @@ export type TranslationKeys = {
   'chat.input.filesAddedToSession': string;
   'chat.input.filesImported': string;
   'chat.input.filesSelected': string;
+  'chat.input.filesCount': string;
   'chat.input.dragFilesHere': string;
   'chat.input.filesWillBeAddedToList': string;
   'chat.input.removeFile': string;
@@ -709,4 +734,56 @@ export type TranslationKeys = {
   'notification.runCompleted': string;
   'notification.runFailed': string;
   'notification.stopped': string;
+
+  // Artifacts
+  'artifacts.singleFileGenerated': string;
+  'artifacts.multipleFilesGenerated': string;
+
+  // AutoResearch
+  'autoresearch.selectExperimentForDetails': string;
+  'autoresearch.experiment': string;
+  'autoresearch.experimentShort': string;
+  'autoresearch.hypothesis': string;
+  'autoresearch.change': string;
+  'autoresearch.result': string;
+  'autoresearch.reasoning': string;
+  'autoresearch.notAvailable': string;
+  'autoresearch.emptyValue': string;
+  'autoresearch.secondsShort': string;
+  'autoresearch.statusImproved': string;
+  'autoresearch.statusNotImproved': string;
+  'autoresearch.statusFailed': string;
+  'autoresearch.failedToResolveSessionFilePath': string;
+  'autoresearch.setupTitle': string;
+  'autoresearch.setupDescription': string;
+  'autoresearch.modeLocal': string;
+  'autoresearch.hostPlaceholder': string;
+  'autoresearch.userPlaceholder': string;
+  'autoresearch.portPlaceholder': string;
+  'autoresearch.authAgent': string;
+  'autoresearch.authPassword': string;
+  'autoresearch.authKey': string;
+  'autoresearch.passwordPlaceholder': string;
+  'autoresearch.sshKeyPathPlaceholder': string;
+  'autoresearch.localWorkDirPlaceholder': string;
+  'autoresearch.remoteWorkDirPlaceholder': string;
+  'autoresearch.metricNamePlaceholder': string;
+  'autoresearch.lowerIsBetter': string;
+  'autoresearch.higherIsBetter': string;
+  'autoresearch.maxIterationsPlaceholder': string;
+  'autoresearch.start': string;
+  'autoresearch.loopStateIdle': string;
+  'autoresearch.loopStateRunning': string;
+  'autoresearch.loopStatePaused': string;
+  'autoresearch.loopStateStopped': string;
+  'autoresearch.loopStateError': string;
+  'autoresearch.best': string;
+  'autoresearch.consecutiveFailures': string;
+  'autoresearch.setupAndStart': string;
+  'autoresearch.pause': string;
+  'autoresearch.stop': string;
+  'autoresearch.resume': string;
+  'autoresearch.newSession': string;
+  'autoresearch.emptyIdle': string;
+  'autoresearch.emptyWaiting': string;
 };

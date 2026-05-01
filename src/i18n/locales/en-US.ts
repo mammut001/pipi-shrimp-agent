@@ -42,6 +42,58 @@ const enUS: TranslationKeys = {
   'common.inputParameters': 'Input Parameters',
   'common.requiredField': 'This field is required',
 
+  // Artifacts
+  'artifacts.singleFileGenerated': '{count} file generated',
+  'artifacts.multipleFilesGenerated': '{count} files generated',
+
+  // AutoResearch
+  'autoresearch.selectExperimentForDetails': 'Select an experiment on the left to view details',
+  'autoresearch.experiment': 'Experiment',
+  'autoresearch.experimentShort': 'Exp',
+  'autoresearch.hypothesis': 'Hypothesis',
+  'autoresearch.change': 'Change',
+  'autoresearch.result': 'Result',
+  'autoresearch.reasoning': 'Reasoning',
+  'autoresearch.notAvailable': 'N/A',
+  'autoresearch.emptyValue': '—',
+  'autoresearch.secondsShort': 's',
+  'autoresearch.statusImproved': 'Improved',
+  'autoresearch.statusNotImproved': 'Not Improved',
+  'autoresearch.statusFailed': 'Failed',
+  'autoresearch.failedToResolveSessionFilePath': 'Failed to resolve AutoResearch session file path: {message}',
+  'autoresearch.setupTitle': 'AutoResearch Setup',
+  'autoresearch.setupDescription': 'Run the loop on this Mac locally or on a remote machine via SSH. Password auth requires sshpass.',
+  'autoresearch.modeLocal': 'Local',
+  'autoresearch.hostPlaceholder': 'Host (e.g. 192.168.1.10 or connect.westd.seetacloud.com)',
+  'autoresearch.userPlaceholder': 'User (default: root)',
+  'autoresearch.portPlaceholder': 'Port',
+  'autoresearch.authAgent': 'Auth: Agent (~/.ssh/config or authorized_keys)',
+  'autoresearch.authPassword': 'Auth: Password (sshpass)',
+  'autoresearch.authKey': 'Auth: Private key',
+  'autoresearch.passwordPlaceholder': 'Password (kept in memory only)',
+  'autoresearch.sshKeyPathPlaceholder': 'SSH key path (e.g. ~/.ssh/id_rsa)',
+  'autoresearch.localWorkDirPlaceholder': 'Local work dir (absolute path)',
+  'autoresearch.remoteWorkDirPlaceholder': 'Remote work dir (default: ~/autoresearch)',
+  'autoresearch.metricNamePlaceholder': 'Metric name (e.g. val_bpb)',
+  'autoresearch.lowerIsBetter': 'Lower is better',
+  'autoresearch.higherIsBetter': 'Higher is better',
+  'autoresearch.maxIterationsPlaceholder': 'Max iterations (default: 50)',
+  'autoresearch.start': 'Start AutoResearch',
+  'autoresearch.loopStateIdle': 'Idle',
+  'autoresearch.loopStateRunning': 'Running',
+  'autoresearch.loopStatePaused': 'Paused',
+  'autoresearch.loopStateStopped': 'Stopped',
+  'autoresearch.loopStateError': 'Error',
+  'autoresearch.best': 'Best',
+  'autoresearch.consecutiveFailures': '{count} consecutive failure(s)',
+  'autoresearch.setupAndStart': 'Setup & Start',
+  'autoresearch.pause': 'Pause',
+  'autoresearch.stop': 'Stop',
+  'autoresearch.resume': 'Resume',
+  'autoresearch.newSession': 'New Session',
+  'autoresearch.emptyIdle': 'Configure and start an experiment session.',
+  'autoresearch.emptyWaiting': 'Waiting for first experiment...',
+
   // Navigation
   'nav.chat': 'Chat',
   'nav.workflow': 'Workflow',
@@ -311,6 +363,15 @@ const enUS: TranslationKeys = {
   'browser.openWindow': 'Open browser',
   'browser.currentPage': 'Current page:',
   'browser.statusSummary': 'Current status',
+  'browser.currentTask': 'Current task',
+  'browser.recentActivity': 'Recent activity',
+  'browser.noActiveTask': 'No active task',
+  'browser.noBrowserSurface': 'No browser surface yet',
+  'browser.loginRequired': 'Login or a manual step is required first',
+  'browser.loggedIn': 'Logged in',
+  'browser.notLoggedIn': 'Not logged in',
+  'browser.pendingPageMetadata': 'Pending page metadata',
+  'browser.collapseToMini': 'Collapse to mini',
   'browser.quickSites': 'Quick sites',
   'browser.quickTasks': 'Quick tasks',
   'browser.hideHistory': 'Hide history',
@@ -330,6 +391,11 @@ const enUS: TranslationKeys = {
   'browser.forceContinue': 'Force continue',
   'browser.executeAfterLogin': 'Continue after login',
   'browser.executeAfterManualStep': 'Continue after manual step',
+  'browser.logs': 'Logs',
+  'browser.debug': 'Debug',
+  'browser.copyAll': 'Copy all',
+  'browser.copied': 'Copied',
+  'browser.observability': 'Observability',
   'browser.skipVerificationAndContinue': 'Skip verification and continue',
   'browser.operationBlocked': 'Operation blocked',
   'browser.pleaseCompleteOperationInBrowser': 'Please complete the necessary operations in the browser window, then try again.',
@@ -352,6 +418,10 @@ const enUS: TranslationKeys = {
   'browser.matchedSignals': 'Matched signals',
   'browser.notice.openWindowFirstTitle': 'Open a page first',
   'browser.notice.openWindowFirstDescription': 'Enter or paste a URL, open the page, and then run the task. Your task text will be kept.',
+  'browser.notice.taskContextRequiredTitle': 'Task context is required',
+  'browser.notice.taskContextRequiredDescription': 'Start a browser task from chat first, or connect CDP and enter a target URL.',
+  'browser.notice.enterTargetUrlTitle': 'Enter a target URL first',
+  'browser.notice.enterTargetUrlDescription': 'After connecting CDP, enter a target URL before running the task.',
   'browser.guidance.openWindowTitle': 'Open a page first',
   'browser.guidance.openWindowDescription': 'Enter or paste a URL, then open the page. Once it is open, you can type a task and the panel will inspect automatically before running it.',
   'browser.guidance.openingTitle': 'Opening the page',
@@ -569,6 +639,71 @@ Autonomous experiment loop for iterative ML training and hyperparameter optimiza
 - The agent uses ssh_exec / ssh_upload_file tools to run experiments
 - Results are parsed and logged; improved experiments are committed, failures are rolled back`,
   'skill.autoresearch.openInChat': 'Open in Chat',
+  'skill.webResearch.name': 'Web Research',
+  'skill.webResearch.description': 'Research live websites with PageState navigation, extraction, and source-backed summaries.',
+  'skill.webResearch.documentation': `# Web Research
+
+Research a topic in a live browser using the PageState-aware browser toolchain.
+
+## Best For
+
+- Comparing information across public websites
+- Following search results to the primary source
+- Summarizing page content with the source URL preserved
+
+## Preferred Tool Loop
+
+- browser_navigate
+- browser_get_page
+- browser_click / browser_type / browser_press_key
+- browser_wait
+- browser_extract_content or browser_get_text
+
+## Demo Prompts
+
+- Research the current release notes for Tauri 2 and summarize the top 3 changes.
+- Find the official documentation page for Chromiumoxide screenshot capture and extract the key API details.
+- Open a product page, identify the price and delivery text, and report both with the source URL.
+
+## Validation Flow
+
+1. Open the target page or a search engine.
+2. Re-read browser_get_page after each meaningful DOM change.
+3. Extract only the page needed to answer the question.
+4. Return a concise answer plus the title and URL.
+`,
+  'skill.formFill.name': 'Form Fill',
+  'skill.formFill.description': 'Fill web forms with backend_node_id targeting, verification reads, and guarded submission.',
+  'skill.formFill.documentation': `# Form Fill
+
+Fill structured browser forms while re-checking PageState before risky actions.
+
+## Best For
+
+- Checkout and signup forms
+- Support or application forms
+- Multi-step flows that change after typing
+
+## Preferred Tool Loop
+
+- browser_get_page
+- browser_type
+- browser_click
+- browser_wait
+- browser_get_page again before submit
+
+## Demo Prompts
+
+- Open the checkout demo, fill the card field with a test number, and stop before submission.
+- Find the login form, type the provided email, and confirm which field is still empty.
+- Fill every required field you can confidently identify, then list exactly what changed.
+
+## Guardrails
+
+- Confirm the current page state before each risky click.
+- Stop before irreversible submission unless the user explicitly asks to continue.
+- Report uncertain or missing fields instead of guessing.
+`,
 
   // Typst Preview
   'typst.title': 'Document Preview',
@@ -596,6 +731,7 @@ Autonomous experiment loop for iterative ML training and hyperparameter optimiza
   'chat.input.filesAddedToSession': '{count} files added to current session',
   'chat.input.filesImported': '{count} files imported',
   'chat.input.filesSelected': 'Files selected',
+  'chat.input.filesCount': '{count} files',
   'chat.input.dragFilesHere': 'Drag files here',
   'chat.input.filesWillBeAddedToList': 'Files will be added to the list when released',
   'chat.input.removeFile': 'Remove file',

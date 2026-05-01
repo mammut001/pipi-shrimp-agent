@@ -143,75 +143,16 @@ const defaultSkills: Skill[] = [
   },
   {
     id: 'web_research',
-    name: 'Web Research',
-    description: 'Research live websites with PageState navigation, extraction, and source-backed summaries.',
-    documentation: `# Web Research
-
-Research a topic in a live browser using the PageState-aware browser toolchain.
-
-## Best For
-
-- Comparing information across public websites
-- Following search results to the primary source
-- Summarizing page content with the source URL preserved
-
-## Preferred Tool Loop
-
-- browser_navigate
-- browser_get_page
-- browser_click / browser_type / browser_press_key
-- browser_wait
-- browser_extract_content or browser_get_text
-
-## Demo Prompts
-
-- Research the current release notes for Tauri 2 and summarize the top 3 changes.
-- Find the official documentation page for Chromiumoxide screenshot capture and extract the key API details.
-- Open a product page, identify the price and delivery text, and report both with the source URL.
-
-## Validation Flow
-
-1. Open the target page or a search engine.
-2. Re-read browser_get_page after each meaningful DOM change.
-3. Extract only the page needed to answer the question.
-4. Return a concise answer plus the title and URL.
-`,
+    name: 'skill.webResearch.name',
+    description: 'skill.webResearch.description',
+    documentation: 'skill.webResearch.documentation',
     icon: 'M10.5 3a7.5 7.5 0 015.906 12.141l2.476 2.476a1 1 0 01-1.414 1.414l-2.476-2.476A7.5 7.5 0 1110.5 3zm0 2a5.5 5.5 0 100 11 5.5 5.5 0 000-11z',
   },
   {
     id: 'form_fill',
-    name: 'Form Fill',
-    description: 'Fill web forms with backend_node_id targeting, verification reads, and guarded submission.',
-    documentation: `# Form Fill
-
-Fill structured browser forms while re-checking PageState before risky actions.
-
-## Best For
-
-- Checkout and signup forms
-- Support or application forms
-- Multi-step flows that change after typing
-
-## Preferred Tool Loop
-
-- browser_get_page
-- browser_type
-- browser_click
-- browser_wait
-- browser_get_page again before submit
-
-## Demo Prompts
-
-- Open the checkout demo, fill the card field with a test number, and stop before submission.
-- Find the login form, type the provided email, and confirm which field is still empty.
-- Fill every required field you can confidently identify, then list exactly what changed.
-
-## Guardrails
-
-1. Do not submit unless the user explicitly asked to submit.
-2. Stop when a field is ambiguous instead of guessing.
-3. Re-read browser_get_page after any large DOM update.
-`,
+    name: 'skill.formFill.name',
+    description: 'skill.formFill.description',
+    documentation: 'skill.formFill.documentation',
     icon: 'M7 3h10a2 2 0 012 2v10a2 2 0 01-2 2h-3.586L10 22.414 6.586 19H3a2 2 0 01-2-2V5a2 2 0 012-2h4zm1 5v2h8V8H8zm0 4v2h5v-2H8z',
   },
   {

@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { t } from '@/i18n';
 import { MainLayout } from '@/layout';
 import { useAutoResearchStore, type ExperimentEntry, type SshConfig } from '@/store/autoresearchStore';
 import {
@@ -14,6 +15,36 @@ import {
   resumeExperimentLoop,
 } from '@/services/autoresearch';
 import { getDefaultAutoResearchSessionFilePath } from '@/services/autoresearch/paths';
+
+function getStatusLabel(status: ExperimentEntry['status']) {
+  switch (status) {
+    case 'IMPROVED':
+      return t('autoresearch.statusImproved');
+    case 'NOT_IMPROVED':
+      return t('autoresearch.statusNotImproved');
+    case 'FAILED':
+      return t('autoresearch.statusFailed');
+    default:
+      return status;
+  }
+}
+
+function getLoopStateLabel(state: string) {
+  switch (state) {
+    case 'idle':
+      return t('autoresearch.loopStateIdle');
+    case 'running':
+      return t('autoresearch.loopStateRunning');
+    case 'paused':
+      return t('autoresearch.loopStatePaused');
+    case 'stopped':
+      return t('autoresearch.loopStateStopped');
+    case 'error':
+      return t('autoresearch.loopStateError');
+    default:
+      return state;
+  }
+}
 
 // ============== Experiment Detail Panel ==============
 
@@ -25,7 +56,7 @@ function ExperimentDetailPanel() {
   if (!entry) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-        点击左侧实验条目查看详情
+        {t('autoresearch.selectExperimentForDetails')}
       </div>
     );
   }
@@ -33,22 +64,22 @@ function ExperimentDetailPanel() {
   return (
     <div className="p-4 space-y-4 text-sm overflow-y-auto h-full">
       <h3 className="text-lg font-semibold text-gray-800">
-        Experiment #{entry.iteration}
+        {t('autoresearch.experiment')} #{entry.iteration}
       </h3>
       <div>
-        <label className="text-xs text-gray-500 uppercase tracking-wider">Hypothesis</label>
+        <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.hypothesis')}</label>
         <p className="text-gray-800 mt-1">{entry.hypothesis}</p>
       </div>
       <div>
-        <label className="text-xs text-gray-500 uppercase tracking-wider">Change</label>
+        <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.change')}</label>
         <p className="text-gray-700 mt-1 font-mono text-xs">{entry.change}</p>
       </div>
       <div>
-        <label className="text-xs text-gray-500 uppercase tracking-wider">Result</label>
+        <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.result')}</label>
         <p className="mt-1">
           <StatusBadge status={entry.status} />
           <span className="ml-2 text-gray-700">
-            {entry.metricValue !== null ? entry.metricValue : 'N/A'}
+            {entry.metricValue !== null ? entry.metricValue : t('autoresearch.notAvailable')}
           </span>
           {entry.failReason && (
             <span className="ml-2 text-red-500 text-xs">({entry.failReason})</span>
@@ -56,11 +87,11 @@ function ExperimentDetailPanel() {
         </p>
       </div>
       <div>
-        <label className="text-xs text-gray-500 uppercase tracking-wider">Reasoning</label>
-        <p className="text-gray-600 mt-1 whitespace-pre-wrap">{entry.reasoning || '—'}</p>
+        <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.reasoning')}</label>
+        <p className="text-gray-600 mt-1 whitespace-pre-wrap">{entry.reasoning || t('autoresearch.emptyValue')}</p>
       </div>
       <div className="text-xs text-gray-400">
-        {entry.timestamp} · {(entry.durationMs / 1000).toFixed(1)}s
+        {entry.timestamp} · {(entry.durationMs / 1000).toFixed(1)}{t('autoresearch.secondsShort')}
       </div>
     </div>
   );
@@ -78,7 +109,7 @@ function StatusBadge({ status }: { status: ExperimentEntry['status'] }) {
 
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${styles[status]}`}>
-      {icons[status]} {status}
+      {icons[status]} {getStatusLabel(status)}
     </span>
   );
 }
@@ -123,7 +154,12 @@ function AutoResearchView() {
     try {
       sessionFilePath = await getDefaultAutoResearchSessionFilePath();
     } catch (error) {
-      useAutoResearchStore.getState().setError(`Failed to resolve AutoResearch session file path: ${error instanceof Error ? error.message : String(error)}`);
+      useAutoResearchStore.getState().setError(
+        t('autoresearch.failedToResolveSessionFilePath').replace(
+          '{message}',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
       return;
     }
 
@@ -160,9 +196,9 @@ function AutoResearchView() {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-md space-y-4">
-          <h2 className="text-xl font-bold text-gray-800">AutoResearch Setup</h2>
+          <h2 className="text-xl font-bold text-gray-800">{t('autoresearch.setupTitle')}</h2>
           <p className="text-sm text-gray-500">
-            Run the loop on this Mac (Local) or on a remote machine via SSH. Password auth requires <code className="px-1 py-0.5 bg-gray-100 rounded text-xs">sshpass</code>.
+            {t('autoresearch.setupDescription')}
           </p>
 
           <div className="space-y-3">
@@ -177,27 +213,27 @@ function AutoResearchView() {
                 type="button"
                 onClick={() => setSetupForm(f => ({ ...f, mode: 'local' }))}
                 className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all ${setupForm.mode === 'local' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-              >Local</button>
+              >{t('autoresearch.modeLocal')}</button>
             </div>
 
             {setupForm.mode === 'ssh' && (
               <>
                 <input
                   className="w-full px-3 py-2 border rounded-lg text-sm"
-                  placeholder="Host (e.g. 192.168.1.10 or connect.westd.seetacloud.com)"
+                  placeholder={t('autoresearch.hostPlaceholder')}
                   value={setupForm.host}
                   onChange={e => setSetupForm(f => ({ ...f, host: e.target.value }))}
                 />
                 <div className="flex gap-2">
                   <input
                     className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                    placeholder="User (default: root)"
+                    placeholder={t('autoresearch.userPlaceholder')}
                     value={setupForm.user}
                     onChange={e => setSetupForm(f => ({ ...f, user: e.target.value }))}
                   />
                   <input
                     className="w-20 px-3 py-2 border rounded-lg text-sm"
-                    placeholder="Port"
+                    placeholder={t('autoresearch.portPlaceholder')}
                     type="number"
                     value={setupForm.port}
                     onChange={e => setSetupForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
@@ -208,14 +244,14 @@ function AutoResearchView() {
                   value={setupForm.authMode}
                   onChange={e => setSetupForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
                 >
-                  <option value="agent">Auth: Agent (~/.ssh/config or authorized_keys)</option>
-                  <option value="password">Auth: Password (sshpass)</option>
-                  <option value="key">Auth: Private key</option>
+                  <option value="agent">{t('autoresearch.authAgent')}</option>
+                  <option value="password">{t('autoresearch.authPassword')}</option>
+                  <option value="key">{t('autoresearch.authKey')}</option>
                 </select>
                 {setupForm.authMode === 'password' && (
                   <input
                     className="w-full px-3 py-2 border rounded-lg text-sm"
-                    placeholder="Password (kept in memory only)"
+                    placeholder={t('autoresearch.passwordPlaceholder')}
                     type="password"
                     autoComplete="off"
                     value={setupForm.password}
@@ -225,7 +261,7 @@ function AutoResearchView() {
                 {setupForm.authMode === 'key' && (
                   <input
                     className="w-full px-3 py-2 border rounded-lg text-sm"
-                    placeholder="SSH key path (e.g. ~/.ssh/id_rsa)"
+                    placeholder={t('autoresearch.sshKeyPathPlaceholder')}
                     value={setupForm.keyPath}
                     onChange={e => setSetupForm(f => ({ ...f, keyPath: e.target.value }))}
                   />
@@ -234,7 +270,7 @@ function AutoResearchView() {
             )}
             <input
               className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder={setupForm.mode === 'local' ? 'Local work dir (absolute path)' : 'Remote work dir (default: ~/autoresearch)'}
+              placeholder={setupForm.mode === 'local' ? t('autoresearch.localWorkDirPlaceholder') : t('autoresearch.remoteWorkDirPlaceholder')}
               value={setupForm.remoteWorkDir}
               onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
             />
@@ -244,7 +280,7 @@ function AutoResearchView() {
             <div className="flex gap-2">
               <input
                 className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                placeholder="Metric name (e.g. val_bpb)"
+                placeholder={t('autoresearch.metricNamePlaceholder')}
                 value={metric}
                 onChange={e => setMetric(e.target.value)}
               />
@@ -253,13 +289,13 @@ function AutoResearchView() {
                 value={direction}
                 onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
               >
-                <option value="lower">Lower is better</option>
-                <option value="higher">Higher is better</option>
+                <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
+                <option value="higher">{t('autoresearch.higherIsBetter')}</option>
               </select>
             </div>
             <input
               className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder="Max iterations (default: 50)"
+              placeholder={t('autoresearch.maxIterationsPlaceholder')}
               type="number"
               value={maxIter}
               onChange={e => setMaxIter(parseInt(e.target.value) || 50)}
@@ -277,7 +313,7 @@ function AutoResearchView() {
             }
             onClick={handleStart}
           >
-            Start AutoResearch
+            {t('autoresearch.start')}
           </button>
         </div>
       </div>
@@ -294,17 +330,17 @@ function AutoResearchView() {
           loopState === 'paused' ? 'bg-yellow-500' :
           loopState === 'error' ? 'bg-red-500' : 'bg-gray-400'
         }`} />
-        <span className="font-medium text-gray-700 capitalize">{loopState}</span>
+        <span className="font-medium text-gray-700">{getLoopStateLabel(loopState)}</span>
         <span className="text-gray-400">|</span>
-        <span className="text-gray-600">Exp {currentIteration}/{maxIterations}</span>
+        <span className="text-gray-600">{t('autoresearch.experimentShort')} {currentIteration}/{maxIterations}</span>
         <span className="text-gray-400">|</span>
         <span className="text-gray-600">
-          Best: {bestMetric !== null ? `${metricName}=${bestMetric}` : 'N/A'}
+          {t('autoresearch.best')}: {bestMetric !== null ? `${metricName}=${bestMetric}` : t('autoresearch.notAvailable')}
         </span>
         {consecutiveFailures > 0 && (
           <>
             <span className="text-gray-400">|</span>
-            <span className="text-red-500">⚠ {consecutiveFailures} consecutive failure(s)</span>
+            <span className="text-red-500">⚠ {t('autoresearch.consecutiveFailures').replace('{count}', String(consecutiveFailures))}</span>
           </>
         )}
 
@@ -316,26 +352,26 @@ function AutoResearchView() {
             onClick={() => setShowSetup(true)}
             className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700"
           >
-            ▶ Setup & Start
+            ▶ {t('autoresearch.setupAndStart')}
           </button>
         )}
         {loopState === 'running' && (
           <>
             <button onClick={handlePause} className="px-3 py-1 bg-yellow-500 text-white rounded-lg text-xs hover:bg-yellow-600">
-              ⏸ Pause
+              ⏸ {t('autoresearch.pause')}
             </button>
             <button onClick={handleStop} className="px-3 py-1 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600">
-              ⏹ Stop
+              ⏹ {t('autoresearch.stop')}
             </button>
           </>
         )}
         {loopState === 'paused' && (
           <>
             <button onClick={handleResume} className="px-3 py-1 bg-green-500 text-white rounded-lg text-xs hover:bg-green-600">
-              ▶ Resume
+              ▶ {t('autoresearch.resume')}
             </button>
             <button onClick={handleStop} className="px-3 py-1 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600">
-              ⏹ Stop
+              ⏹ {t('autoresearch.stop')}
             </button>
           </>
         )}
@@ -344,7 +380,7 @@ function AutoResearchView() {
             onClick={() => { useAutoResearchStore.getState().resetSession(); setShowSetup(true); }}
             className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700"
           >
-            ↻ New Session
+            ↻ {t('autoresearch.newSession')}
           </button>
         )}
       </div>
@@ -360,7 +396,7 @@ function AutoResearchView() {
       <div className="flex-1 overflow-y-auto space-y-1">
         {experiments.length === 0 ? (
           <div className="text-center text-gray-400 text-sm mt-20">
-            {loopState === 'idle' ? 'Configure and start an experiment session.' : 'Waiting for first experiment...'}
+            {loopState === 'idle' ? t('autoresearch.emptyIdle') : t('autoresearch.emptyWaiting')}
           </div>
         ) : (
           experiments.map((exp, idx) => (
