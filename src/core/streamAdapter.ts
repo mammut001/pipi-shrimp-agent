@@ -15,7 +15,7 @@ interface InvokeParams {
   model: string;
   baseUrl: string;
   systemPrompt: string;
-  browserConnected: boolean;
+  allowBrowserTools?: boolean;
   sessionId: string;
   /** Optional explicit API format override: "anthropic" | "openai" */
   apiFormat?: string;

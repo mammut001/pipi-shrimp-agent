@@ -18,6 +18,7 @@ import {
   matchProfileByUrl,
   getProfileById,
 } from './browserProfiles';
+import { t } from '../i18n';
 
 /**
  * Map auth state to block reason
@@ -198,21 +199,21 @@ export function parseInspectionResult(
 export function getAuthStateText(authState: BrowserAuthState): string {
   switch (authState) {
     case 'authenticated':
-      return '已登录';
+      return t('browser.authState.authenticated');
     case 'auth_required':
-      return '需要登录';
+      return t('browser.authState.authRequired');
     case 'mfa_required':
-      return '需要二次验证';
+      return t('browser.authState.mfaRequired');
     case 'captcha_required':
-      return '需要验证码';
+      return t('browser.authState.captchaRequired');
     case 'expired':
-      return '会话已过期';
+      return t('browser.authState.expired');
     case 'unauthenticated':
-      return '未登录';
+      return t('browser.authState.unauthenticated');
     case 'unknown':
-      return '未知';
+      return t('browser.authState.unknown');
     default:
-      return '未知';
+      return t('browser.authState.unknown');
   }
 }
 
@@ -224,21 +225,21 @@ export function getBlockReasonText(reason: BrowserBlockReason | undefined): stri
 
   switch (reason) {
     case 'login_required':
-      return '需要登录才能继续';
+      return t('browser.blockReason.loginRequired');
     case 'captcha_required':
-      return '需要完成验证码';
+      return t('browser.blockReason.captchaRequired');
     case 'mfa_required':
-      return '需要完成二次验证';
+      return t('browser.blockReason.mfaRequired');
     case 'manual_confirmation_required':
-      return '需要手动确认';
+      return t('browser.blockReason.manualConfirmationRequired');
     case 'unsupported_page':
-      return '不支持的页面';
+      return t('browser.blockReason.unsupportedPage');
     case 'rate_limited':
-      return '请求过于频繁，请稍后再试';
+      return t('browser.blockReason.rateLimited');
     case 'unknown':
-      return '未知原因被阻止';
+      return t('browser.blockReason.unknown');
     default:
-      return '操作被阻止';
+      return t('browser.blockReason.default');
   }
 }
 
@@ -249,21 +250,21 @@ export function getRecommendation(result: BrowserInspectionResult): string {
   if (!result.safeForAgent) {
     switch (result.authState) {
       case 'auth_required':
-        return '此网站需要登录。请在浏览器窗口中完成登录，然后点击"我已登录"按钮继续。';
+        return t('browser.recommendation.authRequired');
       case 'mfa_required':
-        return '此网站需要二次验证。请完成验证后继续。';
+        return t('browser.recommendation.mfaRequired');
       case 'captcha_required':
-        return '检测到验证码。请在浏览器窗口中完成验证，然后继续。';
+        return t('browser.recommendation.captchaRequired');
       case 'expired':
-        return '登录会话已过期。请重新登录后继续。';
+        return t('browser.recommendation.expired');
       case 'unauthenticated':
-        return '当前未登录。请先登录后再继续操作。';
+        return t('browser.recommendation.unauthenticated');
       default:
-        return '当前页面状态不适合自动化操作。请检查浏览器窗口。';
+        return t('browser.recommendation.default');
     }
   }
 
-  return '页面状态正常，可以开始执行自动化任务。';
+  return t('browser.recommendation.safe');
 }
 
 /**

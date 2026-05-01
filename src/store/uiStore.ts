@@ -3,6 +3,7 @@
  */
 
 import { create } from 'zustand';
+import { getCurrentLocale } from '@/i18n';
 import type { UIState, PermissionRequest, Notification, BrowserDockMode, SplitFocus, QuestionnaireData } from '../types/ui';
 import { NOTIFICATION_HISTORY_LIMIT, NOTIFICATION_TIMEOUT } from '../types/ui';
 
@@ -16,14 +17,54 @@ const AGENT_INSTRUCTIONS_STORAGE_KEY = 'ai-agent-instructions';
  */
 const CURRENT_VIEW_STORAGE_KEY = 'ai-agent-current-view';
 
+const DEFAULT_AGENT_INSTRUCTIONS = {
+  'zh-CN': '你是 PiPi Shrimp Agent，一个本地优先的 AI 助手，专注于清晰、安全、高效地帮助用户完成任务。',
+  'en-US': 'You are PiPi Shrimp Agent, a local-first AI assistant focused on helping users complete tasks clearly, safely, and efficiently.',
+} as const;
+
+const getDefaultAgentInstructions = (): string => DEFAULT_AGENT_INSTRUCTIONS[getCurrentLocale()];
+
+type CurrentView = 'chat' | 'workflow' | 'skill' | 'browser';
+type PersistedCurrentView = Exclude<CurrentView, 'browser'>;
+
+const persistCurrentView = (view: PersistedCurrentView): void => {
+  localStorage.setItem(CURRENT_VIEW_STORAGE_KEY, view);
+};
+
+const normalizeCurrentView = (view: CurrentView): {
+  currentView: PersistedCurrentView;
+  migratedFromBrowser: boolean;
+} => {
+  if (view === 'browser') {
+    return {
+      currentView: 'chat',
+      migratedFromBrowser: true,
+    };
+  }
+
+  return {
+    currentView: view,
+    migratedFromBrowser: false,
+  };
+};
+
 /**
  * Get persisted current view, default to 'chat'
  */
-const getInitialCurrentView = (): 'chat' | 'workflow' | 'skill' | 'browser' => {
+const getInitialCurrentView = (): PersistedCurrentView => {
   const saved = localStorage.getItem(CURRENT_VIEW_STORAGE_KEY);
+
   if (saved === 'chat' || saved === 'workflow' || saved === 'skill' || saved === 'browser') {
-    return saved;
+    const { currentView, migratedFromBrowser } = normalizeCurrentView(saved);
+
+    if (migratedFromBrowser) {
+      console.warn('Migrating deprecated browser view from localStorage to chat.');
+      persistCurrentView(currentView);
+    }
+
+    return currentView;
   }
+
   return 'chat';
 };
 
@@ -52,7 +93,7 @@ export const useUIStore = create<UIState>((set) => ({
   // Agentic UI State
   rightPanelVisible: true,
   agentPanelTab: 'main' as const,
-  agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || 'You are a powerful AI Agent designed by the Google Deepmind team.',
+  agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || getDefaultAgentInstructions(),
   taskProgress: [],
 
   // Terminal Panel State
@@ -83,11 +124,25 @@ export const useUIStore = create<UIState>((set) => ({
   // ========== Action Methods ==========
 
   /**
-   * Set current view (chat, workflow, or skill)
+   * Set current view. Deprecated browser requests are redirected to chat.
    */
-  setCurrentView: (view: 'chat' | 'workflow' | 'skill' | 'browser') => {
-    localStorage.setItem(CURRENT_VIEW_STORAGE_KEY, view);
-    set({ currentView: view });
+  setCurrentView: (view: CurrentView) => {
+    const { currentView, migratedFromBrowser } = normalizeCurrentView(view);
+
+    persistCurrentView(currentView);
+
+    if (migratedFromBrowser) {
+      console.warn('Deprecated browser view requested. Redirecting to chat workspace.');
+      set({
+        currentView,
+        browserDockMode: 'split' as BrowserDockMode,
+        browserPaneVisible: true,
+        browserSplitFocus: 'chat' as SplitFocus,
+      });
+      return;
+    }
+
+    set({ currentView });
   },
 
   /**

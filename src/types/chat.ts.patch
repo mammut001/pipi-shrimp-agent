@@ -1,0 +1,24 @@
+--- src/types/chat.ts
++++ src/types/chat.ts
+@@ -107,6 +107,17 @@
+   role: MessageRole;
+ }
+ 
++export interface StructuredToolResult {
++  rawContent: string;
++  modelContent: string;
++  structuredData?: {
++    filePath?: string;
++    pdfPath?: string;
++    svgPath?: string;
++    exists?: boolean;
++    kind?: 'file' | 'directory' | 'unknown';
++    [key: string]: unknown;
++  };
++  isError: boolean;
++  errorMessage?: string;
++}
++
+ export interface ChatSession {
+   id: string;
+   title: string | null;

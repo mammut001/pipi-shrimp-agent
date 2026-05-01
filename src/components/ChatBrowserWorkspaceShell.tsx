@@ -173,7 +173,7 @@ export function ChatBrowserWorkspaceShell() {
 
   const handleDenyPermission = () => {
     if (!pendingPermission) return;
-    addNotification('info', 'Permission denied');
+    addNotification('info', t('permission.deniedMessage'));
     pendingPermission._resolve?.(false);
     clearPermissionRequest();
   };
@@ -207,31 +207,7 @@ export function ChatBrowserWorkspaceShell() {
     error,
     clearError,
     retryLastMessage,
-    startSession,
-    sendMessage,
-    projects,
   } = useChatStore();
-
-  // ── New-chat modal (triggered when user types in the empty-state input) ──
-  const [showNewChatModal, setShowNewChatModal] = useState(false);
-  const [selectedProjectForNewChat, setSelectedProjectForNewChat] = useState<string | null>(null);
-  const [pendingMessage, setPendingMessage] = useState<string>('');
-
-  const handleNewSessionRequired = useCallback((message: string) => {
-    setPendingMessage(message);
-    setSelectedProjectForNewChat(null);
-    setShowNewChatModal(true);
-  }, []);
-
-  const handleCreateNewChat = useCallback(async () => {
-    setShowNewChatModal(false);
-    const newSessionId = await startSession(selectedProjectForNewChat || undefined);
-    setSelectedProjectForNewChat(null);
-    if (pendingMessage.trim()) {
-      await sendMessage(pendingMessage.trim(), newSessionId);
-      setPendingMessage('');
-    }
-  }, [startSession, sendMessage, selectedProjectForNewChat, pendingMessage]);
 
   // Memoized token usage
   const currentSessionData = currentSession();
@@ -344,9 +320,9 @@ export function ChatBrowserWorkspaceShell() {
     <div className={`${workspacePreviewChrome.toolbar} px-4 py-3`}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className={workspacePreviewChrome.eyebrow}>Workspace View</p>
+          <p className={workspacePreviewChrome.eyebrow}>{t('chat.workspaceView')}</p>
           <p className={workspacePreviewChrome.secondaryText}>
-            Switch between live chat and a document-focused workspace preview.
+            {t('chat.workspaceViewDescription')}
           </p>
         </div>
 
@@ -363,7 +339,7 @@ export function ChatBrowserWorkspaceShell() {
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z" />
             </svg>
-            Chat
+            {t('nav.chat')}
           </button>
           <button
             type="button"
@@ -378,7 +354,7 @@ export function ChatBrowserWorkspaceShell() {
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6h13M9 5h13M3 5h.01M3 11h.01M3 17h.01" />
             </svg>
-            Preview
+            {t('common.preview')}
           </button>
         </div>
       </div>
@@ -391,9 +367,9 @@ export function ChatBrowserWorkspaceShell() {
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         <div className="flex w-[420px] min-w-[360px] max-w-[460px] flex-col border-r border-[#e9e9e7] bg-[#fbfbfa] shadow-[inset_-1px_0_0_rgba(255,255,255,0.6)]">
           <div className="border-b border-[#e9e9e7] bg-[#fbfbfa]/92 px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.72)]">
-            <p className={workspacePreviewChrome.eyebrow}>Conversation</p>
+            <p className={workspacePreviewChrome.eyebrow}>{t('chat.conversationPanel')}</p>
             <p className={workspacePreviewChrome.secondaryText}>
-              Keep the chat thread visible while reading generated documents.
+              {t('chat.conversationPanelDescription')}
             </p>
           </div>
           <div className="flex-1 min-h-0 min-w-0">
@@ -446,7 +422,7 @@ export function ChatBrowserWorkspaceShell() {
                 PiPi Shrimp Agent
               </h2>
               <p className="text-gray-500 text-sm">
-                What can I help you with today?
+                {t('chat.emptyStatePrompt')}
               </p>
             </div>
           </div>
@@ -477,7 +453,7 @@ export function ChatBrowserWorkspaceShell() {
                 onClick={() => retryLastMessage()}
                 className="px-3 py-1 text-sm error-button-primary rounded transition-colors whitespace-nowrap"
               >
-                Retry
+                {t('common.retry')}
               </button>
               <button
                 onClick={() => clearError()}
@@ -502,7 +478,7 @@ export function ChatBrowserWorkspaceShell() {
                 <svg className="h-3 w-3 text-[#8a867f]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span>Cost</span>
+                <span>{t('token.cost')}</span>
                 <span className={workspacePreviewChrome.statusValue}>{formatCostCompact(sessionCost)}</span>
                 </span>
             )}
@@ -512,7 +488,7 @@ export function ChatBrowserWorkspaceShell() {
               </svg>
               <span>{t('chat.sessionTokenUsage')}</span>
               <span className={workspacePreviewChrome.statusValue}>{formatTokenCount(sessionTokenUsage.total)}</span>
-              <span>tokens</span>
+              <span>{t('token.tokens')}</span>
             </span>
 
             <span className={workspacePreviewChrome.statusBadge}>
@@ -528,8 +504,7 @@ export function ChatBrowserWorkspaceShell() {
         </div>
       )}
 
-      {/* Chat Input — pass onNewSessionRequired so empty-state sends open the new-chat modal */}
-      <ChatInput onNewSessionRequired={!currentSessionId ? handleNewSessionRequired : undefined} />
+      <ChatInput />
 
       {/* Terminal Panel — keep mounted after first open so PTY session survives
            hide/show toggles. Visibility controlled by CSS, not unmounting. */}
@@ -616,47 +591,6 @@ export function ChatBrowserWorkspaceShell() {
             onCancel={() => clearQuestionnaire(currentSessionId || undefined)}
           />
         </Suspense>
-      )}
-
-      {/* New Chat Modal — shown when user submits a message with no active session */}
-      {showNewChatModal && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={() => setShowNewChatModal(false)}
-        >
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">New Chat</h3>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Select Project</label>
-              <select
-                value={selectedProjectForNewChat || ''}
-                onChange={(e) => setSelectedProjectForNewChat(e.target.value || null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="">No project (root)</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => { setShowNewChatModal(false); setSelectedProjectForNewChat(null); setPendingMessage(''); }}
-                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleCreateNewChat}
-                className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </MainLayout>
   );

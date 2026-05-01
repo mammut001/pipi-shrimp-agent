@@ -7,6 +7,7 @@
 
 import { useState, useCallback } from 'react';
 import type { QuestionnaireData, QuestionnaireField } from '@/types/ui';
+import { t } from '@/i18n';
 
 interface QuestionnaireCardProps {
   data: QuestionnaireData;
@@ -40,7 +41,7 @@ export function QuestionnaireCard({ data, onSubmit, onCancel }: QuestionnaireCar
       if (field.required) {
         const val = values[field.id];
         if (val === '' || val === undefined || val === null) {
-          newErrors[field.id] = 'This field is required';
+          newErrors[field.id] = t('common.requiredField');
         }
       }
     }
@@ -92,13 +93,13 @@ export function QuestionnaireCard({ data, onSubmit, onCancel }: QuestionnaireCar
             onClick={onCancel}
             className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={handleSubmit}
             className="px-4 py-2 text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors font-medium"
           >
-            Submit
+            {t('questionnaire.submit')}
           </button>
         </div>
       </div>
@@ -175,7 +176,7 @@ function FieldInput({
             onChange={(e) => onChange(e.target.value)}
             className={inputClass}
           >
-            <option value="">{field.placeholder || 'Select...'}</option>
+            <option value="">{field.placeholder || t('questionnaire.selectPlaceholder')}</option>
             {field.options?.map((opt) => (
               <option key={opt} value={opt}>
                 {opt}

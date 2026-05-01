@@ -1,6 +1,6 @@
 import { invokeRustAPIStream } from './streamAdapter';
 import type { EngineEvent, ToolCallParams } from './types';
-import { useSettingsStore, useCdpStore } from '@/store';
+import { useSettingsStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
 
@@ -9,6 +9,7 @@ export async function* runChatTurn(
   initialMessages: any[],
   systemPrompt: string,
   projectRoot?: string,
+  allowBrowserTools: boolean = false,
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
   const maxRounds = settings?.maxToolRounds ?? 10;
@@ -21,6 +22,17 @@ export async function* runChatTurn(
   // Memory hook — fires after each final (no-tool-call) response
   const memoryHook = createMemoryHook({ projectRoot });
   
+  // [ROUND ACCOUNTING CONTRACT]
+  // Current Behavior: Every iteration of this loop increments `round` by 1, regardless of whether it's
+  // a true model reasoning step, a tool retry, or polling/waiting. If a tool fails transiently or polling 
+  // requires many checks, these eat into the single `maxRounds` limit indiscriminately.
+  // 
+  // Target Behavior: We need an Explicit Execution Budget distinguishing:
+  // 1. Model reasoning rounds (maxModelRounds)
+  // 2. Tool execution attempts (maxToolExecutions)
+  // 3. Tool wall-clock timeouts & Retries
+  // This will prevent slow or polling tools from prematurely exhausting the agent loop budget.
+
   while (!isTurnComplete && round < maxRounds) {
     round++;
     
@@ -49,7 +61,7 @@ export async function* runChatTurn(
       model: apiConfig.model,
       baseUrl: apiConfig.baseUrl || '',
       systemPrompt,
-      browserConnected: useCdpStore.getState().status === 'connected',
+      allowBrowserTools: allowBrowserTools,
       sessionId: sessionId,
     });
     

@@ -75,7 +75,7 @@ export interface UIState {
   // ========== Data State ==========
   sidebarVisible: boolean;
   settingsOpen: boolean;
-  // NOTE: 'browser' as a view is deprecated - use browserDockMode instead
+  // NOTE: 'browser' is kept only for compatibility and is redirected to 'chat'
   currentView: 'chat' | 'workflow' | 'skill' | 'browser';
   currentArtifactId?: string;
   permissionQueue: PermissionRequest[];  // FIFO queue — supports multiple concurrent tool calls
@@ -128,7 +128,7 @@ export interface UIState {
   // ========== Action Methods ==========
 
   /**
-   * Set current view (chat, workflow, or skill)
+  * Set current view. Deprecated browser requests are redirected to chat.
    */
   setCurrentView: (view: 'chat' | 'workflow' | 'skill' | 'browser') => void;
 

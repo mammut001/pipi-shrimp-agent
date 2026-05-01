@@ -8,6 +8,7 @@
  * - Approve/Deny buttons
  */
 
+import { useState } from 'react';
 import type { PermissionRequest } from '@/types/ui';
 import { t } from '@/i18n';
 
@@ -36,6 +37,7 @@ const truncateText = (text: string, maxLength: number): string => {
  */
 export function PermissionModal({ permission, onApprove, onDeny }: PermissionModalProps) {
   const truncatedInput = truncateText(permission.toolInput, 1000);
+  const [showAdvancedDetails, setShowAdvancedDetails] = useState(false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -63,10 +65,10 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
             </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-900">
-                Permission Request
+                {t('permission.title')}
               </h2>
               <p className="text-sm text-gray-500">
-                AI Agent wants to use a tool
+                {t('permission.subtitle')}
               </p>
             </div>
           </div>
@@ -77,7 +79,7 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
           {/* Tool Name */}
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tool
+              {t('permission.tool')}
             </label>
             <div className="px-3 py-2 bg-gray-100 rounded-lg font-mono text-sm text-gray-900">
               {permission.toolName}
@@ -88,27 +90,40 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
           {permission.description && (
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
+                {t('common.description')}
               </label>
               <p className="text-sm text-gray-600">{permission.description}</p>
             </div>
           )}
 
-          {/* Input Parameters */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Input Parameters
-            </label>
-            <div className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
-              <pre className="text-xs text-gray-600 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                {truncatedInput}
-              </pre>
-              {permission.toolInput.length > 1000 && (
-                <p className="text-xs text-gray-400 mt-2">
-                  (Truncated - showing first 1000 characters)
-                </p>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvancedDetails((prev) => !prev)}
+              className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
+            >
+              {showAdvancedDetails
+                ? t('permission.hideAdvancedDetails')
+                : t('permission.showAdvancedDetails')}
+            </button>
+
+            {showAdvancedDetails && (
+              <div className="mt-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('permission.inputParameters')}
+                </label>
+                <div className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+                  <pre className="text-xs text-gray-600 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                    {truncatedInput}
+                  </pre>
+                  {permission.toolInput.length > 1000 && (
+                    <p className="text-xs text-gray-400 mt-2">
+                      {t('permission.truncated')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

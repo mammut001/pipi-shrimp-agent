@@ -5,7 +5,7 @@
  * to the browser orchestration layer.
  */
 
-import { detectBrowserIntent, mightBeBrowserIntent, detectGenericBrowserTask } from './browserIntentDetector';
+import { detectBrowserIntent, detectGenericBrowserTask } from './browserIntentDetector';
 import { createTaskEnvelope, estimateTaskComplexity } from './browserTaskPlanner';
 import type { BrowserTaskEnvelope, BrowserSessionStatus } from '../types/browser';
 import { createMessage, type Message } from '../types/chat';
@@ -119,16 +119,7 @@ export function detectChatBrowserIntent(message: string): ChatBrowserIntent {
     lowerMessage.includes('用浏览器') ||
     lowerMessage.includes('open ') ||
     lowerMessage.includes('visit ') ||
-    lowerMessage.includes('browser') ||
-    lowerMessage.includes('帮我去') ||
-    lowerMessage.includes('去这个') ||
-    lowerMessage.includes('去看看') ||
-    lowerMessage.includes('帮我看看') ||
-    lowerMessage.includes('去查查') ||
-    lowerMessage.includes('看一下') ||
-    lowerMessage.includes('查一下') ||
-    lowerMessage.includes('去一下') ||
-    lowerMessage.includes('帮我查');
+    lowerMessage.includes('browser');
 
   if (directDomainMatch && hasExplicitBrowserAction) {
     const rawTarget = directDomainMatch[1].trim();
@@ -679,11 +670,6 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
     await chatStore.startSession();
   }
 
-  // CRITICAL: Add the user's message FIRST so it appears in the chat history.
-  // Without this, the user's input is lost and only assistant bubbles are shown.
-  const chatStoreAfterSession = useChatStore.getState();
-  await chatStoreAfterSession.addMessage(createMessage('user', message));
-
   // Create task envelope (async: may show Chrome connect prompt for complex sites)
   const envelope = await createTaskEnvelopeFromChat(message);
 
@@ -691,6 +677,11 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
     console.error('[chatBrowserBridge] Failed to create task envelope');
     return false;
   }
+
+  // Only persist the user message after browser handoff is ready to start.
+  // This avoids leaving orphaned user bubbles behind when envelope creation fails.
+  const chatStoreAfterEnvelope = useChatStore.getState();
+  await chatStoreAfterEnvelope.addMessage(createMessage('user', message));
 
   console.log('[chatBrowserBridge] Created task envelope:', envelope);
 
@@ -741,65 +732,37 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
  */
 export function quickCheckBrowserIntent(message: string): boolean {
   const lowerMessage = message.toLowerCase();
-  const hasDomain = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s，。！？,!?]*)?/i.test(message);
-  const hasExplicitBrowserAction =
-    lowerMessage.includes('打开') ||
-    lowerMessage.includes('访问') ||
-    lowerMessage.includes('浏览器') ||
-    lowerMessage.includes('用浏览器') ||
-    lowerMessage.includes('open ') ||
-    lowerMessage.includes('visit ') ||
-    lowerMessage.includes('browser') ||
-    lowerMessage.includes('帮我去') ||
-    lowerMessage.includes('去这个') ||
-    lowerMessage.includes('去看看') ||
-    lowerMessage.includes('帮我看看') ||
-    lowerMessage.includes('去查查') ||
-    lowerMessage.includes('看一下') ||
-    lowerMessage.includes('查一下') ||
-    lowerMessage.includes('去一下') ||
-    lowerMessage.includes('帮我查');
 
-  if (hasDomain && hasExplicitBrowserAction) {
-    return true;
-  }
+  const isCodeOrProjectAnalysisRequest = (msg: string) => {
+    return [
+      "代码", "项目", "repo", "repository", "bug", "fix", "debug", "toolcall", "artifact", 
+      "实现", "源码", "文件", "函数", "组件", "prompt", "报错", "修复", "分析", "重构"
+    ].some(kw => msg.includes(kw));
+  };
 
-  // First try the simple keyword check
-  if (!mightBeBrowserIntent(message)) {
-    // Check for auth-gated keywords
-    const authGatedKeywords = [
-      '上传 build',
-      '上传 app',
-      '上传新 build',
-      'app store',
-      '邮箱',
-      '邮件',
-      'gmail',
-      'outlook',
-      'hotmail',
-      'qq邮箱',
-      '163邮箱',
-      'inbox',
-      '收件箱',
-      'aws',
-      '阿里云',
-      'vercel',
-      'netlify',
-    ];
+  const isExplicitBrowserCommand = (msg: string) => {
+    if (msg.startsWith('/browser') || msg.startsWith('browser:') || msg.startsWith('浏览器：') || msg.startsWith('用浏览器')) return true;
+    if (msg.includes('用浏览器打开') || msg.includes('用浏览器访问') || msg.includes('在浏览器中打开') || msg.includes('打开网页') || msg.includes('访问网站')) return true;
+    
+    const hasDomain = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s，。！？,!?]*)?/i.test(msg);
+    const hasStrongNav = ['打开', '访问', '进入', '导航到', 'open', 'visit', 'go to'].some(verb => msg.includes(verb));
+    if (hasDomain && hasStrongNav) return true;
 
-    if (authGatedKeywords.some(keyword => lowerMessage.includes(keyword.toLowerCase()))) {
-      return true;
+    return false;
+  };
+
+  if (isCodeOrProjectAnalysisRequest(lowerMessage)) {
+    // Escape hatch: even if explicit rules might catch it, if it mentions code strongly,
+    // we require VERY strong explicit commands, or we just default false. 
+    // Wait, the requirements say: "If a message contains code-review/debugging words, do not trigger browser workflow even if it mentions a repo-hosting site or a repo-like path."
+    // Let's implement this strictly. If it starts with /browser or includes explicit "用浏览器打开", we should probably still allow it.
+    // The instructions say: "Escape-hatch keywords... Examples that should be normal chat, not browser workflow... Keep explicit browser commands working (These should still trigger browser workflow...)"
+    
+    // We will just let explicit browser commands override the escape hatch.
+    if (!isExplicitBrowserCommand(lowerMessage)) {
+      return false;
     }
-
-    // Check for generic task patterns ("帮我查询下机票", "search for flights")
-    const genericTaskKeywords = [
-      '查询', '查一下', '搜一下', '帮我查', '帮我搜', '帮我找',
-      '查找', '搜一搜', '查一查', '找一找',
-      'search for', 'find me', 'look up', 'help me find',
-    ];
-
-    return genericTaskKeywords.some(keyword => lowerMessage.includes(keyword.toLowerCase()));
   }
 
-  return true;
+  return isExplicitBrowserCommand(lowerMessage);
 }

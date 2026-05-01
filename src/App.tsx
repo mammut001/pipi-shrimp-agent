@@ -27,44 +27,94 @@ const Settings = lazy(() => import('@/pages/Settings'));
 const Workflow = lazy(() => import('@/pages/Workflow'));
 const Skill = lazy(() => import('@/pages/Skill'));
 
+function DeprecatedBrowserViewFallback() {
+  const setCurrentView = useUIStore((state) => state.setCurrentView);
+  const setBrowserDockMode = useUIStore((state) => state.setBrowserDockMode);
+  const focusChatPane = useUIStore((state) => state.focusChatPane);
+
+  useEffect(() => {
+    console.warn('Deprecated browser view requested. Redirecting to chat workspace.');
+    setBrowserDockMode('split');
+    focusChatPane();
+    setCurrentView('chat');
+  }, [focusChatPane, setBrowserDockMode, setCurrentView]);
+
+  return <ChatBrowserWorkspaceShell />;
+}
+
 /**
  * Main application component
  */
 export default function App() {
   const { getApiConfig } = useSettingsStore();
   const { init: initChat } = useChatStore();
-  const { settingsOpen, currentView } = useUIStore();
+  const settingsOpen = useUIStore((state) => state.settingsOpen);
+  const currentView = useUIStore((state) => state.currentView);
   const initSwarm = useSwarmStore((s) => s.init);
 
   // Keyboard shortcuts handler
   const { showShortcuts, setShowShortcuts } = useKeyboardShortcuts();
 
-  // Load settings on mount, then show window once fully initialized.
+  // Load critical state first, then show the window once the app can render.
   // Window starts hidden (visible: false in tauri.conf.json) to avoid the
   // white-screen flash while the JS bundle is parsing and React is mounting.
   useEffect(() => {
+    let disposed = false;
+    let cleanupBrowserObservability: (() => void) | null = null;
+
+    const startBackgroundInitialization = () => {
+      void initializeTelegramStore().catch((error) => {
+        console.warn('Telegram background initialization failed:', error);
+      });
+
+      void initSwarm().catch((error) => {
+        console.warn('Swarm background initialization failed:', error);
+      });
+
+      try {
+        const cleanup = setupBrowserObservabilityWiring();
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        cleanupBrowserObservability = cleanup;
+      } catch (error) {
+        console.error('Browser observability wiring failed:', error);
+      }
+    };
+
     const init = async () => {
       try {
         await getApiConfig();
         await initChat();
-        await initializeTelegramStore();
-        initSwarm();
       } catch (error) {
-        console.error('Failed to initialize:', error);
+        console.error('Failed to initialize critical app state:', error);
       } finally {
-        // Always show the window — even if init partially failed, a blank/error
-        // UI is better than a window that never appears.
-        await getCurrentWindow().show();
+        if (disposed) {
+          return;
+        }
+
+        try {
+          // Always show the window — even if init partially failed, a blank/error
+          // UI is better than a window that never appears.
+          await getCurrentWindow().show();
+        } catch (error) {
+          console.error('Failed to show main window after initialization:', error);
+        }
+
+        if (!disposed) {
+          startBackgroundInitialization();
+        }
       }
     };
 
-    init();
-  }, [getApiConfig, initChat]);
+    void init();
 
-  useEffect(() => {
-    const cleanup = setupBrowserObservabilityWiring();
-    return cleanup;
-  }, []);
+    return () => {
+      disposed = true;
+      cleanupBrowserObservability?.();
+    };
+  }, [getApiConfig, initChat, initSwarm]);
 
   // Render active page based on currentView
   // Note: 'browser' view is deprecated - browser is now a dock mode in chat view
@@ -75,8 +125,7 @@ export default function App() {
       case 'skill':
         return <Skill />;
       case 'browser':
-        // Deprecated: redirect to chat with browser visible
-        return <ChatBrowserWorkspaceShell />;
+        return <DeprecatedBrowserViewFallback />;
       case 'chat':
       default:
         return <ChatBrowserWorkspaceShell />;

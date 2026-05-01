@@ -113,7 +113,7 @@ export interface ChatState {
   /**
    * Send message (call API)
    */
-  sendMessage: (content: string, sessionId?: string) => Promise<void>;
+  sendMessage: (content: string, sessionId?: string, options?: { allowBrowserTools?: boolean }) => Promise<void>;
   generateBrowserResultResponse: (browserResult: string, originalQuery: string) => Promise<void>;
 
   /**
@@ -330,3 +330,37 @@ export const createProject = (name: string): Project => ({
   createdAt: Date.now(),
   updatedAt: Date.now(),
 });
+
+/** Structured Result for Tool Executions */
+export interface StructuredToolResult {
+  rawContent: string;
+  modelContent: string;
+  structuredData?: {
+    filePath?: string;
+    pdfPath?: string;
+    svgPath?: string;
+    exists?: boolean;
+    kind?: 'file' | 'directory' | 'unknown';
+    [key: string]: unknown;
+  };
+  isError: boolean;
+  errorMessage?: string;
+}
+
+export interface AgentExecutionBudget {
+  maxModelRounds: number;
+  maxToolExecutions: number;
+  maxToolRetries: number;
+  maxToolWallClockMs: number;
+  maxTotalWallClockMs: number;
+  reserveFinalResponseRound: boolean;
+}
+
+export interface AgentExecutionCounters {
+  modelRoundsUsed: number;
+  toolExecutionsUsed: number;
+  toolRetriesUsed: number;
+  startedAt: number;
+  lastToolStartedAt?: number;
+  lastToolName?: string;
+}

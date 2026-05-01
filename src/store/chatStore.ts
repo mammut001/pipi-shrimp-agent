@@ -10,7 +10,6 @@ import { createSession, createMessage, createProject } from '../types/chat';
 import { useArtifactsStore } from './artifactsStore';
 import { useSettingsStore } from './settingsStore';
 import { useUIStore } from './uiStore';
-import { useCdpStore } from './cdpStore';
 import { usePromptStore } from './promptStore';
 import { runPreToolUseHooks } from '../services/tools/preToolUseHooks';
 import { runPostToolUseHooks } from '../services/tools/postToolUseHooks';
@@ -23,6 +22,7 @@ import { getCompactConfig, getContextTokenStats } from '../services/compact/conf
 import { checkReactiveCompact, recordToolForReactiveCompact } from '../services/compact/reactiveCompact';
 import { triggerContextAnalysis } from '../services/contextAnalysis/hooks/contextAnalysisTrigger';
 import { sanitizeToolResultForModel } from '../services/tools/toolResultSanitizer';
+import { t } from '../i18n';
 
 
 /**
@@ -1259,7 +1259,7 @@ export const useChatStore = create<ChatState>()(
           baseUrl: apiConfig.baseUrl || '',
           systemPrompt,
           noTools: true,
-          browserConnected: useCdpStore.getState().status === 'connected',
+          allowBrowserTools: true,
           sessionId: currentSessionId,
           apiFormat: apiConfig.apiFormat,
         });
@@ -1329,7 +1329,7 @@ export const useChatStore = create<ChatState>()(
     /**
      * Send message - call API (with streaming + multi-round tool loop)
      */
-    sendMessage: async (content: string, targetSessionId?: string) => {
+    sendMessage: async (content: string, targetSessionId?: string, options?: { allowBrowserTools?: boolean }) => {
       const {
         currentSessionId,
         currentMessages,
@@ -1523,7 +1523,7 @@ export const useChatStore = create<ChatState>()(
         // === Multi-round tool loop via Core Query Engine ===
         const { runChatTurn } = await import('../core/QueryEngine');
         const apiMessages = currentMessages();
-        const engine = runChatTurn(activeSessionId, apiMessages, systemPrompt, sessionWorkDir);
+        const engine = runChatTurn(activeSessionId, apiMessages, systemPrompt, sessionWorkDir, options?.allowBrowserTools || false);
         
         const uiStore = useUIStore.getState();
         let tokenUsageResult: any = undefined;
@@ -1569,7 +1569,7 @@ export const useChatStore = create<ChatState>()(
               }
             }
 
-            const allResults: { id: string; content: string }[] = [];
+            const allResults: { id: string; content: string; toolName?: string; toolArgs?: string }[] = [];
             const normalizedToolArgsById = new Map<string, string>();
 
             for (const tool of chunk.tools) {
@@ -1607,8 +1607,8 @@ export const useChatStore = create<ChatState>()(
                   workDir: workDir ?? undefined,
                 });
                 for (const result of batchResult.results) {
-                  allResults.push({ id: result.id, content: result.content });
                   const req = concurrent.find(r => r.id === result.id);
+                  allResults.push({ id: result.id, content: result.content, toolName: req?.name, toolArgs: normalizedToolArgsById.get(result.id) ?? '{}' });
                   if (req) {
                     const postCtx: PostHookContext = {
                       toolName: req.name,
@@ -1623,7 +1623,7 @@ export const useChatStore = create<ChatState>()(
                 }
               } catch (concurrentErr) {
                 for (const req of concurrent) {
-                  allResults.push({ id: req.id, content: `Error: batch execution failed: ${concurrentErr instanceof Error ? concurrentErr.message : String(concurrentErr)}` });
+                  allResults.push({ id: req.id, content: `Error: batch execution failed: ${concurrentErr instanceof Error ? concurrentErr.message : String(concurrentErr)}`, toolName: req.name, toolArgs: normalizedToolArgsById.get(req.id) ?? '{}' });
                 }
               }
             }
@@ -1649,7 +1649,7 @@ export const useChatStore = create<ChatState>()(
                 } catch (err) {
                   toolResultContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
                 }
-                allResults.push({ id: tool.id, content: toolResultContent });
+                allResults.push({ id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: normalizedToolArgs });
                 continue;
               }
 
@@ -1664,12 +1664,13 @@ export const useChatStore = create<ChatState>()(
                 sessionId: activeSessionId,
               });
 
+              let effectiveArgs = normalizedToolArgs;
               let toolResultContent = '';
               if (!hookResult.approved) {
                 uiStore.addNotification('error', hookResult.error || 'Tool execution blocked', activeSessionId);
                 toolResultContent = `Error: ${hookResult.error || 'Tool execution blocked'}`;
               } else {
-                const effectiveArgs = hookResult.modifiedArgs || normalizedToolArgs;
+                effectiveArgs = hookResult.modifiedArgs || normalizedToolArgs;
                 const shouldBypass = permissionMode === 'bypass' || permissionMode === 'auto-edits';
                 let parsedAgentArgs: Record<string, any> | null = null;
                 let isSwarmTeammateRequest = false;
@@ -1729,7 +1730,7 @@ export const useChatStore = create<ChatState>()(
                       toolArgs: effectiveArgs,
                     });
                     if (!approved) {
-                      swarm.failAgent(runtimeAgent.id, 'Permission denied by user');
+                      swarm.failAgent(runtimeAgent.id, t('permission.deniedMessage'));
                       swarm.reconcileRunForChatSession(activeSessionId);
                     }
                   } else {
@@ -1742,7 +1743,7 @@ export const useChatStore = create<ChatState>()(
                 }
 
                 if (!approved) {
-                  toolResultContent = 'Permission denied by user.';
+                  toolResultContent = t('permission.deniedMessage');
                 } else {
                   try {
                     if (tool.name === 'get_current_workspace') {
@@ -1757,7 +1758,7 @@ export const useChatStore = create<ChatState>()(
                       } catch (parseErr) {
                         toolResultContent = `Error: Failed to parse agent_tool arguments: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`;
                         uiStore.addNotification('error', 'Invalid agent tool arguments', activeSessionId);
-                        allResults.push({ id: tool.id, content: toolResultContent });
+                        allResults.push({ id: tool.id, content: toolResultContent, toolName: tool.name });
                         continue; // skip to next serial tool
                       }
                       if (args.team_name && args.name) {
@@ -1896,18 +1897,24 @@ export const useChatStore = create<ChatState>()(
                 }
               }
 
-              allResults.push({ id: tool.id, content: toolResultContent });
+              allResults.push({ id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: effectiveArgs });
             }
 
             // === Artifact detection: scan tool results for generated files ===
             try {
               const { detectAndRegisterArtifacts } = await import('../services/artifactDetector');
               for (const result of allResults) {
-                detectAndRegisterArtifacts(assistantMessage.id, result.content);
+                detectAndRegisterArtifacts({
+                  messageId: assistantMessage.id,
+                  toolName: result.toolName || '',
+                  toolArgs: result.toolArgs || '',
+                  toolResultText: result.content,
+                  workDir: workDir || undefined,
+                });
               }
             } catch (e) { /* artifact detection is best-effort */ }
 
-            chunk._resolveAll(allResults);
+            chunk._resolveAll(allResults.map(({id, content}) => ({id, content})));
           } else if (chunk.type === 'error') {
             throw chunk.error;
           } else if (chunk.type === 'turn_complete') {

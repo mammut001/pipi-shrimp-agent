@@ -63,12 +63,12 @@ async fn send_claude_sdk_chat(
     model: String,
     base_url: Option<String>,
     system_prompt: Option<String>,
-    #[allow(non_snake_case)] browserConnected: Option<bool>,
+    #[allow(non_snake_case)] allowBrowserTools: Option<bool>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<ChatResponse, String> {
     // Convert empty string to None for custom API
     let base_url = base_url.filter(|s| !s.is_empty());
-    let browser_connected = browserConnected.unwrap_or(false);
+    let allow_browser_tools = allowBrowserTools.unwrap_or(false);
     // Clone the client out of the lock so the mutex is released before the
     // long-running HTTP request (otherwise all concurrent requests serialize).
     let client = {
@@ -82,7 +82,7 @@ async fn send_claude_sdk_chat(
             model,
             base_url,
             system_prompt,
-            browser_connected,
+            allow_browser_tools,
         )
         .await
         .map_err(|e| e.to_string())
@@ -100,7 +100,7 @@ async fn send_claude_sdk_chat_streaming(
     #[allow(non_snake_case)] baseUrl: Option<String>,
     #[allow(non_snake_case)] systemPrompt: Option<String>,
     #[allow(non_snake_case)] noTools: Option<bool>,
-    #[allow(non_snake_case)] browserConnected: Option<bool>,
+    #[allow(non_snake_case)] allowBrowserTools: Option<bool>,
     #[allow(non_snake_case)] sessionId: String,
     // Optional explicit API format override: "anthropic" or "openai".
     // When absent the format is auto-detected from key / model / base URL.
@@ -111,7 +111,7 @@ async fn send_claude_sdk_chat_streaming(
     // Convert empty string to None for custom API
     let base_url = baseUrl.filter(|s| !s.is_empty());
     let no_tools = noTools.unwrap_or(false);
-    let browser_connected = browserConnected.unwrap_or(false);
+    let allow_browser_tools = allowBrowserTools.unwrap_or(false);
     let api_format = apiFormat.filter(|s| !s.is_empty());
     // Clone out of lock before the long-running streaming call.
     let client = {
@@ -127,7 +127,7 @@ async fn send_claude_sdk_chat_streaming(
             systemPrompt,
             no_tools,
             window,
-            browser_connected,
+            allow_browser_tools,
             sessionId,
             api_format,
         )

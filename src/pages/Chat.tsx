@@ -25,9 +25,6 @@ export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
-  const [showNewSessionModal, setShowNewSessionModal] = useState(false);
-  const [selectedProjectForNewChat, setSelectedProjectForNewChat] = useState<string | null>(null);
-  const [pendingFirstMessage, setPendingFirstMessage] = useState<string | null>(null);
 
   const {
     currentMessages,
@@ -36,9 +33,6 @@ export function Chat() {
     error,
     clearError,
     retryLastMessage,
-    startSession,
-    sendMessage,
-    projects,
   } = useChatStore();
 
   // Memoized token usage (recalculates only when messages change)
@@ -149,33 +143,9 @@ export function Chat() {
    */
   const handleDenyPermission = () => {
     if (!pendingPermission) return;
-    addNotification('info', 'Permission denied');
+    addNotification('info', t('permission.deniedMessage'));
     pendingPermission._resolve?.(false);
     clearPermissionRequest();
-  };
-
-  /**
-   * Handle new session required - show project selection modal
-   */
-  const handleNewSessionRequired = (message: string) => {
-    setSelectedProjectForNewChat(null);
-    setPendingFirstMessage(message);
-    setShowNewSessionModal(true);
-  };
-
-  /**
-   * Handle creating new session with selected project
-   */
-  const handleCreateNewSession = async () => {
-    const sessionId = await startSession(selectedProjectForNewChat || undefined);
-    setShowNewSessionModal(false);
-    setSelectedProjectForNewChat(null);
-
-    const message = pendingFirstMessage;
-    setPendingFirstMessage(null);
-    if (message) {
-      await sendMessage(message, sessionId);
-    }
   };
 
   /**
@@ -229,7 +199,7 @@ export function Chat() {
                     PiPi Shrimp Agent
                   </h2>
                   <p className="text-gray-500 text-sm">
-                    What can I help you with today?
+                    {t('chat.emptyStatePrompt')}
                   </p>
                 </div>
               </div>
@@ -260,7 +230,7 @@ export function Chat() {
                     onClick={() => retryLastMessage()}
                     className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors whitespace-nowrap"
                   >
-                    Retry
+                    {t('common.retry')}
                   </button>
                   <button
                     onClick={handleDismissError}
@@ -298,7 +268,7 @@ export function Chat() {
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      {formatCostCompact(sessionCost)}
+                      {t('token.cost')}: {formatCostCompact(sessionCost)}
                     </span>
                     <span className="text-gray-300">|</span>
                   </>
@@ -307,7 +277,7 @@ export function Chat() {
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
-                  <span>{t('chat.sessionTokenUsage')}: <strong className="text-gray-700">{formatTokenCount(sessionTokenUsage.total)}</strong> tokens</span>
+                  <span>{t('chat.sessionTokenUsage')}: <strong className="text-gray-700">{formatTokenCount(sessionTokenUsage.total)}</strong> {t('token.tokens')}</span>
                 </span>
                 <span className="text-gray-300">|</span>
                 <span>{t('chat.input')}: {formatTokenCount(sessionTokenUsage.input)}</span>
@@ -317,7 +287,7 @@ export function Chat() {
           )}
 
           {/* Chat Input */}
-          <ChatInput onNewSessionRequired={handleNewSessionRequired} />
+          <ChatInput />
           </div>{/* end chat area */}
 
           {/* Terminal Panel (bottom, VS Code-style)
@@ -342,46 +312,6 @@ export function Chat() {
             </div>
           </div>
         </div>
-
-        {/* New Session Modal - Select Project */}
-        {showNewSessionModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowNewSessionModal(false)}>
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('chat.newSession')}</h3>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Select Project</label>
-                <select
-                  value={selectedProjectForNewChat || ''}
-                  onChange={(e) => setSelectedProjectForNewChat(e.target.value || null)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                >
-                  <option value="">None (No Project)</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>{project.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex justify-end gap-3">
-                <button
-                  onClick={() => {
-                    setShowNewSessionModal(false);
-                    setSelectedProjectForNewChat(null);
-                  }}
-                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  {t('common.cancel')}
-                </button>
-                <button
-                  onClick={handleCreateNewSession}
-                  className="px-4 py-2 text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors"
-                >
-                  {t('common.confirm')}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Permission Modal */}
         {pendingPermission && (
           <PermissionModal
