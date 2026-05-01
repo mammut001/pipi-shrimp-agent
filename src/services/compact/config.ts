@@ -7,7 +7,7 @@
  *          restored-src/src/services/compact/microCompact.ts (DEFAULT_*_CONFIG)
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke } from '../../utils/safeInvoke';
 import type { AutoCompactConfig, ContextTokenStats } from '../../types/compact';
 import { DEFAULT_AUTO_COMPACT_CONFIG } from '../../types/compact';
 
@@ -85,5 +85,5 @@ export async function getRecentToolResults(
   preview: string;
   timestamp: number;
 }>> {
-  return invoke('get_recent_tool_results', { sessionId, limit });
+  return safeInvoke('get_recent_tool_results', { sessionId, limit });
 }

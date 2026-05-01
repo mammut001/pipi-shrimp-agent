@@ -1,6 +1,7 @@
 import React from 'react';
 import { t } from '../i18n';
 import { getErrorLogsText, logError } from '../utils/errorLogger';
+import { useUIStore } from '../store/uiStore';
 
 interface Props {
   children: React.ReactNode;
@@ -10,6 +11,8 @@ interface State {
   hasError: boolean;
   error: Error | null;
   copied: boolean;
+  /** Incremented to force a fresh subtree render after recovery */
+  recoverKey: number;
 }
 
 /**
@@ -18,13 +21,15 @@ interface State {
  * Features:
  * - Friendly error page (no white screen)
  * - Reload button
- * - Back-to-chat button
+ * - Back-to-chat button (resets transient UI via uiStore.recoverToChatView)
  * - Copy sanitized diagnostics button (no API keys/tokens)
  */
 export class AppErrorBoundary extends React.Component<Props, State> {
+  private copyTimers: ReturnType<typeof setTimeout>[] = [];
+
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null, copied: false };
+    this.state = { hasError: false, error: null, copied: false, recoverKey: 0 };
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
@@ -35,12 +40,32 @@ export class AppErrorBoundary extends React.Component<Props, State> {
     logError('error', error.message, 'AppErrorBoundary', error, errorInfo.componentStack ?? undefined);
   }
 
+  componentWillUnmount(): void {
+    // Clear any pending copy-reset timers to avoid setState on unmounted component
+    for (const timer of this.copyTimers) {
+      clearTimeout(timer);
+    }
+    this.copyTimers = [];
+  }
+
   private handleReload = (): void => {
     window.location.reload();
   };
 
   private handleBackToChat = (): void => {
-    this.setState({ hasError: false, error: null, copied: false });
+    // Reset transient UI state that may have caused the crash
+    try {
+      useUIStore.getState().recoverToChatView();
+    } catch {
+      // If store access fails, we still clear the boundary state
+    }
+    // Clear error state and bump recoverKey to force fresh render
+    this.setState((prev) => ({
+      hasError: false,
+      error: null,
+      copied: false,
+      recoverKey: prev.recoverKey + 1,
+    }));
   };
 
   private handleCopyDiagnostics = async (): Promise<void> => {
@@ -57,7 +82,7 @@ export class AppErrorBoundary extends React.Component<Props, State> {
     try {
       await navigator.clipboard.writeText(diagnostics);
       this.setState({ copied: true });
-      setTimeout(() => this.setState({ copied: false }), 2000);
+      this.copyTimers.push(setTimeout(() => this.setState({ copied: false }), 2000));
     } catch {
       // Fallback: select text in a temporary textarea
       const textarea = document.createElement('textarea');
@@ -69,7 +94,7 @@ export class AppErrorBoundary extends React.Component<Props, State> {
       document.execCommand('copy');
       document.body.removeChild(textarea);
       this.setState({ copied: true });
-      setTimeout(() => this.setState({ copied: false }), 2000);
+      this.copyTimers.push(setTimeout(() => this.setState({ copied: false }), 2000));
     }
   };
 
@@ -130,7 +155,7 @@ export class AppErrorBoundary extends React.Component<Props, State> {
                 onClick={this.handleBackToChat}
                 className="w-full px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-lg font-medium text-sm border border-gray-300 transition-colors"
               >
-                {t('errorBoundary.backToChat')}
+                {t('errorBoundary.tryBackToChat')}
               </button>
 
               <button
@@ -148,6 +173,7 @@ export class AppErrorBoundary extends React.Component<Props, State> {
       );
     }
 
-    return this.props.children;
+    // Wrap children with a keyed div so recovery forces a fresh subtree
+    return <div key={this.state.recoverKey}>{this.props.children}</div>;
   }
 }

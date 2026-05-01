@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { usePolling } from '@/hooks/usePolling';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { workflowEngine } from '@/services/workflowEngine';
 import { workflowService, type FileInfo } from '@/services/workflow';
@@ -74,13 +75,8 @@ export function WorkflowOutputPanel() {
     }
   }, [runDirectory]);
 
-  // Periodic refresh while running
-  useEffect(() => {
-    refreshFiles();
-    if (!isRunning) return;
-    const id = setInterval(refreshFiles, 2000);
-    return () => clearInterval(id);
-  }, [isRunning, refreshFiles]);
+  // Periodic refresh while running (pauses when tab is hidden)
+  usePolling(refreshFiles, 2000, isRunning);
 
   // Extra refresh when run completes
   useEffect(() => {

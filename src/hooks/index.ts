@@ -7,3 +7,5 @@ export type { UseMultiSelectOptions, UseMultiSelectReturn } from './useMultiSele
 
 export { useSearch } from './useSearch';
 export type { UseSearchOptions, UseSearchReturn } from './useSearch';
+
+export { usePolling } from './usePolling';

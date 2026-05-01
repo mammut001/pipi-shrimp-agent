@@ -13,7 +13,7 @@
 import { useState, useEffect } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
 import { usePromptStore } from '@/store/promptStore';
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke } from '@/utils/safeInvoke';
 import type { ApiConfig, ModelPricing } from '@/types/settings';
 import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import {
@@ -423,11 +423,11 @@ export function Settings() {
 
     try {
       const providerDef = getProvider(formData.provider);
-      const result = await invoke<boolean>('test_connection', {
+      const result = await safeInvoke<boolean>('test_connection', {
         apiKey: formData.apiKey,
         model: formData.model,
         baseUrl: providerDef?.requiresBaseUrl ? formData.baseUrl : null,
-      });
+      }, { source: 'Settings.testConnection' });
 
       const latency = Date.now() - startTime;
 
@@ -443,7 +443,7 @@ export function Settings() {
       const rawMsg = error instanceof Error ? error.message : String(error);
       const lower = rawMsg.toLowerCase();
 
-      // Classify the error for a friendly message
+      // Classify the error for a friendly message — never expose raw error to UI
       let friendlyMsg: string;
       if (lower.includes('timeout') || lower.includes('timed out')) {
         friendlyMsg = t('settings.testConnectionErrorTimeout');
@@ -454,7 +454,8 @@ export function Settings() {
       } else if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection') || lower.includes('dns') || lower.includes('enotfound')) {
         friendlyMsg = t('settings.testConnectionErrorNetwork');
       } else {
-        friendlyMsg = `${t('settings.testConnectionErrorUnknown')} (${rawMsg.slice(0, 120)})`;
+        // Unknown errors: show only the friendly message, raw error is already in errorLogger via safeInvoke
+        friendlyMsg = t('settings.testConnectionErrorUnknown');
       }
 
       setTestResult({ success: false, message: friendlyMsg });

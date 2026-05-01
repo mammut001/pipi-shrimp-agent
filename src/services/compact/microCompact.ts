@@ -9,7 +9,7 @@
  * - restored-src/src/services/compact/compactWarningState.ts
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke } from '../../utils/safeInvoke';
 import type { MicrocompactUpdate } from '../../types/compact';
 import { getCompactConfig } from './config';
 import {
@@ -183,7 +183,7 @@ export async function applyMicrocompactUpdates(
   for (const update of updates) {
     // 1. 更新 SQLite（Rust 已更新，但确保一致性）
     try {
-      await invoke('db_save_message', {
+      await safeInvoke('db_save_message', {
         message: {
           id: update.message_id,
           content: update.new_content,

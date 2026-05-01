@@ -402,6 +402,27 @@ export const useUIStore = create<UIState>((set) => ({
 
   setProjectFingerprint: (fingerprint) =>
     set({ projectFingerprint: fingerprint }),
+
+  /**
+   * Recover to a safe chat view state after an error boundary catch.
+   * Resets transient UI that may have caused the crash while preserving user data.
+   */
+  recoverToChatView: () => {
+    persistCurrentView('chat');
+    set({
+      currentView: 'chat',
+      settingsOpen: false,
+      currentArtifactId: undefined,
+      permissionQueue: [],
+      activeQuestionnaire: null,
+      activeQuestionnaireSessionId: null,
+      chromePromptVisible: false,
+      chromePromptTargetUrl: null,
+      browserDockMode: 'hidden' as BrowserDockMode,
+      browserPaneVisible: false,
+      terminalPanelVisible: false,
+    });
+  },
 }));
 
 export type { PermissionRequest, Notification, TaskStep, BrowserDockMode, SplitFocus } from '../types/ui';

@@ -10,6 +10,7 @@
 
 import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
+import { t } from '../i18n';
 
 // Module-level ref-count guard: multiple components call setupEventListeners()
 // (ChatBrowserWorkspaceShell, BrowserPanel, BrowserMiniPreview). We only want ONE
@@ -230,7 +231,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       level,
     };
     set((state) => ({
-      logs: [...state.logs, entry],
+      logs: [...state.logs, entry].slice(-500),
     }));
   },
 
@@ -281,7 +282,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       const unlistenComplete = await listen<AgentTaskComplete>('agent_task_complete', (event) => {
         const { success, final_url, result } = event.payload;
         if (success) {
-          addLog('success', `任务完成！最终URL: ${final_url}`);
+          addLog('success', t('browserAgent.log.taskCompleted').replace('{url}', final_url));
           const completedTaskId = get().pendingTask?.id || null;
           set(() => ({
             status: 'completed',
@@ -303,7 +304,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
           }, 5000);
           _completionTimerTaskId = completedTaskId;
         } else {
-          addLog('error', `任务失败: ${result}`);
+          addLog('error', t('browserAgent.log.taskFailed').replace('{error}', result));
           const failedTaskId = get().pendingTask?.id || null;
           set({ status: 'error', error: result, lastTaskResult: null });
           // Also reset error state after 5s so next task isn't blocked
@@ -329,7 +330,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
       const unlistenScreenshotError = await listen<{ message: string }>('screenshot_error', (event) => {
         const message = event.payload?.message ?? 'unknown';
-        addLog('error', `截图错误: ${message}`);
+        addLog('error', t('browserAgent.log.screenshotError').replace('{error}', message));
       });
 
       // Store the real cleanup so subsequent callers can share it
@@ -377,7 +378,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
       // Update status to opening
       set({ status: 'opening' });
-      addLog('info', `正在打开嵌入式浏览器: ${normalizedUrl}`);
+      addLog('info', t('browserAgent.log.openingBrowser').replace('{url}', normalizedUrl));
 
       // Use embedded surface as the primary browser surface
       await openEmbeddedSurface(normalizedUrl);
@@ -399,7 +400,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         handoffState: 'no_handoff',
       });
 
-      addLog('success', `嵌入式浏览器已打开 (${profile.label})`);
+      addLog('success', t('browserAgent.log.browserOpened').replace('{profile}', profile.label));
 
       // Start live preview for real-time screenshot updates
       get()._startLivePreview();
@@ -410,7 +411,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       // that fight over the same app.once() event listener → one always times out.
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog('error', `打开窗口失败: ${errorMessage}`);
+      addLog('error', t('browserAgent.log.openWindowFailed').replace('{error}', errorMessage));
       set({ error: errorMessage, status: 'error' });
     }
   },
@@ -419,7 +420,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     const { addLog } = get();
 
     try {
-      addLog('info', '正在关闭嵌入式浏览器');
+      addLog('info', t('browserAgent.log.closingBrowser'));
 
       // Stop live preview
       get()._stopLivePreview();
@@ -439,10 +440,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         presentationMode: 'hidden',
         handoffState: 'no_handoff',
       });
-      addLog('info', '嵌入式浏览器已关闭');
+      addLog('info', t('browserAgent.log.browserClosed'));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog('error', `关闭窗口失败: ${errorMessage}`);
+      addLog('error', t('browserAgent.log.closeWindowFailed').replace('{error}', errorMessage));
     }
   },
 
@@ -456,7 +457,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     const { addLog, siteProfileId } = get();
 
     if (!get().isWindowOpen) {
-      addLog('error', '浏览器窗口未打开');
+      addLog('error', t('browserAgent.log.windowNotOpen'));
       return;
     }
 
@@ -464,13 +465,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     // Concurrent inspections both register app.once() listeners for the same event;
     // whichever fires first wins, the other always times out.
     if (get()._isInspecting) {
-      addLog('info', '检查中，跳过重复请求...');
+      addLog('info', t('browserAgent.log.checkingDuplicate'));
       return;
     }
 
     try {
       set({ status: 'inspecting', _isInspecting: true });
-      addLog('info', '正在检查页面状态...');
+      addLog('info', t('browserAgent.log.checkingPageStatus'));
 
       // Get raw inspection from backend with one retry on timeout.
       // Heavy SPAs (e.g. Apple ID redirect) may still be loading on first attempt.
@@ -480,7 +481,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       } catch (firstErr) {
         const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
         if (msg.includes('Timed out') || msg.includes('timeout')) {
-          addLog('info', '页面仍在加载，2 秒后重试检查...');
+          addLog('info', t('browserAgent.log.pageStillLoading'));
           await new Promise(r => setTimeout(r, 2000));
           raw = await inspectEmbeddedSurface();
         } else {
@@ -532,16 +533,16 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
       // Log the result
       if (result.authState === 'authenticated') {
-        addLog('success', '页面已登录，可以执行自动化任务');
+        addLog('success', t('browserAgent.log.pageLoggedIn'));
       } else if (result.authState === 'auth_required' || result.authState === 'mfa_required') {
-        addLog('warning', '检测到需要登录，请完成登录后继续');
+        addLog('warning', t('browserAgent.log.loginRequired'));
       } else if (result.authState === 'captcha_required') {
-        addLog('warning', '检测到验证码，请先完成验证');
+        addLog('warning', t('browserAgent.log.captchaDetected'));
       }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      addLog('warning', `页面检查失败 (${errorMessage})，将尝试直接执行`);
+      addLog('warning', t('browserAgent.log.pageCheckFailed').replace('{error}', errorMessage));
 
       // Fallback: treat as safe/unknown so execution can still proceed
       const fallbackInspection: BrowserInspectionResult = {
@@ -593,10 +594,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
           permissionGranted = permission === 'granted';
         }
         if (permissionGranted) {
-          const siteId = get().siteProfileId || '目标网站';
+          const siteId = get().siteProfileId || t('browserAgent.log.targetWebsite');
           sendNotification({
-            title: '需要登录',
-            body: `浏览器已打开 ${siteId}，请完成登录后点击"我已登录"继续任务`,
+            title: t('browserAgent.log.loginNotificationTitle'),
+            body: t('browserAgent.log.loginNotificationBody').replace('{siteId}', siteId),
           });
         }
       } catch (e) {
@@ -604,8 +605,8 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       }
     })();
 
-    addLog('info', '请在浏览器中完成登录');
-    addLog('info', '登录完成后，点击"我已登录"按钮继续');
+    addLog('info', t('browserAgent.log.completeLoginInBrowser'));
+    addLog('info', t('browserAgent.log.clickAfterLogin'));
   },
 
   /**
@@ -614,7 +615,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   confirmLoginAndResume: async () => {
     const { addLog, inspectCurrentPage } = get();
 
-    addLog('info', '正在验证登录状态...');
+    addLog('info', t('browserAgent.log.verifyingLogin'));
 
     // Only re-inspect if we have NO inspection result yet (e.g. called directly
     // without a prior inspectCurrentPage). If inspection already ran (even as a
@@ -638,11 +639,11 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         handoffState: 'no_handoff',
       });
 
-      addLog('success', '登录验证通过，可以执行任务');
+      addLog('success', t('browserAgent.log.loginVerified'));
 
       // If there's a pending task, execute it using fresh pendingTask value
       if (pendingTask) {
-        addLog('info', '正在恢复执行任务...');
+        addLog('info', t('browserAgent.log.resumingTask'));
         await get().executeTask(pendingTask.executionPrompt);
       }
     } else {
@@ -653,7 +654,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         mode: 'manual_handoff',
         handoffState: 'waiting_for_login',
       });
-      addLog('warning', '登录验证失败，请确认已正确登录');
+      addLog('warning', t('browserAgent.log.loginVerifyFailed'));
     }
   },
 
@@ -664,7 +665,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   forceResumeWithoutAuth: async () => {
     const { addLog, pendingTask } = get();
 
-    addLog('info', '跳过登录验证，直接继续...');
+    addLog('info', t('browserAgent.log.skippingLoginCheck'));
 
     set({
       status: 'ready_for_agent',
@@ -676,10 +677,10 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
     // If there's a pending task, execute it
     if (pendingTask) {
-      addLog('info', '正在执行任务...');
+      addLog('info', t('browserAgent.log.executingTask'));
       await get().executeTask(pendingTask.executionPrompt);
     } else {
-      addLog('success', '已准备好执行新任务');
+      addLog('success', t('browserAgent.log.readyForTask'));
     }
   },
 
@@ -689,16 +690,16 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     const { isWindowOpen, addLog, status, authState, inspection } = get();
 
     if (!isWindowOpen) {
-      addLog('error', '请先打开浏览器窗口');
+      addLog('error', t('browserAgent.log.windowNotOpen'));
       // Set error so startBrowserStateListener can finalize the progress bubble
-      set({ status: 'error', error: '浏览器窗口未打开' });
+      set({ status: 'error', error: t('browserAgent.log.windowNotOpen') });
       return;
     }
 
     // Execution is ONLY allowed when explicitly ready_for_agent
     if (status !== 'ready_for_agent') {
-      addLog('error', `当前状态 (${status}) 不允许执行任务。请先完成登录检查。`);
-      set({ status: 'error', error: `状态错误: ${status}` });
+      addLog('error', t('browserAgent.log.statusNotAllowed').replace('{status}', status));
+      set({ status: 'error', error: t('browserAgent.log.statusError').replace('{status}', status) });
       return;
     }
 
@@ -709,15 +710,15 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     if (!useCdp) {
       const blockedStates: BrowserAuthState[] = ['auth_required', 'mfa_required', 'captcha_required', 'expired', 'unauthenticated'];
       if (blockedStates.includes(authState)) {
-        addLog('error', `页面需要登录或验证 (${authState})，无法执行任务`);
-        set({ status: 'error', error: `需要登录: ${authState}` });
+        addLog('error', t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState));
+        set({ status: 'error', error: t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState) });
         return;
       }
       // If inspection explicitly failed (safeForAgent=false with known block reason), block
       // Use store authState (not inspection.authState) — executeTaskEnvelope may have reset it to 'unknown'
       if (inspection && !inspection.safeForAgent && authState !== 'unknown') {
-        addLog('error', '页面未通过安全检查，无法执行任务');
-        set({ status: 'error', error: '页面安全检查失败' });
+        addLog('error', t('browserAgent.log.pageNotSafe'));
+        set({ status: 'error', error: t('browserAgent.log.pageNotSafe') });
         return;
       }
     }
@@ -729,7 +730,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     try {
       const config = useSettingsStore.getState().getActiveConfig();
       if (!config?.apiKey) {
-        addLog('error', '请先配置 API 设置');
+        addLog('error', t('browserAgent.log.configureApiFirst'));
         set({ status: 'idle', _abortController: null });
         return;
       }
@@ -737,21 +738,21 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       // Determine execution engine from current envelope
       if (useCdp) {
         // CDP Tier: use external Chrome via nativeBrowserAgent
-        addLog('info', `[CDP 模式] 开始执行: ${task.substring(0, 50)}...`);
+        addLog('info', t('browserAgent.log.cdpModeStart').replace('{task}', task.substring(0, 50)));
         const targetUrl = get().pendingTask?.targetUrl;
         const resultText = await executeCdpTask(task, config.apiKey, config.model || 'claude-3-5-sonnet-20241022', {
           baseUrl: config.baseUrl,
           onLog: addLog,
           targetUrl,
         });
-        addLog('success', `[CDP 模式] 任务完成: ${resultText}`);
+        addLog('success', t('browserAgent.log.cdpModeComplete').replace('{result}', resultText));
         const completedTaskId = get().pendingTask?.id || null;
         set({ status: 'completed', lastCompletedTaskId: completedTaskId, lastTaskResult: resultText || null });
         return;
       }
 
       // PageAgent Tier: use embedded WebView (original logic)
-      addLog('info', `开始执行任务: ${task.substring(0, 50)}${task.length > 50 ? '...' : ''}`);
+      addLog('info', t('browserAgent.log.startExecuting').replace('{task}', task.substring(0, 50) + (task.length > 50 ? '...' : '')));
 
       const pageAgentSystemPrompt = `You are a browser automation agent. You MUST only use the following actions — do not invent or use any other action names:
 - done: { text: string, success: boolean } — mark the task as complete
@@ -775,12 +776,12 @@ Complete the task efficiently and call "done" when finished.`;
       // Status will be updated by the event listener in setupEventListeners()
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        addLog('info', '任务已停止');
+        addLog('info', t('browserAgent.log.taskStopped'));
         set({ status: 'idle', _abortController: null });
         return;
       }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog('error', `执行失败: ${errorMessage}`);
+      addLog('error', t('browserAgent.log.executionFailed').replace('{error}', errorMessage));
       set({ status: 'error', error: errorMessage, _abortController: null });
     }
   },
@@ -806,7 +807,7 @@ Complete the task efficiently and call "done" when finished.`;
 
     if (mode === 'cdp') {
       // CDP Tier: connect to external Chrome, bypass embedded WebView
-      addLog('info', '[CDP 模式] 连接外部 Chrome...');
+      addLog('info', t('browserAgent.log.cdpModeConnecting'));
       set({
         isWindowOpen: true,     // mock so executeTask gate passes
         currentUrl: envelope.targetUrl,
@@ -836,8 +837,8 @@ Complete the task efficiently and call "done" when finished.`;
 
     // If already in a blocked state, don't proceed
     if (status === 'blocked_auth' || status === 'blocked_captcha' || status === 'blocked_manual_step') {
-      get().addLog('warning', '当前任务被阻塞，请先解决阻塞问题');
-      set({ status: 'error', error: '任务被阻塞，请先解决登录或验证码问题' });
+      get().addLog('warning', t('browserAgent.log.taskBlocked'));
+      set({ status: 'error', error: t('browserAgent.log.taskBlocked') });
       return;
     }
 
@@ -845,7 +846,7 @@ Complete the task efficiently and call "done" when finished.`;
     if (!envelope.requiresLogin) {
       // No login required — reset authState to 'unknown' so auth walls on optional
       // sign-in prompts (e.g. grok.com "Sign in to continue") don't block execution.
-      get().addLog('info', '无需登录，直接开始执行任务');
+      get().addLog('info', t('browserAgent.log.noLoginRequired'));
       set({
         status: 'ready_for_agent',
         mode: 'agent_controlled',
@@ -917,7 +918,7 @@ Complete the task efficiently and call "done" when finished.`;
     const { pendingTask, addLog } = get();
 
     if (!pendingTask) {
-      addLog('error', '没有待执行的任务');
+      addLog('error', t('browserAgent.log.noPendingTask'));
       return;
     }
 
@@ -930,9 +931,9 @@ Complete the task efficiently and call "done" when finished.`;
     if (_abortController) {
       _abortController.abort();
       set({ _abortController: null });
-      addLog('info', '正在停止任务...');
+      addLog('info', t('browserAgent.log.stoppingTask'));
     } else {
-      addLog('info', '没有正在执行的任务');
+      addLog('info', t('browserAgent.log.noRunningTask'));
     }
   },
 
@@ -945,12 +946,12 @@ Complete the task efficiently and call "done" when finished.`;
     const { addLog, status } = get();
 
     if (status === 'running') {
-      addLog('warning', '任务执行中，无法切换模式');
+      addLog('warning', t('browserAgent.log.taskRunningCannotSwitch'));
       return;
     }
 
     set({ mode: 'manual_handoff' });
-    addLog('info', '已切换到手动控制模式');
+    addLog('info', t('browserAgent.log.switchedToManual'));
   },
 
   /**
@@ -961,17 +962,17 @@ Complete the task efficiently and call "done" when finished.`;
 
     // Check if ready
     if (status === 'needs_login' || status === 'waiting_user_resume') {
-      addLog('error', '请先完成登录');
+      addLog('error', t('browserAgent.log.completeLoginFirst'));
       return;
     }
 
     if (authState !== 'authenticated' || !inspection?.safeForAgent) {
-      addLog('error', '当前页面状态不适合自动化');
+      addLog('error', t('browserAgent.log.pageNotSuitable'));
       return;
     }
 
     set({ mode: 'agent_controlled' });
-    addLog('info', '已切换到 Agent 控制模式');
+    addLog('info', t('browserAgent.log.switchedToAgent'));
   },
 
   /**
@@ -1005,11 +1006,11 @@ Complete the task efficiently and call "done" when finished.`;
       handoffState: handoff,
     });
 
-    addLog('warning', `任务被阻塞: ${reason}`);
+    addLog('warning', t('browserAgent.log.taskBlockedWithReason').replace('{reason}', reason));
 
     // Keep the pending task for potential resume
     if (pendingTask) {
-      addLog('info', '任务已保存，可以在登录后恢复');
+      addLog('info', t('browserAgent.log.taskSavedForLater'));
     }
     // Note: Browser surface visibility is handled by BrowserSurfaceViewport based on presentationMode.
     // If presentationMode was 'hidden', it was set to 'mini' above, which will show the embedded surface.
@@ -1024,7 +1025,7 @@ Complete the task efficiently and call "done" when finished.`;
 
     // Only reset if currently in a terminal state that blocks execution
     if (status === 'running' || status === 'ready_for_agent') {
-      addLog('info', '状态已是可执行状态，无需重置');
+      addLog('info', t('browserAgent.log.alreadyExecutable'));
       return;
     }
 
@@ -1033,7 +1034,7 @@ Complete the task efficiently and call "done" when finished.`;
       lastTaskResult: null,
       pendingTask: null,
     });
-    addLog('info', '状态已重置，可以执行新任务');
+    addLog('info', t('browserAgent.log.stateReset'));
   },
 
   clearLogs: () => {
@@ -1061,7 +1062,7 @@ Complete the task efficiently and call "done" when finished.`;
     }
 
     set({ presentationMode: mode });
-    addLog('info', `浏览器切换到 ${mode} 模式`);
+    addLog('info', t('browserAgent.log.browserModeSwitch').replace('{mode}', mode));
 
     // Handle mode-specific actions
     if (mode === 'hidden') {
@@ -1078,7 +1079,7 @@ Complete the task efficiently and call "done" when finished.`;
     const { addLog, presentationMode } = get();
 
     if (presentationMode === 'expanded') {
-      addLog('info', '浏览器已在展开模式');
+      addLog('info', t('browserAgent.log.alreadyExpanded'));
       return;
     }
 
@@ -1087,14 +1088,14 @@ Complete the task efficiently and call "done" when finished.`;
     // Keep AgentPanel on browser tab so user sees controls + logs
     useUIStore.getState().setAgentPanelTab('browser');
     set({ presentationMode: 'expanded' });
-    addLog('info', '浏览器已展开到主工作区');
+    addLog('info', t('browserAgent.log.expandedToMain'));
   },
 
   collapseBrowser: () => {
     const { addLog, presentationMode } = get();
 
     if (presentationMode === 'mini') {
-      addLog('info', '浏览器已在迷你模式');
+      addLog('info', t('browserAgent.log.alreadyMini'));
       return;
     }
 
@@ -1103,7 +1104,7 @@ Complete the task efficiently and call "done" when finished.`;
     // Re-open browser tab in AgentPanel
     useUIStore.getState().setAgentPanelTab('browser');
     set({ presentationMode: 'mini' });
-    addLog('info', '浏览器已折叠到右侧面板');
+    addLog('info', t('browserAgent.log.dockedToPanel'));
   },
 
   showMiniBrowser: () => {
@@ -1111,14 +1112,14 @@ Complete the task efficiently and call "done" when finished.`;
 
     // If no URL, can't show mini browser
     if (!currentUrl && !isWindowOpen) {
-      addLog('info', '请先打开一个网页');
+      addLog('info', t('browserAgent.log.openPageFirst'));
       return;
     }
 
     // Sync with UI store
     useUIStore.getState().setBrowserDockMode('panel');
     set({ presentationMode: 'mini' });
-    addLog('info', '显示迷你浏览器');
+    addLog('info', t('browserAgent.log.showMiniBrowser'));
   },
 
   hideBrowser: () => {
@@ -1126,7 +1127,7 @@ Complete the task efficiently and call "done" when finished.`;
     // Sync with UI store
     useUIStore.getState().closeBrowserDock();
     set({ presentationMode: 'hidden' });
-    addLog('info', '隐藏浏览器');
+    addLog('info', t('browserAgent.log.hideBrowser'));
   },
 
   // Embedded mode toggling removed; runtime embedding will be inferred from actual capability

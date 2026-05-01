@@ -12,7 +12,7 @@
  * - restored-src/src/services/SessionMemory/prompts.ts
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke } from '../../utils/safeInvoke';
 import type { Message } from '../../types/chat';
 import { getCompactConfig } from './config';
 import { estimateMessagesTokens } from '../tokens/tokenEstimator';
@@ -113,7 +113,7 @@ export async function getSessionMemory(workDir?: string): Promise<string | null>
  * 源码参考: writeFile(memoryPath, content) 在 sessionMemory.ts
  */
 export async function writeSessionMemory(content: string, workDir?: string): Promise<void> {
-  await invoke('write_session_memory', {
+  await safeInvoke('write_session_memory', {
     content,
     workDir: workDir ?? null,
   });
@@ -123,7 +123,7 @@ export async function writeSessionMemory(content: string, workDir?: string): Pro
  * 检查 Session Memory 是否为空（只有模板）
  */
 export async function isSessionMemoryEmpty(workDir?: string): Promise<boolean> {
-  return invoke<boolean>('is_session_memory_empty', {
+  return safeInvoke<boolean>('is_session_memory_empty', {
     workDir: workDir ?? null,
   });
 }
@@ -132,7 +132,7 @@ export async function isSessionMemoryEmpty(workDir?: string): Promise<boolean> {
  * 检查 Session Memory 是否存在
  */
 export async function sessionMemoryExists(workDir?: string): Promise<boolean> {
-  return invoke<boolean>('session_memory_exists', {
+  return safeInvoke<boolean>('session_memory_exists', {
     workDir: workDir ?? null,
   });
 }
@@ -147,7 +147,7 @@ export async function getSessionMemoryInfo(workDir?: string): Promise<{
   is_empty: boolean;
   sections: string[];
 } | null> {
-  return invoke('get_session_memory_info', {
+  return safeInvoke('get_session_memory_info', {
     workDir: workDir ?? null,
   });
 }
@@ -156,7 +156,7 @@ export async function getSessionMemoryInfo(workDir?: string): Promise<{
  * 估算 Session Memory 的 token 数
  */
 export async function estimateSessionMemoryTokens(workDir?: string): Promise<number> {
-  return invoke<number>('estimate_session_memory_tokens', {
+  return safeInvoke<number>('estimate_session_memory_tokens', {
     workDir: workDir ?? null,
   });
 }
