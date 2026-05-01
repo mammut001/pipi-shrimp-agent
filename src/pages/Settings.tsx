@@ -10,7 +10,7 @@
  * - Loading states
  */
 
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
 import { usePromptStore } from '@/store/promptStore';
 import { safeInvoke } from '@/utils/safeInvoke';
@@ -19,6 +19,7 @@ import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import {
   getProviderNames,
   getProvider,
+  getProviderDefaultModelId,
   getProviderDefaultModelIds,
   getProviderDefaultBaseUrl,
   getProviderDefaultApiFormat,
@@ -29,11 +30,15 @@ import {
 } from '@/shared/providers';
 import type { ProviderName } from '@/shared/providers';
 import { formatCost } from '@/utils/pricing';
-import { TokenStats } from '@/components/TokenStats';
 import { TelegramSettings } from '@/components/settings/TelegramSettings';
 import { MCPSettingsSection } from '@/components/settings/MCPSettingsSection';
-import { t, getSupportedLocales, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
+import { AgentBehaviorSettings } from '@/components/settings/AgentBehaviorSettings';
+import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
+import { t, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
 import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuilder';
+import { classifyConnectionError, getConnectionErrorMessage } from '@/services/settings/settingsConnection';
+
+const TokenStats = lazy(() => import('@/components/TokenStats').then((module) => ({ default: module.TokenStats })));
 
 /**
  * Settings page component
@@ -84,7 +89,7 @@ export function Settings() {
     provider: 'anthropic',
     apiKey: '',
     baseUrl: '',
-    model: 'claude-3-5-sonnet-20241022',
+    model: getProviderDefaultModelId('anthropic'),
     apiFormat: '',
     pricing: {},
   });
@@ -172,7 +177,7 @@ export function Settings() {
       provider: 'anthropic',
       apiKey: '',
       baseUrl: '',
-      model: 'claude-3-5-sonnet-20241022',
+      model: getProviderDefaultModelId('anthropic'),
       apiFormat: '',
       pricing: {},
     });
@@ -441,22 +446,7 @@ export function Settings() {
       }
     } catch (error) {
       const rawMsg = error instanceof Error ? error.message : String(error);
-      const lower = rawMsg.toLowerCase();
-
-      // Classify the error for a friendly message — never expose raw error to UI
-      let friendlyMsg: string;
-      if (lower.includes('timeout') || lower.includes('timed out')) {
-        friendlyMsg = t('settings.testConnectionErrorTimeout');
-      } else if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized') || lower.includes('auth') || lower.includes('invalid api key') || lower.includes('incorrect api key')) {
-        friendlyMsg = t('settings.testConnectionErrorAuth');
-      } else if (lower.includes('model') && (lower.includes('not found') || lower.includes('not available') || lower.includes('does not exist') || lower.includes('invalid'))) {
-        friendlyMsg = t('settings.testConnectionErrorModel');
-      } else if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection') || lower.includes('dns') || lower.includes('enotfound')) {
-        friendlyMsg = t('settings.testConnectionErrorNetwork');
-      } else {
-        // Unknown errors: show only the friendly message, raw error is already in errorLogger via safeInvoke
-        friendlyMsg = t('settings.testConnectionErrorUnknown');
-      }
+      const friendlyMsg = getConnectionErrorMessage(classifyConnectionError(rawMsg), t);
 
       setTestResult({ success: false, message: friendlyMsg });
       addNotification('error', t('settings.connectionTestFailed'));
@@ -737,7 +727,6 @@ export function Settings() {
                 </select>
               </div>
 
-                    {isFetchingModels ? t('settings.fetchingModels') : t('settings.fetchModels')}
               <div className="mb-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-3 border border-green-200">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
@@ -888,37 +877,10 @@ export function Settings() {
           <MCPSettingsSection />
 
           {/* ====== Agent Settings Section ====== */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <h2 className="text-sm font-semibold text-gray-900 mb-3">{t('settings.agentBehavior')}</h2>
-
-            <div className="mb-1">
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-medium text-gray-600">
-                  {t('settings.maxToolLoopRounds')}
-                </label>
-                <span className="text-xs font-mono bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
-                  {agentSettings.maxToolRounds}
-                </span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="20"
-                step="1"
-                value={agentSettings.maxToolRounds}
-                onChange={(e) => updateAgentSettings({ maxToolRounds: parseInt(e.target.value, 10) })}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-gray-900"
-              />
-              <div className="flex justify-between text-xs text-gray-400 mt-1">
-                <span>1</span>
-                <span>10</span>
-                <span>20</span>
-              </div>
-              <p className="text-xs text-gray-400 mt-2">
-                {t('settings.maxToolLoopRoundsDescription')}
-              </p>
-            </div>
-          </div>
+          <AgentBehaviorSettings
+            agentSettings={agentSettings}
+            onUpdate={updateAgentSettings}
+          />
 
           {/* ====== Prompt Templates Section ====== */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
@@ -1036,56 +998,12 @@ export function Settings() {
           </div>
 
           {/* ====== Theme & Language Section ====== */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <h2 className="text-sm font-semibold text-gray-900 mb-3">{t('settings.appearance')}</h2>
-
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">{t('settings.theme')}</label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="theme"
-                    value="light"
-                    checked={otherSettings.theme === 'light'}
-                    onChange={() => setOtherSettings((prev) => ({ ...prev, theme: 'light' }))}
-                    className="text-gray-900 focus:ring-gray-900"
-                  />
-                  <span className="text-sm text-gray-700">{t('common.light')}</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="theme"
-                    value="dark"
-                    checked={otherSettings.theme === 'dark'}
-                    onChange={() => setOtherSettings((prev) => ({ ...prev, theme: 'dark' }))}
-                    className="text-gray-900 focus:ring-gray-900"
-                  />
-                  <span className="text-sm text-gray-700">{t('common.dark')}</span>
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">{t('settings.language')}</label>
-              <div className="flex gap-4">
-                {getSupportedLocales().map((locale) => (
-                  <label key={locale.value} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="language"
-                      value={locale.value}
-                      checked={otherSettings.language === locale.value}
-                      onChange={() => setOtherSettings((prev) => ({ ...prev, language: locale.value }))}
-                      className="text-gray-900 focus:ring-gray-900"
-                    />
-                    <span className="text-sm text-gray-700">{locale.flag} {locale.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
+          <AppearanceSettings
+            theme={otherSettings.theme}
+            language={otherSettings.language}
+            onThemeChange={(nextTheme) => setOtherSettings((prev) => ({ ...prev, theme: nextTheme }))}
+            onLanguageChange={(nextLanguage) => setOtherSettings((prev) => ({ ...prev, language: nextLanguage }))}
+          />
 
           {/* ====== Save Other Settings Button ====== */}
           <div className="flex justify-end">
@@ -1102,7 +1020,9 @@ export function Settings() {
         {/* ====== Token Stats Section ====== */}
         <div className="border-t border-gray-200 pt-6 px-4 pb-6">
           <div className="h-96 bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-            <TokenStats />
+            <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-gray-400">{t('common.loading')}</div>}>
+              <TokenStats />
+            </Suspense>
           </div>
         </div>
       </div>

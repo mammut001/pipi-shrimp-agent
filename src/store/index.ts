@@ -3,7 +3,7 @@
  */
 
 // Export all stores
-export { useChatStore } from './chatStore';
+export { useChatStore } from './chat';
 export { useSettingsStore } from './settingsStore';
 export { useUIStore } from './uiStore';
 export { useWorkflowStore } from './workflowStore';

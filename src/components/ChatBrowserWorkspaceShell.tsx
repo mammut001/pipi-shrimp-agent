@@ -31,6 +31,7 @@ const QuestionnaireCard = lazy(() => import('./QuestionnaireCard'));
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
+import { getHiddenMessageCount, getVisibleMessageWindow } from './chat/messageWindowing';
 
 /**
  * Draggable wrapper for SwarmPanel — allows free positioning anywhere on screen.
@@ -141,7 +142,7 @@ export function ChatBrowserWorkspaceShell() {
   // Permission modal state (Ask mode)
   const permissionQueue = useUIStore((s) => s.permissionQueue);
   const pendingPermission = permissionQueue[0];
-  const clearPermissionRequest = useUIStore((s) => s.clearPermissionRequest);
+  const resolvePermissionRequest = useUIStore((s) => s.resolvePermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
 
   // Questionnaire state
@@ -167,15 +168,13 @@ export function ChatBrowserWorkspaceShell() {
 
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
-    pendingPermission._resolve?.(true);
-    clearPermissionRequest();
+    resolvePermissionRequest(true);
   };
 
   const handleDenyPermission = () => {
     if (!pendingPermission) return;
     addNotification('info', t('permission.deniedMessage'));
-    pendingPermission._resolve?.(false);
-    clearPermissionRequest();
+    resolvePermissionRequest(false);
   };
 
   // Terminal drag-resize handler
@@ -304,10 +303,17 @@ export function ChatBrowserWorkspaceShell() {
           : message
       );
   }, [messages]);
+  const [showFullHistory, setShowFullHistory] = useState(false);
+  const visibleMessages = useMemo(
+    () => showFullHistory ? displayMessages : getVisibleMessageWindow(displayMessages),
+    [displayMessages, showFullHistory],
+  );
+  const hiddenMessageCount = getHiddenMessageCount(displayMessages, visibleMessages);
   const hasMessages = displayMessages.length > 0;
 
   useEffect(() => {
     setWorkspaceMode('chat');
+    setShowFullHistory(false);
   }, [currentSessionId]);
 
   useEffect(() => {
@@ -398,7 +404,18 @@ export function ChatBrowserWorkspaceShell() {
       <div className="flex-1 overflow-y-auto min-h-0">
         {hasMessages ? (
           <div className="divide-y divide-gray-100">
-            {displayMessages.map((message, index, filtered) => (
+            {hiddenMessageCount > 0 && (
+              <div className="flex justify-center bg-gray-50 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setShowFullHistory(true)}
+                  className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50"
+                >
+                  {t('chat.showEarlierMessages').replace('{count}', String(hiddenMessageCount))}
+                </button>
+              </div>
+            )}
+            {visibleMessages.map((message, index, filtered) => (
               <ChatMessage
                 key={message.id}
                 message={message}

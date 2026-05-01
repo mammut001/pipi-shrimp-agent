@@ -47,10 +47,12 @@ class SwarmEventBus extends EventTarget {
   on<K extends keyof SwarmEventMap>(
     type: K,
     handler: (detail: SwarmEventMap[K]) => void,
-  ): void {
-    this.addEventListener(type as string, (e) =>
-      handler((e as CustomEvent<SwarmEventMap[K]>).detail),
-    );
+  ): () => void {
+    const listener = (e: Event) => {
+      handler((e as CustomEvent<SwarmEventMap[K]>).detail);
+    };
+    this.addEventListener(type as string, listener);
+    return () => this.removeEventListener(type as string, listener);
   }
   off<K extends keyof SwarmEventMap>(
     type: K,

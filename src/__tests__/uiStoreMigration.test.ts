@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { normalizePersistedCurrentView } from '../utils/storageMigrations';
 
 // ─── Mock localStorage ────────────────────────────────────────────────────────
 
@@ -53,6 +54,21 @@ describe('uiStoreMigration', () => {
   });
 
   describe('currentView persistence and migration', () => {
+    it('normalizes deprecated browser view through the shared migration helper', () => {
+      expect(normalizePersistedCurrentView('browser')).toEqual({
+        currentView: 'chat',
+        migratedFromBrowser: true,
+      });
+      expect(normalizePersistedCurrentView('workflow')).toEqual({
+        currentView: 'workflow',
+        migratedFromBrowser: false,
+      });
+      expect(normalizePersistedCurrentView('{ invalid json')).toEqual({
+        currentView: 'chat',
+        migratedFromBrowser: false,
+      });
+    });
+
     it('migrates persisted browser view to chat on init', async () => {
       localStorageMock.setItem('ai-agent-current-view', 'browser');
 

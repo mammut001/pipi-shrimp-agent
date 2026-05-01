@@ -3,6 +3,8 @@ export type ChatInputSubmissionDecision =
   | { type: 'confirm-browser'; message: string }
   | { type: 'send-regular'; message: string };
 
+export const MAX_CHAT_DRAFT_CHARS = 30000;
+
 interface DecideChatInputSubmissionArgs {
   input: string;
   isStreaming: boolean;
@@ -50,4 +52,8 @@ export async function resolveChatTargetSessionId(
 
 export function shouldClearDraftAfterBrowserWorkflow(handled: boolean): boolean {
   return handled;
+}
+
+export function isStaleChatDraftValue(value: string): boolean {
+  return value.length > MAX_CHAT_DRAFT_CHARS;
 }

@@ -18,6 +18,7 @@ import { MCPChatButton, MCPDropdown } from '@/components/mcp';
 import { BrowserIntentConfirm } from './BrowserIntentConfirm';
 import {
   decideChatInputSubmission,
+  isStaleChatDraftValue,
   resolveChatTargetSessionId,
   shouldClearDraftAfterBrowserWorkflow,
   shouldDismissBrowserIntentConfirm,
@@ -59,7 +60,7 @@ function cleanupOldDrafts(): void {
           // For drafts without timestamp, we use a heuristic:
           // If the draft content looks stale (> 30KB, likely forgotten), remove it
           // This handles the case where user typed a lot but never sent
-          if (value.length > 30000) {
+          if (isStaleChatDraftValue(value)) {
             keysToRemove.push(key);
           }
         }

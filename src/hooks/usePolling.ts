@@ -20,6 +20,7 @@ export function usePolling(
 ): void {
   const savedCallback = useRef(callback);
   const intervalId = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inFlight = useRef(false);
 
   // Keep callback ref up to date without restarting the interval
   useEffect(() => {
@@ -37,7 +38,19 @@ export function usePolling(
     }
 
     const tick = () => {
-      void savedCallback.current();
+      if (inFlight.current) {
+        return;
+      }
+
+      const result = savedCallback.current();
+      if (result && typeof result === 'object' && 'then' in result) {
+        inFlight.current = true;
+        void Promise.resolve(result)
+          .catch(() => undefined)
+          .finally(() => {
+            inFlight.current = false;
+          });
+      }
     };
 
     // Run immediately on mount / enable

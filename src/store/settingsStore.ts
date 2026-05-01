@@ -8,66 +8,16 @@ import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings, AgentSetti
 import { DEFAULT_BUDGET_SETTINGS } from '../types/settings';
 import { resolvePricing } from '../shared/providers';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
-import { saveSecret, loadSecret, migrateLegacySecret, obfuscateInline, deobfuscateInline } from '../utils/secureSecrets';
-
-/**
- * Storage keys for persisting settings
- */
-const API_CONFIGS_STORAGE_KEY = 'ai-agent-api-configs';
-const ACTIVE_CONFIG_STORAGE_KEY = 'ai-agent-active-config';
-const TELEGRAM_TOKEN_STORAGE_KEY = 'ai-agent-telegram-token';
-const THEME_STORAGE_KEY = 'ai-agent-theme';
-const LANGUAGE_STORAGE_KEY = 'ai-agent-language';
-const IMPORTED_FILES_STORAGE_KEY = 'ai-agent-imported-files';
-const BUDGET_SETTINGS_STORAGE_KEY = 'ai-agent-budget-settings';
-const AGENT_SETTINGS_STORAGE_KEY = 'ai-agent-agent-settings';
-
-/** Legacy storage key (for migration) */
-const LEGACY_API_CONFIG_KEY = 'ai-agent-api-config';
-
-/**
- * Generate a unique ID for API configs
- */
-function generateConfigId(): string {
-  return `config-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
- * Persist all API configs to localStorage.
- * Uses obfuscateInline from secureSecrets for API key obfuscation.
- */
-function persistConfigs(configs: ApiConfig[], activeId: string | null) {
-  try {
-    // Obfuscate API keys before persisting
-    const safe = configs.map(c => ({
-      ...c,
-      apiKey: c.apiKey ? obfuscateInline(c.apiKey) : '',
-    }));
-    localStorage.setItem(API_CONFIGS_STORAGE_KEY, JSON.stringify(safe));
-    if (activeId) {
-      localStorage.setItem(ACTIVE_CONFIG_STORAGE_KEY, activeId);
-    }
-  } catch (error) {
-    console.error('Failed to persist API configs:', error);
-  }
-}
-
-/**
- * Load API configs from localStorage, deobfuscating keys.
- */
-function loadPersistedConfigs(): ApiConfig[] {
-  try {
-    const raw = localStorage.getItem(API_CONFIGS_STORAGE_KEY);
-    if (!raw) return [];
-    const configs = JSON.parse(raw) as ApiConfig[];
-    return configs.map(c => ({
-      ...c,
-      apiKey: c.apiKey ? deobfuscateInline(c.apiKey) : '',
-    }));
-  } catch {
-    return [];
-  }
-}
+import { saveSecret, loadSecret, migrateLegacySecret } from '../utils/secureSecrets';
+import { normalizePersistedAgentSettings } from '../utils/storageMigrations';
+import {
+  generateSettingsConfigId,
+  loadPersistedApiConfigs,
+  persistApiConfigs,
+  persistSettingsJson,
+  removeSettingsItem,
+  SETTINGS_STORAGE_KEYS,
+} from './settings/settingsStorage';
 
 /**
  * Settings store using Zustand
@@ -94,7 +44,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   addApiConfig: async (configData) => {
     const newConfig: ApiConfig = {
       ...configData,
-      id: generateConfigId(),
+      id: generateSettingsConfigId(),
       // Back-fill modelProviderId so identity is always explicit
       modelProviderId: configData.modelProviderId ?? configData.provider,
     };
@@ -112,7 +62,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       apiConfig: activeConfig,
     });
 
-    persistConfigs(updatedConfigs, activeId);
+    persistApiConfigs(updatedConfigs, activeId);
     return newConfig;
   },
 
@@ -135,7 +85,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       apiConfig: activeConfig,
     });
 
-    persistConfigs(updatedConfigs, activeConfigId);
+    persistApiConfigs(updatedConfigs, activeConfigId);
   },
 
   /**
@@ -161,7 +111,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       apiConfig: activeConfig,
     });
 
-    persistConfigs(updatedConfigs, newActiveId);
+    persistApiConfigs(updatedConfigs, newActiveId);
   },
 
   /**
@@ -175,7 +125,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         activeConfigId: id,
         apiConfig: config,
       });
-      localStorage.setItem(ACTIVE_CONFIG_STORAGE_KEY, id);
+      localStorage.setItem(SETTINGS_STORAGE_KEYS.activeConfig, id);
     }
   },
 
@@ -282,7 +232,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setTheme: (theme: 'light' | 'dark') => {
     set({ theme });
     try {
-      localStorage.setItem(THEME_STORAGE_KEY, theme);
+      localStorage.setItem(SETTINGS_STORAGE_KEYS.theme, theme);
     } catch (error) {
       console.error('Failed to persist theme:', error);
     }
@@ -296,7 +246,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     setLocale(locale);
     set({ language });
     try {
-      localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+      localStorage.setItem(SETTINGS_STORAGE_KEYS.language, language);
     } catch (error) {
       console.error('Failed to persist language:', error);
     }
@@ -327,7 +277,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ importedFiles: updatedFiles });
 
     try {
-      localStorage.setItem(IMPORTED_FILES_STORAGE_KEY, JSON.stringify(updatedFiles));
+      persistSettingsJson(SETTINGS_STORAGE_KEYS.importedFiles, updatedFiles, 'Failed to persist imported files:');
     } catch (error) {
       console.error('Failed to persist imported files:', error);
     }
@@ -341,7 +291,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ importedFiles: updatedFiles });
 
     try {
-      localStorage.setItem(IMPORTED_FILES_STORAGE_KEY, JSON.stringify(updatedFiles));
+      persistSettingsJson(SETTINGS_STORAGE_KEYS.importedFiles, updatedFiles, 'Failed to persist imported files:');
     } catch (error) {
       console.error('Failed to persist imported files:', error);
     }
@@ -354,7 +304,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ importedFiles: [] });
 
     try {
-      localStorage.removeItem(IMPORTED_FILES_STORAGE_KEY);
+      removeSettingsItem(SETTINGS_STORAGE_KEYS.importedFiles, 'Failed to clear imported files:');
     } catch (error) {
       console.error('Failed to clear imported files:', error);
     }
@@ -370,7 +320,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ budgetSettings: newSettings });
 
     try {
-      localStorage.setItem(BUDGET_SETTINGS_STORAGE_KEY, JSON.stringify(newSettings));
+      persistSettingsJson(SETTINGS_STORAGE_KEYS.budgetSettings, newSettings, 'Failed to persist budget settings:');
     } catch (error) {
       console.error('Failed to persist budget settings:', error);
     }
@@ -383,7 +333,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ agentSettings: newSettings });
 
     try {
-      localStorage.setItem(AGENT_SETTINGS_STORAGE_KEY, JSON.stringify(newSettings));
+      persistSettingsJson(SETTINGS_STORAGE_KEYS.agentSettings, newSettings, 'Failed to persist agent settings:');
     } catch (error) {
       console.error('Failed to persist agent settings:', error);
     }
@@ -438,13 +388,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 const initializeSettings = () => {
   try {
     // Load theme
-    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    const storedTheme = localStorage.getItem(SETTINGS_STORAGE_KEYS.theme);
     if (storedTheme === 'light' || storedTheme === 'dark') {
       useSettingsStore.setState({ theme: storedTheme });
     }
 
     // Load language
-    const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    const storedLanguage = localStorage.getItem(SETTINGS_STORAGE_KEYS.language);
     if (storedLanguage === 'en' || storedLanguage === 'zh') {
       useSettingsStore.setState({ language: storedLanguage });
       // 同时更新 i18n 系统的语言
@@ -460,20 +410,20 @@ const initializeSettings = () => {
     // Load Telegram token (migrate from legacy key if needed)
     let telegramToken = loadSecret('telegram-token');
     if (!telegramToken) {
-      telegramToken = migrateLegacySecret(TELEGRAM_TOKEN_STORAGE_KEY, 'telegram-token');
+      telegramToken = migrateLegacySecret(SETTINGS_STORAGE_KEYS.telegramToken, 'telegram-token');
     }
     if (telegramToken) {
       useSettingsStore.setState({ telegramToken });
     }
 
     // Load imported files
-    const storedImportedFiles = localStorage.getItem(IMPORTED_FILES_STORAGE_KEY);
+    const storedImportedFiles = localStorage.getItem(SETTINGS_STORAGE_KEYS.importedFiles);
     if (storedImportedFiles) {
       useSettingsStore.setState({ importedFiles: JSON.parse(storedImportedFiles) });
     }
 
     // Load budget settings
-    const storedBudgetSettings = localStorage.getItem(BUDGET_SETTINGS_STORAGE_KEY);
+    const storedBudgetSettings = localStorage.getItem(SETTINGS_STORAGE_KEYS.budgetSettings);
     if (storedBudgetSettings) {
       try {
         const budgetSettings = JSON.parse(storedBudgetSettings);
@@ -484,27 +434,26 @@ const initializeSettings = () => {
     }
 
     // Load agent settings
-    const storedAgentSettings = localStorage.getItem(AGENT_SETTINGS_STORAGE_KEY);
+    const storedAgentSettings = localStorage.getItem(SETTINGS_STORAGE_KEYS.agentSettings);
     if (storedAgentSettings) {
-      try {
-        const agentSettings = JSON.parse(storedAgentSettings);
-        // If the user hasn't explicitly changed it from the old default of 10, implicitly bump it to 50
-        if (agentSettings.maxToolRounds === 10) {
-          agentSettings.maxToolRounds = 50;
-        }
-        useSettingsStore.setState({ agentSettings: { maxToolRounds: 50, ...agentSettings } });
-      } catch (error) {
-        console.error('Failed to parse agent settings:', error);
+      const { agentSettings, migrated } = normalizePersistedAgentSettings(storedAgentSettings);
+      useSettingsStore.setState({ agentSettings });
+      if (migrated) {
+        persistSettingsJson(
+          SETTINGS_STORAGE_KEYS.agentSettings,
+          agentSettings,
+          'Failed to persist migrated agent settings:',
+        );
       }
     }
 
     // Load API configs (new format)
-    const storedConfigs = localStorage.getItem(API_CONFIGS_STORAGE_KEY);
-    const storedActiveId = localStorage.getItem(ACTIVE_CONFIG_STORAGE_KEY);
+    const storedConfigs = localStorage.getItem(SETTINGS_STORAGE_KEYS.apiConfigs);
+    const storedActiveId = localStorage.getItem(SETTINGS_STORAGE_KEYS.activeConfig);
 
     if (storedConfigs) {
       // New multi-config format — deobfuscate API keys
-      const raw = loadPersistedConfigs();
+      const raw = loadPersistedApiConfigs();
       // Back-fill modelProviderId for configs saved before P1-1 migration
       const configs = raw.map((c) => ({
         ...c,
@@ -524,12 +473,12 @@ const initializeSettings = () => {
       });
     } else {
       // Try migrating from legacy single-config format
-      const legacyStored = localStorage.getItem(LEGACY_API_CONFIG_KEY);
+      const legacyStored = localStorage.getItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
       if (legacyStored) {
         const legacyConfig = JSON.parse(legacyStored) as Omit<ApiConfig, 'id' | 'name'>;
         const migratedConfig: ApiConfig = {
           ...legacyConfig,
-          id: generateConfigId(),
+          id: generateSettingsConfigId(),
           name: legacyConfig.provider.charAt(0).toUpperCase() + legacyConfig.provider.slice(1),
         };
 
@@ -541,8 +490,8 @@ const initializeSettings = () => {
         });
 
         // Persist in new format and clean up legacy
-        persistConfigs(configs, migratedConfig.id);
-        localStorage.removeItem(LEGACY_API_CONFIG_KEY);
+        persistApiConfigs(configs, migratedConfig.id);
+        localStorage.removeItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
       }
     }
   } catch (error) {

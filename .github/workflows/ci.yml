@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: TypeScript type check
+      - name: Type check
         run: pnpm exec tsc --noEmit
 
       - name: Run unit tests
@@ -64,9 +64,59 @@ jobs:
       - name: Run Rust tests
         run: cargo test --all-features
 
+  repo-hygiene:
+    name: Repository Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check repository hygiene
+        run: node scripts/check-repo-hygiene.mjs
+
+  i18n-check:
+    name: i18n Key Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check locale key consistency
+        run: node scripts/check-i18n-keys.mjs
+
+  website:
+    name: Website Lint & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint website
+        run: npm run lint
+
+      - name: Build website
+        run: npm run build
+
   build-tauri:
     name: Build Tauri (${{ matrix.platform }})
-    needs: [lint-and-test, rust-check]
+    needs: [lint-and-test, rust-check, repo-hygiene, i18n-check]
     strategy:
       fail-fast: false
       matrix:

@@ -208,7 +208,7 @@ describe('browserAgentStore listener idempotency', () => {
   describe('listener initialization failure handling', () => {
     it('listen throws → error is logged to errorLogger, not thrown to caller', async () => {
       const listenMock = jest.requireMock('@tauri-apps/api/event') as any;
-      listenMock.listen.mockRejectedValueOnce(new Error(' Tauri's event system unavailable'));
+      listenMock.listen.mockRejectedValueOnce(new Error('Tauri event system unavailable'));
 
       // Re-import to get clean state
       jest.resetModules();

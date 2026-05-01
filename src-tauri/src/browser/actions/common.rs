@@ -201,8 +201,7 @@ impl ActionContext {
 
     pub async fn capture_page_state(&self) -> ActionResult<PageState> {
         let mut manager = self.manager.lock().await;
-        manager
-            .capture_page_state()
+        capture_page_state_with_resync(&mut manager)
             .await
             .map_err(|error| BrowserActionError::session(error.to_string()))
     }
@@ -213,15 +212,13 @@ impl ActionContext {
     ) -> ActionResult<PageState> {
         let mut manager = self.manager.lock().await;
         if force_refresh {
-            manager
-                .capture_page_state()
+            capture_page_state_with_resync(&mut manager)
                 .await
                 .map_err(|error| BrowserActionError::page_state_stale(error.to_string()))
         } else if let Some(page_state) = manager.consume_cached_page_state() {
             Ok(page_state)
         } else {
-            manager
-                .capture_page_state()
+            capture_page_state_with_resync(&mut manager)
                 .await
                 .map_err(|error| BrowserActionError::page_state_stale(error.to_string()))
         }
@@ -229,9 +226,9 @@ impl ActionContext {
 
     pub async fn page_state_text(&self) -> ActionResult<String> {
         let mut manager = self.manager.lock().await;
-        manager
-            .page_state_text()
+        capture_page_state_with_resync(&mut manager)
             .await
+            .map(|page_state| page_state.to_text())
             .map_err(|error| BrowserActionError::page_state_stale(error.to_string()))
     }
 
@@ -307,6 +304,20 @@ impl ActionContext {
         }
 
         result
+    }
+}
+
+async fn capture_page_state_with_resync(
+    manager: &mut BrowserSessionManager,
+) -> Result<PageState, crate::browser::cdp::CdpError> {
+    match manager.capture_page_state().await {
+        Ok(page_state) => Ok(page_state),
+        Err(first_error) => {
+            if manager.resync_page().await.is_ok() {
+                return manager.capture_page_state().await;
+            }
+            Err(first_error)
+        }
     }
 }
 

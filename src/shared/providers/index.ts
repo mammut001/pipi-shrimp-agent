@@ -2,6 +2,7 @@ export {
   PROVIDER_REGISTRY,
   getProviderNames,
   getProvider,
+  getProviderDefaultModelId,
   getProviderDefaultModelIds,
   getProviderDefaultBaseUrl,
   getProviderDefaultApiFormat,
