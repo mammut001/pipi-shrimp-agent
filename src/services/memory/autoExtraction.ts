@@ -143,7 +143,7 @@ async function runExtraction(ctx: ExtractionContext, isTrailingRun = false): Pro
       baseUrl: apiConfig.baseUrl || '',
       systemPrompt: EXTRACTION_SYSTEM_PROMPT,
       noTools: true,
-      browserConnected: false,
+      allowBrowserTools: false,
       sessionId: `memory-extraction-${Date.now()}`,
       apiFormat: apiConfig.apiFormat,
     });

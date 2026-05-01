@@ -129,7 +129,7 @@ You have access to browser tools for web automation. Use these when the user ask
 "#;
 
 /// Helper function to merge user system prompt with global security constraints
-pub fn merge_system_prompt(user_prompt: Option<&str>, browser_connected: bool) -> String {
+pub fn merge_system_prompt(user_prompt: Option<&str>, allow_browser_tools: bool) -> String {
     let mut base_prompt = format!(
         "{}\n\n{}",
         GLOBAL_SECURITY_CONSTRAINT.trim(),
@@ -137,7 +137,7 @@ pub fn merge_system_prompt(user_prompt: Option<&str>, browser_connected: bool) -
     );
 
     // Add browser tools guide if browser is connected
-    if browser_connected {
+    if allow_browser_tools {
         base_prompt.push_str(&format!("\n\n{}", BROWSER_TOOLS_GUIDE.trim()));
     }
 
@@ -368,7 +368,7 @@ fn get_browser_tools() -> Vec<serde_json::Value> {
     ]
 }
 
-pub fn get_tools(browser_connected: bool) -> Vec<serde_json::Value> {
+pub fn get_tools(allow_browser_tools: bool) -> Vec<serde_json::Value> {
     // NOTE: "additionalProperties": false on every schema is required for MiniMax
     // and OpenAI strict-mode. Without it, models may generate extra properties
     // that fail server-side validation ("Tool arguments validation failed").
@@ -678,7 +678,7 @@ pub fn get_tools(browser_connected: bool) -> Vec<serde_json::Value> {
     ];
 
     // Add browser tools only when Chrome CDP is connected
-    if browser_connected {
+    if allow_browser_tools {
         tools.extend(get_browser_tools());
     }
 
@@ -1251,7 +1251,7 @@ impl ClaudeClient {
         model: String,
         base_url: Option<String>,
         system_prompt: Option<String>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
     ) -> AppResult<ChatResponse> {
         // Validate message sequence before sending to API
         let (normalized, validation) = normalize_messages(&messages);
@@ -1279,7 +1279,7 @@ impl ClaudeClient {
                     false,
                     false,
                     None,
-                    browser_connected,
+                    allow_browser_tools,
                     "",
                 )
                 .await
@@ -1294,7 +1294,7 @@ impl ClaudeClient {
                     false,
                     false,
                     None,
-                    browser_connected,
+                    allow_browser_tools,
                     "",
                 )
                 .await
@@ -1315,7 +1315,7 @@ impl ClaudeClient {
         system_prompt: Option<String>,
         no_tools: bool,
         window: Window,
-        browser_connected: bool,
+        allow_browser_tools: bool,
         session_id: String,
         // Optional explicit API format override: "anthropic" or "openai".
         // When None, the format is auto-detected from base_url / api_key / model.
@@ -1364,10 +1364,10 @@ impl ClaudeClient {
 
                 match api_format {
                     super::provider::ApiFormat::Anthropic => {
-                        self.chat_anthropic(&normalized, &api_key, &model, base_url.as_deref(), system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
+                        self.chat_anthropic(&normalized, &api_key, &model, base_url.as_deref(), system_prompt.as_deref(), true, no_tools, Some(window.clone()), allow_browser_tools, &session_id).await
                     }
                     super::provider::ApiFormat::OpenAI => {
-                        self.chat_openai(&normalized, &api_key, &model, base_url, system_prompt.as_deref(), true, no_tools, Some(window.clone()), browser_connected, &session_id).await
+                        self.chat_openai(&normalized, &api_key, &model, base_url, system_prompt.as_deref(), true, no_tools, Some(window.clone()), allow_browser_tools, &session_id).await
                     }
                 }
             } => result
@@ -1397,7 +1397,7 @@ impl ClaudeClient {
         streaming: bool,
         no_tools: bool,
         window: Option<Window>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
         session_id: &str,
     ) -> AppResult<ChatResponse> {
         let thinking = supports_thinking(model);
@@ -1432,12 +1432,12 @@ impl ClaudeClient {
         if !no_tools {
             body.insert(
                 "tools".to_string(),
-                serde_json::json!(get_tools(browser_connected)),
+                serde_json::json!(get_tools(allow_browser_tools)),
             );
         }
 
         // ALWAYS inject global security constraints (Layer 2 defense)
-        let merged_system = merge_system_prompt(system_prompt, browser_connected);
+        let merged_system = merge_system_prompt(system_prompt, allow_browser_tools);
         body.insert("system".to_string(), serde_json::json!(merged_system));
 
         if thinking {
@@ -1473,7 +1473,7 @@ impl ClaudeClient {
         // Estimate input tokens from the formatted messages (used as fallback if API returns 0)
         let anthropic_msgs = format_messages_for_anthropic(messages);
         let estimated_input = estimate_messages_tokens(&anthropic_msgs)
-            + estimate_tokens(&merge_system_prompt(system_prompt, browser_connected));
+            + estimate_tokens(&merge_system_prompt(system_prompt, allow_browser_tools));
 
         // Send request
         let endpoint = base_url
@@ -1782,7 +1782,7 @@ impl ClaudeClient {
         streaming: bool,
         no_tools: bool,
         window: Option<Window>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
         session_id: &str,
     ) -> AppResult<ChatResponse> {
         let base_url = base_url.unwrap_or_default();
@@ -1790,14 +1790,14 @@ impl ClaudeClient {
             None
         } else {
             Some(convert_tools_to_openai_format(&get_tools(
-                browser_connected,
+                allow_browser_tools,
             )))
         };
 
         // Build messages list，system prompt 放到 messages 数组的第一条（OpenAI 兼容格式）
         // ALWAYS inject global security constraints (Layer 2 defense)
         let mut openai_messages = format_messages_for_openai(messages);
-        let merged_system = merge_system_prompt(system_prompt, browser_connected);
+        let merged_system = merge_system_prompt(system_prompt, allow_browser_tools);
         openai_messages.insert(
             0,
             serde_json::json!({

@@ -1,5 +1,6 @@
 import { ToolRegistry } from './ToolRegistry';
 import { ToolContext, ToolResult } from '../base/Tool';
+import { t } from '../../i18n';
 
 /**
  * 工具执行器
@@ -56,7 +57,7 @@ export class ToolExecutor {
         if (!permission.granted) {
           return {
             success: false,
-            error: permission.reason || 'Permission denied',
+            error: permission.reason || t('permission.deniedMessage'),
             metadata: { durationMs: Date.now() - startTime }
           };
         }

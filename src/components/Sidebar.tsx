@@ -100,10 +100,6 @@ export function Sidebar() {
   const [renamingWorkflowInstanceId, setRenamingWorkflowInstanceId] = useState<string | null>(null);
   const [workflowRenameInput, setWorkflowRenameInput] = useState('');
 
-  // New Chat modal state
-  const [showNewChatModal, setShowNewChatModal] = useState(false);
-  const [selectedProjectForNewChat, setSelectedProjectForNewChat] = useState<string | null>(null);
-
   // Multi-select state
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
@@ -187,21 +183,11 @@ export function Sidebar() {
   };
 
   /**
-   * Handle creating a new chat with project selection
+   * Handle creating a new chat with the default session flow.
    */
-  const handleNewChat = () => {
-    startSession(selectedProjectForNewChat || undefined);
-    setShowNewChatModal(false);
-    setSelectedProjectForNewChat(null);
-  };
-
-  /**
-   * Open new chat modal
-   */
-  const openNewChatModal = useCallback(() => {
-    setSelectedProjectForNewChat(null);
-    setShowNewChatModal(true);
-  }, []);
+  const handleNewChat = useCallback(() => {
+    void startSession();
+  }, [startSession]);
 
   /**
    * Create a new blank workflow with a pre-assigned working directory.
@@ -549,7 +535,7 @@ export function Sidebar() {
 
         {/* New Chat / New Workflow Button (context-aware) */}
         <button
-          onClick={currentView === 'workflow' ? handleNewWorkflow : openNewChatModal}
+          onClick={currentView === 'workflow' ? handleNewWorkflow : handleNewChat}
           className="w-full px-4 py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-xl transition-all flex items-center justify-center gap-2 font-medium shadow-sm active:scale-[0.98]"
         >
           <svg
@@ -1272,45 +1258,6 @@ export function Sidebar() {
               <button
                 onClick={handleCreateProject}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      ))}
-
-      {/* New Chat Modal - Select Project */}
-      {renderSidebarModal(showNewChatModal, (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={() => setShowNewChatModal(false)}>
-          <div className="bg-white rounded-2xl shadow-xl p-6 w-80" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">New Chat</h3>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Select Project</label>
-              <select
-                value={selectedProjectForNewChat || ''}
-                onChange={(e) => setSelectedProjectForNewChat(e.target.value || null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="">No project (root)</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  setShowNewChatModal(false);
-                  setSelectedProjectForNewChat(null);
-                }}
-                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleNewChat}
-                className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-colors"
               >
                 Create
               </button>

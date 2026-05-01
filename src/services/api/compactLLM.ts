@@ -64,7 +64,7 @@ export async function callCompactLLM(
     model: apiConfig.model,
     baseUrl: apiConfig.baseUrl || null,
     systemPrompt,
-    browserConnected: false,
+    allowBrowserTools: false,
   });
 
   return response.content;

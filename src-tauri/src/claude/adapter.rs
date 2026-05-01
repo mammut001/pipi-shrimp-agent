@@ -112,7 +112,7 @@ pub trait ProviderAdapter: Send + Sync {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
     ) -> serde_json::Value;
 
     /// Build request body for streaming
@@ -121,7 +121,7 @@ pub trait ProviderAdapter: Send + Sync {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
     ) -> serde_json::Value;
 
     /// Parse non-streaming response
@@ -261,7 +261,7 @@ impl ProviderAdapter for AnthropicAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
     ) -> serde_json::Value {
         use super::http_client::{format_messages_for_anthropic, get_tools, merge_system_prompt};
 
@@ -272,11 +272,11 @@ impl ProviderAdapter for AnthropicAdapter {
             "max_tokens": max_tokens,
             "stream": false,
             "messages": format_messages_for_anthropic(messages),
-            "tools": get_tools(browser_connected),
+            "tools": get_tools(allow_browser_tools),
         });
 
         // Add system prompt
-        let merged_system = merge_system_prompt(system_prompt, browser_connected);
+        let merged_system = merge_system_prompt(system_prompt, allow_browser_tools);
         body["system"] = serde_json::json!(merged_system);
 
         // Add thinking config if supported
@@ -295,9 +295,9 @@ impl ProviderAdapter for AnthropicAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
     ) -> serde_json::Value {
-        let mut body = self.build_body(config, messages, system_prompt, browser_connected);
+        let mut body = self.build_body(config, messages, system_prompt, allow_browser_tools);
         body["stream"] = serde_json::json!(true);
         body
     }
@@ -529,14 +529,14 @@ impl ProviderAdapter for OpenAIAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
     ) -> serde_json::Value {
         use super::http_client::{
             convert_tools_to_openai_format, format_messages_for_openai, get_tools,
         };
 
         let tools = Some(convert_tools_to_openai_format(&get_tools(
-            browser_connected,
+            allow_browser_tools,
         )));
         let openai_messages = format_messages_for_openai(messages);
 
@@ -578,9 +578,9 @@ impl ProviderAdapter for OpenAIAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
-        browser_connected: bool,
+        allow_browser_tools: bool,
     ) -> serde_json::Value {
-        let mut body = self.build_body(config, messages, system_prompt, browser_connected);
+        let mut body = self.build_body(config, messages, system_prompt, allow_browser_tools);
         body["stream"] = serde_json::json!(true);
         body
     }

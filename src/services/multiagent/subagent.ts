@@ -64,7 +64,7 @@ export async function runAgentSync(options: SubagentOptions): Promise<SubagentRe
         model: options.model || apiConfig.model,
         baseUrl: apiConfig.baseUrl || '',
         systemPrompt,
-        browserConnected: false,
+        allowBrowserTools: false,
         sessionId: `${options.sessionId}-sub-${agentId}`,
         apiFormat: apiConfig.apiFormat,
       });

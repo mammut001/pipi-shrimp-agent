@@ -71,7 +71,7 @@ Return only the filenames of the selected memories, one per line. Do not include
       model: apiConfig.model,
       baseUrl: apiConfig.baseUrl || '',
       systemPrompt: 'You are a memory selector. Return only filenames.',
-      browserConnected: false,
+      allowBrowserTools: false,
       sessionId: 'memory-recall',
       apiFormat: apiConfig.apiFormat,
     });

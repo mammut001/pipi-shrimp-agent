@@ -120,10 +120,48 @@ export function registerFileArtifacts(messageId: string, filePaths: string[]): v
  * All-in-one: scan tool result text, extract file paths, register them.
  * Call this after each tool execution round.
  */
-export function detectAndRegisterArtifacts(messageId: string, toolResultText: string): void {
+export interface ArtifactDetectionContext {
+  messageId: string;
+  toolName: string;
+  toolArgs: string;
+  toolResultText: string;
+  workDir?: string;
+  outputDir?: string;
+}
+
+export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext): Promise<void> {
+  const { messageId, toolName, toolResultText, workDir } = ctx;
+
+  const validTools = ['write_file', 'render_typst_to_pdf', 'compile_typst_file', 'execute_command', 'Skill', 'skill', 'execute_skill'];
+  if (!validTools.includes(toolName)) {
+    return;
+  }
+
   const paths = extractFilePaths(toolResultText);
-  if (paths.length > 0) {
-    registerFileArtifacts(messageId, paths);
+  if (paths.length === 0) return;
+
+  const allowedExtensions = ['pdf', 'svg', 'png', 'jpg', 'jpeg', 'webp', 'html'];
+
+  const filteredPaths = paths.filter(p => {
+    // Must be under workDir
+    if (workDir && !p.startsWith(workDir)) {
+      return false;
+    }
+
+    if (toolName === 'write_file') {
+      return detectFileType(p) !== 'unknown';
+    }
+
+    const ext = p.split('.').pop()?.toLowerCase() ?? '';
+    if (!allowedExtensions.includes(ext) && toolName !== 'write_file') {
+      return false;
+    }
+
+    return allowedExtensions.includes(ext);
+  });
+
+  if (filteredPaths.length > 0) {
+    registerFileArtifacts(messageId, filteredPaths);
   }
 }
 

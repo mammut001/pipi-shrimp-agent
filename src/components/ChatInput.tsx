@@ -15,6 +15,13 @@ import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
 import { useMCPStore } from '@/store/mcpStore';
 import { MCPChatButton, MCPDropdown } from '@/components/mcp';
+import { BrowserIntentConfirm } from './BrowserIntentConfirm';
+import {
+  decideChatInputSubmission,
+  resolveChatTargetSessionId,
+  shouldClearDraftAfterBrowserWorkflow,
+  shouldDismissBrowserIntentConfirm,
+} from './chatInputFlow';
 import { t } from '@/i18n';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 
@@ -74,8 +81,6 @@ function cleanupOldDrafts(): void {
 interface ChatInputProps {
   /** Optional callback when message is sent */
   onSend?: (message: string) => void;
-  /** Optional callback when user sends message but no session exists */
-  onNewSessionRequired?: (message: string) => void;
   /** Key used to namespace the draft in localStorage (default: 'default') */
   draftKey?: string;
 }
@@ -83,12 +88,15 @@ interface ChatInputProps {
 /**
  * Chat input component
  */
-export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }: ChatInputProps) {
+export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [isBindingFolder, setIsBindingFolder] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [browserIntentCandidate, setBrowserIntentCandidate] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isComposingRef = useRef(false);
+  const draftStorageKey = `chat_draft_${draftKey}`;
 
   const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
   const { toggleSettings } = useUIStore();
@@ -102,19 +110,25 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
 
   // Restore draft from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem(`chat_draft_${draftKey}`);
+    const saved = localStorage.getItem(draftStorageKey);
     if (saved) setInput(saved);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey]);
+  }, [draftStorageKey]);
 
   // Persist draft to localStorage whenever input changes
   useEffect(() => {
     if (input) {
-      localStorage.setItem(`chat_draft_${draftKey}`, input);
+      localStorage.setItem(draftStorageKey, input);
     } else {
-      localStorage.removeItem(`chat_draft_${draftKey}`);
+      localStorage.removeItem(draftStorageKey);
     }
-  }, [input, draftKey]);
+  }, [input, draftStorageKey]);
+
+  useEffect(() => {
+    if (shouldDismissBrowserIntentConfirm(browserIntentCandidate, input)) {
+      setBrowserIntentCandidate(null);
+    }
+  }, [browserIntentCandidate, input]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -157,50 +171,81 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
     }
   }, [workDir, currentSessionId]);
 
+  const clearInputDraft = useCallback(() => {
+    setInput('');
+    setBrowserIntentCandidate(null);
+    localStorage.removeItem(draftStorageKey);
+  }, [draftStorageKey]);
+
+  const sendAsRegularChat = useCallback(async (message: string) => {
+    setIsSubmitting(true);
+    try {
+      const targetSessionId = await resolveChatTargetSessionId(currentSessionId, startSession);
+
+      onSend?.(message);
+      const sendPromise = sendMessage(message, targetSessionId);
+      clearInputDraft();
+      await sendPromise;
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [clearInputDraft, currentSessionId, onSend, sendMessage, startSession]);
+
+  const sendToBrowserWorkflow = useCallback(async (message: string) => {
+    setIsSubmitting(true);
+    try {
+      const handled = await handleChatBrowserWorkflow(message);
+      if (shouldClearDraftAfterBrowserWorkflow(handled)) {
+        clearInputDraft();
+      }
+      return handled;
+    } catch (error) {
+      console.error('[ChatInput] Failed to hand off browser workflow:', error);
+      return false;
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [clearInputDraft]);
+
   /**
    * Handle message submission
    */
   const handleSubmit = useCallback(async () => {
-    const trimmedInput = input.trim();
-    if (!trimmedInput || isStreaming) return;
+    const decision = decideChatInputSubmission({
+      input,
+      isStreaming,
+      isSubmitting,
+      isBrowserIntent: quickCheckBrowserIntent,
+    });
 
-    const finalMessage = trimmedInput;
-
-    // Quick check for browser intent before creating session
-    const mightBeBrowser = quickCheckBrowserIntent(finalMessage);
-
-    // Browser workflow should be able to start from the empty-chat entry flow.
-    // Route browser intents before the new-session modal early-return path.
-    if (mightBeBrowser) {
-      // Clear input state first so browser workflows feel the same as normal sends
-      setInput('');
-
-      const handled = await handleChatBrowserWorkflow(finalMessage);
-      if (handled) {
-        return;
-      }
+    if (decision.type === 'noop') {
+      return;
     }
 
-    // Ensure session exists before sending
-    if (!currentSessionId) {
-      // 如果有回调函数，调用它来显示 project 选择模态框
-      if (onNewSessionRequired) {
-        onNewSessionRequired(finalMessage);
-        setInput('');
-        return;
-      }
-      // 否则直接创建 session（向后兼容）
-      await startSession();
+    if (decision.type === 'confirm-browser') {
+      setBrowserIntentCandidate((current) => current === decision.message ? current : decision.message);
+      return;
     }
 
-    // Clear input state and draft
-    setInput('');
-    localStorage.removeItem(`chat_draft_${draftKey}`);
+    await sendAsRegularChat(decision.message);
+  }, [input, isStreaming, isSubmitting, sendAsRegularChat]);
 
-    // Send to AI (browser is controlled manually or via AI tools, not by client-side regex)
-    onSend?.(finalMessage);
-    await sendMessage(finalMessage);
-  }, [input, isStreaming, currentSessionId, onNewSessionRequired, startSession, draftKey, onSend, sendMessage]);
+  const handleConfirmBrowserIntent = useCallback(async () => {
+    if (!browserIntentCandidate || isSubmitting) return;
+    await sendToBrowserWorkflow(browserIntentCandidate);
+  }, [browserIntentCandidate, isSubmitting, sendToBrowserWorkflow]);
+
+  const handleSendAsNormalMessage = useCallback(async () => {
+    const message = browserIntentCandidate ?? input.trim();
+    if (!message || isSubmitting) return;
+    await sendAsRegularChat(message);
+  }, [browserIntentCandidate, input, isSubmitting, sendAsRegularChat]);
+
+  const handleCancelBrowserIntent = useCallback(() => {
+    if (isSubmitting) return;
+    setBrowserIntentCandidate(null);
+    textareaRef.current?.focus();
+  }, [isSubmitting]);
 
   /**
    * Handle stop generation
@@ -210,7 +255,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
   }, [stopGeneration]);
 
 
-  const isDisabled = isStreaming;
+  const isDisabled = isStreaming || isSubmitting;
 
   return (
     <div className="border-t border-gray-200 bg-white p-4">
@@ -251,8 +296,8 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                 <button
                   onClick={() => invoke('reveal_in_finder', { path: workDir }).catch(console.error)}
                   className="text-gray-400 hover:text-blue-500 transition-colors ml-0.5"
-                  title={`Open source folder: ${workDir}`}
-                  aria-label="Open source folder in Finder"
+                  title={`${t('chat.openSourceFolder')}: ${workDir}`}
+                  aria-label={t('chat.openSourceFolder')}
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -263,8 +308,8 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                 <button
                   onClick={() => invoke('reveal_in_finder', { path: `${workDir}/.pipi-shrimp` }).catch(console.error)}
                   className="text-gray-400 hover:text-purple-500 transition-colors"
-                  title={`Open output folder: ${workDir}/.pipi-shrimp`}
-                  aria-label="Open .pipi-shrimp folder in Finder"
+                  title={`${t('chat.openOutputFolder')}: ${workDir}/.pipi-shrimp`}
+                  aria-label={t('chat.openOutputFolder')}
                 >
                   <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
                     <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
@@ -283,9 +328,9 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                   }}
                   disabled={isBindingFolder}
                   className="ml-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[10px] font-medium"
-                  title="Change work directory"
+                  title={t('chat.changeWorkDirectory')}
                 >
-                  {isBindingFolder ? 'binding...' : 'change'}
+                  {isBindingFolder ? t('chat.binding') : t('common.change')}
                 </button>
 
                 {/* Remove button */}
@@ -300,8 +345,8 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                   }}
                   disabled={isBindingFolder}
                   className="text-gray-300 hover:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ml-0.5"
-                  title="Remove work directory"
-                  aria-label="Remove work directory"
+                  title={t('chat.removeWorkDirectory')}
+                  aria-label={t('chat.removeWorkDirectory')}
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -331,7 +376,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
                 </svg>
-                {isBindingFolder ? 'binding...' : 'Bind work folder'}
+                {isBindingFolder ? t('chat.binding') : t('chat.bindWorkFolder')}
               </button>
             )}
 
@@ -345,15 +390,25 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                              ? 'bg-gray-800 border-gray-700 text-gray-200 hover:bg-gray-700'
                              : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'
                            }`}
-                title={terminalPanelVisible ? 'Hide Terminal' : 'Show Terminal'}
+                title={terminalPanelVisible ? t('chat.hideTerminal') : t('chat.showTerminal')}
               >
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                Terminal
+                {t('chat.terminal')}
               </button>
             )}
           </div>
+        )}
+
+        {browserIntentCandidate && (
+          <BrowserIntentConfirm
+            message={browserIntentCandidate}
+            isProcessing={isSubmitting}
+            onConfirmBrowser={() => { void handleConfirmBrowserIntent(); }}
+            onSendNormally={() => { void handleSendAsNormalMessage(); }}
+            onCancel={handleCancelBrowserIntent}
+          />
         )}
 
         <div className={`relative flex items-end gap-2 bg-gray-50 rounded-xl border transition-all px-4 ${
@@ -375,7 +430,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
                   return;
                 }
                 e.preventDefault();
-                handleSubmit();
+                void handleSubmit();
               }
             }}
             onCompositionStart={() => { isComposingRef.current = true; }}
@@ -400,7 +455,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
               onClick={handleOpenFolder}
               type="button"
               className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
-              title="Open chat folder"
+              title={t('chat.openChatFolder')}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
@@ -429,7 +484,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
               </button>
             ) : (
               <button
-                onClick={handleSubmit}
+                onClick={() => { void handleSubmit(); }}
                 disabled={isDisabled || !input.trim()}
                 className="p-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title={t('chat.send')}
@@ -449,7 +504,7 @@ export function ChatInput({ onSend, onNewSessionRequired, draftKey = 'default' }
 
         {/* Hint */}
         <p className="text-center text-[10px] text-gray-400 mt-2 uppercase tracking-tight font-bold">
-          Enter <span className="text-gray-300 mx-1">/</span> Shift + Enter for new line
+          {t('chat.enterHint')} <span className="text-gray-300 mx-1">/</span> {t('chat.newLineHint')}
         </p>
       </div>
     </div>

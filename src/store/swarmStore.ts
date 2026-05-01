@@ -75,7 +75,7 @@ export interface SwarmStoreState {
 
   // ===== Actions =====
   /** Initialize store: restore from storage and subscribe to events */
-  init: () => void;
+  init: () => Promise<void>;
   /** Manual sync from repository (called on events) */
   sync: () => void;
   /** Cleanup: unsubscribe and stop pollers */

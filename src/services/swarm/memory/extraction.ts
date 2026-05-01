@@ -66,7 +66,7 @@ export async function extractAgentMemory(
       baseUrl: apiConfig.baseUrl || '',
       systemPrompt: EXTRACTION_SYSTEM_PROMPT,
       noTools: true,
-      browserConnected: false,
+      allowBrowserTools: false,
       sessionId: `swarm-agent-memory-${Date.now()}`,
       apiFormat: apiConfig.apiFormat,
     });
@@ -204,7 +204,7 @@ export async function extractTeamMemory(
       baseUrl: apiConfig.baseUrl || '',
       systemPrompt: TEAM_EXTRACTION_SYSTEM_PROMPT,
       noTools: true,
-      browserConnected: false,
+      allowBrowserTools: false,
       sessionId: `swarm-team-memory-${Date.now()}`,
       apiFormat: apiConfig.apiFormat,
     });
