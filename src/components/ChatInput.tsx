@@ -10,7 +10,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
 import { useMCPStore } from '@/store/mcpStore';
@@ -155,16 +155,12 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
    */
   const handleOpenFolder = useCallback(async () => {
     try {
-      let targetPath = workDir;
+      let targetPath: string | undefined = workDir;
       if (!targetPath && currentSessionId) {
-        try {
-          targetPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
-        } catch (e) {
-          console.error("Failed to get default dir:", e);
-        }
+        targetPath = await safeInvokeOrNull<string>('get_app_default_dir', { sessionId: currentSessionId }, { source: 'ChatInput.getDefaultDir' }) ?? undefined;
       }
       if (targetPath) {
-        await invoke('reveal_in_finder', { path: targetPath });
+        await safeInvoke('reveal_in_finder', { path: targetPath }, { source: 'ChatInput.openFolder' });
       }
     } catch (err) {
       console.error('Failed to open folder:', err);
@@ -305,7 +301,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
 
                 {/* Open source folder in Finder */}
                 <button
-                  onClick={() => invoke('reveal_in_finder', { path: workDir }).catch(console.error)}
+                  onClick={() => safeInvokeOrNull('reveal_in_finder', { path: workDir }, { source: 'ChatInput.openSourceFolder' })}
                   className="text-gray-400 hover:text-blue-500 transition-colors ml-0.5"
                   title={`${t('chat.openSourceFolder')}: ${workDir}`}
                   aria-label={t('chat.openSourceFolder')}
@@ -317,7 +313,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
 
                 {/* Open .pipi-shrimp output folder in Finder */}
                 <button
-                  onClick={() => invoke('reveal_in_finder', { path: `${workDir}/.pipi-shrimp` }).catch(console.error)}
+                  onClick={() => safeInvokeOrNull('reveal_in_finder', { path: `${workDir}/.pipi-shrimp` }, { source: 'ChatInput.openOutputFolder' })}
                   className="text-gray-400 hover:text-purple-500 transition-colors"
                   title={`${t('chat.openOutputFolder')}: ${workDir}/.pipi-shrimp`}
                   aria-label={t('chat.openOutputFolder')}

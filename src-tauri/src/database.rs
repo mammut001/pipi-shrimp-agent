@@ -7,6 +7,15 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// Acquire the global database mutex, mapping a poisoned lock to a Sqlite error
+/// instead of panicking. Every public function should call this instead of
+/// `DATABASE.lock().unwrap()`.
+fn get_db() -> SqliteResult<std::sync::MutexGuard<'static, Option<Connection>>> {
+    DATABASE.lock().map_err(|e| {
+        rusqlite::Error::InvalidParameterName(format!("Database lock poisoned: {}", e))
+    })
+}
+
 /**
  * Helper to map a row to DbSession
  */
@@ -475,25 +484,26 @@ pub fn init_database() -> SqliteResult<()> {
     );
 
     // Store connection globally
-    let mut db = DATABASE.lock().unwrap();
+    let mut db = get_db()?;
     *db = Some(conn);
 
     Ok(())
 }
 
 /**
- * Get the database connection
+ * Get the database connection.
+ * Returns an error if the lock is poisoned instead of panicking.
  */
 #[allow(dead_code)]
-pub fn get_connection() -> std::sync::MutexGuard<'static, Option<Connection>> {
-    DATABASE.lock().unwrap()
+pub fn get_connection() -> SqliteResult<std::sync::MutexGuard<'static, Option<Connection>>> {
+    get_db()
 }
 
 /**
  * Save a session to database
  */
 pub fn save_session(session: &DbSession) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode)
@@ -508,7 +518,7 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
  * Get all sessions from database
  */
 pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut sessions = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -530,7 +540,7 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
  * Delete a session and its messages
  */
 pub fn delete_session(session_id: &str) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "DELETE FROM messages WHERE session_id = ?1",
@@ -545,7 +555,7 @@ pub fn delete_session(session_id: &str) -> SqliteResult<()> {
  * Save a message to database
  */
 pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, artifacts, tool_calls, token_usage, created_at)
@@ -570,7 +580,7 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
  * Save a Telegram binding to database (INSERT OR REPLACE)
  */
 pub fn save_telegram_binding(binding: &DbTelegramBinding) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO telegram_bindings (
@@ -601,7 +611,7 @@ pub fn save_telegram_binding(binding: &DbTelegramBinding) -> SqliteResult<()> {
  * Get a Telegram binding by chat ID
  */
 pub fn get_telegram_binding(chat_id: i64) -> SqliteResult<Option<DbTelegramBinding>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
             "SELECT chat_id, chat_type, display_name, is_owner, auto_run, allowed_modes_json,
@@ -622,7 +632,7 @@ pub fn get_telegram_binding(chat_id: i64) -> SqliteResult<Option<DbTelegramBindi
  * Get all Telegram bindings
  */
 pub fn list_telegram_bindings() -> SqliteResult<Vec<DbTelegramBinding>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut bindings = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -646,7 +656,7 @@ pub fn list_telegram_bindings() -> SqliteResult<Vec<DbTelegramBinding>> {
  * Save a Telegram task to database (INSERT OR REPLACE)
  */
 pub fn save_telegram_task(task: &DbTelegramTask) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO telegram_tasks (
@@ -677,7 +687,7 @@ pub fn save_telegram_task(task: &DbTelegramTask) -> SqliteResult<()> {
  * Get a Telegram task by ID
  */
 pub fn get_telegram_task(task_id: &str) -> SqliteResult<Option<DbTelegramTask>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
             "SELECT id, chat_id, source_message_id, type, status, prompt, local_session_id,
@@ -701,7 +711,7 @@ pub fn find_telegram_task_by_source(
     chat_id: i64,
     source_message_id: i64,
 ) -> SqliteResult<Option<DbTelegramTask>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
             "SELECT id, chat_id, source_message_id, type, status, prompt, local_session_id,
@@ -726,7 +736,7 @@ pub fn list_telegram_tasks_for_chat(
     chat_id: i64,
     limit: Option<usize>,
 ) -> SqliteResult<Vec<DbTelegramTask>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut tasks = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -778,7 +788,7 @@ pub fn list_telegram_tasks_by_statuses(
         return Ok(Vec::new());
     }
 
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut tasks = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -824,7 +834,7 @@ pub fn list_telegram_tasks_by_statuses(
  * Save a Telegram runtime state value
  */
 pub fn set_telegram_runtime_state(key: &str, value: &str) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO telegram_runtime_state (key, value) VALUES (?1, ?2)",
@@ -838,7 +848,7 @@ pub fn set_telegram_runtime_state(key: &str, value: &str) -> SqliteResult<()> {
  * Get a Telegram runtime state value
  */
 pub fn get_telegram_runtime_state(key: &str) -> SqliteResult<Option<String>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         let mut stmt =
             conn.prepare("SELECT value FROM telegram_runtime_state WHERE key = ?1 LIMIT 1")?;
@@ -853,7 +863,7 @@ pub fn get_telegram_runtime_state(key: &str) -> SqliteResult<Option<String>> {
  * Delete a specific message by ID
  */
 pub fn delete_message(message_id: &str) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute("DELETE FROM messages WHERE id = ?1", params![message_id])?;
     }
@@ -864,7 +874,7 @@ pub fn delete_message(message_id: &str) -> SqliteResult<()> {
  * Delete multiple messages by IDs
  */
 pub fn delete_messages_by_ids(message_ids: &[String]) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare("DELETE FROM messages WHERE id = ?1")?;
         for id in message_ids {
@@ -878,7 +888,7 @@ pub fn delete_messages_by_ids(message_ids: &[String]) -> SqliteResult<()> {
  * Get all messages for a session
  */
 pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut messages = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -902,7 +912,7 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
  */
 #[allow(dead_code)]
 pub fn clear_messages_for_session(session_id: &str) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "DELETE FROM messages WHERE session_id = ?1",
@@ -916,7 +926,7 @@ pub fn clear_messages_for_session(session_id: &str) -> SqliteResult<()> {
  * Save a project to database (INSERT OR REPLACE)
  */
 pub fn save_project(project: &DbProject) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT OR REPLACE INTO projects (id, name, description, color, work_dir, created_at, updated_at)
@@ -939,7 +949,7 @@ pub fn save_project(project: &DbProject) -> SqliteResult<()> {
  * Get all projects from database
  */
 pub fn get_all_projects() -> SqliteResult<Vec<DbProject>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut projects = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -961,7 +971,7 @@ pub fn get_all_projects() -> SqliteResult<Vec<DbProject>> {
  * Delete a project
  */
 pub fn delete_project(project_id: &str) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         // Delete all sessions in this project first
         conn.execute(
@@ -978,7 +988,7 @@ pub fn delete_project(project_id: &str) -> SqliteResult<()> {
  * Update a project
  */
 pub fn update_project(project: &DbProject) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "UPDATE projects SET name = ?1, description = ?2, color = ?3, work_dir = ?4, updated_at = ?5 WHERE id = ?6",
@@ -999,7 +1009,7 @@ pub fn update_project(project: &DbProject) -> SqliteResult<()> {
  * Save token usage record
  */
 pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
             "INSERT INTO token_usage (id, session_id, date, input_tokens, output_tokens, model, api_config_id, created_at)
@@ -1023,7 +1033,7 @@ pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
  * Delete all token usage records
  */
 pub fn delete_all_token_usage() -> SqliteResult<()> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute("DELETE FROM token_usage", [])?;
     }
@@ -1059,7 +1069,7 @@ pub fn get_daily_token_stats(
     year_month: &str,
     api_config_id: Option<&str>,
 ) -> SqliteResult<Vec<DailyTokenStats>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut stats = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -1118,7 +1128,7 @@ pub fn get_daily_token_stats(
  * Get monthly token stats
  */
 pub fn get_monthly_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<DailyTokenStats>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut stats = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -1172,7 +1182,7 @@ pub fn get_monthly_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<
  * Get token stats by model
  */
 pub fn get_model_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<ModelTokenStats>> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     let mut stats = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
@@ -1226,7 +1236,7 @@ pub fn get_model_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<Mo
  * Get total token stats
  */
 pub fn get_total_token_stats(api_config_id: Option<&str>) -> SqliteResult<(i64, i64, i64)> {
-    let guard: std::sync::MutexGuard<Option<Connection>> = DATABASE.lock().unwrap();
+    let guard = get_db()?;
 
     if let Some(conn) = guard.as_ref() {
         let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match api_config_id
@@ -1306,7 +1316,7 @@ pub fn init_swarm_table(conn: &Connection) -> SqliteResult<()> {
  * Replaces the existing snapshot (only one is kept).
  */
 pub fn save_swarm_snapshot(snapshot_json: &str, saved_at: i64) -> SqliteResult<()> {
-    let guard = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         // Delete any existing snapshot first (we only keep the latest)
         conn.execute("DELETE FROM swarm_snapshots", [])?;
@@ -1323,7 +1333,7 @@ pub fn save_swarm_snapshot(snapshot_json: &str, saved_at: i64) -> SqliteResult<(
  * Returns None if no snapshot exists.
  */
 pub fn load_swarm_snapshot() -> SqliteResult<Option<String>> {
-    let guard = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         let result = conn.query_row(
             "SELECT snapshot_json FROM swarm_snapshots ORDER BY saved_at DESC LIMIT 1",
@@ -1339,7 +1349,7 @@ pub fn load_swarm_snapshot() -> SqliteResult<Option<String>> {
  * Clear all swarm snapshots.
  */
 pub fn clear_swarm_snapshots() -> SqliteResult<()> {
-    let guard = DATABASE.lock().unwrap();
+    let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute("DELETE FROM swarm_snapshots", [])?;
     }

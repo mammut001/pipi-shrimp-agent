@@ -8,6 +8,7 @@ import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings, AgentSetti
 import { DEFAULT_BUDGET_SETTINGS } from '../types/settings';
 import { resolvePricing } from '../shared/providers';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
+import { saveSecret, loadSecret, migrateLegacySecret, obfuscateInline, deobfuscateInline } from '../utils/secureSecrets';
 
 /**
  * Storage keys for persisting settings
@@ -32,43 +33,15 @@ function generateConfigId(): string {
 }
 
 /**
- * Minimal obfuscation for API keys in localStorage.
- * 
- * ⚠️ SECURITY WARNING ⚠️
- * This is NOT real encryption. btoa() creates easily reversible base64 encoding.
- * Anyone can decode with: atob(encodedKey)
- * 
- * Current protection: prevents casual shoulder-surfing and accidental log exposure
- * 
- * P2 TODO: Implement proper encryption using:
- *   - @tauri-apps/plugin-secure-store (when available), OR
- *   - Use OS keychain via tauri-plugin-os
- *   
- * Current fallback: if secure storage unavailable, API keys are stored with this
- * basic obfuscation only.
- */
-function obfuscate(value: string): string {
-  return btoa(unescape(encodeURIComponent(value)));
-}
-
-function deobfuscate(value: string): string {
-  try {
-    return decodeURIComponent(escape(atob(value)));
-  } catch {
-    // Fallback: value might be stored in plaintext from before this change
-    return value;
-  }
-}
-
-/**
- * Persist all API configs to localStorage
+ * Persist all API configs to localStorage.
+ * Uses obfuscateInline from secureSecrets for API key obfuscation.
  */
 function persistConfigs(configs: ApiConfig[], activeId: string | null) {
   try {
     // Obfuscate API keys before persisting
     const safe = configs.map(c => ({
       ...c,
-      apiKey: c.apiKey ? obfuscate(c.apiKey) : '',
+      apiKey: c.apiKey ? obfuscateInline(c.apiKey) : '',
     }));
     localStorage.setItem(API_CONFIGS_STORAGE_KEY, JSON.stringify(safe));
     if (activeId) {
@@ -89,7 +62,7 @@ function loadPersistedConfigs(): ApiConfig[] {
     const configs = JSON.parse(raw) as ApiConfig[];
     return configs.map(c => ({
       ...c,
-      apiKey: c.apiKey ? deobfuscate(c.apiKey) : '',
+      apiKey: c.apiKey ? deobfuscateInline(c.apiKey) : '',
     }));
   } catch {
     return [];
@@ -291,11 +264,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   /**
-   * Set Telegram token and persist
+   * Set Telegram token and persist via secureSecrets
    */
   setTelegramToken: async (token: string) => {
     try {
-      localStorage.setItem(TELEGRAM_TOKEN_STORAGE_KEY, obfuscate(token));
+      saveSecret('telegram-token', token);
       set({ telegramToken: token });
     } catch (error) {
       console.error('Failed to save Telegram token:', error);
@@ -484,10 +457,13 @@ const initializeSettings = () => {
       useSettingsStore.setState({ language: oldLanguage });
     }
 
-    // Load Telegram token
-    const storedTelegramToken = localStorage.getItem(TELEGRAM_TOKEN_STORAGE_KEY);
-    if (storedTelegramToken) {
-      useSettingsStore.setState({ telegramToken: deobfuscate(storedTelegramToken) });
+    // Load Telegram token (migrate from legacy key if needed)
+    let telegramToken = loadSecret('telegram-token');
+    if (!telegramToken) {
+      telegramToken = migrateLegacySecret(TELEGRAM_TOKEN_STORAGE_KEY, 'telegram-token');
+    }
+    if (telegramToken) {
+      useSettingsStore.setState({ telegramToken });
     }
 
     // Load imported files

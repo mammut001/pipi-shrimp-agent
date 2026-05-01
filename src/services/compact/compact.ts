@@ -9,7 +9,8 @@
  * - compactConversation(), streamCompactSummary()
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke } from '../../utils/safeInvoke';
+import { createLogger } from '../../utils/logger';
 import type { Message } from '../../types/chat';
 import type { CompactibleMessage } from '../../types/compact';
 import { getCompactConfig } from './config';
@@ -17,6 +18,8 @@ import { getCompactPrompt, getCompactUserSummaryMessage, formatCompactSummary } 
 import { callCompactLLM } from '../api/compactLLM';
 import { estimateMessagesTokens, estimateMessageTokens } from '../tokens/tokenEstimator';
 import { resetMicrocompactState } from './microCompactState';
+
+const log = createLogger('LegacyCompact');
 
 // ============================================================================
 // 常量
@@ -105,7 +108,7 @@ export async function compactConversation(
 
   try {
     const preCompactTokenCount = await estimateMessagesTokens(messages);
-    console.log('[Legacy Compact] Starting:', { preCompactTokenCount, messageCount: messages.length });
+    log.info('Starting:', { preCompactTokenCount, messageCount: messages.length });
 
     // 2. 剥离图片和文档（节省 token）
     const strippedMessages = stripImagesFromMessages(messages);
@@ -157,11 +160,11 @@ export async function compactConversation(
     const messagesToDelete = messages.slice(0, keepIndex);
     const idsToDelete = messagesToDelete.map(m => m.id);
     if (idsToDelete.length > 0) {
-      await invoke('delete_messages_by_ids', { messageIds: idsToDelete });
+      await safeInvoke('delete_messages_by_ids', { messageIds: idsToDelete });
     }
 
     // 9. 保存 boundary 到数据库
-    await invoke('save_compact_boundary', {
+    await safeInvoke('save_compact_boundary', {
       sessionId,
       boundary: {
         id: boundary.id,
@@ -190,7 +193,7 @@ export async function compactConversation(
     // 12. 后清理
     await runPostCompactCleanup();
 
-    console.log('[Legacy Compact] Success:', {
+    log.info('Success:', {
       pre: preCompactTokenCount,
       post: postCompactTokenCount,
       deleted: idsToDelete.length,
@@ -209,7 +212,7 @@ export async function compactConversation(
 
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    console.error('[Legacy Compact] Error:', errMsg);
+    log.error('Error:', errMsg);
 
     let errorType: LegacyCompactResult['error_type'] = 'unknown';
     if (errMsg.includes('prompt') || errMsg.includes('too long') || errMsg.includes('context')) {
@@ -278,7 +281,7 @@ async function callCompactWithPTLRetry(
 
       ptlAttempts++;
       if (ptlAttempts > MAX_PTL_RETRIES) {
-        console.error('[Legacy Compact] PTL: max retries exceeded');
+        log.error('PTL: max retries exceeded');
         throw new Error(ERROR_MESSAGE_PROMPT_TOO_LONG);
       }
 
@@ -288,7 +291,7 @@ async function callCompactWithPTLRetry(
         throw new Error(ERROR_MESSAGE_PROMPT_TOO_LONG);
       }
 
-      console.log(`[Legacy Compact] PTL retry ${ptlAttempts}: ${currentMessages.length} → ${truncated.length} messages`);
+      log.info(`PTL retry ${ptlAttempts}: ${currentMessages.length} → ${truncated.length} messages`);
       currentMessages = truncated;
     }
   }
@@ -580,7 +583,7 @@ function extractRecentFilePaths(messages: Message[]): string[] {
 async function runPostCompactCleanup(): Promise<void> {
   // 1. 重置 microcompact 状态
   resetMicrocompactState();
-  console.log('[Legacy Compact] Cleanup complete');
+  log.info('Cleanup complete');
 }
 
 // ============================================================================

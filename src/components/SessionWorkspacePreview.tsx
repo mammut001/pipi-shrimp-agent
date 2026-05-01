@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { usePolling } from '@/hooks/usePolling';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -301,6 +302,7 @@ export function useSessionWorkspacePreview(workDir: string | null, enabled: bool
     }
   }, [enabled, workDir]);
 
+  // Reset state when disabled
   useEffect(() => {
     if (!enabled) {
       setEntries([]);
@@ -309,18 +311,11 @@ export function useSessionWorkspacePreview(workDir: string | null, enabled: bool
       setFileError(null);
       setFileLoading(false);
       setIsTruncated(false);
-      return;
     }
+  }, [enabled]);
 
-    void refreshEntries();
-    const intervalId = window.setInterval(() => {
-      void refreshEntries();
-    }, 4000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [enabled, refreshEntries]);
+  // Poll workspace files (pauses when tab is hidden)
+  usePolling(refreshEntries, 4000, enabled);
 
   useEffect(() => {
     if (!enabled || !selectedFilePath) {

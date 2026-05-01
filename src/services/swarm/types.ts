@@ -32,6 +32,8 @@ export interface SwarmAgent {
   model?: string;
   createdAt: number;
   updatedAt: number;
+  /** Background agent ID assigned by runAgentBackground (optional) */
+  _bgAgentId?: string;
 }
 
 // =============================================================================

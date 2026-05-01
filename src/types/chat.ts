@@ -17,7 +17,7 @@ export interface ToolCall {
 /** Chat message interface */
 export interface Message {
   id: string;                    // Unique ID (UUID v4)
-  role: 'user' | 'assistant';    // Message sender role
+  role: 'user' | 'assistant' | 'system';  // Message sender role ('system' for compact boundaries)
   content: string;              // Message content
   reasoning?: string;           // AI reasoning/thinking process (optional)
   timestamp: number;            // Timestamp in milliseconds

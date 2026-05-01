@@ -4,8 +4,9 @@
  * Inspired by Claude Code's sidebar layout.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useUIStore, useSettingsStore, useChatStore, useSkillStore } from '@/store';
+import { usePolling } from '@/hooks/usePolling';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
 import { invoke } from '@tauri-apps/api/core';
@@ -84,66 +85,54 @@ export const AgentPanel: React.FC = () => {
     setSyncedFiles([]);
   }, [currentSessionId]);
 
-  useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval>;
-
-    const syncWorkspaceFiles = async () => {
-      if (!currentSessionId) {
-        setSyncedFiles([]);
+  const syncWorkspaceFiles = useCallback(async () => {
+    if (!currentSessionId) {
+      setSyncedFiles([]);
+      return;
+    }
+    let targetPath = currentSession?.workDir;
+    if (!targetPath) {
+      try {
+        targetPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
+      } catch {
         return;
       }
-      let targetPath = currentSession?.workDir;
-      if (!targetPath) {
-        try {
-          targetPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
-        } catch (e) {
-          return; // Ignore
-        }
-      }
-      
-      if (targetPath) {
-        try {
-          // fetch all files
-          const files = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: targetPath });
-          // ignore .pipi-shrimp and hidden files/folders
-          const visibleFiles = files.filter(f => !f.name.startsWith('.'));
-          const flattened: SyncedWorkspaceEntry[] = [];
+    }
 
-          for (const file of visibleFiles) {
-            flattened.push({ ...file, depth: 0, displayName: file.name });
+    if (targetPath) {
+      try {
+        const files = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: targetPath });
+        const visibleFiles = files.filter(f => !f.name.startsWith('.'));
+        const flattened: SyncedWorkspaceEntry[] = [];
 
-            if (!file.is_directory) {
-              continue;
+        for (const file of visibleFiles) {
+          flattened.push({ ...file, depth: 0, displayName: file.name });
+
+          if (!file.is_directory) continue;
+
+          try {
+            const children = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: file.path });
+            const visibleChildren = children.filter((child) => !child.name.startsWith('.'));
+            for (const child of visibleChildren) {
+              flattened.push({
+                ...child,
+                depth: 1,
+                displayName: `${file.name}/${child.name}`,
+              });
             }
-
-            try {
-              const children = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: file.path });
-              const visibleChildren = children.filter((child) => !child.name.startsWith('.'));
-              for (const child of visibleChildren) {
-                flattened.push({
-                  ...child,
-                  depth: 1,
-                  displayName: `${file.name}/${child.name}`,
-                });
-              }
-            } catch {
-              // Ignore unreadable sub-directories; top-level entry is still useful.
-            }
+          } catch {
+            // Ignore unreadable sub-directories; top-level entry is still useful.
           }
-
-          setSyncedFiles(flattened);
-        } catch (e) {
-          // Folder might not exist yet, that's fine
-          setSyncedFiles([]);
         }
+
+        setSyncedFiles(flattened);
+      } catch {
+        setSyncedFiles([]);
       }
-    };
-
-    syncWorkspaceFiles();
-    intervalId = setInterval(syncWorkspaceFiles, 2000); // Poll every 2 seconds
-
-    return () => clearInterval(intervalId);
+    }
   }, [currentSessionId, currentSession?.workDir]);
+
+  usePolling(syncWorkspaceFiles, 2000, !!currentSessionId);
 
   // Load skills from tool registry
   const loadSkills = useSkillStore((s) => s.loadSkills);

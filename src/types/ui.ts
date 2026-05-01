@@ -229,6 +229,9 @@ export interface UIState {
   openBrowserExternal: () => void;
   closeBrowserDock: () => void;
   setBrowserPaneWidth: (width: number) => void;
+
+  // Recovery Actions
+  recoverToChatView: () => void;
 }
 
 // ============= Constants =============

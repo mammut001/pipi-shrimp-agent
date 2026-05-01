@@ -121,16 +121,23 @@ export class ToolExecutor {
     input: unknown,
     timeoutMs: number
   ): Promise<ToolResult> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<ToolResult>((_, reject) => {
-      setTimeout(() => reject(new Error('Tool execution timed out')), timeoutMs);
+      timer = setTimeout(() => reject(new Error('Tool execution timed out')), timeoutMs);
     });
 
     const executePromise = this.execute(toolName, input);
 
-    return Promise.race([executePromise, timeoutPromise]).catch(error => ({
-      success: false,
-      error: error.message,
-      metadata: { durationMs: timeoutMs }
-    }));
+    try {
+      return await Promise.race([executePromise, timeoutPromise]);
+    } catch (error) {
+      return {
+        success: false,
+        error: (error as Error).message,
+        metadata: { durationMs: timeoutMs }
+      };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react';
 import { useMCPStore } from '@/store/mcpStore';
+import { usePolling } from '@/hooks/usePolling';
 
 /**
  * MCP button displayed next to the chat input.
@@ -8,17 +9,13 @@ import { useMCPStore } from '@/store/mcpStore';
 export function MCPChatButton() {
   const { runtimes, dropdownOpen, setDropdownOpen, refreshRuntimes, loadServers } = useMCPStore();
 
-  const init = useCallback(() => {
+  useEffect(() => {
     loadServers();
     refreshRuntimes();
   }, [loadServers, refreshRuntimes]);
 
-  useEffect(() => {
-    init();
-    // Refresh runtimes periodically to catch status changes
-    const interval = setInterval(refreshRuntimes, 10_000);
-    return () => clearInterval(interval);
-  }, [init, refreshRuntimes]);
+  // Refresh runtimes periodically (pauses when tab is hidden)
+  usePolling(refreshRuntimes, 10_000);
 
   const connectedCount = runtimes.filter(r => r.status === 'connected').length;
   const hasError = runtimes.some(r => r.status === 'error');

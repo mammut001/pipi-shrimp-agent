@@ -18,12 +18,25 @@ import type { PostHookContext } from '../services/tools/postToolUseHooks';
 import type { ImportedFile } from '../types/settings';
 import { runMicrocompactCheck, resetMicrocompactForNewTurn } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
+import type { TokenUsage } from '../core/types';
 import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
 import { checkReactiveCompact, recordToolForReactiveCompact } from '../services/compact/reactiveCompact';
 import { triggerContextAnalysis } from '../services/contextAnalysis/hooks/contextAnalysisTrigger';
-import { sanitizeToolResultForModel } from '../services/tools/toolResultSanitizer';
 import { t } from '../i18n';
+import {
+  parseThinkContent,
+  mergeReasoningParts,
+  buildApiMessages,
+  dbToSession,
+  sessionToDb,
+  messageToDb,
+  dbToProject,
+  projectToDb,
+  type DbSession,
+  type DbMessage,
+  type DbProject,
+} from '../utils/chatHelpers';
 
 
 /**
@@ -105,7 +118,7 @@ async function runSMCompactAfterStreaming(
                     subtype: 'compact_boundary',
                     compact_type: smResult.boundary_message!.compact_type,
                   },
-                } as any,
+                },
                 smResult.summary_message!,
                 ...s.messages.slice(smResult.deleted_count!),
               ],
@@ -145,7 +158,7 @@ async function runSMCompactAfterStreaming(
                     subtype: 'compact_boundary',
                     compact_type: legacyResult.boundary_message!.compact_type,
                   },
-                } as any,
+                },
                 legacyResult.summary_message!,
                 ...(legacyResult.messages_to_keep ?? []),
               ],
@@ -215,99 +228,6 @@ async function runMicrocompactAfterStreaming(
   }
 }
 
-/**
- * Database types matching Rust backend
- */
-interface DbSession {
-  id: string;
-  title: string;
-  created_at: number;
-  updated_at: number;
-  cwd: string | null;
-  project_id: string | null;
-  model: string | null;
-  work_dir?: string | null;
-  working_files?: string | null;  // JSON serialized ImportedFile[]
-  permission_mode?: string | null;  // NEW: session permission mode
-}
-
-interface DbMessage {
-  id: string;
-  session_id: string;
-  role: string;
-  content: string;
-  reasoning: string | null;
-  artifacts: string | null;
-  tool_calls: string | null;  // JSON-serialized Vec<ToolCall>
-  token_usage: string | null; // JSON-serialized token usage
-  created_at: number;
-}
-
-interface DbProject {
-  id: string;
-  name: string;
-  description?: string;
-  color?: string;
-  work_dir?: string;      // NEW
-  created_at: number;
-  updated_at: number;
-}
-
-/**
- * Safely parse JSON with fallback
- */
-function safeJsonParse<T>(json: string | null | undefined, fallback: T): T {
-  if (!json) return fallback;
-  try {
-    return JSON.parse(json);
-  } catch (e) {
-    console.warn('Failed to parse JSON:', e);
-    return fallback;
-  }
-}
-
-/**
- * Convert database session to frontend session
- */
-const dbToSession = (dbSession: DbSession, dbMessages: DbMessage[]): Session => ({
-  id: dbSession.id,
-  title: dbSession.title,
-  createdAt: dbSession.created_at,
-  updatedAt: dbSession.updated_at,
-  cwd: dbSession.cwd || undefined,
-  projectId: dbSession.project_id || undefined,
-  model: dbSession.model || undefined,
-  workDir: dbSession.work_dir || undefined,
-  workingFiles: safeJsonParse(dbSession.working_files, undefined),
-  permissionMode: (dbSession.permission_mode as Session['permissionMode']) || undefined,
-  messages: dbMessages.map((m) => ({
-    id: m.id,
-    role: m.role as 'user' | 'assistant',
-    content: m.content,
-    reasoning: m.reasoning || undefined,
-    timestamp: m.created_at,
-    artifacts: safeJsonParse(m.artifacts, undefined),
-    tool_calls: safeJsonParse(m.tool_calls, undefined),
-    token_usage: safeJsonParse(m.token_usage, undefined),
-  })),
-});
-
-/**
- * Convert frontend session to database session
- */
-const sessionToDb = (session: Session): DbSession => ({
-  id: session.id,
-  title: session.title,
-  created_at: session.createdAt,
-  updated_at: session.updatedAt,
-  cwd: session.cwd || null,
-  project_id: session.projectId || null,
-  model: session.model || null,
-  work_dir: session.workDir || null,
-  working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
-  permission_mode: session.permissionMode || null,
-});
-
 async function ensureSessionWorkDir(
   sessionId: string,
   set: (updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)) => void,
@@ -349,100 +269,6 @@ async function ensureSessionWorkDir(
   }
   return null;
 }
-
-/**
- * Convert frontend message to database message
- */
-const messageToDb = (message: Message, sessionId: string): DbMessage => ({
-  id: message.id,
-  session_id: sessionId,
-  role: message.role,
-  content: message.content,
-  reasoning: message.reasoning || null,
-  artifacts: message.artifacts ? JSON.stringify(message.artifacts) : null,
-  tool_calls: message.tool_calls ? JSON.stringify(message.tool_calls) : null,
-  token_usage: message.token_usage ? JSON.stringify(message.token_usage) : null,
-  created_at: message.timestamp,
-});
-
-/**
- * Convert database project to frontend project
- */
-const dbToProject = (dbProject: DbProject): Project => ({
-  id: dbProject.id,
-  name: dbProject.name,
-  createdAt: dbProject.created_at,
-  updatedAt: dbProject.updated_at,
-  workDir: dbProject.work_dir || undefined,   // NEW
-});
-
-/**
- * Convert frontend project to database project
- */
-const projectToDb = (project: Project): DbProject => ({
-  id: project.id,
-  name: project.name,
-  created_at: project.createdAt,
-  updated_at: project.updatedAt,
-  work_dir: project.workDir,                  // NEW
-});
-
-/**
- * Parse <think>...</think> tags from content
- * Returns { content: string (without think tags), reasoning: string | undefined }
- */
-const parseThinkContent = (rawContent: string): { content: string; reasoning?: string } => {
-  const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
-  const thinkingParts: string[] = [];
-  let cleanContent = rawContent;
-
-  let match;
-  while ((match = thinkRegex.exec(rawContent)) !== null) {
-    thinkingParts.push(match[1].trim());
-  }
-
-  // Remove all complete <think>...</think> blocks from content
-  cleanContent = rawContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-  // Handle incomplete thinking (still streaming) - remove partial <think> at the end
-  // e.g. content ends with "<think>some reasoning still coming..."
-  const partialThink = cleanContent.match(/<think>[\s\S]*$/);
-  if (partialThink) {
-    cleanContent = cleanContent.replace(/<think>[\s\S]*$/, '').trim();
-  }
-
-  // Strip orphaned </think> closing tags that have no matching <think> opener.
-  // This happens when a previous streaming chunk already consumed the <think> block
-  // but a stray </think> token arrives in a subsequent chunk.
-  cleanContent = cleanContent.replace(/<\/think>/g, '').trim();
-
-  // For MiniMax/other providers, a chunk can contain one or more complete <think>
-  // blocks. Preserve them in order so the UI can collapse them into one bubble.
-  return {
-    content: cleanContent,
-    reasoning: mergeReasoningParts(...thinkingParts),
-  };
-};
-
-/**
- * Merge multiple reasoning fragments into a single display string.
- *
- * This keeps the fragments in arrival order, removes empty entries, and de-dupes
- * identical blocks so repeated finalization doesn't duplicate the bubble text.
- */
-const mergeReasoningParts = (...parts: Array<string | undefined | null>): string | undefined => {
-  const merged: string[] = [];
-
-  for (const part of parts) {
-    const normalized = part?.trim();
-    if (!normalized) continue;
-    if (!merged.includes(normalized)) {
-      merged.push(normalized);
-    }
-  }
-
-  return merged.length > 0 ? merged.join('\n\n') : undefined;
-};
 
 /**
  * Remove unresolved tool_calls from the last assistant message of a session.
@@ -497,102 +323,6 @@ async function scrubDanglingToolCalls(
   } catch (error) {
     console.error('Failed to scrub dangling tool_calls from database:', error);
   }
-}
-
-const parseToolResultMessage = (message: Message): { toolCallId: string; result: string } | null => {
-  if (message.role !== 'user' || !message.content.startsWith('__TOOL_RESULT__:')) {
-    return null;
-  }
-
-  const match = message.content.match(/^__TOOL_RESULT__:([^:]+):([\s\S]*)$/);
-  if (!match) return null;
-
-  return {
-    toolCallId: match[1],
-    result: match[2],
-  };
-};
-
-/**
- * Build API-safe messages for Rust.
- *
- * OpenAI-compatible providers are strict: if an assistant message contains
- * `tool_calls`, it must be followed immediately by matching tool result messages.
- * If the history is malformed, drop the entire broken block rather than sending
- * orphaned `tool_result` messages that trigger 400 errors.
- */
-function buildApiMessages(messages: Message[]) {
-  const apiMessages: Array<{
-    role: 'user' | 'assistant' | 'system';
-    content: string;
-    tool_calls?: Array<{ tool_call_id: string; name: string; arguments: string }>;
-    tool_call_id?: string;
-  }> = [];
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-
-    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-      const resultMessages: Array<{ message: Message; parsed: { toolCallId: string; result: string } }> = [];
-      let cursor = i + 1;
-
-      while (cursor < messages.length) {
-        const parsed = parseToolResultMessage(messages[cursor]);
-        if (!parsed) break;
-        resultMessages.push({ message: messages[cursor], parsed });
-        cursor += 1;
-      }
-
-      const resultById = new Map(resultMessages.map(({ parsed }) => [parsed.toolCallId, parsed.result]));
-      const expectedIds = msg.tool_calls.map((tc) => tc.id);
-      const allExpectedPresent = expectedIds.every((id) => resultById.has(id));
-      const noExtraResults = resultMessages.length === expectedIds.length
-        && resultMessages.every(({ parsed }) => expectedIds.includes(parsed.toolCallId));
-
-      if (!allExpectedPresent || !noExtraResults) {
-        console.warn('[buildApiMessages] Dropping malformed tool-call block before API request:', {
-          assistantToolCallIds: expectedIds,
-          toolResultIds: resultMessages.map(({ parsed }) => parsed.toolCallId),
-        });
-        i = cursor - 1;
-        continue;
-      }
-
-      apiMessages.push({
-        role: 'assistant',
-        content: msg.content || '',
-        tool_calls: msg.tool_calls.map((tc) => ({
-          tool_call_id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments,
-        })),
-      });
-
-      for (const toolCall of msg.tool_calls) {
-        apiMessages.push({
-          role: 'user',
-          content: `__TOOL_RESULT__:${toolCall.id}:${sanitizeToolResultForModel(toolCall.name, resultById.get(toolCall.id) ?? '')}`,
-        });
-      }
-
-      i = cursor - 1;
-      continue;
-    }
-
-    const parsedToolResult = parseToolResultMessage(msg);
-    if (parsedToolResult) {
-      console.warn('[buildApiMessages] Skipping orphan tool result before API request:', parsedToolResult.toolCallId);
-      continue;
-    }
-
-    apiMessages.push({
-      role: msg.role as 'user' | 'assistant' | 'system',
-      content: msg.content,
-      ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
-    });
-  }
-
-  return apiMessages;
 }
 
 /**
@@ -1527,7 +1257,7 @@ export const useChatStore = create<ChatState>()(
         const engine = runChatTurn(activeSessionId, apiMessages, systemPrompt, sessionWorkDir, options?.allowBrowserTools || false);
         
         const uiStore = useUIStore.getState();
-        let tokenUsageResult: any = undefined;
+        let tokenUsageResult: TokenUsage | undefined = undefined;
 
         for await (const chunk of engine) {
           if (chunk.type === 'text_delta') {
@@ -1830,7 +1560,7 @@ export const useChatStore = create<ChatState>()(
                           runInBackground: true,
                           model: args.model,
                         });
-                        (runtimeAgent as any)._bgAgentId = bgAgentId;
+                        runtimeAgent._bgAgentId = bgAgentId;
                         toolResultContent = `Teammate ${args.name} spawned in team ${args.team_name} (runtime ID: ${runtimeAgent.id}). Task assigned: ${runtimeTask.id}`;
                       } else if (args.run_in_background) {
                         const { runAgentBackground } = await import('../services/multiagent/subagent');
@@ -2457,7 +2187,7 @@ export const useChatStore = create<ChatState>()(
 
       // Delete from database first; only update UI state when persistence succeeds.
       try {
-        await invoke('db_delete_session', { sessionId });
+        await safeInvoke('db_delete_session', { sessionId });
       } catch (error) {
         console.error('Failed to delete session from database:', error);
         uiStore.addNotification('error', 'Delete failed: unable to remove conversation from database', sessionId);
@@ -2465,14 +2195,14 @@ export const useChatStore = create<ChatState>()(
       }
 
       try {
-        await invoke<boolean>('delete_app_chat_dir', { sessionId });
+        await safeInvokeOrNull<boolean>('delete_app_chat_dir', { sessionId });
       } catch (error) {
         console.warn('Failed to delete app chat directory:', error);
       }
 
       if (sessionWorkDir) {
         try {
-          await invoke<boolean>('delete_session_work_dir', { path: sessionWorkDir });
+          await safeInvokeOrNull<boolean>('delete_session_work_dir', { path: sessionWorkDir });
         } catch (error) {
           console.warn('Failed to delete session work directory:', error);
           uiStore.addNotification('warning', 'Conversation deleted, but folder cleanup failed', sessionId);
@@ -2514,12 +2244,12 @@ export const useChatStore = create<ChatState>()(
       // Delete from database first and track succeeded IDs.
       for (const sessionId of sessionIds) {
         try {
-          await invoke('db_delete_session', { sessionId });
+          await safeInvoke('db_delete_session', { sessionId });
           deletedSessionIds.push(sessionId);
           console.log(`🗑️ Deleted session from DB: ${sessionId}`);
 
           try {
-            await invoke<boolean>('delete_app_chat_dir', { sessionId });
+            await safeInvokeOrNull<boolean>('delete_app_chat_dir', { sessionId });
           } catch (error) {
             workDirDeleteErrors++;
             console.warn(`⚠️ Failed to delete app chat directory for ${sessionId}:`, error);
@@ -2528,7 +2258,7 @@ export const useChatStore = create<ChatState>()(
           const sessionWorkDir = get().sessions.find((s) => s.id === sessionId)?.workDir;
           if (sessionWorkDir) {
             try {
-              await invoke<boolean>('delete_session_work_dir', { path: sessionWorkDir });
+              await safeInvokeOrNull<boolean>('delete_session_work_dir', { path: sessionWorkDir });
             } catch (error) {
               workDirDeleteErrors++;
               console.warn(`⚠️ Failed to delete work directory for ${sessionId}:`, error);
@@ -2593,7 +2323,7 @@ export const useChatStore = create<ChatState>()(
       if (session) {
         const updatedSession = { ...session, cwd, workDir: cwd, updatedAt: Date.now() };
         try {
-          await invoke('db_save_session', { session: sessionToDb(updatedSession) });
+          await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
         } catch (error) {
           console.error('Failed to update session cwd in database:', error);
         }

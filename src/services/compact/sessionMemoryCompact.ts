@@ -8,7 +8,8 @@
  * - restored-src/src/services/compact/sessionMemoryCompact.ts
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvoke } from '../../utils/safeInvoke';
+import { createLogger } from '../../utils/logger';
 import type { CompactibleMessage } from '../../types/compact';
 import type { Message } from '../../types/chat';
 import { getCompactConfig } from './config';
@@ -19,6 +20,8 @@ import {
   initSessionMemory,
 } from './sessionMemory';
 import { estimateMessagesTokens, estimateMessageTokens } from '../tokens/tokenEstimator';
+
+const log = createLogger('SMCompact');
 
 // ============================================================================
 // 配置
@@ -101,11 +104,11 @@ export async function trySessionMemoryCompact(
   // 2. 检查 session memory 是否存在且非空
   const sessionMemoryContent = await getEffectiveSessionMemory(workDir);
   if (sessionMemoryContent === null) {
-    console.log('[SM Compact] No session memory file, skipping');
+    log.info('No session memory file, skipping');
     return { did_compact: false };
   }
   if (sessionMemoryContent === '') {
-    console.log('[SM Compact] Session memory is empty, skipping');
+    log.info('Session memory is empty, skipping');
     return { did_compact: false };
   }
   
@@ -140,11 +143,11 @@ export async function trySessionMemoryCompact(
     
     // 7. 删除被压缩的消息（SQLite）
     if (idsToDelete.length > 0) {
-      await invoke('delete_messages_by_ids', { messageIds: idsToDelete });
+      await safeInvoke('delete_messages_by_ids', { messageIds: idsToDelete });
     }
     
     // 8. 保存 boundary 消息到 SQLite
-    await invoke('save_compact_boundary', {
+    await safeInvoke('save_compact_boundary', {
       sessionId,
       boundary: {
         id: boundary.id,
@@ -168,7 +171,7 @@ export async function trySessionMemoryCompact(
       if (workDir) setSessionMemoryState(workDir, state);
     }
     
-    console.log('[SM Compact] Success:', {
+    log.info('Success:', {
       pre_tokens: totalTokens,
       post_tokens: boundary.post_compact_token_count,
       deleted_count: idsToDelete.length,
@@ -183,7 +186,7 @@ export async function trySessionMemoryCompact(
     
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    console.error('[SM Compact] Error:', errMsg);
+    log.error('Error:', errMsg);
     return { did_compact: false, error: errMsg };
   }
 }

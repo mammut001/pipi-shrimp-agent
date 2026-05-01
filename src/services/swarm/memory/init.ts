@@ -5,7 +5,7 @@
  * Team Memory and Agent Memory when teams/agents are created.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { safeInvokeOrNull } from '../../../utils/safeInvoke';
 import { getMemoryDir } from '../../memory/memoryPaths';
 import type { AgentMemory, TeamMemory } from '../types';
 import { buildTeamMemoryTemplate } from './teamMemory';
@@ -20,14 +20,14 @@ export async function initTeamMemory(teamId: string, baseDir: string): Promise<T
   const topicDir = `${memoryDir}/topic-memories`;
 
   try {
-    await invoke('create_directory', { path: topicDir });
+    await safeInvokeOrNull('create_directory', { path: topicDir });
   } catch {
     // directory may already exist
   }
 
   const template = buildTeamMemoryTemplate(memoryDir);
   try {
-    await invoke('write_file', { path: `${memoryDir}/MEMORY.md`, content: template });
+    await safeInvokeOrNull('write_file', { path: `${memoryDir}/MEMORY.md`, content: template });
   } catch (e) {
     console.error('[SwarmMemory] Failed to write team MEMORY.md:', e);
   }
@@ -48,14 +48,14 @@ export async function initAgentMemory(
   const topicDir = `${memoryDir}/topic-memories`;
 
   try {
-    await invoke('create_directory', { path: topicDir });
+    await safeInvokeOrNull('create_directory', { path: topicDir });
   } catch {
     // directory may already exist
   }
 
   const template = buildAgentMemoryTemplate(memoryDir);
   try {
-    await invoke('write_file', { path: `${memoryDir}/MEMORY.md`, content: template });
+    await safeInvokeOrNull('write_file', { path: `${memoryDir}/MEMORY.md`, content: template });
   } catch (e) {
     console.error('[SwarmMemory] Failed to write agent MEMORY.md:', e);
   }
