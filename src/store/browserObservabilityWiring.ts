@@ -1,4 +1,5 @@
 import type { BrowserInspectionResult, LogEntry } from '@/types/browser';
+import type { BrowserFailureSnapshot } from '@/types/browser';
 import type { BrowserInteractiveElement, BrowserPageState } from '@/types/browserPageState';
 import type {
   BrowserBackendEvent,
@@ -11,6 +12,7 @@ import { isBrowserPageStateV2Enabled } from '@/utils/browserFeatureFlags';
 import { getBrowserObservabilitySnapshot } from '@/utils/browserObservabilityClient';
 import { getBrowserPageState } from '@/utils/browserPageStateClient';
 import { getBrowserElementLabel, getBrowserElementStatus } from '@/utils/browserPageStateModel';
+import { safeInvoke } from '@/utils/safeInvoke';
 
 import { useBrowserAgentStore } from './browserAgentStore';
 import { useBrowserObservabilityStore } from './browserObservabilityStore';
@@ -24,6 +26,8 @@ let lastBackendPageStateError: string | null = null;
 let backendObservabilitySync: Promise<void> | null = null;
 let lastBackendObservabilityError: string | null = null;
 let lastBackendEventSequence = 0;
+let backendFailureSync: Promise<void> | null = null;
+let lastBackendFailureError: string | null = null;
 
 const simpleHash = (value: string): string => {
   let hash = 0;
@@ -468,6 +472,10 @@ const syncBackendObservability = async (reason: 'setup' | 'navigation' | 'browse
         lastBackendEventSequence = Math.max(lastBackendEventSequence, event.sequence);
         ingestBackendEvent(event);
       });
+
+      if (nextEvents.some((event) => event.kind === 'action_failed')) {
+        await syncBrowserFailureSnapshots('action_failed');
+      }
     } catch (error) {
       if (isConnectionGoneError(error)) {
         return;
@@ -490,6 +498,40 @@ const syncBackendObservability = async (reason: 'setup' | 'navigation' | 'browse
   })();
 
   return backendObservabilitySync;
+};
+
+const syncBrowserFailureSnapshots = async (reason: 'setup' | 'status' | 'action_failed') => {
+  if (backendFailureSync) {
+    return backendFailureSync;
+  }
+
+  backendFailureSync = (async () => {
+    try {
+      const snapshots = await safeInvoke<BrowserFailureSnapshot[]>('list_browser_failures', undefined, {
+        source: 'BrowserFailureRecovery',
+        silent: true,
+        skipLogging: true,
+      });
+      lastBackendFailureError = null;
+      useBrowserObservabilityStore.getState().syncFailureSnapshots(snapshots);
+    } catch (error) {
+      const message = String(error);
+      if (message !== lastBackendFailureError) {
+        lastBackendFailureError = message;
+        useBrowserObservabilityStore.getState().recordEvent({
+          kind: 'health_changed',
+          title: 'Failure snapshot sync failed',
+          detail: `${reason}: ${message}`,
+          level: 'warning',
+          source: 'backend',
+        });
+      }
+    } finally {
+      backendFailureSync = null;
+    }
+  })();
+
+  return backendFailureSync;
 };
 
 const syncSessionFromStores = () => {
@@ -534,6 +576,7 @@ export const setupBrowserObservabilityWiring = (): (() => void) => {
   observability.seedMockData();
 
   void useCdpStore.getState().syncConnectionState();
+  void syncBrowserFailureSnapshots('setup');
   syncSessionFromStores();
   if (useCdpStore.getState().status === 'connected') {
     void syncBackendObservability('setup');
@@ -616,6 +659,7 @@ export const setupBrowserObservabilityWiring = (): (() => void) => {
           status: 'failed',
           source: 'derived',
         });
+        void syncBrowserFailureSnapshots('status');
       }
     }
 

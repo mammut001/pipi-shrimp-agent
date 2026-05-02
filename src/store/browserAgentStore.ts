@@ -30,6 +30,11 @@ let _completionTimerTaskId: string | null = null;
 let _errorTimerId: ReturnType<typeof setTimeout> | null = null;
 let _errorTimerTaskId: string | null = null;
 import { useSettingsStore } from './settingsStore';
+import {
+  registerDiagnosticsTask,
+  registerDiagnosticsTaskCancel,
+  updateDiagnosticsTask,
+} from './taskRegistryStore';
 import { useUIStore } from './uiStore';
 import {
   openEmbeddedSurface,
@@ -284,6 +289,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         if (success) {
           addLog('success', t('browserAgent.log.taskCompleted').replace('{url}', final_url));
           const completedTaskId = get().pendingTask?.id || null;
+          if (completedTaskId) {
+            updateDiagnosticsTask(completedTaskId, {
+              state: 'completed',
+              cancelable: false,
+              detail: result || final_url,
+            });
+          }
           set(() => ({
             status: 'completed',
             lastCompletedTaskId: completedTaskId,
@@ -306,6 +318,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         } else {
           addLog('error', t('browserAgent.log.taskFailed').replace('{error}', result));
           const failedTaskId = get().pendingTask?.id || null;
+          if (failedTaskId) {
+            updateDiagnosticsTask(failedTaskId, {
+              state: 'failed',
+              cancelable: false,
+              error: result,
+            });
+          }
           set({ status: 'error', error: result, lastTaskResult: null });
           // Also reset error state after 5s so next task isn't blocked
           clearPendingTimers(failedTaskId);
@@ -688,11 +707,45 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
 
   executeTask: async (task: string) => {
     const { isWindowOpen, addLog, status, authState, inspection } = get();
+    let currentTask = get().pendingTask;
+
+    if (!currentTask) {
+      currentTask = {
+        id: `browser:${Date.now()}`,
+        connectorType: get().connectorType,
+        siteProfileId: get().siteProfileId || 'manual-browser',
+        targetUrl: get().currentUrl || 'embedded-surface',
+        userIntent: task,
+        executionPrompt: task,
+        requiresLogin: false,
+        authPolicy: 'none',
+        executionMode: 'pageagent',
+        allowedControlMode: get().mode,
+      };
+      get().bindTask(currentTask);
+    }
+
+    registerDiagnosticsTask({
+      id: currentTask.id,
+      kind: 'browser',
+      source: currentTask.targetUrl || get().currentUrl || 'browser',
+      state: 'created',
+      cancelable: true,
+      title: task.slice(0, 120),
+    });
+    registerDiagnosticsTaskCancel(currentTask.id, () => {
+      get().stopTask();
+    });
 
     if (!isWindowOpen) {
       addLog('error', t('browserAgent.log.windowNotOpen'));
       // Set error so startBrowserStateListener can finalize the progress bubble
       set({ status: 'error', error: t('browserAgent.log.windowNotOpen') });
+      updateDiagnosticsTask(currentTask.id, {
+        state: 'failed',
+        cancelable: false,
+        error: t('browserAgent.log.windowNotOpen'),
+      });
       return;
     }
 
@@ -700,6 +753,11 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     if (status !== 'ready_for_agent') {
       addLog('error', t('browserAgent.log.statusNotAllowed').replace('{status}', status));
       set({ status: 'error', error: t('browserAgent.log.statusError').replace('{status}', status) });
+      updateDiagnosticsTask(currentTask.id, {
+        state: 'failed',
+        cancelable: false,
+        error: t('browserAgent.log.statusError').replace('{status}', status),
+      });
       return;
     }
 
@@ -712,6 +770,11 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       if (blockedStates.includes(authState)) {
         addLog('error', t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState));
         set({ status: 'error', error: t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState) });
+        updateDiagnosticsTask(currentTask.id, {
+          state: 'failed',
+          cancelable: false,
+          error: t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState),
+        });
         return;
       }
       // If inspection explicitly failed (safeForAgent=false with known block reason), block
@@ -719,6 +782,11 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       if (inspection && !inspection.safeForAgent && authState !== 'unknown') {
         addLog('error', t('browserAgent.log.pageNotSafe'));
         set({ status: 'error', error: t('browserAgent.log.pageNotSafe') });
+        updateDiagnosticsTask(currentTask.id, {
+          state: 'failed',
+          cancelable: false,
+          error: t('browserAgent.log.pageNotSafe'),
+        });
         return;
       }
     }
@@ -726,12 +794,22 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     // Create abort controller for this task
     const controller = new AbortController();
     set({ _abortController: controller, status: 'running' });
+    updateDiagnosticsTask(currentTask.id, {
+      state: 'running',
+      cancelable: true,
+      detail: task.slice(0, 240),
+    });
 
     try {
       const config = useSettingsStore.getState().getActiveConfig();
       if (!config?.apiKey) {
         addLog('error', t('browserAgent.log.configureApiFirst'));
         set({ status: 'idle', _abortController: null });
+        updateDiagnosticsTask(currentTask.id, {
+          state: 'failed',
+          cancelable: false,
+          error: t('browserAgent.log.configureApiFirst'),
+        });
         return;
       }
 
@@ -747,6 +825,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         });
         addLog('success', t('browserAgent.log.cdpModeComplete').replace('{result}', resultText));
         const completedTaskId = get().pendingTask?.id || null;
+        if (completedTaskId) {
+          updateDiagnosticsTask(completedTaskId, {
+            state: 'completed',
+            cancelable: false,
+            detail: resultText || null,
+          });
+        }
         set({ status: 'completed', lastCompletedTaskId: completedTaskId, lastTaskResult: resultText || null });
         return;
       }
@@ -778,11 +863,20 @@ Complete the task efficiently and call "done" when finished.`;
       if ((error as Error).name === 'AbortError') {
         addLog('info', t('browserAgent.log.taskStopped'));
         set({ status: 'idle', _abortController: null });
+        updateDiagnosticsTask(currentTask.id, {
+          state: 'cancelled',
+          cancelable: false,
+        });
         return;
       }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       addLog('error', t('browserAgent.log.executionFailed').replace('{error}', errorMessage));
       set({ status: 'error', error: errorMessage, _abortController: null });
+      updateDiagnosticsTask(currentTask.id, {
+        state: 'failed',
+        cancelable: false,
+        error: errorMessage,
+      });
     }
   },
 
@@ -800,6 +894,17 @@ Complete the task efficiently and call "done" when finished.`;
 
     // Bind the task and clear stale result from any previous task
     get().bindTask(envelope);
+    registerDiagnosticsTask({
+      id: envelope.id,
+      kind: 'browser',
+      source: envelope.targetUrl,
+      state: 'created',
+      cancelable: true,
+      title: envelope.executionPrompt.slice(0, 120),
+    });
+    registerDiagnosticsTaskCancel(envelope.id, () => {
+      get().stopTask();
+    });
     set({ lastTaskResult: null });
 
     // Tiered dispatch: explicitly select execution engine based on executionMode
@@ -839,6 +944,11 @@ Complete the task efficiently and call "done" when finished.`;
     if (status === 'blocked_auth' || status === 'blocked_captcha' || status === 'blocked_manual_step') {
       get().addLog('warning', t('browserAgent.log.taskBlocked'));
       set({ status: 'error', error: t('browserAgent.log.taskBlocked') });
+      updateDiagnosticsTask(envelope.id, {
+        state: 'failed',
+        cancelable: false,
+        error: t('browserAgent.log.taskBlocked'),
+      });
       return;
     }
 
@@ -927,11 +1037,18 @@ Complete the task efficiently and call "done" when finished.`;
 
   stopTask: () => {
     const { addLog, _abortController } = get();
+    const taskId = get().pendingTask?.id;
 
     if (_abortController) {
       _abortController.abort();
       set({ _abortController: null });
       addLog('info', t('browserAgent.log.stoppingTask'));
+      if (taskId) {
+        updateDiagnosticsTask(taskId, {
+          state: 'cancelled',
+          cancelable: false,
+        });
+      }
     } else {
       addLog('info', t('browserAgent.log.noRunningTask'));
     }

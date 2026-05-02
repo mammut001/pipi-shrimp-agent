@@ -17,6 +17,10 @@ jest.mock('../utils/browserObservabilityClient', () => ({
   getBrowserObservabilitySnapshot: jest.fn(),
 }));
 
+jest.mock('../utils/safeInvoke', () => ({
+  safeInvoke: jest.fn(),
+}));
+
 import type { BrowserConnectionStatePayload } from '@/store/cdpStore';
 import type { BrowserPageState } from '@/types/browserPageState';
 
@@ -42,6 +46,7 @@ let setupBrowserObservabilityWiring: typeof import('@/store/browserObservability
 let useCdpStore: typeof import('@/store/cdpStore').useCdpStore;
 let getBrowserPageStateMock: jest.MockedFunction<typeof import('@/utils/browserPageStateClient').getBrowserPageState>;
 let getBrowserObservabilitySnapshotMock: jest.MockedFunction<typeof import('@/utils/browserObservabilityClient').getBrowserObservabilitySnapshot>;
+let safeInvokeMock: jest.MockedFunction<typeof import('@/utils/safeInvoke').safeInvoke>;
 
 const connectionState: BrowserConnectionStatePayload = {
   connected: true,
@@ -112,6 +117,7 @@ describe('browserObservabilityWiring', () => {
     ({ useCdpStore } = await import('@/store/cdpStore'));
     ({ getBrowserPageState: getBrowserPageStateMock } = await import('@/utils/browserPageStateClient'));
     ({ getBrowserObservabilitySnapshot: getBrowserObservabilitySnapshotMock } = await import('@/utils/browserObservabilityClient'));
+    ({ safeInvoke: safeInvokeMock } = await import('@/utils/safeInvoke'));
   });
 
   beforeEach(() => {
@@ -246,6 +252,18 @@ describe('browserObservabilityWiring', () => {
       last_activity_at_ms: Date.now(),
       idle_timeout_ms: 300_000,
     });
+    safeInvokeMock.mockReset();
+    safeInvokeMock.mockResolvedValue([
+      {
+        taskId: 'failure-1',
+        failedAction: 'click',
+        url: 'https://example.com/dashboard',
+        title: 'Dashboard',
+        errorKind: 'browser.execution_failed',
+        errorMessage: 'button went stale',
+        ts: Date.now(),
+      },
+    ]);
 
     useBrowserAgentStore.setState({
       status: 'idle',
@@ -313,6 +331,26 @@ describe('browserObservabilityWiring', () => {
       lastSyncedAt: Date.now(),
       syncConnectionState: jest.fn(async () => connectionState),
     });
+  });
+
+  it('hydrates failure snapshots when browser status transitions to error', async () => {
+    const cleanup = setupBrowserObservabilityWiring();
+    await flushPromises();
+
+    useBrowserAgentStore.setState({
+      status: 'error',
+      error: 'button went stale',
+    });
+
+    await flushPromises();
+    const state = useBrowserObservabilityStore.getState();
+
+    expect(safeInvokeMock).toHaveBeenCalledWith('list_browser_failures', undefined, expect.objectContaining({
+      source: 'BrowserFailureRecovery',
+    }));
+    expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
+
+    cleanup();
   });
 
   it('hydrates observability snapshots from backend PageState when CDP is connected', async () => {

@@ -6,3 +6,4 @@ export { Chat } from './Chat';
 export { Settings } from './Settings';
 export { Workflow } from './Workflow';
 export { Skill } from './Skill';
+export { Diagnostics } from './Diagnostics';

@@ -6,15 +6,23 @@
  * Controls like Current Task and Logs are in the right AgentPanel.
  */
 
-import { useBrowserAgentStore } from '@/store';
+import { useBrowserAgentStore, useBrowserObservabilityStore } from '@/store';
+import { BrowserFailureRecovery } from './BrowserFailureRecovery';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
 
 /**
  * BrowserWorkspacePane component
  */
 export function BrowserWorkspacePane() {
+  const hasFailureSnapshot = useBrowserObservabilityStore((state) => Boolean(state.activeFailureSnapshot));
+
   return (
     <div className="flex flex-col h-full">
+      {hasFailureSnapshot && (
+        <div className="p-3 border-b border-gray-200 bg-white">
+          <BrowserFailureRecovery />
+        </div>
+      )}
       <div className="flex-1 overflow-hidden">
         <BrowserSurfaceHost onCollapse={() => {
           useBrowserAgentStore.getState().collapseBrowser();

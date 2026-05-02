@@ -14,6 +14,8 @@ use crate::utils::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Window};
 
+use super::http::request_builder;
+use super::http::stream::split_think_content;
 use super::message::{Artifact, ChatResponse, Message, ToolCall, UsageInfo};
 use super::provider::{ApiFormat, ProviderId, ResolvedProviderConfig};
 
@@ -65,10 +67,16 @@ pub struct StreamContext {
     pub usage: UsageInfo,
     /// Model name
     pub model: String,
+    /// Session id for frontend event routing
+    pub session_id: Option<String>,
+    /// Whether an inline <think> block is currently open
+    pub in_think_tag: bool,
+    /// Number of tool calls already emitted to the frontend
+    pub emitted_tool_calls: usize,
 }
 
 impl StreamContext {
-    pub fn new(estimated_input: i32, window: Option<Window>) -> Self {
+    pub fn new(estimated_input: i32, window: Option<Window>, session_id: Option<String>) -> Self {
         Self {
             estimated_input,
             window,
@@ -81,14 +89,74 @@ impl StreamContext {
                 output_tokens: 0,
             },
             model: String::new(),
+            session_id,
+            in_think_tag: false,
+            emitted_tool_calls: 0,
         }
     }
 
-    /// Emit an event to the frontend
-    pub fn emit(&self, event_type: &str, payload: &str) {
+    pub fn emit_token(&self, content: &str) {
         if let Some(ref w) = self.window {
-            let _ = w.emit(event_type, payload);
+            let payload = serde_json::json!({
+                "session_id": self.session_id.clone().unwrap_or_default(),
+                "content": content,
+            });
+            let _ = w.emit("claude-token", payload);
         }
+    }
+
+    pub fn emit_reasoning(&self, content: &str) {
+        if let Some(ref w) = self.window {
+            let payload = serde_json::json!({
+                "session_id": self.session_id.clone().unwrap_or_default(),
+                "content": content,
+            });
+            let _ = w.emit("claude-reasoning", payload);
+        }
+    }
+
+    pub fn emit_tool_use(&self, tool_call_id: &str, name: &str, arguments: &str) {
+        if let Some(ref w) = self.window {
+            let payload = serde_json::json!({
+                "session_id": self.session_id.clone().unwrap_or_default(),
+                "tool_call_id": tool_call_id,
+                "name": name,
+                "arguments": arguments,
+            });
+            let _ = w.emit("claude-tool-use", payload);
+        }
+    }
+
+    pub fn emit_usage(&self) {
+        if let Some(ref w) = self.window {
+            let payload = serde_json::json!({
+                "session_id": self.session_id.clone().unwrap_or_default(),
+                "input_tokens": self.usage.input_tokens,
+                "output_tokens": self.usage.output_tokens,
+            });
+            let _ = w.emit("claude-usage", payload);
+        }
+    }
+
+    pub fn emit_pending_tool_calls(&mut self) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+        let pending_calls: Vec<ToolCall> = self.tool_calls[self.emitted_tool_calls..].to_vec();
+
+        for tool_call in &pending_calls {
+            self.emit_tool_use(&tool_call.tool_call_id, &tool_call.name, &tool_call.arguments);
+            events.push(StreamEvent::ToolCall {
+                id: tool_call.tool_call_id.clone(),
+                name: tool_call.name.clone(),
+                arguments: tool_call.arguments.clone(),
+            });
+            events.push(StreamEvent::ToolCallComplete {
+                id: tool_call.tool_call_id.clone(),
+                name: tool_call.name.clone(),
+            });
+        }
+
+        self.emitted_tool_calls = self.tool_calls.len();
+        events
     }
 }
 
@@ -112,6 +180,7 @@ pub trait ProviderAdapter: Send + Sync {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
+        no_tools: bool,
         allow_browser_tools: bool,
     ) -> serde_json::Value;
 
@@ -121,6 +190,7 @@ pub trait ProviderAdapter: Send + Sync {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
+        no_tools: bool,
         allow_browser_tools: bool,
     ) -> serde_json::Value;
 
@@ -173,46 +243,7 @@ pub trait ProviderAdapter: Send + Sync {
 
 /// Detect artifacts in content
 fn detect_artifacts(content: &str) -> Vec<Artifact> {
-    let mut artifacts = Vec::new();
-
-    // Simple pattern detection for code blocks, mermaid, etc.
-    // This is a simplified version - the full implementation is in http_client.rs
-
-    // Detect HTML artifacts
-    if content.contains("<html") || content.contains("<!DOCTYPE") {
-        if let Some(start) = content.find("<html") {
-            let end = content[start..]
-                .find("</html>")
-                .map(|i| start + i + 7)
-                .unwrap_or(content.len());
-            let html = &content[start..end];
-            if html.len() > 100 {
-                artifacts.push(Artifact {
-                    artifact_type: "html".to_string(),
-                    content: html.to_string(),
-                    title: Some("HTML Document".to_string()),
-                    language: Some("html".to_string()),
-                });
-            }
-        }
-    }
-
-    // Detect mermaid diagrams
-    let mermaid_re = regex::Regex::new(r"```mermaid\s*([\s\S]*?)```").ok();
-    if let Some(re) = mermaid_re {
-        for cap in re.captures_iter(content) {
-            if let Some(code) = cap.get(1) {
-                artifacts.push(Artifact {
-                    artifact_type: "mermaid".to_string(),
-                    content: code.as_str().to_string(),
-                    title: Some("Mermaid Diagram".to_string()),
-                    language: Some("mermaid".to_string()),
-                });
-            }
-        }
-    }
-
-    artifacts
+    request_builder::detect_artifacts(content)
 }
 
 // =============================================================================
@@ -236,24 +267,16 @@ impl ProviderAdapter for AnthropicAdapter {
         ApiFormat::Anthropic
     }
 
-    fn build_url(&self, _config: &ResolvedProviderConfig) -> String {
-        "https://api.anthropic.com/v1/messages".to_string()
+    fn build_url(&self, config: &ResolvedProviderConfig) -> String {
+        request_builder::build_anthropic_url(&config.base_url)
     }
 
     fn build_headers(&self, config: &ResolvedProviderConfig) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-api-key", config.api_key.parse().unwrap());
-        headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
-        headers.insert("content-type", "application/json".parse().unwrap());
-
-        if config.capabilities.supports_thinking {
-            headers.insert(
-                "anthropic-beta",
-                "interleaved-thinking-2025-05-14".parse().unwrap(),
-            );
-        }
-
-        headers
+        request_builder::build_anthropic_headers(
+            &config.api_key,
+            config.capabilities.supports_thinking,
+        )
+        .unwrap_or_default()
     }
 
     fn build_body(
@@ -261,33 +284,17 @@ impl ProviderAdapter for AnthropicAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
+        no_tools: bool,
         allow_browser_tools: bool,
     ) -> serde_json::Value {
-        use super::http_client::{format_messages_for_anthropic, get_tools, merge_system_prompt};
-
-        let max_tokens = self.get_max_tokens(config);
-
-        let mut body = serde_json::json!({
-            "model": config.model,
-            "max_tokens": max_tokens,
-            "stream": false,
-            "messages": format_messages_for_anthropic(messages),
-            "tools": get_tools(allow_browser_tools),
-        });
-
-        // Add system prompt
-        let merged_system = merge_system_prompt(system_prompt, allow_browser_tools);
-        body["system"] = serde_json::json!(merged_system);
-
-        // Add thinking config if supported
-        if config.capabilities.supports_thinking {
-            body["thinking"] = serde_json::json!({
-                "type": "enabled",
-                "budget_tokens": config.capabilities.thinking_budget.unwrap_or(5000)
-            });
-        }
-
-        body
+        request_builder::build_anthropic_body(
+            config,
+            messages,
+            system_prompt,
+            allow_browser_tools,
+            no_tools,
+            false,
+        )
     }
 
     fn build_stream_body(
@@ -295,11 +302,17 @@ impl ProviderAdapter for AnthropicAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
+        no_tools: bool,
         allow_browser_tools: bool,
     ) -> serde_json::Value {
-        let mut body = self.build_body(config, messages, system_prompt, allow_browser_tools);
-        body["stream"] = serde_json::json!(true);
-        body
+        request_builder::build_anthropic_body(
+            config,
+            messages,
+            system_prompt,
+            allow_browser_tools,
+            no_tools,
+            true,
+        )
     }
 
     fn parse_response(
@@ -374,18 +387,24 @@ impl ProviderAdapter for AnthropicAdapter {
         match event_type {
             "content_block_delta" => {
                 if let Some(delta) = json.get("delta") {
-                    // Text delta
-                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
-                        ctx.content.push_str(text);
-                        ctx.emit("claude-token", text);
-                        events.push(StreamEvent::Token(text.to_string()));
-                    }
+                    if delta.get("type").and_then(|v| v.as_str()) == Some("input_json_delta") {
+                        if let Some(arg_text) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                            if let Some(last) = ctx.tool_calls.last_mut() {
+                                last.arguments.push_str(arg_text);
+                            }
+                        }
+                    } else {
+                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                            ctx.content.push_str(text);
+                            ctx.emit_token(text);
+                            events.push(StreamEvent::Token(text.to_string()));
+                        }
 
-                    // Thinking delta
-                    if let Some(thinking) = delta.get("thinking").and_then(|v| v.as_str()) {
-                        ctx.reasoning.push_str(thinking);
-                        ctx.emit("claude-reasoning", thinking);
-                        events.push(StreamEvent::Reasoning(thinking.to_string()));
+                        if let Some(thinking) = delta.get("thinking").and_then(|v| v.as_str()) {
+                            ctx.reasoning.push_str(thinking);
+                            ctx.emit_reasoning(thinking);
+                            events.push(StreamEvent::Reasoning(thinking.to_string()));
+                        }
                     }
                 }
             }
@@ -400,46 +419,16 @@ impl ProviderAdapter for AnthropicAdapter {
                             name: name.clone(),
                             arguments: String::new(),
                         });
-
-                        ctx.emit(
-                            "claude-tool-use",
-                            &serde_json::json!({
-                                "id": id,
-                                "name": name
-                            })
-                            .to_string(),
-                        );
-
-                        events.push(StreamEvent::ToolCall {
-                            id,
-                            name,
-                            arguments: String::new(),
-                        });
                     }
                 }
             }
-            "content_block_delta" => {
-                // Tool input delta
-                if let Some(delta) = json.get("delta") {
-                    if delta.get("type").and_then(|v| v.as_str()) == Some("input_json_delta") {
-                        if let Some(arg_text) = delta.get("partial_json").and_then(|v| v.as_str()) {
-                            if let Some(last) = ctx.tool_calls.last_mut() {
-                                last.arguments.push_str(arg_text);
-                            }
-                        }
-                    }
-                }
+            "content_block_stop" => {
+                events.extend(ctx.emit_pending_tool_calls());
             }
             "message_delta" => {
                 if let Some(usage) = json.get("usage") {
                     ctx.usage.output_tokens = usage["output_tokens"].as_i64().unwrap_or(0) as i32;
-                    ctx.emit(
-                        "claude-usage",
-                        &serde_json::json!({
-                            "output_tokens": ctx.usage.output_tokens
-                        })
-                        .to_string(),
-                    );
+                    ctx.emit_usage();
                 }
             }
             "message_stop" => {
@@ -511,17 +500,11 @@ impl ProviderAdapter for OpenAIAdapter {
     }
 
     fn build_url(&self, config: &ResolvedProviderConfig) -> String {
-        format!("{}/chat/completions", config.base_url.trim_end_matches('/'))
+        request_builder::build_openai_url(config)
     }
 
     fn build_headers(&self, config: &ResolvedProviderConfig) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "Authorization",
-            format!("Bearer {}", config.api_key).parse().unwrap(),
-        );
-        headers.insert("content-type", "application/json".parse().unwrap());
-        headers
+        request_builder::build_openai_headers(&config.api_key).unwrap_or_default()
     }
 
     fn build_body(
@@ -529,48 +512,17 @@ impl ProviderAdapter for OpenAIAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
+        no_tools: bool,
         allow_browser_tools: bool,
     ) -> serde_json::Value {
-        use super::http_client::{
-            convert_tools_to_openai_format, format_messages_for_openai, get_tools,
-        };
-
-        let tools = Some(convert_tools_to_openai_format(&get_tools(
+        request_builder::build_openai_body(
+            config,
+            messages,
+            system_prompt,
             allow_browser_tools,
-        )));
-        let openai_messages = format_messages_for_openai(messages);
-
-        // Build request body
-        let mut body = serde_json::json!({
-            "model": config.model,
-            "messages": openai_messages,
-            "stream": false,
-        });
-
-        if let Some(system) = system_prompt {
-            // Add system message at the front
-            if let Some(msgs) = body["messages"].as_array_mut() {
-                msgs.insert(
-                    0,
-                    serde_json::json!({
-                        "role": "system",
-                        "content": system
-                    }),
-                );
-            }
-        }
-
-        if self.provider == ProviderId::MiniMax || self.provider == ProviderId::Custom {
-            // MiniMax and custom providers typically need tools
-            body["tools"] = serde_json::json!(tools);
-        } else {
-            // OpenAI and others: only add tools if supported
-            if config.capabilities.supports_tool_calls {
-                body["tools"] = serde_json::json!(tools);
-            }
-        }
-
-        body
+            no_tools,
+            false,
+        )
     }
 
     fn build_stream_body(
@@ -578,11 +530,17 @@ impl ProviderAdapter for OpenAIAdapter {
         config: &ResolvedProviderConfig,
         messages: &[Message],
         system_prompt: Option<&str>,
+        no_tools: bool,
         allow_browser_tools: bool,
     ) -> serde_json::Value {
-        let mut body = self.build_body(config, messages, system_prompt, allow_browser_tools);
-        body["stream"] = serde_json::json!(true);
-        body
+        request_builder::build_openai_body(
+            config,
+            messages,
+            system_prompt,
+            allow_browser_tools,
+            no_tools,
+            true,
+        )
     }
 
     fn parse_response(
@@ -682,23 +640,37 @@ impl ProviderAdapter for OpenAIAdapter {
             for choice in choices {
                 // Handle delta content
                 if let Some(delta) = choice.get("delta") {
-                    // Text token
                     if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-                        ctx.content.push_str(text);
-                        ctx.emit("claude-token", text);
-                        events.push(StreamEvent::Token(text.to_string()));
+                        for (segment, is_reasoning) in split_think_content(text, &mut ctx.in_think_tag) {
+                            if segment.is_empty() {
+                                continue;
+                            }
+
+                            if is_reasoning {
+                                ctx.reasoning.push_str(&segment);
+                                ctx.emit_reasoning(&segment);
+                                events.push(StreamEvent::Reasoning(segment));
+                            } else {
+                                ctx.content.push_str(&segment);
+                                ctx.emit_token(&segment);
+                                events.push(StreamEvent::Token(segment));
+                            }
+                        }
                     }
 
-                    // MiniMax/OpenAI reasoning format
-                    if let Some(thinking) = delta.get("thinking").and_then(|v| v.as_str()) {
+                    if let Some(thinking) = delta
+                        .get("thinking")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| delta.get("reasoning_content").and_then(|v| v.as_str()))
+                    {
                         ctx.reasoning.push_str(thinking);
-                        ctx.emit("claude-reasoning", thinking);
+                        ctx.emit_reasoning(thinking);
                         events.push(StreamEvent::Reasoning(thinking.to_string()));
                     }
 
-                    // Tool calls
                     if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                         for tc in tool_calls {
+                            let index = tc.get("index").and_then(|v| v.as_u64()).map(|v| v as usize);
                             let id = tc["id"].as_str().unwrap_or("").to_string();
                             let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
                             let args = tc["function"]["arguments"]
@@ -706,55 +678,53 @@ impl ProviderAdapter for OpenAIAdapter {
                                 .unwrap_or("{}")
                                 .to_string();
 
-                            // Check if this is a continuation
+                            if let Some(index) = index {
+                                while ctx.tool_calls.len() <= index {
+                                    ctx.tool_calls.push(ToolCall {
+                                        tool_call_id: String::new(),
+                                        name: String::new(),
+                                        arguments: String::new(),
+                                    });
+                                }
+
+                                let entry = &mut ctx.tool_calls[index];
+                                if !id.is_empty() {
+                                    entry.tool_call_id = id.clone();
+                                }
+                                if !name.is_empty() {
+                                    entry.name = name.clone();
+                                }
+                                entry.arguments.push_str(&args);
+                                continue;
+                            }
+
                             if let Some(last) = ctx.tool_calls.last_mut() {
-                                if last.tool_call_id == id {
-                                    // Continuation
+                                if id.is_empty() || last.tool_call_id == id {
+                                    if last.name.is_empty() && !name.is_empty() {
+                                        last.name = name.clone();
+                                    }
                                     last.arguments.push_str(&args);
                                     continue;
                                 }
                             }
 
-                            // New tool call
                             ctx.tool_calls.push(ToolCall {
                                 tool_call_id: id.clone(),
                                 name: name.clone(),
                                 arguments: args,
                             });
-
-                            ctx.emit(
-                                "claude-tool-use",
-                                &serde_json::json!({
-                                    "id": id,
-                                    "name": name
-                                })
-                                .to_string(),
-                            );
-
-                            events.push(StreamEvent::ToolCall {
-                                id,
-                                name,
-                                arguments: String::new(),
-                            });
                         }
                     }
                 }
 
-                // Handle finish reason
                 if let Some(finish_reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
                     if finish_reason == "tool_calls" {
-                        for tc in &ctx.tool_calls {
-                            events.push(StreamEvent::ToolCallComplete {
-                                id: tc.tool_call_id.clone(),
-                                name: tc.name.clone(),
-                            });
-                        }
+                        events.extend(ctx.emit_pending_tool_calls());
                     }
                 }
             }
         }
 
-        // Handle usage
         if let Some(usage) = json.get("usage").and_then(|v| v.as_object()) {
             ctx.usage.input_tokens = usage
                 .get("prompt_tokens")
@@ -764,6 +734,7 @@ impl ProviderAdapter for OpenAIAdapter {
                 .get("completion_tokens")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0) as i32;
+            ctx.emit_usage();
         }
 
         Ok(events)

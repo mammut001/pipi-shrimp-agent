@@ -1,18 +1,52 @@
 use crate::database::{
     clear_swarm_snapshots, delete_message, delete_project, delete_session,
-    find_telegram_task_by_source, get_all_projects, get_all_sessions, get_daily_token_stats,
-    get_database_diagnostics, get_messages_for_session, get_model_token_stats, get_monthly_token_stats, get_telegram_binding,
-    get_telegram_runtime_state, get_telegram_task, get_total_token_stats, list_telegram_bindings,
+    export_database_backup_file, find_telegram_task_by_source, get_all_projects,
+    get_all_sessions, get_daily_token_stats, get_data_directory, get_database_diagnostics,
+    get_messages_for_session, get_model_token_stats, get_monthly_token_stats,
+    get_telegram_binding, get_telegram_runtime_state, get_telegram_task,
+    get_total_token_stats, list_database_backups, list_telegram_bindings,
     list_telegram_tasks_by_statuses, list_telegram_tasks_for_chat, load_swarm_snapshot,
-    save_message, save_project, save_session, save_swarm_snapshot, save_telegram_binding,
-    save_telegram_task, save_token_usage, set_telegram_runtime_state, update_project,
-    DailyTokenStats, DbMessage, DbProject, DbSession, DbTelegramBinding, DbTelegramTask,
-    DbDiagnostics, DbTokenUsage, ModelTokenStats,
+    restore_database_from_backup, save_message, save_project, save_session,
+    save_swarm_snapshot, save_telegram_binding, save_telegram_task, save_token_usage,
+    set_telegram_runtime_state, update_project, DailyTokenStats, DbBackupEntry,
+    DbDiagnostics, DbMessage, DbProject, DbSession, DbTelegramBinding, DbTelegramTask,
+    DbTokenUsage, ModelTokenStats,
 };
+use std::path::Path;
 
 #[tauri::command]
 pub fn db_get_diagnostics() -> Result<DbDiagnostics, String> {
     get_database_diagnostics().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn export_database_backup(
+    path: String,
+    backup_path: Option<String>,
+) -> Result<String, String> {
+    export_database_backup_file(
+        Path::new(&path),
+        backup_path.as_deref().map(Path::new),
+    )
+    .map(|exported_path| exported_path.display().to_string())
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_data_directory() -> Result<String, String> {
+    let data_directory = get_data_directory();
+    open::that(&data_directory).map_err(|e| e.to_string())?;
+    Ok(data_directory.display().to_string())
+}
+
+#[tauri::command]
+pub fn list_backups() -> Result<Vec<DbBackupEntry>, String> {
+    list_database_backups().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn restore_from_backup(backup_path: String) -> Result<(), String> {
+    restore_database_from_backup(Path::new(&backup_path)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

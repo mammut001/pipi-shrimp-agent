@@ -585,6 +585,15 @@ export function Sidebar() {
           >
             {t('nav.workflow')}
           </button>
+          <button
+            onClick={() => setCurrentView('diagnostics')}
+            className={`flex-1 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${currentView === 'diagnostics'
+                ? 'bg-white text-gray-900 shadow-md'
+                : 'text-gray-600 hover:text-gray-900'
+              }`}
+          >
+            {t('nav.diagnostics')}
+          </button>
           {/* Chat Multi-select Button */}
           {currentView === 'chat' && (
             <button

@@ -89,7 +89,7 @@ export interface UIState {
   sidebarVisible: boolean;
   settingsOpen: boolean;
   // NOTE: 'browser' is kept only for compatibility and is redirected to 'chat'
-  currentView: 'chat' | 'workflow' | 'skill' | 'browser';
+  currentView: 'chat' | 'workflow' | 'skill' | 'browser' | 'diagnostics';
   currentArtifactId?: string;
   permissionQueue: PermissionRequest[];  // FIFO queue — supports multiple concurrent tool calls
   permissionLedger: PermissionLedgerEntry[];
@@ -144,7 +144,7 @@ export interface UIState {
   /**
   * Set current view. Deprecated browser requests are redirected to chat.
    */
-  setCurrentView: (view: 'chat' | 'workflow' | 'skill' | 'browser') => void;
+  setCurrentView: (view: 'chat' | 'workflow' | 'skill' | 'browser' | 'diagnostics') => void;
 
   /**
    * Toggle sidebar visibility

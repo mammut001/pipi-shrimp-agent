@@ -18,6 +18,7 @@ import { useSettingsStore, useChatStore, useUIStore } from '@/store';
 import { setupBrowserObservabilityWiring } from '@/store/browserObservabilityWiring';
 import { useSwarmStore } from '@/store/swarmStore';
 import { initializeTelegramStore } from '@/store/telegramStore';
+import { setupTaskDiagnosticsWiring } from '@/services/taskDiagnosticsWiring';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 import { useKeyboardShortcuts, KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
 import { AutoResearchSetupModal } from '@/components/AutoResearchSetupModal';
@@ -26,6 +27,7 @@ import { AutoResearchSetupModal } from '@/components/AutoResearchSetupModal';
 const Settings = lazy(() => import('@/pages/Settings'));
 const Workflow = lazy(() => import('@/pages/Workflow'));
 const Skill = lazy(() => import('@/pages/Skill'));
+const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
 
 function DeprecatedBrowserViewFallback() {
   const setCurrentView = useUIStore((state) => state.setCurrentView);
@@ -61,6 +63,7 @@ export default function App() {
   useEffect(() => {
     let disposed = false;
     let cleanupBrowserObservability: (() => void) | null = null;
+    let cleanupTaskDiagnostics: (() => void) | null = null;
 
     const startBackgroundInitialization = () => {
       // Wrap in Promise.resolve().then() to safely handle functions that may
@@ -73,6 +76,17 @@ export default function App() {
       Promise.resolve().then(() => initSwarm()).catch((error) => {
         console.warn('Swarm background initialization failed:', error);
       });
+
+      try {
+        const cleanup = setupTaskDiagnosticsWiring();
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        cleanupTaskDiagnostics = cleanup;
+      } catch (error) {
+        console.error('Task diagnostics wiring failed:', error);
+      }
 
       try {
         const cleanup = setupBrowserObservabilityWiring();
@@ -115,6 +129,7 @@ export default function App() {
 
     return () => {
       disposed = true;
+      cleanupTaskDiagnostics?.();
       cleanupBrowserObservability?.();
     };
   }, [getApiConfig, initChat, initSwarm]);
@@ -127,6 +142,8 @@ export default function App() {
         return <Workflow />;
       case 'skill':
         return <Skill />;
+      case 'diagnostics':
+        return <Diagnostics />;
       case 'browser':
         return <DeprecatedBrowserViewFallback />;
       case 'chat':

@@ -26,6 +26,11 @@ import {
 } from '../services/telegramService';
 import { startTelegramPoller, stopTelegramPoller } from '../services/telegram/poller';
 import { useSettingsStore } from './settingsStore';
+import {
+  registerDiagnosticsTask,
+  registerDiagnosticsTaskCancel,
+  updateDiagnosticsTask,
+} from './taskRegistryStore';
 
 // ============= Storage Keys =============
 
@@ -60,6 +65,7 @@ function saveMessages(messages: TelegramMessage[]): void {
 let messageUnsubscribe: (() => void) | null = null;
 let errorUnsubscribe: (() => void) | null = null;
 let statusUnsubscribe: (() => void) | null = null;
+let activeTelegramConnectTaskId: string | null = null;
 
 // ============= Store =============
 
@@ -106,6 +112,25 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
       token: trimmedToken,
     });
 
+    const diagnosticsTaskId = `telegram:connect:${Date.now()}`;
+    activeTelegramConnectTaskId = diagnosticsTaskId;
+    registerDiagnosticsTask({
+      id: diagnosticsTaskId,
+      kind: 'telegram',
+      source: 'telegram:connection',
+      state: 'created',
+      cancelable: true,
+      title: 'Connect Telegram bot',
+    });
+    registerDiagnosticsTaskCancel(diagnosticsTaskId, async () => {
+      await useTelegramStore.getState().disconnect();
+    });
+    updateDiagnosticsTask(diagnosticsTaskId, {
+      state: 'running',
+      cancelable: true,
+      detail: 'Connecting to Telegram bot',
+    });
+
     try {
       // Connect via Tauri backend
       const botInfo = await connectTelegram(trimmedToken);
@@ -122,6 +147,12 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
       // Set up event listeners
       setupEventListeners();
       await startTelegramPoller();
+      updateDiagnosticsTask(diagnosticsTaskId, {
+        state: 'completed',
+        cancelable: false,
+        detail: botInfo.username,
+      });
+      activeTelegramConnectTaskId = null;
 
     } catch (error) {
       const errorMessage = getTelegramErrorMessage(error);
@@ -129,6 +160,12 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
         status: 'error',
         error: errorMessage,
       });
+      updateDiagnosticsTask(diagnosticsTaskId, {
+        state: 'failed',
+        cancelable: false,
+        error: errorMessage,
+      });
+      activeTelegramConnectTaskId = null;
       console.error('Telegram connection failed:', error);
     }
   },
@@ -167,6 +204,14 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
       token: undefined,
     });
 
+    if (activeTelegramConnectTaskId) {
+      updateDiagnosticsTask(activeTelegramConnectTaskId, {
+        state: 'cancelled',
+        cancelable: false,
+      });
+      activeTelegramConnectTaskId = null;
+    }
+
     // Don't clear messages on disconnect - keep for history
   },
 
@@ -184,7 +229,23 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
       throw new Error('Message text is required');
     }
 
+    const diagnosticsTaskId = `telegram:send:${chatId}:${Date.now()}`;
+
     try {
+      registerDiagnosticsTask({
+        id: diagnosticsTaskId,
+        kind: 'telegram',
+        source: `chat:${chatId}`,
+        state: 'created',
+        cancelable: false,
+        title: text.trim().slice(0, 120),
+      });
+      updateDiagnosticsTask(diagnosticsTaskId, {
+        state: 'running',
+        cancelable: false,
+        detail: text.trim().slice(0, 240),
+      });
+
       const message = await sendTelegramMessage(chatId, text);
 
       // Add the sent message to our history
@@ -194,9 +255,20 @@ export const useTelegramStore = create<TelegramState>((set, get) => ({
         return { messages };
       });
 
+      updateDiagnosticsTask(diagnosticsTaskId, {
+        state: 'completed',
+        cancelable: false,
+        detail: message.text || text.trim().slice(0, 240),
+      });
+
       return message;
     } catch (error) {
       const errorMessage = getTelegramErrorMessage(error);
+      updateDiagnosticsTask(diagnosticsTaskId, {
+        state: 'failed',
+        cancelable: false,
+        error: errorMessage,
+      });
       throw new Error(errorMessage);
     }
   },

@@ -8,6 +8,9 @@ use crate::browser::actions::{
     self, ActionContext, ClickInput, ElementReference, ExtractContentInput, GetTextContentInput,
     NavigateInput, PressKeyInput, ScrollInput, TypeTextInput, WaitInput,
 };
+use crate::browser::failure_snapshot::{
+    get_failure_snapshot, list_failure_snapshots, BrowserFailureSnapshot,
+};
 use crate::browser::dom::PageState;
 use crate::browser::observability::BrowserObservabilitySnapshot;
 use crate::browser::session::{BrowserConnectionState, BrowserSessionManager};
@@ -566,6 +569,48 @@ pub async fn get_browser_observability_snapshot(
     let manager = clone_manager_handle(&state).await;
     let manager_guard = manager.lock().await;
     Ok(manager_guard.observability_snapshot())
+}
+
+#[tauri::command]
+pub async fn get_browser_failure(task_id: String) -> Result<Option<BrowserFailureSnapshot>, String> {
+    get_failure_snapshot(&task_id)
+}
+
+#[tauri::command]
+pub async fn list_browser_failures() -> Result<Vec<BrowserFailureSnapshot>, String> {
+    list_failure_snapshots()
+}
+
+#[tauri::command]
+pub async fn retry_browser_action(
+    task_id: String,
+    action: String,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> Result<BrowserFailureSnapshot, String> {
+    let snapshot = get_failure_snapshot(&task_id)?
+        .ok_or_else(|| format!("Browser failure snapshot not found: {}", task_id))?;
+    if snapshot.failed_action != action {
+        return Err(format!(
+            "Browser failure action mismatch: expected '{}' but received '{}'",
+            snapshot.failed_action, action
+        ));
+    }
+
+    let manager = clone_manager_handle(&state).await;
+    manager.lock().await.note_manual_activity();
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn take_over_browser(
+    task_id: String,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> Result<BrowserFailureSnapshot, String> {
+    let snapshot = get_failure_snapshot(&task_id)?
+        .ok_or_else(|| format!("Browser failure snapshot not found: {}", task_id))?;
+    let manager = clone_manager_handle(&state).await;
+    manager.lock().await.note_manual_activity();
+    Ok(snapshot)
 }
 
 #[tauri::command]

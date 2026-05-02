@@ -5,268 +5,25 @@ use crate::commands::web::{self, BrowserController};
  *
  * Handles chat session management and message sending using SQLite
  */
-use crate::database::{self, DbMessage, DbSession};
+use crate::database;
 use crate::models::{SendMessageRequest, SendMessageResponse};
+use crate::services::chat::browser_tool_service::{
+    browser_not_connected_message, browser_target_from_args, execute_browser_chat_tool_call,
+    is_browser_not_connected_error, parse_browser_chat_tool_call, serialize_page_state_for_chat,
+    BrowserChatRuntime, BrowserChatToolCall, BrowserToolTarget,
+};
+use crate::services::chat::session_service::{
+    delete_session_service, get_session_service, list_sessions_service,
+    reset_token_estimate_service, save_message_to_db_service, send_message_service,
+    start_session_service, update_session_cwd_service, update_session_title_service,
+};
 use crate::utils::{AppError, AppResult};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
-/**
- * Session data structure for API responses
- */
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SessionData {
-    pub id: String,
-    pub title: String,
-    pub created_at: u64,
-    pub updated_at: u64,
-    pub cwd: Option<String>,
-    pub messages: Vec<Message>,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Message {
-    pub role: String,
-    pub content: String,
-    pub reasoning: Option<String>,
-    pub artifacts: Option<String>,
-    pub tool_calls: Option<String>,
-    pub token_usage: Option<String>,
-    pub tool_call_id: Option<String>,
-    pub timestamp: u64,
-}
-
-/**
- * Get current timestamp
- */
-fn get_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn is_browser_not_connected_error(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-    normalized.contains("未连接") || normalized.contains("not connected")
-}
-
-fn browser_not_connected_message() -> String {
-    "ERROR: 浏览器未连接。请先在界面中点击「连接 Chrome」，然后再重试此操作。".to_string()
-}
-
-fn serialize_page_state_for_chat(page_state: &crate::browser::dom::PageState) -> String {
-    serde_json::to_string_pretty(page_state).unwrap_or_else(|_| "{}".to_string())
-}
-
-fn browser_target_from_args(
-    args: &serde_json::Value,
-    tool_name: &str,
-) -> AppResult<(Option<u64>, Option<i64>, Option<String>)> {
-    let element_id = args
-        .get("element_id")
-        .or_else(|| args.get("elementId"))
-        .and_then(|value| value.as_u64());
-    let backend_node_id = args
-        .get("backend_node_id")
-        .or_else(|| args.get("backendNodeId"))
-        .and_then(|value| value.as_i64());
-    let navigation_id = args
-        .get("navigation_id")
-        .or_else(|| args.get("navigationId"))
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string());
-
-    if element_id.is_none() && backend_node_id.is_none() {
-        return Err(AppError::InternalError(format!(
-            "Missing 'element_id' or 'backend_node_id' argument for {}",
-            tool_name
-        )));
-    }
-
-    Ok((element_id, backend_node_id, navigation_id))
-}
-
-fn describe_browser_target(element_id: Option<u64>, backend_node_id: Option<i64>) -> String {
-    match (element_id, backend_node_id) {
-        (Some(element_id), Some(backend_node_id)) => {
-            format!("元素 {} / backend_node_id {}", element_id, backend_node_id)
-        }
-        (Some(element_id), None) => format!("元素 {}", element_id),
-        (None, Some(backend_node_id)) => format!("backend_node_id {}", backend_node_id),
-        (None, None) => "目标元素".to_string(),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BrowserToolTarget {
-    element_id: Option<u64>,
-    backend_node_id: Option<i64>,
-    navigation_id: Option<String>,
-}
-
-impl BrowserToolTarget {
-    fn from_args(args: &serde_json::Value, tool_name: &str) -> AppResult<Self> {
-        let (element_id, backend_node_id, navigation_id) =
-            browser_target_from_args(args, tool_name)?;
-        Ok(Self {
-            element_id,
-            backend_node_id,
-            navigation_id,
-        })
-    }
-
-    fn label(&self) -> String {
-        describe_browser_target(self.element_id, self.backend_node_id)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum BrowserChatToolCall {
-    Navigate {
-        url: String,
-        wait_selector: Option<String>,
-    },
-    GetPage,
-    Click {
-        target: BrowserToolTarget,
-    },
-    Type {
-        target: BrowserToolTarget,
-        text: String,
-    },
-    Scroll {
-        direction: String,
-        pixels: i64,
-    },
-    GetText {
-        max_length: usize,
-    },
-    Screenshot,
-    ExtractContent,
-    PressKey {
-        key: String,
-    },
-    Wait {
-        seconds: Option<u64>,
-        wait_selector: Option<String>,
-    },
-}
-
-fn browser_wait_selector_from_args(args: &serde_json::Value) -> Option<String> {
-    args.get("selector")
-        .or_else(|| args.get("wait_selector"))
-        .or_else(|| args.get("waitSelector"))
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
-}
-
-fn parse_browser_chat_tool_call(
-    tool_name: &str,
-    args: &serde_json::Value,
-) -> AppResult<Option<BrowserChatToolCall>> {
-    let call = match tool_name {
-        "browser_navigate" => {
-            let url = args.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
-                AppError::InternalError("Missing 'url' argument for browser_navigate".to_string())
-            })?;
-
-            Some(BrowserChatToolCall::Navigate {
-                url: url.to_string(),
-                wait_selector: browser_wait_selector_from_args(args),
-            })
-        }
-        "browser_get_page" => Some(BrowserChatToolCall::GetPage),
-        "browser_click" => Some(BrowserChatToolCall::Click {
-            target: BrowserToolTarget::from_args(args, "browser_click")?,
-        }),
-        "browser_type" => {
-            let text = args.get("text").and_then(|v| v.as_str()).ok_or_else(|| {
-                AppError::InternalError("Missing 'text' argument for browser_type".to_string())
-            })?;
-
-            Some(BrowserChatToolCall::Type {
-                target: BrowserToolTarget::from_args(args, "browser_type")?,
-                text: text.to_string(),
-            })
-        }
-        "browser_scroll" => {
-            let direction = args
-                .get("direction")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    AppError::InternalError(
-                        "Missing 'direction' argument for browser_scroll".to_string(),
-                    )
-                })?;
-            let pixels = args.get("pixels").and_then(|v| v.as_i64()).unwrap_or(600);
-
-            Some(BrowserChatToolCall::Scroll {
-                direction: direction.to_string(),
-                pixels,
-            })
-        }
-        "browser_get_text" => Some(BrowserChatToolCall::GetText {
-            max_length: args
-                .get("max_length")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(3000) as usize,
-        }),
-        "browser_screenshot" => Some(BrowserChatToolCall::Screenshot),
-        "browser_extract_content" => Some(BrowserChatToolCall::ExtractContent),
-        "browser_press_key" => {
-            let key = args.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
-                AppError::InternalError("Missing 'key' argument for browser_press_key".to_string())
-            })?;
-
-            Some(BrowserChatToolCall::PressKey {
-                key: key.to_string(),
-            })
-        }
-        "browser_wait" => Some(BrowserChatToolCall::Wait {
-            seconds: args.get("seconds").and_then(|v| v.as_u64()),
-            wait_selector: browser_wait_selector_from_args(args),
-        }),
-        _ => None,
-    };
-
-    Ok(call)
-}
-
-#[async_trait]
-trait BrowserChatRuntime {
-    async fn navigate_and_wait(
-        &self,
-        url: String,
-        wait_selector: Option<String>,
-    ) -> Result<(), String>;
-    async fn resync_page(&self) -> Result<(), String>;
-    async fn get_page_state(&self) -> Result<PageState, String>;
-    async fn click(&self, target: &BrowserToolTarget) -> Result<String, String>;
-    async fn type_text(&self, target: &BrowserToolTarget, text: String) -> Result<String, String>;
-    async fn scroll(&self, direction: String, pixels: i64) -> Result<String, String>;
-    async fn get_text(&self, max_length: Option<u64>) -> Result<String, String>;
-    async fn screenshot(&self) -> Result<String, String>;
-    async fn extract_content(&self) -> Result<String, String>;
-    async fn press_key(&self, key: String) -> Result<String, String>;
-    async fn wait(
-        &self,
-        seconds: Option<u64>,
-        wait_selector: Option<String>,
-    ) -> Result<String, String>;
-
-    async fn delay_after_click(&self) {
-        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-    }
-}
+pub use crate::services::chat::session_service::{Message, SessionData};
 
 struct LiveBrowserChatRuntime<'a> {
     browser_state: tauri::State<'a, Arc<Mutex<BrowserController>>>,
@@ -344,189 +101,6 @@ impl BrowserChatRuntime for LiveBrowserChatRuntime<'_> {
     }
 }
 
-async fn execute_browser_chat_tool_call<R>(call: BrowserChatToolCall, runtime: &R) -> String
-where
-    R: BrowserChatRuntime + Sync,
-{
-    match call {
-        BrowserChatToolCall::Navigate { url, wait_selector } => {
-            match runtime.navigate_and_wait(url.clone(), wait_selector).await {
-                Ok(_) => {
-                    if let Err(e) = runtime.resync_page().await {
-                        eprintln!("[browser_navigate] resync_page warning: {}", e);
-                    }
-                    let title = runtime
-                        .get_page_state()
-                        .await
-                        .map(|page_state| page_state.title)
-                        .unwrap_or_else(|_| "Unknown".to_string());
-                    format!("已导航到: {}，页面标题: {}", url, title)
-                }
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!(
-                            "ERROR: 导航失败（{}s）。URL: {}。可能是网络问题或页面需要认证。",
-                            30, url
-                        )
-                    }
-                }
-            }
-        }
-        BrowserChatToolCall::GetPage => match runtime.get_page_state().await {
-            Ok(page_state) => serialize_page_state_for_chat(&page_state),
-            Err(e) => {
-                if is_browser_not_connected_error(&e) {
-                    browser_not_connected_message()
-                } else {
-                    format!("ERROR: 获取页面元素失败: {}", e)
-                }
-            }
-        },
-        BrowserChatToolCall::Click { target } => {
-            let target_label = target.label();
-
-            match runtime.click(&target).await {
-                Ok(_) => {
-                    runtime.delay_after_click().await;
-                    format!(
-                        "已点击{}，页面可能已更新，请使用 browser_get_page 查看新状态",
-                        target_label
-                    )
-                }
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 点击{}失败: {}", target_label, e)
-                    }
-                }
-            }
-        }
-        BrowserChatToolCall::Type { target, text } => {
-            let target_label = target.label();
-
-            match runtime.type_text(&target, text).await {
-                Ok(msg) => msg,
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 向{}输入失败: {}", target_label, e)
-                    }
-                }
-            }
-        }
-        BrowserChatToolCall::Scroll { direction, pixels } => {
-            match runtime.scroll(direction.clone(), pixels).await {
-                Ok(_) => format!("已向{}滚动 {}px", direction, pixels),
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 滚动失败: {}", e)
-                    }
-                }
-            }
-        }
-        BrowserChatToolCall::GetText { max_length } => {
-            match runtime.get_text(Some(max_length as u64)).await {
-                Ok(text) => {
-                    if text.is_empty() {
-                        "页面没有文本内容".to_string()
-                    } else {
-                        text
-                    }
-                }
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 获取页面文本失败: {}", e)
-                    }
-                }
-            }
-        }
-        BrowserChatToolCall::Screenshot => {
-            match runtime.screenshot().await {
-                Ok(base64_data) => {
-                    format!("截图已捕获（base64 PNG，长度 {} 字符）。图片数据已保存，可直接展示给用户。", base64_data.len())
-                }
-                Err(e) => {
-                    if is_browser_not_connected_error(&e) {
-                        browser_not_connected_message()
-                    } else {
-                        format!("ERROR: 截图失败: {}", e)
-                    }
-                }
-            }
-        }
-        BrowserChatToolCall::ExtractContent => match runtime.extract_content().await {
-            Ok(content) => content,
-            Err(e) => {
-                if is_browser_not_connected_error(&e) {
-                    browser_not_connected_message()
-                } else {
-                    format!("ERROR: 提取内容失败: {}", e)
-                }
-            }
-        },
-        BrowserChatToolCall::PressKey { key } => match runtime.press_key(key.clone()).await {
-            Ok(_) => format!("已按下键 '{}'", key),
-            Err(e) => {
-                if is_browser_not_connected_error(&e) {
-                    browser_not_connected_message()
-                } else {
-                    format!("ERROR: 按键失败: {}", e)
-                }
-            }
-        },
-        BrowserChatToolCall::Wait {
-            seconds,
-            wait_selector,
-        } => match runtime.wait(seconds, wait_selector).await {
-            Ok(message) => message,
-            Err(e) => {
-                if is_browser_not_connected_error(&e) {
-                    browser_not_connected_message()
-                } else {
-                    format!("ERROR: 等待失败: {}", e)
-                }
-            }
-        },
-    }
-}
-
-/**
- * Convert DbSession to SessionData with messages
- */
-fn db_session_to_session_data(db_session: DbSession) -> AppResult<SessionData> {
-    let messages = database::get_messages_for_session(&db_session.id)
-        .map_err(|e| AppError::InternalError(format!("Failed to get messages: {}", e)))?
-        .into_iter()
-        .map(|m| Message {
-            role: m.role,
-            content: m.content,
-            reasoning: m.reasoning,
-            artifacts: m.artifacts,
-            tool_calls: m.tool_calls,
-            token_usage: m.token_usage,
-            tool_call_id: None, // This field is used for API requests, not persisted in DB for every msg role yet (in prefix)
-            timestamp: m.created_at as u64,
-        })
-        .collect();
-
-    Ok(SessionData {
-        id: db_session.id,
-        title: db_session.title,
-        created_at: db_session.created_at as u64,
-        updated_at: db_session.updated_at as u64,
-        cwd: db_session.cwd,
-        messages,
-    })
-}
-
 /**
  * Start a new chat session
  *
@@ -534,27 +108,7 @@ fn db_session_to_session_data(db_session: DbSession) -> AppResult<SessionData> {
  */
 #[tauri::command]
 pub async fn start_session(_app: AppHandle) -> AppResult<String> {
-    let session_id = Uuid::new_v4().to_string();
-    let timestamp = get_timestamp() as i64;
-
-    let session = DbSession {
-        id: session_id.clone(),
-        title: "New Chat".to_string(),
-        created_at: timestamp,
-        updated_at: timestamp,
-        cwd: None,
-        project_id: None,
-        model: None,
-        work_dir: None,
-        working_files: None,
-        permission_mode: Some("standard".to_string()),
-    };
-
-    database::save_session(&session)
-        .map_err(|e| AppError::InternalError(format!("Failed to save session: {}", e)))?;
-
-    println!("📝 Created new session in database: {}", session_id);
-    Ok(session_id)
+    start_session_service().await
 }
 
 /**
@@ -567,41 +121,7 @@ pub async fn send_message(
     _app: AppHandle,
     req: SendMessageRequest,
 ) -> AppResult<SendMessageResponse> {
-    let timestamp = get_timestamp() as i64;
-    let message_id = Uuid::new_v4().to_string();
-
-    // Save user message to database
-    let user_message = DbMessage {
-        id: message_id,
-        session_id: req.session_id.clone(),
-        role: "user".to_string(),
-        content: req.content.clone(),
-        reasoning: None,
-        artifacts: None,
-        tool_calls: None,
-        token_usage: None,
-        created_at: timestamp,
-    };
-
-    database::save_message(&user_message)
-        .map_err(|e| AppError::InternalError(format!("Failed to save user message: {}", e)))?;
-
-    // Update session's updated_at timestamp
-    if let Ok(sessions) = database::get_all_sessions() {
-        if let Some(session) = sessions.iter().find(|s| s.id == req.session_id) {
-            let mut updated_session = session.clone();
-            updated_session.updated_at = timestamp;
-            let _ = database::save_session(&updated_session);
-        }
-    }
-
-    // Return response - actual Claude response will be saved by frontend
-    // The frontend will call save_message after receiving streaming tokens
-    Ok(SendMessageResponse {
-        id: Uuid::new_v4().to_string(),
-        content: String::new(), // Empty - frontend will populate via streaming
-        artifacts: vec![],
-    })
+    send_message_service(req).await
 }
 
 /**
@@ -620,11 +140,7 @@ pub async fn save_message_to_db(
     tool_calls: Option<String>,
     token_usage: Option<String>,
 ) -> AppResult<String> {
-    let timestamp = get_timestamp() as i64;
-    let message_id = Uuid::new_v4().to_string();
-
-    let message = DbMessage {
-        id: message_id.clone(),
+    save_message_to_db_service(
         session_id,
         role,
         content,
@@ -632,13 +148,8 @@ pub async fn save_message_to_db(
         artifacts,
         tool_calls,
         token_usage,
-        created_at: timestamp,
-    };
-
-    database::save_message(&message)
-        .map_err(|e| AppError::InternalError(format!("Failed to save message: {}", e)))?;
-
-    Ok(message_id)
+    )
+    .await
 }
 
 /**
@@ -648,18 +159,7 @@ pub async fn save_message_to_db(
  */
 #[tauri::command]
 pub async fn get_session(_app: AppHandle, session_id: String) -> AppResult<String> {
-    let sessions = database::get_all_sessions()
-        .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
-
-    let session = sessions
-        .into_iter()
-        .find(|s| s.id == session_id)
-        .ok_or_else(|| AppError::NotFound(format!("Session {} not found", session_id)))?;
-
-    let session_data = db_session_to_session_data(session)?;
-
-    serde_json::to_string(&session_data)
-        .map_err(|e| AppError::InternalError(format!("Failed to serialize session: {}", e)))
+    get_session_service(session_id).await
 }
 
 /**
@@ -670,25 +170,7 @@ pub async fn get_session(_app: AppHandle, session_id: String) -> AppResult<Strin
 #[allow(dead_code)]
 #[tauri::command]
 pub async fn list_sessions(_app: AppHandle) -> AppResult<Vec<SessionData>> {
-    let sessions = database::get_all_sessions()
-        .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
-
-    let mut result = Vec::new();
-    for session in sessions {
-        result.push(SessionData {
-            id: session.id,
-            title: session.title,
-            created_at: session.created_at as u64,
-            updated_at: session.updated_at as u64,
-            cwd: session.cwd,
-            messages: vec![], // Don't load messages for list view
-        });
-    }
-
-    // Sort by updated_at descending (newest first)
-    result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
-    Ok(result)
+    list_sessions_service().await
 }
 
 /**
@@ -697,11 +179,7 @@ pub async fn list_sessions(_app: AppHandle) -> AppResult<Vec<SessionData>> {
 #[allow(dead_code)]
 #[tauri::command]
 pub async fn delete_session(_app: AppHandle, session_id: String) -> AppResult<()> {
-    database::delete_session(&session_id)
-        .map_err(|e| AppError::InternalError(format!("Failed to delete session: {}", e)))?;
-
-    println!("🗑️ Deleted session: {}", session_id);
-    Ok(())
+    delete_session_service(session_id).await
 }
 
 /**
@@ -709,11 +187,7 @@ pub async fn delete_session(_app: AppHandle, session_id: String) -> AppResult<()
  */
 #[tauri::command]
 pub async fn reset_token_estimate(_app: AppHandle) -> AppResult<()> {
-    database::delete_all_token_usage()
-        .map_err(|e| AppError::InternalError(format!("Failed to reset token estimate: {}", e)))?;
-
-    println!("🔄 Token estimate reset successfully");
-    Ok(())
+    reset_token_estimate_service().await
 }
 
 /**
@@ -725,17 +199,7 @@ pub async fn update_session_title(
     session_id: String,
     title: String,
 ) -> AppResult<()> {
-    let sessions = database::get_all_sessions()
-        .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
-
-    if let Some(mut session) = sessions.into_iter().find(|s| s.id == session_id) {
-        session.title = title;
-        session.updated_at = get_timestamp() as i64;
-        database::save_session(&session)
-            .map_err(|e| AppError::InternalError(format!("Failed to update session: {}", e)))?;
-    }
-
-    Ok(())
+    update_session_title_service(session_id, title).await
 }
 
 /**
@@ -744,17 +208,7 @@ pub async fn update_session_title(
 #[allow(dead_code)]
 #[tauri::command]
 pub async fn update_session_cwd(_app: AppHandle, session_id: String, cwd: String) -> AppResult<()> {
-    let sessions = database::get_all_sessions()
-        .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
-
-    if let Some(mut session) = sessions.into_iter().find(|s| s.id == session_id) {
-        session.work_dir = Some(cwd);
-        session.updated_at = get_timestamp() as i64;
-        database::save_session(&session)
-            .map_err(|e| AppError::InternalError(format!("Failed to update cwd: {}", e)))?;
-    }
-
-    Ok(())
+    update_session_cwd_service(session_id, cwd).await
 }
 
 /**

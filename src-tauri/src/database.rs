@@ -4,7 +4,8 @@ use once_cell::sync::Lazy;
  */
 use rusqlite::{params, types::ToSql, Connection, OptionalExtension, Result as SqliteResult, Row};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Acquire the global database mutex, mapping a poisoned lock to a Sqlite error
@@ -235,7 +236,11 @@ pub struct DbDiagnostics {
     pub path: String,
     pub initialized: bool,
     pub schema_version: i64,
+    pub last_migration_at: Option<i64>,
     pub integrity_check: String,
+    pub file_size_bytes: u64,
+    pub wal_size_bytes: u64,
+    pub backup_count: usize,
     pub sessions_count: i64,
     pub messages_count: i64,
     pub projects_count: i64,
@@ -244,16 +249,291 @@ pub struct DbDiagnostics {
     pub telegram_tasks_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbBackupEntry {
+    pub name: String,
+    pub path: String,
+    pub created_at: i64,
+    pub schema_version: i64,
+    pub size_bytes: u64,
+}
+
 /**
  * Get the database path in app data directory
  */
-fn get_db_path() -> PathBuf {
-    let app_data_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("pipi-shrimp-agent");
+const MAX_DATABASE_BACKUPS: usize = 10;
 
+fn get_app_data_dir() -> PathBuf {
+    if let Ok(override_dir) = std::env::var("PIPI_SHRIMP_DATA_DIR") {
+        return PathBuf::from(override_dir);
+    }
+
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("pipi-shrimp-agent")
+}
+
+pub fn get_data_directory() -> PathBuf {
+    let app_data_dir = get_app_data_dir();
     std::fs::create_dir_all(&app_data_dir).ok();
+    app_data_dir
+}
+
+fn get_db_path() -> PathBuf {
+    let app_data_dir = get_data_directory();
     app_data_dir.join("data.db")
+}
+
+pub fn get_backup_directory() -> SqliteResult<PathBuf> {
+    let backup_dir = get_data_directory().join("backups");
+    fs::create_dir_all(&backup_dir).map_err(|e| storage_error(format!("Failed to create backup directory: {}", e)))?;
+    Ok(backup_dir)
+}
+
+fn storage_error(message: impl Into<String>) -> rusqlite::Error {
+    rusqlite::Error::InvalidParameterName(message.into())
+}
+
+fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", path.to_string_lossy(), suffix))
+}
+
+fn current_schema_version(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+        [],
+        |row| row.get(0),
+    )
+    .unwrap_or(0)
+}
+
+fn last_migration_timestamp(conn: &Connection) -> Option<i64> {
+    conn.query_row("SELECT MAX(applied_at) FROM schema_version", [], |row| {
+        row.get::<_, Option<i64>>(0)
+    })
+    .unwrap_or(None)
+}
+
+fn database_has_user_tables(conn: &Connection) -> SqliteResult<bool> {
+    let table_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'
+           AND name != 'schema_version'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(table_count > 0)
+}
+
+fn parse_backup_schema_version(file_name: &str) -> Option<i64> {
+    file_name
+        .strip_prefix("db-")?
+        .strip_suffix(".sqlite")?
+        .rsplit_once("-v")?
+        .1
+        .parse::<i64>()
+        .ok()
+}
+
+pub fn list_database_backups() -> SqliteResult<Vec<DbBackupEntry>> {
+    let backup_dir = get_backup_directory()?;
+    let mut backups = Vec::new();
+
+    for entry in fs::read_dir(&backup_dir)
+        .map_err(|e| storage_error(format!("Failed to read backup directory: {}", e)))?
+    {
+        let entry = entry.map_err(|e| storage_error(format!("Failed to read backup entry: {}", e)))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !file_name.starts_with("db-") || !file_name.ends_with(".sqlite") {
+            continue;
+        }
+
+        let metadata = entry
+            .metadata()
+            .map_err(|e| storage_error(format!("Failed to read backup metadata: {}", e)))?;
+        let created_at = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or(0);
+
+        backups.push(DbBackupEntry {
+            name: file_name.to_string(),
+            path: path.display().to_string(),
+            created_at,
+            schema_version: parse_backup_schema_version(file_name).unwrap_or(0),
+            size_bytes: metadata.len(),
+        });
+    }
+
+    backups.sort_by(|left, right| right.name.cmp(&left.name));
+    Ok(backups)
+}
+
+fn rotate_backups(backup_dir: &Path, keep: usize) -> SqliteResult<()> {
+    let mut backups = list_database_backups()?;
+    backups.sort_by(|left, right| right.name.cmp(&left.name));
+
+    for backup in backups.into_iter().skip(keep) {
+        let backup_path = backup_dir.join(&backup.name);
+        if backup_path.exists() {
+            fs::remove_file(&backup_path).map_err(|e| {
+                storage_error(format!("Failed to remove old backup {}: {}", backup_path.display(), e))
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn backup_before_migration(db_path: &Path, schema_version: i64) -> SqliteResult<PathBuf> {
+    let backup_dir = get_backup_directory()?;
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let backup_path = backup_dir.join(format!("db-{}-v{}.sqlite", timestamp, schema_version));
+
+    fs::copy(db_path, &backup_path).map_err(|e| {
+        storage_error(format!(
+            "Failed to create database backup at {}: {}",
+            backup_path.display(),
+            e
+        ))
+    })?;
+
+    rotate_backups(&backup_dir, MAX_DATABASE_BACKUPS)?;
+    Ok(backup_path)
+}
+
+fn ensure_wal_mode(conn: &Connection) -> SqliteResult<()> {
+    let _: String = conn.query_row("PRAGMA journal_mode=WAL;", [], |row| row.get(0))?;
+    conn.execute("PRAGMA synchronous=NORMAL;", [])?;
+    Ok(())
+}
+
+fn checkpoint_database(conn: &Connection) -> SqliteResult<()> {
+    conn.execute_batch("PRAGMA wal_checkpoint(FULL);")?;
+    Ok(())
+}
+
+fn validate_backup_path(backup_path: &Path) -> SqliteResult<PathBuf> {
+    let canonical_backup_path = backup_path.canonicalize().map_err(|e| {
+        storage_error(format!(
+            "Failed to access backup {}: {}",
+            backup_path.display(),
+            e
+        ))
+    })?;
+    let backup_dir = get_backup_directory()?.canonicalize().map_err(|e| {
+        storage_error(format!("Failed to access backup directory: {}", e))
+    })?;
+
+    if !canonical_backup_path.starts_with(&backup_dir) {
+        return Err(storage_error(format!(
+            "Backup path {} is outside the managed backup directory",
+            backup_path.display()
+        )));
+    }
+
+    Ok(canonical_backup_path)
+}
+
+fn copy_database_file(source_path: &Path, destination_path: &Path) -> SqliteResult<PathBuf> {
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            storage_error(format!(
+                "Failed to prepare export directory {}: {}",
+                parent.display(),
+                e
+            ))
+        })?;
+    }
+
+    fs::copy(source_path, destination_path).map_err(|e| {
+        storage_error(format!(
+            "Failed to copy database from {} to {}: {}",
+            source_path.display(),
+            destination_path.display(),
+            e
+        ))
+    })?;
+
+    Ok(destination_path.to_path_buf())
+}
+
+pub fn export_database_backup_file(
+    destination_path: &Path,
+    backup_source_path: Option<&Path>,
+) -> SqliteResult<PathBuf> {
+    let source_path = if let Some(backup_source_path) = backup_source_path {
+        validate_backup_path(backup_source_path)?
+    } else {
+        let db_path = get_db_path();
+        let guard = get_db()?;
+        if let Some(conn) = guard.as_ref() {
+            checkpoint_database(conn)?;
+        }
+        db_path
+    };
+
+    copy_database_file(&source_path, destination_path)
+}
+
+pub fn restore_database_from_backup(backup_path: &Path) -> SqliteResult<()> {
+    let validated_backup_path = validate_backup_path(backup_path)?;
+    let db_path = get_db_path();
+    let wal_path = path_with_suffix(&db_path, "-wal");
+    let shm_path = path_with_suffix(&db_path, "-shm");
+
+    let existing_schema_version = {
+        let guard = get_db()?;
+        if let Some(conn) = guard.as_ref() {
+            checkpoint_database(conn)?;
+            current_schema_version(conn)
+        } else if db_path.exists() {
+            Connection::open(&db_path)
+                .map(|conn| current_schema_version(&conn))
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    };
+
+    if db_path.exists() && fs::metadata(&db_path).map(|metadata| metadata.len()).unwrap_or(0) > 0 {
+        backup_before_migration(&db_path, existing_schema_version)?;
+    }
+
+    {
+        let mut guard = get_db()?;
+        *guard = None;
+    }
+
+    if wal_path.exists() {
+        fs::remove_file(&wal_path).map_err(|e| {
+            storage_error(format!("Failed to remove WAL file {}: {}", wal_path.display(), e))
+        })?;
+    }
+    if shm_path.exists() {
+        fs::remove_file(&shm_path).map_err(|e| {
+            storage_error(format!("Failed to remove SHM file {}: {}", shm_path.display(), e))
+        })?;
+    }
+    if db_path.exists() {
+        fs::remove_file(&db_path).map_err(|e| {
+            storage_error(format!("Failed to replace database {}: {}", db_path.display(), e))
+        })?;
+    }
+
+    copy_database_file(&validated_backup_path, &db_path)?;
+    init_database()
 }
 
 fn table_count(conn: &Connection, table_name: &str) -> SqliteResult<i64> {
@@ -273,14 +553,24 @@ fn table_count(conn: &Connection, table_name: &str) -> SqliteResult<i64> {
 
 pub fn get_database_diagnostics() -> SqliteResult<DbDiagnostics> {
     let path = get_db_path();
+    let wal_path = path_with_suffix(&path, "-wal");
     let path_string = path.display().to_string();
+    let file_size_bytes = fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+    let wal_size_bytes = fs::metadata(&wal_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let backup_count = list_database_backups().map(|backups| backups.len()).unwrap_or(0);
     let guard = get_db()?;
     let Some(conn) = guard.as_ref() else {
         return Ok(DbDiagnostics {
             path: path_string,
             initialized: false,
             schema_version: 0,
+            last_migration_at: None,
             integrity_check: "not_initialized".to_string(),
+            file_size_bytes,
+            wal_size_bytes,
+            backup_count,
             sessions_count: 0,
             messages_count: 0,
             projects_count: 0,
@@ -290,13 +580,7 @@ pub fn get_database_diagnostics() -> SqliteResult<DbDiagnostics> {
         });
     };
 
-    let schema_version = conn
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
+    let schema_version = current_schema_version(conn);
     let integrity_check = conn
         .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
         .unwrap_or_else(|e| format!("error: {}", e));
@@ -305,7 +589,11 @@ pub fn get_database_diagnostics() -> SqliteResult<DbDiagnostics> {
         path: path_string,
         initialized: true,
         schema_version,
+        last_migration_at: last_migration_timestamp(conn),
         integrity_check,
+        file_size_bytes,
+        wal_size_bytes,
+        backup_count,
         sessions_count: table_count(conn, "sessions")?,
         messages_count: table_count(conn, "messages")?,
         projects_count: table_count(conn, "projects")?,
@@ -525,6 +813,20 @@ pub fn init_database() -> SqliteResult<()> {
 
     let conn = Connection::open(&db_path)?;
 
+    let current_version = current_schema_version(&conn);
+    if current_version < LATEST_VERSION && database_has_user_tables(&conn)? {
+        let backup_db_path = db_path.clone();
+        let backup_version = current_version;
+        let backup_path = std::thread::spawn(move || {
+            backup_before_migration(backup_db_path.as_path(), backup_version)
+        })
+        .join()
+        .map_err(|_| storage_error("Database backup worker panicked"))??;
+        println!("🛟 Database backup created at {:?}", backup_path);
+    }
+
+    ensure_wal_mode(&conn)?;
+
     // Bootstrap the version-tracking table on first run
     conn.execute_batch(
         "
@@ -535,13 +837,7 @@ pub fn init_database() -> SqliteResult<()> {
     ",
     )?;
 
-    let current_version: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
+    let current_version = current_schema_version(&conn);
 
     for v in (current_version + 1)..=(LATEST_VERSION) {
         println!("🚀 Applying database migration v{}", v);
@@ -1427,4 +1723,67 @@ pub fn clear_swarm_snapshots() -> SqliteResult<()> {
         conn.execute("DELETE FROM swarm_snapshots", [])?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+
+    static TEST_ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    fn with_temp_data_dir(test_fn: impl FnOnce(&Path)) {
+        let _guard = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pipi-shrimp-db-tests-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&temp_dir).expect("create temp data dir");
+        std::env::set_var("PIPI_SHRIMP_DATA_DIR", &temp_dir);
+
+        test_fn(&temp_dir);
+
+        std::env::remove_var("PIPI_SHRIMP_DATA_DIR");
+        fs::remove_dir_all(&temp_dir).expect("remove temp data dir");
+    }
+
+    #[test]
+    fn backup_before_migration_creates_expected_backup_file() {
+        with_temp_data_dir(|temp_dir| {
+            let db_path = temp_dir.join("data.db");
+            fs::write(&db_path, b"sqlite-backup-test").expect("write source db");
+
+            let backup_path = backup_before_migration(&db_path, 7).expect("create backup");
+            let backup_name = backup_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("backup file name");
+
+            assert!(backup_path.exists());
+            assert!(backup_name.starts_with("db-"));
+            assert!(backup_name.ends_with("-v7.sqlite"));
+            assert_eq!(fs::read(&backup_path).expect("read backup"), b"sqlite-backup-test");
+        });
+    }
+
+    #[test]
+    fn rotate_backups_keeps_only_latest_ten_entries() {
+        with_temp_data_dir(|_| {
+            let backup_dir = get_backup_directory().expect("backup dir");
+
+            for index in 0..12 {
+                let backup_name = format!("db-20240101-0000{:02}-v{}.sqlite", index, index);
+                fs::write(backup_dir.join(&backup_name), format!("backup-{index}"))
+                    .expect("write backup fixture");
+            }
+
+            rotate_backups(&backup_dir, 10).expect("rotate backups");
+
+            let backups = list_database_backups().expect("list backups");
+            assert_eq!(backups.len(), 10);
+            assert!(backups.iter().all(|backup| !backup.name.ends_with("-v0.sqlite")));
+            assert!(backups.iter().all(|backup| !backup.name.ends_with("-v1.sqlite")));
+        });
+    }
 }

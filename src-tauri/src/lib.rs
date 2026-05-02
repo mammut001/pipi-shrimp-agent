@@ -8,9 +8,11 @@ mod claude;
  */
 mod commands;
 mod database;
+mod errors;
 mod mcp;
 mod models;
 mod providers;
+mod services;
 mod tools;
 mod utils;
 
@@ -146,6 +148,10 @@ pub fn run() {
             commands::web::disconnect_browser,
             commands::web::get_browser_connection_state,
             commands::web::get_browser_observability_snapshot,
+            commands::web::get_browser_failure,
+            commands::web::list_browser_failures,
+            commands::web::retry_browser_action,
+            commands::web::take_over_browser,
             commands::web::export_browser_benchmark_report,
             commands::web::resync_page,
             commands::web::cdp_execute_script,
@@ -161,6 +167,10 @@ pub fn run() {
             // Database commands
             commands::database_bridge::db_save_session,
             commands::database_bridge::db_get_diagnostics,
+            commands::database_bridge::export_database_backup,
+            commands::database_bridge::open_data_directory,
+            commands::database_bridge::list_backups,
+            commands::database_bridge::restore_from_backup,
             commands::database_bridge::db_get_all_sessions,
             commands::database_bridge::db_delete_session,
             commands::database_bridge::db_save_message,

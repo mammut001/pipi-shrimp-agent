@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type {
+  BrowserFailureSnapshot,
   BrowserActionTrace,
   BrowserCommandTrace,
   BrowserDebugEvent,
@@ -65,6 +66,9 @@ interface BrowserObservabilityState {
   latestPageState: BrowserPageStateSnapshot | null;
   snapshotCache: BrowserSnapshotCacheState;
   benchmarkReport: BrowserBenchmarkReport | null;
+  failureSnapshots: BrowserFailureSnapshot[];
+  activeFailureSnapshot: BrowserFailureSnapshot | null;
+  dismissedFailureIds: string[];
   setDebugPanelEnabled: (enabled: boolean) => void;
   markWiringReady: (ready: boolean) => void;
   seedMockData: () => void;
@@ -77,6 +81,8 @@ interface BrowserObservabilityState {
   syncSession: (patch: SessionPatch) => void;
   upsertPageState: (input: PageStateInput) => void;
   invalidateSnapshots: (reason: string, source?: BrowserDebugSource) => void;
+  syncFailureSnapshots: (snapshots: BrowserFailureSnapshot[]) => void;
+  dismissFailureSnapshot: (taskId?: string) => void;
   clearTimeline: () => void;
 }
 
@@ -249,6 +255,9 @@ const materializeState = (state: BrowserObservabilityState, source: BrowserDebug
       latestPageState: state.latestPageState,
       snapshotCache: state.snapshotCache,
       benchmarkReport: state.benchmarkReport,
+      failureSnapshots: state.failureSnapshots,
+      activeFailureSnapshot: state.activeFailureSnapshot,
+      dismissedFailureIds: state.dismissedFailureIds,
     };
   }
 
@@ -261,6 +270,9 @@ const materializeState = (state: BrowserObservabilityState, source: BrowserDebug
     latestPageState: state.latestPageState?.source === 'mock' ? null : state.latestPageState,
     snapshotCache: createEmptySnapshotCache(),
     benchmarkReport: state.benchmarkReport,
+    failureSnapshots: state.failureSnapshots,
+    activeFailureSnapshot: state.activeFailureSnapshot,
+    dismissedFailureIds: state.dismissedFailureIds,
   };
 };
 
@@ -275,6 +287,9 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
   latestPageState: null,
   snapshotCache: createEmptySnapshotCache(),
   benchmarkReport: null,
+  failureSnapshots: [],
+  activeFailureSnapshot: null,
+  dismissedFailureIds: [],
 
   setDebugPanelEnabled: (enabled) => {
     writeDebugFlag(enabled);
@@ -866,6 +881,40 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
           reason,
           invalidatedAt,
         ),
+      };
+    });
+  },
+
+  syncFailureSnapshots: (snapshots) => {
+    set((state) => {
+      const dismissedFailureIds = state.dismissedFailureIds.filter((taskId) =>
+        snapshots.some((snapshot) => snapshot.taskId === taskId),
+      );
+      const activeFailureSnapshot = snapshots.find(
+        (snapshot) => !dismissedFailureIds.includes(snapshot.taskId),
+      ) ?? null;
+
+      return {
+        failureSnapshots: snapshots,
+        activeFailureSnapshot,
+        dismissedFailureIds,
+      };
+    });
+  },
+
+  dismissFailureSnapshot: (taskId) => {
+    set((state) => {
+      const targetTaskId = taskId ?? state.activeFailureSnapshot?.taskId;
+      if (!targetTaskId) {
+        return {};
+      }
+
+      return {
+        activeFailureSnapshot:
+          state.activeFailureSnapshot?.taskId === targetTaskId ? null : state.activeFailureSnapshot,
+        dismissedFailureIds: state.dismissedFailureIds.includes(targetTaskId)
+          ? state.dismissedFailureIds
+          : [...state.dismissedFailureIds, targetTaskId],
       };
     });
   },
