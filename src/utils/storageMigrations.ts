@@ -1,4 +1,4 @@
-export type PersistedCurrentView = 'chat' | 'workflow' | 'skill';
+export type PersistedCurrentView = 'chat' | 'workflow' | 'skill' | 'diagnostics';
 
 export interface PersistedAgentSettings {
   maxToolRounds: number;
@@ -17,7 +17,7 @@ export function normalizePersistedCurrentView(value: string | null): CurrentView
     };
   }
 
-  if (value === 'chat' || value === 'workflow' || value === 'skill') {
+  if (value === 'chat' || value === 'workflow' || value === 'skill' || value === 'diagnostics') {
     return {
       currentView: value,
       migratedFromBrowser: false,

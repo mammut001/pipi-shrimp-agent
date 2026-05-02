@@ -20,7 +20,7 @@ import {
 const AGENT_INSTRUCTIONS_STORAGE_KEY = 'ai-agent-instructions';
 
 /**
- * Storage key for persisting current view (chat, workflow, skill)
+ * Storage key for persisting current view (chat, workflow, skill, diagnostics)
  */
 const CURRENT_VIEW_STORAGE_KEY = 'ai-agent-current-view';
 
@@ -31,7 +31,7 @@ const DEFAULT_AGENT_INSTRUCTIONS = {
 
 const getDefaultAgentInstructions = (): string => DEFAULT_AGENT_INSTRUCTIONS[getCurrentLocale()];
 
-type CurrentView = 'chat' | 'workflow' | 'skill' | 'browser';
+type CurrentView = 'chat' | 'workflow' | 'skill' | 'browser' | 'diagnostics';
 
 const persistCurrentView = (view: PersistedCurrentView): void => {
   localStorage.setItem(CURRENT_VIEW_STORAGE_KEY, view);

@@ -70,12 +70,14 @@ pub async fn stream_response(
     config: &ResolvedProviderConfig,
     window: Option<Window>,
     estimated_input: i32,
+    session_id: Option<String>,
 ) -> AppResult<super::message::ChatResponse> {
     let adapter = get_adapter_for_config(config);
-    let mut ctx = StreamContext::new(estimated_input, window);
+    let mut ctx = StreamContext::new(estimated_input, window, session_id);
 
     // Stream response body
     let mut stream = response.bytes_stream();
+    let mut buffer = Vec::new();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = match chunk_result {
@@ -85,12 +87,14 @@ pub async fn stream_response(
             }
         };
 
-        let text = String::from_utf8_lossy(&chunk);
-        let lines: Vec<&str> = text.lines().collect();
+        buffer.extend_from_slice(&chunk);
 
-        for line in lines {
+        while let Some(newline_pos) = buffer.iter().position(|&byte| byte == b'\n') {
+            let line_bytes = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
+            let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
+
             // Parse SSE data line
-            let data_str = match parse_sse_data_line(line) {
+            let data_str = match parse_sse_data_line(&line) {
                 Some(s) => s,
                 None => continue,
             };

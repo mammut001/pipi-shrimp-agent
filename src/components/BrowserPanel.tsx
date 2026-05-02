@@ -10,6 +10,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useBrowserAgentStore } from '../store/browserAgentStore';
+import { useBrowserObservabilityStore } from '../store/browserObservabilityStore';
 import { useUIStore } from '../store/uiStore';
 import { goBack } from '../utils/browserCommands';
 import {
@@ -25,6 +26,7 @@ import {
   runBrowserPanelTaskFlow,
   type BrowserPanelTone,
 } from './browserPanelModel';
+import { BrowserFailureRecovery } from './BrowserFailureRecovery';
 import { t } from '@/i18n';
 
 const QUICK_SITES = [
@@ -162,6 +164,7 @@ const getToneIcon = (tone: BrowserPanelTone) => {
 };
 
 export const BrowserPanel: React.FC = () => {
+  const hasFailureSnapshot = useBrowserObservabilityStore((state) => Boolean(state.activeFailureSnapshot));
   const [urlInput, setUrlInput] = useState('');
   const [taskInput, setTaskInput] = useState('');
   const [taskHistory, setTaskHistory] = useState<TaskHistoryItem[]>([]);
@@ -701,6 +704,12 @@ export const BrowserPanel: React.FC = () => {
           )}
         </div>
       </div>
+
+      {hasFailureSnapshot && (
+        <div className="px-4 py-4 border-b border-gray-200 bg-white">
+          <BrowserFailureRecovery />
+        </div>
+      )}
 
       <div className="p-4 border-b border-gray-200 bg-white">
         <div className="flex gap-2">

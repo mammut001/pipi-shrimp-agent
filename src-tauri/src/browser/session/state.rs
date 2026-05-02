@@ -1,4 +1,5 @@
 use serde::Serialize;
+use tracing::warn;
 
 use crate::browser::cdp::CdpHealthSnapshot;
 use chrono::Utc;
@@ -48,6 +49,17 @@ impl BrowserSession {
             health,
             last_activity_at_ms: Utc::now().timestamp_millis(),
         }
+    }
+}
+
+impl Drop for BrowserSession {
+    fn drop(&mut self) {
+        warn!(
+            target: "browser::session",
+            session_id = self.session_id.as_deref().unwrap_or("unknown"),
+            target_id = self.target_id.as_deref().unwrap_or("unknown"),
+            "BrowserSession dropped without explicit cleanup"
+        );
     }
 }
 

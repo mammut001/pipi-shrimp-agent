@@ -296,11 +296,19 @@ impl ActionContext {
         let started_at = Instant::now();
         let result = future.await;
         let duration_ms = started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        let error_kind = result.as_ref().err().map(|err| err.code.clone());
         let error = result.as_ref().err().map(|err| err.message.clone());
 
         {
             let mut manager = self.manager.lock().await;
-            manager.record_action_finished(action_name, detail, duration_ms, result.is_ok(), error);
+            manager.record_action_finished(
+                action_name,
+                detail,
+                duration_ms,
+                result.is_ok(),
+                error_kind,
+                error,
+            );
         }
 
         result

@@ -12,7 +12,7 @@ type RailButtonProps = {
 };
 
 type RailItem = RailButtonProps & {
-  id: 'chat' | 'workflow';
+  id: 'chat' | 'workflow' | 'diagnostics';
 };
 
 const RAIL_ITEMS: RailItem[] = [
@@ -36,6 +36,18 @@ const RAIL_ITEMS: RailItem[] = [
         <rect x="4" y="4" width="6" height="6" rx="2" />
         <rect x="14" y="4" width="6" height="6" rx="2" />
         <rect x="4" y="14" width="6" height="6" rx="2" />
+      </svg>
+    ),
+  },
+  {
+    id: 'diagnostics',
+    label: 'Diag',
+    title: 'Open diagnostics workspace',
+    icon: (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 5v14h14" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 15l3-3 2 2 4-5" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h10" />
       </svg>
     ),
   },

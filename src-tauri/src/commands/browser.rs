@@ -1,3 +1,9 @@
+use crate::services::browser::action_service::{
+    build_page_agent_script, normalize_browser_url, strip_thinking_content,
+};
+use crate::services::browser::inspection_service::{
+    EMBEDDED_SURFACE_INSPECTION_SCRIPT, STANDALONE_INSPECTION_SCRIPT,
+};
 use crate::utils::{AppError, AppResult};
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -17,10 +23,7 @@ use tauri::{
 };
 use tokio::sync::Mutex;
 
-/// Inline page-agent IIFE bundle — embedded at compile time so we never load from CDN.
-/// Tauri's eval() is native-level injection that bypasses any page CSP (unlike <script src>).
-const PAGE_AGENT_IIFE: &str =
-    include_str!("../../../node_modules/page-agent/dist/iife/page-agent.demo.js");
+pub use crate::services::browser::inspection_service::RawBrowserInspection;
 
 /// Represents which browser surface is currently active.
 /// This eliminates ambiguity in dual-track execution environment.
@@ -198,11 +201,7 @@ pub async fn open_embedded_surface(
         return Err(AppError::InvalidInput("URL cannot be empty".to_string()));
     }
 
-    let normalized_url = if url.starts_with("http://") || url.starts_with("https://") {
-        url
-    } else {
-        format!("https://{}", url)
-    };
+    let normalized_url = normalize_browser_url(&url);
 
     let parsed_url = Url::parse(&normalized_url)
         .map_err(|e| AppError::InvalidInput(format!("Invalid URL: {}", e)))?;
@@ -471,136 +470,7 @@ pub async fn inspect_embedded_surface(
         }
     });
 
-    // Same inspection script as before
-    let inspection_script = r#"
-(function() {
-    try {
-        const url = window.location.href;
-        const title = document.title;
-        const hasPasswordInput = document.querySelectorAll('input[type="password"]').length > 0;
-        const hasLoginForm = document.querySelectorAll('form[action*="login"], form[action*="signin"], form[action*="auth"]').length > 0;
-        const hasQrAuth = !!(
-            document.querySelector('[data-testid="qr-code"]') ||
-            document.querySelector('img[alt*="QR"]') ||
-            document.querySelector('img[src*="qr"]') ||
-            document.body.innerText.toLowerCase().includes('scan qr')
-        );
-        const hasCaptcha = !!(
-            document.querySelector('[class*="captcha"]') ||
-            document.querySelector('[id*="captcha"]') ||
-            document.body.innerText.toLowerCase().includes('captcha') ||
-            document.body.innerText.toLowerCase().includes('verify you\'re human') ||
-            document.body.innerText.toLowerCase().includes('i\'m not a robot')
-        );
-
-        const bodyText = document.body.innerText;
-        const textMarkers = [];
-        const authTexts = [
-            'sign in', 'sign in to', 'log in', 'log in to', 'login',
-            'password', 'username', 'email', 'authentication',
-            'two-factor', '2fa', 'verification code', 'security code',
-            'dashboard', 'my apps', 'account', 'profile', 'settings',
-            'chats', 'messages', 'contacts', 'whatsapp', 'telegram',
-        ];
-
-        for (const text of authTexts) {
-            if (bodyText.toLowerCase().includes(text)) {
-                textMarkers.push(text);
-            }
-        }
-
-        const domMarkers = [];
-        const passwordInputs = document.querySelectorAll('input[type="password"]');
-        for (const input of passwordInputs) {
-            domMarkers.push('input[type="password"]');
-            if (input.id) domMarkers.push('input#' + input.id);
-            if (input.name) domMarkers.push('input[name="' + input.name + '"]');
-        }
-
-        const forms = document.querySelectorAll('form');
-        for (const form of forms) {
-            if (form.action && (form.action.includes('login') || form.action.includes('signin'))) {
-                domMarkers.push('form[action*="login"]');
-            }
-        }
-
-        const uniqueTextMarkers = [...new Set(textMarkers)];
-        const uniqueDomMarkers = [...new Set(domMarkers)];
-
-        // Detect if login UI is inside a modal/overlay (optional sign-in, content still accessible)
-        const modalSelectors = [
-            'dialog',
-            '[role="dialog"]',
-            '[aria-modal="true"]',
-            '[class*="modal"]',
-            '[class*="overlay"]',
-            '[class*="popup"]',
-            '[class*="drawer"]',
-            '[class*="sheet"]',
-        ];
-        let hasLoginModal = false;
-        const loginKeywords = ['sign in', 'log in', 'login', 'sign up', 'create account'];
-        for (const sel of modalSelectors) {
-            try {
-                const modals = document.querySelectorAll(sel);
-                for (const modal of modals) {
-                    const mt = (modal.innerText || '').toLowerCase();
-                    if (loginKeywords.some(kw => mt.includes(kw))) {
-                        hasLoginModal = true;
-                        break;
-                    }
-                }
-            } catch(e) {}
-            if (hasLoginModal) break;
-        }
-
-        // Count words in body (high count = real content accessible behind any login prompt)
-        const contentWordCount = bodyText.trim().split(/\s+/).filter(w => w.length > 0).length;
-
-        const result = {
-            url: url,
-            title: title,
-            has_password_input: hasPasswordInput,
-            has_login_form: hasLoginForm,
-            has_qr_auth: hasQrAuth,
-            has_captcha: hasCaptcha,
-            text_markers: uniqueTextMarkers,
-            dom_markers: uniqueDomMarkers,
-            has_login_modal: hasLoginModal,
-            content_word_count: contentWordCount,
-        };
-
-        window.__inspection_result = JSON.stringify(result);
-
-        function emitInspectionResult(payload) {
-            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
-                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
-                    event: 'browser_inspection_result',
-                    windowLabel: null,
-                    payload: payload
-                }).catch(function() {});
-                return;
-            }
-            console.warn('[Browser] No Tauri IPC available for inspection result');
-        }
-
-        emitInspectionResult(result);
-        console.log('[Browser] Inspection complete:', result.url);
-    } catch (e) {
-        console.error('Inspection error:', e);
-        function emitInspectionError(msg) {
-            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
-                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
-                    event: 'browser_inspection_error',
-                    windowLabel: null,
-                    payload: { message: msg }
-                }).catch(function() {});
-            }
-        }
-        emitInspectionError(e.message || String(e));
-    }
-})();
-"#;
+    let inspection_script = EMBEDDED_SURFACE_INSPECTION_SCRIPT;
 
     webview.eval(inspection_script).map_err(|e| {
         AppError::InternalError(format!("Failed to inject inspection script: {}", e))
@@ -637,11 +507,7 @@ pub async fn navigate_embedded_surface(
         state.get_target()?
     };
 
-    let normalized_url = if url.starts_with("http://") || url.starts_with("https://") {
-        url
-    } else {
-        format!("https://{}", url)
-    };
+    let normalized_url = normalize_browser_url(&url);
 
     let script = format!(
         "window.location.href = '{}';",
@@ -805,251 +671,6 @@ pub async fn execute_agent_task(
     Ok(format!("Task execution started on {:?}", surface_type))
 }
 
-/// Build the JavaScript code to inject into the browser window.
-/// Inlines the page-agent IIFE bundle so it bypasses CSP (Tauri eval is native-level).
-#[allow(non_snake_case)]
-fn build_page_agent_script(
-    task: &str,
-    baseUrl: Option<String>,
-    apiKey: &str,
-    model: &str,
-    systemPrompt: Option<String>,
-) -> String {
-    let base_url_js = match baseUrl {
-        Some(url) => format!("\"{}\"", url),
-        None => "undefined".to_string(),
-    };
-
-    let system_prompt_js = match systemPrompt {
-        Some(prompt) => format!(
-            "\"{}\"",
-            prompt
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-        ),
-        None => "undefined".to_string(),
-    };
-
-    let escaped_task = task
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r");
-    let escaped_api_key = apiKey.replace('\\', "\\\\").replace('"', "\\\"");
-    let escaped_model = model.replace('\\', "\\\\").replace('"', "\\\"");
-
-    // The IIFE bundle sets window.PageAgent when it runs.
-    // We suppress its demo auto-start by temporarily replacing setTimeout.
-    // We also override fetch() to proxy LLM API calls through Tauri backend (bypass CSP connect-src).
-    format!(
-        r#"
-(function() {{
-    console.log('[PageAgent] Script injected. __TAURI_INTERNALS__ exists:', !!window.__TAURI_INTERNALS__);
-    // --- Override fetch to proxy LLM API calls (bypass CSP connect-src) ---
-    var __origFetch = window.fetch;
-    var LLM_API_PATTERNS = [
-        'api.openai.com',
-        'api.anthropic.com',
-        'api-biz.alibaba.com',
-        'api.minimaxi.com',      // MiniMax (Chinese LLM)
-        'page-ag-testing',
-        'api.minimax.chat',
-        'localhost',
-        '127.0.0.1',
-        ':8000', ':8080', ':3000', ':5000'  // Local dev servers
-    ];
-
-    function shouldProxy(url) {{
-        var urlStr = String(url).toLowerCase();
-
-        // Check whitelist patterns
-        var matchesPattern = LLM_API_PATTERNS.some(function(pattern) {{
-            return urlStr.indexOf(pattern) !== -1;
-        }});
-
-        if (matchesPattern) return true;
-
-        // Also proxy if URL matches the configured baseURL
-        var baseUrl = {base_url_js};
-        if (baseUrl && baseUrl !== 'undefined') {{
-            var baseUrlStr = String(baseUrl).toLowerCase();
-            if (urlStr.startsWith(baseUrlStr)) return true;
-        }}
-
-        return false;
-    }}
-
-    // Convert headers to plain object (handles both Headers instance and plain object)
-    function toPlainHeaders(h) {{
-        var obj = {{}};
-        if (!h) return obj;
-        if (typeof h.forEach === 'function') {{
-            h.forEach(function(v, k) {{ obj[k] = v; }});
-        }} else if (typeof h === 'object') {{
-            for (var k in h) {{ if (Object.prototype.hasOwnProperty.call(h, k)) obj[k] = h[k]; }}
-        }}
-        return obj;
-    }}
-
-    window.fetch = async function(url, options) {{
-        // Don't proxy non-LLM requests
-        if (!shouldProxy(url)) {{
-            return __origFetch.apply(this, arguments);
-        }}
-
-        try {{
-            var method = (options && options.method) || 'POST';
-            var headers = toPlainHeaders(options && options.headers);
-            var body = options && options.body;
-
-            // Convert body to string if needed
-            if (body && typeof body !== 'string') {{
-                body = JSON.stringify(body);
-            }}
-
-            console.log('[FetchProxy] Intercepted:', String(url).substring(0, 80));
-            console.log('[FetchProxy] __TAURI_INTERNALS__:', !!window.__TAURI_INTERNALS__);
-
-            // Use Tauri IPC proxy to bypass CSP connect-src restrictions.
-            // NOTE: proxy_http_request takes a named `request` parameter (struct).
-            // JS must wrap args under the param name: {{ request: {{ url, method, ... }} }}
-            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
-                try {{
-                    console.log('[FetchProxy] Calling proxy_http_request via IPC...');
-                    var result = await window.__TAURI_INTERNALS__.invoke('proxy_http_request', {{
-                        request: {{
-                            url: String(url),
-                            method: method,
-                            headers: headers,
-                            body: body || null
-                        }}
-                    }});
-                    console.log('[FetchProxy] IPC success, status:', result && result.status);
-
-                    return new Response(result.body, {{
-                        status: result.status,
-                        statusText: result.status_text || 'OK',
-                        headers: new Headers(result.headers || {{}})
-                    }});
-                }} catch(tauri_error) {{
-                    var errMsg = tauri_error && (tauri_error.message || String(tauri_error));
-                    console.warn('[FetchProxy] Tauri IPC failed:', errMsg);
-                    // Surface error to action logs so it's visible in the UI
-                    try {{
-                        if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
-                            window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
-                                event: 'agent_log',
-                                windowLabel: null,
-                                payload: {{ timestamp: Date.now(), message: '[FetchProxy] IPC error: ' + errMsg, level: 'error' }}
-                            }}).catch(function(){{}});
-                        }}
-                    }} catch(e) {{}}
-                }}
-            }}
-
-            // Last resort: try original fetch (will likely fail due to CSP on external pages)
-            console.warn('[FetchProxy] Falling back to native fetch (may fail due to CSP)');
-            return __origFetch.apply(this, [url, options]);
-        }} catch (error) {{
-            console.error('[FetchProxy] All methods failed:', error && error.message);
-            return __origFetch.apply(this, [url, options]);
-        }}
-    }};
-
-    // --- Suppress demo auto-start from the IIFE bundle ---
-    var __origSetTimeout = window.setTimeout;
-    window.setTimeout = function() {{ return 0; }};
-
-    // --- Inline page-agent IIFE (bypasses page CSP via Tauri eval) ---
-    {iife}
-
-    // Restore setTimeout
-    window.setTimeout = __origSetTimeout;
-
-    // --- Helpers ---
-    function emitLog(level, message) {{
-        console.log('[PageAgent ' + level + ']', message);
-        try {{
-            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
-                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
-                    event: 'agent_log',
-                    windowLabel: null,
-                    payload: {{ timestamp: new Date().toISOString(), message: message, level: level }}
-                }}).catch(function(){{}});
-            }}
-        }} catch(e) {{}}
-    }}
-
-    function emitComplete(success, result) {{
-        emitLog(success ? 'success' : 'error', 'Task ' + (success ? 'completed' : 'failed') + ': ' + result);
-        try {{
-            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {{
-                window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {{
-                    event: 'agent_task_complete',
-                    windowLabel: null,
-                    payload: {{ success: success, final_url: window.location.href, result: result }}
-                }}).catch(function(){{}});
-            }}
-        }} catch(e) {{}}
-    }}
-
-    // --- Execute ---
-    (async function() {{
-        try {{
-            emitLog('info', 'Initializing PageAgent...');
-
-            if (typeof window.PageAgent === 'undefined') {{
-                throw new Error('PageAgent not available after inline injection');
-            }}
-
-            emitLog('info', 'Creating PageAgent instance...');
-            const agent = new window.PageAgent({{
-                baseURL: {base_url_js},
-                apiKey: "{escaped_api_key}",
-                model: "{escaped_model}",
-                systemPrompt: {system_prompt_js}
-            }});
-
-            emitLog('info', 'Executing task: {escaped_task}');
-            const result = await agent.execute("{escaped_task}");
-            // Extract a clean text summary — PageAgent may return a raw API response object
-            // (with tool schemas, choices arrays, etc.) which is too noisy to send to the AI.
-            let resultText;
-            if (typeof result === 'string') {{
-                resultText = result;
-            }} else if (result && typeof result === 'object') {{
-                // Try common text fields first
-                resultText = result.text || result.message || result.content ||
-                             result.summary || result.output || result.answer || result.result;
-                if (!resultText) {{
-                    // If choices array (OpenAI/MiniMax format), extract content
-                    if (Array.isArray(result.choices) && result.choices[0] && result.choices[0].message) {{
-                        resultText = result.choices[0].message.content || result.choices[0].message.text;
-                    }}
-                }}
-                if (!resultText) {{
-                    // Last resort: JSON, but truncate to avoid sending huge schemas
-                    const raw = JSON.stringify(result);
-                    resultText = raw.length > 2000 ? raw.substring(0, 2000) + '...' : raw;
-                }}
-            }} else {{
-                resultText = String(result);
-            }}
-            emitLog('success', 'Task completed: ' + String(resultText).substring(0, 200));
-            emitComplete(true, String(resultText));
-        }} catch (error) {{
-            emitLog('error', 'Error: ' + (error && error.message ? error.message : String(error)));
-            emitComplete(false, error && error.message ? error.message : String(error));
-        }}
-    }})();
-}})();
-"#,
-        iife = PAGE_AGENT_IIFE,
-    )
-}
-
 /// HTTP proxy request/response types (for bypassing CSP connect-src)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HttpProxyRequest {
@@ -1065,24 +686,6 @@ pub struct HttpProxyResponse {
     pub status_text: String,
     pub headers: HashMap<String, String>,
     pub body: String,
-}
-
-/// Strip <think>...</think> blocks from LLM response bodies.
-/// Reasoning models (Claude, DeepSeek-R1, MiniMax thinking mode) embed large internal
-/// reasoning traces in responses. PageAgent stores the full response in conversation history,
-/// so these traces accumulate quickly and make subsequent request bodies too large for Tauri IPC.
-fn strip_thinking_content(body: String) -> String {
-    let mut result = body;
-    loop {
-        match (result.find("<think>"), result.find("</think>")) {
-            (Some(start), Some(end_tag_pos)) if end_tag_pos >= start => {
-                let end = end_tag_pos + "</think>".len();
-                result = format!("{}{}", &result[..start], &result[end..]);
-            }
-            _ => break,
-        }
-    }
-    result
 }
 
 /// Proxy HTTP requests through the backend (bypasses page CSP connect-src).
@@ -1247,23 +850,6 @@ pub async fn browser_go_back(
     Ok("Navigated back".to_string())
 }
 
-/// Raw inspection data returned from browser
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct RawBrowserInspection {
-    pub url: String,
-    pub title: String,
-    pub has_password_input: bool,
-    pub has_login_form: bool,
-    pub has_qr_auth: bool,
-    pub has_captcha: bool,
-    pub text_markers: Vec<String>,
-    pub dom_markers: Vec<String>,
-    #[serde(default)]
-    pub has_login_modal: bool,
-    #[serde(default)]
-    pub content_word_count: u32,
-}
-
 /// Inspect the current browser page state
 /// Returns raw DOM and text information for auth detection
 /// Since Tauri v2's eval doesn't return values, we use a two-step approach:
@@ -1321,131 +907,7 @@ pub async fn inspect_browser_state(
         }
     });
 
-    // Inject JavaScript that computes the inspection and stores it globally
-    let inspection_script = r#"
-(function() {
-    try {
-        // Get basic info
-        const url = window.location.href;
-        const title = document.title;
-
-        // Check for password inputs
-        const hasPasswordInput = document.querySelectorAll('input[type="password"]').length > 0;
-
-        // Check for login forms
-        const hasLoginForm = document.querySelectorAll('form[action*="login"], form[action*="signin"], form[action*="auth"]').length > 0;
-
-        // Check for QR code (common patterns)
-        const hasQrAuth = !!(
-            document.querySelector('[data-testid="qr-code"]') ||
-            document.querySelector('img[alt*="QR"]') ||
-            document.querySelector('img[src*="qr"]') ||
-            document.body.innerText.toLowerCase().includes('scan qr')
-        );
-
-        // Check for captcha
-        const hasCaptcha = !!(
-            document.querySelector('[class*="captcha"]') ||
-            document.querySelector('[id*="captcha"]') ||
-            document.body.innerText.toLowerCase().includes('captcha') ||
-            document.body.innerText.toLowerCase().includes('verify you\'re human') ||
-            document.body.innerText.toLowerCase().includes('i\'m not a robot')
-        );
-
-        // Collect text markers
-        const bodyText = document.body.innerText;
-        const textMarkers = [];
-        const authTexts = [
-            'sign in', 'sign in to', 'log in', 'log in to', 'login',
-            'password', 'username', 'email', 'authentication',
-            'two-factor', '2fa', 'verification code', 'security code',
-            'dashboard', 'my apps', 'account', 'profile', 'settings',
-            'chats', 'messages', 'contacts', 'whatsapp', 'telegram',
-        ];
-
-        for (const text of authTexts) {
-            if (bodyText.toLowerCase().includes(text)) {
-                textMarkers.push(text);
-            }
-        }
-
-        // Collect DOM markers
-        const domMarkers = [];
-        const passwordInputs = document.querySelectorAll('input[type="password"]');
-        for (const input of passwordInputs) {
-            domMarkers.push('input[type="password"]');
-            if (input.id) domMarkers.push('input#' + input.id);
-            if (input.name) domMarkers.push('input[name="' + input.name + '"]');
-        }
-
-        const forms = document.querySelectorAll('form');
-        for (const form of forms) {
-            if (form.action && (form.action.includes('login') || form.action.includes('signin'))) {
-                domMarkers.push('form[action*="login"]');
-            }
-        }
-
-        const uniqueTextMarkers = [...new Set(textMarkers)];
-        const uniqueDomMarkers = [...new Set(domMarkers)];
-
-        // Detect if login UI is inside a modal/overlay (optional sign-in, content still accessible)
-        const modalSelectors2 = [
-            'dialog',
-            '[role="dialog"]',
-            '[aria-modal="true"]',
-            '[class*="modal"]',
-            '[class*="overlay"]',
-            '[class*="popup"]',
-            '[class*="drawer"]',
-            '[class*="sheet"]',
-        ];
-        let hasLoginModal2 = false;
-        const loginKeywords2 = ['sign in', 'log in', 'login', 'sign up', 'create account'];
-        for (const sel of modalSelectors2) {
-            try {
-                const modals = document.querySelectorAll(sel);
-                for (const modal of modals) {
-                    const mt = (modal.innerText || '').toLowerCase();
-                    if (loginKeywords2.some(kw => mt.includes(kw))) {
-                        hasLoginModal2 = true;
-                        break;
-                    }
-                }
-            } catch(e) {}
-            if (hasLoginModal2) break;
-        }
-        const contentWordCount2 = bodyText.trim().split(/\s+/).filter(w => w.length > 0).length;
-
-        const result = {
-            url: url,
-            title: title,
-            has_password_input: hasPasswordInput,
-            has_login_form: hasLoginForm,
-            has_qr_auth: hasQrAuth,
-            has_captcha: hasCaptcha,
-            text_markers: uniqueTextMarkers,
-            dom_markers: uniqueDomMarkers,
-            has_login_modal: hasLoginModal2,
-            content_word_count: contentWordCount2,
-        };
-
-        // Store in global for Rust to read via second eval
-        window.__inspection_result = JSON.stringify(result);
-
-        // Emit event with result to Rust (for async listeners)
-        if (window.__TAURI__) {
-            window.__TAURI__.event.emit('browser_inspection_result', result);
-        }
-
-        console.log('[Browser] Inspection complete:', result.url);
-    } catch (e) {
-        console.error('Inspection error:', e);
-        if (window.__TAURI__) {
-            window.__TAURI__.event.emit('browser_inspection_error', { message: e.message });
-        }
-    }
-})();
-"#;
+    let inspection_script = STANDALONE_INSPECTION_SCRIPT;
 
     // Inject the inspection script
     browser_window.eval(inspection_script).map_err(|e| {
@@ -1492,11 +954,7 @@ pub async fn browser_navigate(
         return Err(AppError::InvalidInput("URL cannot be empty".to_string()));
     }
 
-    let normalized_url = if url.starts_with("http://") || url.starts_with("https://") {
-        url
-    } else {
-        format!("https://{}", url)
-    };
+    let normalized_url = normalize_browser_url(&url);
 
     // Use eval to navigate
     let script = format!(

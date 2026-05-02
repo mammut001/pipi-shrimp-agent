@@ -5,6 +5,7 @@ const mockInvoke = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const mockRunChatTurn = jest.fn();
 const mockAddNotification = jest.fn();
 const mockClearTaskProgress = jest.fn();
+const mockSetTaskProgress = jest.fn();
 const mockSetActiveSkill = jest.fn();
 const mockUpdateTaskStep = jest.fn();
 const mockGetActiveConfig = jest.fn();
@@ -17,6 +18,8 @@ const mockGetContextTokenStats = jest.fn();
 const mockCheckReactiveCompact = jest.fn();
 const mockTriggerContextAnalysis = jest.fn();
 const mockRecordToolForReactiveCompact = jest.fn();
+const mockExecuteBatch = jest.fn();
+const mockDetectAndRegisterArtifacts = jest.fn();
 
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
@@ -35,7 +38,9 @@ jest.mock('../../uiStore', () => ({
     getState: () => ({
       addNotification: mockAddNotification,
       clearTaskProgress: mockClearTaskProgress,
+      setTaskProgress: mockSetTaskProgress,
       agentInstructions: 'agent instructions',
+      activeSkill: null,
       setActiveSkill: mockSetActiveSkill,
       updateTaskStep: mockUpdateTaskStep,
       waitForPermission: jest.fn(async () => true),
@@ -102,6 +107,17 @@ jest.mock('../../../services/contextAnalysis/hooks/contextAnalysisTrigger', () =
   triggerContextAnalysis: (...args: unknown[]) => mockTriggerContextAnalysis(...args),
 }));
 
+jest.mock('../../../services/StreamingToolExecutor', () => ({
+  partitionTools: (tools: unknown[]) => ({ concurrent: tools, serial: [] }),
+  StreamingToolExecutor: jest.fn().mockImplementation(() => ({
+    executeBatch: (...args: unknown[]) => mockExecuteBatch(...args),
+  })),
+}));
+
+jest.mock('../../../services/artifactDetector', () => ({
+  detectAndRegisterArtifacts: (...args: unknown[]) => mockDetectAndRegisterArtifacts(...args),
+}));
+
 jest.mock('../../../i18n', () => ({
   t: (key: string) => key,
 }));
@@ -116,6 +132,23 @@ async function* streamOneAssistantReply() {
     tokenUsage: {
       input_tokens: 12,
       output_tokens: 5,
+      model: 'mock-model',
+    },
+  };
+}
+
+async function* streamWithToolBatch() {
+  yield {
+    type: 'tool_batch_request' as const,
+    tools: [{ id: 'tool-1', name: 'read_file', arguments: '{}' }],
+    _resolveAll: jest.fn(),
+  };
+  yield { type: 'text_delta' as const, content: 'Artifact ready' };
+  yield {
+    type: 'turn_complete' as const,
+    tokenUsage: {
+      input_tokens: 7,
+      output_tokens: 3,
       model: 'mock-model',
     },
   };
@@ -154,6 +187,7 @@ describe('chatStore sendMessage integration', () => {
     mockRunChatTurn.mockReset();
     mockAddNotification.mockReset();
     mockClearTaskProgress.mockReset();
+    mockSetTaskProgress.mockReset();
     mockSetActiveSkill.mockReset();
     mockUpdateTaskStep.mockReset();
     mockGetActiveConfig.mockReset();
@@ -166,6 +200,8 @@ describe('chatStore sendMessage integration', () => {
     mockCheckReactiveCompact.mockReset();
     mockTriggerContextAnalysis.mockReset();
     mockRecordToolForReactiveCompact.mockReset();
+    mockExecuteBatch.mockReset();
+    mockDetectAndRegisterArtifacts.mockReset();
 
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -193,6 +229,11 @@ describe('chatStore sendMessage integration', () => {
     mockBuildPrompt.mockReturnValue({ systemPrompt: 'system prompt' });
     mockClassifyIntent.mockReturnValue({ shouldDelegate: false });
     mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+    mockExecuteBatch.mockResolvedValue({
+      results: [{ id: 'tool-1', content: 'created /work/out.svg', is_error: false }],
+      totalExecutionTime: 1,
+      errors: [],
+    });
     mockRunMicrocompactCheck.mockResolvedValue({ didCompact: false });
     mockTrySessionMemoryCompact.mockResolvedValue({ did_compact: false });
     mockGetContextTokenStats.mockResolvedValue({ current: 0 });
@@ -249,5 +290,25 @@ describe('chatStore sendMessage integration', () => {
         api_config_id: 'api-config-1',
       }),
     }));
+  });
+
+  it('routes tool batch execution through the extracted coordinator and artifact detector', async () => {
+    mockRunChatTurn.mockImplementation(() => streamWithToolBatch());
+
+    await useChatStore.getState().sendMessage('generate artifact');
+
+    expect(mockSetTaskProgress).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'tool-1', label: 'read_file', status: 'pending' }),
+    ]);
+    expect(mockExecuteBatch).toHaveBeenCalledWith(
+      [{ id: 'tool-1', name: 'read_file', arguments: {} }],
+      expect.objectContaining({ sessionId: 'session-1' }),
+    );
+    expect(mockDetectAndRegisterArtifacts).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'read_file',
+      toolResultText: 'created /work/out.svg',
+    }));
+    expect(mockUpdateTaskStep).toHaveBeenCalledWith('tool-1', 'running');
+    expect(mockUpdateTaskStep).toHaveBeenCalledWith('tool-1', 'done');
   });
 });

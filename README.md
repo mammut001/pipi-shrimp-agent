@@ -114,6 +114,30 @@ pipi-shrimp-agent/
 └── package.json                 # Frontend dependencies
 ```
 
+### Claude HTTP Architecture
+
+The Rust multi-provider HTTP stack under `src-tauri/src/claude/` is split so transport concerns stay isolated from provider-specific parsing:
+
+- `http_client.rs`: thin facade that validates messages, manages cancellation tokens, and delegates request execution.
+- `http/request_builder.rs`: provider-specific URL, header, body, tool, and token-estimation helpers.
+- `http/retry.rs` and `http/error_mapping.rs`: retry policy plus transport/provider error normalization.
+- `http/stream.rs` and `stream_parser.rs`: buffered SSE parsing and shared streaming helpers.
+- `adapter.rs` and `provider.rs`: provider capability resolution plus Anthropic/OpenAI-compatible response adapters.
+
+Integration coverage for the facade path lives in `src-tauri/src/claude/http/__tests__/integration_test.rs` and uses a mocked HTTP server.
+
+### Database Backups & Health Diagnostics
+
+The local SQLite database now maintains a managed backup flow for schema migrations and recovery:
+
+- Pending migrations create an automatic backup in `backups/` before schema changes are applied.
+- The app keeps the database in WAL mode and surfaces database size, WAL size, integrity check status, and last migration time in Settings.
+- Settings now includes a Database Health section where you can export the live database, open the app data directory, inspect managed backups, and restore a backup after typing `CONFIRM`.
+
+### Browser Failure Recovery
+
+Browser automation failures now produce a persisted recovery snapshot under `data/browser-failures/`, which the frontend uses to surface retry, continue-from-current-page, manual takeover, and copy-diagnostics actions.
+
 ### 🛠️ Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, Zustand, Vite
@@ -242,6 +266,30 @@ pipi-shrimp-agent/
 ├── public/                      # 静态资源
 └── package.json                  # 前端依赖
 ```
+
+### Claude HTTP 架构
+
+`src-tauri/src/claude/` 下的 Rust 多 Provider HTTP 栈已拆分为清晰的分层，避免请求构造、重试、流解析和 provider 适配继续堆在同一个文件里：
+
+- `http_client.rs`：薄 façade，负责消息校验、取消控制和统一调度。
+- `http/request_builder.rs`：URL、header、body、tools 和 token 估算。
+- `http/retry.rs` 与 `http/error_mapping.rs`：重试策略与错误归一化。
+- `http/stream.rs` 与 `stream_parser.rs`：带缓冲的 SSE 解析与共享流式辅助逻辑。
+- `adapter.rs` 与 `provider.rs`：provider 能力解析，以及 Anthropic/OpenAI-compatible 的响应适配。
+
+ façade 路径的集成测试位于 `src-tauri/src/claude/http/__tests__/integration_test.rs`，通过 mocked HTTP server 验证请求发送与解析链路。
+
+### 数据库备份与健康诊断
+
+本地 SQLite 数据库现在具备托管备份和恢复流程：
+
+- 在存在待执行 migration 时，会先在 `backups/` 目录自动创建备份，再应用 schema 变更。
+- 应用默认启用 WAL 模式，并在设置页展示数据库大小、WAL 大小、完整性检查状态和最近一次 migration 时间。
+- 设置页新增 Database Health 区块，可导出当前数据库、打开应用数据目录、查看受管备份列表，并在输入 `CONFIRM` 后执行恢复。
+
+### 浏览器失败恢复
+
+浏览器自动化失败后，现在会在 `data/browser-failures/` 下持久化 recovery snapshot，前端会据此展示重试上一步、从当前页继续、手动接管以及复制诊断等恢复操作。
 
 ### 🛠️ 技术栈
 

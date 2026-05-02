@@ -50,6 +50,9 @@ describe('browserObservabilityStore', () => {
         evictionCount: 0,
         invalidationCount: 0,
       },
+      failureSnapshots: [],
+      activeFailureSnapshot: null,
+      dismissedFailureIds: [],
     });
   });
 
@@ -153,5 +156,42 @@ describe('browserObservabilityStore', () => {
     expect(state.session.connected).toBe(true);
     expect(state.session.mode).toBe('attach');
     expect(state.timeline[0]?.kind).toBe('connected');
+  });
+
+  it('tracks active browser failure snapshots and dismissals', () => {
+    const store = useBrowserObservabilityStore.getState();
+
+    store.syncFailureSnapshots([
+      {
+        taskId: 'failure-2',
+        failedAction: 'click',
+        url: 'https://example.com',
+        title: 'Example',
+        errorKind: 'browser.timeout',
+        errorMessage: 'button not reachable',
+        ts: 2,
+      },
+      {
+        taskId: 'failure-1',
+        failedAction: 'navigate',
+        url: 'https://example.com/login',
+        title: 'Login',
+        errorKind: 'browser.auth_required',
+        errorMessage: 'login required',
+        ts: 1,
+      },
+    ]);
+
+    let state = useBrowserObservabilityStore.getState();
+    expect(state.activeFailureSnapshot?.taskId).toBe('failure-2');
+
+    store.dismissFailureSnapshot('failure-2');
+    state = useBrowserObservabilityStore.getState();
+    expect(state.activeFailureSnapshot).toBeNull();
+    expect(state.dismissedFailureIds).toContain('failure-2');
+
+    store.syncFailureSnapshots(state.failureSnapshots);
+    state = useBrowserObservabilityStore.getState();
+    expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
   });
 });

@@ -34,6 +34,7 @@ import { TelegramSettings } from '@/components/settings/TelegramSettings';
 import { MCPSettingsSection } from '@/components/settings/MCPSettingsSection';
 import { AgentBehaviorSettings } from '@/components/settings/AgentBehaviorSettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
+import { DatabaseHealthSection } from '@/components/settings/DatabaseHealthSection';
 import { t, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
 import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuilder';
 import { classifyConnectionError, getConnectionErrorMessage } from '@/services/settings/settingsConnection';
@@ -881,6 +882,9 @@ export function Settings() {
             agentSettings={agentSettings}
             onUpdate={updateAgentSettings}
           />
+
+          {/* ====== Database Health Section ====== */}
+          <DatabaseHealthSection addNotification={addNotification} />
 
           {/* ====== Prompt Templates Section ====== */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">

@@ -11,6 +11,7 @@ export { useBrowserAgentStore } from './browserAgentStore';
 export { useCdpStore } from './cdpStore';
 export { useBrowserObservabilityStore } from './browserObservabilityStore';
 export { useSwarmStore } from './swarmStore';
+export { useTaskRegistryStore } from './taskRegistryStore';
 export {
   useTelegramStore,
   useTelegramState,

@@ -17,6 +17,11 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { useUIStore } from '@/store/uiStore';
+import {
+  registerDiagnosticsTask,
+  registerDiagnosticsTaskCancel,
+  updateDiagnosticsTask,
+} from '@/store/taskRegistryStore';
 import type { WorkflowAgent, WorkflowConnection, WorkflowRun } from '@/types/workflow';
 import { DEFAULT_EXECUTION_CONFIG } from '@/types/workflow';
 import {
@@ -133,6 +138,17 @@ class WorkflowEngine {
     const localRunId = crypto.randomUUID();
     this.currentRunId = localRunId;
     this.workingDirectory = '';
+    registerDiagnosticsTask({
+      id: this.currentRunId,
+      kind: 'workflow',
+      source: `instance:${instance.id}`,
+      state: 'created',
+      cancelable: true,
+      title: workflowGoal.slice(0, 120),
+    });
+    registerDiagnosticsTaskCancel(this.currentRunId, async () => {
+      await this.stop();
+    });
     store.resetAllStatuses();
     store.setRunning(true, null);
 
@@ -157,6 +173,11 @@ class WorkflowEngine {
       runDirectory: this.workingDirectory,
     };
     store.addWorkflowRun(run);
+    updateDiagnosticsTask(this.currentRunId, {
+      state: 'running',
+      cancelable: true,
+      detail: workflowGoal.slice(0, 240),
+    });
 
     try {
       // 4. Build topological execution order (handles A→B, A+B→C, A→B+C)
@@ -343,15 +364,28 @@ class WorkflowEngine {
       store.updateWorkflowRun(this.currentRunId, { status: finalStatus, endTime: Date.now() });
 
       if (finalStatus === 'completed') {
+        updateDiagnosticsTask(this.currentRunId, {
+          state: 'completed',
+          cancelable: false,
+        });
         const dirMsg = this.workingDirectory ? `\n输出保存在: ${this.workingDirectory}` : '';
         useUIStore.getState().addNotification('success', `✅ 工作流执行完成！${dirMsg}`);
       } else {
+        updateDiagnosticsTask(this.currentRunId, {
+          state: 'cancelled',
+          cancelable: false,
+        });
         useUIStore.getState().addNotification('info', '⏹ 工作流已停止');
       }
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '未知错误';
       store.updateWorkflowRun(this.currentRunId, { status: 'error', endTime: Date.now() });
+      updateDiagnosticsTask(this.currentRunId, {
+        state: 'failed',
+        cancelable: false,
+        error: errorMsg,
+      });
       useUIStore.getState().addNotification('error', `❌ 工作流失败：${errorMsg}`);
     } finally {
       // Only reset shared engine state when this coroutine is still the active run.

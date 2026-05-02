@@ -117,6 +117,20 @@ export interface BrowserInspectionResult {
   safeForAgent: boolean;
 }
 
+export interface BrowserFailureSnapshot {
+  taskId: string;
+  sessionId?: string | null;
+  lastSuccessAction?: string | null;
+  failedAction: string;
+  url: string;
+  title: string;
+  screenshotPath?: string | null;
+  domSnapshotId?: string | null;
+  errorKind: string;
+  errorMessage: string;
+  ts: number;
+}
+
 // ============= Raw Inspection Data (from backend) =============
 
 /** Raw inspection data from backend JS injection */

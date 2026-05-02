@@ -45,6 +45,10 @@ jsonschema = "0.18"
 base64 = "0.22"
 portable-pty = "0.9"
 libc = "0.2"
+
+[dev-dependencies]
+wiremock = "0.6"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
