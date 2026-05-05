@@ -87,6 +87,11 @@ export interface ExperimentSession {
   selectedExperiment: number;
   /** Error message if loopState === 'error' */
   errorMessage?: string;
+  /** Embedded PTY terminal state for AutoResearch runs */
+  terminalVisible: boolean;
+  terminalReady: boolean;
+  terminalSessionId: string | null;
+  terminalCwd: string;
 }
 
 // ============== Default values ==============
@@ -116,6 +121,10 @@ function createEmptySession(): ExperimentSession {
     telegramConfig: { ...defaultTelegramConfig },
     liveOutput: '',
     selectedExperiment: -1,
+    terminalVisible: false,
+    terminalReady: false,
+    terminalSessionId: null,
+    terminalCwd: '',
   };
 }
 
@@ -143,13 +152,20 @@ interface AutoResearchStore extends ExperimentSession {
   incrementIteration: () => void;
   addExperiment: (entry: ExperimentEntry) => void;
   updateBestMetric: (value: number) => void;
+  setBestMetric: (value: number | null) => void;
+  setCurrentIterationValue: (iteration: number) => void;
   incrementConsecutiveFailures: () => void;
   resetConsecutiveFailures: () => void;
+  setExperiments: (entries: ExperimentEntry[]) => void;
 
   // UI state
   setLiveOutput: (output: string) => void;
   appendLiveOutput: (chunk: string) => void;
   setSelectedExperiment: (idx: number) => void;
+  openTerminalPanel: (sessionId: string, cwd: string) => void;
+  setTerminalReady: (ready: boolean) => void;
+  setTerminalVisible: (visible: boolean) => void;
+  setTerminalCwd: (cwd: string) => void;
 
   // Config
   setSshConfig: (cfg: SshConfig) => void;
@@ -181,6 +197,10 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     liveOutput: '',
     selectedExperiment: -1,
     errorMessage: undefined,
+    terminalVisible: false,
+    terminalReady: false,
+    terminalSessionId: null,
+    terminalCwd: opts.sshConfig.remoteWorkDir || '',
   }),
 
   resetSession: () => set(createEmptySession()),
@@ -195,16 +215,28 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   })),
 
   updateBestMetric: (value) => set({ bestMetric: value, consecutiveFailures: 0 }),
+  setBestMetric: (value) => set({ bestMetric: value }),
+  setCurrentIterationValue: (iteration) => set({ currentIteration: iteration }),
 
   incrementConsecutiveFailures: () => set((s) => ({
     consecutiveFailures: s.consecutiveFailures + 1,
   })),
 
   resetConsecutiveFailures: () => set({ consecutiveFailures: 0 }),
+  setExperiments: (entries) => set({ experiments: entries }),
 
   setLiveOutput: (output) => set({ liveOutput: output }),
   appendLiveOutput: (chunk) => set((s) => ({ liveOutput: s.liveOutput + chunk })),
   setSelectedExperiment: (idx) => set({ selectedExperiment: idx }),
+  openTerminalPanel: (sessionId, cwd) => set({
+    terminalVisible: true,
+    terminalReady: false,
+    terminalSessionId: sessionId,
+    terminalCwd: cwd,
+  }),
+  setTerminalReady: (ready) => set({ terminalReady: ready }),
+  setTerminalVisible: (visible) => set({ terminalVisible: visible }),
+  setTerminalCwd: (cwd) => set({ terminalCwd: cwd }),
 
   setSshConfig: (cfg) => set({ sshConfig: withSshConfigDefaults(cfg) }),
   setTelegramConfig: (cfg) => set((s) => ({

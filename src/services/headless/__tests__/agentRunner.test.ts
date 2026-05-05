@@ -35,6 +35,7 @@ describe('runHeadlessAgentTurn', () => {
           id: 'tool-2',
           content: 'file contents',
           is_error: false,
+          execution_time_ms: 7,
         },
       ],
       totalExecutionTime: 1,
@@ -72,6 +73,9 @@ describe('runHeadlessAgentTurn', () => {
     const onTextDelta = jest.fn();
     const onReasoningDelta = jest.fn();
     const onToolSummary = jest.fn();
+    const onAssistantMessage = jest.fn();
+    const onToolCall = jest.fn();
+    const onToolResult = jest.fn();
     const onWorkDirResolved = jest.fn();
     const resolveWorkDir = jest.fn().mockResolvedValue('/tmp/headless');
 
@@ -86,6 +90,9 @@ describe('runHeadlessAgentTurn', () => {
       onTextDelta,
       onReasoningDelta,
       onToolSummary,
+      onAssistantMessage,
+      onToolCall,
+      onToolResult,
     });
 
     expect(resolveWorkDir).toHaveBeenCalledTimes(1);
@@ -127,6 +134,32 @@ describe('runHeadlessAgentTurn', () => {
       }),
     );
     expect(onToolSummary).toHaveBeenCalledWith('read_file', 'file contents');
+    expect(onToolCall).toHaveBeenNthCalledWith(1, {
+      id: 'tool-1',
+      name: 'get_current_workspace',
+      arguments: '{}',
+    });
+    expect(onToolCall).toHaveBeenNthCalledWith(2, {
+      id: 'tool-2',
+      name: 'read_file',
+      arguments: '{"path":"README.md"}',
+    });
+    expect(onToolResult).toHaveBeenNthCalledWith(1, {
+      id: 'tool-1',
+      name: 'get_current_workspace',
+      result: JSON.stringify({
+        work_dir: '/tmp/headless',
+        message: 'Current working directory: /tmp/headless',
+      }),
+      durationMs: 0,
+    });
+    expect(onToolResult).toHaveBeenNthCalledWith(2, {
+      id: 'tool-2',
+      name: 'read_file',
+      result: 'file contents',
+      durationMs: 7,
+    });
+    expect(onAssistantMessage).toHaveBeenCalledWith('Hello');
     expect(result).toEqual({
       finalText: 'Hello',
       finalReasoning: ' step',

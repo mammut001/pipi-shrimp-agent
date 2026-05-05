@@ -1,0 +1,219 @@
+import { invoke } from '@tauri-apps/api/core';
+import type { SshConfig } from '@/store/autoresearchStore';
+import { buildRemoteBashCommand, shellEscapePath } from '@/utils/remoteExec';
+
+interface RawBashResult {
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+}
+
+export interface RunDir {
+  iter: number;
+  iterDir: string;
+  logsDir: string;
+  transcriptPath: string;
+  hypothesisPath: string;
+  diffPath: string;
+  metricsPath: string;
+  statusPath: string;
+}
+
+export interface SessionRunPaths {
+  sessionDir: string;
+  sessionFilePath: string;
+  livingDocPath: string;
+  metricsJsonlPath: string;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/[\\/]+$/, '');
+}
+
+function padIteration(iter: number): string {
+  return String(iter).padStart(3, '0');
+}
+
+function formatTimestamp(date = new Date()): string {
+  return date.toISOString().replace(/:/g, '-').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function getParentDirectory(path: string): string {
+  const idx = path.lastIndexOf('/');
+  return idx > 0 ? path.slice(0, idx) : '.';
+}
+
+function buildRunDir(sessionDir: string, iter: number, directoryName: string): RunDir {
+  const iterDir = `${sessionDir}/${directoryName}`;
+  return {
+    iter,
+    iterDir,
+    logsDir: `${iterDir}/logs`,
+    transcriptPath: `${iterDir}/transcript.md`,
+    hypothesisPath: `${iterDir}/hypothesis.md`,
+    diffPath: `${iterDir}/diff.patch`,
+    metricsPath: `${iterDir}/metrics.json`,
+    statusPath: `${iterDir}/status.json`,
+  };
+}
+
+function buildWriteCommand(path: string, content: string, append = false): string {
+  let delimiter = '__PIPI_SHRIMP_EOF__';
+  while (content.includes(delimiter)) {
+    delimiter += '_X';
+  }
+
+  return [
+    `mkdir -p ${shellEscapePath(getParentDirectory(path))}`,
+    `cat <<'${delimiter}' ${append ? '>>' : '>'} ${shellEscapePath(path)}`,
+    content,
+    delimiter,
+  ].join('\n');
+}
+
+export function getSessionRunPaths(cfg: SshConfig, sessionId: string): SessionRunPaths {
+  const sessionDir = `${trimTrailingSlash(cfg.remoteWorkDir)}/runs/${sessionId}`;
+  return {
+    sessionDir,
+    sessionFilePath: `${sessionDir}/session.md`,
+    livingDocPath: `${sessionDir}/autoresearch.md`,
+    metricsJsonlPath: `${sessionDir}/metrics.jsonl`,
+  };
+}
+
+export async function executeTargetCommand(
+  cfg: SshConfig,
+  command: string,
+  timeoutSecs = 120,
+): Promise<RawBashResult> {
+  return invoke<RawBashResult>('execute_bash', {
+    args: {
+      command: buildRemoteBashCommand(cfg, command),
+      timeoutSecs,
+    },
+  });
+}
+
+export async function pathExistsOnTarget(cfg: SshConfig, path: string): Promise<boolean> {
+  const result = await executeTargetCommand(
+    { ...cfg, remoteWorkDir: '' },
+    `[ -e ${shellEscapePath(path)} ] && printf '1' || printf '0'`,
+    30,
+  );
+  return (result.stdout || '').trim() === '1';
+}
+
+export async function readTargetText(cfg: SshConfig, path: string): Promise<string | null> {
+  const result = await executeTargetCommand(
+    { ...cfg, remoteWorkDir: '' },
+    `if [ -f ${shellEscapePath(path)} ]; then cat ${shellEscapePath(path)}; else exit 3; fi`,
+    60,
+  );
+  const exitCode = result.exit_code ?? 0;
+  if (exitCode === 3) {
+    return null;
+  }
+  if (exitCode !== 0) {
+    throw new Error(result.stderr || `Failed to read ${path}`);
+  }
+  return result.stdout || '';
+}
+
+export async function writeTargetText(cfg: SshConfig, path: string, content: string): Promise<void> {
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, buildWriteCommand(path, content), 60);
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to write ${path}`);
+  }
+}
+
+export async function appendTargetText(cfg: SshConfig, path: string, content: string): Promise<void> {
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, buildWriteCommand(path, content, true), 60);
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to append ${path}`);
+  }
+}
+
+export async function ensureSessionDir(cfg: SshConfig, sessionId: string): Promise<string> {
+  const { sessionDir } = getSessionRunPaths(cfg, sessionId);
+  const result = await executeTargetCommand(
+    cfg,
+    `mkdir -p ${shellEscapePath(sessionDir)}`,
+    60,
+  );
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to create session dir ${sessionDir}`);
+  }
+  return sessionDir;
+}
+
+export async function createRunDir(cfg: SshConfig, sessionId: string, iter: number): Promise<RunDir> {
+  const sessionDir = await ensureSessionDir(cfg, sessionId);
+  const directoryName = `iter-${padIteration(iter)}-${formatTimestamp()}`;
+  const runDir = buildRunDir(sessionDir, iter, directoryName);
+  const codeDir = `${runDir.iterDir}/code`;
+
+  const script = [
+    `mkdir -p ${shellEscapePath(runDir.iterDir)} ${shellEscapePath(runDir.logsDir)}`,
+    `if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
+    `  if ! git worktree add --detach ${shellEscapePath(codeDir)} HEAD >/dev/null 2>&1; then`,
+    `    mkdir -p ${shellEscapePath(codeDir)}`,
+    `    tar --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
+    `  fi`,
+    `else`,
+    `  mkdir -p ${shellEscapePath(codeDir)}`,
+    `  tar --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
+    `fi`,
+    `: > ${shellEscapePath(runDir.hypothesisPath)}`,
+    `: > ${shellEscapePath(runDir.diffPath)}`,
+  ].join('\n');
+
+  const result = await executeTargetCommand(cfg, script, 300);
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to create iteration dir ${runDir.iterDir}`);
+  }
+  return runDir;
+}
+
+export async function listIterations(cfg: SshConfig, sessionId: string): Promise<RunDir[]> {
+  const sessionDir = await ensureSessionDir(cfg, sessionId);
+  const result = await executeTargetCommand(
+    cfg,
+    `find ${shellEscapePath(sessionDir)} -maxdepth 1 -mindepth 1 -type d -name 'iter-*' | sort`,
+    60,
+  );
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to list iterations for ${sessionId}`);
+  }
+
+  return (result.stdout || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((iterDir) => {
+      const name = iterDir.slice(sessionDir.length + 1);
+      const match = name.match(/^iter-(\d+)-/);
+      const iter = match ? Number.parseInt(match[1], 10) : 0;
+      return buildRunDir(sessionDir, iter, name);
+    })
+    .sort((a, b) => a.iter - b.iter);
+}
+
+export async function pruneOldRuns(cfg: SshConfig, sessionId: string, keepLast: number): Promise<void> {
+  const runs = await listIterations(cfg, sessionId);
+  const stale = runs.slice(0, Math.max(0, runs.length - keepLast));
+  for (const run of stale) {
+    const result = await executeTargetCommand(cfg, `rm -rf ${shellEscapePath(run.iterDir)}`, 120);
+    if ((result.exit_code ?? 0) !== 0) {
+      throw new Error(result.stderr || `Failed to prune ${run.iterDir}`);
+    }
+  }
+}
+
+export async function captureCommitHash(cfg: SshConfig): Promise<string | undefined> {
+  const result = await executeTargetCommand(cfg, 'git rev-parse --short HEAD', 30);
+  if ((result.exit_code ?? 0) !== 0) {
+    return undefined;
+  }
+  const hash = (result.stdout || '').trim();
+  return hash || undefined;
+}

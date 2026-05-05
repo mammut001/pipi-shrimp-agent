@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useMCPStore } from '@/store/mcpStore';
 import { parseMCPToolName } from '@/services/mcp/toolNormalizer';
 import type { ToolResult as MCPToolResult, ContentBlock } from '@/services/mcp/types';
+import { runSshExec, runSshReadFile, runSshUpload } from '@/tools/impl/SshTool';
 
 /** Convert MCP ContentBlock array to a plain string for tool output */
 function contentBlocksToString(blocks: ContentBlock[]): string {
@@ -63,6 +64,7 @@ const READ_ONLY_TOOLS = new Set([
   'read_file',
   'list_files',
   'path_exists',
+  'ssh_read_file',
   // Search — all read-only scans
   'search_files',
   'glob_search',
@@ -264,6 +266,36 @@ export class StreamingToolExecutor {
     }
 
     try {
+      if (request.name === 'ssh_exec') {
+        const data = await runSshExec(request.arguments as any);
+        return {
+          id: request.id,
+          content: JSON.stringify(data),
+          is_error: false,
+          execution_time_ms: Date.now() - startTime,
+        };
+      }
+
+      if (request.name === 'ssh_upload_file') {
+        const data = await runSshUpload(request.arguments as any);
+        return {
+          id: request.id,
+          content: JSON.stringify(data),
+          is_error: false,
+          execution_time_ms: Date.now() - startTime,
+        };
+      }
+
+      if (request.name === 'ssh_read_file') {
+        const data = await runSshReadFile(request.arguments as any);
+        return {
+          id: request.id,
+          content: JSON.stringify(data),
+          is_error: false,
+          execution_time_ms: Date.now() - startTime,
+        };
+      }
+
       const result = await Promise.race([
         invoke<any>('execute_tool', {
           toolName: request.name,

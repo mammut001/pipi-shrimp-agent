@@ -46,10 +46,11 @@ export class BashTool extends BaseTool<BashInput, BashOutput> {
 
     try {
       const result = await invoke<RawBashResult>('execute_bash', {
-        command: input.command,
-        cwd: context.cwd || undefined,
-        workDir: context.cwd || undefined,
-        timeoutSecs: input.timeout
+        args: {
+          command: input.command,
+          workDir: context.cwd || undefined,
+          timeoutSecs: input.timeout,
+        },
       });
 
       return {

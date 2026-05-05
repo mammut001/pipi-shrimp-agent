@@ -100,17 +100,22 @@ async function checkTimeBasedMicrocompact(
   sessionId: string,
   config: ReturnType<typeof getCompactConfig>,
 ): Promise<TimeTriggerResult> {
-  const updates = await invoke<MicrocompactUpdate[]>('microcompact_clear_old_tool_results', {
-    sessionId,
-    keepCount: config.micro_keep_recent_tool_results,
-    idleMinutes: config.micro_idle_minutes,
-  });
+  try {
+    const updates = await safeInvoke<MicrocompactUpdate[]>('microcompact_clear_old_tool_results', {
+      sessionId,
+      keepCount: config.micro_keep_recent_tool_results,
+      idleMinutes: config.micro_idle_minutes,
+    }, { silent: true });
 
-  if (updates.length === 0) {
+    if (updates.length === 0) {
+      return { triggered: false };
+    }
+
+    return { triggered: true, updates };
+  } catch (error) {
+    console.warn('[Microcompact] time-based check failed:', error);
     return { triggered: false };
   }
-
-  return { triggered: true, updates };
 }
 
 // ============================================================================
@@ -136,17 +141,22 @@ async function checkCountBasedMicrocompact(
   sessionId: string,
   config: ReturnType<typeof getCompactConfig>,
 ): Promise<CountTriggerResult> {
-  const updates = await invoke<MicrocompactUpdate[]>('microcompact_by_count', {
-    sessionId,
-    maxToolResults: config.micro_max_tool_results,
-    keepCount: config.micro_keep_recent_tool_results,
-  });
+  try {
+    const updates = await safeInvoke<MicrocompactUpdate[]>('microcompact_by_count', {
+      sessionId,
+      maxToolResults: config.micro_max_tool_results,
+      keepCount: config.micro_keep_recent_tool_results,
+    }, { silent: true });
 
-  if (updates.length === 0) {
+    if (updates.length === 0) {
+      return { triggered: false };
+    }
+
+    return { triggered: true, updates };
+  } catch (error) {
+    console.warn('[Microcompact] count-based check failed:', error);
     return { triggered: false };
   }
-
-  return { triggered: true, updates };
 }
 
 // ============================================================================

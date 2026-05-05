@@ -24,6 +24,15 @@ jest.mock('@/services/headless/agentRunner', () => ({
   runHeadlessAgentTurn: (...args: unknown[]) => mockRunHeadlessAgentTurn(...args),
 }));
 
+jest.mock('../runDir', () => ({
+  writeTargetText: jest.fn(),
+  appendTargetText: jest.fn(),
+}));
+
+jest.mock('../terminalRunner', () => ({
+  getCurrentRunDir: () => null,
+}));
+
 describe('createAutoResearchSendMessage', () => {
   beforeEach(() => {
     jest.resetModules();
@@ -33,6 +42,9 @@ describe('createAutoResearchSendMessage', () => {
       input.onReasoningDelta?.('reasoning trace');
       input.onStatus?.('working');
       input.onToolSummary?.('read_file', 'README excerpt');
+      await input.onToolCall?.({ id: 'tool-1', name: 'read_file', arguments: '{"path":"README.md"}' });
+      await input.onToolResult?.({ id: 'tool-1', name: 'read_file', result: 'README excerpt', durationMs: 12 });
+      await input.onAssistantMessage?.('assistant block');
       return {
         finalText: 'final answer',
         finalReasoning: '',

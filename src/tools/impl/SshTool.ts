@@ -7,7 +7,10 @@ import {
   ensureSshpassAvailable,
   type ExecMode,
   type SshAuthMode,
+  shellEscapePath,
 } from '../../utils/remoteExec';
+import { runInTerminal, getCurrentRunDir } from '@/services/autoresearch/terminalRunner';
+import { readTargetText } from '@/services/autoresearch/runDir';
 
 // ============== SSH Config (legacy shape — kept for callers) ==============
 
@@ -55,7 +58,7 @@ const TargetFields = {
   remoteWorkDir: z.string().optional().describe('Working directory on the target (cd-ed into before running the command).'),
 };
 
-function toCfg(input: any): Partial<SshConfig> {
+function toCfg(input: any): SshConfig {
   return {
     mode: input.mode ?? 'ssh',
     host: input.host ?? '',
@@ -68,7 +71,12 @@ function toCfg(input: any): Partial<SshConfig> {
   };
 }
 
-async function preflight(cfg: Partial<SshConfig>): Promise<{ ok: true } | { ok: false; error: string }> {
+function labelForCommand(command: string): string {
+  const compact = command.replace(/\s+/g, ' ').trim();
+  return compact.length > 72 ? `${compact.slice(0, 72)}...` : compact || 'ssh_exec';
+}
+
+async function preflight(cfg: SshConfig): Promise<{ ok: true } | { ok: false; error: string }> {
   if ((cfg.mode ?? 'ssh') === 'ssh') {
     if (!cfg.host) return { ok: false, error: 'host is required for ssh mode' };
     if (!cfg.user) return { ok: false, error: 'user is required for ssh mode' };
@@ -96,6 +104,7 @@ const SshExecInputSchema = z.object({
   command: z.string().describe('The command to execute on the target'),
   ...TargetFields,
   timeout: z.number().optional().describe('Timeout in seconds (default: 300, max: 600)'),
+  terminal: z.boolean().optional().describe('When true, run through the embedded PTY terminal instead of the silent bash command path.'),
 });
 
 const SshExecOutputSchema = z.object({
@@ -106,6 +115,61 @@ const SshExecOutputSchema = z.object({
 
 type SshExecInput = z.infer<typeof SshExecInputSchema>;
 type SshExecOutput = z.infer<typeof SshExecOutputSchema>;
+
+export async function runSshExec(
+  input: SshExecInput,
+  options: { forceTerminal?: boolean } = {},
+): Promise<SshExecOutput> {
+  if (isDangerous(input.command)) {
+    throw new Error(`Dangerous command blocked: ${input.command.substring(0, 80)}`);
+  }
+
+  const cfg = toCfg(input);
+  const check = await preflight(cfg);
+  if (!check.ok) {
+    throw new Error('error' in check ? check.error : 'SSH preflight failed');
+  }
+
+  const timeout = Math.min(input.timeout || 300, 600);
+  const activeRun = getCurrentRunDir();
+  const shouldUseTerminal = Boolean(options.forceTerminal ?? input.terminal ?? activeRun);
+
+  if (shouldUseTerminal && activeRun) {
+    const result = await runInTerminal({
+      cfg,
+      cmd: input.command,
+      cwd: input.remoteWorkDir || cfg.remoteWorkDir,
+      logsDir: activeRun.logsDir,
+      timeoutSecs: timeout,
+      label: labelForCommand(input.command),
+    });
+
+    const [stdout, stderr] = await Promise.all([
+      readTargetText(cfg, result.stdoutPath),
+      readTargetText(cfg, result.stderrPath),
+    ]);
+
+    return {
+      stdout: stdout || '',
+      stderr: stderr || '',
+      exitCode: result.exitCode,
+    };
+  }
+
+  const fullCmd = buildRemoteBashCommand(cfg, input.command);
+  const result = await invoke<RawBashResult>('execute_bash', {
+    args: {
+      command: fullCmd,
+      timeoutSecs: timeout,
+    },
+  });
+
+  return {
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    exitCode: result.exit_code ?? 0,
+  };
+}
 
 export class SshExecTool extends BaseTool<SshExecInput, SshExecOutput> {
   readonly name = 'ssh_exec';
@@ -118,29 +182,10 @@ export class SshExecTool extends BaseTool<SshExecInput, SshExecOutput> {
   readonly outputSchema = SshExecOutputSchema;
 
   async execute(input: SshExecInput, _context: ToolContext): Promise<ToolResult<SshExecOutput>> {
-    if (isDangerous(input.command)) {
-      return { success: false, error: `Dangerous command blocked: ${input.command.substring(0, 80)}` };
-    }
-
-    const cfg = toCfg(input);
-    const check = await preflight(cfg);
-    if (!check.ok) return { success: false, error: check.error };
-
-    const timeout = Math.min(input.timeout || 300, 600);
-    const fullCmd = buildRemoteBashCommand(cfg, input.command);
-
     try {
-      const result = await invoke<RawBashResult>('execute_bash', {
-        command: fullCmd,
-        timeoutSecs: timeout,
-      });
       return {
         success: true,
-        data: {
-          stdout: result.stdout || '',
-          stderr: result.stderr || '',
-          exitCode: result.exit_code ?? 0,
-        },
+        data: await runSshExec(input),
       };
     } catch (error) {
       return { success: false, error: (error as Error).message };
@@ -171,6 +216,27 @@ const SshUploadOutputSchema = z.object({
 type SshUploadInput = z.infer<typeof SshUploadInputSchema>;
 type SshUploadOutput = z.infer<typeof SshUploadOutputSchema>;
 
+export async function runSshUpload(input: SshUploadInput): Promise<SshUploadOutput> {
+  const cfg = toCfg(input);
+  const check = await preflight(cfg);
+  if (!check.ok) {
+    throw new Error('error' in check ? check.error : 'SSH preflight failed');
+  }
+
+  const cmd = buildUploadCommand(cfg, input.localPath, input.remotePath);
+  const result = await invoke<RawBashResult>('execute_bash', {
+    args: {
+      command: cmd,
+      timeoutSecs: 120,
+    },
+  });
+  const exitCode = result.exit_code ?? 0;
+  if (exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || `upload failed (exit ${exitCode})`);
+  }
+  return { success: true, message: `Uploaded ${input.localPath} → ${input.remotePath}` };
+}
+
 export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput> {
   readonly name = 'ssh_upload_file';
   readonly aliases = ['SshUpload', 'ScpUpload', 'RemoteUpload'];
@@ -182,27 +248,10 @@ export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput>
   readonly outputSchema = SshUploadOutputSchema;
 
   async execute(input: SshUploadInput, _context: ToolContext): Promise<ToolResult<SshUploadOutput>> {
-    const cfg = toCfg(input);
-    const check = await preflight(cfg);
-    if (!check.ok) return { success: false, error: check.error };
-
-    const cmd = buildUploadCommand(cfg, input.localPath, input.remotePath);
-
     try {
-      const result = await invoke<RawBashResult>('execute_bash', {
-        command: cmd,
-        timeoutSecs: 120,
-      });
-      const exitCode = result.exit_code ?? 0;
-      if (exitCode !== 0) {
-        return {
-          success: false,
-          error: `upload failed (exit ${exitCode}): ${result.stderr || result.stdout || 'unknown error'}`,
-        };
-      }
       return {
         success: true,
-        data: { success: true, message: `Uploaded ${input.localPath} → ${input.remotePath}` },
+        data: await runSshUpload(input),
       };
     } catch (error) {
       return { success: false, error: (error as Error).message };
@@ -232,6 +281,36 @@ const SshReadFileOutputSchema = z.object({
 type SshReadFileInput = z.infer<typeof SshReadFileInputSchema>;
 type SshReadFileOutput = z.infer<typeof SshReadFileOutputSchema>;
 
+export async function runSshReadFile(input: SshReadFileInput): Promise<SshReadFileOutput> {
+  const cfg = toCfg(input);
+  const check = await preflight(cfg);
+  if (!check.ok) {
+    throw new Error('error' in check ? check.error : 'SSH preflight failed');
+  }
+
+  const remoteCmd = input.maxLines
+    ? `head -n ${Math.max(1, Math.floor(input.maxLines))} ${shellEscapePath(input.remotePath)}`
+    : `cat ${shellEscapePath(input.remotePath)}`;
+
+  const readCfg = { ...cfg, remoteWorkDir: '' };
+  const fullCmd = buildRemoteBashCommand(readCfg, remoteCmd);
+  const result = await invoke<RawBashResult>('execute_bash', {
+    args: {
+      command: fullCmd,
+      timeoutSecs: 30,
+    },
+  });
+  const exitCode = result.exit_code ?? 0;
+  if (exitCode !== 0) {
+    throw new Error(result.stderr || `Failed to read file (exit ${exitCode})`);
+  }
+  const content = result.stdout || '';
+  return {
+    content,
+    lineCount: content.split('\n').length,
+  };
+}
+
 export class SshReadFileTool extends BaseTool<SshReadFileInput, SshReadFileOutput> {
   readonly name = 'ssh_read_file';
   readonly aliases = ['SshReadFile', 'RemoteReadFile'];
@@ -243,39 +322,10 @@ export class SshReadFileTool extends BaseTool<SshReadFileInput, SshReadFileOutpu
   readonly outputSchema = SshReadFileOutputSchema;
 
   async execute(input: SshReadFileInput, _context: ToolContext): Promise<ToolResult<SshReadFileOutput>> {
-    const cfg = toCfg(input);
-    const check = await preflight(cfg);
-    if (!check.ok) return { success: false, error: check.error };
-
-    // Build remote subcommand. Escape path for the remote side.
-    const esc = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
-    const remoteCmd = input.maxLines
-      ? `head -n ${Math.max(1, Math.floor(input.maxLines))} ${esc(input.remotePath)}`
-      : `cat ${esc(input.remotePath)}`;
-
-    // For reads don't cd into remoteWorkDir — the target path might be absolute.
-    const readCfg = { ...cfg, remoteWorkDir: '' };
-    const fullCmd = buildRemoteBashCommand(readCfg, remoteCmd);
-
     try {
-      const result = await invoke<RawBashResult>('execute_bash', {
-        command: fullCmd,
-        timeoutSecs: 30,
-      });
-      const exitCode = result.exit_code ?? 0;
-      if (exitCode !== 0) {
-        return {
-          success: false,
-          error: `Failed to read file (exit ${exitCode}): ${result.stderr || 'unknown error'}`,
-        };
-      }
-      const content = result.stdout || '';
       return {
         success: true,
-        data: {
-          content,
-          lineCount: content.split('\n').length,
-        },
+        data: await runSshReadFile(input),
       };
     } catch (error) {
       return { success: false, error: (error as Error).message };

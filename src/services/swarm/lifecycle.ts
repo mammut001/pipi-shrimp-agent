@@ -217,6 +217,19 @@ export async function spawnAgent(options: SpawnAgentOptions): Promise<{ agent: S
 export function startAgent(agentId: string, taskId?: string): SwarmAgent | undefined {
   const agent = repo.getAgent(agentId);
   if (!agent) return undefined;
+
+  if (agent.status === 'working') {
+    recordTranscript(agentId, {
+      role: 'system',
+      content: `agent ${agent.name} reassigned from ${agent.currentTaskId ?? 'none'} to ${taskId ?? 'none'}`,
+      eventType: 'agent_started',
+      taskId,
+    });
+    return repo.updateAgent(agentId, {
+      currentTaskId: taskId,
+    });
+  }
+
   if (agent.status !== 'idle' && agent.status !== 'interrupted') return agent;
 
   return repo.updateAgent(agentId, {
@@ -279,7 +292,7 @@ export function transitionAgent(agentId: string, newStatus: AgentStatus): SwarmA
 function getAllowedTransitions(current: AgentStatus): AgentStatus[] {
   switch (current) {
     case 'idle':        return ['working', 'completed', 'failed'];
-    case 'working':     return ['idle', 'completed', 'failed', 'interrupted'];
+    case 'working':     return ['working', 'idle', 'completed', 'failed', 'interrupted'];
     case 'completed':   return []; // terminal
     case 'failed':      return ['idle']; // can retry
     case 'interrupted': return ['idle', 'failed']; // can resume or give up
