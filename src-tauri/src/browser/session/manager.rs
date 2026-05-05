@@ -25,7 +25,7 @@ use super::BrowserConnectionState;
 pub struct BrowserSessionManager {
     pub(super) config: CdpConfig,
     pub(super) client: ChromiumoxideCdpClient,
-    pub(super) session: Option<BrowserSession>,
+    pub(crate) session: Option<BrowserSession>,
     pub(super) browser: Option<Browser>,
     pub(super) page: Option<Page>,
     pub(super) handler: Option<JoinHandle<()>>,
@@ -36,13 +36,13 @@ pub struct BrowserSessionManager {
     pub(super) runtime_event_worker: Option<JoinHandle<()>>,
     pub(super) worker_shutdown: Option<watch::Sender<bool>>,
     pub(super) manager_handle: Option<Weak<Mutex<BrowserSessionManager>>>,
-    pub(super) snapshot_cache: SnapshotCache,
+    pub(crate) snapshot_cache: SnapshotCache,
     pub(super) test_page_state_captures: VecDeque<Result<PageState, CdpError>>,
     pub(super) test_page_state_capture_count: usize,
-    pub(super) event_bus: BrowserEventBus,
+    pub(crate) event_bus: BrowserEventBus,
     pub(super) last_activity: Instant,
     pub(super) last_activity_at_ms: i64,
-    pub(super) last_successful_action: Option<String>,
+    pub(crate) last_successful_action: Option<String>,
 }
 
 impl Default for BrowserSessionManager {
@@ -218,7 +218,7 @@ impl BrowserSessionManager {
             .await;
     }
 
-    fn touch_activity(&mut self) {
+    pub(super) fn touch_activity(&mut self) {
         self.last_activity = Instant::now();
         self.last_activity_at_ms = Utc::now().timestamp_millis();
         if let Some(session) = self.session.as_mut() {
@@ -226,11 +226,11 @@ impl BrowserSessionManager {
         }
     }
 
-    fn idle_timed_out(&self) -> bool {
+    pub(super) fn idle_timed_out(&self) -> bool {
         self.last_activity.elapsed() >= self.config.idle_timeout
     }
 
-    fn idle_elapsed_ms(&self) -> u64 {
+    pub(super) fn idle_elapsed_ms(&self) -> u64 {
         duration_as_ms(self.last_activity.elapsed())
     }
 

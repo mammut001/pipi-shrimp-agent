@@ -114,4 +114,5 @@ pub async fn send_request(
         session_id,
         api_format_hint,
     )
+    .await
 }

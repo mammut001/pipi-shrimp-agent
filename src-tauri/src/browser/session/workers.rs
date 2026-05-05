@@ -15,6 +15,7 @@ use crate::browser::cdp::{CdpConfig, CdpError, ChromiumoxideCdpClient, discover_
 use crate::browser::observability::{BrowserBenchmarkKind, BrowserEventKind, BrowserEventLevel};
 use crate::browser::session::reconnect::next_reconnect_delay;
 
+use super::cleanup::SessionCleanup;
 use super::cdp_target::{select_active_page_with_client, select_attach_page_with_client};
 use super::manager::BrowserSessionManager;
 use super::state::BrowserLaunchMode;
