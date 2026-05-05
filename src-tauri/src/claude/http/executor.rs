@@ -240,21 +240,21 @@ fn provider_label(provider_id: ProviderId) -> &'static str {
 }
 
 fn map_app_error(provider: &str, error: AppError) -> ClaudeHttpError {
-    match error {
-        AppError::ConfigError(message) => ClaudeHttpError::Auth {
-            provider_message: Some(message),
+    match error.code.as_str() {
+        "config_error" => ClaudeHttpError::Auth {
+            provider_message: Some(error.message),
         },
-        AppError::InvalidInput(message) => ClaudeHttpError::Validation {
+        "invalid_input" => ClaudeHttpError::Validation {
             field: "request".to_string(),
-            message,
+            message: error.message,
         },
-        AppError::ProcessError(message)
-        | AppError::FileError(message)
-        | AppError::InternalError(message)
-        | AppError::NotFound(message)
-        | AppError::SecurityError(message) => ClaudeHttpError::Provider {
+        "process_error" | "file_error" | "internal_error" | "not_found" | "security_error" => ClaudeHttpError::Provider {
             provider: provider.to_string(),
-            message,
+            message: error.message,
+        },
+        _ => ClaudeHttpError::Provider {
+            provider: provider.to_string(),
+            message: error.message,
         },
     }
 }

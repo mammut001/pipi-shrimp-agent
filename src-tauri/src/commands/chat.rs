@@ -285,10 +285,16 @@ pub async fn execute_tool(
             let command = args.get("command")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'command' argument for execute_command".to_string()))?;
-            let cwd = args.get("cwd")
+            let work_dir_override = args.get("cwd")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            let result = crate::commands::code::execute_bash(command.to_string(), cwd, work_dir.clone()).await?;
+            let result = crate::commands::code::execute_bash(
+                crate::commands::code::ExecuteBashArgs {
+                    command: command.to_string(),
+                    work_dir: work_dir_override.or(work_dir.clone()),
+                    timeout_secs: None,
+                },
+            ).await?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }
         "create_directory" => {

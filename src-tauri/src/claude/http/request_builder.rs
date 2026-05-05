@@ -53,13 +53,15 @@ pub fn detect_artifacts(content: &str) -> Vec<Artifact> {
         }
     }
 
-    if (content.contains("<!DOCTYPE") || content.contains("<html")) && let Some(html_match) = ARTIFACT_HTML_REGEX.find(content) {
-        artifacts.push(Artifact {
-            artifact_type: "html".to_string(),
-            content: html_match.as_str().to_string(),
-            title: Some("HTML Document".to_string()),
-            language: None,
-        });
+    if content.contains("<!DOCTYPE") || content.contains("<html") {
+        if let Some(html_match) = ARTIFACT_HTML_REGEX.find(content) {
+            artifacts.push(Artifact {
+                artifact_type: "html".to_string(),
+                content: html_match.as_str().to_string(),
+                title: Some("HTML Document".to_string()),
+                language: None,
+            });
+        }
     }
 
     for captures in ARTIFACT_MERMAID_REGEX.captures_iter(content) {

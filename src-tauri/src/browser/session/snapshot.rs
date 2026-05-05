@@ -40,12 +40,14 @@ impl BrowserSessionManager {
         let upgraded = self
             .snapshot_cache
             .upgrade_latest_invalidation_reason(from_reason, to_reason);
-        if upgraded && let Some(entry) = self.cached_invalidated_entry() {
-            self.record_snapshot_cache_invalidation_event(
-                to_reason,
-                &entry.key.as_string(),
-                &entry.page_state.url,
-            );
+        if upgraded {
+            if let Some(entry) = self.cached_invalidated_entry() {
+                self.record_snapshot_cache_invalidation_event(
+                    to_reason,
+                    &entry.key.as_string(),
+                    &entry.page_state.url,
+                );
+            }
         }
         upgraded
     }
