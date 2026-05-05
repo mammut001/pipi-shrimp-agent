@@ -108,7 +108,7 @@ export async function runDelegationPlan(
     );
   };
 
-  swarm.swarmEvents.on('task_result_received', eventHandler);
+  const unsubscribeTaskResults = swarm.swarmEvents.on('task_result_received', eventHandler);
 
   // Build parent context for all agents
   const parentContext = agentCtx.getCurrentAgentContext() || {
@@ -183,7 +183,7 @@ export async function runDelegationPlan(
   const result = await Promise.race([completionPromise, timeoutPromise]);
 
   // Clean up event listener
-  swarm.swarmEvents.off('task_result_received', eventHandler);
+  unsubscribeTaskResults();
 
   // Stop inbox polling for all agents in the team and disband
   inbox.onTeamDisbanded(team.id);

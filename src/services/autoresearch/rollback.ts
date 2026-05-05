@@ -5,9 +5,9 @@
  * remoteExec helpers.
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import type { SshConfig } from '@/store/autoresearchStore';
-import { buildRemoteBashCommand, shellEscape } from '@/utils/remoteExec';
+import { shellEscape } from '@/utils/remoteExec';
+import { runSshExec } from '@/tools/impl/SshTool';
 
 interface RawBashResult {
   stdout?: string;
@@ -15,11 +15,23 @@ interface RawBashResult {
   exit_code?: number;
 }
 
-async function runRemote(cfg: SshConfig, cmd: string, timeout = 30): Promise<RawBashResult> {
-  return invoke<RawBashResult>('execute_bash', {
-    command: buildRemoteBashCommand(cfg, cmd),
-    timeoutSecs: timeout,
+async function runRemote(
+  cfg: SshConfig,
+  cmd: string,
+  timeout = 30,
+  terminal = false,
+): Promise<RawBashResult> {
+  const result = await runSshExec({
+    command: cmd,
+    timeout,
+    terminal,
+    ...cfg,
   });
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exit_code: result.exitCode,
+  };
 }
 
 /**
@@ -44,11 +56,14 @@ export async function getRemoteDiff(cfg: SshConfig): Promise<string> {
  * Rollback all uncommitted changes on the remote.
  * Returns true if rollback succeeded and the repo is now clean.
  */
-export async function rollback(cfg: SshConfig): Promise<{ success: boolean; message: string }> {
+export async function rollback(
+  cfg: SshConfig,
+  options: { terminal?: boolean } = {},
+): Promise<{ success: boolean; message: string }> {
   // Revert all changes
-  await runRemote(cfg, 'git checkout -- .');
+  await runRemote(cfg, 'git checkout -- .', 30, options.terminal ?? false);
   // Also clean untracked files created by the experiment
-  await runRemote(cfg, 'git clean -fd');
+  await runRemote(cfg, 'git clean -fd', 30, options.terminal ?? false);
 
   // Verify clean
   const clean = await isRemoteClean(cfg);
@@ -67,16 +82,17 @@ export async function commitExperiment(
   description: string,
   metricName: string,
   metricValue: number,
+  options: { terminal?: boolean } = {},
 ): Promise<{ success: boolean; commitHash?: string; message: string }> {
   const msg = `exp-${iteration}: ${description} | ${metricName}=${metricValue}`;
 
   // Stage all
-  await runRemote(cfg, 'git add -A');
+  await runRemote(cfg, 'git add -A', 30, options.terminal ?? false);
 
   // Commit — shell-escape the message to survive the local bash wrapper
   // and (if SSH) the second shell on the remote side.
   const escapedMsg = shellEscape(msg);
-  const result = await runRemote(cfg, `git commit -m ${escapedMsg}`);
+  const result = await runRemote(cfg, `git commit -m ${escapedMsg}`, 30, options.terminal ?? false);
   const exitCode = result.exit_code ?? 0;
 
   if (exitCode !== 0) {

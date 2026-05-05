@@ -771,20 +771,6 @@ ${output}
       }
     }
 
-    // Special handling for QA rejection subtypes (<REJECT:CODE>, <REJECT:DOC>)
-    if (output.includes('<REJECT:CODE>')) {
-      const developer = agents.find(
-        (a) => a.name.toLowerCase().includes('developer') || a.name.toLowerCase().includes('dev')
-      );
-      if (developer) return developer;
-    }
-    if (output.includes('<REJECT:DOC>')) {
-      const writer = agents.find(
-        (a) => a.name.toLowerCase().includes('writer') || a.name.toLowerCase().includes('文档')
-      );
-      if (writer) return writer;
-    }
-
     // If agent has no outputRoutes configured, check connections (backward compatibility)
     const outgoingConn = connections.find(c => c.sourceAgentId === currentAgent.id);
     if (outgoingConn) {

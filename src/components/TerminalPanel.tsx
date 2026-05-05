@@ -48,8 +48,14 @@ const TERMINAL_THEME = {
 interface TerminalPanelProps {
   /** Working directory for the spawned shell. */
   cwd?: string;
+  /** Optional stable session id. */
+  sessionId?: string;
   /** Invoked when the user closes the terminal. */
   onClose?: () => void;
+  /** Invoked when the PTY is ready to accept input. */
+  onSessionReady?: (sessionId: string) => void;
+  /** Invoked when the PTY exits. */
+  onSessionExit?: (sessionId: string) => void;
 }
 
 /** Truncate a long path so only the final segments are displayed. */
@@ -60,7 +66,13 @@ function shortenPath(path: string, maxLen = 48): string {
   return `…/${tail}`;
 }
 
-export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
+export function TerminalPanel({
+  cwd,
+  sessionId: externalSessionId,
+  onClose,
+  onSessionReady,
+  onSessionExit,
+}: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -71,7 +83,7 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
     const container = containerRef.current;
     if (!container) return;
 
-    const sessionId = crypto.randomUUID();
+    const sessionId = externalSessionId || crypto.randomUUID();
     let disposed = false;
 
     setStatus('connecting');
@@ -164,6 +176,7 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
             if (event.payload.session_id !== sessionId) return;
             terminal.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
             setStatus('exited');
+            onSessionExit?.(sessionId);
           }
         );
 
@@ -184,6 +197,7 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
         }
 
         setStatus('ready');
+        onSessionReady?.(sessionId);
         safeFit();
         terminal.focus();
 
@@ -232,7 +246,7 @@ export function TerminalPanel({ cwd, onClose }: TerminalPanelProps) {
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [cwd]);
+  }, [cwd, externalSessionId, onSessionExit, onSessionReady]);
 
   const handleClear = useCallback(() => {
     terminalRef.current?.clear();

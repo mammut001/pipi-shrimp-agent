@@ -25,6 +25,35 @@ interface AgentConfigPanelProps {
   embedded?: boolean;
 }
 
+const ROUTE_MARKER_REGEX = /<[A-Z0-9:_-]+>/g;
+
+function getMissingExplicitRouteMarkers(agent: {
+  taskPrompt?: string;
+  taskInstruction?: string;
+  soulPrompt?: string;
+  outputRoutes: Array<{ condition: RouteCondition; keyword?: string }>;
+}): string[] {
+  const declaredMarkers = new Set(
+    [
+      agent.taskPrompt,
+      agent.taskInstruction,
+      agent.soulPrompt,
+    ]
+      .filter(Boolean)
+      .flatMap((value) => value!.match(ROUTE_MARKER_REGEX) ?? []),
+  );
+
+  const explicitKeywords = new Set(
+    agent.outputRoutes
+      .filter((route) => route.condition === 'outputContains' && route.keyword)
+      .map((route) => route.keyword!.trim().toLowerCase()),
+  );
+
+  return [...declaredMarkers].filter((marker) => (
+    marker !== '<PASS>' && !explicitKeywords.has(marker.toLowerCase())
+  ));
+}
+
 export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, embedded = false }: AgentConfigPanelProps) {
   const agent = useWorkflowStore((state) => {
     const inst = state.instances.find(i => i.id === state.currentInstanceId);
@@ -70,6 +99,8 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
   }, [agent]);
 
   if (!agent) return null;
+
+  const missingRouteMarkers = getMissingExplicitRouteMarkers(agent);
 
   const handleSave = () => {
     const updates: any = {
@@ -354,6 +385,15 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
           <label className="block text-sm font-medium text-gray-700 mb-2">
             {t('workflow.outputRoutes')}
           </label>
+
+          {missingRouteMarkers.length > 0 && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <div className="font-medium">{t('workflow.missingOutputRouteWarning')}</div>
+              <div className="mt-1 text-amber-800">
+                {t('workflow.missingOutputRouteHint').replace('{markers}', missingRouteMarkers.join(', '))}
+              </div>
+            </div>
+          )}
 
           {/* Existing routes */}
           {agent.outputRoutes.map((route) => {

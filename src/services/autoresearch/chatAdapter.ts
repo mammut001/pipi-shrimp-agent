@@ -10,8 +10,41 @@
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { useSettingsStore } from '@/store';
 import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
+import { appendTargetText, writeTargetText } from './runDir';
+import { getCurrentRunDir } from './terminalRunner';
 
 let adapterSessionCounter = 0;
+
+function truncateTranscriptResult(result: string, limit = 4000): string {
+  if (result.length <= limit) {
+    return result;
+  }
+  return `${result.slice(0, limit)}\n...[truncated ${result.length - limit} chars]`;
+}
+
+async function writeIterationTranscriptHeader(userMessage: string): Promise<void> {
+  const state = useAutoResearchStore.getState();
+  const runDir = getCurrentRunDir();
+  if (!state.sshConfig || !runDir) {
+    return;
+  }
+
+  await writeTargetText(
+    state.sshConfig,
+    runDir.transcriptPath,
+    `# AutoResearch Iteration ${runDir.iter}\n\n## User Message\n${userMessage}\n`,
+  );
+}
+
+async function appendIterationTranscript(section: string): Promise<void> {
+  const state = useAutoResearchStore.getState();
+  const runDir = getCurrentRunDir();
+  if (!state.sshConfig || !runDir) {
+    return;
+  }
+
+  await appendTargetText(state.sshConfig, runDir.transcriptPath, section);
+}
 
 /**
  * Create a sendMessage function suitable for startExperimentLoop().
@@ -59,6 +92,7 @@ export function createAutoResearchSendMessage(
 
     const store = useAutoResearchStore.getState();
     store.appendLiveOutput(`\n--- Iteration ${store.currentIteration} ---\n`);
+    await writeIterationTranscriptHeader(userMessage);
 
     const result = await runHeadlessAgentTurn({
       sessionId,
@@ -76,6 +110,22 @@ export function createAutoResearchSendMessage(
       },
       onToolSummary: (toolName, preview) => {
         useAutoResearchStore.getState().appendLiveOutput(`  → ${toolName}: ${preview}\n`);
+      },
+      onAssistantMessage: async (text) => {
+        if (!text.trim()) {
+          return;
+        }
+        await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
+      },
+      onToolCall: async (call) => {
+        await appendIterationTranscript(
+          `\n## Tool Call: ${call.name}\n\`\`\`json\n${call.arguments || '{}'}\n\`\`\`\n`,
+        );
+      },
+      onToolResult: async (call) => {
+        await appendIterationTranscript(
+          `\n## Tool Result: ${call.name} (${call.durationMs}ms)\n\`\`\`text\n${truncateTranscriptResult(call.result)}\n\`\`\`\n`,
+        );
       },
     });
 

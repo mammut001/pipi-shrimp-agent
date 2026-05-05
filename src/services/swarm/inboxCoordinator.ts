@@ -54,12 +54,6 @@ class SwarmEventBus extends EventTarget {
     this.addEventListener(type as string, listener);
     return () => this.removeEventListener(type as string, listener);
   }
-  off<K extends keyof SwarmEventMap>(
-    type: K,
-    handler: (detail: SwarmEventMap[K]) => void,
-  ): void {
-    this.removeEventListener(type as string, handler as unknown as EventListener);
-  }
 }
 
 /** Singleton in-app event bus for swarm coordinator signals */

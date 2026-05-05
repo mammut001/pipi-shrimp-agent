@@ -7,4 +7,8 @@ export { logExperiment, appendMarkdownLog, saveExperimentToDb } from './expLogge
 export { rollback, commitExperiment, isRemoteClean, getRemoteDiff } from './rollback';
 export { createNotifier } from './notifier';
 export { createAutoResearchSendMessage } from './chatAdapter';
+export { assertSupportedPlatform } from './platformGuard';
+export { ensureSessionDir, createRunDir, listIterations, getSessionRunPaths } from './runDir';
+export { appendIterationMetrics, readAllMetrics, summarize } from './metricsStore';
+export { rebuildLivingDoc, readLivingDoc, renderLivingDoc } from './livingDoc';
 export type { AutoResearchNotifier } from './notifier';

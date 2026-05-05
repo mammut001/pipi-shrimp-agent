@@ -284,6 +284,8 @@ export type TranslationKeys = {
   'workflow.outputContains': string;
   'workflow.always': string;
   'workflow.keywordPlaceholder': string;
+  'workflow.missingOutputRouteWarning': string;
+  'workflow.missingOutputRouteHint': string;
   'workflow.selectTargetAgent': string;
   'workflow.condition': string;
   'workflow.target': string;
@@ -851,6 +853,7 @@ export type TranslationKeys = {
   'autoresearch.setupTitle': string;
   'autoresearch.setupDescription': string;
   'autoresearch.modeLocal': string;
+  'autoresearch.modeRemote': string;
   'autoresearch.hostPlaceholder': string;
   'autoresearch.userPlaceholder': string;
   'autoresearch.portPlaceholder': string;
@@ -860,7 +863,11 @@ export type TranslationKeys = {
   'autoresearch.passwordPlaceholder': string;
   'autoresearch.sshKeyPathPlaceholder': string;
   'autoresearch.localWorkDirPlaceholder': string;
+  'autoresearch.chooseDirectory': string;
   'autoresearch.remoteWorkDirPlaceholder': string;
+  'autoresearch.testConnection': string;
+  'autoresearch.connectionTesting': string;
+  'autoresearch.connectionTestRequired': string;
   'autoresearch.metricNamePlaceholder': string;
   'autoresearch.lowerIsBetter': string;
   'autoresearch.higherIsBetter': string;
@@ -880,6 +887,9 @@ export type TranslationKeys = {
   'autoresearch.newSession': string;
   'autoresearch.emptyIdle': string;
   'autoresearch.emptyWaiting': string;
+  'autoresearch.terminalTitle': string;
+  'autoresearch.hideTerminal': string;
+  'autoresearch.showTerminal': string;
 
   // Error Boundary
   'errorBoundary.title': string;

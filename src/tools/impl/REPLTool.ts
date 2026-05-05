@@ -115,11 +115,20 @@ export class REPLTool extends BaseTool<REPLInput, REPLOutput> {
         commandName = 'execute_bash';
     }
 
-    const result = await invoke<{ stdout: string; stderr: string; exit_code: number }>(commandName, {
-      code: input.code,
-      command: input.code,
-      workDir: context.cwd || undefined
-    });
+    const result = await invoke<{ stdout: string; stderr: string; exit_code: number }>(
+      commandName,
+      commandName === 'execute_bash'
+        ? {
+            args: {
+              command: input.code,
+              workDir: context.cwd || undefined,
+            },
+          }
+        : {
+            code: input.code,
+            workDir: context.cwd || undefined,
+          },
+    );
 
     return {
       success: true,

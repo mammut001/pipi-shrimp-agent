@@ -33,6 +33,21 @@ export function shellEscape(s: string): string {
   return "'" + String(s ?? '').replace(/'/g, "'\\''") + "'";
 }
 
+/**
+ * Escape a filesystem path while preserving leading `~/` expansion.
+ * Quoting the whole string would suppress tilde expansion in shells.
+ */
+export function shellEscapePath(path: string): string {
+  const value = String(path ?? '');
+  if (value === '~') {
+    return '~';
+  }
+  if (value.startsWith('~/')) {
+    return `~/${shellEscape(value.slice(2))}`;
+  }
+  return shellEscape(value);
+}
+
 function defaultCfg(partial: Partial<RemoteExecConfig>): RemoteExecConfig {
   return {
     mode: partial.mode ?? 'ssh',
@@ -73,7 +88,7 @@ function buildSshArgs(cfg: RemoteExecConfig, binary: 'ssh' | 'scp'): {
   }
 
   if (cfg.authMode === 'key' && cfg.keyPath) {
-    base.push('-i', shellEscape(cfg.keyPath));
+    base.push('-i', shellEscapePath(cfg.keyPath));
   }
 
   // ssh uses -p, scp uses -P.
@@ -99,7 +114,7 @@ export function buildRemoteBashCommand(
   remoteCmd: string,
 ): string {
   const cfg = defaultCfg(raw);
-  const wd = cfg.remoteWorkDir ? `cd ${shellEscape(cfg.remoteWorkDir)} && ` : '';
+  const wd = cfg.remoteWorkDir ? `cd ${shellEscapePath(cfg.remoteWorkDir)} && ` : '';
   const inner = `${wd}${remoteCmd}`;
 
   if (cfg.mode === 'local') {
@@ -124,12 +139,12 @@ export function buildUploadCommand(
 ): string {
   const cfg = defaultCfg(raw);
   if (cfg.mode === 'local') {
-    return `cp -f ${shellEscape(localPath)} ${shellEscape(dstPath)}`;
+    return `cp -f ${shellEscapePath(localPath)} ${shellEscapePath(dstPath)}`;
   }
 
   const { prefix, envPrefix } = buildSshArgs(cfg, 'scp');
-  const target = `${shellEscape(cfg.user)}@${shellEscape(cfg.host)}:${shellEscape(dstPath)}`;
-  return `${envPrefix}${prefix} ${shellEscape(localPath)} ${target}`;
+  const target = `${shellEscape(cfg.user)}@${shellEscape(cfg.host)}:${shellEscapePath(dstPath)}`;
+  return `${envPrefix}${prefix} ${shellEscapePath(localPath)} ${target}`;
 }
 
 /**
@@ -162,7 +177,9 @@ export async function ensureSshpassAvailable(): Promise<{ ok: boolean; hint?: st
   if (_sshpassCache) return _sshpassCache;
   try {
     const result = await invoke<RawBashResult>('execute_bash', {
-      command: 'command -v sshpass >/dev/null 2>&1 && echo OK || echo MISSING',
+      args: {
+        command: 'command -v sshpass >/dev/null 2>&1 && echo OK || echo MISSING',
+      },
     });
     const ok = (result.stdout || '').trim() === 'OK';
     _sshpassCache = ok

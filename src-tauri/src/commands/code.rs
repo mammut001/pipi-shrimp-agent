@@ -57,6 +57,14 @@ fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult
     Ok(resolved.to_string_lossy().to_string())
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecuteBashArgs {
+    pub command: String,
+    pub work_dir: Option<String>,
+    pub timeout_secs: Option<u64>,
+}
+
 /// Block known-destructive bash command patterns.
 /// This is a defence-in-depth measure — the AI system prompt also restricts these,
 /// but we enforce it at the code level too.
@@ -101,14 +109,10 @@ fn check_command_safety(command: &str) -> AppResult<()> {
  * Runs the command in a bash shell and returns stdout/stderr
  */
 #[tauri::command]
-pub async fn execute_bash(
-    command: String,
-    cwd: Option<String>,
-    work_dir: Option<String>,
-) -> AppResult<ExecuteCodeResponse> {
-    let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
+pub async fn execute_bash(args: ExecuteBashArgs) -> AppResult<ExecuteCodeResponse> {
+    let work_dir = resolve_command_cwd(None, args.work_dir.as_deref())?;
 
-    check_command_safety(&command)?;
+    check_command_safety(&args.command)?;
 
     // Check if bash exists
     if !command_exists("bash") {
@@ -119,7 +123,7 @@ pub async fn execute_bash(
 
     let output = Command::new("bash")
         .arg("-c")
-        .arg(&command)
+        .arg(&args.command)
         .current_dir(work_dir)
         .output()
         .map_err(|e| AppError::ProcessError(e.to_string()))?;

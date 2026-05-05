@@ -4,17 +4,79 @@
  * Layout: MainLayout with experiment timeline in center and detail panel on right.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
+import { TerminalPanel } from '@/components';
 import { MainLayout } from '@/layout';
 import { useAutoResearchStore, type ExperimentEntry, type SshConfig } from '@/store/autoresearchStore';
 import {
+  createAutoResearchSendMessage,
   startExperimentLoop,
   stopExperimentLoop,
   pauseExperimentLoop,
   resumeExperimentLoop,
 } from '@/services/autoresearch';
 import { getDefaultAutoResearchSessionFilePath } from '@/services/autoresearch/paths';
+import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
+import { buildRemoteBashCommand } from '@/utils/remoteExec';
+
+const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
+
+interface RawBashResult {
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+}
+
+type ConnectionTestState =
+  | { status: 'idle'; output: string }
+  | { status: 'testing'; output: string }
+  | { status: 'success'; output: string }
+  | { status: 'error'; output: string };
+
+function loadPersistedSetup(): SshConfig {
+  const fallback: SshConfig = {
+    mode: 'local',
+    host: '',
+    user: 'root',
+    keyPath: '',
+    port: 22,
+    remoteWorkDir: '',
+    authMode: 'agent',
+    password: '',
+  };
+
+  try {
+    const raw = localStorage.getItem(AUTORESEARCH_CONFIG_STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
+    const parsed = JSON.parse(raw) as Partial<SshConfig>;
+    return {
+      ...fallback,
+      ...parsed,
+      password: '',
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function createStableAutoResearchSessionId(
+  cfg: SshConfig,
+  sessionFilePath: string,
+  metricName: string,
+  direction: 'lower' | 'higher',
+): string {
+  const seed = `${cfg.mode}|${cfg.host}|${cfg.user}|${cfg.port}|${cfg.remoteWorkDir}|${sessionFilePath}|${metricName}|${direction}`;
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(index)) | 0;
+  }
+  return `autoresearch-${Math.abs(hash).toString(36)}`;
+}
 
 function getStatusLabel(status: ExperimentEntry['status']) {
   switch (status) {
@@ -122,19 +184,127 @@ function AutoResearchView() {
     metricName, consecutiveFailures,
     experiments, liveOutput, sshConfig,
     setSelectedExperiment, initSession, setSshConfig,
+    terminalVisible, terminalSessionId, terminalCwd,
+    openTerminalPanel, setTerminalReady, setTerminalVisible,
   } = useAutoResearchStore();
 
   const [showSetup, setShowSetup] = useState(!sshConfig);
-  const [setupForm, setSetupForm] = useState<SshConfig>({
-    mode: 'ssh',
-    host: '', user: 'root', keyPath: '', port: 22, remoteWorkDir: '~/autoresearch',
-    authMode: 'agent', password: '',
-  });
+  const [setupForm, setSetupForm] = useState<SshConfig>(() => loadPersistedSetup());
   const [maxIter, setMaxIter] = useState(50);
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
+  const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle', output: '' });
+
+  useEffect(() => {
+    const { password: _password, ...persisted } = setupForm;
+    localStorage.setItem(AUTORESEARCH_CONFIG_STORAGE_KEY, JSON.stringify(persisted));
+  }, [setupForm]);
+
+  useEffect(() => {
+    if (!showSetup) {
+      return;
+    }
+    void assertSupportedPlatform().catch((error) => {
+      useAutoResearchStore.getState().setError(
+        error instanceof Error ? error.message : String(error),
+      );
+      setShowSetup(false);
+    });
+  }, [showSetup]);
+
+  useEffect(() => {
+    setConnectionTest((prev) => (prev.status === 'idle'
+      ? prev
+      : { status: 'idle', output: '' }));
+  }, [
+    setupForm.mode,
+    setupForm.host,
+    setupForm.user,
+    setupForm.port,
+    setupForm.authMode,
+    setupForm.password,
+    setupForm.keyPath,
+    setupForm.remoteWorkDir,
+  ]);
+
+  const handlePickLocalWorkDir = useCallback(async () => {
+    const selection = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: setupForm.remoteWorkDir || undefined,
+    });
+    if (typeof selection === 'string') {
+      setSetupForm((current) => ({ ...current, remoteWorkDir: selection }));
+    }
+  }, [setupForm.remoteWorkDir]);
+
+  const handleShowSetup = useCallback(async () => {
+    try {
+      await assertSupportedPlatform();
+      setShowSetup(true);
+    } catch (error) {
+      useAutoResearchStore.getState().setError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }, []);
+
+  const handleTestConnection = useCallback(async () => {
+    try {
+      await assertSupportedPlatform();
+    } catch (error) {
+      useAutoResearchStore.getState().setError(
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+
+    const cfg = sshConfig || setupForm;
+    setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
+
+    try {
+      const result = await invoke<RawBashResult>('execute_bash', {
+        args: {
+          command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
+          timeoutSecs: 30,
+        },
+      });
+      const stdout = (result.stdout || '').trim();
+      const stderr = (result.stderr || '').trim();
+      const exitCode = result.exit_code ?? 0;
+      if (exitCode !== 0) {
+        throw new Error(stderr || stdout || `connection test failed (exit ${exitCode})`);
+      }
+
+      const [unameLine = '', pwdLine = '', gitLine = ''] = stdout.split('\n');
+      if (cfg.mode === 'ssh' && unameLine.trim() !== 'Linux') {
+        throw new Error('Remote target must be Linux');
+      }
+      if (cfg.mode === 'local' && !['Darwin', 'Linux'].includes(unameLine.trim())) {
+        throw new Error('AutoResearch supports macOS and Linux only');
+      }
+
+      setConnectionTest({
+        status: 'success',
+        output: [unameLine, pwdLine, gitLine].filter(Boolean).join('\n'),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setConnectionTest({ status: 'error', output: message });
+      useAutoResearchStore.getState().setError(message);
+    }
+  }, [setupForm, sshConfig]);
 
   const handleStart = useCallback(async () => {
+    try {
+      await assertSupportedPlatform();
+    } catch (error) {
+      useAutoResearchStore.getState().setError(
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+
     if (!sshConfig) {
       if (setupForm.mode === 'ssh') {
         if (!setupForm.host || !setupForm.user) return;
@@ -146,6 +316,10 @@ function AutoResearchView() {
     }
 
     const cfg = sshConfig || setupForm;
+    if (connectionTest.status !== 'success') {
+      useAutoResearchStore.getState().setError(t('autoresearch.connectionTestRequired'));
+      return;
+    }
     if (!sshConfig) {
       setSshConfig(cfg);
     }
@@ -163,9 +337,8 @@ function AutoResearchView() {
       return;
     }
 
-    const sessionId = `autoresearch-${Date.now()}`;
     initSession({
-      id: sessionId,
+      id: createStableAutoResearchSessionId(cfg, sessionFilePath, metric, direction),
       maxIterations: maxIter,
       metricName: metric,
       metricDirection: direction,
@@ -174,22 +347,28 @@ function AutoResearchView() {
     });
 
     setShowSetup(false);
+    openTerminalPanel(`autoresearch-terminal-${Date.now()}`, cfg.mode === 'local' ? cfg.remoteWorkDir : '');
 
-    // The sendMessage adapter needs to be wired to the actual QueryEngine.
-    // For now, provide a placeholder that will be connected in the next phase.
-    const sendMessage = async (systemPrompt: string, userMessage: string): Promise<string> => {
-      // TODO: Wire to QueryEngine.runChatTurn via chatStore
-      // This requires creating a dedicated session and piping the agent output back.
-      console.log('[AutoResearch] sendMessage called', { systemPrompt: systemPrompt.slice(0, 100), userMessage });
-      return 'EXPERIMENT_RESULT: metric_value=null status=FAILED fail_reason="sendMessage adapter not yet wired" hypothesis="placeholder"';
-    };
-
-    startExperimentLoop(sendMessage);
-  }, [sshConfig, setupForm, maxIter, metric, direction, initSession, setSshConfig]);
+    const sendMessage = createAutoResearchSendMessage(cfg.remoteWorkDir);
+    void startExperimentLoop(sendMessage);
+  }, [
+    connectionTest.status,
+    direction,
+    initSession,
+    maxIter,
+    metric,
+    openTerminalPanel,
+    setSshConfig,
+    setupForm,
+    sshConfig,
+  ]);
 
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
   const handleResume = useCallback(() => resumeExperimentLoop(), []);
   const handleStop = useCallback(() => stopExperimentLoop(), []);
+  const handleTerminalClose = useCallback(() => setTerminalVisible(false), [setTerminalVisible]);
+  const handleTerminalReady = useCallback(() => setTerminalReady(true), [setTerminalReady]);
+  const handleTerminalExit = useCallback(() => setTerminalReady(false), [setTerminalReady]);
 
   // ---- Setup form ----
   if (showSetup && loopState === 'idle') {
@@ -208,7 +387,7 @@ function AutoResearchView() {
                 type="button"
                 onClick={() => setSetupForm(f => ({ ...f, mode: 'ssh' }))}
                 className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all ${setupForm.mode === 'ssh' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-              >SSH</button>
+              >{t('autoresearch.modeRemote')}</button>
               <button
                 type="button"
                 onClick={() => setSetupForm(f => ({ ...f, mode: 'local' }))}
@@ -268,12 +447,60 @@ function AutoResearchView() {
                 )}
               </>
             )}
-            <input
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder={setupForm.mode === 'local' ? t('autoresearch.localWorkDirPlaceholder') : t('autoresearch.remoteWorkDirPlaceholder')}
-              value={setupForm.remoteWorkDir}
-              onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
-            />
+            {setupForm.mode === 'local' ? (
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                  placeholder={t('autoresearch.localWorkDirPlaceholder')}
+                  value={setupForm.remoteWorkDir}
+                  onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
+                />
+                <button
+                  type="button"
+                  className="px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={handlePickLocalWorkDir}
+                >
+                  {t('autoresearch.chooseDirectory')}
+                </button>
+              </div>
+            ) : (
+              <input
+                className="w-full px-3 py-2 border rounded-lg text-sm"
+                placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
+                value={setupForm.remoteWorkDir}
+                onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
+              />
+            )}
+
+            <button
+              type="button"
+              className="w-full py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              disabled={
+                setupForm.mode === 'ssh'
+                  ? (!setupForm.host || !setupForm.user
+                      || (setupForm.authMode === 'password' && !setupForm.password)
+                      || (setupForm.authMode === 'key' && !setupForm.keyPath)
+                      || !setupForm.remoteWorkDir)
+                  : !setupForm.remoteWorkDir
+              }
+              onClick={handleTestConnection}
+            >
+              {connectionTest.status === 'testing'
+                ? t('autoresearch.connectionTesting')
+                : t('autoresearch.testConnection')}
+            </button>
+
+            {connectionTest.output && (
+              <div className={`rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap ${
+                connectionTest.status === 'success'
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : connectionTest.status === 'error'
+                    ? 'border-red-200 bg-red-50 text-red-700'
+                    : 'border-gray-200 bg-gray-50 text-gray-600'
+              }`}>
+                {connectionTest.output}
+              </div>
+            )}
 
             <hr className="border-gray-200" />
 
@@ -305,11 +532,13 @@ function AutoResearchView() {
           <button
             className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
             disabled={
-              setupForm.mode === 'ssh'
+              connectionTest.status !== 'success'
+              || (setupForm.mode === 'ssh'
                 ? (!setupForm.host || !setupForm.user
                     || (setupForm.authMode === 'password' && !setupForm.password)
-                    || (setupForm.authMode === 'key' && !setupForm.keyPath))
-                : !setupForm.remoteWorkDir
+                    || (setupForm.authMode === 'key' && !setupForm.keyPath)
+                    || !setupForm.remoteWorkDir)
+                : !setupForm.remoteWorkDir)
             }
             onClick={handleStart}
           >
@@ -349,7 +578,7 @@ function AutoResearchView() {
         {/* Control buttons */}
         {loopState === 'idle' && (
           <button
-            onClick={() => setShowSetup(true)}
+            onClick={() => { void handleShowSetup(); }}
             className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700"
           >
             ▶ {t('autoresearch.setupAndStart')}
@@ -377,7 +606,10 @@ function AutoResearchView() {
         )}
         {(loopState === 'stopped' || loopState === 'error') && (
           <button
-            onClick={() => { useAutoResearchStore.getState().resetSession(); setShowSetup(true); }}
+            onClick={() => {
+              useAutoResearchStore.getState().resetSession();
+              void handleShowSetup();
+            }}
             className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700"
           >
             ↻ {t('autoresearch.newSession')}
@@ -423,6 +655,35 @@ function AutoResearchView() {
       {liveOutput && (
         <div className="max-h-32 overflow-y-auto bg-gray-900 text-green-400 text-xs font-mono p-3 rounded-lg">
           <pre className="whitespace-pre-wrap">{liveOutput}</pre>
+        </div>
+      )}
+
+      {terminalSessionId && (
+        <div className="rounded-xl border overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b text-xs">
+            <span className="font-medium text-gray-700">{t('autoresearch.terminalTitle')}</span>
+            <button
+              type="button"
+              className="text-blue-600 hover:text-blue-700"
+              onClick={() => setTerminalVisible(!terminalVisible)}
+            >
+              {terminalVisible ? t('autoresearch.hideTerminal') : t('autoresearch.showTerminal')}
+            </button>
+          </div>
+          <div
+            style={{
+              height: terminalVisible ? 260 : 0,
+              display: terminalVisible ? undefined : 'none',
+            }}
+          >
+            <TerminalPanel
+              sessionId={terminalSessionId}
+              cwd={terminalCwd || undefined}
+              onClose={handleTerminalClose}
+              onSessionReady={handleTerminalReady}
+              onSessionExit={handleTerminalExit}
+            />
+          </div>
         </div>
       )}
     </div>

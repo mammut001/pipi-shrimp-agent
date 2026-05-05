@@ -492,51 +492,27 @@ async function buildPostCompactAttachments(
   let totalTokens = 0;
 
   // 1. Session Memory（如果存在）
-  try {
-    const smContent = await invoke<string | null>('get_session_memory', { workDir: workDir ?? null });
-    if (smContent && smContent.trim().length > 100) {
-      // 估算 SM token
-      const smTokens = Math.ceil(smContent.length / 3);  // 粗估
-      if (totalTokens + smTokens < POST_COMPACT_TOKEN_BUDGET) {
-        attachments.push({ type: 'session_memory', content: smContent });
-        totalTokens += smTokens;
-      }
+  const smContent = await readSessionMemoryAttachment(workDir);
+  if (smContent && smContent.trim().length > 100) {
+    const smTokens = Math.ceil(smContent.length / 3);
+    if (totalTokens + smTokens < POST_COMPACT_TOKEN_BUDGET) {
+      attachments.push({ type: 'session_memory', content: smContent });
+      totalTokens += smTokens;
     }
-  } catch { /* SM 不存在，跳过 */ }
+  }
 
   // 2. 最近读取的文件
-  const recentFiles = extractRecentFilePaths(recentMessages);
+  const recentFiles = await extractRecentFilePaths(recentMessages, workDir);
   for (const filePath of recentFiles.slice(0, POST_COMPACT_MAX_FILES)) {
     if (totalTokens >= POST_COMPACT_TOKEN_BUDGET) break;
 
-    try {
-      const response = await invoke<{ content: string; path: string }>('read_file', {
-        path: filePath,
-        workDir: workDir ?? null,
-      });
+    const fileAttachment = await readPostCompactFileAttachment(filePath, workDir);
+    if (!fileAttachment) continue;
 
-      if (!response || !response.content) continue;
+    if (totalTokens + fileAttachment.tokens > POST_COMPACT_TOKEN_BUDGET) break;
 
-      // 截断到每文件上限
-      const fileContent = response.content;
-      const maxChars = POST_COMPACT_MAX_TOKENS_PER_FILE * 3;
-      const truncated = fileContent.length > maxChars;
-      const truncatedContent = truncated ? fileContent.slice(0, maxChars) : fileContent;
-      const tokens = Math.ceil(truncatedContent.length / 3);
-
-      if (totalTokens + tokens > POST_COMPACT_TOKEN_BUDGET) break;
-
-      attachments.push({
-        type: 'file',
-        file_path: filePath,
-        content: truncatedContent,
-        truncated,
-        tokens,
-      });
-      totalTokens += tokens;
-    } catch {
-      // 文件不存在或读取失败，跳过
-    }
+    attachments.push(fileAttachment);
+    totalTokens += fileAttachment.tokens;
   }
 
   return attachments;
@@ -545,30 +521,103 @@ async function buildPostCompactAttachments(
 /**
  * 从消息中提取最近读取的文件路径
  */
-function extractRecentFilePaths(messages: Message[]): string[] {
+async function extractRecentFilePaths(messages: Message[], workDir?: string): Promise<string[]> {
   const paths: string[] = [];
-  // 常见的文件路径正则
   const filePatterns = [
-    // 相对路径
     /["']((?:src|lib|components|hooks|services|utils|pages|app|api|models|types|styles|assets|config|tests?|docs?|scripts|bin)\/[^\s"')]+(?:\.[a-zA-Z0-9]+)?)["']/g,
-    // 绝对路径
-    /(?:^|\s)((?:\/[a-zA-Z0-9._-]+)+(?:\.[a-zA-Z0-9]+)?)(?:\s|$)/gm,
+    /['"`]?((?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|md|json|ya?ml|toml|css|scss|html|sql|sh))['"`]?/g,
   ];
 
   for (const msg of messages.slice(-20).reverse()) {
     for (const pattern of filePatterns) {
+      pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(msg.content)) !== null) {
-        const path = match[1] || match[0];
-        if (path && !path.includes('node_modules') && !path.includes('.git')) {
-          paths.push(path.trim());
+        const path = (match[1] || match[0] || '').trim();
+        if (path && isLikelyProjectFilePath(path)) {
+          paths.push(path);
         }
       }
     }
   }
 
-  // 去重，保留顺序
-  return [...new Set(paths)];
+  const existingPaths: string[] = [];
+  for (const path of [...new Set(paths)]) {
+    try {
+      const exists = await safeInvoke<boolean>('path_exists', {
+        path,
+        workDir: workDir ?? null,
+      }, { silent: true, skipLogging: true });
+      if (exists) {
+        existingPaths.push(path);
+      }
+    } catch {
+      // Ignore best-effort path validation failures here.
+    }
+  }
+
+  return existingPaths;
+}
+
+async function readSessionMemoryAttachment(workDir?: string): Promise<string | null> {
+  try {
+    return await safeInvoke<string | null>('get_session_memory', {
+      workDir: workDir ?? null,
+    }, { silent: true, skipLogging: true });
+  } catch {
+    return null;
+  }
+}
+
+async function readPostCompactFileAttachment(
+  filePath: string,
+  workDir?: string,
+): Promise<Extract<CompactAttachment, { type: 'file' }> | null> {
+  try {
+    const response = await safeInvoke<{ content: string; path: string }>('read_file', {
+      path: filePath,
+      workDir: workDir ?? null,
+    }, { silent: true, skipLogging: true });
+
+    if (!response?.content) {
+      return null;
+    }
+
+    const maxChars = POST_COMPACT_MAX_TOKENS_PER_FILE * 3;
+    const truncated = response.content.length > maxChars;
+    const content = truncated ? response.content.slice(0, maxChars) : response.content;
+    return {
+      type: 'file',
+      file_path: filePath,
+      content,
+      truncated,
+      tokens: Math.ceil(content.length / 3),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyProjectFilePath(path: string): boolean {
+  const normalized = path.trim();
+  if (!normalized) return false;
+  if (normalized.startsWith('http')) return false;
+  if (
+    normalized.startsWith('/usr/')
+    || normalized.startsWith('/System/')
+    || normalized.startsWith('/Library/')
+    || normalized.startsWith('/private/')
+  ) {
+    return false;
+  }
+
+  return ![
+    'node_modules',
+    '.git/',
+    'target/',
+    'dist/',
+    'build/',
+  ].some((segment) => normalized.includes(segment));
 }
 
 // ============================================================================

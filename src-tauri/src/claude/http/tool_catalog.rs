@@ -207,6 +207,70 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
             }
         }),
         serde_json::json!({
+            "name": "ssh_exec",
+            "description": "Execute a command on the target. In AutoResearch this can run locally or on a remote Linux host via SSH, depending on the provided mode and connection fields.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["local", "ssh"] },
+                    "host": { "type": "string" },
+                    "user": { "type": "string" },
+                    "port": { "type": "number" },
+                    "authMode": { "type": "string", "enum": ["agent", "password", "key"] },
+                    "keyPath": { "type": "string" },
+                    "password": { "type": "string" },
+                    "remoteWorkDir": { "type": "string" },
+                    "timeout": { "type": "number" },
+                    "terminal": { "type": "boolean" }
+                },
+                "required": ["command"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "ssh_upload_file",
+            "description": "Upload a local file to the target. In local mode this becomes a direct local copy; in ssh mode it uses SCP semantics.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "localPath": { "type": "string" },
+                    "remotePath": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["local", "ssh"] },
+                    "host": { "type": "string" },
+                    "user": { "type": "string" },
+                    "port": { "type": "number" },
+                    "authMode": { "type": "string", "enum": ["agent", "password", "key"] },
+                    "keyPath": { "type": "string" },
+                    "password": { "type": "string" },
+                    "remoteWorkDir": { "type": "string" }
+                },
+                "required": ["localPath", "remotePath"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "ssh_read_file",
+            "description": "Read a file from the target. In local mode the path is read directly; in ssh mode the file is read from the remote host.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "remotePath": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["local", "ssh"] },
+                    "host": { "type": "string" },
+                    "user": { "type": "string" },
+                    "port": { "type": "number" },
+                    "authMode": { "type": "string", "enum": ["agent", "password", "key"] },
+                    "keyPath": { "type": "string" },
+                    "password": { "type": "string" },
+                    "remoteWorkDir": { "type": "string" },
+                    "maxLines": { "type": "number" }
+                },
+                "required": ["remotePath"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
             "name": "list_files",
             "description": "List files in a directory.",
             "input_schema": {
