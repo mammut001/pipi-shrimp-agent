@@ -207,6 +207,7 @@ function toIterationRecord(entry: ExperimentEntry, existing?: AutoResearchIterat
     reasoning: entry.reasoning || existing?.reasoning,
     metricValue: entry.metricValue,
     error: entry.failReason ?? existing?.error ?? null,
+    commitHash: existing?.commitHash,
     startedAt: existing?.startedAt,
     endedAt: entry.timestamp,
     artifactPaths: existing?.artifactPaths,
@@ -231,6 +232,7 @@ function buildRunRecordFromInit(opts: {
   experimentDir?: string;
   sessionFilePath?: string;
   livingDocPath?: string;
+  baseline?: number | null;
   agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
 }): AutoResearchRunRecord {
   return {
@@ -248,12 +250,12 @@ function buildRunRecordFromInit(opts: {
       metric: opts.metricName,
       direction: opts.metricDirection,
       iterations: opts.maxIterations,
-      baseline: null,
+      baseline: opts.baseline ?? null,
       configSnapshot: toHistoryConfigSnapshot(opts.agentConfigSnapshot),
     },
     currentIteration: 0,
-    bestMetricValue: null,
-    bestIteration: null,
+    bestMetricValue: opts.baseline ?? null,
+    bestIteration: opts.baseline !== null && opts.baseline !== undefined ? 0 : null,
     failureCount: 0,
     iterations: [],
     events: [],
@@ -290,6 +292,7 @@ interface AutoResearchStore extends ExperimentSession {
     experimentDir?: string;
     sessionFilePath?: string;
     livingDocPath?: string;
+    baseline?: number | null;
     agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
     telegramConfig?: Partial<TelegramNotifyConfig>;
   }) => void;
@@ -311,6 +314,7 @@ interface AutoResearchStore extends ExperimentSession {
     reasoning?: string;
     metricValue?: number | null;
     improvement?: number | null;
+    commitHash?: string;
     error?: string | null;
     endedAt?: string;
     artifactPaths?: string[];
@@ -365,6 +369,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       experimentDir: opts.experimentDir,
       sessionFilePath: opts.sessionFilePath,
       livingDocPath: opts.livingDocPath,
+      baseline: opts.baseline,
       agentConfigSnapshot: opts.agentConfigSnapshot,
     });
     nextRun.events = [
@@ -386,7 +391,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       loopState: 'running',
       currentIteration: 0,
       maxIterations: opts.maxIterations,
-      bestMetric: null,
+      bestMetric: opts.baseline ?? null,
       metricDirection: opts.metricDirection,
       metricName: opts.metricName,
       consecutiveFailures: 0,
@@ -551,6 +556,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         reasoning: input.reasoning ?? existing?.reasoning,
         metricValue: input.metricValue ?? existing?.metricValue,
         improvement: input.improvement ?? existing?.improvement,
+        commitHash: input.commitHash ?? existing?.commitHash,
         error: input.error ?? existing?.error ?? null,
         startedAt: existing?.startedAt,
         endedAt: input.endedAt ?? existing?.endedAt,

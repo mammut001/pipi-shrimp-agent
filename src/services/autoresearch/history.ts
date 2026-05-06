@@ -44,6 +44,7 @@ export interface AutoResearchIterationRecord {
   reasoning?: string;
   metricValue?: number | null;
   improvement?: number | null;
+  commitHash?: string;
   error?: string | null;
   startedAt?: string;
   endedAt?: string;
@@ -208,6 +209,7 @@ function normalizeIterationRecord(record: unknown, fallbackRunId: string, index:
     reasoning: sanitizeDisplayString(record.reasoning, MAX_REASONING_CHARS),
     metricValue: typeof record.metricValue === 'number' || record.metricValue === null ? record.metricValue : undefined,
     improvement: typeof record.improvement === 'number' || record.improvement === null ? record.improvement : undefined,
+    commitHash: sanitizeDisplayString(record.commitHash, MAX_CONFIG_VALUE_CHARS),
     error: typeof record.error === 'string'
       ? truncateString(record.error, MAX_ERROR_CHARS)
       : record.error === null ? null : undefined,

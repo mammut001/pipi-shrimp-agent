@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import { TerminalPanel } from '@/components';
+import { AutoResearchRunDetailDocument } from '@/components/autoresearch/AutoResearchRunDetailDocument';
 import { MainLayout } from '@/layout';
 import { useSettingsStore } from '@/store';
 import {
@@ -34,9 +35,20 @@ import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
 import { formatError } from '@/services/autoresearch/errors';
 import { createAutoResearchRunId } from '@/services/autoresearch/history';
 import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
+import { redactSensitiveText } from '@/services/autoresearch/runDocument';
+import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
+
+function parseOptionalBaseline(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 interface RawBashResult {
   stdout?: string;
@@ -160,9 +172,8 @@ function ExperimentDetailPanel() {
 function AutoResearchView() {
   const {
     id: activeRunId,
-    loopState, currentIteration, maxIterations, bestMetric,
-    metricName, consecutiveFailures,
-    liveOutput, sshConfig, statusMessage, agentConfigSnapshot,
+    loopState,
+    liveOutput, sshConfig, statusMessage,
     setSelectedExperiment, initSession, setSshConfig, runHistory, selectRun,
     terminalVisible, terminalSessionId, terminalCwd,
     openTerminalPanel, setTerminalReady, setTerminalVisible,
@@ -177,7 +188,9 @@ function AutoResearchView() {
   const [maxIter, setMaxIter] = useState(50);
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
+  const [baselineInput, setBaselineInput] = useState('');
   const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle', output: '' });
+  const [showRunList, setShowRunList] = useState(false);
   const agentConfig = useMemo(
     () => resolveActiveAgentConfig(),
     [activeConfigId, apiConfigs],
@@ -187,14 +200,8 @@ function AutoResearchView() {
     ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
     : '';
   const displayRun = selectedRun;
-  const displayedCurrentIteration = displayRun?.currentIteration ?? currentIteration;
-  const displayedMaxIterations = displayRun?.config.iterations ?? maxIterations;
-  const displayedMetricName = displayRun?.config.metric ?? metricName;
-  const displayedBestMetric = displayRun?.bestMetricValue ?? bestMetric;
-  const displayedIterations = displayRun?.iterations ?? [];
   const displayedLiveOutput = displayRun?.id === activeRunId ? liveOutput : (displayRun?.liveOutputExcerpt || '');
-  const displayedStatus = displayRun?.status ?? loopState;
-  const displayedConfigSnapshot = displayRun?.config.configSnapshot ?? agentConfigSnapshot;
+  const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
 
   useEffect(() => {
     const { password: _password, ...persisted } = setupForm;
@@ -210,6 +217,12 @@ function AutoResearchView() {
       setShowSetup(false);
     });
   }, [showSetup]);
+
+  useEffect(() => {
+    if (activeRunId) {
+      setShowRunList(false);
+    }
+  }, [activeRunId]);
 
   useEffect(() => {
     setConnectionTest((prev) => (prev.status === 'idle'
@@ -347,6 +360,7 @@ function AutoResearchView() {
         maxIterations: maxIter,
         metricName: metric,
         metricDirection: direction,
+        baseline: parseOptionalBaseline(baselineInput),
         sshConfig: resolvedConfig,
         experimentDir: preflight.resolvedExperimentDir,
         sessionFilePath: preflight.sessionFilePath,
@@ -372,6 +386,7 @@ function AutoResearchView() {
       useAutoResearchStore.getState().setError(formatError(error));
     }
   }, [
+    baselineInput,
     connectionTest.status,
     direction,
     initSession,
@@ -389,6 +404,40 @@ function AutoResearchView() {
   const handleTerminalClose = useCallback(() => setTerminalVisible(false), [setTerminalVisible]);
   const handleTerminalReady = useCallback(() => setTerminalReady(true), [setTerminalReady]);
   const handleTerminalExit = useCallback(() => setTerminalReady(false), [setTerminalReady]);
+
+  const handleOpenRunArtifact = useCallback(() => {
+    const targetPath = displayRun?.config.livingDocPath
+      || displayRun?.config.sessionFilePath
+      || displayRun?.config.experimentDir;
+    if (targetPath) {
+      void openFileExternal(targetPath);
+    }
+  }, [displayRun]);
+
+  const runControls = displayRun?.id === activeRunId ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {loopState === 'running' && (
+        <>
+          <button onClick={handlePause} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-700 hover:bg-amber-100">
+            Pause
+          </button>
+          <button onClick={handleStop} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 hover:bg-red-100">
+            Stop
+          </button>
+        </>
+      )}
+      {loopState === 'paused' && (
+        <>
+          <button onClick={handleResume} className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-[12px] font-medium text-green-700 hover:bg-green-100">
+            Resume
+          </button>
+          <button onClick={handleStop} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 hover:bg-red-100">
+            Stop
+          </button>
+        </>
+      )}
+    </div>
+  ) : null;
 
   // ---- Setup form ----
   if (showSetup && loopState === 'idle') {
@@ -501,8 +550,9 @@ function AutoResearchView() {
                       || (setupForm.authMode === 'password' && !setupForm.password)
                       || (setupForm.authMode === 'key' && !setupForm.keyPath)
                       || !setupForm.remoteWorkDir
-                      || Boolean(agentConfigError))
-                  : !setupForm.remoteWorkDir || Boolean(agentConfigError)
+                        || Boolean(agentConfigError)
+                        || baselineInvalid)
+                      : !setupForm.remoteWorkDir || Boolean(agentConfigError) || baselineInvalid
               }
               onClick={handleTestConnection}
             >
@@ -542,6 +592,15 @@ function AutoResearchView() {
               </select>
             </div>
             <input
+              className={`w-full px-3 py-2 border rounded-lg text-sm ${baselineInvalid ? 'border-red-300' : ''}`}
+              placeholder="Baseline (optional, e.g. 0.963284)"
+              value={baselineInput}
+              onChange={e => setBaselineInput(e.target.value)}
+            />
+            {baselineInvalid && (
+              <div className="text-xs text-red-500">Baseline must be a number.</div>
+            )}
+            <input
               className="w-full px-3 py-2 border rounded-lg text-sm"
               placeholder={t('autoresearch.maxIterationsPlaceholder')}
               type="number"
@@ -559,8 +618,9 @@ function AutoResearchView() {
                       || (setupForm.authMode === 'password' && !setupForm.password)
                       || (setupForm.authMode === 'key' && !setupForm.keyPath)
                       || !setupForm.remoteWorkDir
-                      || Boolean(agentConfigError))
-                  : !setupForm.remoteWorkDir || Boolean(agentConfigError))
+                        || Boolean(agentConfigError)
+                        || baselineInvalid)
+                      : !setupForm.remoteWorkDir || Boolean(agentConfigError) || baselineInvalid)
               }
               onClick={handleStart}
             >
@@ -576,78 +636,43 @@ function AutoResearchView() {
     );
   }
 
-  // ---- Main dashboard ----
-  return (
-    <div className="flex-1 flex flex-col min-h-0 p-4 space-y-4">
-      {/* Status Bar */}
-      <div className="flex items-center gap-4 px-4 py-3 bg-gray-50 rounded-xl border text-sm">
-        <span className={`w-2 h-2 rounded-full ${
-          displayedStatus === 'running' ? 'bg-green-500 animate-pulse' :
-          displayedStatus === 'waiting_rate_limit' ? 'bg-yellow-500' :
-          displayedStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
-        }`} />
-        <span className="font-medium text-gray-700">{String(displayedStatus).replace(/_/g, ' ')}</span>
-        <span className="text-gray-400">|</span>
-        <span className="text-gray-600">{t('autoresearch.experimentShort')} {displayedCurrentIteration}/{displayedMaxIterations}</span>
-        <span className="text-gray-400">|</span>
-        <span className="text-gray-600">
-          {t('autoresearch.best')}: {displayedBestMetric !== null && displayedBestMetric !== undefined ? `${displayedMetricName}=${displayedBestMetric}` : t('autoresearch.notAvailable')}
-        </span>
-        {(displayRun?.failureCount ?? consecutiveFailures) > 0 && (
-          <>
-            <span className="text-gray-400">|</span>
-            <span className="text-red-500">⚠ {t('autoresearch.consecutiveFailures').replace('{count}', String(displayRun?.failureCount ?? consecutiveFailures))}</span>
-          </>
-        )}
-
-        <div className="flex-1" />
-
-        {/* Control buttons */}
-        {loopState === 'idle' && (
-          <button
-            onClick={() => { void handleShowSetup(); }}
-            className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700"
-          >
-            ▶ {t('autoresearch.setupAndStart')}
-          </button>
-        )}
-        {loopState === 'running' && displayRun?.id === activeRunId && (
-          <>
-            <button onClick={handlePause} className="px-3 py-1 bg-yellow-500 text-white rounded-lg text-xs hover:bg-yellow-600">
-              ⏸ {t('autoresearch.pause')}
-            </button>
-            <button onClick={handleStop} className="px-3 py-1 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600">
-              ⏹ {t('autoresearch.stop')}
-            </button>
-          </>
-        )}
-        {loopState === 'paused' && displayRun?.id === activeRunId && (
-          <>
-            <button onClick={handleResume} className="px-3 py-1 bg-green-500 text-white rounded-lg text-xs hover:bg-green-600">
-              ▶ {t('autoresearch.resume')}
-            </button>
-            <button onClick={handleStop} className="px-3 py-1 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600">
-              ⏹ {t('autoresearch.stop')}
-            </button>
-          </>
-        )}
-        {(loopState === 'stopped' || loopState === 'error' || displayRun?.id !== activeRunId) && (
-          <button
-            onClick={() => {
-              useAutoResearchStore.getState().resetSession();
-              void handleShowSetup();
-            }}
-            className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700"
-          >
-            ↻ {t('autoresearch.newSession')}
-          </button>
-        )}
+  if (!displayRun && sortedRuns.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="mb-4 rounded-2xl bg-indigo-50 p-4 text-indigo-500">
+          <svg className="h-9 w-9" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+          </svg>
+        </div>
+        <h2 className="text-xl font-bold text-gray-800">AutoResearch</h2>
+        <p className="mt-2 max-w-md text-sm text-gray-500">{t('autoresearch.emptyIdle')}</p>
+        <button
+          onClick={() => { void handleShowSetup(); }}
+          className="mt-5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          {t('autoresearch.setupAndStart')}
+        </button>
       </div>
+    );
+  }
 
-      {sortedRuns.length > 0 && (
-        <div className="rounded-lg border px-3 py-2 bg-white">
-          <div className="text-xs font-semibold text-gray-600 mb-2">Recent runs</div>
-          <div className="flex flex-wrap gap-2">
+  if (showRunList) {
+    return (
+      <div className="flex-1 overflow-y-auto bg-[#f6f1e8] p-6">
+        <div className="mx-auto max-w-5xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">AutoResearch</p>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[#2f251a]">Run History</h2>
+            </div>
+            <button
+              onClick={() => { void handleShowSetup(); }}
+              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              New Run
+            </button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {sortedRuns.map((run) => (
               <button
                 key={run.id}
@@ -656,87 +681,56 @@ function AutoResearchView() {
                   selectRun(run.id);
                   setSelectedExperiment(-1);
                   setShowSetup(false);
+                  setShowRunList(false);
                 }}
-                className={`rounded-md border px-2 py-1 text-xs text-left ${
-                  displayRun?.id === run.id ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                className={`rounded-2xl border bg-white p-4 text-left shadow-sm transition-colors ${
+                  displayRun?.id === run.id ? 'border-blue-300 ring-2 ring-blue-100' : 'border-[#ebe4d9] hover:border-[#d8cfc1]'
                 }`}
               >
-                <div className="font-medium truncate max-w-[220px]">{run.title}</div>
-                <div className="text-[11px] opacity-80">{run.status.replace(/_/g, ' ')} · {run.currentIteration}/{run.config.iterations}</div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="rounded-full bg-[#dceeea] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
+                    {run.status.replace(/_/g, ' ')}
+                  </span>
+                  <span className="font-mono text-[11px] text-[#8a7f72]">{run.currentIteration}/{run.config.iterations}</span>
+                </div>
+                <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-[#2f251a]">{run.title}</h3>
+                <p className="mt-2 truncate text-xs text-[#6f665c]">{run.config.metric} · {run.config.direction}</p>
+                <p className="mt-1 truncate text-xs text-[#8a7f72]">{run.config.configSnapshot.provider} · {run.config.configSnapshot.model || 'no model'}</p>
               </button>
             ))}
           </div>
         </div>
-      )}
-
-      {displayedConfigSnapshot && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-800">
-          <div className="font-medium">
-            Run config: {displayedConfigSnapshot.configName} · {displayedConfigSnapshot.provider} · {displayedConfigSnapshot.model} · {displayedConfigSnapshot.source}
-          </div>
-          <div className="mt-1 break-all text-blue-700">
-            {displayedConfigSnapshot.apiFormat} · {displayedConfigSnapshot.baseUrl} · key {displayedConfigSnapshot.keyPreview || '<EMPTY>'}
-          </div>
-          <div className="mt-1 text-blue-700">
-            This run is using the config captured when the run started. Start a new run to use latest Settings.
-          </div>
-          {displayedConfigSnapshot.warning && (
-            <div className="mt-1 text-amber-700">{displayedConfigSnapshot.warning}</div>
-          )}
-        </div>
-      )}
-
-      {statusMessage && loopState !== 'error' && (
-        <div className="px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
-          {statusMessage}
-        </div>
-      )}
-
-      {/* Error banner */}
-      {loopState === 'error' && (
-        <div className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {useAutoResearchStore.getState().errorMessage}
-        </div>
-      )}
-
-      {/* Experiment Timeline */}
-      <div className="flex-1 overflow-y-auto space-y-1">
-        {displayedIterations.length === 0 ? (
-          <div className="text-center text-gray-400 text-sm mt-20">
-            {sortedRuns.length === 0 && loopState === 'idle' ? t('autoresearch.emptyIdle') : t('autoresearch.emptyWaiting')}
-          </div>
-        ) : (
-          displayedIterations.map((exp, idx) => (
-            <button
-              key={exp.id}
-              className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm text-left transition
-                ${idx === useAutoResearchStore.getState().selectedExperiment
-                  ? 'bg-blue-50 border border-blue-200'
-                  : 'hover:bg-gray-50'}`}
-              onClick={() => setSelectedExperiment(idx)}
-            >
-              <span className="w-8 text-gray-400 text-xs">#{exp.index}</span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
-                {exp.status}
-              </span>
-              <span className="flex-1 text-gray-700 truncate">{exp.hypothesis || 'Pending iteration'}</span>
-              <span className="text-gray-400 text-xs font-mono">
-                {exp.metricValue !== null && exp.metricValue !== undefined ? exp.metricValue : '—'}
-              </span>
-            </button>
-          ))
-        )}
       </div>
+    );
+  }
 
-      {/* Live output */}
-      {displayedLiveOutput && (
-        <div className="max-h-32 overflow-y-auto bg-gray-900 text-green-400 text-xs font-mono p-3 rounded-lg">
-          <pre className="whitespace-pre-wrap">{displayedLiveOutput}</pre>
+  return (
+    <div className="flex-1 flex min-h-0 flex-col bg-[#f6f1e8]">
+      {statusMessage && loopState !== 'error' && (
+        <div className="border-b border-yellow-200 bg-yellow-50 px-4 py-2 text-sm text-yellow-800">
+          {redactSensitiveText(statusMessage)}
         </div>
       )}
-
+      {loopState === 'error' && (
+        <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+          {redactSensitiveText(useAutoResearchStore.getState().errorMessage || '')}
+        </div>
+      )}
+      {displayRun && (
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <AutoResearchRunDetailDocument
+            run={displayRun}
+            liveOutput={displayedLiveOutput}
+            onBack={() => setShowRunList(true)}
+            onOpen={handleOpenRunArtifact}
+            onClose={() => setShowRunList(true)}
+            headerActions={runControls}
+            className="min-h-[calc(100vh-2rem)] rounded-[28px] border border-white/70"
+          />
+        </div>
+      )}
       {terminalSessionId && (
-        <div className="rounded-xl border overflow-hidden">
+        <div className="mx-4 mb-4 rounded-xl border bg-white overflow-hidden">
           <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b text-xs">
             <span className="font-medium text-gray-700">{t('autoresearch.terminalTitle')}</span>
             <button
