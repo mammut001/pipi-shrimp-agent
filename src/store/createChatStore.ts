@@ -22,6 +22,7 @@ import {
 import { safeInvoke, safeInvokeOrNull } from '../utils/safeInvoke';
 import { useArtifactsStore } from './artifactsStore';
 import { createChatActionMethods } from './chat/chatActions';
+import { resetTransientSessionStateForNewChat } from './chat/sessionIsolation';
 import { filterSessionsByProject, selectCurrentMessages, selectCurrentSession } from './chat/chatSelectors';
 import { useUIStore } from './uiStore';
 
@@ -396,13 +397,41 @@ export const useChatStore = create<ChatState>()(
     startSession: async (projectId?: string | null, model?: string) => {
       const title = `Chat ${get().sessions.length + 1}`;
       const newSession = createSession(title, projectId, model);
+      const previousSessionId = get().currentSessionId;
+      const uiStore = useUIStore.getState();
+      const artifactsStore = useArtifactsStore.getState();
+
       try {
         await safeInvoke('db_save_session', { session: sessionToDb(newSession) });
       } catch (error) {
         console.error('Failed to save session to database:', error);
       }
-      useUIStore.getState().clearAllPermissions();
-      useUIStore.getState().clearQuestionnaire(get().currentSessionId || undefined);
+
+      if (get().streamingTimeoutId) {
+        clearTimeout(get().streamingTimeoutId!);
+      }
+      resetTransientSessionStateForNewChat(previousSessionId, {
+        isStreaming: get().isStreaming,
+        pendingToolCalls: get().pendingToolCalls,
+        pendingToolResultsLength: get().pendingToolResults.length,
+        permissionQueueLength: uiStore.permissionQueue.length,
+      }, {
+        stopSubprocess: (sessionId) => {
+          safeInvokeOrNull('stop_subprocess', { sessionId });
+        },
+        clearAllPermissions: () => uiStore.clearAllPermissions(),
+        clearQuestionnaire: (sessionId) => uiStore.clearQuestionnaire(sessionId),
+        clearNotificationHistory: (sessionId) => uiStore.clearNotificationHistory(sessionId),
+        clearArtifactId: () => uiStore.clearArtifactId(),
+        clearTaskProgress: () => uiStore.clearTaskProgress(),
+        setActiveSkill: (name) => uiStore.setActiveSkill(name),
+        setAgentPanelTab: (tab) => uiStore.setAgentPanelTab(tab),
+        closeArtifactsPanel: () => artifactsStore.closePanel(),
+        scrubDanglingToolCalls: (sessionId) => {
+          void scrubDanglingToolCalls(sessionId, set, get);
+        },
+      });
+
       localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, newSession.id);
       set((state) => ({
         sessions: [...state.sessions, newSession],
@@ -411,6 +440,7 @@ export const useChatStore = create<ChatState>()(
         error: null,
         streamingContent: '',
         streamingReasoning: '',
+        streamingTimeoutId: null,
         pendingToolCalls: 0,
         pendingToolResults: [],
         streamingSessionId: null,

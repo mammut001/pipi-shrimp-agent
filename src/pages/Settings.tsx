@@ -16,8 +16,9 @@ import { usePromptStore } from '@/store/promptStore';
 import type { ApiConfig, ModelPricing } from '@/types/settings';
 import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import {
-  preserveApiKeyValue,
+  resolveDraftApiKeyValue,
   resolveAgentConfig,
+  sanitizeApiKeyValue,
 } from '@/services/agentConfig';
 import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
 import { formatError } from '@/utils/errorFormat';
@@ -172,7 +173,7 @@ export function Settings() {
       id: editingConfigId || 'draft-config',
       name: formData.name.trim() || existingConfig?.name || formData.provider,
       provider: formData.provider,
-      apiKey: preserveApiKeyValue(formData.apiKey, existingConfig?.apiKey),
+      apiKey: resolveDraftApiKeyValue(formData.apiKey, formData.provider, existingConfig),
       baseUrl: formData.baseUrl || undefined,
       model: formData.model,
       modelProviderId: existingConfig?.modelProviderId ?? formData.provider,
@@ -223,7 +224,12 @@ export function Settings() {
    * Handle model fetching
    */
   const handleRefreshModels = async () => {
-    const prereqErrors = validateFetchModelsPrereqs(formData.provider, formData.apiKey, formData.baseUrl);
+    const draftConfig = buildDraftConfig();
+    const prereqErrors = validateFetchModelsPrereqs(
+      draftConfig.provider,
+      draftConfig.apiKey,
+      draftConfig.baseUrl || '',
+    );
     if (Object.keys(prereqErrors).length > 0) {
       setErrors((prev) => ({ ...prev, ...prereqErrors }));
       return;
@@ -234,9 +240,9 @@ export function Settings() {
       // Pass the current form data directly to fetch available models
       // This works for both new and existing configs
       const models = await fetchAvailableModels({
-        provider: formData.provider,
-        apiKey: formData.apiKey,
-        baseUrl: formData.baseUrl || undefined,
+        provider: draftConfig.provider,
+        apiKey: draftConfig.apiKey,
+        baseUrl: draftConfig.baseUrl,
       });
 
       addNotification('success', `${t('settings.foundModels')}: ${models.length}`);
@@ -366,13 +372,18 @@ export function Settings() {
    */
   const validateApiForm = (): boolean => {
     const newErrors: Record<string, string> = {};
+    const draftConfig = buildDraftConfig();
 
     if (!formData.name.trim()) {
       newErrors.name = t('settings.nameRequired');
     }
 
     // Capability-driven provider field validation
-    const providerErrors = validateProviderFields(formData.provider, formData.apiKey, formData.baseUrl);
+    const providerErrors = validateProviderFields(
+      draftConfig.provider,
+      draftConfig.apiKey,
+      draftConfig.baseUrl || '',
+    );
     Object.assign(newErrors, providerErrors);
 
     setErrors(newErrors);
@@ -453,7 +464,12 @@ export function Settings() {
    * Handle test connection with latency measurement and error classification
    */
   const handleTestConnection = async () => {
-    const providerErrors = validateProviderFields(formData.provider, formData.apiKey, formData.baseUrl);
+    const draftConfig = buildDraftConfig();
+    const providerErrors = validateProviderFields(
+      draftConfig.provider,
+      draftConfig.apiKey,
+      draftConfig.baseUrl || '',
+    );
     if (Object.keys(providerErrors).length > 0) {
       setErrors((prev) => ({ ...prev, ...providerErrors }));
       return;
@@ -470,7 +486,7 @@ export function Settings() {
     const startTime = Date.now();
 
     try {
-      const resolvedConfig = resolveAgentConfig(buildDraftConfig());
+      const resolvedConfig = resolveAgentConfig(draftConfig);
 
       // Debug: Log what's being sent to Rust for API testing
       console.info('[Settings Test] API Key debug', {
@@ -707,12 +723,7 @@ export function Settings() {
                     type={showApiKey ? 'text' : 'password'}
                     value={formData.apiKey}
                     onChange={(e) => {
-                      let cleanKey = e.target.value.trim();
-                      if (cleanKey.toLowerCase().startsWith('bearer ')) {
-                        cleanKey = cleanKey.substring(7).trim();
-                      }
-                      cleanKey = cleanKey.replace(/[\s\u0000-\u001F\u007F-\uFFFF]/g, '');
-                      handleChange('apiKey', cleanKey);
+                      handleChange('apiKey', sanitizeApiKeyValue(e.target.value));
                     }}
                     placeholder={t('settings.apiKeyPlaceholder')}
                     className={`w-full px-3 py-2 pr-10 text-sm border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${

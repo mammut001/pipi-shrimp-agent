@@ -31,7 +31,7 @@ export function resolveAgentConfig(config: ApiConfig): ResolvedAgentConfig {
   const baseUrl = resolveConfigBaseUrl(config.provider, config.baseUrl || '');
   const resolvedApiFormat = resolveConfigApiFormat(config.provider, config.apiFormat || '');
   const apiFormat = resolvedApiFormat || getProvider(config.provider)?.defaultApiFormat || '';
-  const apiKey = config.apiKey || '';
+  const apiKey = sanitizeApiKeyValue(config.apiKey || '');
 
   return {
     configId: config.id,
@@ -165,9 +165,34 @@ export function looksLikeMaskedSecret(value: string): boolean {
   return trimmed.length >= 4 && MASKED_SECRET_PATTERN.test(trimmed);
 }
 
+export function sanitizeApiKeyValue(value: string): string {
+  const trimmed = value.trim();
+  const withoutBearer = trimmed.toLowerCase().startsWith('bearer ')
+    ? trimmed.slice(7).trim()
+    : trimmed;
+  return withoutBearer.replace(/[\s\u0000-\u001F\u007F-\u009F]/g, '');
+}
+
 export function preserveApiKeyValue(inputValue: string, existingValue?: string): string {
-  if (looksLikeMaskedSecret(inputValue) && existingValue) {
+  if (!existingValue) {
+    return sanitizeApiKeyValue(inputValue);
+  }
+
+  const trimmed = inputValue.trim();
+  if (!trimmed || looksLikeMaskedSecret(trimmed)) {
     return existingValue;
   }
-  return inputValue;
+
+  return sanitizeApiKeyValue(inputValue);
+}
+
+export function resolveDraftApiKeyValue(
+  inputValue: string,
+  provider: ApiConfig['provider'],
+  existingConfig?: Pick<ApiConfig, 'provider' | 'apiKey'> | null,
+): string {
+  const existingValue = existingConfig?.provider === provider
+    ? existingConfig.apiKey
+    : undefined;
+  return preserveApiKeyValue(inputValue, existingValue);
 }

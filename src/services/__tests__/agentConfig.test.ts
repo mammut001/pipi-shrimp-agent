@@ -12,7 +12,9 @@ import {
   formatAgentConfigValidationError,
   getAgentConfigDiagnostics,
   preserveApiKeyValue,
+  resolveDraftApiKeyValue,
   resolveActiveAgentConfig,
+  sanitizeApiKeyValue,
   validateResolvedAgentConfig,
 } from '@/services/agentConfig';
 
@@ -42,6 +44,7 @@ describe('agentConfig resolver', () => {
       baseUrl: 'https://api.minimaxi.com/v1',
       apiFormat: 'openai',
       hasApiKey: true,
+      apiKey: 'mini-secret',
     });
     expect(getAgentConfigDiagnostics(config!)).toMatchObject({
       selectedConfigName: 'MiniMax Global',
@@ -98,6 +101,29 @@ describe('agentConfig resolver', () => {
   it('preserves the stored api key when a masked placeholder is submitted', () => {
     expect(preserveApiKeyValue('••••••••', 'real-secret')).toBe('real-secret');
     expect(preserveApiKeyValue('********', 'real-secret')).toBe('real-secret');
+    expect(preserveApiKeyValue('', 'real-secret')).toBe('real-secret');
+    expect(preserveApiKeyValue('   ', 'real-secret')).toBe('real-secret');
     expect(preserveApiKeyValue('new-secret', 'real-secret')).toBe('new-secret');
+  });
+
+  it('preserves the existing key only when editing the same provider draft', () => {
+    expect(resolveDraftApiKeyValue('', 'minimax', {
+      provider: 'minimax',
+      apiKey: 'real-secret',
+    })).toBe('real-secret');
+
+    expect(resolveDraftApiKeyValue('', 'anthropic', {
+      provider: 'minimax',
+      apiKey: 'real-secret',
+    })).toBe('');
+
+    expect(resolveDraftApiKeyValue(' Bearer next-secret ', 'minimax', {
+      provider: 'minimax',
+      apiKey: 'real-secret',
+    })).toBe('next-secret');
+  });
+
+  it('sanitizes bearer-prefixed keys before resolving config usage', () => {
+    expect(sanitizeApiKeyValue('  Bearer mini-secret\t\n')).toBe('mini-secret');
   });
 });

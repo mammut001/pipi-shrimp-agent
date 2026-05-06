@@ -20,6 +20,7 @@ import {
   getResolvedChatDiagnostics,
   testResolvedChatConnection,
 } from '../resolvedChatRequest';
+import { resolveAgentConfig } from '../agentConfig';
 import { buildConnectionFailureDetails } from '../settings/settingsConnection';
 
 const minimaxConfig = {
@@ -86,6 +87,55 @@ describe('resolvedChatRequest', () => {
       noTools: true,
       sessionId: 'settings-api-test',
     }));
+  });
+
+  it('uses the normalized resolved config so openai-compatible requests keep a clean bearer token', () => {
+    const resolved = resolveAgentConfig({
+      id: 'cfg-minimax',
+      name: 'MiniMax Global',
+      provider: 'minimax',
+      apiKey: '  Bearer secret-key \n',
+      model: 'MiniMax-M2.7',
+      baseUrl: '',
+      modelProviderId: 'minimax',
+    });
+
+    const request = buildResolvedChatRequest(resolved, {
+      messages: [{ role: 'user', content: 'ping' }],
+      systemPrompt: 'test',
+      sessionId: 'settings-test',
+      noTools: true,
+    });
+
+    expect(request.params.apiKey).toBe('secret-key');
+    expect(request.diagnostics.authorizationHeaderPresent).toBe(true);
+    expect(request.params.apiFormat).toBe('openai');
+    expect(request.params.baseUrl).toBe('https://api.minimaxi.com/v1');
+  });
+
+  it('prunes oversized request context before invoking the model', () => {
+    const request = buildResolvedChatRequest(minimaxConfig, {
+      messages: [
+        { role: 'user', content: 'old'.repeat(20) },
+        { role: 'assistant', content: 'older'.repeat(20) },
+        { role: 'user', content: `__TOOL_RESULT__:tool-1:${'x'.repeat(500)}` },
+        { role: 'user', content: 'latest' },
+      ],
+      systemPrompt: 'system'.repeat(15_000),
+      sessionId: 'budgeted-test',
+      noTools: true,
+      contextBudget: {
+        maxChars: 300,
+        maxMessages: 3,
+        maxToolOutputChars: 60,
+      },
+    });
+
+    expect(request.diagnostics.contextWasPruned).toBe(true);
+    expect(request.diagnostics.droppedContextCount).toBeGreaterThan(0);
+    expect(request.params.messages[request.params.messages.length - 1]).toEqual({ role: 'user', content: 'latest' });
+    expect(request.params.messages.some((message) => String(message.content).includes('[tool output truncated]'))).toBe(true);
+    expect(request.params.systemPrompt).toContain('[system prompt truncated]');
   });
 
   it('formats provider object errors into clear details instead of [object Object]', async () => {
