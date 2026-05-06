@@ -414,10 +414,13 @@ const enUS: TranslationKeys = {
   'workflow.goalPanel.builtinEvaluator': 'Use built-in rules / built-in prompt',
   'workflow.goalPanel.maxIterations': 'Max Goal Iterations',
   'workflow.goalPanel.projectGoalRequired': 'Set a project goal before running the workflow',
+  'workflow.goalPanel.expandConfig': 'Expand Config',
+  'workflow.goalPanel.collapseConfig': 'Collapse Config',
   'workflow.goalStatus.reached': 'Reached',
   'workflow.goalStatus.notReached': 'Not Reached',
   'workflow.goalStatus.inProgress': 'In Progress',
   'workflow.goalStatus.noMissingItems': 'No missing items',
+  'workflow.canvas.emptyState': 'Add agents to display the workflow canvas here',
 
   // Workflow Output Panel
   'workflow.output.realTime': 'Real-time Output',
@@ -433,6 +436,8 @@ const enUS: TranslationKeys = {
   'workflow.output.noWorkDir': 'No work directory available yet',
   'workflow.output.cannotOpenWorkDir': 'Cannot open work directory: {error}',
   'workflow.output.agentCount': '{done}/{total} agents',
+  'workflow.output.expand': 'Expand',
+  'workflow.output.collapse': 'Collapse',
 
   // Workflow Run History
   'workflow.history.title': 'Run History',
@@ -972,6 +977,7 @@ Fill structured browser forms while re-checking PageState before risky actions.
   'settings.newConfiguration': 'New Configuration',
   'settings.name': 'Name',
   'settings.nameRequired': 'Name is required',
+  'settings.modelRequired': 'Model is required',
   'settings.configNamePlaceholder': 'My Anthropic API',
   'settings.provider': 'Provider',
   'settings.baseUrl': 'Base URL',

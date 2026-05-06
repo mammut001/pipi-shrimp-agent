@@ -12,7 +12,7 @@ export function Workflow() {
     <MainLayout
       showRightPanel={true}
       rightPanelContent={<FilePreviewPanel />}
-      rightPanelWidthClassName="w-[420px]"
+      rightPanelWidthClassName="w-[360px] min-w-[320px] max-w-[420px]"
     >
       <WorkflowView />
     </MainLayout>

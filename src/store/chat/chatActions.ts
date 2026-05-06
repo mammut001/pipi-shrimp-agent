@@ -1,8 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { TokenUsage } from '../../core/types';
-import { t } from '../../i18n';
+import {
+  formatAgentConfigValidationError,
+  resolveActiveAgentConfig,
+  validateResolvedAgentConfig,
+} from '@/services/agentConfig';
+import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { safeInvoke, safeInvokeOrNull } from '../../utils/safeInvoke';
+import { formatError } from '../../utils/errorFormat';
 import {
   buildApiMessages,
   mergeReasoningParts,
@@ -12,7 +18,6 @@ import {
 import type { ChatState, Message } from '../../types/chat';
 import { createMessage } from '../../types/chat';
 import { usePromptStore } from '../promptStore';
-import { useSettingsStore } from '../settingsStore';
 import {
   registerDiagnosticsTask,
   registerDiagnosticsTaskCancel,
@@ -88,9 +93,10 @@ export function createChatActionMethods({
         return;
       }
 
-      const apiConfig = useSettingsStore.getState().getActiveConfig();
-      if (!apiConfig?.apiKey) {
-        setError(CHAT_ERROR_MESSAGES.missingApiKeyShort);
+      const resolvedConfig = resolveActiveAgentConfig();
+      const configIssues = validateResolvedAgentConfig(resolvedConfig);
+      if (configIssues.length > 0) {
+        setError(formatAgentConfigValidationError(resolvedConfig, configIssues));
         return;
       }
 
@@ -122,23 +128,21 @@ export function createChatActionMethods({
           sessionWorkDir,
         );
 
+        const request = buildResolvedChatRequest(resolvedConfig!, {
+          messages,
+          systemPrompt,
+          noTools: true,
+          allowBrowserTools: true,
+          sessionId: currentSessionId,
+        });
+
         const response = await invoke<{
           content: string;
           artifacts: Array<{ type: string; content: string; title?: string; language?: string }>;
           model: string;
           usage: { input_tokens: number; output_tokens: number };
           tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
-        }>('send_claude_sdk_chat_streaming', {
-          messages,
-          apiKey: apiConfig.apiKey,
-          model: apiConfig.model,
-          baseUrl: apiConfig.baseUrl || '',
-          systemPrompt,
-          noTools: true,
-          allowBrowserTools: true,
-          sessionId: currentSessionId,
-          apiFormat: apiConfig.apiFormat,
-        });
+        }>('send_claude_sdk_chat_streaming', request.params);
 
         if (timeoutId) {
           clearTimeout(timeoutId);
@@ -154,7 +158,7 @@ export function createChatActionMethods({
           ? {
               input_tokens: response.usage.input_tokens,
               output_tokens: response.usage.output_tokens,
-              model: response.model || apiConfig.model,
+              model: response.model || resolvedConfig!.model,
             }
           : undefined;
 
@@ -241,9 +245,10 @@ export function createChatActionMethods({
 
       useUIStore.getState().clearTaskProgress();
 
-      const apiConfig = useSettingsStore.getState().getActiveConfig();
-      if (!apiConfig?.apiKey) {
-        setError(CHAT_ERROR_MESSAGES.missingApiKey);
+      const resolvedConfig = resolveActiveAgentConfig();
+      const configIssues = validateResolvedAgentConfig(resolvedConfig);
+      if (configIssues.length > 0) {
+        setError(formatAgentConfigValidationError(resolvedConfig, configIssues));
         return;
       }
 
@@ -429,7 +434,7 @@ export function createChatActionMethods({
           ? {
               input_tokens: tokenUsageResult.input_tokens,
               output_tokens: tokenUsageResult.output_tokens,
-              model: tokenUsageResult.model || apiConfig.model,
+              model: tokenUsageResult.model || resolvedConfig!.model,
             }
           : undefined;
 
@@ -445,14 +450,14 @@ export function createChatActionMethods({
           await safeInvoke('db_save_token_usage', {
             usage: {
               id: crypto.randomUUID(),
-              session_id: activeSessionId,
-              date: now.toISOString().split('T')[0],
-              input_tokens: tokenUsage.input_tokens,
-              output_tokens: tokenUsage.output_tokens,
-              model: tokenUsage.model || apiConfig.model,
-              api_config_id: apiConfig.id,
-              created_at: Math.floor(now.getTime() / 1000),
-            },
+               session_id: activeSessionId,
+               date: now.toISOString().split('T')[0],
+               input_tokens: tokenUsage.input_tokens,
+               output_tokens: tokenUsage.output_tokens,
+               model: tokenUsage.model || resolvedConfig!.model,
+               api_config_id: resolvedConfig!.configId,
+               created_at: Math.floor(now.getTime() / 1000),
+             },
           }).catch((error: unknown) => {
             console.error('Failed to save token usage:', error);
           });
@@ -545,7 +550,7 @@ export function createChatActionMethods({
         await safeInvoke('stop_subprocess', { sessionId: currentSessionId }, { silent: true });
       } catch (error) {
         console.error('Failed to stop subprocess:', error);
-        setError(`Failed to stop generation: ${error instanceof Error ? error.message : String(error)}`);
+        setError(`Failed to stop generation: ${formatError(error)}`);
       }
 
       const flushed = flushBuffer({

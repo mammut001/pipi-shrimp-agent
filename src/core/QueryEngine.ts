@@ -6,9 +6,11 @@ import {
   validateResolvedAgentConfig,
   type ResolvedAgentConfig,
 } from '@/services/agentConfig';
+import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { useSettingsStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
+import { toError } from '@/utils/errorFormat';
 
 export async function* runChatTurn(
   sessionId: string,
@@ -66,16 +68,13 @@ export async function* runChatTurn(
     }));
 
     // [Phase 2: API Call]
-    const stream = invokeRustAPIStream({
+    const request = buildResolvedChatRequest(resolvedConfig!, {
       messages: backendMessages,
-      apiKey: resolvedConfig!.apiKey,
-      model: resolvedConfig!.model,
-      baseUrl: resolvedConfig!.baseUrl || '',
       systemPrompt,
-      allowBrowserTools: allowBrowserTools,
-      sessionId: sessionId,
-      apiFormat: resolvedConfig!.apiFormat || undefined,
+      allowBrowserTools,
+      sessionId,
     });
+    const stream = invokeRustAPIStream(request.params);
     
     let hasToolCalls = false;
     let pendingToolCalls: ToolCallParams[] = [];
@@ -107,7 +106,7 @@ export async function* runChatTurn(
         }
       }
     } catch (e) {
-      yield { type: 'error', error: e instanceof Error ? e : new Error(String(e)) };
+      yield { type: 'error', error: toError(e, 'Chat request failed') };
       return;
     }
     

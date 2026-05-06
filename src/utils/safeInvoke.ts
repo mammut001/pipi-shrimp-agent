@@ -11,6 +11,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { logError } from './errorLogger';
+import { extractErrorDetails } from './errorFormat';
 
 /** Error classification for Tauri invoke failures */
 export type InvokeErrorKind = 'network' | 'timeout' | 'permission' | 'validation' | 'unknown';
@@ -40,7 +41,7 @@ export interface InvokeError extends Error {
  * Classify an error from a Tauri invoke call.
  */
 function classifyError(error: unknown): InvokeErrorKind {
-  const msg = error instanceof Error ? error.message : String(error);
+  const msg = extractErrorDetails(error).message;
   const lower = msg.toLowerCase();
 
   if (lower.includes('timeout') || lower.includes('timed out')) return 'timeout';
@@ -54,7 +55,8 @@ function classifyError(error: unknown): InvokeErrorKind {
  * Wrap an error into an InvokeError with classification.
  */
 function wrapError(command: string, original: unknown): InvokeError {
-  const msg = original instanceof Error ? original.message : String(original);
+  const details = extractErrorDetails(original);
+  const msg = details.message;
   const err = new Error(msg) as InvokeError;
   err.name = 'InvokeError';
   err.kind = classifyError(original);

@@ -45,6 +45,27 @@ pub async fn fetch_openai_models(
     api_key: &str,
     fallback_models: &[&str],
 ) -> Result<Vec<String>, String> {
+    // Trim the API key to strip any accidental leading/trailing whitespace or
+    // newlines the user may have introduced when copy-pasting.
+    // Also remove accidental 'Bearer ' prefix if present.
+    let trimmed = api_key.trim();
+    let trimmed = if trimmed.to_lowercase().starts_with("bearer ") {
+        trimmed[7..].trim()
+    } else {
+        trimmed
+    };
+
+    // We also forcefully filter out any internal whitespace, control characters,
+    // or non-ASCII characters that cause HeaderValue::from_str to fail.
+    let api_key: String = trimmed
+        .chars()
+        .filter(|c| c.is_ascii() && !c.is_control() && !c.is_whitespace())
+        .collect();
+    
+    if api_key.is_empty() {
+        return Err("API key is empty after trimming. Please check your settings.".to_string());
+    }
+
     // Normalise base URL: ensure it contains /v1
     let base = if !base_url.contains("/v1") && !base_url.contains("/models") {
         format!("{}/v1", base_url.trim_end_matches('/'))
@@ -57,7 +78,8 @@ pub async fn fetch_openai_models(
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(|e| e.to_string())?,
+        HeaderValue::from_str(&format!("Bearer {}", api_key))
+            .map_err(|e| format!("Invalid API key format (contains illegal characters): {}", e))?,
     );
 
     match client.get(&endpoint).headers(headers).send().await {
@@ -105,13 +127,34 @@ pub async fn fetch_anthropic_models(
     api_key: &str,
     fallback_models: &[&str],
 ) -> Result<Vec<String>, String> {
+    // Trim the API key to strip any accidental leading/trailing whitespace or
+    // newlines the user may have introduced when copy-pasting.
+    let trimmed = api_key.trim();
+    let trimmed = if trimmed.to_lowercase().starts_with("bearer ") {
+        trimmed[7..].trim()
+    } else {
+        trimmed
+    };
+
+    // We also forcefully filter out any internal whitespace, control characters,
+    // or non-ASCII characters that cause HeaderValue::from_str to fail.
+    let api_key: String = trimmed
+        .chars()
+        .filter(|c| c.is_ascii() && !c.is_control() && !c.is_whitespace())
+        .collect();
+
+    if api_key.is_empty() {
+        return Err("API key is empty after trimming. Please check your settings.".to_string());
+    }
+
     let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
 
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         "x-api-key",
-        HeaderValue::from_str(api_key).map_err(|e| e.to_string())?,
+        HeaderValue::from_str(&api_key)
+            .map_err(|e| format!("Invalid API key format (contains illegal characters): {}", e))?,
     );
     headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 

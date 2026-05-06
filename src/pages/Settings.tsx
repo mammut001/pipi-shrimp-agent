@@ -13,9 +13,14 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
 import { usePromptStore } from '@/store/promptStore';
-import { safeInvoke } from '@/utils/safeInvoke';
 import type { ApiConfig, ModelPricing } from '@/types/settings';
 import { DEFAULT_MODEL_PRICING } from '@/types/settings';
+import {
+  preserveApiKeyValue,
+  resolveAgentConfig,
+} from '@/services/agentConfig';
+import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
+import { formatError } from '@/utils/errorFormat';
 import {
   getProviderNames,
   getProvider,
@@ -35,9 +40,14 @@ import { MCPSettingsSection } from '@/components/settings/MCPSettingsSection';
 import { AgentBehaviorSettings } from '@/components/settings/AgentBehaviorSettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { DatabaseHealthSection } from '@/components/settings/DatabaseHealthSection';
+import type { Locale } from '@/i18n/types';
 import { t, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
 import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuilder';
-import { classifyConnectionError, getConnectionErrorMessage } from '@/services/settings/settingsConnection';
+import {
+  buildConnectionFailureDetails,
+  classifyConnectionError,
+  getConnectionErrorMessage,
+} from '@/services/settings/settingsConnection';
 
 const TokenStats = lazy(() => import('@/components/TokenStats').then((module) => ({ default: module.TokenStats })));
 
@@ -101,7 +111,7 @@ export function Settings() {
   // Other settings form
   const [otherSettings, setOtherSettings] = useState({
     theme: 'light' as 'light' | 'dark',
-    language: getCurrentLocale(),
+    language: getCurrentLocale() as Locale,
   });
 
   // Build source-annotated model list: remote entries first, then default fallbacks
@@ -148,6 +158,28 @@ export function Settings() {
 
     setIsLoading(false);
   }, []);
+
+  const getEditingConfig = () => (
+    editingConfigId
+      ? apiConfigs.find((config) => config.id === editingConfigId) || null
+      : null
+  );
+
+  const buildDraftConfig = (): ApiConfig => {
+    const existingConfig = getEditingConfig();
+
+    return {
+      id: editingConfigId || 'draft-config',
+      name: formData.name.trim() || existingConfig?.name || formData.provider,
+      provider: formData.provider,
+      apiKey: preserveApiKeyValue(formData.apiKey, existingConfig?.apiKey),
+      baseUrl: formData.baseUrl || undefined,
+      model: formData.model,
+      modelProviderId: existingConfig?.modelProviderId ?? formData.provider,
+      apiFormat: (formData.apiFormat || undefined) as ApiConfig['apiFormat'],
+      pricing: Object.keys(formData.pricing).length > 0 ? formData.pricing : undefined,
+    };
+  };
 
   /**
    * Load a config into the form for editing
@@ -213,7 +245,7 @@ export function Settings() {
         setFormData(prev => ({ ...prev, model: models[0] }));
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = formatError(error);
       addNotification('error', `${t('settings.failedToFetchModels')}: ${errorMessage}`);
       console.error(error);
     } finally {
@@ -355,14 +387,15 @@ export function Settings() {
 
     setIsSaving(true);
     try {
+      const draftConfig = buildDraftConfig();
       const configData = {
-        name: formData.name.trim(),
-        provider: formData.provider,
-        apiKey: formData.apiKey,
-        baseUrl: formData.baseUrl || undefined,
-        model: formData.model,
-        apiFormat: (formData.apiFormat || undefined) as ApiConfig['apiFormat'],
-        pricing: Object.keys(formData.pricing).length > 0 ? formData.pricing : undefined,
+        name: draftConfig.name,
+        provider: draftConfig.provider,
+        apiKey: draftConfig.apiKey,
+        baseUrl: draftConfig.baseUrl,
+        model: draftConfig.model,
+        apiFormat: draftConfig.apiFormat,
+        pricing: draftConfig.pricing,
       };
 
       if (editingConfigId) {
@@ -409,7 +442,11 @@ export function Settings() {
    */
   const handleActivate = (id: string) => {
     setActiveConfig(id);
-    addNotification('success', `${t('settings.switchedToConfig')}: ${apiConfigs.find((c) => c.id === id)?.name}`);
+    const config = apiConfigs.find((c) => c.id === id);
+    if (config) {
+      handleSelectConfig(config);
+    }
+    addNotification('success', `${t('settings.switchedToConfig')}: ${config?.name}`);
   };
 
   /**
@@ -422,35 +459,55 @@ export function Settings() {
       return;
     }
 
+    if (!formData.model.trim()) {
+      setErrors((prev) => ({ ...prev, model: t('settings.modelRequired') }));
+      return;
+    }
+
     setIsTesting(true);
     setTestResult(null);
 
     const startTime = Date.now();
 
     try {
-      const providerDef = getProvider(formData.provider);
-      const result = await safeInvoke<boolean>('test_connection', {
-        apiKey: formData.apiKey,
-        model: formData.model,
-        baseUrl: providerDef?.requiresBaseUrl ? formData.baseUrl : null,
-      }, { source: 'Settings.testConnection' });
+      const resolvedConfig = resolveAgentConfig(buildDraftConfig());
 
-      const latency = Date.now() - startTime;
+      // Debug: Log what's being sent to Rust for API testing
+      console.info('[Settings Test] API Key debug', {
+        keyLength: resolvedConfig.apiKey?.length ?? 0,
+        keyPreview: resolvedConfig.apiKey
+          ? `${resolvedConfig.apiKey.substring(0, 6)}...${resolvedConfig.apiKey.substring(resolvedConfig.apiKey.length - 4)} (${resolvedConfig.apiKey.length} chars)`
+          : '<EMPTY>',
+        provider: resolvedConfig.provider,
+        model: resolvedConfig.model,
+        baseUrl: resolvedConfig.baseUrl,
+        apiFormat: resolvedConfig.apiFormat,
+      });
 
-      if (result) {
-        const successMsg = t('settings.testConnectionSuccess')
-          .replace('{provider}', formData.provider)
-          .replace('{model}', formData.model)
-          .replace('{latency}', String(latency));
-        setTestResult({ success: true, message: successMsg });
-        addNotification('success', t('settings.connectionTestPassed'));
-      }
+      const result = await testResolvedChatConnection(
+        resolvedConfig,
+        `settings-api-test-${editingConfigId ?? 'draft'}-${Date.now()}`,
+      );
+
+      const latency = result.latencyMs || (Date.now() - startTime);
+      const successMsg = t('settings.testConnectionSuccess')
+        .replace('{provider}', resolvedConfig.provider)
+        .replace('{model}', resolvedConfig.model)
+        .replace('{latency}', String(latency));
+      setTestResult({ success: true, message: successMsg });
+      addNotification('success', t('settings.connectionTestPassed'));
     } catch (error) {
-      const rawMsg = error instanceof Error ? error.message : String(error);
+      const details = (error instanceof Error && 'diagnostics' in error)
+        ? buildConnectionFailureDetails(
+          (error as Error & { diagnostics: Parameters<typeof buildConnectionFailureDetails>[0] }).diagnostics,
+          error,
+        )
+        : formatError(error);
+      const rawMsg = error instanceof Error ? error.message : formatError(error);
       const friendlyMsg = getConnectionErrorMessage(classifyConnectionError(rawMsg), t);
 
-      setTestResult({ success: false, message: friendlyMsg });
-      addNotification('error', t('settings.connectionTestFailed'));
+      setTestResult({ success: false, message: `${friendlyMsg}\n${details}` });
+      addNotification('error', `${t('settings.connectionTestFailed')}: ${friendlyMsg}`);
     } finally {
       setIsTesting(false);
     }
@@ -649,7 +706,14 @@ export function Settings() {
                   <input
                     type={showApiKey ? 'text' : 'password'}
                     value={formData.apiKey}
-                    onChange={(e) => handleChange('apiKey', e.target.value)}
+                    onChange={(e) => {
+                      let cleanKey = e.target.value.trim();
+                      if (cleanKey.toLowerCase().startsWith('bearer ')) {
+                        cleanKey = cleanKey.substring(7).trim();
+                      }
+                      cleanKey = cleanKey.replace(/[\s\u0000-\u001F\u007F-\uFFFF]/g, '');
+                      handleChange('apiKey', cleanKey);
+                    }}
                     placeholder={t('settings.apiKeyPlaceholder')}
                     className={`w-full px-3 py-2 pr-10 text-sm border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
                       errors.apiKey ? 'border-red-300' : 'border-gray-300'
@@ -863,7 +927,7 @@ export function Settings() {
                 </button>
 
                 {testResult && (
-                  <span className={`text-xs ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                  <span className={`text-xs whitespace-pre-wrap break-words ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
                     {testResult.message}
                   </span>
                 )}
@@ -1006,7 +1070,7 @@ export function Settings() {
             theme={otherSettings.theme}
             language={otherSettings.language}
             onThemeChange={(nextTheme) => setOtherSettings((prev) => ({ ...prev, theme: nextTheme }))}
-            onLanguageChange={(nextLanguage) => setOtherSettings((prev) => ({ ...prev, language: nextLanguage }))}
+            onLanguageChange={(nextLanguage) => setOtherSettings((prev) => ({ ...prev, language: nextLanguage as Locale }))}
           />
 
           {/* ====== Save Other Settings Button ====== */}

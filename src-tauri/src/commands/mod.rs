@@ -39,21 +39,17 @@ pub mod workspace;
 pub use agent::*;
 pub use browser::*; // NEW
 pub use chat::*;
-pub use claude_sdk::*;
 pub use code::*;
 pub use compact::*;
 pub use config::*;
-pub use database_bridge::*;
 pub use doc::*; // Document management
 pub use file::*;
 pub use models::*;
-pub use project_file::*;
 pub use search::*;
 pub use session_memory::*;
 pub use skill::*; // Skill execution
 pub use telegram::*;
 pub use terminal::*;
 pub use tools::*;
-pub use typst_render::*;
 pub use web::*;
 pub use workspace::*;

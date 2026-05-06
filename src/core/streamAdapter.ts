@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { ToolCallParams } from './types';
+import { toError } from '@/utils/errorFormat';
 
 export type APIChunkEvent =
   | { type: 'text_delta'; content: string }
@@ -15,6 +16,7 @@ interface InvokeParams {
   model: string;
   baseUrl: string;
   systemPrompt: string;
+  noTools?: boolean;
   allowBrowserTools?: boolean;
   sessionId: string;
   /** Optional explicit API format override: "anthropic" | "openai" */
@@ -98,7 +100,7 @@ export async function* invokeRustAPIStream(
         return finalResponse;
       })
       .catch((err) => {
-        error = err instanceof Error ? err : new Error(String(err));
+        error = toError(err, 'Streaming request failed');
         isDone = true;
         if (resolveNext) resolveNext();
       });

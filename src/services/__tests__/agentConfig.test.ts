@@ -11,6 +11,7 @@ jest.mock('@/store', () => ({
 import {
   formatAgentConfigValidationError,
   getAgentConfigDiagnostics,
+  preserveApiKeyValue,
   resolveActiveAgentConfig,
   validateResolvedAgentConfig,
 } from '@/services/agentConfig';
@@ -92,5 +93,11 @@ describe('agentConfig resolver', () => {
     expect(formatAgentConfigValidationError(config, issues)).toBe(
       "Agent API config invalid: selected config 'Mystery Gateway' uses unknown provider 'mystery-provider'.",
     );
+  });
+
+  it('preserves the stored api key when a masked placeholder is submitted', () => {
+    expect(preserveApiKeyValue('••••••••', 'real-secret')).toBe('real-secret');
+    expect(preserveApiKeyValue('********', 'real-secret')).toBe('real-secret');
+    expect(preserveApiKeyValue('new-secret', 'real-secret')).toBe('new-secret');
   });
 });

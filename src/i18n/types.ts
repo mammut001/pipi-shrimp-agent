@@ -356,10 +356,13 @@ export type TranslationKeys = {
   'workflow.goalPanel.builtinEvaluator': string;
   'workflow.goalPanel.maxIterations': string;
   'workflow.goalPanel.projectGoalRequired': string;
+  'workflow.goalPanel.expandConfig': string;
+  'workflow.goalPanel.collapseConfig': string;
   'workflow.goalStatus.reached': string;
   'workflow.goalStatus.notReached': string;
   'workflow.goalStatus.inProgress': string;
   'workflow.goalStatus.noMissingItems': string;
+  'workflow.canvas.emptyState': string;
 
   // Workflow Output Panel
   'workflow.output.realTime': string;
@@ -375,6 +378,8 @@ export type TranslationKeys = {
   'workflow.output.noWorkDir': string;
   'workflow.output.cannotOpenWorkDir': string;
   'workflow.output.agentCount': string;
+  'workflow.output.expand': string;
+  'workflow.output.collapse': string;
 
   // Workflow Run History
   'workflow.history.title': string;
@@ -746,6 +751,7 @@ export type TranslationKeys = {
   'settings.newConfiguration': string;
   'settings.name': string;
   'settings.nameRequired': string;
+  'settings.modelRequired': string;
   'settings.configNamePlaceholder': string;
   'settings.provider': string;
   'settings.baseUrl': string;

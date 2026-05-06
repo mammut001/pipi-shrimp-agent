@@ -34,9 +34,9 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /Authorization[:\s]+[a-zA-Z0-9_.-]{20,}/gi, replacement: 'Authorization: ***REDACTED***' },
   // Named secret fields: apiKey: xxx, api_key: xxx, x-api-key: xxx, token: xxx,
   //   access_token: xxx, refresh_token: xxx, password: xxx
-  { pattern: /(apiKey|api_key|x-api-key|token|access_token|refresh_token|password)\s*[:=]\s*\S+/gi, replacement: '$1=***REDACTED***' },
+  { pattern: /(apiKey|api_key|x-api-key|token|access_token|refresh_token|password)\s*[:=]\s*((Bearer\s+)?\S+)/gi, replacement: '$1=***REDACTED***' },
   // URL query parameters containing secrets: ?api_key=xxx, &token=xxx, &access_token=xxx
-  { pattern: /([?&])(api_key|apikey|token|access_token|refresh_token|secret|password)=([^&\s]+)/gi, replacement: '$1$2=***REDACTED***' },
+  { pattern: /([?&])(api_key|apikey|token|access_token|refresh_token|secret|password)=((Bearer\s+)?[^&#\s]+)/gi, replacement: '$1$2=***REDACTED***' },
   // Generic long hex/base64 strings that look like secrets (40+ chars)
   { pattern: /\b[a-f0-9]{40,}\b/gi, replacement: '***REDACTED_HEX***' },
   { pattern: /\b[A-Za-z0-9+/=]{60,}\b/g, replacement: '***REDACTED_B64***' },

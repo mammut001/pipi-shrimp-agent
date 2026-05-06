@@ -14,6 +14,7 @@ export interface ResolvedAgentConfig {
   baseUrl: string;
   apiFormat: ApiConfig['apiFormat'] | '';
   hasApiKey: boolean;
+  hasBaseUrl: boolean;
   apiKey: string;
 }
 
@@ -40,6 +41,7 @@ export function resolveAgentConfig(config: ApiConfig): ResolvedAgentConfig {
     baseUrl,
     apiFormat,
     hasApiKey: apiKey.trim().length > 0,
+    hasBaseUrl: baseUrl.trim().length > 0,
     apiKey,
   };
 }
@@ -147,10 +149,25 @@ export function getAgentConfigDiagnostics(config: ResolvedAgentConfig) {
     selectedConfigName: config.name,
     selectedProvider: config.provider,
     selectedModel: config.model,
+    apiFormat: config.apiFormat,
     hasApiKey: config.hasApiKey,
-    hasBaseURL: Boolean(config.baseUrl),
+    hasBaseURL: config.hasBaseUrl,
     adapterName: getAgentAdapterName(config),
     endpointHost: getEndpointHost(config.baseUrl),
     authorizationHeaderPresent: config.apiFormat === 'openai' && config.hasApiKey,
   };
+}
+
+const MASKED_SECRET_PATTERN = /^[•*]+$/;
+
+export function looksLikeMaskedSecret(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length >= 4 && MASKED_SECRET_PATTERN.test(trimmed);
+}
+
+export function preserveApiKeyValue(inputValue: string, existingValue?: string): string {
+  if (looksLikeMaskedSecret(inputValue) && existingValue) {
+    return existingValue;
+  }
+  return inputValue;
 }
