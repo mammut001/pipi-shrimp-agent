@@ -1,3 +1,5 @@
+import { formatError } from '@/utils/errorFormat';
+
 export const CHAT_ERROR_MESSAGES = {
   missingApiKey: 'API key not configured. Please set up your API key in Settings.',
   missingApiKeyShort: 'API key not configured.',
@@ -7,13 +9,6 @@ export const CHAT_ERROR_MESSAGES = {
 } as const;
 
 export function normalizeCaughtErrorMessage(error: unknown, fallback: string): string {
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return fallback;
+  const message = formatError(error, fallback).trim();
+  return message || fallback;
 }

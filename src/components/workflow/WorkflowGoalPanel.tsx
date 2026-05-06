@@ -12,6 +12,7 @@ export function WorkflowGoalPanel() {
   const [successCriteria, setSuccessCriteria] = useState('');
   const [goalEvaluatorAgentId, setGoalEvaluatorAgentId] = useState<string>('');
   const [maxGoalIterations, setMaxGoalIterations] = useState(5);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!currentInstance) return;
@@ -34,67 +35,28 @@ export function WorkflowGoalPanel() {
   const evaluatorAgents = currentInstance.agents.filter((agent) => agent.role === 'goal-evaluator');
 
   return (
-    <div className="border-b border-gray-200 bg-white px-4 py-3">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_220px_180px_auto]">
-        <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+    <section className="shrink-0 border-b border-gray-200 bg-white px-4 py-3">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <label className="block text-xs font-medium text-gray-500">
             {t('workflow.goalPanel.projectGoal')}
           </label>
           <textarea
             value={projectGoal}
             onChange={(event) => setProjectGoal(event.target.value)}
-            rows={3}
+            rows={2}
             placeholder={t('workflow.goalPanel.projectGoalPlaceholder')}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="mt-1 block h-20 max-h-28 min-h-[80px] w-full max-w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
-            {t('workflow.goalPanel.successCriteria')}
-          </label>
-          <textarea
-            value={successCriteria}
-            onChange={(event) => setSuccessCriteria(event.target.value)}
-            rows={3}
-            placeholder={t('workflow.goalPanel.successCriteriaPlaceholder')}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
-            {t('workflow.goalPanel.goalEvaluator')}
-          </label>
-          <select
-            value={goalEvaluatorAgentId}
-            onChange={(event) => setGoalEvaluatorAgentId(event.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <button
+            onClick={() => setExpanded((value) => !value)}
+            className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
           >
-            <option value="">{t('workflow.goalPanel.builtinEvaluator')}</option>
-            {evaluatorAgents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
-            {t('workflow.goalPanel.maxIterations')}
-          </label>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={maxGoalIterations}
-            onChange={(event) => setMaxGoalIterations(Math.max(1, Number(event.target.value) || 5))}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-
-        <div className="flex items-end">
+            {expanded ? t('workflow.goalPanel.collapseConfig') : t('workflow.goalPanel.expandConfig')}
+          </button>
           <button
             onClick={() => updateInstanceMeta(currentInstance.id, {
               projectGoal,
@@ -102,13 +64,62 @@ export function WorkflowGoalPanel() {
               goalEvaluatorAgentId: goalEvaluatorAgentId || null,
               maxGoalIterations,
             })}
-            className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
           >
             {t('workflow.save')}
           </button>
         </div>
       </div>
-    </div>
+
+      {expanded && (
+        <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-3">
+          <div className="min-w-0">
+            <label className="block text-xs font-medium text-gray-500">
+              {t('workflow.goalPanel.successCriteria')}
+            </label>
+            <textarea
+              value={successCriteria}
+              onChange={(event) => setSuccessCriteria(event.target.value)}
+              rows={3}
+              placeholder={t('workflow.goalPanel.successCriteriaPlaceholder')}
+              className="mt-1 block min-h-[88px] w-full max-w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="min-w-0">
+            <label className="block text-xs font-medium text-gray-500">
+              {t('workflow.goalPanel.goalEvaluator')}
+            </label>
+            <select
+              value={goalEvaluatorAgentId}
+              onChange={(event) => setGoalEvaluatorAgentId(event.target.value)}
+              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">{t('workflow.goalPanel.builtinEvaluator')}</option>
+              {evaluatorAgents.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="min-w-0">
+            <label className="block text-xs font-medium text-gray-500">
+              {t('workflow.goalPanel.maxIterations')}
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={maxGoalIterations}
+              onChange={(event) => setMaxGoalIterations(Math.max(1, Number(event.target.value) || 5))}
+              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

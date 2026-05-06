@@ -5,7 +5,10 @@ import {
   validateResolvedAgentConfig,
   type ResolvedAgentConfig,
 } from '@/services/agentConfig';
+import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
+import { isAuthConnectionError } from '@/services/settings/settingsConnection';
 import type { SshConfig } from '@/store/autoresearchStore';
+import { formatError } from '@/utils/errorFormat';
 import {
   getAutoResearchLivingDocPathFromWorkDir,
   getAutoResearchSessionFilePathFromWorkDir,
@@ -84,6 +87,19 @@ export async function runAutoResearchPreflight(
   const configIssues = validateResolvedAgentConfig(agentConfig);
   if (configIssues.length > 0) {
     throw new Error(formatAgentConfigValidationError(agentConfig, configIssues));
+  }
+
+  try {
+    await testResolvedChatConnection(agentConfig!, `autoresearch-api-test-${input.sessionId}`);
+  } catch (error) {
+    if (isAuthConnectionError(error)) {
+      throw new Error(
+        `Agent API config invalid: selected config '${agentConfig!.name}' failed authentication. Please fix it in Settings.`,
+      );
+    }
+    throw new Error(
+      `Agent API config invalid: selected config '${agentConfig!.name}' failed connection test. ${formatError(error)}`,
+    );
   }
 
   const resolvedWorkDir = await resolveTargetPath(input.sshConfig, 'workdir', input.workDir);

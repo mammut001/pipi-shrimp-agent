@@ -9,7 +9,7 @@
  * - Drag-and-drop node positioning
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { t } from '@/i18n';
 import {
@@ -51,7 +51,7 @@ function AutoFitView({ nodeCount }: { nodeCount: number }) {
   const nodesInitialized = useNodesInitialized();
   const { fitView } = useReactFlow();
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!nodesInitialized || nodeCount === 0) return;
 
     const timer = window.setTimeout(() => {
@@ -69,7 +69,7 @@ interface WorkflowCanvasProps {
   onAgentSelect: (id: string | null) => void;
 }
 
-const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgentSelect }) => {
+const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps) => {
   const currentInstance = useWorkflowStore((s) =>
     s.instances.find(i => i.id === s.currentInstanceId) ?? null
   );
@@ -159,12 +159,12 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   // Sync nodes from store when agents change
-  React.useEffect(() => {
+  useEffect(() => {
     setNodes(initialNodes);
   }, [initialNodes, setNodes]);
 
   // Sync edges from store when connections change
-  React.useEffect(() => {
+  useEffect(() => {
     setEdges(initialEdges);
   }, [initialEdges, setEdges]);
 
@@ -230,7 +230,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
 
   // Handle node selection
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (_: MouseEvent, node: Node) => {
       if (!isWorkflowActive) {
         notifyWorkflowLocked();
         return;
@@ -251,7 +251,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   }, [isWorkflowActive, onAgentSelect]);
 
   // Handle right-click context menu
-  const onContextMenu = useCallback((event: React.MouseEvent) => {
+  const onContextMenu = useCallback((event: MouseEvent) => {
     if (!isWorkflowActive) {
       event.preventDefault();
       notifyWorkflowLocked();
@@ -269,7 +269,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
 
   // Add agent at context menu position (opens template drawer)
   const handleAddAgent = useCallback(
-    (e: React.MouseEvent) => {
+    (e: MouseEvent) => {
       if (!isWorkflowActive) {
         e.preventDefault();
         e.stopPropagation();
@@ -346,7 +346,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   }, []);
 
   // Handle keyboard delete
-  React.useEffect(() => {
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isWorkflowActive) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAgentId) {
@@ -363,7 +363,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
   }, [isWorkflowActive, selectedAgentId, removeAgent, onAgentSelect]);
 
   return (
-    <div className="w-full h-full relative">
+    <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -391,7 +391,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         nodesConnectable={isWorkflowActive}
         elementsSelectable={isWorkflowActive}
         panOnDrag={isWorkflowActive}
-        className="bg-gray-50"
+        className="h-full w-full bg-gray-50"
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d1d5db" />
         <Controls showInteractive={false} className="bg-white border border-gray-200 rounded-lg shadow-md" />
@@ -471,6 +471,14 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
           </div>
         )}
       </ReactFlow>
+
+      {agents.length === 0 && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <div className="rounded-xl border border-dashed border-gray-300 bg-white/90 px-6 py-4 text-center shadow-sm">
+            <div className="text-sm font-medium text-gray-700">{t('workflow.canvas.emptyState')}</div>
+          </div>
+        </div>
+      )}
 
       {!isWorkflowActive && (
         <div className="absolute inset-0 z-40 cursor-not-allowed bg-white/45 backdrop-blur-[1px] flex items-center justify-center">

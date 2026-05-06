@@ -216,9 +216,20 @@ pub fn build_anthropic_headers(
     thinking_enabled: bool,
 ) -> Result<reqwest::header::HeaderMap, ClaudeHttpError> {
     let mut headers = reqwest::header::HeaderMap::new();
+    let trimmed = api_key.trim();
+    let trimmed = if trimmed.to_lowercase().starts_with("bearer ") {
+        trimmed[7..].trim()
+    } else {
+        trimmed
+    };
+    let clean_key: String = trimmed
+        .chars()
+        .filter(|c| c.is_ascii() && !c.is_control() && !c.is_whitespace())
+        .collect();
+
     headers.insert(
         "x-api-key",
-        api_key.parse().map_err(|_| ClaudeHttpError::Validation {
+        clean_key.parse().map_err(|_| ClaudeHttpError::Validation {
             field: "api_key".to_string(),
             message: "Invalid API key header".to_string(),
         })?,
@@ -233,7 +244,18 @@ pub fn build_anthropic_headers(
 
 pub fn build_openai_headers(api_key: &str) -> Result<reqwest::header::HeaderMap, ClaudeHttpError> {
     let mut headers = reqwest::header::HeaderMap::new();
-    let bearer = format!("Bearer {}", api_key);
+    let trimmed = api_key.trim();
+    let trimmed = if trimmed.to_lowercase().starts_with("bearer ") {
+        trimmed[7..].trim()
+    } else {
+        trimmed
+    };
+    let clean_key: String = trimmed
+        .chars()
+        .filter(|c| c.is_ascii() && !c.is_control() && !c.is_whitespace())
+        .collect();
+
+    let bearer = format!("Bearer {}", clean_key);
     headers.insert(
         "Authorization",
         bearer.parse().map_err(|_| ClaudeHttpError::Validation {

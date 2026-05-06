@@ -100,6 +100,28 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   const isComposingRef = useRef(false);
   const draftStorageKey = `chat_draft_${draftKey}`;
 
+  // ── macOS WKWebView arrow-key tofu fix ──────────────────────────────────────
+  // WKWebView forwards unhandled NSEvents back through NSTextInputClient, which
+  // calls insertText: with Apple private-use characters:
+  //   U+F700 ↑  U+F701 ↓  U+F702 ←  U+F703 →
+  // These have no font glyph and render as □ squares.
+  // The `beforeinput` event fires *before* the value changes, so preventDefault()
+  // cancels the insertion cleanly. We attach both a React handler (onBeforeInput)
+  // and a native capture-phase listener as belt-and-suspenders.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const blockPrivateUse = (e: Event) => {
+      const ie = e as InputEvent;
+      if (ie.data && /[\uE000-\uF8FF]/.test(ie.data)) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener('beforeinput', blockPrivateUse, { capture: true });
+    return () => el.removeEventListener('beforeinput', blockPrivateUse, { capture: true });
+  }, []);
+  // ────────────────────────────────────────────────────────────────────────────
+
   const { isStreaming, sendMessage, stopGeneration, currentSessionId, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
   const { toggleSettings } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
@@ -269,6 +291,26 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
     await stopGeneration();
   }, [stopGeneration]);
 
+  /**
+   * Handle paste events — intercept image pastes from screenshot tools.
+   * When a screenshot is pasted, macOS puts image/png (or image/tiff) data
+   * on the clipboard. A plain <textarea> cannot display images and instead
+   * inserts raw binary/RTF bytes that render as tofu (□□□□) squares.
+   * We block that default behaviour and optionally append a note so the user
+   * knows their paste was detected.
+   */
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const hasImage = items.some((item) => item.type.startsWith('image/'));
+    if (!hasImage) return; // plain text paste — let browser handle it normally
+
+    e.preventDefault(); // stop the tofu characters from being inserted
+    // NOTE: future enhancement — convert image to base64 and attach to message
+    // For now, just let the user know we saw the image paste.
+    const notice = '[截图已检测，暂不支持图片粘贴]';
+    setInput((prev) => (prev ? `${prev}\n${notice}` : notice));
+  }, []);
+
 
   const isDisabled = isStreaming || isSubmitting;
 
@@ -435,7 +477,21 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              // Last-resort filter: strip any Apple private-use chars that slipped through
+              // beforeinput (e.g. older WKWebView versions that don't fire beforeinput).
+              const cleaned = e.target.value.replace(/[\uE000-\uF8FF]/g, '');
+              setInput(cleaned);
+            }}
+            // onBeforeInput: cancel insertText: calls from WKWebView's NSTextInputClient
+            // before they write private-use chars (U+F700-U+F703) into the DOM.
+            onBeforeInput={(e) => {
+              const ie = e.nativeEvent as InputEvent;
+              if (ie.data && /[\uE000-\uF8FF]/.test(ie.data)) {
+                e.preventDefault();
+              }
+            }}
+            onPaste={handlePaste}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             onKeyDown={(e) => {

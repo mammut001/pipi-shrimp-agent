@@ -133,7 +133,7 @@ export function WorkflowView() {
   );
   const agents = currentInstance?.agents ?? [];
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [outputPanelOpen, setOutputPanelOpen] = useState(true);
+  const [outputPanelOpen, setOutputPanelOpen] = useState(false);
 
   useEffect(() => {
     if (!selectedAgentId) return;
@@ -150,7 +150,7 @@ export function WorkflowView() {
   // No active workflow instance
   if (!currentInstance) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-gray-50">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col items-center justify-center bg-gray-50">
         <div className="text-6xl mb-4 opacity-60">🦐</div>
         <h2 className="text-xl font-semibold text-gray-700 mb-2">
           No Active Workflow
@@ -172,53 +172,61 @@ export function WorkflowView() {
   }
 
   return (
-    <div key={currentInstance?.id ?? 'none'} className="flex flex-col h-full">
-      {/* Top: Execution bar */}
-      <WorkflowExecutionBar />
-      <WorkflowGoalPanel />
+    <div key={currentInstance.id} className="flex h-full min-h-0 min-w-0 overflow-hidden bg-white">
+      <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden">
+        <WorkflowGoalPanel />
+        <WorkflowExecutionBar />
 
-      {/* Main: Canvas + Config panel */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Canvas area */}
-        <div className="flex-1 relative overflow-hidden bg-gray-50">
-          <WorkflowCanvas
-            selectedAgentId={selectedAgentId}
-            onAgentSelect={handleAgentSelect}
-          />
+        <div className="flex min-h-[420px] flex-1 min-w-0 overflow-hidden">
+          <div className="relative flex min-h-[420px] flex-1 min-w-0 overflow-hidden bg-gray-50">
+            <WorkflowCanvas
+              selectedAgentId={selectedAgentId}
+              onAgentSelect={handleAgentSelect}
+            />
+          </div>
+
+          {selectedAgentId && (
+            <aside className="flex h-full w-[360px] min-h-0 min-w-[320px] max-w-[40vw] shrink-0 flex-col overflow-hidden border-l border-gray-200 bg-white">
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <WorkflowTaskPanel agentId={selectedAgentId} />
+                <AgentConfigPanel
+                  agentId={selectedAgentId}
+                  onClose={() => setSelectedAgentId(null)}
+                  hideTaskFields
+                  embedded
+                />
+              </div>
+            </aside>
+          )}
         </div>
 
-        {/* Right: Agent config panel (320px) */}
-        {selectedAgentId && (
-          <div className="w-96 min-h-0 border-l border-gray-200 overflow-hidden bg-white flex flex-col">
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <WorkflowTaskPanel agentId={selectedAgentId} />
-              <AgentConfigPanel
-                agentId={selectedAgentId}
-                onClose={() => setSelectedAgentId(null)}
-                hideTaskFields
-                embedded
-              />
+        <div
+          className={`shrink-0 border-t border-gray-200 bg-white overflow-hidden ${
+            outputPanelOpen ? 'h-[220px]' : 'h-12'
+          }`}
+        >
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-2">
+              <div className="text-xs font-medium uppercase tracking-[0.12em] text-gray-500">
+                {t('workflow.output.realTime')}
+              </div>
+              <button
+                onClick={() => setOutputPanelOpen((open) => !open)}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+              >
+                <span>{outputPanelOpen ? t('workflow.output.collapse') : t('workflow.output.expand')}</span>
+                <span>{outputPanelOpen ? '▼' : '▲'}</span>
+              </button>
             </div>
+            {outputPanelOpen && (
+              <div className="flex-1 min-h-0">
+                <WorkflowOutputPanel key={currentInstance.id} />
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Bottom: Output panel (collapsible, ~200px) */}
-      {outputPanelOpen && (
-        <div className="h-48 border-t border-gray-200">
-          <WorkflowOutputPanel key={currentInstance?.id ?? 'none'} />
-        </div>
-      )}
-
-      {/* Toggle output panel */}
-      <button
-        onClick={() => setOutputPanelOpen(!outputPanelOpen)}
-        className="absolute bottom-0 left-1/2 transform -translate-x-1/2 px-3 py-1 bg-white border border-gray-200 border-b-0 rounded-t-lg shadow-sm text-xs text-gray-500 hover:text-gray-700"
-      >
-        {outputPanelOpen ? '▼' : '▲'}
-      </button>
-
-      {/* History floating panel */}
       <WorkflowRunHistory />
     </div>
   );

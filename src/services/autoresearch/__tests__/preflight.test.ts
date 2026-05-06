@@ -1,5 +1,6 @@
 const mockExecuteTargetCommand = jest.fn();
 const mockPathExistsOnTarget = jest.fn();
+const mockTestResolvedChatConnection = jest.fn();
 
 jest.mock('@/services/agentConfig', () => ({
   resolveActiveAgentConfig: jest.fn(),
@@ -21,6 +22,10 @@ jest.mock('../runDir', () => ({
   pathExistsOnTarget: (...args: unknown[]) => mockPathExistsOnTarget(...args),
 }));
 
+jest.mock('@/services/resolvedChatRequest', () => ({
+  testResolvedChatConnection: (...args: unknown[]) => mockTestResolvedChatConnection(...args),
+}));
+
 import { runAutoResearchPreflight } from '../preflight';
 
 describe('runAutoResearchPreflight', () => {
@@ -32,11 +37,27 @@ describe('runAutoResearchPreflight', () => {
     baseUrl: 'https://api.minimaxi.com/v1',
     apiFormat: 'openai' as const,
     hasApiKey: true,
+    hasBaseUrl: true,
     apiKey: 'secret',
   };
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTestResolvedChatConnection.mockResolvedValue({
+      latencyMs: 42,
+      diagnostics: {
+        selectedConfigName: 'MiniMax Global',
+        selectedProvider: 'minimax',
+        selectedModel: 'MiniMax-M2.7',
+        apiFormat: 'openai',
+        hasApiKey: true,
+        hasBaseURL: true,
+        adapterName: 'minimax-openai',
+        endpointHost: 'api.minimaxi.com',
+        endpointPreview: 'https://api.minimaxi.com/v1/chat/completions',
+        authorizationHeaderPresent: true,
+      },
+    });
     mockExecuteTargetCommand.mockResolvedValue({ stdout: '/Users/demo', exit_code: 0 });
     mockPathExistsOnTarget.mockResolvedValue(true);
   });
@@ -98,5 +119,28 @@ describe('runAutoResearchPreflight', () => {
     }));
 
     infoSpy.mockRestore();
+  });
+
+  it('blocks startup when the shared API connection test fails auth', async () => {
+    mockTestResolvedChatConnection.mockRejectedValue(new Error('401 Unauthorized: login fail'));
+
+    await expect(runAutoResearchPreflight({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/Users/demo/experiment',
+      workDir: '~/autoresearch',
+      sessionId: 'autoresearch-1',
+      agentConfig,
+    })).rejects.toThrow(
+      "Agent API config invalid: selected config 'MiniMax Global' failed authentication. Please fix it in Settings.",
+    );
   });
 });

@@ -114,9 +114,9 @@ export function WorkflowOutputPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
       {/* Tabs */}
-      <div className="flex items-center border-b border-gray-200">
+      <div className="flex shrink-0 items-center border-b border-gray-200">
         <button
           onClick={() => setActiveTab('output')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
@@ -154,7 +154,7 @@ export function WorkflowOutputPanel() {
       </div>
 
       {/* Tab content */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {activeTab === 'output' ? (
           /* ===== Output tab ===== */
           agents.length === 0 ? (

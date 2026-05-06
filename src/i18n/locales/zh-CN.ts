@@ -414,10 +414,13 @@ const zhCN: TranslationKeys = {
   'workflow.goalPanel.builtinEvaluator': '使用内置规则 / 内置 Prompt',
   'workflow.goalPanel.maxIterations': '最大循环次数',
   'workflow.goalPanel.projectGoalRequired': '请先填写项目目标后再启动 Workflow',
+  'workflow.goalPanel.expandConfig': '展开配置',
+  'workflow.goalPanel.collapseConfig': '收起配置',
   'workflow.goalStatus.reached': '已达成',
   'workflow.goalStatus.notReached': '未达成',
   'workflow.goalStatus.inProgress': '评估中',
   'workflow.goalStatus.noMissingItems': '当前没有缺失项',
+  'workflow.canvas.emptyState': '添加 Agent 后将在这里显示工作流画布',
 
   // Workflow Output Panel
   'workflow.output.realTime': '实时输出',
@@ -433,6 +436,8 @@ const zhCN: TranslationKeys = {
   'workflow.output.noWorkDir': '当前还没有可打开的工作目录',
   'workflow.output.cannotOpenWorkDir': '无法打开工作目录: {error}',
   'workflow.output.agentCount': '{done}/{total} agents',
+  'workflow.output.expand': '展开',
+  'workflow.output.collapse': '收起',
 
   // Workflow Run History
   'workflow.history.title': '执行历史',
@@ -972,6 +977,7 @@ const zhCN: TranslationKeys = {
   'settings.newConfiguration': '新建配置',
   'settings.name': '名称',
   'settings.nameRequired': '名称不能为空',
+  'settings.modelRequired': '模型不能为空',
   'settings.configNamePlaceholder': '我的 Anthropic API',
   'settings.provider': '提供商',
   'settings.baseUrl': '接口地址',

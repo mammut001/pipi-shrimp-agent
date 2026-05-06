@@ -44,6 +44,30 @@ pub async fn send_request_impl(
     let adapter = get_adapter_for_config(&config);
     let url = adapter.build_url(&config);
     let headers = adapter.build_headers(&config);
+
+    #[cfg(debug_assertions)]
+    {
+        let key_preview = if config.api_key.len() > 8 {
+            format!("{}...{} (len={})", &config.api_key[..4], &config.api_key[config.api_key.len()-4..], config.api_key.len())
+        } else {
+            format!("****(len={})", config.api_key.len())
+        };
+        eprintln!(
+            "[claude-http] provider={:?} format={:?} url={} key={} hint={:?}",
+            config.provider_id, config.api_format, url, key_preview, api_format_hint
+        );
+        for (name, value) in headers.iter() {
+            let val_str = value.to_str().unwrap_or("<non-ascii>");
+            if name == "authorization" || name == "x-api-key" {
+                let preview = if val_str.len() > 20 {
+                    format!("{}...{}", &val_str[..15], &val_str[val_str.len()-4..])
+                } else {
+                    val_str.to_string()
+                };
+                eprintln!("[claude-http]   header {}={}", name, preview);
+            }
+        }
+    }
     let body = if streaming {
         adapter.build_stream_body(
             &config,

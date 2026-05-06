@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
 
-pub use crate::services::chat::session_service::{Message, SessionData};
+pub use crate::services::chat::session_service::SessionData;
 
 struct LiveBrowserChatRuntime<'a> {
     browser_state: tauri::State<'a, Arc<Mutex<BrowserController>>>,

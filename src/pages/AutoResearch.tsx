@@ -219,9 +219,7 @@ function AutoResearchView() {
       return;
     }
     void assertSupportedPlatform().catch((error) => {
-      useAutoResearchStore.getState().setError(
-        error instanceof Error ? error.message : String(error),
-      );
+      useAutoResearchStore.getState().setError(formatError(error));
       setShowSetup(false);
     });
   }, [showSetup]);
@@ -257,9 +255,7 @@ function AutoResearchView() {
       await assertSupportedPlatform();
       setShowSetup(true);
     } catch (error) {
-      useAutoResearchStore.getState().setError(
-        error instanceof Error ? error.message : String(error),
-      );
+      useAutoResearchStore.getState().setError(formatError(error));
     }
   }, []);
 
@@ -267,9 +263,7 @@ function AutoResearchView() {
     try {
       await assertSupportedPlatform();
     } catch (error) {
-      useAutoResearchStore.getState().setError(
-        error instanceof Error ? error.message : String(error),
-      );
+      useAutoResearchStore.getState().setError(formatError(error));
       return;
     }
 
@@ -303,7 +297,7 @@ function AutoResearchView() {
         output: [unameLine, pwdLine, gitLine].filter(Boolean).join('\n'),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatError(error);
       setConnectionTest({ status: 'error', output: message });
       useAutoResearchStore.getState().setError(message);
     }
@@ -313,9 +307,7 @@ function AutoResearchView() {
     try {
       await assertSupportedPlatform();
     } catch (error) {
-      useAutoResearchStore.getState().setError(
-        error instanceof Error ? error.message : String(error),
-      );
+      useAutoResearchStore.getState().setError(formatError(error));
       return;
     }
 

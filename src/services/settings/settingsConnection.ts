@@ -1,4 +1,6 @@
 import type { TranslationKeys } from '@/i18n';
+import type { ResolvedChatRequestDiagnostics } from '@/services/resolvedChatRequest';
+import { extractErrorDetails } from '@/utils/errorFormat';
 
 export type ConnectionErrorKind =
   | 'network'
@@ -53,4 +55,40 @@ export function getConnectionErrorMessage(
   }
 
   return fallbackMessages[kind];
+}
+
+export function isAuthConnectionError(error: unknown): boolean {
+  const details = extractErrorDetails(error);
+  const probe = [details.httpCode, details.message].filter(Boolean).join(' ');
+  return classifyConnectionError(probe) === 'auth';
+}
+
+export function buildConnectionFailureDetails(
+  diagnostics: ResolvedChatRequestDiagnostics,
+  error: unknown,
+): string {
+  const details = extractErrorDetails(error);
+  const title = isAuthConnectionError(error)
+    ? '认证失败：当前 API 配置未通过认证。'
+    : '连接测试失败：当前 API 配置请求失败。';
+
+  const lines = [
+    title,
+    `配置：${diagnostics.selectedConfigName}`,
+    `Provider: ${diagnostics.selectedProvider}`,
+    `Model: ${diagnostics.selectedModel}`,
+    `API Format: ${diagnostics.apiFormat || 'auto'}`,
+    `Endpoint Host: ${diagnostics.endpointHost ?? 'unknown'}`,
+    `Authorization Header: ${diagnostics.authorizationHeaderPresent ? 'present' : 'missing'}`,
+  ];
+
+  if (details.httpCode) {
+    lines.push(`HTTP: ${details.httpCode}`);
+  }
+  if (details.requestId) {
+    lines.push(`Request ID: ${details.requestId}`);
+  }
+  lines.push(`Reason: ${details.message}`);
+
+  return lines.join('\n');
 }
