@@ -110,6 +110,15 @@ describe('autoresearch history storage', () => {
       id: `run-${index}`,
       updatedAt: `2026-05-05T00:00:${String(index).padStart(2, '0')}.000Z`,
       liveOutputExcerpt: longOutput,
+      iterations: [
+        {
+          id: `iter-${index}`,
+          index: 1,
+          status: 'completed' as const,
+          metricValue: 0.9,
+          commitHash: 'abcdef1234567890',
+        },
+      ],
       events: [
         {
           id: `event-${index}`,
@@ -131,6 +140,7 @@ describe('autoresearch history storage', () => {
     expect(history.selectedRunId).toBe('run-44');
     expect(history.runs[0]?.liveOutputExcerpt?.length).toBeLessThanOrEqual(20000);
     expect(history.runs[0]?.events[0]?.message.length).toBeLessThanOrEqual(1000);
+    expect(history.runs[0]?.iterations[0]?.commitHash).toBe('abcdef1234567890');
     expect(raw).not.toContain('super-secret-key');
     expect(raw).not.toContain('"apiKey":"super-secret-key"');
   });

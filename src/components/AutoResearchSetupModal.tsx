@@ -26,6 +26,15 @@ import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
 import { formatError } from '@/services/autoresearch/errors';
 import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
 
+function parseOptionalBaseline(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
   const setShowSetupModal = useAutoResearchStore(s => s.setShowSetupModal);
@@ -55,7 +64,9 @@ export function AutoResearchSetupModal() {
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
   const [maxIter, setMaxIter] = useState(50);
+  const [baselineInput, setBaselineInput] = useState('');
   const [experimentDir, setExperimentDir] = useState('');
+  const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
 
   // Sync form when sshConfig changes (e.g. from previous session)
   useEffect(() => {
@@ -152,6 +163,7 @@ export function AutoResearchSetupModal() {
         maxIterations: maxIter,
         metricName: metric,
         metricDirection: direction,
+        baseline: parseOptionalBaseline(baselineInput),
         sshConfig: sanitizedForm,
         experimentDir: preflight.resolvedExperimentDir,
         sessionFilePath: preflight.sessionFilePath,
@@ -177,7 +189,7 @@ export function AutoResearchSetupModal() {
     } catch (error) {
       useAutoResearchStore.getState().setError(formatError(error));
     }
-  }, [agentConfig, agentConfigError, direction, experimentDir, form, initSession, maxIter, metric, setAgentPanelTab, setShowSetupModal, setSshConfig]);
+  }, [agentConfig, agentConfigError, baselineInput, direction, experimentDir, form, initSession, maxIter, metric, setAgentPanelTab, setShowSetupModal, setSshConfig]);
 
   if (!showSetupModal) return null;
 
@@ -338,6 +350,15 @@ export function AutoResearchSetupModal() {
                 onChange={e => setMaxIter(parseInt(e.target.value) || 50)}
               />
             </div>
+            <input
+              className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors ${baselineInvalid ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+              placeholder="baseline (optional, e.g. 0.963284)"
+              value={baselineInput}
+              onChange={e => setBaselineInput(e.target.value)}
+            />
+            {baselineInvalid && (
+              <p className="text-[10px] text-red-500">Baseline must be a number.</p>
+            )}
           </div>
 
           {/* Start Button */}
@@ -350,8 +371,9 @@ export function AutoResearchSetupModal() {
                     || (form.authMode === 'key' && !form.keyPath)
                     || !sanitizePathInput(form.remoteWorkDir, { trim: true })
                     || !sanitizePathInput(experimentDir, { trim: true })
-                    || Boolean(agentConfigError))
-                : !sanitizePathInput(form.remoteWorkDir, { trim: true }) || !sanitizePathInput(experimentDir, { trim: true }) || Boolean(agentConfigError)
+                    || Boolean(agentConfigError)
+                    || baselineInvalid)
+                  : !sanitizePathInput(form.remoteWorkDir, { trim: true }) || !sanitizePathInput(experimentDir, { trim: true }) || Boolean(agentConfigError) || baselineInvalid
             }
             onClick={handleStart}
           >

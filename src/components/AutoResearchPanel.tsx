@@ -5,12 +5,16 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   useAutoResearchStore,
   getSelectedAutoResearchRun,
   getSortedAutoResearchRuns,
   type AutoResearchRunRecord,
 } from '@/store/autoresearchStore';
+import { AutoResearchRunDetailDocument } from './autoresearch/AutoResearchRunDetailDocument';
+import { redactSensitiveText } from '@/services/autoresearch/runDocument';
+import { openFileExternal } from '@/services/docService';
 import {
   stopExperimentLoop,
   pauseExperimentLoop,
@@ -68,23 +72,23 @@ function IterationDetail({ run, index }: { run: AutoResearchRunRecord; index: nu
       {iteration.hypothesis && (
         <div>
           <span className="text-gray-400 font-bold uppercase tracking-wider">Hypothesis</span>
-          <p className="text-gray-700 mt-0.5">{iteration.hypothesis}</p>
+          <p className="text-gray-700 mt-0.5">{redactSensitiveText(iteration.hypothesis)}</p>
         </div>
       )}
       {iteration.change && (
         <div>
           <span className="text-gray-400 font-bold uppercase tracking-wider">Change</span>
-          <p className="text-gray-600 mt-0.5 font-mono text-[9px] whitespace-pre-wrap">{iteration.change}</p>
+          <p className="text-gray-600 mt-0.5 font-mono text-[9px] whitespace-pre-wrap">{redactSensitiveText(iteration.change)}</p>
         </div>
       )}
       {iteration.reasoning && (
         <div>
           <span className="text-gray-400 font-bold uppercase tracking-wider">Reasoning</span>
-          <p className="text-gray-600 mt-0.5 whitespace-pre-wrap">{iteration.reasoning}</p>
+          <p className="text-gray-600 mt-0.5 whitespace-pre-wrap">{redactSensitiveText(iteration.reasoning)}</p>
         </div>
       )}
       {iteration.error && (
-        <p className="text-red-500 text-[9px]">Error: {iteration.error}</p>
+        <p className="text-red-500 text-[9px]">Error: {redactSensitiveText(iteration.error)}</p>
       )}
       {iteration.artifactPaths && iteration.artifactPaths.length > 0 && (
         <div>
@@ -121,6 +125,7 @@ export function AutoResearchPanel() {
 
   const liveOutputRef = useRef<HTMLDivElement>(null);
   const [liveExpanded, setLiveExpanded] = useState(true);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const isSelectedRunActive = Boolean(selectedRun && activeRunId && selectedRun.id === activeRunId);
   const displayedLiveOutput = isSelectedRunActive
@@ -134,12 +139,40 @@ export function AutoResearchPanel() {
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
   const handleResume = useCallback(() => resumeExperimentLoop(), []);
   const handleStop = useCallback(() => stopExperimentLoop(), []);
+  const handleOpenSelectedRunArtifact = useCallback(() => {
+    const targetPath = selectedRun?.config.livingDocPath
+      || selectedRun?.config.sessionFilePath
+      || selectedRun?.config.experimentDir;
+    if (targetPath) {
+      void openFileExternal(targetPath);
+    }
+  }, [selectedRun]);
 
   useEffect(() => {
     if (liveOutputRef.current && liveExpanded) {
       liveOutputRef.current.scrollTop = liveOutputRef.current.scrollHeight;
     }
   }, [displayedLiveOutput, liveExpanded]);
+
+  useEffect(() => {
+    if (!detailOpen || typeof document === 'undefined') {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDetailOpen(false);
+      }
+    };
+
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [detailOpen]);
 
   if (!selectedRun && sortedRuns.length === 0) {
     return (
@@ -229,9 +262,17 @@ export function AutoResearchPanel() {
 
             {selectedRun.summary && (
               <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5 text-[9px] text-yellow-800">
-                {selectedRun.summary}
+                {redactSensitiveText(selectedRun.summary)}
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={() => setDetailOpen(true)}
+              className="w-full py-1.5 rounded-lg border border-indigo-100 bg-indigo-50 text-[9px] font-bold text-indigo-700 hover:bg-indigo-100 transition-colors"
+            >
+              Open Detail
+            </button>
 
             {isSelectedRunActive && (
               <div className="flex gap-1.5">
@@ -313,7 +354,7 @@ export function AutoResearchPanel() {
                   <div key={event.id} className="text-[9px] text-gray-500">
                     <span className="font-semibold text-gray-700">{event.phase}</span>
                     <span className="text-gray-300"> · </span>
-                    <span>{event.message}</span>
+                    <span>{redactSensitiveText(event.message)}</span>
                   </div>
                 ))}
               </div>
@@ -334,10 +375,31 @@ export function AutoResearchPanel() {
                   ref={liveOutputRef}
                   className="max-h-32 overflow-y-auto text-green-400 text-[9px] font-mono px-2 pb-2"
                 >
-                  <pre className="whitespace-pre-wrap break-words">{displayedLiveOutput}</pre>
+                  <pre className="whitespace-pre-wrap break-words">{redactSensitiveText(displayedLiveOutput)}</pre>
                 </div>
               )}
             </div>
+          )}
+
+          {detailOpen && selectedRun && typeof document !== 'undefined' && createPortal(
+            <div
+              className="fixed inset-0 z-[1000] overflow-y-auto bg-[#1c1917]/58 backdrop-blur-[6px]"
+              onClick={() => setDetailOpen(false)}
+            >
+              <div className="min-h-full sm:p-4">
+                <div onClick={(event) => event.stopPropagation()}>
+                  <AutoResearchRunDetailDocument
+                    run={selectedRun}
+                    liveOutput={displayedLiveOutput}
+                    onBack={() => setDetailOpen(false)}
+                    onOpen={handleOpenSelectedRunArtifact}
+                    onClose={() => setDetailOpen(false)}
+                    className="min-h-screen sm:min-h-[calc(100vh-2rem)] sm:rounded-[28px] sm:border sm:border-white/70"
+                  />
+                </div>
+              </div>
+            </div>,
+            document.body,
           )}
         </>
       )}

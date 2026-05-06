@@ -20,6 +20,7 @@ describe('autoresearchStore history behavior', () => {
       maxIterations: 5,
       metricName: 'val_loss',
       metricDirection: 'lower',
+      baseline: 0.75,
       sshConfig: {
         mode: 'local',
         host: '',
@@ -49,6 +50,9 @@ describe('autoresearchStore history behavior', () => {
     expect(state.runHistory).toHaveLength(1);
     expect(state.runHistory[0]?.id).toBe('run-1');
     expect(state.runHistory[0]?.status).toBe('running');
+    expect(state.runHistory[0]?.config.baseline).toBe(0.75);
+    expect(state.runHistory[0]?.bestMetricValue).toBe(0.75);
+    expect(state.runHistory[0]?.bestIteration).toBe(0);
     expect(state.selectedRunId).toBe('run-1');
   });
 
