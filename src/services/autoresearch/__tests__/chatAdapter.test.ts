@@ -1,3 +1,5 @@
+import type { ResolvedAgentConfig } from '@/services/agentConfig';
+
 const mockAppendLiveOutput = jest.fn();
 const mockRunHeadlessAgentTurn = jest.fn();
 const mockResolveActiveAgentConfig = jest.fn();
@@ -35,7 +37,7 @@ jest.mock('../terminalRunner', () => ({
 }));
 
 describe('createAutoResearchSendMessage', () => {
-  const activeConfig = {
+  const activeConfig: ResolvedAgentConfig = {
     configId: 'cfg-1',
     name: 'MiniMax Global',
     provider: 'minimax',
@@ -43,6 +45,7 @@ describe('createAutoResearchSendMessage', () => {
     baseUrl: 'https://api.minimaxi.com/v1',
     apiFormat: 'openai',
     hasApiKey: true,
+    hasBaseUrl: true,
     apiKey: 'test-key',
   };
 
@@ -114,5 +117,27 @@ describe('createAutoResearchSendMessage', () => {
 
     await expect(sendMessage('system prompt', 'first question')).rejects.toThrow('invalid config');
     expect(mockRunHeadlessAgentTurn).not.toHaveBeenCalled();
+  });
+
+  it('keeps using the frozen run config after Settings changes', async () => {
+    const frozenConfig = {
+      ...activeConfig,
+      model: 'MiniMax-M2.7',
+    };
+    mockResolveActiveAgentConfig.mockReturnValue({
+      ...activeConfig,
+      model: 'MiniMax-M2.5',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', frozenConfig);
+
+    await expect(sendMessage('system prompt', 'follow-up question')).resolves.toBe('final answer');
+    expect(mockResolveActiveAgentConfig).not.toHaveBeenCalled();
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
+      agentConfig: expect.objectContaining({
+        model: 'MiniMax-M2.7',
+      }),
+    }));
   });
 });

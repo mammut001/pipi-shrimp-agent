@@ -1,96 +1,147 @@
 /**
  * AutoResearchPanel — Right panel tab for experiment monitoring & control.
  *
- * Rendered inside AgentPanel when the 'autoresearch' tab is active.
- * Compact layout: status bar → experiment timeline → live output.
+ * Shows the current run plus persistent run history.
  */
 
-import { useCallback, useRef, useEffect, useState } from 'react';
-import { useAutoResearchStore, type ExperimentEntry } from '@/store/autoresearchStore';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useAutoResearchStore,
+  getSelectedAutoResearchRun,
+  getSortedAutoResearchRuns,
+  type AutoResearchRunRecord,
+} from '@/store/autoresearchStore';
 import {
   stopExperimentLoop,
   pauseExperimentLoop,
   resumeExperimentLoop,
 } from '@/services/autoresearch';
 
-// ============== Status Badge ==============
-
-function StatusBadge({ status }: { status: ExperimentEntry['status'] }) {
-  const styles = {
-    IMPROVED: 'bg-green-100 text-green-700',
-    NOT_IMPROVED: 'bg-yellow-100 text-yellow-700',
-    FAILED: 'bg-red-100 text-red-700',
+function RunStatusBadge({ status }: { status: AutoResearchRunRecord['status'] }) {
+  const styles: Record<AutoResearchRunRecord['status'], string> = {
+    draft: 'bg-gray-100 text-gray-700',
+    running: 'bg-green-100 text-green-700',
+    waiting_rate_limit: 'bg-yellow-100 text-yellow-700',
+    stopped: 'bg-gray-100 text-gray-700',
+    failed: 'bg-red-100 text-red-700',
+    completed: 'bg-blue-100 text-blue-700',
+    interrupted: 'bg-orange-100 text-orange-700',
   };
-  const icons = { IMPROVED: '✅', NOT_IMPROVED: '➖', FAILED: '❌' };
 
   return (
     <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${styles[status]}`}>
-      {icons[status]} {status.replace('_', ' ')}
+      {status.replace(/_/g, ' ')}
     </span>
   );
 }
 
-// ============== Experiment Detail (inline expand) ==============
+function IterationStatusBadge({ status }: { status: 'pending' | 'running' | 'failed' | 'completed' | 'skipped' }) {
+  const styles: Record<string, string> = {
+    pending: 'bg-gray-100 text-gray-600',
+    running: 'bg-blue-100 text-blue-700',
+    failed: 'bg-red-100 text-red-700',
+    completed: 'bg-green-100 text-green-700',
+    skipped: 'bg-yellow-100 text-yellow-700',
+  };
 
-function ExperimentDetail({ entry }: { entry: ExperimentEntry }) {
   return (
-    <div className="px-3 pb-3 pt-1 space-y-2 text-[10px] bg-gray-50/80 border-t border-gray-100 animate-in slide-in-from-top-1 duration-150">
-      <div>
-        <span className="text-gray-400 font-bold uppercase tracking-wider">Hypothesis</span>
-        <p className="text-gray-700 mt-0.5">{entry.hypothesis}</p>
+    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${styles[status]}`}>
+      {status}
+    </span>
+  );
+}
+
+function IterationDetail({ run, index }: { run: AutoResearchRunRecord; index: number }) {
+  const iteration = run.iterations[index];
+  if (!iteration) {
+    return null;
+  }
+
+  return (
+    <div className="px-3 pb-3 pt-1 space-y-2 text-[10px] bg-gray-50/80 border-t border-gray-100">
+      <div className="flex items-center gap-2">
+        <IterationStatusBadge status={iteration.status} />
+        {typeof iteration.metricValue === 'number' && (
+          <span className="text-gray-500 font-mono">{run.config.metric}={iteration.metricValue}</span>
+        )}
       </div>
-      {entry.change && (
+      {iteration.hypothesis && (
+        <div>
+          <span className="text-gray-400 font-bold uppercase tracking-wider">Hypothesis</span>
+          <p className="text-gray-700 mt-0.5">{iteration.hypothesis}</p>
+        </div>
+      )}
+      {iteration.change && (
         <div>
           <span className="text-gray-400 font-bold uppercase tracking-wider">Change</span>
-          <p className="text-gray-600 mt-0.5 font-mono text-[9px]">{entry.change}</p>
+          <p className="text-gray-600 mt-0.5 font-mono text-[9px] whitespace-pre-wrap">{iteration.change}</p>
         </div>
       )}
-      {entry.reasoning && (
+      {iteration.reasoning && (
         <div>
           <span className="text-gray-400 font-bold uppercase tracking-wider">Reasoning</span>
-          <p className="text-gray-600 mt-0.5 whitespace-pre-wrap">{entry.reasoning}</p>
+          <p className="text-gray-600 mt-0.5 whitespace-pre-wrap">{iteration.reasoning}</p>
         </div>
       )}
-      {entry.failReason && (
-        <p className="text-red-500 text-[9px]">Fail: {entry.failReason}</p>
+      {iteration.error && (
+        <p className="text-red-500 text-[9px]">Error: {iteration.error}</p>
+      )}
+      {iteration.artifactPaths && iteration.artifactPaths.length > 0 && (
+        <div>
+          <span className="text-gray-400 font-bold uppercase tracking-wider">Artifacts</span>
+          <div className="mt-1 space-y-0.5">
+            {iteration.artifactPaths.slice(0, 6).map((artifactPath) => (
+              <p key={artifactPath} className="text-[9px] text-gray-500 break-all font-mono">{artifactPath}</p>
+            ))}
+          </div>
+        </div>
       )}
       <p className="text-gray-300 text-[9px]">
-        {entry.timestamp} · {(entry.durationMs / 1000).toFixed(1)}s
+        {[iteration.startedAt, iteration.endedAt].filter(Boolean).join(' → ')}
       </p>
     </div>
   );
 }
 
-// ============== Main Panel ==============
-
 export function AutoResearchPanel() {
   const {
-    loopState, currentIteration, maxIterations, bestMetric,
-    metricName, consecutiveFailures,
-    experiments, liveOutput, selectedExperiment,
-    setSelectedExperiment, setShowSetupModal, errorMessage,
+    loopState,
+    errorMessage,
+    liveOutput,
+    selectedExperiment,
+    selectedRunId,
+    id: activeRunId,
+    setSelectedExperiment,
+    selectRun,
+    setShowSetupModal,
+    resetSession,
   } = useAutoResearchStore();
+  const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
+  const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
 
   const liveOutputRef = useRef<HTMLDivElement>(null);
   const [liveExpanded, setLiveExpanded] = useState(true);
+
+  const isSelectedRunActive = Boolean(selectedRun && activeRunId && selectedRun.id === activeRunId);
+  const displayedLiveOutput = isSelectedRunActive
+    ? liveOutput
+    : selectedRun?.liveOutputExcerpt || '';
+  const iterations = selectedRun?.iterations ?? [];
+  const selectedIterationIndex = selectedExperiment >= 0 && selectedExperiment < iterations.length
+    ? selectedExperiment
+    : -1;
 
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
   const handleResume = useCallback(() => resumeExperimentLoop(), []);
   const handleStop = useCallback(() => stopExperimentLoop(), []);
 
-  const toggleDetail = (idx: number) => {
-    setSelectedExperiment(selectedExperiment === idx ? -1 : idx);
-  };
-
-  // Auto-scroll live output to bottom
   useEffect(() => {
     if (liveOutputRef.current && liveExpanded) {
       liveOutputRef.current.scrollTop = liveOutputRef.current.scrollHeight;
     }
-  }, [liveOutput, liveExpanded]);
+  }, [displayedLiveOutput, liveExpanded]);
 
-  // ---- Idle state (no session) ----
-  if (loopState === 'idle' && experiments.length === 0) {
+  if (!selectedRun && sortedRuns.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
         <div className="p-3 bg-indigo-50 rounded-2xl mb-3">
@@ -112,128 +163,183 @@ export function AutoResearchPanel() {
     );
   }
 
-  // ---- Active / completed session ----
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Status Bar */}
-      <div className="px-3 py-2.5 border-b border-gray-200/60 bg-white/70 space-y-2">
-        <div className="flex items-center gap-2 text-[10px]">
-          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-            loopState === 'running' ? 'bg-green-500 animate-pulse' :
-            loopState === 'paused' ? 'bg-yellow-500' :
-            loopState === 'error' ? 'bg-red-500' : 'bg-gray-400'
-          }`} />
-          <span className="font-bold text-gray-700 uppercase tracking-tight">{loopState}</span>
-          <span className="text-gray-300">·</span>
-          <span className="text-gray-500">{currentIteration}/{maxIterations}</span>
-          <span className="text-gray-300">·</span>
-          <span className="text-gray-500">
-            {bestMetric !== null ? `${metricName}=${bestMetric}` : 'No best yet'}
-          </span>
-          {consecutiveFailures > 0 && (
-            <span className="text-red-400 ml-auto">⚠ {consecutiveFailures}×fail</span>
-          )}
-        </div>
-
-        {/* Progress bar */}
-        {maxIterations > 0 && (
-          <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-indigo-500 rounded-full transition-all duration-500"
-              style={{ width: `${Math.min((currentIteration / maxIterations) * 100, 100)}%` }}
-            />
-          </div>
-        )}
-
-        {/* Control buttons */}
-        <div className="flex gap-1.5">
-          {loopState === 'running' && (
-            <>
-              <button onClick={handlePause} className="flex-1 py-1 bg-yellow-50 text-yellow-700 rounded-lg text-[9px] font-bold hover:bg-yellow-100 transition-colors">
-                ⏸ Pause
-              </button>
-              <button onClick={handleStop} className="flex-1 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 transition-colors">
-                ⏹ Stop
-              </button>
-            </>
-          )}
-          {loopState === 'paused' && (
-            <>
-              <button onClick={handleResume} className="flex-1 py-1 bg-green-50 text-green-700 rounded-lg text-[9px] font-bold hover:bg-green-100 transition-colors">
-                ▶ Resume
-              </button>
-              <button onClick={handleStop} className="flex-1 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 transition-colors">
-                ⏹ Stop
-              </button>
-            </>
-          )}
-          {(loopState === 'idle' || loopState === 'stopped' || loopState === 'error') && experiments.length > 0 && (
-            <button
-              onClick={() => { useAutoResearchStore.getState().resetSession(); setShowSetupModal(true); }}
-              className="flex-1 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-bold hover:bg-indigo-100 transition-colors"
-            >
-              ↻ New Session
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Error banner */}
-      {loopState === 'error' && errorMessage && (
-        <div className="px-3 py-2 bg-red-50 border-b border-red-100 text-red-600 text-[10px]">
-          {errorMessage}
-        </div>
-      )}
-
-      {/* Experiment Timeline */}
-      <div className="flex-1 overflow-y-auto scrollbar-hide hover:scrollbar-default">
-        {experiments.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-300 text-[10px] font-bold uppercase tracking-widest">
-            Waiting for first experiment...
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-100">
-            {experiments.map((exp, idx) => (
-              <div key={exp.iteration}>
-                <button
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
-                    selectedExperiment === idx ? 'bg-indigo-50/50' : 'hover:bg-gray-50'
-                  }`}
-                  onClick={() => toggleDetail(idx)}
-                >
-                  <span className="text-[9px] text-gray-300 w-5 text-right font-mono">#{exp.iteration}</span>
-                  <StatusBadge status={exp.status} />
-                  <span className="flex-1 text-[10px] text-gray-600 truncate">{exp.hypothesis}</span>
-                  <span className="text-[9px] text-gray-400 font-mono">
-                    {exp.metricValue !== null ? exp.metricValue : '—'}
-                  </span>
-                </button>
-                {selectedExperiment === idx && <ExperimentDetail entry={exp} />}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Live output */}
-      {liveOutput && (
-        <div className="border-t border-gray-800 bg-gray-900">
+      <div className="px-3 py-2 border-b border-gray-200/60 bg-white/70 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Run History</p>
           <button
-            onClick={() => setLiveExpanded(v => !v)}
-            className="w-full flex items-center justify-between px-2 py-1 text-[9px] text-gray-500 hover:text-gray-300 transition-colors"
+            onClick={() => setShowSetupModal(true)}
+            className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[9px] font-bold hover:bg-indigo-100 transition-colors"
           >
-            <span className="font-bold uppercase tracking-widest">Live Output</span>
-            <span>{liveExpanded ? '▾' : '▸'}</span>
+            New Run
           </button>
-          {liveExpanded && (
-            <div
-              ref={liveOutputRef}
-              className="max-h-32 overflow-y-auto text-green-400 text-[9px] font-mono px-2 pb-2"
+        </div>
+        <div className="max-h-24 overflow-y-auto space-y-1">
+          {sortedRuns.map((run) => (
+            <button
+              key={run.id}
+              type="button"
+              onClick={() => {
+                selectRun(run.id);
+                setSelectedExperiment(-1);
+              }}
+              className={`w-full rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                selectedRunId === run.id ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 hover:bg-gray-50'
+              }`}
             >
-              <pre className="whitespace-pre-wrap break-words">{liveOutput}</pre>
+              <div className="flex items-center gap-2">
+                <RunStatusBadge status={run.status} />
+                <span className="flex-1 truncate text-[10px] font-semibold text-gray-700">{run.title}</span>
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-[9px] text-gray-500">
+                <span className="truncate">{run.config.metric}</span>
+                <span>·</span>
+                <span>{run.currentIteration}/{run.config.iterations}</span>
+                <span>·</span>
+                <span className="truncate">{run.config.configSnapshot.model || 'no model'}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {selectedRun && (
+        <>
+          <div className="px-3 py-2.5 border-b border-gray-200/60 bg-white/70 space-y-2">
+            <div className="flex items-center gap-2 text-[10px]">
+              <RunStatusBadge status={selectedRun.status} />
+              <span className="font-bold text-gray-700 truncate">{selectedRun.title}</span>
+              <span className="text-gray-300">·</span>
+              <span className="text-gray-500">{selectedRun.currentIteration}/{selectedRun.config.iterations}</span>
+              <span className="text-gray-300">·</span>
+              <span className="text-gray-500">
+                {selectedRun.bestMetricValue !== null && selectedRun.bestMetricValue !== undefined
+                  ? `${selectedRun.config.metric}=${selectedRun.bestMetricValue}`
+                  : 'No best yet'}
+              </span>
+            </div>
+            <div className="rounded-lg bg-gray-50 px-2 py-1.5 text-[9px] text-gray-500 space-y-0.5">
+              <p className="font-medium text-gray-700">
+                {selectedRun.config.configSnapshot.configName} · {selectedRun.config.configSnapshot.provider} · {selectedRun.config.configSnapshot.model}
+              </p>
+              <p className="break-all">{selectedRun.config.workdir}</p>
+              <p className="break-all">{selectedRun.config.experimentDir}</p>
+            </div>
+
+            {selectedRun.summary && (
+              <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5 text-[9px] text-yellow-800">
+                {selectedRun.summary}
+              </div>
+            )}
+
+            {isSelectedRunActive && (
+              <div className="flex gap-1.5">
+                {loopState === 'running' && (
+                  <>
+                    <button onClick={handlePause} className="flex-1 py-1 bg-yellow-50 text-yellow-700 rounded-lg text-[9px] font-bold hover:bg-yellow-100 transition-colors">
+                      ⏸ Pause
+                    </button>
+                    <button onClick={handleStop} className="flex-1 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 transition-colors">
+                      ⏹ Stop
+                    </button>
+                  </>
+                )}
+                {loopState === 'paused' && (
+                  <>
+                    <button onClick={handleResume} className="flex-1 py-1 bg-green-50 text-green-700 rounded-lg text-[9px] font-bold hover:bg-green-100 transition-colors">
+                      ▶ Resume
+                    </button>
+                    <button onClick={handleStop} className="flex-1 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 transition-colors">
+                      ⏹ Stop
+                    </button>
+                  </>
+                )}
+                {(loopState === 'stopped' || loopState === 'error') && (
+                  <button
+                    onClick={() => {
+                      resetSession();
+                      setShowSetupModal(true);
+                    }}
+                    className="flex-1 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[9px] font-bold hover:bg-indigo-100 transition-colors"
+                  >
+                    ↻ New Session
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {isSelectedRunActive && loopState === 'error' && errorMessage && (
+            <div className="px-3 py-2 bg-red-50 border-b border-red-100 text-red-600 text-[10px]">
+              {errorMessage}
             </div>
           )}
-        </div>
+
+          <div className="flex-1 overflow-y-auto scrollbar-hide hover:scrollbar-default">
+            {iterations.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-gray-300 text-[10px] font-bold uppercase tracking-widest">
+                No iterations recorded yet
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {iterations.map((iteration, idx) => (
+                  <div key={iteration.id}>
+                    <button
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
+                        selectedIterationIndex === idx ? 'bg-indigo-50/50' : 'hover:bg-gray-50'
+                      }`}
+                      onClick={() => setSelectedExperiment(selectedIterationIndex === idx ? -1 : idx)}
+                    >
+                      <span className="text-[9px] text-gray-300 w-5 text-right font-mono">#{iteration.index}</span>
+                      <IterationStatusBadge status={iteration.status} />
+                      <span className="flex-1 text-[10px] text-gray-600 truncate">{iteration.hypothesis || 'Pending iteration'}</span>
+                      <span className="text-[9px] text-gray-400 font-mono">
+                        {typeof iteration.metricValue === 'number' ? iteration.metricValue : '—'}
+                      </span>
+                    </button>
+                    {selectedIterationIndex === idx && <IterationDetail run={selectedRun} index={idx} />}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {selectedRun.events.length > 0 && (
+            <div className="border-t border-gray-200 bg-white px-2 py-2">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-1">Recent Events</p>
+              <div className="space-y-1 max-h-24 overflow-y-auto">
+                {selectedRun.events.slice(-6).reverse().map((event) => (
+                  <div key={event.id} className="text-[9px] text-gray-500">
+                    <span className="font-semibold text-gray-700">{event.phase}</span>
+                    <span className="text-gray-300"> · </span>
+                    <span>{event.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {displayedLiveOutput && (
+            <div className="border-t border-gray-800 bg-gray-900">
+              <button
+                onClick={() => setLiveExpanded((value) => !value)}
+                className="w-full flex items-center justify-between px-2 py-1 text-[9px] text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                <span className="font-bold uppercase tracking-widest">Live Output</span>
+                <span>{liveExpanded ? '▾' : '▸'}</span>
+              </button>
+              {liveExpanded && (
+                <div
+                  ref={liveOutputRef}
+                  className="max-h-32 overflow-y-auto text-green-400 text-[9px] font-mono px-2 pb-2"
+                >
+                  <pre className="whitespace-pre-wrap break-words">{displayedLiveOutput}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

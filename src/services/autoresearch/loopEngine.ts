@@ -26,7 +26,7 @@ import {
 } from './runDir';
 import { readLivingDoc, rebuildLivingDoc } from './livingDoc';
 import { clearCurrentRunDir, setCurrentRunDir } from './terminalRunner';
-import { formatError } from './errors';
+import { formatError, getRateLimitRetryAfterSeconds, isRateLimitError } from './errors';
 import {
   getAutoResearchLivingDocPathFromWorkDir,
   getAutoResearchSessionFilePathFromWorkDir,
@@ -55,6 +55,10 @@ interface StartupContext {
   experimentDir: string;
   workDir: string;
   sessionContent: string;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildSystemPrompt({
@@ -241,7 +245,7 @@ async function prepareStartupContext(store: ReturnType<typeof useAutoResearchSto
     typeofExperimentDir: typeof resolvedExperimentDir,
   });
 
-  useAutoResearchStore.setState({
+  useAutoResearchStore.getState().updateRunPaths({
     sshConfig: artifactCfg,
     experimentDir: resolvedExperimentDir,
     sessionFilePath: resolvedSessionFilePath,
@@ -311,6 +315,20 @@ async function writeRunStatus(
   await writeTargetText(cfg, runDir.statusPath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
+function getRunArtifactPaths(runDir: RunDir): string[] {
+  return [
+    runDir.iterDir,
+    runDir.hypothesisPath,
+    runDir.diffPath,
+    runDir.metricsPath,
+    runDir.statusPath,
+    runDir.transcriptPath,
+    `${runDir.logsDir}/stdout.log`,
+    `${runDir.logsDir}/stderr.log`,
+    `${runDir.logsDir}/combined.log`,
+  ];
+}
+
 async function assertRemoteLinux(cfg: SshConfig): Promise<void> {
   if (cfg.mode !== 'ssh') {
     return;
@@ -342,6 +360,12 @@ export async function startExperimentLoop(
   const notifier = createNotifier(store.telegramConfig);
   const sessionId = store.id;
   const cfg = store.sshConfig;
+  useAutoResearchStore.getState().setRunStatus('running', { summary: 'Run started.' });
+  useAutoResearchStore.getState().addRunEvent({
+    level: 'info',
+    phase: 'system',
+    message: 'AutoResearch loop started.',
+  });
 
   try {
     await assertRemoteLinux(cfg);
@@ -380,6 +404,14 @@ export async function startExperimentLoop(
       metricName: store.metricName,
       direction: store.metricDirection,
     });
+    useAutoResearchStore.getState().addRunEvent({
+      level: 'info',
+      phase: 'preflight',
+      message: 'Run artifacts initialized.',
+      metadata: {
+        sessionDir: sessionPaths.sessionDir,
+      },
+    });
   } catch (error) {
     useAutoResearchStore.getState().setError(`Failed to initialize run artifacts: ${formatError(error)}`);
     return;
@@ -396,6 +428,8 @@ export async function startExperimentLoop(
     return;
   }
 
+  let consecutiveRateLimitCount = 0;
+
   while (true) {
     const state = useAutoResearchStore.getState();
 
@@ -404,11 +438,19 @@ export async function startExperimentLoop(
     }
     if (state.currentIteration >= state.maxIterations) {
       await notifier.onLoopStopped('Max iterations reached', state);
+      useAutoResearchStore.getState().setRunStatus('completed', {
+        summary: 'Max iterations reached.',
+        endedAt: new Date().toISOString(),
+      });
       useAutoResearchStore.getState().setLoopState('stopped');
       break;
     }
     if (state.consecutiveFailures >= 3) {
       await notifier.onLoopStopped('3 consecutive failures', state);
+      useAutoResearchStore.getState().setRunStatus('failed', {
+        summary: 'Stopped after 3 consecutive failures.',
+        endedAt: new Date().toISOString(),
+      });
       useAutoResearchStore.getState().setLoopState('stopped');
       break;
     }
@@ -421,6 +463,7 @@ export async function startExperimentLoop(
     const iteration = useAutoResearchStore.getState().currentIteration;
     const startedAt = new Date().toISOString();
     const startMs = Date.now();
+    useAutoResearchStore.getState().setStatusMessage(undefined);
     useAutoResearchStore.getState().setLiveOutput('');
 
     let runDir: RunDir;
@@ -433,6 +476,19 @@ export async function startExperimentLoop(
       break;
     }
     setCurrentRunDir(runDir);
+    useAutoResearchStore.getState().startIterationRecord({
+      iteration,
+      startedAt,
+      artifactPaths: getRunArtifactPaths(runDir),
+    });
+    useAutoResearchStore.getState().addRunEvent({
+      level: 'info',
+      phase: 'agent_execution',
+      message: `Iteration ${iteration} started.`,
+      metadata: {
+        iterDir: runDir.iterDir,
+      },
+    });
     await writeRunStatus(artifactCfg, runDir, {
       iteration,
       status: 'RUNNING',
@@ -453,6 +509,7 @@ export async function startExperimentLoop(
 
       const userMessage = `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
       const agentOutput = await sendMessage(systemPrompt, userMessage);
+      consecutiveRateLimitCount = 0;
       const parsed = await parseIterationMetrics(artifactCfg, runDir, state.metricName, agentOutput);
       const diff = await getRemoteDiff(experimentCfg);
       const commitHash = await captureCommitHash(experimentCfg);
@@ -481,6 +538,26 @@ export async function startExperimentLoop(
           reasoning: agentOutput.slice(-1000),
         };
         useAutoResearchStore.getState().addExperiment(entry);
+        useAutoResearchStore.getState().completeIterationRecord({
+          iteration,
+          status: 'failed',
+          hypothesis: entry.hypothesis,
+          change: entry.change,
+          reasoning: entry.reasoning,
+          metricValue: entry.metricValue,
+          error: entry.failReason ?? null,
+          endedAt: finishedAt,
+          artifactPaths: getRunArtifactPaths(runDir),
+        });
+        useAutoResearchStore.getState().addRunEvent({
+          level: 'warn',
+          phase: 'evaluation',
+          message: `Iteration ${iteration} finished without parseable metrics.`,
+          metadata: {
+            failReason: entry.failReason ?? null,
+            iterDir: runDir.iterDir,
+          },
+        });
         useAutoResearchStore.getState().incrementConsecutiveFailures();
         await appendIterationMetrics(artifactCfg, sessionId, failedRecord);
         await writeRunStatus(artifactCfg, runDir, {
@@ -520,6 +597,27 @@ export async function startExperimentLoop(
 
       const entry = toExperimentEntry(metricsRecord);
       useAutoResearchStore.getState().addExperiment(entry);
+      useAutoResearchStore.getState().completeIterationRecord({
+        iteration,
+        status: parsed.status === 'FAILED' ? 'failed' : 'completed',
+        hypothesis: entry.hypothesis,
+        change: entry.change,
+        reasoning: entry.reasoning,
+        metricValue: entry.metricValue,
+        error: entry.failReason ?? null,
+        endedAt: finishedAt,
+        artifactPaths: getRunArtifactPaths(runDir),
+      });
+      useAutoResearchStore.getState().addRunEvent({
+        level: parsed.status === 'FAILED' ? 'warn' : 'info',
+        phase: 'evaluation',
+        message: `Iteration ${iteration} completed with status ${parsed.status}.`,
+        metadata: {
+          metricValue: parsed.metricValue,
+          failReason: parsed.failReason ?? null,
+          iterDir: runDir.iterDir,
+        },
+      });
 
       if (parsed.status === 'IMPROVED' && parsed.metricValue !== null) {
         useAutoResearchStore.getState().updateBestMetric(parsed.metricValue);
@@ -565,6 +663,47 @@ export async function startExperimentLoop(
       const summary = `[Exp ${iteration}] ${parsed.hypothesis} → ${parsed.status} ${icon} (${parsed.metricValue ?? 'N/A'})`;
       useAutoResearchStore.getState().appendLiveOutput(summary + '\n');
     } catch (error) {
+      if (isRateLimitError(error)) {
+        consecutiveRateLimitCount += 1;
+        const retryAfterSeconds = getRateLimitRetryAfterSeconds(error);
+        const cooldownSeconds = retryAfterSeconds ?? Math.min(60, 15 * Math.pow(2, consecutiveRateLimitCount - 1));
+        const message = formatError(error);
+
+        useAutoResearchStore.getState().setCurrentIterationValue(Math.max(0, iteration - 1));
+        useAutoResearchStore.getState().setRunStatus('waiting_rate_limit', {
+          summary: `Provider rate limited the run. Cooling down ${cooldownSeconds}s.`,
+        });
+        useAutoResearchStore.getState().setStatusMessage(
+          `Provider rate limited this run. Waiting ${cooldownSeconds}s before retrying iteration ${iteration}.`,
+        );
+        useAutoResearchStore.getState().addRunEvent({
+          level: 'warn',
+          phase: 'rate_limit',
+          message,
+          metadata: {
+            iteration,
+            cooldownSeconds,
+            iterDir: runDir.iterDir,
+          },
+        });
+        useAutoResearchStore.getState().appendLiveOutput(
+          `[rate-limit] ${message}\n[rate-limit] waiting ${cooldownSeconds}s before retrying iteration ${iteration}\n`,
+        );
+        await writeRunStatus(artifactCfg, runDir, {
+          iteration,
+          status: 'RATE_LIMITED',
+          metricValue: null,
+          failReason: message,
+          durationMs: Date.now() - startMs,
+          commitHash: await captureCommitHash(experimentCfg),
+          retryAfterSeconds: cooldownSeconds,
+        });
+        await rollback(experimentCfg);
+        await sleep(cooldownSeconds * 1000);
+        continue;
+      }
+
+      consecutiveRateLimitCount = 0;
       const finishedAt = new Date().toISOString();
       const durationMs = Date.now() - startMs;
       const entry: ExperimentEntry = {
@@ -592,6 +731,26 @@ export async function startExperimentLoop(
         finishedAt,
       };
       useAutoResearchStore.getState().addExperiment(entry);
+      useAutoResearchStore.getState().completeIterationRecord({
+        iteration,
+        status: 'failed',
+        hypothesis: entry.hypothesis,
+        change: entry.change,
+        reasoning: entry.reasoning,
+        metricValue: entry.metricValue,
+        error: entry.failReason ?? null,
+        endedAt: finishedAt,
+        artifactPaths: getRunArtifactPaths(runDir),
+      });
+      useAutoResearchStore.getState().addRunEvent({
+        level: 'error',
+        phase: 'agent_execution',
+        message: entry.failReason ?? 'Agent execution error',
+        metadata: {
+          iteration,
+          iterDir: runDir.iterDir,
+        },
+      });
       useAutoResearchStore.getState().incrementConsecutiveFailures();
       await appendIterationMetrics(artifactCfg, sessionId, failedRecord);
       await writeRunStatus(artifactCfg, runDir, {
@@ -618,16 +777,38 @@ export async function startExperimentLoop(
 }
 
 export function stopExperimentLoop(): void {
+  useAutoResearchStore.getState().setRunStatus('stopped', {
+    summary: 'Stopped by user.',
+    endedAt: new Date().toISOString(),
+  });
+  useAutoResearchStore.getState().addRunEvent({
+    level: 'warn',
+    phase: 'system',
+    message: 'Run stopped by user.',
+  });
   useAutoResearchStore.getState().setLoopState('stopped');
 }
 
 export function pauseExperimentLoop(): void {
+  useAutoResearchStore.getState().addRunEvent({
+    level: 'info',
+    phase: 'system',
+    message: 'Run paused by user.',
+  });
   useAutoResearchStore.getState().setLoopState('paused');
 }
 
 export function resumeExperimentLoop(): void {
   const state = useAutoResearchStore.getState();
   if (state.loopState === 'paused') {
+    useAutoResearchStore.getState().setRunStatus('running', {
+      summary: 'Run resumed.',
+    });
+    useAutoResearchStore.getState().addRunEvent({
+      level: 'info',
+      phase: 'system',
+      message: 'Run resumed by user.',
+    });
     useAutoResearchStore.getState().setLoopState('running');
   }
 }

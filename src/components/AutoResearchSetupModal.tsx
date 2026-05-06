@@ -16,6 +16,7 @@ import {
 } from '@/services/agentConfig';
 import { startExperimentLoop } from '@/services/autoresearch';
 import { createAutoResearchSendMessage } from '@/services/autoresearch/chatAdapter';
+import { createAutoResearchRunId } from '@/services/autoresearch/history';
 import {
   isHorizontalArrowKey,
   resolveInitialExperimentDir,
@@ -23,6 +24,7 @@ import {
 } from '@/services/autoresearch/pathInput';
 import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
 import { formatError } from '@/services/autoresearch/errors';
+import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
@@ -119,9 +121,13 @@ export function AutoResearchSetupModal() {
       if (form.authMode === 'key' && !form.keyPath) return;
     }
 
-    const sessionId = `autoresearch-${Date.now()}`;
-    if (agentConfigError) {
-      useAutoResearchStore.getState().setError(agentConfigError);
+    const sessionId = createAutoResearchRunId();
+
+    let runConfig;
+    try {
+      runConfig = resolveAutoResearchRunConfig();
+    } catch (error) {
+      useAutoResearchStore.getState().setError(formatError(error));
       return;
     }
 
@@ -131,7 +137,7 @@ export function AutoResearchSetupModal() {
         experimentDir,
         workDir: form.remoteWorkDir,
         sessionId,
-        agentConfig,
+        agentConfig: runConfig.agentConfig,
       });
 
       const sanitizedForm = {
@@ -150,6 +156,7 @@ export function AutoResearchSetupModal() {
         experimentDir: preflight.resolvedExperimentDir,
         sessionFilePath: preflight.sessionFilePath,
         livingDocPath: preflight.livingDocPath,
+        agentConfigSnapshot: runConfig.snapshot,
       });
 
       setShowSetupModal(false);

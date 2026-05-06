@@ -26,6 +26,21 @@ jest.mock('../platformGuard', () => ({
   assertSupportedPlatform: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../preflight', () => ({
+  resolveTargetPath: jest.fn(async (_cfg: unknown, _fieldName: string, value: string) => {
+    const os = require('node:os');
+    const path = require('node:path');
+    const trimmed = value.trim();
+    if (trimmed === '~') {
+      return os.homedir();
+    }
+    if (trimmed.startsWith('~/')) {
+      return path.join(os.homedir(), trimmed.slice(2));
+    }
+    return trimmed;
+  }),
+}));
+
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
 import { startExperimentLoop } from '../loopEngine';
 import { getCurrentRunDir } from '../terminalRunner';
@@ -199,5 +214,54 @@ describe('loopEngine integration', () => {
     }));
 
     startupConsoleSpy.mockRestore();
+  });
+
+  it('backs off and retries the same iteration on provider rate limits', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-rate-limit',
+      maxIterations: 1,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    let attempts = 0;
+    const sendMessage = jest.fn(async () => {
+      attempts += 1;
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      if (attempts === 1) {
+        throw new Error('phase=agent_execution; config=MiniMax; provider=minimax; model=MiniMax-M2.7; message=Rate limited. Retry after 0s');
+      }
+
+      await fs.writeFile(runDir.hypothesisPath, 'retry with same iteration\n', 'utf8');
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'val_loss',
+          metricValue: 0.7,
+          status: 'IMPROVED',
+          hypothesis: 'retry with same iteration',
+        }, null, 2),
+        'utf8',
+      );
+      return 'EXPERIMENT_RESULT: metric_value=0.7 status=IMPROVED hypothesis="retry with same iteration"';
+    });
+
+    const loopPromise = startExperimentLoop(sendMessage);
+    await loopPromise;
+
+    const store = useAutoResearchStore.getState();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(store.experiments).toHaveLength(1);
+    expect(store.currentIteration).toBe(1);
+    expect(store.consecutiveFailures).toBe(0);
+    expect(store.statusMessage).toBeUndefined();
+    expect(store.experiments[0]?.iteration).toBe(1);
   });
 });
