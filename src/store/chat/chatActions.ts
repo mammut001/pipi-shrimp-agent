@@ -15,7 +15,7 @@ import {
   messageToDb,
   parseThinkContent,
 } from '../../utils/chatHelpers';
-import type { ChatState, Message } from '../../types/chat';
+import type { ChatSendOptions, ChatState, Message } from '../../types/chat';
 import { createMessage } from '../../types/chat';
 import { usePromptStore } from '../promptStore';
 import {
@@ -207,7 +207,7 @@ export function createChatActionMethods({
       }
     },
 
-    sendMessage: async (content: string, targetSessionId?: string, options?: { allowBrowserTools?: boolean }) => {
+    sendMessage: async (content: string, targetSessionId?: string, options?: ChatSendOptions) => {
       const {
         currentSessionId,
         currentMessages,
@@ -257,7 +257,7 @@ export function createChatActionMethods({
       let sessionWorkDir: string | undefined;
 
       try {
-        const userMessage = createMessage('user', content);
+        const userMessage = createMessage('user', content, undefined, options?.attachments);
         if (targetSessionId && targetSessionId !== get().currentSessionId) {
           get().selectSession(targetSessionId);
         }
@@ -608,7 +608,9 @@ export function createChatActionMethods({
       }));
 
       await Promise.allSettled(messagesToDelete.map((message) => safeInvokeOrNull('db_delete_message', { messageId: message.id })));
-      await get().sendMessage(lastUserMessage.content);
+        await get().sendMessage(lastUserMessage.content, undefined, {
+          attachments: lastUserMessage.attachments,
+        });
     },
 
     addMessage: async (message: Message) => {

@@ -113,6 +113,7 @@ pub fn save_compact_boundary(
         role: "system".to_string(),
         content: boundary.content,
         reasoning: None,
+        attachments: None,
         artifacts,
         tool_calls: None,
         token_usage: None,

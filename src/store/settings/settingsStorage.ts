@@ -10,6 +10,7 @@ export const SETTINGS_STORAGE_KEYS = {
   importedFiles: 'ai-agent-imported-files',
   budgetSettings: 'ai-agent-budget-settings',
   agentSettings: 'ai-agent-agent-settings',
+  visionSettings: 'ai-agent-vision-settings',
   legacyApiConfig: 'ai-agent-api-config',
 } as const;
 

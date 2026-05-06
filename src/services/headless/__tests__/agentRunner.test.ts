@@ -170,4 +170,58 @@ describe('runHeadlessAgentTurn', () => {
       },
     });
   });
+
+  it('returns a targeted error result for tools that are disallowed by the caller', async () => {
+    const resolveAll = jest.fn();
+    mockRunChatTurn.mockReturnValue(
+      createAsyncGenerator([
+        {
+          type: 'tool_batch_request',
+          tools: [
+            { id: 'tool-1', name: 'write_file', arguments: '{"path":"README.md","content":"oops"}' },
+          ],
+          _resolveAll: resolveAll,
+        },
+        {
+          type: 'turn_complete',
+          tokenUsage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ]),
+    );
+
+    const onToolSummary = jest.fn();
+    const onToolResult = jest.fn();
+
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+    await runHeadlessAgentTurn({
+      sessionId: 'session-2',
+      initialMessages: [{ role: 'user', content: 'Do a thing' }],
+      systemPrompt: 'system prompt',
+      allowedTools: ['ssh_exec'],
+      onToolSummary,
+      onToolResult,
+    });
+
+    expect(mockExecuteBatch).not.toHaveBeenCalled();
+    expect(resolveAll).toHaveBeenCalledWith([
+      {
+        id: 'tool-1',
+        content: 'Error: Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+      },
+    ]);
+    expect(onToolSummary).toHaveBeenCalledWith(
+      'write_file',
+      'Error: Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+    );
+    expect(onToolResult).toHaveBeenCalledWith({
+      id: 'tool-1',
+      name: 'write_file',
+      result: 'Error: Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+      durationMs: 0,
+    });
+  });
 });

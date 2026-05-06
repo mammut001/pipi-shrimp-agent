@@ -360,6 +360,12 @@ function AutoResearchView() {
       const sendMessage = createAutoResearchSendMessage(
         preflight.resolvedExperimentDir,
         preflight.agentConfig,
+        {
+          environmentSummary: preflight.environmentSummary,
+          metricName: metric,
+          direction,
+          maxIterations: maxIter,
+        },
       );
       void startExperimentLoop(sendMessage);
     } catch (error) {

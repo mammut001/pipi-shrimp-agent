@@ -43,6 +43,9 @@ describe('runAutoResearchPreflight', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockExecuteTargetCommand.mockReset();
+    mockPathExistsOnTarget.mockReset();
+    mockTestResolvedChatConnection.mockReset();
     mockTestResolvedChatConnection.mockResolvedValue({
       latencyMs: 42,
       diagnostics: {
@@ -58,7 +61,17 @@ describe('runAutoResearchPreflight', () => {
         authorizationHeaderPresent: true,
       },
     });
-    mockExecuteTargetCommand.mockResolvedValue({ stdout: '/Users/demo', exit_code: 0 });
+    mockExecuteTargetCommand
+      .mockResolvedValueOnce({ stdout: '/Users/demo', exit_code: 0 })
+      .mockResolvedValueOnce({
+        stdout: [
+          'preferred_python\tpython3',
+          'git_repo\t1',
+          'dirty_file_count\t0',
+          'worktree_writable\t1',
+        ].join('\n'),
+        exit_code: 0,
+      });
     mockPathExistsOnTarget.mockResolvedValue(true);
   });
 
@@ -109,6 +122,17 @@ describe('runAutoResearchPreflight', () => {
       resolvedWorkDir: '/Users/demo/autoresearch',
       sessionFilePath: '/Users/demo/autoresearch/session.md',
       livingDocPath: '/Users/demo/autoresearch/runs/autoresearch-1/autoresearch.md',
+      environmentSummary: {
+        experimentDir: '/Users/demo/experiment',
+        gitRepo: true,
+        repoStatus: 'clean',
+        dirtyFileCount: 0,
+        preferredPythonCommand: 'python3',
+        worktreeWritable: true,
+        runScriptPath: '/Users/demo/experiment/run_experiment.py',
+        notesPath: '/Users/demo/experiment/AUTORESEARCH.md',
+        recommendedRunCommand: 'python3 run_experiment.py',
+      },
     });
 
     expect(infoSpy).toHaveBeenCalledWith('[AutoResearch] Startup preflight', expect.objectContaining({
@@ -116,6 +140,8 @@ describe('runAutoResearchPreflight', () => {
       selectedProvider: 'minimax',
       selectedModel: 'MiniMax-M2.7',
       authorizationHeaderPresent: true,
+      preferredPythonCommand: 'python3',
+      repoStatus: 'clean',
     }));
 
     infoSpy.mockRestore();
@@ -142,5 +168,37 @@ describe('runAutoResearchPreflight', () => {
     })).rejects.toThrow(
       "Agent API config invalid: selected config 'MiniMax Global' failed authentication. Please fix it in Settings.",
     );
+  });
+
+  it('blocks startup when no python interpreter is available in the experiment environment', async () => {
+    mockExecuteTargetCommand.mockReset();
+    mockExecuteTargetCommand
+      .mockResolvedValueOnce({ stdout: '/Users/demo', exit_code: 0 })
+      .mockResolvedValueOnce({
+        stdout: [
+          'preferred_python\t',
+          'git_repo\t1',
+          'dirty_file_count\t0',
+          'worktree_writable\t1',
+        ].join('\n'),
+        exit_code: 0,
+      });
+
+    await expect(runAutoResearchPreflight({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/Users/demo/experiment',
+      workDir: '~/autoresearch',
+      sessionId: 'autoresearch-1',
+      agentConfig,
+    })).rejects.toThrow('AutoResearch target is missing python3/python in PATH: /Users/demo/experiment');
   });
 });

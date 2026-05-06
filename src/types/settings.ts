@@ -10,6 +10,8 @@ import {
   getProviderNames,
   type ProviderName,
 } from '@/shared/providers';
+import type { VisionSettings } from './vision';
+import { DEFAULT_VISION_SETTINGS } from './vision';
 
 // ============= Type Definitions =============
 
@@ -95,6 +97,7 @@ export interface SettingsState {
   importedFiles: ImportedFile[];
   budgetSettings: BudgetSettings;    // Budget alert settings
   agentSettings: AgentSettings;      // Agent behavior settings
+  visionSettings: VisionSettings;
 
   // ========== Action Methods ==========
 
@@ -184,6 +187,7 @@ export interface SettingsState {
    * Update agent settings
    */
   updateAgentSettings: (settings: Partial<AgentSettings>) => void;
+  updateVisionSettings: (settings: Partial<VisionSettings>) => void;
 
   /**
    * Get pricing for a specific model (custom or default)
@@ -226,6 +230,8 @@ export const DEFAULT_BUDGET_SETTINGS: BudgetSettings = {
   alertedThresholds: [],
   enabled: false,
 };
+
+export const DEFAULT_VISION_SETTINGS_STATE: VisionSettings = DEFAULT_VISION_SETTINGS;
 
 
 /** Imported file interface */

@@ -23,11 +23,77 @@ pub fn estimate_messages_tokens(messages: &[Value]) -> i32 {
     messages
         .iter()
         .map(|message| {
-            let content = message.get("content").and_then(|value| value.as_str()).unwrap_or("");
-            estimate_tokens(content) + 4
+            let content = message.get("content").cloned().unwrap_or(Value::Null);
+            estimate_tokens(&content.to_string()) + 4
         })
         .sum::<i32>()
         + 2
+}
+
+fn has_image_attachments(message: &Message) -> bool {
+    message
+        .attachments
+        .as_ref()
+        .map(|attachments| !attachments.is_empty())
+        .unwrap_or(false)
+}
+
+fn build_anthropic_user_content(message: &Message) -> Value {
+    let mut content = Vec::new();
+
+    if !message.content.is_empty() {
+        content.push(serde_json::json!({
+            "type": "text",
+            "text": message.content,
+        }));
+    }
+
+    if let Some(attachments) = &message.attachments {
+        for attachment in attachments {
+            content.push(serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": attachment.mime,
+                    "data": attachment.data,
+                }
+            }));
+        }
+    }
+
+    if content.is_empty() {
+        Value::String(message.content.clone())
+    } else {
+        Value::Array(content)
+    }
+}
+
+fn build_openai_user_content(message: &Message) -> Value {
+    let mut content = Vec::new();
+
+    if !message.content.is_empty() {
+        content.push(serde_json::json!({
+            "type": "text",
+            "text": message.content,
+        }));
+    }
+
+    if let Some(attachments) = &message.attachments {
+        for attachment in attachments {
+            content.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:{};base64,{}", attachment.mime, attachment.data),
+                }
+            }));
+        }
+    }
+
+    if content.is_empty() {
+        Value::String(message.content.clone())
+    } else {
+        Value::Array(content)
+    }
 }
 
 pub fn supports_thinking(model: &str) -> bool {
@@ -117,7 +183,11 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<Value> {
 
         formatted.push(serde_json::json!({
             "role": if message.role == "assistant" { "assistant" } else { "user" },
-            "content": message.content,
+            "content": if message.role == "user" && has_image_attachments(message) {
+                build_anthropic_user_content(message)
+            } else {
+                Value::String(message.content.clone())
+            },
         }));
     }
 
@@ -151,7 +221,11 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<Value> {
 
         formatted.push(serde_json::json!({
             "role": message.role,
-            "content": message.content,
+            "content": if message.role == "user" && has_image_attachments(message) {
+                build_openai_user_content(message)
+            } else {
+                Value::String(message.content.clone())
+            },
         }));
     }
 
@@ -363,6 +437,7 @@ mod tests {
         Message {
             role: role.to_string(),
             content: content.to_string(),
+            attachments: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -381,6 +456,7 @@ mod tests {
         let messages = vec![Message {
             role: "assistant".to_string(),
             content: "".to_string(),
+            attachments: None,
             tool_calls: Some(vec![ToolCall {
                 tool_call_id: "tool-1".to_string(),
                 name: "read_file".to_string(),
@@ -393,6 +469,37 @@ mod tests {
         assert_eq!(anthropic[0]["role"], "assistant");
         assert_eq!(openai[0]["role"], "assistant");
         assert!(openai[0]["tool_calls"].is_array());
+    }
+
+    #[test]
+    fn formats_image_attachments_for_anthropic_and_openai() {
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: "describe this".to_string(),
+            attachments: Some(vec![crate::claude::message::ImageAttachment {
+                id: "img-1".to_string(),
+                source: "upload".to_string(),
+                mime: "image/png".to_string(),
+                bytes: 42,
+                width: None,
+                height: None,
+                encoding: "base64".to_string(),
+                data: "ZmFrZQ==".to_string(),
+                origPath: Some("a.png".to_string()),
+                caption: None,
+                createdAt: 1,
+            }]),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let anthropic = format_messages_for_anthropic(&messages);
+        let openai = format_messages_for_openai(&messages);
+
+        assert_eq!(anthropic[0]["content"][0]["type"], "text");
+        assert_eq!(anthropic[0]["content"][1]["type"], "image");
+        assert_eq!(openai[0]["content"][0]["type"], "text");
+        assert_eq!(openai[0]["content"][1]["type"], "image_url");
     }
 
     #[test]

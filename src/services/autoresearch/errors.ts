@@ -3,6 +3,15 @@ import { formatError as formatSharedError, extractErrorDetails } from '@/utils/e
 import { sanitize } from '@/utils/errorLogger';
 
 export type AutoResearchConfigSource = 'settings.activeConfig' | 'savedRunConfig' | 'fallback';
+export type AutoResearchFailureKind =
+  | 'environment'
+  | 'command_not_found'
+  | 'tool_round_limit'
+  | 'rate_limit'
+  | 'context_overflow'
+  | 'agent_execution'
+  | 'evaluation'
+  | 'unknown';
 
 export interface AutoResearchAgentConfigSnapshot {
   configName: string;
@@ -101,4 +110,62 @@ export function getRateLimitRetryAfterSeconds(error: unknown): number | null {
 
   const parsed = Number.parseInt(retryAfterMatch[1], 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function isToolRoundLimitError(error: unknown): boolean {
+  const envelope = extractErrorDetails(error);
+  return /exceeded maximum tool rounds \(\d+\)/i.test(envelope.message);
+}
+
+export function getToolRoundLimit(error: unknown): number | null {
+  const envelope = extractErrorDetails(error);
+  const match = envelope.message.match(/exceeded maximum tool rounds \((\d+)\)/i);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function isCommandNotFoundText(value: string | null | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  return /command not found/i.test(value);
+}
+
+export function isTerminalFailureError(error: unknown): boolean {
+  const envelope = extractErrorDetails(error);
+  const message = envelope.message.toLowerCase();
+  return message.includes('timed out waiting for autoresearch terminal')
+    || message.includes('autoresearch terminal');
+}
+
+export function classifyAutoResearchFailure(error: unknown): AutoResearchFailureKind {
+  const envelope = extractErrorDetails(error);
+  const message = envelope.message.toLowerCase();
+
+  if (isRateLimitError(error)) {
+    return 'rate_limit';
+  }
+  if (isToolRoundLimitError(error)) {
+    return 'tool_round_limit';
+  }
+  if (isCommandNotFoundText(message)) {
+    return 'command_not_found';
+  }
+  if (message.includes('context compression check failed') || message.includes('maximum context length') || message.includes('payload too large')) {
+    return 'context_overflow';
+  }
+  if (message.includes('python interpreter') || message.includes('experiment directory') || message.includes('writable')) {
+    return 'environment';
+  }
+  if (message.includes('metric') || message.includes('parse')) {
+    return 'evaluation';
+  }
+  if (message) {
+    return 'agent_execution';
+  }
+  return 'unknown';
 }

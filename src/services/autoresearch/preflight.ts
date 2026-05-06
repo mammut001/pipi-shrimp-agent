@@ -29,9 +29,22 @@ export interface AutoResearchPreflightResult {
   resolvedWorkDir: string;
   sessionFilePath: string;
   livingDocPath: string;
+  environmentSummary: AutoResearchEnvironmentSummary;
 }
 
 const REQUIRED_EXPERIMENT_FILES = ['run_experiment.py', 'AUTORESEARCH.md'] as const;
+
+export interface AutoResearchEnvironmentSummary {
+  experimentDir: string;
+  gitRepo: boolean;
+  repoStatus: 'clean' | 'dirty';
+  dirtyFileCount: number;
+  preferredPythonCommand: string;
+  worktreeWritable: boolean;
+  runScriptPath: string;
+  notesPath: string;
+  recommendedRunCommand: string;
+}
 
 async function resolveTargetHomeDirectory(cfg: SshConfig): Promise<string> {
   const result = await executeTargetCommand(
@@ -80,6 +93,85 @@ async function assertTargetPathExists(
   }
 }
 
+function parseEnvironmentSummary(raw: string, experimentDir: string): AutoResearchEnvironmentSummary {
+  const values = new Map<string, string>();
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const [key, ...rest] = trimmed.split('\t');
+    values.set(key, rest.join('\t'));
+  }
+
+  const preferredPythonCommand = values.get('preferred_python') || '';
+  if (!preferredPythonCommand) {
+    throw new Error(
+      `AutoResearch target is missing python3/python in PATH: ${experimentDir}`,
+    );
+  }
+
+  const gitRepo = values.get('git_repo') === '1';
+  if (!gitRepo) {
+    throw new Error(`Experiment directory must be a git repository: ${experimentDir}`);
+  }
+
+  const worktreeWritable = values.get('worktree_writable') === '1';
+  if (!worktreeWritable) {
+    throw new Error(`Experiment directory is not writable: ${experimentDir}`);
+  }
+
+  const dirtyFileCount = Number.parseInt(values.get('dirty_file_count') || '0', 10);
+  const parsedDirtyFileCount = Number.isFinite(dirtyFileCount) ? dirtyFileCount : 0;
+
+  return {
+    experimentDir,
+    gitRepo,
+    repoStatus: parsedDirtyFileCount > 0 ? 'dirty' : 'clean',
+    dirtyFileCount: parsedDirtyFileCount,
+    preferredPythonCommand,
+    worktreeWritable,
+    runScriptPath: buildRequiredPath(experimentDir, 'run_experiment.py'),
+    notesPath: buildRequiredPath(experimentDir, 'AUTORESEARCH.md'),
+    recommendedRunCommand: `${preferredPythonCommand} run_experiment.py`,
+  };
+}
+
+export async function inspectAutoResearchEnvironment(
+  cfg: SshConfig,
+  experimentDir: string,
+): Promise<AutoResearchEnvironmentSummary> {
+  const command = [
+    `repo=${JSON.stringify(experimentDir)}`,
+    'preferred_python=""',
+    'if command -v python3 >/dev/null 2>&1; then',
+    '  preferred_python="python3"',
+    'elif command -v python >/dev/null 2>&1; then',
+    '  preferred_python="python"',
+    'fi',
+    'git_repo=0',
+    'dirty_file_count=0',
+    `if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
+    '  git_repo=1',
+    '  dirty_file_count="$(git -C "$repo" status --porcelain | wc -l | tr -d \' \')"',
+    'fi',
+    'worktree_writable=0',
+    'if [ -w "$repo" ]; then',
+    '  worktree_writable=1',
+    'fi',
+    'printf \'preferred_python\\t%s\\n\' "$preferred_python"',
+    'printf \'git_repo\\t%s\\n\' "$git_repo"',
+    'printf \'dirty_file_count\\t%s\\n\' "$dirty_file_count"',
+    'printf \'worktree_writable\\t%s\\n\' "$worktree_writable"',
+  ].join('\n');
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, command, 60);
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to inspect experiment environment: ${experimentDir}`);
+  }
+
+  return parseEnvironmentSummary(result.stdout || '', experimentDir);
+}
+
 export async function runAutoResearchPreflight(
   input: AutoResearchPreflightInput,
 ): Promise<AutoResearchPreflightResult> {
@@ -121,6 +213,7 @@ export async function runAutoResearchPreflight(
 
   const sessionFilePath = getAutoResearchSessionFilePathFromWorkDir(resolvedWorkDir);
   const livingDocPath = getAutoResearchLivingDocPathFromWorkDir(resolvedWorkDir, input.sessionId);
+  const environmentSummary = await inspectAutoResearchEnvironment(input.sshConfig, resolvedExperimentDir);
 
   console.info('[AutoResearch] Startup preflight', {
     ...getAgentConfigDiagnostics(agentConfig!),
@@ -128,6 +221,9 @@ export async function runAutoResearchPreflight(
     resolvedExperimentDir,
     sessionFilePath,
     livingDocPath,
+    preferredPythonCommand: environmentSummary.preferredPythonCommand,
+    repoStatus: environmentSummary.repoStatus,
+    dirtyFileCount: environmentSummary.dirtyFileCount,
   });
 
   return {
@@ -136,5 +232,6 @@ export async function runAutoResearchPreflight(
     resolvedWorkDir,
     sessionFilePath,
     livingDocPath,
+    environmentSummary,
   };
 }

@@ -31,6 +31,7 @@ export interface HeadlessAgentRunnerInput {
   systemPrompt: string;
   workDir?: string;
   agentConfig?: ResolvedAgentConfig;
+  allowedTools?: string[];
   resolveWorkDir?: () => Promise<string | null>;
   onWorkDirResolved?: (workDir: string) => Promise<void> | void;
   onTextDelta?: (chunk: string) => void;
@@ -70,6 +71,11 @@ function toolResultContent(content: string, errorMessage?: string): string {
   return 'Error: tool execution failed';
 }
 
+function buildDisallowedToolResult(toolName: string, allowedTools: Set<string>): string {
+  const allowedList = [...allowedTools].join(', ');
+  return `Error: Tool "${toolName}" is disabled for this AutoResearch run. Allowed tools: ${allowedList}`;
+}
+
 async function ensureHeadlessWorkDir(
   currentWorkDir: string | undefined,
   tools: ToolCallParams[],
@@ -99,11 +105,22 @@ async function executeToolBatch(
   executor: StreamingToolExecutor,
   sessionId: string,
   workDir: string | undefined,
+  allowedTools?: Set<string>,
 ): Promise<Array<{ id: string; name: string; content: string; durationMs: number }>> {
   const manualResults: Array<{ id: string; name: string; content: string; durationMs: number }> = [];
   const executableTools: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
 
   for (const tool of tools) {
+    if (allowedTools && !allowedTools.has(tool.name)) {
+      manualResults.push({
+        id: tool.id,
+        name: tool.name,
+        content: buildDisallowedToolResult(tool.name, allowedTools),
+        durationMs: 0,
+      });
+      continue;
+    }
+
     if (tool.name === 'get_current_workspace') {
       manualResults.push({
         id: tool.id,
@@ -174,6 +191,9 @@ export async function runHeadlessAgentTurn(
   input: HeadlessAgentRunnerInput,
 ): Promise<HeadlessAgentRunnerResult> {
   const executor = new StreamingToolExecutor({ timeoutMs: input.timeoutMs ?? 120_000 });
+  const allowedTools = input.allowedTools?.length
+    ? new Set(input.allowedTools)
+    : undefined;
   const engine = runChatTurn(
     input.sessionId,
     input.initialMessages,
@@ -227,6 +247,7 @@ export async function runHeadlessAgentTurn(
           executor,
           input.sessionId,
           currentWorkDir,
+          allowedTools,
         );
         for (const result of results) {
           input.onToolSummary?.(result.name, previewToolResult(result.content));
@@ -260,6 +281,7 @@ export async function runHeadlessAgentTurn(
           executor,
           input.sessionId,
           currentWorkDir,
+          allowedTools,
         );
         if (result) {
           input.onToolSummary?.(result.name, previewToolResult(result.content));

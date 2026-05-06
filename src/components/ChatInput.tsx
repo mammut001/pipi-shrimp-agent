@@ -12,6 +12,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
 import { startNewChatFlow } from '@/services/newChatFlow';
+import { buildImageDataUrl, fileToImageAttachment } from '@/services/vision/imageAttachments';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
 import { useMCPStore } from '@/store/mcpStore';
@@ -26,6 +27,7 @@ import {
 } from './chatInputFlow';
 import { t } from '@/i18n';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
+import type { ImageAttachment } from '@/types/vision';
 
 // Check if running inside Tauri
 const isTauri = !!(window as any).__TAURI__;
@@ -92,11 +94,13 @@ interface ChatInputProps {
  */
 export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [isBindingFolder, setIsBindingFolder] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [browserIntentCandidate, setBrowserIntentCandidate] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const draftStorageKey = `chat_draft_${draftKey}`;
 
@@ -123,7 +127,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   // ────────────────────────────────────────────────────────────────────────────
 
   const { isStreaming, sendMessage, stopGeneration, currentSessionId, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
-  const { toggleSettings } = useUIStore();
+  const { toggleSettings, addNotification } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
   const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
@@ -193,11 +197,29 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
 
   const clearInputDraft = useCallback(() => {
     setInput('');
+    setAttachments([]);
     setBrowserIntentCandidate(null);
     localStorage.removeItem(draftStorageKey);
   }, [draftStorageKey]);
 
-  const sendAsRegularChat = useCallback(async (message: string) => {
+  const appendImageAttachments = useCallback(async (
+    files: File[],
+    source: ImageAttachment['source'],
+  ) => {
+    if (files.length === 0) {
+      return;
+    }
+
+    try {
+      const nextAttachments = await Promise.all(files.map((file) => fileToImageAttachment(file, source)));
+      setAttachments((current) => [...current, ...nextAttachments]);
+      addNotification('success', `${t('chat.imagesAdded')}: ${nextAttachments.length}`);
+    } catch (error) {
+      addNotification('error', `${t('chat.imagesAddFailed')}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [addNotification]);
+
+  const sendAsRegularChat = useCallback(async (message: string, messageAttachments: ImageAttachment[]) => {
     setIsSubmitting(true);
     try {
       const targetSessionId = await resolveChatTargetSessionId(
@@ -209,13 +231,14 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
       }
 
       onSend?.(message);
-      await sendMessage(message, targetSessionId);
+      await sendMessage(message, targetSessionId, { attachments: messageAttachments });
       // Only clear draft after successful send
       clearInputDraft();
     } catch (error) {
       // Preserve input on failure so user can retry
       console.error('[ChatInput] sendMessage failed, preserving input:', error);
       setInput(message);
+      setAttachments(messageAttachments);
     } finally {
       setIsSubmitting(false);
     }
@@ -250,6 +273,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   const handleSubmit = useCallback(async () => {
     const decision = decideChatInputSubmission({
       input,
+      hasAttachments: attachments.length > 0,
       isStreaming,
       isSubmitting,
       isBrowserIntent: quickCheckBrowserIntent,
@@ -264,8 +288,8 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
       return;
     }
 
-    await sendAsRegularChat(decision.message);
-  }, [input, isStreaming, isSubmitting, sendAsRegularChat]);
+    await sendAsRegularChat(decision.message, attachments);
+  }, [attachments, input, isStreaming, isSubmitting, sendAsRegularChat]);
 
   const handleConfirmBrowserIntent = useCallback(async () => {
     if (!browserIntentCandidate || isSubmitting) return;
@@ -275,7 +299,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   const handleSendAsNormalMessage = useCallback(async () => {
     const message = browserIntentCandidate ?? input.trim();
     if (!message || isSubmitting) return;
-    await sendAsRegularChat(message);
+    await sendAsRegularChat(message, []);
   }, [browserIntentCandidate, input, isSubmitting, sendAsRegularChat]);
 
   const handleCancelBrowserIntent = useCallback(() => {
@@ -292,24 +316,35 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   }, [stopGeneration]);
 
   /**
-   * Handle paste events — intercept image pastes from screenshot tools.
-   * When a screenshot is pasted, macOS puts image/png (or image/tiff) data
-   * on the clipboard. A plain <textarea> cannot display images and instead
-   * inserts raw binary/RTF bytes that render as tofu (□□□□) squares.
-   * We block that default behaviour and optionally append a note so the user
-   * knows their paste was detected.
+   * Handle paste events — convert pasted screenshots into image attachments.
    */
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = Array.from(e.clipboardData?.items ?? []);
-    const hasImage = items.some((item) => item.type.startsWith('image/'));
+    const imageFiles = items
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    const hasImage = imageFiles.length > 0;
     if (!hasImage) return; // plain text paste — let browser handle it normally
-
+ 
     e.preventDefault(); // stop the tofu characters from being inserted
-    // NOTE: future enhancement — convert image to base64 and attach to message
-    // For now, just let the user know we saw the image paste.
-    const notice = '[截图已检测，暂不支持图片粘贴]';
-    setInput((prev) => (prev ? `${prev}\n${notice}` : notice));
-  }, []);
+    void appendImageAttachments(imageFiles, 'paste');
+  }, [appendImageAttachments]);
+
+  const handleFileSelection = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((file) => file.type.startsWith('image/'));
+    await appendImageAttachments(files, 'upload');
+    e.target.value = '';
+  }, [appendImageAttachments]);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const files = Array.from(e.dataTransfer?.files ?? []).filter((file) => file.type.startsWith('image/'));
+    if (files.length === 0) {
+      return;
+    }
+    e.preventDefault();
+    void appendImageAttachments(files, 'upload');
+  }, [appendImageAttachments]);
 
 
   const isDisabled = isStreaming || isSubmitting;
@@ -468,11 +503,56 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
           />
         )}
 
-        <div className={`relative flex items-end gap-2 bg-gray-50 rounded-xl border transition-all px-4 ${
+        <div
+          className={`relative bg-gray-50 rounded-xl border transition-all px-4 ${
           isFocused
             ? 'border-gray-400 ring-2 ring-gray-200 shadow-sm'
             : 'border-gray-200'
-        }`}>
+          }`}
+          onDragOver={(e) => {
+            if (Array.from(e.dataTransfer?.items ?? []).some((item) => item.type.startsWith('image/'))) {
+              e.preventDefault();
+            }
+          }}
+          onDrop={handleDrop}
+        >
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-3">
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-1.5"
+                >
+                  <img
+                    src={buildImageDataUrl(attachment)}
+                    alt={attachment.origPath || 'attachment'}
+                    className="h-10 w-10 rounded object-cover"
+                  />
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-gray-700">
+                      {attachment.origPath || t('chat.imageAttachment')}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      {(attachment.bytes / 1024).toFixed(1)} KB
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                    className="text-gray-300 transition-colors hover:text-gray-500"
+                    aria-label={t('common.delete')}
+                    title={t('common.delete')}
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="relative flex items-end gap-2">
           {/* Text Input */}
           <textarea
             ref={textareaRef}
@@ -518,8 +598,28 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
 
           {/* Actions */}
           <div className="flex items-center gap-1 pr-2 pb-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => { void handleFileSelection(e); }}
+            />
+
             {/* MCP toggle button */}
             <MCPChatButton />
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              type="button"
+              className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
+              title={t('chat.addImage')}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </button>
 
             {/* Open Folder Button */}
             <button
@@ -556,7 +656,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
             ) : (
               <button
                 onClick={() => { void handleSubmit(); }}
-                disabled={isDisabled || !input.trim()}
+                disabled={isDisabled || (!input.trim() && attachments.length === 0)}
                 className="p-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title={t('chat.send')}
               >
@@ -570,6 +670,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
                 </svg>
               </button>
             )}
+          </div>
           </div>
         </div>
 

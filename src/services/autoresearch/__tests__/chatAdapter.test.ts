@@ -6,12 +6,29 @@ const mockResolveActiveAgentConfig = jest.fn();
 const mockValidateResolvedAgentConfig = jest.fn();
 const mockFormatAgentConfigValidationError = jest.fn();
 const mockGetAgentConfigDiagnostics = jest.fn();
+const mockAddRunEvent = jest.fn();
+const mockRequestReflectionDecision = jest.fn();
+const mockGetDeterministicRecoveryDecision = jest.fn();
+const mockBuildFallbackReflectionDecision = jest.fn();
 
 jest.mock('@/store/autoresearchStore', () => ({
   useAutoResearchStore: {
     getState: () => ({
+      id: 'run-1',
       currentIteration: 3,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      maxIterations: 5,
+      runHistory: [
+        {
+          id: 'run-1',
+          events: [
+            { phase: 'system', message: 'Run initialized.' },
+          ],
+        },
+      ],
       appendLiveOutput: mockAppendLiveOutput,
+      addRunEvent: mockAddRunEvent,
     }),
   },
 }));
@@ -34,6 +51,13 @@ jest.mock('../runDir', () => ({
 
 jest.mock('../terminalRunner', () => ({
   getCurrentRunDir: () => null,
+}));
+
+jest.mock('../reflection', () => ({
+  buildReflectionInputFromState: (input: unknown) => input,
+  requestReflectionDecision: (...args: unknown[]) => mockRequestReflectionDecision(...args),
+  getDeterministicRecoveryDecision: (...args: unknown[]) => mockGetDeterministicRecoveryDecision(...args),
+  buildFallbackReflectionDecision: (...args: unknown[]) => mockBuildFallbackReflectionDecision(...args),
 }));
 
 describe('createAutoResearchSendMessage', () => {
@@ -77,6 +101,15 @@ describe('createAutoResearchSendMessage', () => {
         finalReasoning: '',
       };
     });
+    mockGetDeterministicRecoveryDecision.mockReturnValue(null);
+    mockRequestReflectionDecision.mockReset();
+    mockBuildFallbackReflectionDecision.mockImplementation((_input, error) => ({
+      action: 'stop_tool_exhausted',
+      summary: error instanceof Error ? error.message : 'fallback stop',
+      userMessage: error instanceof Error ? error.message : 'fallback stop',
+      shouldRetry: false,
+      confidence: 'medium',
+    }));
   });
 
   it('uses the resolved active config for headless agent execution', async () => {
@@ -90,6 +123,12 @@ describe('createAutoResearchSendMessage', () => {
       systemPrompt: 'system prompt',
       workDir: '/tmp/research',
       agentConfig: activeConfig,
+      allowedTools: [
+        'get_current_workspace',
+        'ssh_exec',
+        'ssh_read_file',
+        'ssh_upload_file',
+      ],
       initialMessages: [
         {
           role: 'user',
@@ -138,6 +177,95 @@ describe('createAutoResearchSendMessage', () => {
       agentConfig: expect.objectContaining({
         model: 'MiniMax-M2.7',
       }),
+    }));
+  });
+
+  it('switches to python3 deterministically after python command-not-found failures', async () => {
+    mockRunHeadlessAgentTurn
+      .mockImplementationOnce(async (input) => {
+        await input.onToolCall?.({
+          id: 'tool-1',
+          name: 'ssh_exec',
+          arguments: '{"command":"python run_experiment.py"}',
+        });
+        await input.onToolResult?.({
+          id: 'tool-1',
+          name: 'ssh_exec',
+          result: '{"stdout":"","stderr":"bash: python: command not found\\n","exitCode":127}',
+          durationMs: 42,
+        });
+        throw new Error('phase=agent_execution; message=python command failed');
+      })
+      .mockResolvedValueOnce({
+        finalText: 'recovered answer',
+        finalReasoning: '',
+      });
+    mockGetDeterministicRecoveryDecision.mockReturnValue({
+      action: 'switch_command',
+      summary: 'Use python3 instead of python.',
+      rootCause: 'python command not found',
+      nextCommand: 'python3 run_experiment.py',
+      nextPlan: 'Retry once with python3.',
+      shouldRetry: true,
+      confidence: 'high',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig, {
+      environmentSummary: {
+        experimentDir: '/tmp/research',
+        gitRepo: true,
+        repoStatus: 'clean',
+        dirtyFileCount: 0,
+        preferredPythonCommand: 'python3',
+        worktreeWritable: true,
+        runScriptPath: '/tmp/research/run_experiment.py',
+        notesPath: '/tmp/research/AUTORESEARCH.md',
+        recommendedRunCommand: 'python3 run_experiment.py',
+      },
+      metricName: 'cv_accuracy',
+      direction: 'higher',
+      maxIterations: 5,
+    });
+
+    await expect(sendMessage('system prompt', 'recover please')).resolves.toBe('recovered answer');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(2);
+    expect(mockRequestReflectionDecision).not.toHaveBeenCalled();
+    expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Reflection decision: switch_command — Use python3 instead of python.',
+      metadata: expect.objectContaining({
+        action: 'switch_command',
+        rootCause: 'python command not found',
+      }),
+    }));
+    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('python3 run_experiment.py'),
+      }),
+    );
+  });
+
+  it('runs reflection before surfacing a tool-round exhaustion failure', async () => {
+    mockRunHeadlessAgentTurn.mockRejectedValueOnce(new Error('Exceeded maximum tool rounds (17)'));
+    mockRequestReflectionDecision.mockResolvedValue({
+      action: 'stop_tool_exhausted',
+      summary: 'The agent exhausted the tool budget without producing the metric.',
+      rootCause: 'python command not found',
+      userMessage: '工具调用轮数已耗尽。最近的关键错误是：python: command not found。',
+      shouldRetry: false,
+      confidence: 'medium',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
+
+    await expect(sendMessage('system prompt', 'reflect please')).rejects.toThrow(
+      '工具调用轮数已耗尽。最近的关键错误是：python: command not found。',
+    );
+    expect(mockRequestReflectionDecision).toHaveBeenCalledTimes(1);
+    expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Reflection decision: stop_tool_exhausted — The agent exhausted the tool budget without producing the metric.',
     }));
   });
 });

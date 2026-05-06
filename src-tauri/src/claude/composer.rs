@@ -335,6 +335,7 @@ mod tests {
         Message {
             role: role.to_string(),
             content: content.to_string(),
+            attachments: None,
             tool_calls: None,
             tool_call_id: None,
         }

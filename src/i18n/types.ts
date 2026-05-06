@@ -160,6 +160,10 @@ export type TranslationKeys = {
   'chat.removeWorkDirectory': string;
   'chat.bindWorkFolder': string;
   'chat.binding': string;
+  'chat.addImage': string;
+  'chat.imageAttachment': string;
+  'chat.imagesAdded': string;
+  'chat.imagesAddFailed': string;
   'chat.terminal': string;
   'chat.showTerminal': string;
   'chat.hideTerminal': string;

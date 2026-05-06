@@ -7,6 +7,7 @@ export const MAX_CHAT_DRAFT_CHARS = 30000;
 
 interface DecideChatInputSubmissionArgs {
   input: string;
+  hasAttachments?: boolean;
   isStreaming: boolean;
   isSubmitting: boolean;
   isBrowserIntent: (message: string) => boolean;
@@ -14,17 +15,18 @@ interface DecideChatInputSubmissionArgs {
 
 export function decideChatInputSubmission({
   input,
+  hasAttachments = false,
   isStreaming,
   isSubmitting,
   isBrowserIntent,
 }: DecideChatInputSubmissionArgs): ChatInputSubmissionDecision {
   const message = input.trim();
 
-  if (!message || isStreaming || isSubmitting) {
+  if ((!message && !hasAttachments) || isStreaming || isSubmitting) {
     return { type: 'noop' };
   }
 
-  if (isBrowserIntent(message)) {
+  if (message && !hasAttachments && isBrowserIntent(message)) {
     return { type: 'confirm-browser', message };
   }
 

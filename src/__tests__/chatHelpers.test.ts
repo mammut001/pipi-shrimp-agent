@@ -252,6 +252,30 @@ describe('buildApiMessages', () => {
     expect(result).toHaveLength(2);
     expect(result[0].role).toBe('system');
   });
+
+  it('should preserve user image attachments', () => {
+    const messages: Message[] = [
+      {
+        id: '1',
+        role: 'user',
+        content: 'Describe this image',
+        timestamp: 1,
+        attachments: [{
+          id: 'img-1',
+          source: 'upload',
+          mime: 'image/png',
+          bytes: 128,
+          encoding: 'base64',
+          data: 'ZmFrZQ==',
+          createdAt: 1,
+        }],
+      },
+    ];
+
+    const result = buildApiMessages(messages);
+    expect(result[0].attachments).toHaveLength(1);
+    expect(result[0].attachments?.[0]?.mime).toBe('image/png');
+  });
 });
 
 // ─── safeJsonParse ───────────────────────────────────────────────────────────
@@ -320,6 +344,39 @@ describe('dbToSession / sessionToDb', () => {
     expect(session.projectId).toBeUndefined();
     expect(session.model).toBeUndefined();
   });
+
+  it('should restore message attachments from DB format', () => {
+    const session = dbToSession({
+      id: 'sess-1',
+      title: 'Test',
+      created_at: 1000,
+      updated_at: 2000,
+      cwd: null,
+      project_id: null,
+      model: null,
+    }, [{
+      id: 'msg-1',
+      session_id: 'sess-1',
+      role: 'user',
+      content: 'Hello',
+      reasoning: null,
+      attachments: JSON.stringify([{
+        id: 'img-1',
+        source: 'upload',
+        mime: 'image/png',
+        bytes: 128,
+        encoding: 'base64',
+        data: 'ZmFrZQ==',
+        createdAt: 1,
+      }]),
+      artifacts: null,
+      tool_calls: null,
+      token_usage: null,
+      created_at: 1000,
+    }]);
+
+    expect(session.messages[0].attachments?.[0]?.mime).toBe('image/png');
+  });
 });
 
 describe('messageToDb', () => {
@@ -329,6 +386,15 @@ describe('messageToDb', () => {
       role: 'user',
       content: 'Hello',
       timestamp: 1000,
+      attachments: [{
+        id: 'img-1',
+        source: 'upload',
+        mime: 'image/png',
+        bytes: 128,
+        encoding: 'base64',
+        data: 'ZmFrZQ==',
+        createdAt: 1,
+      }],
     };
     const db = messageToDb(msg, 'sess-1');
     expect(db.id).toBe('msg-1');
@@ -336,6 +402,7 @@ describe('messageToDb', () => {
     expect(db.role).toBe('user');
     expect(db.created_at).toBe(1000);
     expect(db.reasoning).toBeNull();
+    expect(db.attachments).toContain('image/png');
     expect(db.artifacts).toBeNull();
   });
 

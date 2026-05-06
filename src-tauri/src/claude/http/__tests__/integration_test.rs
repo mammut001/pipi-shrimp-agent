@@ -16,6 +16,7 @@ fn sample_messages() -> Vec<Message> {
     vec![Message {
         role: "user".to_string(),
         content: "hello".to_string(),
+        attachments: None,
         tool_calls: None,
         tool_call_id: None,
     }]
