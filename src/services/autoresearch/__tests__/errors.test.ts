@@ -3,7 +3,9 @@ import {
   buildAutoResearchAgentConfigSnapshot,
   formatError,
   getRateLimitRetryAfterSeconds,
+  getToolRoundLimit,
   isRateLimitError,
+  isToolRoundLimitError,
 } from '../errors';
 
 describe('formatError', () => {
@@ -15,6 +17,12 @@ describe('formatError', () => {
     const error = new Error('phase=agent_execution; config=MiniMax; provider=minimax; model=MiniMax-M2.7; message=Rate limited. Retry after 12s');
     expect(isRateLimitError(error)).toBe(true);
     expect(getRateLimitRetryAfterSeconds(error)).toBe(12);
+  });
+
+  it('detects tool-round budget exhaustion and extracts the configured limit', () => {
+    const error = new Error('phase=agent_execution; config=MiniMax; provider=minimax; model=MiniMax-M2.7; message=Exceeded maximum tool rounds (17)');
+    expect(isToolRoundLimitError(error)).toBe(true);
+    expect(getToolRoundLimit(error)).toBe(17);
   });
 
   it('builds a safe config snapshot without exposing the full key', () => {

@@ -26,12 +26,22 @@ import {
 } from './runDir';
 import { readLivingDoc, rebuildLivingDoc } from './livingDoc';
 import { clearCurrentRunDir, setCurrentRunDir } from './terminalRunner';
-import { formatError, getRateLimitRetryAfterSeconds, isRateLimitError } from './errors';
+import {
+  classifyAutoResearchFailure,
+  formatError,
+  getRateLimitRetryAfterSeconds,
+  isRateLimitError,
+  isTerminalFailureError,
+} from './errors';
 import {
   getAutoResearchLivingDocPathFromWorkDir,
   getAutoResearchSessionFilePathFromWorkDir,
 } from './paths';
-import { resolveTargetPath } from './preflight';
+import {
+  inspectAutoResearchEnvironment,
+  resolveTargetPath,
+  type AutoResearchEnvironmentSummary,
+} from './preflight';
 
 interface ParsedResult {
   metricName: string;
@@ -47,6 +57,7 @@ interface PromptInput {
   livingDoc: string;
   sshConfig: SshConfig;
   runDir: RunDir;
+  environmentSummary: AutoResearchEnvironmentSummary;
 }
 
 interface StartupContext {
@@ -66,6 +77,7 @@ function buildSystemPrompt({
   livingDoc,
   sshConfig,
   runDir,
+  environmentSummary,
 }: PromptInput): string {
   const isLocal = sshConfig.mode === 'local';
   const envLine = isLocal
@@ -83,7 +95,15 @@ You are running one autonomous experiment iteration inside Pipi-Shrimp AutoResea
 ## Environment
 - Execution target: ${envLine}
 - Tool config: ${toolCfgHint}
-- Available tools: ssh_exec, ssh_upload_file, ssh_read_file, read_file, write_file, execute_command
+- Only permitted experiment tools for this run: get_current_workspace, ssh_exec, ssh_upload_file, ssh_read_file
+
+## Environment Preflight
+- Experiment directory: ${environmentSummary.experimentDir}
+- Git repository: ${environmentSummary.repoStatus} (${environmentSummary.dirtyFileCount} dirty files before this iteration)
+- Preferred Python command: ${environmentSummary.preferredPythonCommand}
+- Recommended run command: ${environmentSummary.recommendedRunCommand}
+- Required files already confirmed: ${environmentSummary.runScriptPath}, ${environmentSummary.notesPath}
+- Workspace writable: ${environmentSummary.worktreeWritable ? 'yes' : 'no'}
 
 ## Session File
 ${sessionContent}
@@ -99,7 +119,7 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 
 ## Requirements for this iteration
 1. Do exactly one hypothesis/change/run/evaluate cycle.
-2. Before making changes, confirm the repo state with ssh_exec("git status --porcelain").
+2. Before making changes, do at most one batched inspection pass. Read only the minimum files you need, and use ssh_* tools only.
 3. Write a short hypothesis summary to ${runDir.hypothesisPath}.
 4. Run the experiment command through ssh_exec so the user can watch the live terminal output.
 5. After the run, write JSON to ${runDir.metricsPath} with:
@@ -110,6 +130,7 @@ ${livingDoc || 'No prior iterations recorded yet.'}
    EXPERIMENT_RESULT: metric_value=null status=FAILED fail_reason="<reason>" hypothesis="<one line>"
 7. If the change is not improved or the run fails, revert your working tree before finishing.
 8. Do not repeat dead ends from the living doc unless you have a materially different reason.
+9. If you are still exploring after the first inspection pass, stop exploring and either run the experiment or emit a FAILED result with a concrete failReason.
 `;
 }
 
@@ -394,6 +415,7 @@ export async function startExperimentLoop(
   const experimentCfg = startup.experimentCfg;
   const sessionPaths = getSessionRunPaths(artifactCfg, sessionId);
   const sessionContent = startup.sessionContent;
+  let environmentSummary: AutoResearchEnvironmentSummary;
 
   try {
     await hydrateSessionFromDisk(artifactCfg, sessionId, store.metricDirection);
@@ -422,6 +444,17 @@ export async function startExperimentLoop(
     if (!clean) {
       await rollback(experimentCfg);
     }
+    environmentSummary = await inspectAutoResearchEnvironment(experimentCfg, startup.experimentDir);
+    useAutoResearchStore.getState().addRunEvent({
+      level: 'info',
+      phase: 'preflight',
+      message: `Environment ready: ${environmentSummary.preferredPythonCommand}, git ${environmentSummary.repoStatus}.`,
+      metadata: {
+        experimentDir: environmentSummary.experimentDir,
+        recommendedRunCommand: environmentSummary.recommendedRunCommand,
+        dirtyFileCount: environmentSummary.dirtyFileCount,
+      },
+    });
   } catch (error) {
     const where = experimentCfg.mode === 'local' ? 'local experiment directory' : 'remote target';
     useAutoResearchStore.getState().setError(`Cannot reach ${where}: ${formatError(error)}`);
@@ -432,16 +465,19 @@ export async function startExperimentLoop(
 
   while (true) {
     const state = useAutoResearchStore.getState();
+    const activeRun = state.runHistory.find((run) => run.id === state.id);
 
     if (state.loopState === 'stopped' || state.loopState === 'error') {
       break;
     }
     if (state.currentIteration >= state.maxIterations) {
       await notifier.onLoopStopped('Max iterations reached', state);
-      useAutoResearchStore.getState().setRunStatus('completed', {
-        summary: 'Max iterations reached.',
-        endedAt: new Date().toISOString(),
-      });
+      if (activeRun?.status !== 'failed') {
+        useAutoResearchStore.getState().setRunStatus('completed', {
+          summary: 'Max iterations reached.',
+          endedAt: new Date().toISOString(),
+        });
+      }
       useAutoResearchStore.getState().setLoopState('stopped');
       break;
     }
@@ -505,6 +541,7 @@ export async function startExperimentLoop(
         livingDoc,
         sshConfig: experimentCfg,
         runDir,
+        environmentSummary,
       });
 
       const userMessage = `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
@@ -706,13 +743,15 @@ export async function startExperimentLoop(
       consecutiveRateLimitCount = 0;
       const finishedAt = new Date().toISOString();
       const durationMs = Date.now() - startMs;
+      const failureMessage = formatError(error);
+      const failureKind = classifyAutoResearchFailure(error);
       const entry: ExperimentEntry = {
         iteration,
         hypothesis: 'Agent execution error',
         change: 'N/A',
         metricValue: null,
         status: 'FAILED',
-        failReason: formatError(error),
+        failReason: failureMessage,
         reasoning: 'The Agent failed to complete the iteration.',
         timestamp: finishedAt,
         durationMs,
@@ -723,13 +762,16 @@ export async function startExperimentLoop(
         metricName: useAutoResearchStore.getState().metricName,
         metricValue: null,
         status: 'FAILED',
-        failReason: formatError(error),
+        failReason: failureMessage,
         hypothesis: 'Agent execution error',
         commitHash: await captureCommitHash(experimentCfg),
         durationMs,
         startedAt,
         finishedAt,
       };
+      useAutoResearchStore.getState().setRunStatus('failed', {
+        summary: failureMessage,
+      });
       useAutoResearchStore.getState().addExperiment(entry);
       useAutoResearchStore.getState().completeIterationRecord({
         iteration,
@@ -744,11 +786,12 @@ export async function startExperimentLoop(
       });
       useAutoResearchStore.getState().addRunEvent({
         level: 'error',
-        phase: 'agent_execution',
+        phase: isTerminalFailureError(error) ? 'terminal' : 'agent_execution',
         message: entry.failReason ?? 'Agent execution error',
         metadata: {
           iteration,
           iterDir: runDir.iterDir,
+          failureKind,
         },
       });
       useAutoResearchStore.getState().incrementConsecutiveFailures();
@@ -767,7 +810,7 @@ export async function startExperimentLoop(
         metricName: useAutoResearchStore.getState().metricName,
         direction: useAutoResearchStore.getState().metricDirection,
       });
-      await rollback(experimentCfg, { terminal: true });
+      await rollback(experimentCfg, { terminal: !isTerminalFailureError(error) });
       await logExperiment(entry, useAutoResearchStore.getState());
       await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
     } finally {

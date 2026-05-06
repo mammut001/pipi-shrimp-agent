@@ -104,6 +104,7 @@ pub async fn test_connection(
     let messages = vec![Message {
         role: "user".to_string(),
         content: "Hi".to_string(),
+        attachments: None,
         tool_calls: None,
         tool_call_id: None,
     }];

@@ -4,6 +4,12 @@
  */
 
 import { ImportedFile } from './settings';
+import type { ImageAttachment } from './vision';
+
+export interface ChatSendOptions {
+  allowBrowserTools?: boolean;
+  attachments?: ImageAttachment[];
+}
 
 // ============= Type Definitions =============
 
@@ -19,6 +25,7 @@ export interface Message {
   id: string;                    // Unique ID (UUID v4)
   role: 'user' | 'assistant' | 'system';  // Message sender role ('system' for compact boundaries)
   content: string;              // Message content
+  attachments?: ImageAttachment[];
   reasoning?: string;           // AI reasoning/thinking process (optional)
   timestamp: number;            // Timestamp in milliseconds
   artifacts?: Artifact[];        // Attached code/charts etc
@@ -113,7 +120,7 @@ export interface ChatState {
   /**
    * Send message (call API)
    */
-  sendMessage: (content: string, sessionId?: string, options?: { allowBrowserTools?: boolean }) => Promise<void>;
+  sendMessage: (content: string, sessionId?: string, options?: ChatSendOptions) => Promise<void>;
   generateBrowserResultResponse: (browserResult: string, originalQuery: string) => Promise<void>;
 
   /**
@@ -299,13 +306,15 @@ export interface ChatState {
 export const createMessage = (
   role: 'user' | 'assistant',
   content: string,
-  artifacts?: Artifact[]
+  artifacts?: Artifact[],
+  attachments?: ImageAttachment[],
 ): Message => ({
   id: crypto.randomUUID(),
   role,
   content,
   timestamp: Date.now(),
   artifacts,
+  attachments,
 });
 
 /**

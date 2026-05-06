@@ -16,11 +16,43 @@ import {
   type ResolvedAgentConfig,
 } from '@/services/agentConfig';
 import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
-import { buildAutoResearchAgentErrorMessage } from './errors';
+import {
+  buildAutoResearchAgentErrorMessage,
+  classifyAutoResearchFailure,
+  formatError,
+  getToolRoundLimit,
+  isToolRoundLimitError,
+  type AutoResearchFailureKind,
+} from './errors';
+import {
+  buildFallbackReflectionDecision,
+  buildReflectionInputFromState,
+  getDeterministicRecoveryDecision,
+  requestReflectionDecision,
+  type AutoResearchObservedToolResult,
+  type AutoResearchReflectionDecision,
+} from './reflection';
 import { appendTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
+import type { AutoResearchEnvironmentSummary } from './preflight';
 
 let adapterSessionCounter = 0;
+const MAX_HISTORY = 20;
+const MAX_RECOVERY_RETRIES = 1;
+const MAX_REFLECTION_PASSES = 2;
+const AUTORESEARCH_ALLOWED_TOOLS = [
+  'get_current_workspace',
+  'ssh_exec',
+  'ssh_read_file',
+  'ssh_upload_file',
+] as const;
+
+export interface AutoResearchSendMessageOptions {
+  environmentSummary?: AutoResearchEnvironmentSummary;
+  metricName?: string;
+  direction?: 'higher' | 'lower';
+  maxIterations?: number;
+}
 
 function truncateTranscriptResult(result: string, limit = 4000): string {
   if (result.length <= limit) {
@@ -53,6 +85,119 @@ async function appendIterationTranscript(section: string): Promise<void> {
   await appendTargetText(state.sshConfig, runDir.transcriptPath, section);
 }
 
+function buildConvergenceRetryPrompt(systemPrompt: string, maxRounds: number | null): string {
+  const limitLine = maxRounds
+    ? `The previous attempt failed because it exceeded the tool-round budget (${maxRounds}).`
+    : 'The previous attempt failed because it exceeded the tool-round budget.';
+
+  return `${systemPrompt}
+
+## Strict Convergence Retry
+- ${limitLine}
+- Restart this SAME iteration from scratch.
+- Use only these tools: ${AUTORESEARCH_ALLOWED_TOOLS.join(', ')}.
+- Do at most one batched inspection step before editing or running the experiment.
+- If the environment is still unclear after that inspection step, immediately write ${getCurrentRunDir()?.metricsPath ?? 'metrics.json'} with status FAILED and failReason "Exceeded tool-round budget while inspecting environment", then emit EXPERIMENT_RESULT and stop.
+- Do not keep exploring, do not ask for help, and do not switch to local file tools.`;
+}
+
+function buildRecoveryPrompt(
+  systemPrompt: string,
+  decision: AutoResearchReflectionDecision,
+  failureKind: AutoResearchFailureKind,
+): string {
+  const nextCommand = decision.nextCommand ? `- If you run the experiment again, use this exact command: ${decision.nextCommand}` : '';
+  const nextPlan = decision.nextPlan ? `- Recovery plan: ${decision.nextPlan}` : '';
+
+  return `${systemPrompt}
+
+## AutoResearch Recovery Plan
+- Failure kind: ${failureKind}
+- Reflection decision: ${decision.action}
+- Summary: ${decision.summary}
+${decision.rootCause ? `- Root cause: ${decision.rootCause}` : ''}
+${nextCommand}
+${nextPlan}
+- Do not repeat the failed command/tool choice if a better recovery path is already specified above.
+- Keep the retry bounded: one focused recovery attempt only.`;
+}
+
+function parseToolCommand(call: { name: string; arguments: string }): string | undefined {
+  try {
+    const parsed = JSON.parse(call.arguments) as Record<string, unknown>;
+    return typeof parsed.command === 'string' ? parsed.command : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseToolResult(
+  call: { id: string; name: string; result: string; durationMs: number },
+  toolCommand?: string,
+): AutoResearchObservedToolResult {
+  let stdout: string | undefined;
+  let stderr: string | undefined;
+  let exitCode: number | null | undefined;
+
+  try {
+    const parsed = JSON.parse(call.result) as Record<string, unknown>;
+    stdout = typeof parsed.stdout === 'string' ? parsed.stdout : undefined;
+    stderr = typeof parsed.stderr === 'string' ? parsed.stderr : undefined;
+    const rawExitCode = parsed.exitCode ?? parsed.exit_code;
+    exitCode = typeof rawExitCode === 'number' ? rawExitCode : null;
+  } catch {
+    stderr = call.result;
+    exitCode = null;
+  }
+
+  return {
+    tool: call.name,
+    command: toolCommand,
+    stdout,
+    stderr,
+    exitCode,
+  };
+}
+
+function getRecentEventSummaries(): string[] {
+  const state = useAutoResearchStore.getState() as ReturnType<typeof useAutoResearchStore.getState> & {
+    runHistory?: Array<{ id: string; events: Array<{ phase: string; message: string }> }>;
+    id?: string;
+  };
+  const currentRun = state.runHistory?.find((run) => run.id === state.id);
+  return (currentRun?.events ?? [])
+    .slice(-6)
+    .map((event) => `${event.phase}: ${event.message}`);
+}
+
+async function persistReflectionDecision(decision: AutoResearchReflectionDecision): Promise<void> {
+  useAutoResearchStore.getState().addRunEvent?.({
+    level: decision.shouldRetry ? 'info' : 'warn',
+    phase: 'agent_execution',
+    message: `Reflection decision: ${decision.action} — ${decision.summary}`,
+    metadata: {
+      action: decision.action,
+      rootCause: decision.rootCause,
+      confidence: decision.confidence,
+    },
+  });
+  useAutoResearchStore.getState().appendLiveOutput(
+    `[status] Reflection decision: ${decision.action} — ${decision.summary}\n`,
+  );
+  await appendIterationTranscript(
+    `\n## Reflection Decision\n\`\`\`json\n${JSON.stringify({
+      action: decision.action,
+      summary: decision.summary,
+      rootCause: decision.rootCause,
+      nextCommand: decision.nextCommand,
+      nextPlan: decision.nextPlan,
+      userMessage: decision.userMessage,
+      shouldRetry: decision.shouldRetry,
+      confidence: decision.confidence,
+    }, null, 2)}\n\`\`\`\n`,
+  );
+}
+
 /**
  * Create a sendMessage function suitable for startExperimentLoop().
  *
@@ -63,6 +208,7 @@ async function appendIterationTranscript(section: string): Promise<void> {
 export function createAutoResearchSendMessage(
   workDir?: string,
   fixedAgentConfig?: ResolvedAgentConfig | null,
+  options: AutoResearchSendMessageOptions = {},
 ): (systemPrompt: string, userMessage: string) => Promise<string> {
   // Persistent message history across iterations within one loop session
   const messageHistory: any[] = [];
@@ -74,18 +220,11 @@ export function createAutoResearchSendMessage(
       throw new Error(formatAgentConfigValidationError(agentConfig, validationIssues));
     }
 
-    // Each iteration gets a fresh session ID for the Rust backend
-    adapterSessionCounter++;
-    const sessionId = `autoresearch-${adapterSessionCounter}-${Date.now()}`;
-
-    // Build messages for this iteration
-    // We keep a sliding window to avoid unbounded growth
-    const MAX_HISTORY = 20;
+    // Build messages for this iteration. Keep a sliding window to avoid unbounded growth.
     if (messageHistory.length > MAX_HISTORY * 2) {
       messageHistory.splice(0, messageHistory.length - MAX_HISTORY);
     }
 
-    // Add the user message for this iteration
     const turnMessages = [
       ...messageHistory,
       {
@@ -94,11 +233,6 @@ export function createAutoResearchSendMessage(
       },
     ];
 
-    messageHistory.push({
-      role: 'user',
-      content: userMessage,
-    });
-
     const store = useAutoResearchStore.getState();
     store.appendLiveOutput(`\n--- Iteration ${store.currentIteration} ---\n`);
     await writeIterationTranscriptHeader(userMessage);
@@ -106,50 +240,131 @@ export function createAutoResearchSendMessage(
     console.info('[AutoResearch] Agent request', getAgentConfigDiagnostics(agentConfig!));
 
     let assistantText = '';
-    try {
-      const result = await runHeadlessAgentTurn({
-        sessionId,
-        initialMessages: turnMessages,
-        systemPrompt,
-        workDir,
-        agentConfig: agentConfig!,
-        onTextDelta: (chunk) => {
-          useAutoResearchStore.getState().appendLiveOutput(chunk);
-        },
-        onReasoningDelta: (chunk) => {
-          useAutoResearchStore.getState().appendLiveOutput(`💭 ${chunk}`);
-        },
-        onStatus: (message) => {
-          useAutoResearchStore.getState().appendLiveOutput(`[status] ${message}\n`);
-        },
-        onToolSummary: (toolName, preview) => {
-          useAutoResearchStore.getState().appendLiveOutput(`  → ${toolName}: ${preview}\n`);
-        },
-        onAssistantMessage: async (text) => {
-          if (!text.trim()) {
-            return;
-          }
-          await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
-        },
-        onToolCall: async (call) => {
-          await appendIterationTranscript(
-            `\n## Tool Call: ${call.name}\n\`\`\`json\n${call.arguments || '{}'}\n\`\`\`\n`,
-          );
-        },
-        onToolResult: async (call) => {
-          await appendIterationTranscript(
-            `\n## Tool Result: ${call.name} (${call.durationMs}ms)\n\`\`\`text\n${truncateTranscriptResult(call.result)}\n\`\`\`\n`,
-          );
-        },
-      });
+    let lastError: unknown;
+    let recoveryRetries = 0;
+    let reflectionPasses = 0;
+    let attemptPrompt = systemPrompt;
 
-      assistantText = result.finalText;
-    } catch (error) {
+    while (true) {
+      const toolCallsById = new Map<string, { name: string; command?: string }>();
+      const toolResults: AutoResearchObservedToolResult[] = [];
+      const failedCommands: string[] = [];
+
+      try {
+        adapterSessionCounter++;
+        const attemptSessionId = `autoresearch-${adapterSessionCounter}-${Date.now()}`;
+        const result = await runHeadlessAgentTurn({
+          sessionId: attemptSessionId,
+          initialMessages: turnMessages,
+          systemPrompt: attemptPrompt,
+          workDir,
+          agentConfig: agentConfig!,
+          allowedTools: [...AUTORESEARCH_ALLOWED_TOOLS],
+          onTextDelta: (chunk) => {
+            useAutoResearchStore.getState().appendLiveOutput(chunk);
+          },
+          onReasoningDelta: (chunk) => {
+            useAutoResearchStore.getState().appendLiveOutput(`💭 ${chunk}`);
+          },
+          onStatus: (message) => {
+            useAutoResearchStore.getState().appendLiveOutput(`[status] ${message}\n`);
+          },
+          onToolSummary: (toolName, preview) => {
+            useAutoResearchStore.getState().appendLiveOutput(`  → ${toolName}: ${preview}\n`);
+          },
+          onAssistantMessage: async (text) => {
+            if (!text.trim()) {
+              return;
+            }
+            await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
+          },
+          onToolCall: async (call) => {
+            toolCallsById.set(call.id, {
+              name: call.name,
+              command: parseToolCommand(call),
+            });
+            await appendIterationTranscript(
+              `\n## Tool Call: ${call.name}\n\`\`\`json\n${call.arguments || '{}'}\n\`\`\`\n`,
+            );
+          },
+          onToolResult: async (call) => {
+            const observed = parseToolResult(call, toolCallsById.get(call.id)?.command);
+            toolResults.push(observed);
+            if (observed.command && ((typeof observed.exitCode === 'number' && observed.exitCode !== 0) || observed.stderr)) {
+              failedCommands.push(observed.command);
+            }
+            await appendIterationTranscript(
+              `\n## Tool Result: ${call.name} (${call.durationMs}ms)\n\`\`\`text\n${truncateTranscriptResult(call.result)}\n\`\`\`\n`,
+            );
+          },
+        });
+
+        assistantText = result.finalText;
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        const storeState = useAutoResearchStore.getState();
+        const reflectionInput = buildReflectionInputFromState({
+          systemPrompt,
+          metric: options.metricName ?? storeState.metricName,
+          direction: options.direction ?? storeState.metricDirection,
+          cwd: workDir ?? '',
+          iteration: storeState.currentIteration,
+          maxIterations: options.maxIterations ?? storeState.maxIterations,
+          environmentSummary: options.environmentSummary,
+          recentEvents: getRecentEventSummaries(),
+          recentToolResults: toolResults,
+          failedCommands,
+          lastError: formatError(error),
+          remainingToolBudget: isToolRoundLimitError(error) ? 0 : undefined,
+        });
+        const failureKind = classifyAutoResearchFailure(error);
+
+        let decision = getDeterministicRecoveryDecision(reflectionInput);
+        if (!decision && reflectionPasses < MAX_REFLECTION_PASSES) {
+          const shouldReflect = isToolRoundLimitError(error)
+            || toolResults.some((item) => (typeof item.exitCode === 'number' && item.exitCode !== 0) || Boolean(item.stderr));
+
+          if (shouldReflect) {
+            reflectionPasses += 1;
+            try {
+              decision = await requestReflectionDecision(agentConfig!, reflectionInput);
+            } catch (reflectionError) {
+              decision = buildFallbackReflectionDecision(reflectionInput, reflectionError);
+            }
+          }
+        }
+
+        if (!decision && isToolRoundLimitError(error)) {
+          decision = buildFallbackReflectionDecision(reflectionInput, error);
+        }
+
+        if (decision) {
+          await persistReflectionDecision(decision);
+          if (decision.shouldRetry && recoveryRetries < MAX_RECOVERY_RETRIES) {
+            recoveryRetries += 1;
+            attemptPrompt = decision.action === 'switch_command'
+              ? buildRecoveryPrompt(systemPrompt, decision, failureKind)
+              : (isToolRoundLimitError(error)
+                ? buildRecoveryPrompt(buildConvergenceRetryPrompt(systemPrompt, getToolRoundLimit(error)), decision, failureKind)
+                : buildRecoveryPrompt(systemPrompt, decision, failureKind));
+            continue;
+          }
+
+          lastError = new Error(decision.userMessage || decision.summary);
+        }
+
+        break;
+      }
+    }
+
+    if (lastError) {
       const diagnosticMessage = buildAutoResearchAgentErrorMessage({
         phase: 'agent_execution',
         config: agentConfig!,
         cwd: workDir,
-        error,
+        error: lastError,
       });
       console.error('[AutoResearch] Agent execution failed', {
         ...getAgentConfigDiagnostics(agentConfig!),
@@ -160,6 +375,10 @@ export function createAutoResearchSendMessage(
     }
 
     // Record assistant response in history for context continuity
+    messageHistory.push({
+      role: 'user',
+      content: userMessage,
+    });
     messageHistory.push({
       role: 'assistant',
       content: assistantText,

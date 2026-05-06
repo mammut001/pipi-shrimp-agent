@@ -28,6 +28,7 @@ export interface DbMessage {
   role: string;
   content: string;
   reasoning: string | null;
+  attachments: string | null;
   artifacts: string | null;
   tool_calls: string | null;
   token_usage: string | null;
@@ -136,6 +137,7 @@ export function parseToolResultMessage(message: Message): ParsedToolResult | nul
 export interface ApiMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  attachments?: Message['attachments'];
   tool_calls?: Array<{ tool_call_id: string; name: string; arguments: string }>;
   tool_call_id?: string;
 }
@@ -205,6 +207,7 @@ export function buildApiMessages(messages: Message[]): ApiMessage[] {
     apiMessages.push({
       role: msg.role as 'user' | 'assistant' | 'system',
       content: msg.content,
+      ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
       ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
     });
   }
@@ -232,6 +235,7 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
       content: m.content,
       reasoning: m.reasoning || undefined,
       timestamp: m.created_at,
+      attachments: safeJsonParse(m.attachments, undefined),
       artifacts: safeJsonParse(m.artifacts, undefined),
       tool_calls: safeJsonParse(m.tool_calls, undefined),
       token_usage: safeJsonParse(m.token_usage, undefined),
@@ -261,6 +265,7 @@ export function messageToDb(message: Message, sessionId: string): DbMessage {
     role: message.role,
     content: message.content,
     reasoning: message.reasoning || null,
+    attachments: message.attachments ? JSON.stringify(message.attachments) : null,
     artifacts: message.artifacts ? JSON.stringify(message.artifacts) : null,
     tool_calls: message.tool_calls ? JSON.stringify(message.tool_calls) : null,
     token_usage: message.token_usage ? JSON.stringify(message.token_usage) : null,

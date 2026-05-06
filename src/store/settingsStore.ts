@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings, AgentSettings } from '../types/settings';
-import { DEFAULT_BUDGET_SETTINGS } from '../types/settings';
+import { DEFAULT_BUDGET_SETTINGS, DEFAULT_VISION_SETTINGS_STATE } from '../types/settings';
 import { resolvePricing } from '../shared/providers';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
 import { saveSecret, loadSecret, migrateLegacySecret } from '../utils/secureSecrets';
@@ -35,6 +35,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   importedFiles: [],
   budgetSettings: DEFAULT_BUDGET_SETTINGS,
   agentSettings: { maxToolRounds: 50 },
+  visionSettings: DEFAULT_VISION_SETTINGS_STATE,
 
   // ========== Imported Files Methods ==========
 
@@ -339,6 +340,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  updateVisionSettings: (settings) => {
+    const currentSettings = get().visionSettings;
+    const newSettings = {
+      ...currentSettings,
+      ...settings,
+      transcribe: {
+        ...currentSettings.transcribe,
+        ...settings.transcribe,
+      },
+      ocrLanguages: settings.ocrLanguages ?? currentSettings.ocrLanguages,
+    };
+
+    set({ visionSettings: newSettings });
+
+    try {
+      persistSettingsJson(SETTINGS_STORAGE_KEYS.visionSettings, newSettings, 'Failed to persist vision settings:');
+    } catch (error) {
+      console.error('Failed to persist vision settings:', error);
+    }
+  },
+
   /**
    * Get pricing for a specific model (custom or default)
    */
@@ -386,6 +408,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 // ========== Initialize from localStorage ==========
 
 const initializeSettings = () => {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+
   try {
     // Load theme
     const storedTheme = localStorage.getItem(SETTINGS_STORAGE_KEYS.theme);
@@ -444,6 +470,28 @@ const initializeSettings = () => {
           agentSettings,
           'Failed to persist migrated agent settings:',
         );
+      }
+    }
+
+    const storedVisionSettings = localStorage.getItem(SETTINGS_STORAGE_KEYS.visionSettings);
+    if (storedVisionSettings) {
+      try {
+        const visionSettings = JSON.parse(storedVisionSettings);
+        useSettingsStore.setState({
+          visionSettings: {
+            ...DEFAULT_VISION_SETTINGS_STATE,
+            ...visionSettings,
+            transcribe: {
+              ...DEFAULT_VISION_SETTINGS_STATE.transcribe,
+              ...(visionSettings?.transcribe ?? {}),
+            },
+            ocrLanguages: Array.isArray(visionSettings?.ocrLanguages)
+              ? visionSettings.ocrLanguages
+              : DEFAULT_VISION_SETTINGS_STATE.ocrLanguages,
+          },
+        });
+      } catch (error) {
+        console.error('Failed to parse vision settings:', error);
       }
     }
 

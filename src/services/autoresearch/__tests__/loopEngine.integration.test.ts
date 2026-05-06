@@ -39,6 +39,17 @@ jest.mock('../preflight', () => ({
     }
     return trimmed;
   }),
+  inspectAutoResearchEnvironment: jest.fn(async (_cfg: unknown, experimentDir: string) => ({
+    experimentDir,
+    gitRepo: true,
+    repoStatus: 'clean',
+    dirtyFileCount: 0,
+    preferredPythonCommand: 'python3',
+    worktreeWritable: true,
+    runScriptPath: `${experimentDir}/run_experiment.py`,
+    notesPath: `${experimentDir}/AUTORESEARCH.md`,
+    recommendedRunCommand: 'python3 run_experiment.py',
+  })),
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
@@ -263,5 +274,28 @@ describe('loopEngine integration', () => {
     expect(store.consecutiveFailures).toBe(0);
     expect(store.statusMessage).toBeUndefined();
     expect(store.experiments[0]?.iteration).toBe(1);
+  });
+
+  it('marks the run as failed instead of leaving it running after agent execution errors', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-terminal-failure',
+      maxIterations: 1,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      throw new Error('Timed out waiting for AutoResearch terminal');
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const failedRun = store.runHistory.find((run) => run.id === 'autoresearch-terminal-failure');
+    expect(failedRun?.status).toBe('failed');
+    expect(failedRun?.events.some((event) => event.phase === 'terminal')).toBe(true);
   });
 });

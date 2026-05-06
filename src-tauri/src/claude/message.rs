@@ -7,6 +7,25 @@
  */
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    pub id: String,
+    pub source: String,
+    pub mime: String,
+    pub bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    pub encoding: String,
+    pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origPath: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    pub createdAt: u64,
+}
+
 /**
  * Single message in conversation
  */
@@ -16,6 +35,9 @@ pub struct Message {
     pub role: String,
     /// Message content
     pub content: String,
+    /// Optional image attachments for multimodal requests
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<ImageAttachment>>,
     /// Tool calls made by assistant
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,

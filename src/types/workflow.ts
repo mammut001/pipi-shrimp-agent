@@ -3,6 +3,7 @@
  */
 
 import type { ProviderName } from '@/shared/providers';
+import type { WorkflowVisionPolicy } from './vision';
 
 // ============ Execution Config ============
 
@@ -167,6 +168,7 @@ export interface WorkflowAgent {
   role?: AgentRole;
   retryPolicy?: AgentRetryPolicy;
   notifyOnComplete?: string[];
+  visionPolicy?: WorkflowVisionPolicy;
 }
 
 // ============ Connection ============

@@ -11,6 +11,7 @@ import { isContextOverflowError } from '@/services/context/contextBudget';
 import { useSettingsStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
+import { prepareMessagesForVision } from '@/services/vision/visionMessagePrep';
 import { toError } from '@/utils/errorFormat';
 
 export async function* runChatTurn(
@@ -61,12 +62,13 @@ export async function* runChatTurn(
     }
     
     // Clean up internal fields to ensure Rust safely processes it
-    const backendMessages = currentMessages.map(m => ({
+    const backendMessages = prepareMessagesForVision(currentMessages.map(m => ({
       role: m.role,
       content: m.content,
+      attachments: m.attachments,
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id
-    }));
+    })), resolvedConfig!);
 
     // [Phase 2: API Call]
     let hasToolCalls = false;

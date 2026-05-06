@@ -153,6 +153,7 @@ async fn execute_agent(request: &AgentRequest) -> AgentResponse {
     let messages = vec![Message {
         role: "user".to_string(),
         content: request.prompt.clone(),
+        attachments: None,
         tool_calls: None,
         tool_call_id: None,
     }];

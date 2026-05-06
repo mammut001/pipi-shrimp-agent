@@ -43,6 +43,7 @@ function normalizeAgent(agent: WorkflowAgent): WorkflowAgent {
     inputFrom: agent.inputFrom ?? null,
     role: agent.role ?? 'custom',
     notifyOnComplete: agent.notifyOnComplete ?? [],
+    visionPolicy: agent.visionPolicy ?? 'inherit',
   };
 }
 

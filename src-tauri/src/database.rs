@@ -45,10 +45,11 @@ fn row_to_message(row: &Row) -> SqliteResult<DbMessage> {
         role: row.get(2)?,
         content: row.get(3)?,
         reasoning: row.get(4)?,
-        artifacts: row.get(5)?,
-        tool_calls: row.get(6)?,
-        token_usage: row.get(7)?,
-        created_at: row.get(8)?,
+        attachments: row.get(5)?,
+        artifacts: row.get(6)?,
+        tool_calls: row.get(7)?,
+        token_usage: row.get(8)?,
+        created_at: row.get(9)?,
     })
 }
 
@@ -157,6 +158,7 @@ pub struct DbMessage {
     pub role: String,
     pub content: String,
     pub reasoning: Option<String>,
+    pub attachments: Option<String>,
     pub artifacts: Option<String>,
     pub tool_calls: Option<String>,  // JSON-serialized Vec<ToolCall>
     pub token_usage: Option<String>, // JSON-serialized token usage
@@ -635,6 +637,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     reasoning TEXT,
+                    attachments TEXT,
                     artifacts TEXT,
                     tool_calls TEXT,
                     created_at INTEGER NOT NULL,
@@ -682,6 +685,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             // indicate the column already exists (sqlite error 1 "duplicate column").
             let alters = [
                 "ALTER TABLE messages  ADD COLUMN reasoning TEXT",
+                "ALTER TABLE messages  ADD COLUMN attachments TEXT",
                 "ALTER TABLE messages  ADD COLUMN tool_calls TEXT",
                 "ALTER TABLE sessions  ADD COLUMN project_id TEXT",
                 "ALTER TABLE sessions  ADD COLUMN model TEXT",
@@ -790,6 +794,13 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 [],
             )?;
         }
+        6 => {
+            let _ = conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT", []);
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (6, strftime('%s','now'))",
+                [],
+            )?;
+        }
         _ => {
             eprintln!("⚠️  Unknown migration version {}", version);
         }
@@ -806,7 +817,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
  * `LATEST_VERSION`.
  */
 pub fn init_database() -> SqliteResult<()> {
-    const LATEST_VERSION: i64 = 5;
+    const LATEST_VERSION: i64 = 6;
 
     let db_path = get_db_path();
     println!("📂 Database path: {:?}", db_path);
@@ -927,14 +938,15 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, artifacts, tool_calls, token_usage, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, attachments, artifacts, tool_calls, token_usage, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 message.id,
                 message.session_id,
                 message.role,
                 message.content,
                 message.reasoning,
+                message.attachments,
                 message.artifacts,
                 message.tool_calls,
                 message.token_usage,
@@ -1262,7 +1274,7 @@ pub fn get_messages_for_session(session_id: &str) -> SqliteResult<Vec<DbMessage>
 
     if let Some(conn) = guard.as_ref() {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, reasoning, artifacts, tool_calls, token_usage, created_at
+            "SELECT id, session_id, role, content, reasoning, attachments, artifacts, tool_calls, token_usage, created_at
              FROM messages WHERE session_id = ?1 ORDER BY created_at ASC",
         )?;
 

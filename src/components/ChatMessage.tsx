@@ -16,6 +16,7 @@ import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
+import { buildImageDataUrl } from '@/services/vision/imageAttachments';
 import { ChatImage } from './ChatImage';
 import { ArtifactsBadge } from './ArtifactsBadge';
 import { useUIStore } from '@/store';
@@ -187,6 +188,29 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
 
             {/* Message Body */}
             <div className="prose prose-sm max-w-none break-words">
+              {message.attachments && message.attachments.length > 0 && (
+                <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {message.attachments.map((attachment) => (
+                    <a
+                      key={attachment.id}
+                      href={buildImageDataUrl(attachment)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="not-prose block overflow-hidden rounded-xl border border-gray-200 bg-white"
+                    >
+                      <img
+                        src={buildImageDataUrl(attachment)}
+                        alt={attachment.origPath || t('chat.imageAttachment')}
+                        className="h-32 w-full object-cover"
+                      />
+                      <div className="truncate border-t border-gray-100 px-2 py-1 text-[11px] text-gray-500">
+                        {attachment.origPath || t('chat.imageAttachment')}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              )}
+
               {isUser ? (
                 /* User messages: plain text or Tool Results */
                 <MessageContent content={message.content} />
