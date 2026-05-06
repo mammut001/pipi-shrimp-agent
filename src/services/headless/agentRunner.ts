@@ -1,5 +1,6 @@
 import { runChatTurn } from '@/core/QueryEngine';
 import type { ToolCallParams, TokenUsage } from '@/core/types';
+import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { StreamingToolExecutor, partitionTools } from '@/services/StreamingToolExecutor';
 
 const WORKSPACE_SENSITIVE_TOOLS = new Set([
@@ -29,6 +30,7 @@ export interface HeadlessAgentRunnerInput {
   initialMessages: HeadlessMessage[];
   systemPrompt: string;
   workDir?: string;
+  agentConfig?: ResolvedAgentConfig;
   resolveWorkDir?: () => Promise<string | null>;
   onWorkDirResolved?: (workDir: string) => Promise<void> | void;
   onTextDelta?: (chunk: string) => void;
@@ -177,6 +179,8 @@ export async function runHeadlessAgentTurn(
     input.initialMessages,
     input.systemPrompt,
     input.workDir,
+    false,
+    input.agentConfig,
   );
 
   let currentWorkDir = input.workDir;

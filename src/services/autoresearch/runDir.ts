@@ -146,28 +146,34 @@ export async function ensureSessionDir(cfg: SshConfig, sessionId: string): Promi
   return sessionDir;
 }
 
-export async function createRunDir(cfg: SshConfig, sessionId: string, iter: number): Promise<RunDir> {
+export async function createRunDir(
+  cfg: SshConfig,
+  sessionId: string,
+  iter: number,
+  options: { snapshotSourceDir?: string } = {},
+): Promise<RunDir> {
   const sessionDir = await ensureSessionDir(cfg, sessionId);
   const directoryName = `iter-${padIteration(iter)}-${formatTimestamp()}`;
   const runDir = buildRunDir(sessionDir, iter, directoryName);
   const codeDir = `${runDir.iterDir}/code`;
+  const snapshotSourceDir = options.snapshotSourceDir || cfg.remoteWorkDir;
 
   const script = [
     `mkdir -p ${shellEscapePath(runDir.iterDir)} ${shellEscapePath(runDir.logsDir)}`,
-    `if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
-    `  if ! git worktree add --detach ${shellEscapePath(codeDir)} HEAD >/dev/null 2>&1; then`,
+    `if [ -d ${shellEscapePath(snapshotSourceDir)} ] && git -C ${shellEscapePath(snapshotSourceDir)} rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
+    `  if ! git -C ${shellEscapePath(snapshotSourceDir)} worktree add --detach ${shellEscapePath(codeDir)} HEAD >/dev/null 2>&1; then`,
     `    mkdir -p ${shellEscapePath(codeDir)}`,
-    `    tar --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
+    `    tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
     `  fi`,
     `else`,
     `  mkdir -p ${shellEscapePath(codeDir)}`,
-    `  tar --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
+    `  tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
     `fi`,
     `: > ${shellEscapePath(runDir.hypothesisPath)}`,
     `: > ${shellEscapePath(runDir.diffPath)}`,
   ].join('\n');
 
-  const result = await executeTargetCommand(cfg, script, 300);
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, script, 300);
   if ((result.exit_code ?? 0) !== 0) {
     throw new Error(result.stderr || `Failed to create iteration dir ${runDir.iterDir}`);
   }

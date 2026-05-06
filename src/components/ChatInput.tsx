@@ -11,6 +11,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
+import { startNewChatFlow } from '@/services/newChatFlow';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
 import { useMCPStore } from '@/store/mcpStore';
@@ -99,7 +100,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   const isComposingRef = useRef(false);
   const draftStorageKey = `chat_draft_${draftKey}`;
 
-  const { isStreaming, sendMessage, stopGeneration, currentSessionId, startSession, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
+  const { isStreaming, sendMessage, stopGeneration, currentSessionId, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
   const { toggleSettings } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
@@ -177,7 +178,13 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
   const sendAsRegularChat = useCallback(async (message: string) => {
     setIsSubmitting(true);
     try {
-      const targetSessionId = await resolveChatTargetSessionId(currentSessionId, startSession);
+      const targetSessionId = await resolveChatTargetSessionId(
+        currentSessionId,
+        () => startNewChatFlow('chat-input'),
+      );
+      if (!targetSessionId) {
+        return;
+      }
 
       onSend?.(message);
       await sendMessage(message, targetSessionId);
@@ -190,7 +197,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
     } finally {
       setIsSubmitting(false);
     }
-  }, [clearInputDraft, currentSessionId, onSend, sendMessage, startSession]);
+  }, [clearInputDraft, currentSessionId, onSend, sendMessage]);
 
   const sendToBrowserWorkflow = useCallback(async (message: string) => {
     setIsSubmitting(true);

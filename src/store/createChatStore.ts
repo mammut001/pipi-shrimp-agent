@@ -393,7 +393,7 @@ export const useChatStore = create<ChatState>()(
       }
     },
 
-    startSession: async (projectId?: string, model?: string) => {
+    startSession: async (projectId?: string | null, model?: string) => {
       const title = `Chat ${get().sessions.length + 1}`;
       const newSession = createSession(title, projectId, model);
       try {

@@ -14,7 +14,7 @@
 import React, { memo, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
-import type { WorkflowAgent, RouteCondition } from '@/types/workflow';
+import { getRoleModelHint, type WorkflowAgent, type RouteCondition } from '@/types/workflow';
 import { useSettingsStore } from '@/store/settingsStore';
 import { getProviderDefaultModelIds } from '@/shared/providers';
 import { t } from '@/i18n';
@@ -115,6 +115,18 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
 
   const color = getAgentColor(agent.id);
   const initials = getInitials(agent.name);
+  const roleHint = getRoleModelHint(agent.role);
+  const recommendedModelText = roleHint
+    ? `${roleHint.preferredProviders.join(', ')} · ${roleHint.preferredModelKeywords.join(', ')}`
+    : '';
+  const roleRecommendationMismatch = Boolean(
+    roleHint
+    && (
+      !currentProvider
+      || !roleHint.preferredProviders.some((provider) => provider === currentProvider)
+      || !roleHint.preferredModelKeywords.some((keyword) => currentModelId.toLowerCase().includes(keyword.toLowerCase()))
+    ),
+  );
 
   // Get other agents for dropdown
   const otherAgents = allAgents.filter((a) => a.id !== agent.id);
@@ -221,8 +233,8 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
               {initials}
             </div>
 
-            {/* Status dot + Name */}
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+             {/* Status dot + Name */}
+             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <div
                 className="w-2 h-2 rounded-full shrink-0"
                 style={{ backgroundColor: statusBgMap[agent.status] }}
@@ -247,6 +259,11 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                   title={agent.name}
                 >
                   {agent.name}
+                </span>
+              )}
+              {agent.role && (
+                <span className="shrink-0 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                  {agent.role}
                 </span>
               )}
             </div>
@@ -326,6 +343,15 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                 </span>
                 <span className="text-gray-400 shrink-0">▼</span>
               </button>
+
+              {roleHint && roleRecommendationMismatch && (
+                <div className="mt-1 flex items-center gap-1 text-[10px] text-amber-600" title={recommendedModelText}>
+                  <span>⚠️</span>
+                  <span className="truncate">
+                    {recommendedModelText}
+                  </span>
+                </div>
+              )}
 
               {/* Dropdown - using portal to escape overflow clipping */}
               {showModelSelector && createPortal(

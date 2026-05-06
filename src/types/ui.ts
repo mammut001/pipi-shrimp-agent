@@ -126,6 +126,12 @@ export interface UIState {
   showChromePrompt: (targetUrl: string) => Promise<boolean>;
   resolveChromePrompt: (useCdp: boolean) => void;
 
+  // New chat project picker
+  newChatProjectPickerVisible: boolean;
+  newChatProjectPickerSource: string | null;
+  showNewChatProjectPicker: (source: string) => Promise<string | null | undefined>;
+  resolveNewChatProjectPicker: (projectId: string | null | undefined) => void;
+
   // Questionnaire state
   activeQuestionnaire: QuestionnaireData | null;
   showQuestionnaire: (sessionId: string, data: Omit<QuestionnaireData, '_resolve' | 'sessionId'>) => Promise<string>;

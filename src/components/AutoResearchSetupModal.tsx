@@ -6,22 +6,37 @@
  * - User clicks "Setup" button from the AutoResearch panel tab
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
 import { useChatStore, useUIStore } from '@/store';
+import {
+  formatAgentConfigValidationError,
+  resolveActiveAgentConfig,
+  validateResolvedAgentConfig,
+} from '@/services/agentConfig';
 import { startExperimentLoop } from '@/services/autoresearch';
 import { createAutoResearchSendMessage } from '@/services/autoresearch/chatAdapter';
-import { getDefaultAutoResearchSessionFilePath } from '@/services/autoresearch/paths';
+import {
+  isHorizontalArrowKey,
+  resolveInitialExperimentDir,
+  sanitizePathInput,
+} from '@/services/autoresearch/pathInput';
+import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
+import { formatError } from '@/services/autoresearch/errors';
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
   const setShowSetupModal = useAutoResearchStore(s => s.setShowSetupModal);
   const sshConfig = useAutoResearchStore(s => s.sshConfig);
-  const storedSessionFilePath = useAutoResearchStore(s => s.sessionFilePath);
+  const storedExperimentDir = useAutoResearchStore(s => s.experimentDir);
   const setSshConfig = useAutoResearchStore(s => s.setSshConfig);
   const initSession = useAutoResearchStore(s => s.initSession);
   const setAgentPanelTab = useUIStore(s => s.setAgentPanelTab);
-  const addNotification = useUIStore(s => s.addNotification);
+  const agentConfig = resolveActiveAgentConfig();
+  const agentConfigIssues = validateResolvedAgentConfig(agentConfig);
+  const agentConfigError = agentConfigIssues.length > 0
+    ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
+    : '';
 
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -38,40 +53,24 @@ export function AutoResearchSetupModal() {
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
   const [maxIter, setMaxIter] = useState(50);
-  const [sessionFile, setSessionFile] = useState('');
+  const [experimentDir, setExperimentDir] = useState('');
 
   // Sync form when sshConfig changes (e.g. from previous session)
   useEffect(() => {
     if (sshConfig) {
-      setForm(sshConfig);
+      setForm({
+        ...sshConfig,
+        remoteWorkDir: sanitizePathInput(sshConfig.remoteWorkDir),
+      });
     }
   }, [sshConfig]);
 
   useEffect(() => {
     if (!showSetupModal) return;
-
-    let cancelled = false;
-
-    if (storedSessionFilePath) {
-      setSessionFile(storedSessionFilePath);
-      return;
-    }
-
-    void (async () => {
-      try {
-        const defaultPath = await getDefaultAutoResearchSessionFilePath();
-        if (!cancelled) {
-          setSessionFile((current) => current || defaultPath);
-        }
-      } catch (error) {
-        console.error('[AutoResearch] Failed to resolve default session file path:', error);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [showSetupModal, storedSessionFilePath]);
+    const chatState = useChatStore.getState();
+    const currentChatSession = chatState.sessions.find((session) => session.id === chatState.currentSessionId);
+    setExperimentDir(resolveInitialExperimentDir(storedExperimentDir, currentChatSession?.workDir));
+  }, [showSetupModal, storedExperimentDir]);
 
   // Close on click outside
   useEffect(() => {
@@ -95,51 +94,77 @@ export function AutoResearchSetupModal() {
     return () => document.removeEventListener('keydown', handler);
   }, [showSetupModal, setShowSetupModal]);
 
+  const handlePathInputKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (isHorizontalArrowKey(event.key)) {
+      event.stopPropagation();
+    }
+  }, []);
+
+  const handleWorkDirChange = useCallback((value: string) => {
+    setForm((current) => ({
+      ...current,
+      remoteWorkDir: sanitizePathInput(value),
+    }));
+  }, []);
+
+  const handleExperimentDirChange = useCallback((value: string) => {
+    setExperimentDir(sanitizePathInput(value));
+  }, []);
+
   const handleStart = useCallback(async () => {
     // Mode-specific validation
     if (form.mode === 'ssh') {
       if (!form.host || !form.user) return;
       if (form.authMode === 'password' && !form.password) return;
       if (form.authMode === 'key' && !form.keyPath) return;
-    } else {
-      if (!form.remoteWorkDir) return;
     }
-
-    let resolvedSessionFilePath = sessionFile.trim();
-    if (!resolvedSessionFilePath) {
-      try {
-        resolvedSessionFilePath = await getDefaultAutoResearchSessionFilePath();
-        setSessionFile(resolvedSessionFilePath);
-      } catch (error) {
-        console.error('[AutoResearch] Failed to resolve default session file path:', error);
-        addNotification('error', '无法解析 AutoResearch 默认 session 文件路径。');
-        return;
-      }
-    }
-
-    setSshConfig(form);
 
     const sessionId = `autoresearch-${Date.now()}`;
-    initSession({
-      id: sessionId,
-      maxIterations: maxIter,
-      metricName: metric,
-      metricDirection: direction,
-      sshConfig: form,
-      sessionFilePath: resolvedSessionFilePath,
-    });
+    if (agentConfigError) {
+      useAutoResearchStore.getState().setError(agentConfigError);
+      return;
+    }
 
-    setShowSetupModal(false);
-    setAgentPanelTab('autoresearch');
+    try {
+      const preflight = await runAutoResearchPreflight({
+        sshConfig: form,
+        experimentDir,
+        workDir: form.remoteWorkDir,
+        sessionId,
+        agentConfig,
+      });
 
-    // Resolve current chat session's workDir for tool execution context
-    const chatSession = useChatStore.getState().sessions.find(
-      s => s.id === useChatStore.getState().currentSessionId
-    );
-    const sendMessage = createAutoResearchSendMessage(chatSession?.workDir);
+      const sanitizedForm = {
+        ...form,
+        remoteWorkDir: preflight.resolvedWorkDir,
+      };
 
-    startExperimentLoop(sendMessage);
-  }, [addNotification, form, maxIter, metric, direction, sessionFile, initSession, setSshConfig, setShowSetupModal, setAgentPanelTab]);
+      setSshConfig(sanitizedForm);
+
+      initSession({
+        id: sessionId,
+        maxIterations: maxIter,
+        metricName: metric,
+        metricDirection: direction,
+        sshConfig: sanitizedForm,
+        experimentDir: preflight.resolvedExperimentDir,
+        sessionFilePath: preflight.sessionFilePath,
+        livingDocPath: preflight.livingDocPath,
+      });
+
+      setShowSetupModal(false);
+      setAgentPanelTab('autoresearch');
+
+      const sendMessage = createAutoResearchSendMessage(
+        preflight.resolvedExperimentDir,
+        preflight.agentConfig,
+      );
+
+      void startExperimentLoop(sendMessage);
+    } catch (error) {
+      useAutoResearchStore.getState().setError(formatError(error));
+    }
+  }, [agentConfig, agentConfigError, direction, experimentDir, form, initSession, maxIter, metric, setAgentPanelTab, setShowSetupModal, setSshConfig]);
 
   if (!showSetupModal) return null;
 
@@ -256,8 +281,10 @@ export function AutoResearchSetupModal() {
             <input
               className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
               placeholder={form.mode === 'local' ? 'local work dir (absolute path)' : 'remote work dir'}
+              aria-label="AutoResearch workdir"
               value={form.remoteWorkDir}
-              onChange={e => setForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
+              onChange={e => handleWorkDirChange(e.target.value)}
+              onKeyDown={handlePathInputKeyDown}
             />
           </div>
 
@@ -266,10 +293,15 @@ export function AutoResearchSetupModal() {
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Experiment</label>
             <input
               className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors font-mono"
-              placeholder="session file path (default: Documents/PiPi-Shrimp/autoresearch/session.md)"
-              value={sessionFile}
-              onChange={e => setSessionFile(e.target.value)}
+              placeholder="experiment project directory"
+              aria-label="Experiment path"
+              value={experimentDir}
+              onChange={e => handleExperimentDirChange(e.target.value)}
+              onKeyDown={handlePathInputKeyDown}
             />
+            <p className="text-[10px] text-gray-400 leading-snug">
+              Project directory only. Internal <code className="px-1 py-0.5 bg-gray-100 rounded">session.md</code> and living-doc paths are stored separately.
+            </p>
             <div className="flex gap-2">
               <input
                 className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
@@ -302,13 +334,21 @@ export function AutoResearchSetupModal() {
               form.mode === 'ssh'
                 ? (!form.host || !form.user
                     || (form.authMode === 'password' && !form.password)
-                    || (form.authMode === 'key' && !form.keyPath))
-                : !form.remoteWorkDir
+                    || (form.authMode === 'key' && !form.keyPath)
+                    || !sanitizePathInput(form.remoteWorkDir, { trim: true })
+                    || !sanitizePathInput(experimentDir, { trim: true })
+                    || Boolean(agentConfigError))
+                : !sanitizePathInput(form.remoteWorkDir, { trim: true }) || !sanitizePathInput(experimentDir, { trim: true }) || Boolean(agentConfigError)
             }
             onClick={handleStart}
           >
             Start Experiment Loop
           </button>
+          {agentConfigError && (
+            <p className="text-[10px] text-red-500 leading-snug">
+              {agentConfigError}
+            </p>
+          )}
         </div>
       </div>
     </div>

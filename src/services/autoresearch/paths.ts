@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 const AUTORESEARCH_SESSION_FILE = 'session.md';
 const AUTORESEARCH_LOG_FILE = 'experiment_log.md';
+const AUTORESEARCH_LIVING_DOC_FILE = 'autoresearch.md';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/[\\/]+$/, '');
@@ -15,6 +16,18 @@ function getParentDirectory(path: string): string | null {
 
 function joinPath(base: string, leaf: string): string {
   return `${trimTrailingSlash(base)}/${leaf}`;
+}
+
+export function getAutoResearchSessionFilePathFromWorkDir(workDir: string): string {
+  return joinPath(workDir, AUTORESEARCH_SESSION_FILE);
+}
+
+export function getAutoResearchSessionRunDir(workDir: string, sessionId: string): string {
+  return `${trimTrailingSlash(workDir)}/runs/${sessionId}`;
+}
+
+export function getAutoResearchLivingDocPathFromWorkDir(workDir: string, sessionId: string): string {
+  return joinPath(getAutoResearchSessionRunDir(workDir, sessionId), AUTORESEARCH_LIVING_DOC_FILE);
 }
 
 export async function getAutoResearchBaseDir(): Promise<string> {

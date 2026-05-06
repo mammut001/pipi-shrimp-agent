@@ -12,14 +12,23 @@ import { TerminalPanel } from '@/components';
 import { MainLayout } from '@/layout';
 import { useAutoResearchStore, type ExperimentEntry, type SshConfig } from '@/store/autoresearchStore';
 import {
+  formatAgentConfigValidationError,
+  resolveActiveAgentConfig,
+  validateResolvedAgentConfig,
+} from '@/services/agentConfig';
+import {
   createAutoResearchSendMessage,
   startExperimentLoop,
   stopExperimentLoop,
   pauseExperimentLoop,
   resumeExperimentLoop,
 } from '@/services/autoresearch';
-import { getDefaultAutoResearchSessionFilePath } from '@/services/autoresearch/paths';
+import {
+  getAutoResearchSessionFilePathFromWorkDir,
+} from '@/services/autoresearch/paths';
 import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
+import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
+import { formatError } from '@/services/autoresearch/errors';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
@@ -194,6 +203,11 @@ function AutoResearchView() {
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
   const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle', output: '' });
+  const agentConfig = resolveActiveAgentConfig();
+  const agentConfigIssues = validateResolvedAgentConfig(agentConfig);
+  const agentConfigError = agentConfigIssues.length > 0
+    ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
+    : '';
 
   useEffect(() => {
     const { password: _password, ...persisted } = setupForm;
@@ -320,38 +334,57 @@ function AutoResearchView() {
       useAutoResearchStore.getState().setError(t('autoresearch.connectionTestRequired'));
       return;
     }
-    if (!sshConfig) {
-      setSshConfig(cfg);
-    }
-
-    let sessionFilePath = '';
-    try {
-      sessionFilePath = await getDefaultAutoResearchSessionFilePath();
-    } catch (error) {
-      useAutoResearchStore.getState().setError(
-        t('autoresearch.failedToResolveSessionFilePath').replace(
-          '{message}',
-          error instanceof Error ? error.message : String(error),
-        ),
-      );
+    if (agentConfigError) {
+      useAutoResearchStore.getState().setError(agentConfigError);
       return;
     }
 
-    initSession({
-      id: createStableAutoResearchSessionId(cfg, sessionFilePath, metric, direction),
-      maxIterations: maxIter,
-      metricName: metric,
-      metricDirection: direction,
-      sshConfig: cfg,
-      sessionFilePath,
-    });
+    const sessionFilePath = getAutoResearchSessionFilePathFromWorkDir(cfg.remoteWorkDir);
+    const sessionId = createStableAutoResearchSessionId(cfg, sessionFilePath, metric, direction);
 
-    setShowSetup(false);
-    openTerminalPanel(`autoresearch-terminal-${Date.now()}`, cfg.mode === 'local' ? cfg.remoteWorkDir : '');
+    try {
+      const preflight = await runAutoResearchPreflight({
+        sshConfig: cfg,
+        experimentDir: useAutoResearchStore.getState().experimentDir || cfg.remoteWorkDir,
+        workDir: cfg.remoteWorkDir,
+        sessionId,
+        agentConfig,
+      });
 
-    const sendMessage = createAutoResearchSendMessage(cfg.remoteWorkDir);
-    void startExperimentLoop(sendMessage);
+      const resolvedConfig = {
+        ...cfg,
+        remoteWorkDir: preflight.resolvedWorkDir,
+      };
+
+      if (!sshConfig) {
+        setSshConfig(resolvedConfig);
+      }
+
+      initSession({
+        id: sessionId,
+        maxIterations: maxIter,
+        metricName: metric,
+        metricDirection: direction,
+        sshConfig: resolvedConfig,
+        experimentDir: preflight.resolvedExperimentDir,
+        sessionFilePath: preflight.sessionFilePath,
+        livingDocPath: preflight.livingDocPath,
+      });
+
+      setShowSetup(false);
+      openTerminalPanel(`autoresearch-terminal-${Date.now()}`, resolvedConfig.mode === 'local' ? resolvedConfig.remoteWorkDir : '');
+
+      const sendMessage = createAutoResearchSendMessage(
+        preflight.resolvedExperimentDir,
+        preflight.agentConfig,
+      );
+      void startExperimentLoop(sendMessage);
+    } catch (error) {
+      useAutoResearchStore.getState().setError(formatError(error));
+    }
   }, [
+    agentConfig,
+    agentConfigError,
     connectionTest.status,
     direction,
     initSession,
@@ -480,8 +513,9 @@ function AutoResearchView() {
                   ? (!setupForm.host || !setupForm.user
                       || (setupForm.authMode === 'password' && !setupForm.password)
                       || (setupForm.authMode === 'key' && !setupForm.keyPath)
-                      || !setupForm.remoteWorkDir)
-                  : !setupForm.remoteWorkDir
+                      || !setupForm.remoteWorkDir
+                      || Boolean(agentConfigError))
+                  : !setupForm.remoteWorkDir || Boolean(agentConfigError)
               }
               onClick={handleTestConnection}
             >
@@ -529,21 +563,27 @@ function AutoResearchView() {
             />
           </div>
 
-          <button
-            className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            disabled={
-              connectionTest.status !== 'success'
-              || (setupForm.mode === 'ssh'
-                ? (!setupForm.host || !setupForm.user
-                    || (setupForm.authMode === 'password' && !setupForm.password)
-                    || (setupForm.authMode === 'key' && !setupForm.keyPath)
-                    || !setupForm.remoteWorkDir)
-                : !setupForm.remoteWorkDir)
-            }
-            onClick={handleStart}
-          >
-            {t('autoresearch.start')}
-          </button>
+            <button
+              className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              disabled={
+                connectionTest.status !== 'success'
+                || (setupForm.mode === 'ssh'
+                  ? (!setupForm.host || !setupForm.user
+                      || (setupForm.authMode === 'password' && !setupForm.password)
+                      || (setupForm.authMode === 'key' && !setupForm.keyPath)
+                      || !setupForm.remoteWorkDir
+                      || Boolean(agentConfigError))
+                  : !setupForm.remoteWorkDir || Boolean(agentConfigError))
+              }
+              onClick={handleStart}
+            >
+              {t('autoresearch.start')}
+            </button>
+            {agentConfigError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {agentConfigError}
+              </div>
+            )}
         </div>
       </div>
     );

@@ -38,6 +38,8 @@ export function WorkflowRunHistory() {
     switch (status) {
       case 'completed':
         return <span className="text-green-500">✅</span>;
+      case 'completed-not-reached':
+        return <span className="text-amber-500">⚠️</span>;
       case 'error':
         return <span className="text-red-500">❌</span>;
       case 'stopped':

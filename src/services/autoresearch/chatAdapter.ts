@@ -8,8 +8,15 @@
  */
 
 import { useAutoResearchStore } from '@/store/autoresearchStore';
-import { useSettingsStore } from '@/store';
+import {
+  formatAgentConfigValidationError,
+  getAgentConfigDiagnostics,
+  resolveActiveAgentConfig,
+  validateResolvedAgentConfig,
+  type ResolvedAgentConfig,
+} from '@/services/agentConfig';
 import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
+import { buildAutoResearchAgentErrorMessage } from './errors';
 import { appendTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
 
@@ -55,14 +62,16 @@ async function appendIterationTranscript(section: string): Promise<void> {
  */
 export function createAutoResearchSendMessage(
   workDir?: string,
+  fixedAgentConfig?: ResolvedAgentConfig | null,
 ): (systemPrompt: string, userMessage: string) => Promise<string> {
   // Persistent message history across iterations within one loop session
   const messageHistory: any[] = [];
 
   return async (systemPrompt: string, userMessage: string): Promise<string> => {
-    const apiConfig = useSettingsStore.getState().getActiveConfig();
-    if (!apiConfig?.apiKey) {
-      throw new Error('API key not configured');
+    const agentConfig = fixedAgentConfig ?? resolveActiveAgentConfig();
+    const validationIssues = validateResolvedAgentConfig(agentConfig);
+    if (validationIssues.length > 0) {
+      throw new Error(formatAgentConfigValidationError(agentConfig, validationIssues));
     }
 
     // Each iteration gets a fresh session ID for the Rust backend
@@ -94,42 +103,61 @@ export function createAutoResearchSendMessage(
     store.appendLiveOutput(`\n--- Iteration ${store.currentIteration} ---\n`);
     await writeIterationTranscriptHeader(userMessage);
 
-    const result = await runHeadlessAgentTurn({
-      sessionId,
-      initialMessages: turnMessages,
-      systemPrompt,
-      workDir,
-      onTextDelta: (chunk) => {
-        useAutoResearchStore.getState().appendLiveOutput(chunk);
-      },
-      onReasoningDelta: (chunk) => {
-        useAutoResearchStore.getState().appendLiveOutput(`💭 ${chunk}`);
-      },
-      onStatus: (message) => {
-        useAutoResearchStore.getState().appendLiveOutput(`[status] ${message}\n`);
-      },
-      onToolSummary: (toolName, preview) => {
-        useAutoResearchStore.getState().appendLiveOutput(`  → ${toolName}: ${preview}\n`);
-      },
-      onAssistantMessage: async (text) => {
-        if (!text.trim()) {
-          return;
-        }
-        await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
-      },
-      onToolCall: async (call) => {
-        await appendIterationTranscript(
-          `\n## Tool Call: ${call.name}\n\`\`\`json\n${call.arguments || '{}'}\n\`\`\`\n`,
-        );
-      },
-      onToolResult: async (call) => {
-        await appendIterationTranscript(
-          `\n## Tool Result: ${call.name} (${call.durationMs}ms)\n\`\`\`text\n${truncateTranscriptResult(call.result)}\n\`\`\`\n`,
-        );
-      },
-    });
+    console.info('[AutoResearch] Agent request', getAgentConfigDiagnostics(agentConfig!));
 
-    const assistantText = result.finalText;
+    let assistantText = '';
+    try {
+      const result = await runHeadlessAgentTurn({
+        sessionId,
+        initialMessages: turnMessages,
+        systemPrompt,
+        workDir,
+        agentConfig: agentConfig!,
+        onTextDelta: (chunk) => {
+          useAutoResearchStore.getState().appendLiveOutput(chunk);
+        },
+        onReasoningDelta: (chunk) => {
+          useAutoResearchStore.getState().appendLiveOutput(`💭 ${chunk}`);
+        },
+        onStatus: (message) => {
+          useAutoResearchStore.getState().appendLiveOutput(`[status] ${message}\n`);
+        },
+        onToolSummary: (toolName, preview) => {
+          useAutoResearchStore.getState().appendLiveOutput(`  → ${toolName}: ${preview}\n`);
+        },
+        onAssistantMessage: async (text) => {
+          if (!text.trim()) {
+            return;
+          }
+          await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
+        },
+        onToolCall: async (call) => {
+          await appendIterationTranscript(
+            `\n## Tool Call: ${call.name}\n\`\`\`json\n${call.arguments || '{}'}\n\`\`\`\n`,
+          );
+        },
+        onToolResult: async (call) => {
+          await appendIterationTranscript(
+            `\n## Tool Result: ${call.name} (${call.durationMs}ms)\n\`\`\`text\n${truncateTranscriptResult(call.result)}\n\`\`\`\n`,
+          );
+        },
+      });
+
+      assistantText = result.finalText;
+    } catch (error) {
+      const diagnosticMessage = buildAutoResearchAgentErrorMessage({
+        phase: 'agent_execution',
+        config: agentConfig!,
+        cwd: workDir,
+        error,
+      });
+      console.error('[AutoResearch] Agent execution failed', {
+        ...getAgentConfigDiagnostics(agentConfig!),
+        cwd: workDir,
+        diagnosticMessage,
+      });
+      throw new Error(diagnosticMessage);
+    }
 
     // Record assistant response in history for context continuity
     messageHistory.push({

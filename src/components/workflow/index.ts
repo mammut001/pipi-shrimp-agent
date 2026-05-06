@@ -6,6 +6,8 @@ export { AgentNode } from './AgentNode';
 export { CustomEdge } from './CustomEdge';
 export { WorkflowCanvas } from './WorkflowCanvas';
 export { WorkflowExecutionBar } from './WorkflowExecutionBar';
+export { WorkflowGoalPanel } from './WorkflowGoalPanel';
+export { GoalStatusBadge } from './GoalStatusBadge';
 export { AgentConfigPanel } from './AgentConfigPanel';
 export { AgentTemplateDrawer } from './AgentTemplateDrawer';
 export { WorkflowOutputPanel } from './WorkflowOutputPanel';

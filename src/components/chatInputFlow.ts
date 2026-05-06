@@ -41,8 +41,8 @@ export function shouldDismissBrowserIntentConfirm(candidate: string | null, inpu
 
 export async function resolveChatTargetSessionId(
   currentSessionId: string | null | undefined,
-  startSession: () => Promise<string>
-): Promise<string> {
+  startSession: () => Promise<string | null>
+): Promise<string | null> {
   if (currentSessionId) {
     return currentSessionId;
   }

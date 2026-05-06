@@ -18,6 +18,7 @@ import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount } from '@/utils/chat';
 import { invoke } from '@tauri-apps/api/core';
 import { workflowEngine } from '@/services/workflowEngine';
+import { startNewChatFlow } from '@/services/newChatFlow';
 import { SearchInput } from '@/components/ui';
 
 
@@ -40,7 +41,7 @@ export function Sidebar() {
   const projects = useChatStore((s) => s.projects);
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   // Functions are stable references, safe to destructure
-  const { selectSession, deleteSession, deleteSessions, createProject, deleteProject, getSessionsByProject, updateSessionProject, startSession, renameSession } = useChatStore();
+  const { selectSession, deleteSession, deleteSessions, createProject, deleteProject, getSessionsByProject, updateSessionProject, renameSession } = useChatStore();
   const { toggleSettings, currentView, setCurrentView } = useUIStore();
   const workflowInstances = useWorkflowStore((s) => s.instances);
   const currentInstanceId = useWorkflowStore((s) => s.currentInstanceId);
@@ -186,8 +187,8 @@ export function Sidebar() {
    * Handle creating a new chat with the default session flow.
    */
   const handleNewChat = useCallback(() => {
-    void startSession();
-  }, [startSession]);
+    void startNewChatFlow('sidebar');
+  }, []);
 
   /**
    * Create a new blank workflow with a pre-assigned working directory.

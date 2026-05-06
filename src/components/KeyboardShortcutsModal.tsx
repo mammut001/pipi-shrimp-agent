@@ -6,6 +6,7 @@
 
 import { useEffect, useCallback, useState } from 'react';
 import { useUIStore } from '@/store';
+import { startNewChatFlow } from '@/services/newChatFlow';
 
 interface Shortcut {
   key: string;
@@ -116,45 +117,16 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
  */
 export function useKeyboardShortcuts() {
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const { setCurrentView, toggleSidebar } = useUIStore();
+  const { toggleSidebar } = useUIStore();
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    // Ignore if user is typing in an input
-    const target = e.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-      return;
-    }
-
-    const isMeta = e.metaKey || e.ctrlKey;
-
-    // Toggle shortcuts modal with ?
-    if (e.key === '?' && !isMeta) {
-      e.preventDefault();
-      setShowShortcuts((prev) => !prev);
-      return;
-    }
-
-    // Cmd+N - New chat
-    if (isMeta && e.key === 'n') {
-      e.preventDefault();
-      setCurrentView('chat');
-      return;
-    }
-
-    // Cmd+, - Settings
-    if (isMeta && e.key === ',') {
-      e.preventDefault();
-      useUIStore.getState().toggleSettings();
-      return;
-    }
-
-    // Cmd+/ - Toggle sidebar
-    if (isMeta && e.key === '/') {
-      e.preventDefault();
-      toggleSidebar();
-      return;
-    }
-  }, [setCurrentView, toggleSidebar]);
+    handleKeyboardShortcut(e, {
+      toggleShortcuts: () => setShowShortcuts((prev) => !prev),
+      toggleSidebar,
+      toggleSettings: () => useUIStore.getState().toggleSettings(),
+      startNewChat: () => startNewChatFlow('keyboard-shortcut'),
+    });
+  }, [toggleSidebar]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -162,6 +134,46 @@ export function useKeyboardShortcuts() {
   }, [handleKeyDown]);
 
   return { showShortcuts, setShowShortcuts, KeyboardShortcutsModal };
+}
+
+export function handleKeyboardShortcut(
+  e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'preventDefault' | 'target'>,
+  handlers: {
+    toggleShortcuts: () => void;
+    toggleSidebar: () => void;
+    toggleSettings: () => void;
+    startNewChat: () => unknown;
+  },
+): void {
+  const target = e.target as HTMLElement;
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+    return;
+  }
+
+  const isMeta = e.metaKey || e.ctrlKey;
+
+  if (e.key === '?' && !isMeta) {
+    e.preventDefault();
+    handlers.toggleShortcuts();
+    return;
+  }
+
+  if (isMeta && e.key === 'n') {
+    e.preventDefault();
+    void handlers.startNewChat();
+    return;
+  }
+
+  if (isMeta && e.key === ',') {
+    e.preventDefault();
+    handlers.toggleSettings();
+    return;
+  }
+
+  if (isMeta && e.key === '/') {
+    e.preventDefault();
+    handlers.toggleSidebar();
+  }
 }
 
 export default KeyboardShortcutsModal;
