@@ -4,13 +4,19 @@
  * Layout: MainLayout with experiment timeline in center and detail panel on right.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import { TerminalPanel } from '@/components';
 import { MainLayout } from '@/layout';
-import { useAutoResearchStore, type ExperimentEntry, type SshConfig } from '@/store/autoresearchStore';
+import { useSettingsStore } from '@/store';
+import {
+  useAutoResearchStore,
+  type SshConfig,
+  getSelectedAutoResearchRun,
+  getSortedAutoResearchRuns,
+} from '@/store/autoresearchStore';
 import {
   formatAgentConfigValidationError,
   resolveActiveAgentConfig,
@@ -23,12 +29,11 @@ import {
   pauseExperimentLoop,
   resumeExperimentLoop,
 } from '@/services/autoresearch';
-import {
-  getAutoResearchSessionFilePathFromWorkDir,
-} from '@/services/autoresearch/paths';
 import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
 import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
 import { formatError } from '@/services/autoresearch/errors';
+import { createAutoResearchRunId } from '@/services/autoresearch/history';
+import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
@@ -73,56 +78,12 @@ function loadPersistedSetup(): SshConfig {
   }
 }
 
-function createStableAutoResearchSessionId(
-  cfg: SshConfig,
-  sessionFilePath: string,
-  metricName: string,
-  direction: 'lower' | 'higher',
-): string {
-  const seed = `${cfg.mode}|${cfg.host}|${cfg.user}|${cfg.port}|${cfg.remoteWorkDir}|${sessionFilePath}|${metricName}|${direction}`;
-  let hash = 0;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = ((hash << 5) - hash + seed.charCodeAt(index)) | 0;
-  }
-  return `autoresearch-${Math.abs(hash).toString(36)}`;
-}
-
-function getStatusLabel(status: ExperimentEntry['status']) {
-  switch (status) {
-    case 'IMPROVED':
-      return t('autoresearch.statusImproved');
-    case 'NOT_IMPROVED':
-      return t('autoresearch.statusNotImproved');
-    case 'FAILED':
-      return t('autoresearch.statusFailed');
-    default:
-      return status;
-  }
-}
-
-function getLoopStateLabel(state: string) {
-  switch (state) {
-    case 'idle':
-      return t('autoresearch.loopStateIdle');
-    case 'running':
-      return t('autoresearch.loopStateRunning');
-    case 'paused':
-      return t('autoresearch.loopStatePaused');
-    case 'stopped':
-      return t('autoresearch.loopStateStopped');
-    case 'error':
-      return t('autoresearch.loopStateError');
-    default:
-      return state;
-  }
-}
-
 // ============== Experiment Detail Panel ==============
 
 function ExperimentDetailPanel() {
-  const experiments = useAutoResearchStore(s => s.experiments);
+  const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
   const selectedIdx = useAutoResearchStore(s => s.selectedExperiment);
-  const entry = selectedIdx >= 0 ? experiments[selectedIdx] : null;
+  const entry = selectedRun && selectedIdx >= 0 ? selectedRun.iterations[selectedIdx] : null;
 
   if (!entry) {
     return (
@@ -135,25 +96,27 @@ function ExperimentDetailPanel() {
   return (
     <div className="p-4 space-y-4 text-sm overflow-y-auto h-full">
       <h3 className="text-lg font-semibold text-gray-800">
-        {t('autoresearch.experiment')} #{entry.iteration}
+        {t('autoresearch.experiment')} #{entry.index}
       </h3>
       <div>
         <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.hypothesis')}</label>
-        <p className="text-gray-800 mt-1">{entry.hypothesis}</p>
+        <p className="text-gray-800 mt-1">{entry.hypothesis || t('autoresearch.emptyValue')}</p>
       </div>
       <div>
         <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.change')}</label>
-        <p className="text-gray-700 mt-1 font-mono text-xs">{entry.change}</p>
+        <p className="text-gray-700 mt-1 font-mono text-xs whitespace-pre-wrap">{entry.change || t('autoresearch.emptyValue')}</p>
       </div>
       <div>
         <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.result')}</label>
         <p className="mt-1">
-          <StatusBadge status={entry.status} />
-          <span className="ml-2 text-gray-700">
-            {entry.metricValue !== null ? entry.metricValue : t('autoresearch.notAvailable')}
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+            {entry.status}
           </span>
-          {entry.failReason && (
-            <span className="ml-2 text-red-500 text-xs">({entry.failReason})</span>
+          <span className="ml-2 text-gray-700">
+            {entry.metricValue !== null && entry.metricValue !== undefined ? entry.metricValue : t('autoresearch.notAvailable')}
+          </span>
+          {entry.error && (
+            <span className="ml-2 text-red-500 text-xs">({entry.error})</span>
           )}
         </p>
       </div>
@@ -161,27 +124,34 @@ function ExperimentDetailPanel() {
         <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.reasoning')}</label>
         <p className="text-gray-600 mt-1 whitespace-pre-wrap">{entry.reasoning || t('autoresearch.emptyValue')}</p>
       </div>
+      {entry.artifactPaths && entry.artifactPaths.length > 0 && (
+        <div>
+          <label className="text-xs text-gray-500 uppercase tracking-wider">Artifacts</label>
+          <div className="mt-1 space-y-1">
+            {entry.artifactPaths.slice(0, 8).map((artifactPath) => (
+              <p key={artifactPath} className="text-xs text-gray-500 break-all font-mono">{artifactPath}</p>
+            ))}
+          </div>
+        </div>
+      )}
+      {selectedRun && selectedRun.events.length > 0 && (
+        <div>
+          <label className="text-xs text-gray-500 uppercase tracking-wider">Recent events</label>
+          <div className="mt-1 space-y-1">
+            {selectedRun.events.slice(-5).reverse().map((event) => (
+              <p key={event.id} className="text-xs text-gray-500">
+                <span className="font-semibold text-gray-700">{event.phase}</span>
+                <span className="text-gray-300"> · </span>
+                {event.message}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="text-xs text-gray-400">
-        {entry.timestamp} · {(entry.durationMs / 1000).toFixed(1)}{t('autoresearch.secondsShort')}
+        {[entry.startedAt, entry.endedAt].filter(Boolean).join(' → ')}
       </div>
     </div>
-  );
-}
-
-// ============== Status Badge ==============
-
-function StatusBadge({ status }: { status: ExperimentEntry['status'] }) {
-  const styles = {
-    IMPROVED: 'bg-green-100 text-green-700',
-    NOT_IMPROVED: 'bg-yellow-100 text-yellow-700',
-    FAILED: 'bg-red-100 text-red-700',
-  };
-  const icons = { IMPROVED: '✅', NOT_IMPROVED: '➖', FAILED: '❌' };
-
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${styles[status]}`}>
-      {icons[status]} {getStatusLabel(status)}
-    </span>
   );
 }
 
@@ -189,25 +159,42 @@ function StatusBadge({ status }: { status: ExperimentEntry['status'] }) {
 
 function AutoResearchView() {
   const {
+    id: activeRunId,
     loopState, currentIteration, maxIterations, bestMetric,
     metricName, consecutiveFailures,
-    experiments, liveOutput, sshConfig,
-    setSelectedExperiment, initSession, setSshConfig,
+    liveOutput, sshConfig, statusMessage, agentConfigSnapshot,
+    setSelectedExperiment, initSession, setSshConfig, runHistory, selectRun,
     terminalVisible, terminalSessionId, terminalCwd,
     openTerminalPanel, setTerminalReady, setTerminalVisible,
   } = useAutoResearchStore();
+  const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
+  const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
+  const activeConfigId = useSettingsStore((state) => state.activeConfigId);
+  const apiConfigs = useSettingsStore((state) => state.apiConfigs);
 
-  const [showSetup, setShowSetup] = useState(!sshConfig);
+  const [showSetup, setShowSetup] = useState(!sshConfig && runHistory.length === 0);
   const [setupForm, setSetupForm] = useState<SshConfig>(() => loadPersistedSetup());
   const [maxIter, setMaxIter] = useState(50);
   const [metric, setMetric] = useState('val_bpb');
   const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
   const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle', output: '' });
-  const agentConfig = resolveActiveAgentConfig();
+  const agentConfig = useMemo(
+    () => resolveActiveAgentConfig(),
+    [activeConfigId, apiConfigs],
+  );
   const agentConfigIssues = validateResolvedAgentConfig(agentConfig);
   const agentConfigError = agentConfigIssues.length > 0
     ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
     : '';
+  const displayRun = selectedRun;
+  const displayedCurrentIteration = displayRun?.currentIteration ?? currentIteration;
+  const displayedMaxIterations = displayRun?.config.iterations ?? maxIterations;
+  const displayedMetricName = displayRun?.config.metric ?? metricName;
+  const displayedBestMetric = displayRun?.bestMetricValue ?? bestMetric;
+  const displayedIterations = displayRun?.iterations ?? [];
+  const displayedLiveOutput = displayRun?.id === activeRunId ? liveOutput : (displayRun?.liveOutputExcerpt || '');
+  const displayedStatus = displayRun?.status ?? loopState;
+  const displayedConfigSnapshot = displayRun?.config.configSnapshot ?? agentConfigSnapshot;
 
   useEffect(() => {
     const { password: _password, ...persisted } = setupForm;
@@ -326,13 +313,16 @@ function AutoResearchView() {
       useAutoResearchStore.getState().setError(t('autoresearch.connectionTestRequired'));
       return;
     }
-    if (agentConfigError) {
-      useAutoResearchStore.getState().setError(agentConfigError);
+
+    let runConfig;
+    try {
+      runConfig = resolveAutoResearchRunConfig();
+    } catch (error) {
+      useAutoResearchStore.getState().setError(formatError(error));
       return;
     }
 
-    const sessionFilePath = getAutoResearchSessionFilePathFromWorkDir(cfg.remoteWorkDir);
-    const sessionId = createStableAutoResearchSessionId(cfg, sessionFilePath, metric, direction);
+    const sessionId = createAutoResearchRunId();
 
     try {
       const preflight = await runAutoResearchPreflight({
@@ -340,7 +330,7 @@ function AutoResearchView() {
         experimentDir: useAutoResearchStore.getState().experimentDir || cfg.remoteWorkDir,
         workDir: cfg.remoteWorkDir,
         sessionId,
-        agentConfig,
+        agentConfig: runConfig.agentConfig,
       });
 
       const resolvedConfig = {
@@ -361,6 +351,7 @@ function AutoResearchView() {
         experimentDir: preflight.resolvedExperimentDir,
         sessionFilePath: preflight.sessionFilePath,
         livingDocPath: preflight.livingDocPath,
+        agentConfigSnapshot: runConfig.snapshot,
       });
 
       setShowSetup(false);
@@ -375,8 +366,6 @@ function AutoResearchView() {
       useAutoResearchStore.getState().setError(formatError(error));
     }
   }, [
-    agentConfig,
-    agentConfigError,
     connectionTest.status,
     direction,
     initSession,
@@ -587,21 +576,21 @@ function AutoResearchView() {
       {/* Status Bar */}
       <div className="flex items-center gap-4 px-4 py-3 bg-gray-50 rounded-xl border text-sm">
         <span className={`w-2 h-2 rounded-full ${
-          loopState === 'running' ? 'bg-green-500 animate-pulse' :
-          loopState === 'paused' ? 'bg-yellow-500' :
-          loopState === 'error' ? 'bg-red-500' : 'bg-gray-400'
+          displayedStatus === 'running' ? 'bg-green-500 animate-pulse' :
+          displayedStatus === 'waiting_rate_limit' ? 'bg-yellow-500' :
+          displayedStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
         }`} />
-        <span className="font-medium text-gray-700">{getLoopStateLabel(loopState)}</span>
+        <span className="font-medium text-gray-700">{String(displayedStatus).replace(/_/g, ' ')}</span>
         <span className="text-gray-400">|</span>
-        <span className="text-gray-600">{t('autoresearch.experimentShort')} {currentIteration}/{maxIterations}</span>
+        <span className="text-gray-600">{t('autoresearch.experimentShort')} {displayedCurrentIteration}/{displayedMaxIterations}</span>
         <span className="text-gray-400">|</span>
         <span className="text-gray-600">
-          {t('autoresearch.best')}: {bestMetric !== null ? `${metricName}=${bestMetric}` : t('autoresearch.notAvailable')}
+          {t('autoresearch.best')}: {displayedBestMetric !== null && displayedBestMetric !== undefined ? `${displayedMetricName}=${displayedBestMetric}` : t('autoresearch.notAvailable')}
         </span>
-        {consecutiveFailures > 0 && (
+        {(displayRun?.failureCount ?? consecutiveFailures) > 0 && (
           <>
             <span className="text-gray-400">|</span>
-            <span className="text-red-500">⚠ {t('autoresearch.consecutiveFailures').replace('{count}', String(consecutiveFailures))}</span>
+            <span className="text-red-500">⚠ {t('autoresearch.consecutiveFailures').replace('{count}', String(displayRun?.failureCount ?? consecutiveFailures))}</span>
           </>
         )}
 
@@ -616,7 +605,7 @@ function AutoResearchView() {
             ▶ {t('autoresearch.setupAndStart')}
           </button>
         )}
-        {loopState === 'running' && (
+        {loopState === 'running' && displayRun?.id === activeRunId && (
           <>
             <button onClick={handlePause} className="px-3 py-1 bg-yellow-500 text-white rounded-lg text-xs hover:bg-yellow-600">
               ⏸ {t('autoresearch.pause')}
@@ -626,7 +615,7 @@ function AutoResearchView() {
             </button>
           </>
         )}
-        {loopState === 'paused' && (
+        {loopState === 'paused' && displayRun?.id === activeRunId && (
           <>
             <button onClick={handleResume} className="px-3 py-1 bg-green-500 text-white rounded-lg text-xs hover:bg-green-600">
               ▶ {t('autoresearch.resume')}
@@ -636,7 +625,7 @@ function AutoResearchView() {
             </button>
           </>
         )}
-        {(loopState === 'stopped' || loopState === 'error') && (
+        {(loopState === 'stopped' || loopState === 'error' || displayRun?.id !== activeRunId) && (
           <button
             onClick={() => {
               useAutoResearchStore.getState().resetSession();
@@ -649,6 +638,54 @@ function AutoResearchView() {
         )}
       </div>
 
+      {sortedRuns.length > 0 && (
+        <div className="rounded-lg border px-3 py-2 bg-white">
+          <div className="text-xs font-semibold text-gray-600 mb-2">Recent runs</div>
+          <div className="flex flex-wrap gap-2">
+            {sortedRuns.map((run) => (
+              <button
+                key={run.id}
+                type="button"
+                onClick={() => {
+                  selectRun(run.id);
+                  setSelectedExperiment(-1);
+                  setShowSetup(false);
+                }}
+                className={`rounded-md border px-2 py-1 text-xs text-left ${
+                  displayRun?.id === run.id ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <div className="font-medium truncate max-w-[220px]">{run.title}</div>
+                <div className="text-[11px] opacity-80">{run.status.replace(/_/g, ' ')} · {run.currentIteration}/{run.config.iterations}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {displayedConfigSnapshot && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-800">
+          <div className="font-medium">
+            Run config: {displayedConfigSnapshot.configName} · {displayedConfigSnapshot.provider} · {displayedConfigSnapshot.model} · {displayedConfigSnapshot.source}
+          </div>
+          <div className="mt-1 break-all text-blue-700">
+            {displayedConfigSnapshot.apiFormat} · {displayedConfigSnapshot.baseUrl} · key {displayedConfigSnapshot.keyPreview || '<EMPTY>'}
+          </div>
+          <div className="mt-1 text-blue-700">
+            This run is using the config captured when the run started. Start a new run to use latest Settings.
+          </div>
+          {displayedConfigSnapshot.warning && (
+            <div className="mt-1 text-amber-700">{displayedConfigSnapshot.warning}</div>
+          )}
+        </div>
+      )}
+
+      {statusMessage && loopState !== 'error' && (
+        <div className="px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+          {statusMessage}
+        </div>
+      )}
+
       {/* Error banner */}
       {loopState === 'error' && (
         <div className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -658,25 +695,27 @@ function AutoResearchView() {
 
       {/* Experiment Timeline */}
       <div className="flex-1 overflow-y-auto space-y-1">
-        {experiments.length === 0 ? (
+        {displayedIterations.length === 0 ? (
           <div className="text-center text-gray-400 text-sm mt-20">
-            {loopState === 'idle' ? t('autoresearch.emptyIdle') : t('autoresearch.emptyWaiting')}
+            {sortedRuns.length === 0 && loopState === 'idle' ? t('autoresearch.emptyIdle') : t('autoresearch.emptyWaiting')}
           </div>
         ) : (
-          experiments.map((exp, idx) => (
+          displayedIterations.map((exp, idx) => (
             <button
-              key={exp.iteration}
+              key={exp.id}
               className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg text-sm text-left transition
                 ${idx === useAutoResearchStore.getState().selectedExperiment
                   ? 'bg-blue-50 border border-blue-200'
                   : 'hover:bg-gray-50'}`}
               onClick={() => setSelectedExperiment(idx)}
             >
-              <span className="w-8 text-gray-400 text-xs">#{exp.iteration}</span>
-              <StatusBadge status={exp.status} />
-              <span className="flex-1 text-gray-700 truncate">{exp.hypothesis}</span>
+              <span className="w-8 text-gray-400 text-xs">#{exp.index}</span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                {exp.status}
+              </span>
+              <span className="flex-1 text-gray-700 truncate">{exp.hypothesis || 'Pending iteration'}</span>
               <span className="text-gray-400 text-xs font-mono">
-                {exp.metricValue !== null ? exp.metricValue : '—'}
+                {exp.metricValue !== null && exp.metricValue !== undefined ? exp.metricValue : '—'}
               </span>
             </button>
           ))
@@ -684,9 +723,9 @@ function AutoResearchView() {
       </div>
 
       {/* Live output */}
-      {liveOutput && (
+      {displayedLiveOutput && (
         <div className="max-h-32 overflow-y-auto bg-gray-900 text-green-400 text-xs font-mono p-3 rounded-lg">
-          <pre className="whitespace-pre-wrap">{liveOutput}</pre>
+          <pre className="whitespace-pre-wrap">{displayedLiveOutput}</pre>
         </div>
       )}
 
