@@ -76,7 +76,9 @@ export interface ExperimentSession {
   metricDirection: 'lower' | 'higher';
   metricName: string;
   consecutiveFailures: number;
+  experimentDir: string;
   sessionFilePath: string;
+  livingDocPath: string;
   startedAt: string;
   experiments: ExperimentEntry[];
   sshConfig: SshConfig | null;
@@ -114,7 +116,9 @@ function createEmptySession(): ExperimentSession {
     metricDirection: 'lower',
     metricName: 'val_bpb',
     consecutiveFailures: 0,
+    experimentDir: '',
     sessionFilePath: '',
+    livingDocPath: '',
     startedAt: '',
     experiments: [],
     sshConfig: null,
@@ -138,7 +142,9 @@ interface AutoResearchStore extends ExperimentSession {
     metricName: string;
     metricDirection: 'lower' | 'higher';
     sshConfig: SshConfig;
+    experimentDir?: string;
     sessionFilePath?: string;
+    livingDocPath?: string;
     telegramConfig?: Partial<TelegramNotifyConfig>;
   }) => void;
 
@@ -189,7 +195,9 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     metricDirection: opts.metricDirection,
     metricName: opts.metricName,
     consecutiveFailures: 0,
+    experimentDir: opts.experimentDir || opts.sshConfig.remoteWorkDir || '',
     sessionFilePath: opts.sessionFilePath || '',
+    livingDocPath: opts.livingDocPath || '',
     startedAt: new Date().toISOString(),
     experiments: [],
     sshConfig: withSshConfigDefaults(opts.sshConfig),

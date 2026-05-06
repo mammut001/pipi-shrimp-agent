@@ -35,6 +35,7 @@ import { useAutoResearchStore } from '@/store/autoresearchStore';
 describe('loopEngine integration', () => {
   let workDir: string;
   let sessionFilePath: string;
+  const extraCleanupDirs = new Set<string>();
 
   beforeEach(async () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-loop-'));
@@ -55,6 +56,9 @@ describe('loopEngine integration', () => {
     mockNotifier.onLoopStopped.mockClear();
     mockNotifier.onTrendReport.mockClear();
     await fs.rm(workDir, { recursive: true, force: true });
+    await Promise.all([...extraCleanupDirs].map((dir) => fs.rm(dir, { recursive: true, force: true })));
+    extraCleanupDirs.clear();
+    useAutoResearchStore.getState().resetSession();
   });
 
   it('records iterations, rebuilds autoresearch.md, and stops after three consecutive failures', async () => {
@@ -68,13 +72,18 @@ describe('loopEngine integration', () => {
       sessionFilePath,
     });
 
-    const sequence = [
+    const sequence: Array<{
+      status: 'IMPROVED' | 'NOT_IMPROVED' | 'FAILED';
+      metricValue: number | null;
+      hypothesis: string;
+      failReason?: string;
+    }> = [
       { status: 'IMPROVED', metricValue: 0.9, hypothesis: 'lower learning rate' },
       { status: 'NOT_IMPROVED', metricValue: 1.0, hypothesis: 'bigger batch size' },
       { status: 'FAILED', metricValue: null, hypothesis: 'remove warmup', failReason: 'NaN' },
       { status: 'FAILED', metricValue: null, hypothesis: 'remove warmup more', failReason: 'timeout' },
       { status: 'FAILED', metricValue: null, hypothesis: 'remove warmup again', failReason: 'OOM' },
-    ] as const;
+    ];
 
     const sendMessage = jest.fn(async () => {
       const runDir = getCurrentRunDir();
@@ -115,5 +124,80 @@ describe('loopEngine integration', () => {
     expect(livingDoc).toContain('## Tried (reverted)');
 
     expect(mockNotifier.onLoopStopped).toHaveBeenCalledWith('3 consecutive failures', expect.any(Object));
+  });
+
+  it('resolves ~/ workdir, initializes a missing session file, and logs primitive startup paths', async () => {
+    const relativeWorkDir = `.pipi-autoresearch-startup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const startupWorkDir = path.join(os.homedir(), relativeWorkDir);
+    const startupWorkDirInput = `~/${relativeWorkDir}`;
+    extraCleanupDirs.add(startupWorkDir);
+    await fs.rm(startupWorkDir, { recursive: true, force: true });
+
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-experiment-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'train.py': 'print("train")\n',
+      'README.md': '# Demo experiment\n',
+    });
+
+    const startupSessionId = 'autoresearch-startup';
+    const startupConsoleSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    useAutoResearchStore.getState().initSession({
+      id: startupSessionId,
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: createLocalSshConfig(startupWorkDirInput),
+      experimentDir,
+      sessionFilePath: `${startupWorkDirInput}/session.md`,
+      livingDocPath: `${startupWorkDirInput}/runs/${startupSessionId}/autoresearch.md`,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+      await fs.writeFile(runDir.hypothesisPath, 'improve accuracy\n', 'utf8');
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: 0.91,
+          status: 'IMPROVED',
+          hypothesis: 'improve accuracy',
+        }, null, 2),
+        'utf8',
+      );
+      return 'EXPERIMENT_RESULT: metric_value=0.91 status=IMPROVED hypothesis="improve accuracy"';
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const expectedSessionFilePath = path.join(startupWorkDir, 'session.md');
+    const expectedLivingDocPath = path.join(startupWorkDir, 'runs', startupSessionId, 'autoresearch.md');
+
+    expect(store.errorMessage).toBeUndefined();
+    expect(store.currentIteration).toBe(1);
+    expect(store.sessionFilePath).toBe(expectedSessionFilePath);
+    expect(store.experimentDir).toBe(experimentDir);
+    expect(store.livingDocPath).toBe(expectedLivingDocPath);
+    await expect(fs.readFile(expectedSessionFilePath, 'utf8')).resolves.toContain('# AutoResearch Session');
+
+    expect(startupConsoleSpy).toHaveBeenCalledWith('[AutoResearch] Startup paths', expect.objectContaining({
+      resolvedWorkdir: startupWorkDir,
+      experimentDir,
+      sessionFilePath: expectedSessionFilePath,
+      livingDocPath: expectedLivingDocPath,
+      metricName: 'cv_accuracy',
+      direction: 'higher',
+      iterations: 1,
+      typeofSessionFilePath: 'string',
+      typeofExperimentDir: 'string',
+    }));
+
+    startupConsoleSpy.mockRestore();
   });
 });

@@ -54,6 +54,7 @@ const getInitialCurrentView = (): PersistedCurrentView => {
 
 // Promise resolver for the Chrome connect prompt (module-level, one at a time)
 let _chromePromptResolver: ((useCdp: boolean) => void) | null = null;
+let _newChatProjectPickerResolver: ((projectId: string | null | undefined) => void) | null = null;
 
 // Questionnaire resolvers grouped by session so repeated tool calls resolve together.
 const _questionnaireResolvers = new Map<string, Array<(response: string) => void>>();
@@ -97,6 +98,8 @@ export const useUIStore = create<UIState>((set) => ({
   // Chrome connect prompt
   chromePromptVisible: false,
   chromePromptTargetUrl: null,
+  newChatProjectPickerVisible: false,
+  newChatProjectPickerSource: null,
 
   // Questionnaire state
   activeQuestionnaire: null,
@@ -354,6 +357,27 @@ export const useUIStore = create<UIState>((set) => ({
     }
   },
 
+  showNewChatProjectPicker: (source: string): Promise<string | null | undefined> => {
+    return new Promise((resolve) => {
+      _newChatProjectPickerResolver = resolve;
+      set({
+        newChatProjectPickerVisible: true,
+        newChatProjectPickerSource: source,
+      });
+    });
+  },
+
+  resolveNewChatProjectPicker: (projectId: string | null | undefined) => {
+    set({
+      newChatProjectPickerVisible: false,
+      newChatProjectPickerSource: null,
+    });
+    if (_newChatProjectPickerResolver) {
+      _newChatProjectPickerResolver(projectId);
+      _newChatProjectPickerResolver = null;
+    }
+  },
+
   // Questionnaire actions: show form and return a promise resolved by user's submission
   showQuestionnaire: (sessionId: string, data: Omit<QuestionnaireData, '_resolve' | 'sessionId'>): Promise<string> => {
     return new Promise((resolve) => {
@@ -446,6 +470,8 @@ export const useUIStore = create<UIState>((set) => ({
       activeQuestionnaireSessionId: null,
       chromePromptVisible: false,
       chromePromptTargetUrl: null,
+      newChatProjectPickerVisible: false,
+      newChatProjectPickerSource: null,
       browserDockMode: 'hidden' as BrowserDockMode,
       browserPaneVisible: false,
       terminalPanelVisible: false,

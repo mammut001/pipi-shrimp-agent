@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { WorkflowExecutionBar } from './WorkflowExecutionBar';
+import { WorkflowGoalPanel } from './WorkflowGoalPanel';
 import { AgentConfigPanel } from './AgentConfigPanel';
 import { WorkflowOutputPanel } from './WorkflowOutputPanel';
 import { WorkflowRunHistory } from './WorkflowRunHistory';
@@ -174,6 +175,7 @@ export function WorkflowView() {
     <div key={currentInstance?.id ?? 'none'} className="flex flex-col h-full">
       {/* Top: Execution bar */}
       <WorkflowExecutionBar />
+      <WorkflowGoalPanel />
 
       {/* Main: Canvas + Config panel */}
       <div className="flex flex-1 min-h-0 overflow-hidden">

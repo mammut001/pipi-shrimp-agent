@@ -13,14 +13,61 @@ import { create } from 'zustand';
 import type {
   WorkflowState, WorkflowInstance, WorkflowAgent, WorkflowConnection,
   WorkflowRun, WorkflowRunAgentEntry, AgentExecutionConfig,
-  OutputRoute
+  GoalEvaluationResult, OutputRoute
 } from '../types/workflow';
-import { DEFAULT_EXECUTION_CONFIG, AGENT_TEMPLATES } from '../types/workflow';
+import {
+  AGENT_TEMPLATES,
+  DEFAULT_EXECUTION_CONFIG,
+  DEFAULT_MAX_GOAL_ITERATIONS,
+} from '../types/workflow';
 
 const STORAGE_KEY_V2 = 'pipi-workflow-v2';
 const STORAGE_KEY_V1 = 'pipi-workflow-v1';
 
 // ============ Persistence ============
+
+function normalizeOutputRoute(route: OutputRoute): OutputRoute {
+  return {
+    ...route,
+    keywordMode: route.keywordMode ?? 'includes',
+  };
+}
+
+function normalizeAgent(agent: WorkflowAgent): WorkflowAgent {
+  return {
+    ...agent,
+    position: agent.position ?? { x: 100, y: 200 },
+    status: agent.status ?? 'idle',
+    outputRoutes: (agent.outputRoutes ?? []).map(normalizeOutputRoute),
+    execution: agent.execution ?? DEFAULT_EXECUTION_CONFIG,
+    inputFrom: agent.inputFrom ?? null,
+    role: agent.role ?? 'custom',
+    notifyOnComplete: agent.notifyOnComplete ?? [],
+  };
+}
+
+function normalizeRun(run: WorkflowRun): WorkflowRun {
+  return {
+    ...run,
+    successCriteria: run.successCriteria ?? '',
+    currentIteration: run.currentIteration ?? 0,
+    goalEvaluations: run.goalEvaluations ?? [],
+  };
+}
+
+function normalizeInstance(instance: WorkflowInstance): WorkflowInstance {
+  return {
+    ...instance,
+    projectGoal: instance.projectGoal ?? '',
+    successCriteria: instance.successCriteria ?? '',
+    goalEvaluatorAgentId: instance.goalEvaluatorAgentId ?? null,
+    maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
+    activeRunId: instance.activeRunId ?? null,
+    dirtyAgentIds: instance.dirtyAgentIds ?? [],
+    agents: (instance.agents ?? []).map(normalizeAgent),
+    workflowRuns: (instance.workflowRuns ?? []).map(normalizeRun),
+  };
+}
 
 function loadFromStorage(): Partial<WorkflowState> {
   try {
@@ -29,7 +76,7 @@ function loadFromStorage(): Partial<WorkflowState> {
     if (v2) {
       const parsed = JSON.parse(v2);
       return {
-        instances: parsed.instances || [],
+        instances: (parsed.instances || []).map(normalizeInstance),
         currentInstanceId: parsed.currentInstanceId || null,
       };
     }
@@ -43,10 +90,15 @@ function loadFromStorage(): Partial<WorkflowState> {
         const defaultInstance: WorkflowInstance = {
           id: 'default',
           name: 'My Workflow',
-          agents: old.agents || [],
+          projectGoal: '',
+          successCriteria: '',
+          goalEvaluatorAgentId: null,
+          maxGoalIterations: DEFAULT_MAX_GOAL_ITERATIONS,
+          agents: (old.agents || []).map(normalizeAgent),
           connections: old.connections || [],
-          workflowRuns: old.workflowRuns || [],
+          workflowRuns: (old.workflowRuns || []).map(normalizeRun),
           activeRunId: null,
+          dirtyAgentIds: [],
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
@@ -127,15 +179,30 @@ export interface WorkflowStore extends WorkflowState {
   renameInstance: (id: string, name: string) => void;
   selectInstance: (id: string) => void;
   getCurrentInstance: () => WorkflowInstance | null;
+  updateInstanceMeta: (
+    id: string,
+    updates: Pick<WorkflowInstance, 'projectGoal' | 'successCriteria' | 'goalEvaluatorAgentId' | 'maxGoalIterations'>,
+  ) => void;
 
   // Agent CRUD (operates on current instance)
-  addAgent: (data: { name: string; soulPrompt?: string; task?: string; taskPrompt?: string; taskInstruction?: string; execution?: AgentExecutionConfig; inputFrom?: string | null }) => WorkflowAgent;
+  addAgent: (data: {
+    name: string;
+    soulPrompt?: string;
+    task?: string;
+    taskPrompt?: string;
+    taskInstruction?: string;
+    execution?: AgentExecutionConfig;
+    inputFrom?: string | null;
+    role?: WorkflowAgent['role'];
+  }) => WorkflowAgent;
   updateAgent: (id: string, updates: Partial<Omit<WorkflowAgent, 'id'>>) => void;
   removeAgent: (id: string) => void;
   updateAgentPosition: (id: string, position: { x: number; y: number }) => void;
   updateAgentSize: (id: string, width: number, height: number) => void;
   setAgentStatus: (id: string, status: WorkflowAgent['status']) => void;
   setAgentInputFrom: (agentId: string, fromId: string | null) => void;
+  markAgentDirty: (agentId: string) => void;
+  clearAgentDirty: (agentId: string) => void;
 
   // Connection CRUD (operates on current instance)
   addConnection: (sourceId: string, targetId: string, condition: string) => WorkflowConnection;
@@ -152,6 +219,7 @@ export interface WorkflowStore extends WorkflowState {
   renameWorkflowRun: (id: string, title: string) => void;
   deleteWorkflowRun: (id: string) => void;
   updateRunAgent: (runId: string, agentId: string, updates: Partial<WorkflowRunAgentEntry>) => void;
+  appendGoalEvaluation: (runId: string, evaluation: GoalEvaluationResult) => void;
   selectRun: (id: string | null) => void;
 
   // Execution state
@@ -178,10 +246,15 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const instance: WorkflowInstance = {
       id,
       name: name || `Workflow ${get().instances.length + 1}`,
+      projectGoal: '',
+      successCriteria: '',
+      goalEvaluatorAgentId: null,
+      maxGoalIterations: DEFAULT_MAX_GOAL_ITERATIONS,
       agents: [],
       connections: [],
       workflowRuns: [],
       activeRunId: null,
+      dirtyAgentIds: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -271,6 +344,20 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     return state.instances.find(i => i.id === state.currentInstanceId) ?? null;
   },
 
+  updateInstanceMeta: (id, updates) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        ...updateInstanceById(state, id, () => ({
+          ...updates,
+          maxGoalIterations: updates.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
+        })),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
   // ============ Agent CRUD ============
 
   addAgent: (data) => {
@@ -289,6 +376,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       outputRoutes: [],
       execution: data.execution || DEFAULT_EXECUTION_CONFIG,
       inputFrom: data.inputFrom ?? null,
+      role: data.role ?? 'custom',
+      notifyOnComplete: [],
     };
 
     set((state) => {
@@ -311,7 +400,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         ...state,
         ...updateCurrentInstance(state, (inst) => ({
           agents: inst.agents.map(agent =>
-            agent.id === id ? { ...agent, ...updates } : agent
+            agent.id === id ? normalizeAgent({ ...agent, ...updates }) : agent
           ),
         })),
       };
@@ -445,6 +534,32 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     });
   },
 
+  markAgentDirty: (agentId) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        ...updateCurrentInstance(state, (inst) => ({
+          dirtyAgentIds: Array.from(new Set([...(inst.dirtyAgentIds ?? []), agentId])),
+        })),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
+  clearAgentDirty: (agentId) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        ...updateCurrentInstance(state, (inst) => ({
+          dirtyAgentIds: (inst.dirtyAgentIds ?? []).filter((id) => id !== agentId),
+        })),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
   // ============ Connection CRUD ============
 
   addConnection: (sourceId, targetId, condition) => {
@@ -486,7 +601,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   // ============ OutputRoute Management ============
 
   addOutputRoute: (agentId, route) => {
-    const newRoute: OutputRoute = { ...route, id: crypto.randomUUID() };
+    const newRoute: OutputRoute = normalizeOutputRoute({ ...route, id: crypto.randomUUID() });
 
     set((state) => {
       const newConnection: WorkflowConnection = {
@@ -535,7 +650,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
               ? {
                   ...agent,
                   outputRoutes: agent.outputRoutes.map(route =>
-                    route.id === routeId ? { ...route, ...updates } : route
+                    route.id === routeId ? normalizeOutputRoute({ ...route, ...updates }) : route
                   ),
                 }
               : agent
@@ -587,11 +702,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   addWorkflowRun: (run) => {
     set((state) => {
+      const normalizedRun = normalizeRun(run);
       const newState = {
         ...state,
         ...updateCurrentInstance(state, (inst) => ({
-          workflowRuns: [run, ...inst.workflowRuns].slice(0, 50),
+          workflowRuns: [normalizedRun, ...inst.workflowRuns].slice(0, 50),
+          activeRunId: normalizedRun.id,
         })),
+        selectedRunId: normalizedRun.id,
       };
       saveToStorage(newState);
       return newState;
@@ -604,8 +722,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         ...state,
         ...updateCurrentInstance(state, (inst) => ({
           workflowRuns: inst.workflowRuns.map(run =>
-            run.id === id ? { ...run, ...updates } : run
+            run.id === id ? normalizeRun({ ...run, ...updates }) : run
           ),
+          activeRunId: inst.activeRunId === id || updates.status === 'running' ? id : inst.activeRunId,
         })),
       };
       saveToStorage(newState);
@@ -643,13 +762,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         nextRunId = runsAfterDelete[deletedIndex]?.id ?? runsAfterDelete[runsAfterDelete.length - 1]?.id ?? null;
       }
 
-      const newState = {
-        ...state,
-        ...updateCurrentInstance(state, () => ({
-          workflowRuns: runsAfterDelete,
-        })),
-        selectedRunId: wasSelected ? nextRunId : state.selectedRunId,
-      };
+        const newState = {
+          ...state,
+          ...updateCurrentInstance(state, (inst) => ({
+            workflowRuns: runsAfterDelete,
+            activeRunId: inst.activeRunId === id ? (runsAfterDelete[0]?.id ?? null) : inst.activeRunId,
+          })),
+          selectedRunId: wasSelected ? nextRunId : state.selectedRunId,
+        };
       saveToStorage(newState);
       return newState;
     });
@@ -677,6 +797,28 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     });
   },
 
+  appendGoalEvaluation: (runId, evaluation) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        ...updateCurrentInstance(state, (inst) => ({
+          workflowRuns: inst.workflowRuns.map((run) => (
+            run.id === runId
+              ? normalizeRun({
+                  ...run,
+                  currentIteration: evaluation.iteration,
+                  goalEvaluations: [...(run.goalEvaluations ?? []), evaluation],
+                  reachedGoal: evaluation.reached,
+                })
+              : run
+          )),
+        })),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
   selectRun: (id) => {
     set({ selectedRunId: id });
   },
@@ -696,6 +838,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       ...state,
       ...updateCurrentInstance(state, (inst) => ({
         agents: inst.agents.map(agent => ({ ...agent, status: 'idle' as const })),
+        dirtyAgentIds: [],
       })),
     }));
   },
@@ -708,13 +851,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   clearCanvas: () => {
     set((state) => {
-      const newState = {
-        ...state,
-        ...updateCurrentInstance(state, () => ({
-          agents: [],
-          connections: [],
-        })),
-      };
+        const newState = {
+          ...state,
+          ...updateCurrentInstance(state, () => ({
+            agents: [],
+            connections: [],
+            dirtyAgentIds: [],
+          })),
+        };
       saveToStorage(newState);
       return newState;
     });
@@ -737,6 +881,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       soulPrompt: writerTemplate?.soulPrompt || '',
       execution: { mode: 'single' },
       inputFrom: null,
+      role: 'writer',
     });
 
     const agentB = addAgent({
@@ -747,6 +892,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       soulPrompt: devTemplate?.soulPrompt || '',
       execution: { mode: 'single' },
       inputFrom: agentA.id,
+      role: 'coder',
     });
 
     const agentC = addAgent({
@@ -757,6 +903,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       soulPrompt: qaTemplate?.soulPrompt || '',
       execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
       inputFrom: agentB.id,
+      role: 'tester',
     });
 
     addConnection(agentA.id, agentB.id, 'A → B');

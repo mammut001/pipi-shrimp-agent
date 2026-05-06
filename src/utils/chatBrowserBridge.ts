@@ -13,6 +13,7 @@ import { useBrowserAgentStore } from '../store/browserAgentStore';
 import { useUIStore } from '../store/uiStore';
 import { useChatStore } from '../store/chatStore';
 import { useCdpStore } from '../store/cdpStore';
+import { startNewChatFlow } from '@/services/newChatFlow';
 import { t } from '@/i18n';
 
 // Track browser workflow listener lifecycle between tasks
@@ -634,7 +635,10 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
 
   const chatStore = useChatStore.getState();
   if (!chatStore.currentSessionId) {
-    await chatStore.startSession();
+    const sessionId = await startNewChatFlow('browser-bridge');
+    if (!sessionId) {
+      return false;
+    }
   }
 
   // Create task envelope (async: may show Chrome connect prompt for complex sites)

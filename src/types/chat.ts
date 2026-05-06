@@ -108,7 +108,7 @@ export interface ChatState {
   /**
    * Create a new session (optionally in a project and with a specific model)
    */
-  startSession: (projectId?: string, model?: string) => Promise<string>;
+  startSession: (projectId?: string | null, model?: string) => Promise<string>;
 
   /**
    * Send message (call API)
@@ -311,13 +311,13 @@ export const createMessage = (
 /**
  * Helper function to create a new session
  */
-export const createSession = (title?: string, projectId?: string, model?: string): Session => ({
+export const createSession = (title?: string, projectId?: string | null, model?: string): Session => ({
   id: crypto.randomUUID(),
   title: title || 'Chat',
   messages: [],
   createdAt: Date.now(),
   updatedAt: Date.now(),
-  projectId,
+  projectId: projectId ?? undefined,
   model,
 });
 

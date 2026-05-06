@@ -2,12 +2,11 @@
  * AutoResearch Loop Engine — Autonomous experiment cycle state machine.
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import { useAutoResearchStore, type ExperimentEntry, type ExperimentStatus, type SshConfig } from '@/store/autoresearchStore';
 import { logExperiment } from './expLogger';
 import { rollback, isRemoteClean, getRemoteDiff } from './rollback';
 import { createNotifier } from './notifier';
-import { describeTarget, ensureSshpassAvailable } from '@/utils/remoteExec';
+import { describeTarget, ensureSshpassAvailable, shellEscapePath } from '@/utils/remoteExec';
 import { assertSupportedPlatform } from './platformGuard';
 import {
   appendIterationMetrics,
@@ -19,6 +18,7 @@ import {
   captureCommitHash,
   createRunDir,
   getSessionRunPaths,
+  pathExistsOnTarget,
   readTargetText,
   writeTargetText,
   executeTargetCommand,
@@ -26,11 +26,12 @@ import {
 } from './runDir';
 import { readLivingDoc, rebuildLivingDoc } from './livingDoc';
 import { clearCurrentRunDir, setCurrentRunDir } from './terminalRunner';
-
-interface FileResponse {
-  content: string;
-  path: string;
-}
+import { formatError } from './errors';
+import {
+  getAutoResearchLivingDocPathFromWorkDir,
+  getAutoResearchSessionFilePathFromWorkDir,
+} from './paths';
+import { resolveTargetPath } from './preflight';
 
 interface ParsedResult {
   metricName: string;
@@ -46,6 +47,14 @@ interface PromptInput {
   livingDoc: string;
   sshConfig: SshConfig;
   runDir: RunDir;
+}
+
+interface StartupContext {
+  artifactCfg: SshConfig;
+  experimentCfg: SshConfig;
+  experimentDir: string;
+  workDir: string;
+  sessionContent: string;
 }
 
 function buildSystemPrompt({
@@ -158,6 +167,97 @@ function parseExperimentResult(agentOutput: string, metricName: string): ParsedR
   };
 }
 
+function assertNonEmptyString(fieldName: string, value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`Invalid ${fieldName}: expected non-empty string`);
+  }
+}
+
+async function ensureTargetDirectory(cfg: SshConfig, directoryPath: string): Promise<void> {
+  const result = await executeTargetCommand(
+    { ...cfg, remoteWorkDir: '' },
+    `mkdir -p ${shellEscapePath(directoryPath)}`,
+    60,
+  );
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to create workdir: ${directoryPath}`);
+  }
+}
+
+function buildInitialSessionContent(): string {
+  return `# AutoResearch Session\nInitialized at: ${new Date().toISOString()}\n`;
+}
+
+async function ensureSessionFileInitialized(cfg: SshConfig, sessionFilePath: string): Promise<string> {
+  const existing = await readTargetText(cfg, sessionFilePath);
+  if (existing !== null) {
+    return existing;
+  }
+
+  const initialContent = buildInitialSessionContent();
+  await writeTargetText(cfg, sessionFilePath, initialContent);
+  return initialContent;
+}
+
+async function prepareStartupContext(store: ReturnType<typeof useAutoResearchStore.getState>): Promise<StartupContext> {
+  const cfg = store.sshConfig;
+  if (!cfg) {
+    throw new Error('SSH config not set');
+  }
+
+  const workDirInput = cfg.remoteWorkDir;
+  const experimentDirInput = store.experimentDir;
+  const sessionFilePathInput = store.sessionFilePath || getAutoResearchSessionFilePathFromWorkDir(workDirInput);
+
+  assertNonEmptyString('workdir', workDirInput);
+  assertNonEmptyString('experimentDir', experimentDirInput);
+  assertNonEmptyString('sessionFilePath', sessionFilePathInput);
+
+  const resolvedWorkDir = await resolveTargetPath(cfg, 'workdir', workDirInput);
+  const resolvedExperimentDir = await resolveTargetPath(cfg, 'experimentDir', experimentDirInput);
+  const resolvedSessionFilePath = await resolveTargetPath(cfg, 'sessionFilePath', sessionFilePathInput);
+  const resolvedLivingDocPath = getAutoResearchLivingDocPathFromWorkDir(resolvedWorkDir, store.id);
+
+  const artifactCfg = { ...cfg, remoteWorkDir: resolvedWorkDir };
+  const experimentCfg = { ...cfg, remoteWorkDir: resolvedExperimentDir };
+
+  await ensureTargetDirectory(cfg, resolvedWorkDir);
+
+  if (!await pathExistsOnTarget({ ...cfg, remoteWorkDir: '' }, resolvedExperimentDir)) {
+    throw new Error(`Experiment directory does not exist: ${resolvedExperimentDir}`);
+  }
+
+  const sessionContent = await ensureSessionFileInitialized(artifactCfg, resolvedSessionFilePath);
+
+  console.info('[AutoResearch] Startup paths', {
+    resolvedWorkdir: resolvedWorkDir,
+    experimentDir: resolvedExperimentDir,
+    sessionFilePath: resolvedSessionFilePath,
+    livingDocPath: resolvedLivingDocPath,
+    metricName: store.metricName,
+    direction: store.metricDirection,
+    iterations: store.maxIterations,
+    typeofSessionFilePath: typeof resolvedSessionFilePath,
+    typeofExperimentDir: typeof resolvedExperimentDir,
+  });
+
+  useAutoResearchStore.setState({
+    sshConfig: artifactCfg,
+    experimentDir: resolvedExperimentDir,
+    sessionFilePath: resolvedSessionFilePath,
+    livingDocPath: resolvedLivingDocPath,
+    terminalCwd: resolvedExperimentDir,
+  });
+
+  return {
+    artifactCfg,
+    experimentCfg,
+    experimentDir: resolvedExperimentDir,
+    workDir: resolvedWorkDir,
+    sessionContent,
+  };
+}
+
 async function parseIterationMetrics(
   cfg: SshConfig,
   runDir: RunDir,
@@ -230,7 +330,7 @@ export async function startExperimentLoop(
   try {
     await assertSupportedPlatform();
   } catch (error) {
-    useAutoResearchStore.getState().setError(error instanceof Error ? error.message : String(error));
+    useAutoResearchStore.getState().setError(formatError(error));
     return;
   }
 
@@ -239,31 +339,14 @@ export async function startExperimentLoop(
     return;
   }
 
-  if (!store.sessionFilePath.trim()) {
-    useAutoResearchStore.getState().setError('AutoResearch session file path not set');
-    return;
-  }
-
   const notifier = createNotifier(store.telegramConfig);
-  const cfg = store.sshConfig;
   const sessionId = store.id;
-  const sessionPaths = getSessionRunPaths(cfg, sessionId);
-
-  let sessionContent: string;
-  try {
-    const result = await invoke<FileResponse>('read_file', {
-      path: store.sessionFilePath,
-    });
-    sessionContent = result.content;
-  } catch (error) {
-    useAutoResearchStore.getState().setError(`Failed to read session file: ${error}`);
-    return;
-  }
+  const cfg = store.sshConfig;
 
   try {
     await assertRemoteLinux(cfg);
   } catch (error) {
-    useAutoResearchStore.getState().setError(error instanceof Error ? error.message : String(error));
+    useAutoResearchStore.getState().setError(formatError(error));
     return;
   }
 
@@ -275,28 +358,41 @@ export async function startExperimentLoop(
     }
   }
 
+  let startup: StartupContext;
   try {
-    await hydrateSessionFromDisk(cfg, sessionId, store.metricDirection);
-    await writeTargetText(cfg, sessionPaths.sessionFilePath, sessionContent);
-    await rebuildLivingDoc(cfg, sessionId, {
+    startup = await prepareStartupContext(store);
+  } catch (error) {
+    useAutoResearchStore.getState().setError(formatError(error));
+    return;
+  }
+
+  const artifactCfg = startup.artifactCfg;
+  const experimentCfg = startup.experimentCfg;
+  const sessionPaths = getSessionRunPaths(artifactCfg, sessionId);
+  const sessionContent = startup.sessionContent;
+
+  try {
+    await hydrateSessionFromDisk(artifactCfg, sessionId, store.metricDirection);
+    await writeTargetText(artifactCfg, sessionPaths.sessionFilePath, sessionContent);
+    await rebuildLivingDoc(artifactCfg, sessionId, {
       startedAt: store.startedAt,
-      workDir: cfg.remoteWorkDir,
+      workDir: startup.workDir,
       metricName: store.metricName,
       direction: store.metricDirection,
     });
   } catch (error) {
-    useAutoResearchStore.getState().setError(`Failed to initialize run artifacts: ${error}`);
+    useAutoResearchStore.getState().setError(`Failed to initialize run artifacts: ${formatError(error)}`);
     return;
   }
 
   try {
-    const clean = await isRemoteClean(cfg);
+    const clean = await isRemoteClean(experimentCfg);
     if (!clean) {
-      await rollback(cfg);
+      await rollback(experimentCfg);
     }
   } catch (error) {
-    const where = cfg.mode === 'local' ? 'local workdir' : 'remote target';
-    useAutoResearchStore.getState().setError(`Cannot reach ${where}: ${error}`);
+    const where = experimentCfg.mode === 'local' ? 'local experiment directory' : 'remote target';
+    useAutoResearchStore.getState().setError(`Cannot reach ${where}: ${formatError(error)}`);
     return;
   }
 
@@ -329,39 +425,41 @@ export async function startExperimentLoop(
 
     let runDir: RunDir;
     try {
-      runDir = await createRunDir(cfg, sessionId, iteration);
+      runDir = await createRunDir(artifactCfg, sessionId, iteration, {
+        snapshotSourceDir: startup.experimentDir,
+      });
     } catch (error) {
-      useAutoResearchStore.getState().setError(`Failed to create run directory: ${error}`);
+      useAutoResearchStore.getState().setError(`Failed to create run directory: ${formatError(error)}`);
       break;
     }
     setCurrentRunDir(runDir);
-    await writeRunStatus(cfg, runDir, {
+    await writeRunStatus(artifactCfg, runDir, {
       iteration,
       status: 'RUNNING',
       metricValue: null,
       failReason: null,
       durationMs: 0,
-      commitHash: await captureCommitHash(cfg),
+      commitHash: await captureCommitHash(experimentCfg),
     });
 
     try {
-      const livingDoc = await readLivingDoc(cfg, sessionId) || '';
+      const livingDoc = await readLivingDoc(artifactCfg, sessionId) || '';
       const systemPrompt = buildSystemPrompt({
         sessionContent,
         livingDoc,
-        sshConfig: cfg,
+        sshConfig: experimentCfg,
         runDir,
       });
 
       const userMessage = `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
       const agentOutput = await sendMessage(systemPrompt, userMessage);
-      const parsed = await parseIterationMetrics(cfg, runDir, state.metricName, agentOutput);
-      const diff = await getRemoteDiff(cfg);
-      const commitHash = await captureCommitHash(cfg);
+      const parsed = await parseIterationMetrics(artifactCfg, runDir, state.metricName, agentOutput);
+      const diff = await getRemoteDiff(experimentCfg);
+      const commitHash = await captureCommitHash(experimentCfg);
       const finishedAt = new Date().toISOString();
       const durationMs = Date.now() - startMs;
 
-      await writeTargetText(cfg, runDir.diffPath, diff);
+      await writeTargetText(artifactCfg, runDir.diffPath, diff);
 
       if (!parsed) {
         const failedRecord: IterationMetrics = {
@@ -384,8 +482,8 @@ export async function startExperimentLoop(
         };
         useAutoResearchStore.getState().addExperiment(entry);
         useAutoResearchStore.getState().incrementConsecutiveFailures();
-        await appendIterationMetrics(cfg, sessionId, failedRecord);
-        await writeRunStatus(cfg, runDir, {
+        await appendIterationMetrics(artifactCfg, sessionId, failedRecord);
+        await writeRunStatus(artifactCfg, runDir, {
           iteration,
           status: entry.status,
           metricValue: entry.metricValue,
@@ -393,10 +491,10 @@ export async function startExperimentLoop(
           durationMs,
           commitHash,
         });
-        await rollback(cfg, { terminal: true });
-        await rebuildLivingDoc(cfg, sessionId, {
+        await rollback(experimentCfg, { terminal: true });
+        await rebuildLivingDoc(artifactCfg, sessionId, {
           startedAt: state.startedAt,
-          workDir: cfg.remoteWorkDir,
+          workDir: startup.workDir,
           metricName: state.metricName,
           direction: state.metricDirection,
         });
@@ -432,8 +530,8 @@ export async function startExperimentLoop(
         useAutoResearchStore.getState().resetConsecutiveFailures();
       }
 
-      await appendIterationMetrics(cfg, sessionId, metricsRecord);
-      await writeRunStatus(cfg, runDir, {
+      await appendIterationMetrics(artifactCfg, sessionId, metricsRecord);
+      await writeRunStatus(artifactCfg, runDir, {
         iteration,
         status: parsed.status,
         metricValue: parsed.metricValue,
@@ -441,9 +539,9 @@ export async function startExperimentLoop(
         durationMs,
         commitHash,
       });
-      await rebuildLivingDoc(cfg, sessionId, {
+      await rebuildLivingDoc(artifactCfg, sessionId, {
         startedAt: state.startedAt,
-        workDir: cfg.remoteWorkDir,
+        workDir: startup.workDir,
         metricName: state.metricName,
         direction: state.metricDirection,
       });
@@ -475,7 +573,7 @@ export async function startExperimentLoop(
         change: 'N/A',
         metricValue: null,
         status: 'FAILED',
-        failReason: String(error),
+        failReason: formatError(error),
         reasoning: 'The Agent failed to complete the iteration.',
         timestamp: finishedAt,
         durationMs,
@@ -486,17 +584,17 @@ export async function startExperimentLoop(
         metricName: useAutoResearchStore.getState().metricName,
         metricValue: null,
         status: 'FAILED',
-        failReason: String(error),
+        failReason: formatError(error),
         hypothesis: 'Agent execution error',
-        commitHash: await captureCommitHash(cfg),
+        commitHash: await captureCommitHash(experimentCfg),
         durationMs,
         startedAt,
         finishedAt,
       };
       useAutoResearchStore.getState().addExperiment(entry);
       useAutoResearchStore.getState().incrementConsecutiveFailures();
-      await appendIterationMetrics(cfg, sessionId, failedRecord);
-      await writeRunStatus(cfg, runDir, {
+      await appendIterationMetrics(artifactCfg, sessionId, failedRecord);
+      await writeRunStatus(artifactCfg, runDir, {
         iteration,
         status: entry.status,
         metricValue: null,
@@ -504,13 +602,13 @@ export async function startExperimentLoop(
         durationMs,
         commitHash: failedRecord.commitHash,
       });
-      await rebuildLivingDoc(cfg, sessionId, {
+      await rebuildLivingDoc(artifactCfg, sessionId, {
         startedAt: useAutoResearchStore.getState().startedAt,
-        workDir: cfg.remoteWorkDir,
+        workDir: startup.workDir,
         metricName: useAutoResearchStore.getState().metricName,
         direction: useAutoResearchStore.getState().metricDirection,
       });
-      await rollback(cfg, { terminal: true });
+      await rollback(experimentCfg, { terminal: true });
       await logExperiment(entry, useAutoResearchStore.getState());
       await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
     } finally {

@@ -22,6 +22,7 @@ import { setupTaskDiagnosticsWiring } from '@/services/taskDiagnosticsWiring';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 import { useKeyboardShortcuts, KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
 import { AutoResearchSetupModal } from '@/components/AutoResearchSetupModal';
+import { NewChatProjectPickerModal } from '@/components/NewChatProjectPickerModal';
 
 // Lazy-load heavy pages so they don't bloat the initial bundle
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -167,6 +168,9 @@ export default function App() {
 
       {/* AutoResearch setup modal */}
       <AutoResearchSetupModal />
+
+      {/* New chat project picker */}
+      <NewChatProjectPickerModal />
     </>
   );
 }

@@ -1,21 +1,16 @@
-/**
- * AgentConfigPanel - Configuration panel for editing an agent
- *
- * Located on the right side of the canvas.
- * Contains form fields for:
- * - Agent name
- * - Task description
- * - Soul prompt (textarea)
- * - Execution mode (single/multi-round)
- * - Model override (optional)
- * - Output routes
- * - Template loading
- */
-
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkflowStore } from '@/store/workflowStore';
-import { AGENT_TEMPLATES, DEFAULT_EXECUTION_CONFIG } from '@/types/workflow';
-import type { RouteCondition } from '@/types/workflow';
+import { getProviderDefaultModelIds, type ProviderName } from '@/shared/providers';
+import type { TranslationKeys } from '@/i18n';
+import {
+  AGENT_TEMPLATES,
+  DEFAULT_EXECUTION_CONFIG,
+  DEFAULT_RETRY_POLICY,
+  getRoleModelHint,
+  type AgentRole,
+  type RouteCondition,
+} from '@/types/workflow';
 import { t } from '@/i18n';
 
 interface AgentConfigPanelProps {
@@ -25,7 +20,32 @@ interface AgentConfigPanelProps {
   embedded?: boolean;
 }
 
-const ROUTE_MARKER_REGEX = /<[A-Z0-9:_-]+>/g;
+const ROUTE_MARKER_REGEX = /\[\[[A-Z0-9_:-]+\]\]|<[A-Z0-9:_-]+>/g;
+const AGENT_ROLES: AgentRole[] = [
+  'writer',
+  'coder',
+  'tester',
+  'reviewer',
+  'security',
+  'devops',
+  'data-analyst',
+  'translator',
+  'goal-evaluator',
+  'custom',
+];
+
+const ROLE_LABEL_KEYS: Record<AgentRole, keyof TranslationKeys> = {
+  writer: 'workflow.role.writer',
+  coder: 'workflow.role.coder',
+  tester: 'workflow.role.tester',
+  reviewer: 'workflow.role.reviewer',
+  security: 'workflow.role.security',
+  devops: 'workflow.role.devops',
+  'data-analyst': 'workflow.role.data-analyst',
+  translator: 'workflow.role.translator',
+  'goal-evaluator': 'workflow.role.goal-evaluator',
+  custom: 'workflow.role.custom',
+};
 
 function getMissingExplicitRouteMarkers(agent: {
   taskPrompt?: string;
@@ -34,11 +54,7 @@ function getMissingExplicitRouteMarkers(agent: {
   outputRoutes: Array<{ condition: RouteCondition; keyword?: string }>;
 }): string[] {
   const declaredMarkers = new Set(
-    [
-      agent.taskPrompt,
-      agent.taskInstruction,
-      agent.soulPrompt,
-    ]
+    [agent.taskPrompt, agent.taskInstruction, agent.soulPrompt]
       .filter(Boolean)
       .flatMap((value) => value!.match(ROUTE_MARKER_REGEX) ?? []),
   );
@@ -49,26 +65,27 @@ function getMissingExplicitRouteMarkers(agent: {
       .map((route) => route.keyword!.trim().toLowerCase()),
   );
 
-  return [...declaredMarkers].filter((marker) => (
-    marker !== '<PASS>' && !explicitKeywords.has(marker.toLowerCase())
-  ));
+  return [...declaredMarkers].filter((marker) => !explicitKeywords.has(marker.toLowerCase()));
 }
 
-export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, embedded = false }: AgentConfigPanelProps) {
+export function AgentConfigPanel({
+  agentId,
+  onClose,
+  hideTaskFields = false,
+  embedded = false,
+}: AgentConfigPanelProps) {
   const agent = useWorkflowStore((state) => {
-    const inst = state.instances.find(i => i.id === state.currentInstanceId);
-    return inst?.agents.find((a) => a.id === agentId);
+    const instance = state.instances.find((item) => item.id === state.currentInstanceId);
+    return instance?.agents.find((item) => item.id === agentId);
   });
-  const allAgents = useWorkflowStore((state) => {
-    const inst = state.instances.find(i => i.id === state.currentInstanceId);
-    return inst?.agents ?? [];
-  });
+  const currentInstance = useWorkflowStore((state) =>
+    state.instances.find((item) => item.id === state.currentInstanceId) ?? null,
+  );
+  const allAgents = currentInstance?.agents ?? [];
   const { updateAgent, addOutputRoute, removeOutputRoute, setAgentInputFrom } = useWorkflowStore();
 
-  const connections = useWorkflowStore((state) => {
-    const inst = state.instances.find(i => i.id === state.currentInstanceId);
-    return (inst?.connections ?? []).filter((c) => c.targetAgentId === agentId);
-  });
+  const apiConfigs = useSettingsStore((state) => state.apiConfigs);
+  const availableModels = useSettingsStore((state) => state.availableModels);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -77,429 +94,618 @@ export function AgentConfigPanel({ agentId, onClose, hideTaskFields = false, emb
     taskInstruction: '',
     soulPrompt: '',
     execution: DEFAULT_EXECUTION_CONFIG,
+    role: 'custom' as AgentRole,
+    configId: '',
+    provider: '' as ProviderName | '',
+    modelId: '',
+    notifyOnComplete: [] as string[],
+    retryPolicy: DEFAULT_RETRY_POLICY,
   });
 
   const [newRoute, setNewRoute] = useState({
     condition: 'onComplete' as RouteCondition,
     keyword: '',
+    keywordMode: 'includes' as 'includes' | 'regex',
     targetAgentId: '',
   });
 
   useEffect(() => {
-    if (agent) {
-      setFormData({
-        name: agent.name,
-        task: agent.task || '',
-        taskPrompt: agent.taskPrompt || '',
-        taskInstruction: agent.taskInstruction || '',
-        soulPrompt: agent.soulPrompt || '',
-        execution: agent.execution || DEFAULT_EXECUTION_CONFIG,
-      });
-    }
+    if (!agent) return;
+    setFormData({
+      name: agent.name,
+      task: agent.task || '',
+      taskPrompt: agent.taskPrompt || '',
+      taskInstruction: agent.taskInstruction || '',
+      soulPrompt: agent.soulPrompt || '',
+      execution: agent.execution || DEFAULT_EXECUTION_CONFIG,
+      role: agent.role || 'custom',
+      configId: agent.model?.configId || '',
+      provider: (agent.model?.provider || '') as ProviderName | '',
+      modelId: agent.model?.modelId || '',
+      notifyOnComplete: agent.notifyOnComplete || [],
+      retryPolicy: {
+        ...DEFAULT_RETRY_POLICY,
+        ...agent.retryPolicy,
+        fallbackConfigIds: agent.retryPolicy?.fallbackConfigIds || [],
+      },
+    });
   }, [agent]);
+
+  const roleHint = getRoleModelHint(formData.role);
+  const selectedConfig = apiConfigs.find((config) => config.id === formData.configId) || null;
+  const effectiveProvider = selectedConfig?.provider || formData.provider;
+  const modelOptions = effectiveProvider
+    ? availableModels[effectiveProvider] && availableModels[effectiveProvider].length > 0
+      ? availableModels[effectiveProvider]
+      : getProviderDefaultModelIds(effectiveProvider)
+    : [];
+  const otherAgents = allAgents.filter((item) => item.id !== agentId);
+  const connections = (currentInstance?.connections ?? []).filter((connection) => connection.targetAgentId === agentId);
+  const missingRouteMarkers = agent ? getMissingExplicitRouteMarkers(agent) : [];
+
+  const configOptions = useMemo(() => apiConfigs.map((config) => ({
+    id: config.id,
+    label: `${config.name} (${config.provider})`,
+    provider: config.provider,
+    model: config.model,
+  })), [apiConfigs]);
 
   if (!agent) return null;
 
-  const missingRouteMarkers = getMissingExplicitRouteMarkers(agent);
+  const setField = <K extends keyof typeof formData>(key: K, value: (typeof formData)[K]) => {
+    setFormData((prev) => ({ ...prev, [key]: value }));
+  };
 
   const handleSave = () => {
-    const updates: any = {
+    updateAgent(agentId, {
       name: formData.name,
       soulPrompt: formData.soulPrompt,
+      task: hideTaskFields ? agent.task : formData.task,
+      taskPrompt: hideTaskFields ? agent.taskPrompt : formData.taskPrompt,
+      taskInstruction: hideTaskFields ? agent.taskInstruction : formData.taskInstruction,
       execution: formData.execution,
-    };
-
-    if (!hideTaskFields) {
-      updates.task = formData.task;
-      updates.taskPrompt = formData.taskPrompt;
-      updates.taskInstruction = formData.taskInstruction;
-    }
-
-    updateAgent(agentId, updates);
+      role: formData.role,
+      model: formData.configId || formData.provider || formData.modelId
+        ? {
+            configId: formData.configId || undefined,
+            provider: (selectedConfig?.provider || formData.provider || undefined) as ProviderName | undefined,
+            modelId: formData.modelId || selectedConfig?.model || undefined,
+          }
+        : undefined,
+      notifyOnComplete: formData.notifyOnComplete,
+      retryPolicy: formData.retryPolicy,
+    });
   };
 
   const handleTemplateSelect = (templateId: string) => {
-    const template = AGENT_TEMPLATES.find((t) => t.id === templateId);
-    if (template) {
-      setFormData((prev) => ({
-        ...prev,
-        name: template.name,
-        task: template.task,
-        taskPrompt: template.taskPrompt || '',
-        taskInstruction: template.taskInstruction || '',
-        soulPrompt: template.soulPrompt,
-        execution: template.execution,
-      }));
-    }
+    const template = AGENT_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+
+    setFormData((prev) => ({
+      ...prev,
+      name: template.name,
+      task: template.task,
+      taskPrompt: template.taskPrompt || '',
+      taskInstruction: template.taskInstruction || '',
+      soulPrompt: template.soulPrompt,
+      execution: template.execution,
+      role: template.recommendedRole || prev.role,
+    }));
   };
 
   const handleAddRoute = () => {
-    if (newRoute.targetAgentId) {
-      addOutputRoute(agentId, {
-        condition: newRoute.condition,
-        keyword: newRoute.condition === 'outputContains' ? newRoute.keyword : undefined,
-        targetAgentId: newRoute.targetAgentId,
-      });
-      setNewRoute({
-        condition: 'onComplete',
-        keyword: '',
-        targetAgentId: '',
-      });
-    }
+    if (!newRoute.targetAgentId) return;
+    addOutputRoute(agentId, {
+      condition: newRoute.condition,
+      keyword: newRoute.condition === 'outputContains' ? newRoute.keyword : undefined,
+      keywordMode: newRoute.condition === 'outputContains' ? newRoute.keywordMode : undefined,
+      targetAgentId: newRoute.targetAgentId,
+    });
+    setNewRoute({
+      condition: 'onComplete',
+      keyword: '',
+      keywordMode: 'includes',
+      targetAgentId: '',
+    });
   };
 
-  // Get other agents for route targets
-  const otherAgents = useWorkflowStore((state) => {
-    const inst = state.instances.find(i => i.id === state.currentInstanceId);
-    return (inst?.agents ?? []).filter((a) => a.id !== agentId);
-  });
+  const applyRecommendedModel = () => {
+    if (!roleHint) return;
 
-  return (
-    <div className={`bg-white ${embedded ? '' : 'flex flex-col h-full'}`}>
-      {!embedded && (
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h2 className="font-medium text-gray-900">{t('workflow.agentConfig')}</h2>
-          <button
-            onClick={onClose}
-            className="p-1 text-gray-400 hover:text-gray-600 rounded"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+    const recommendedConfig = configOptions.find((option) =>
+      roleHint.preferredProviders.includes(option.provider),
+    );
+    const provider = recommendedConfig?.provider || roleHint.preferredProviders[0] || '';
+    const models = provider ? (availableModels[provider]?.length ? availableModels[provider] : getProviderDefaultModelIds(provider)) : [];
+    const recommendedModel = models.find((model) =>
+      roleHint.preferredModelKeywords.some((keyword) => model.toLowerCase().includes(keyword.toLowerCase())),
+    ) || models[0] || '';
+
+    setFormData((prev) => ({
+      ...prev,
+      configId: recommendedConfig?.id || '',
+      provider,
+      modelId: recommendedModel,
+    }));
+  };
+
+  const panelBody = (
+    <div className={`space-y-4 ${embedded ? 'px-4 py-4' : 'flex-1 overflow-y-auto p-4'}`}>
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          {t('workflow.agentName')}
+        </label>
+        <input
+          type="text"
+          value={formData.name}
+          onChange={(event) => setField('name', event.target.value)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          {t('workflow.agentRole')}
+        </label>
+        <select
+          value={formData.role}
+          onChange={(event) => setField('role', event.target.value as AgentRole)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          {AGENT_ROLES.map((role) => (
+            <option key={role} value={role}>
+              {t(ROLE_LABEL_KEYS[role])}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {!hideTaskFields && (
+        <>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              {t('workflow.agentTaskLabel')}
+            </label>
+            <input
+              type="text"
+              value={formData.task}
+              onChange={(event) => setField('task', event.target.value)}
+              placeholder={t('workflow.agentTaskLabelPlaceholder')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              {t('workflow.taskInstruction')}
+            </label>
+            <textarea
+              value={formData.taskInstruction}
+              onChange={(event) => setField('taskInstruction', event.target.value)}
+              rows={5}
+              placeholder={t('workflow.taskInstructionPlaceholder')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              {t('workflow.taskPrompt')}
+            </label>
+            <textarea
+              value={formData.taskPrompt}
+              onChange={(event) => setField('taskPrompt', event.target.value)}
+              rows={4}
+              placeholder={t('workflow.taskPromptPlaceholder')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </>
       )}
 
-      <div className={`space-y-4 ${embedded ? 'px-4 py-4' : 'flex-1 overflow-y-auto p-4'}`}>
-        {embedded && (
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900">{t('workflow.agentConfig')}</h2>
-            <button
-              onClick={onClose}
-              className="p-1 text-gray-400 hover:text-gray-600 rounded"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        {/* Agent Name */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            {t('workflow.agentName')}
-          </label>
-          <input
-            type="text"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-
-        {!hideTaskFields && (
-          <>
-            {/* Task label (short, shown on canvas card) */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('workflow.agentTaskLabel')} <span className="text-xs text-gray-400">({t('workflow.agentTaskLabelHint')})</span>
-              </label>
-              <input
-                type="text"
-                value={formData.task}
-                onChange={(e) => setFormData({ ...formData, task: e.target.value })}
-                placeholder={t('workflow.agentTaskLabelPlaceholder')}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Task Instruction (multiline, injected into prompt) */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('workflow.taskInstruction')} <span className="text-xs text-gray-400">({t('workflow.taskInstructionHint')})</span>
-              </label>
-              <textarea
-                value={formData.taskInstruction}
-                onChange={(e) => setFormData({ ...formData, taskInstruction: e.target.value })}
-                rows={5}
-                placeholder={t('workflow.taskInstructionPlaceholder')}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('workflow.taskPrompt')} <span className="text-xs text-gray-400">({t('workflow.taskPromptHint')})</span>
-              </label>
-              <textarea
-                value={formData.taskPrompt}
-                onChange={(e) => setFormData({ ...formData, taskPrompt: e.target.value })}
-                rows={4}
-                placeholder={t('workflow.taskPromptPlaceholder')}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              />
-            </div>
-          </>
-        )}
-
-        {/* Waits for (read-only, derived from connections) */}
-        {connections.length > 0 && (
+      <div className="rounded-xl border border-gray-200 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              {t('workflow.waitingUpstream')}
-            </label>
-            <div className="flex flex-wrap gap-1">
-              {connections.map((conn) => {
-                const src = allAgents.find((a) => a.id === conn.sourceAgentId);
-                return src ? (
-                  <span
-                    key={conn.id}
-                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200"
-                  >
-                    {src.name}
-                  </span>
-                ) : null;
-              })}
-            </div>
-            <p className="mt-1 text-xs text-gray-400">
-              {t('workflow.waitingUpstream')}
-            </p>
+            <div className="text-sm font-medium text-gray-900">{t('workflow.modelConfig')}</div>
+            {roleHint && (
+              <div className="text-xs text-gray-500" title={t(roleHint.reason as keyof TranslationKeys)}>
+                {t('workflow.roleRecommendation').replace('{providers}', roleHint.preferredProviders.join(', ')).replace('{models}', roleHint.preferredModelKeywords.join(', '))}
+              </div>
+            )}
           </div>
-        )}
+          {roleHint && (
+            <button
+              onClick={applyRecommendedModel}
+              type="button"
+              className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+            >
+              {t('workflow.applyRecommendation')}
+            </button>
+          )}
+        </div>
 
-        {/* InputFrom - Upstream Agent Selection */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            {t('workflow.inputSource')}
-          </label>
+        <div className="space-y-2">
           <select
-            value={agent.inputFrom || ''}
-            onChange={(e) => setAgentInputFrom(agentId, e.target.value || null)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={formData.configId}
+            onChange={(event) => {
+              const config = apiConfigs.find((item) => item.id === event.target.value) || null;
+              setFormData((prev) => ({
+                ...prev,
+                configId: event.target.value,
+                provider: config?.provider || prev.provider,
+                modelId: prev.modelId || config?.model || '',
+              }));
+            }}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">{t('workflow.entryNode')}</option>
-            {allAgents
-              .filter((a) => a.id !== agentId)
-              .map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
+            <option value="">{t('workflow.useMatchingProviderConfig')}</option>
+            {configOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
           </select>
-          <p className="mt-1 text-xs text-gray-400">
-            {agent.inputFrom
-              ? t('workflow.upstreamInfo').replace('{name}', allAgents.find((a) => a.id === agent.inputFrom)?.name || '')
-              : t('workflow.upstreamNone')}
-          </p>
-        </div>
 
-        {/* Soul Prompt */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Soul Prompt
-          </label>
-          <textarea
-            value={formData.soulPrompt}
-            onChange={(e) => setFormData({ ...formData, soulPrompt: e.target.value })}
-            rows={6}
-            placeholder={t('workflow.systemPromptPlaceholder')}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
-        </div>
-
-        {/* Execution Mode */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            {t('workflow.executionMode')}
-          </label>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="executionMode"
-                checked={formData.execution.mode === 'single'}
-                onChange={() => setFormData({ ...formData, execution: { mode: 'single' } })}
-                className="text-blue-600"
-              />
-              {t('workflow.singleExecution')}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="executionMode"
-                checked={formData.execution.mode === 'multi-round'}
-                onChange={() =>
-                  setFormData({
-                    ...formData,
-                    execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
-                  })
-                }
-                className="text-blue-600"
-              />
-              {t('workflow.multiExecution')}
-            </label>
-          </div>
-
-          {formData.execution.mode === 'multi-round' && (
-            <div className="mt-3 space-y-2 pl-4 border-l-2 border-gray-200">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">{t('workflow.maxRounds')}:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={formData.execution.maxRounds || 3}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      execution: { ...formData.execution, maxRounds: parseInt(e.target.value) || 3 },
-                    })
-                  }
-                  className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">{t('workflow.stopCondition')}:</span>
-                <select
-                  value={formData.execution.roundCondition || 'untilComplete'}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      execution: { ...formData.execution, roundCondition: e.target.value as any },
-                    })
-                  }
-                  className="px-2 py-1 border border-gray-300 rounded text-sm"
-                >
-                  <option value="untilComplete">{t('workflow.untilComplete')}</option>
-                  <option value="untilError">{t('workflow.untilError')}</option>
-                  <option value="fixed">{t('workflow.fixedRounds')}</option>
-                </select>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Output Routes */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            {t('workflow.outputRoutes')}
-          </label>
-
-          {missingRouteMarkers.length > 0 && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <div className="font-medium">{t('workflow.missingOutputRouteWarning')}</div>
-              <div className="mt-1 text-amber-800">
-                {t('workflow.missingOutputRouteHint').replace('{markers}', missingRouteMarkers.join(', '))}
-              </div>
-            </div>
-          )}
-
-          {/* Existing routes */}
-          {agent.outputRoutes.map((route) => {
-            const targetAgent = otherAgents.find((a) => a.id === route.targetAgentId);
-            return (
-              <div
-                key={route.id}
-                className="flex items-center justify-between px-3 py-2 mb-2 bg-gray-50 rounded-lg text-sm"
-              >
-                <span className="text-gray-600">
-                  {route.condition === 'onComplete' && t('workflow.onComplete')}
-                  {route.condition === 'onError' && t('workflow.onError')}
-                  {route.condition === 'outputContains' && `${t('workflow.outputContains')} "${route.keyword}"`}
-                  {route.condition === 'always' && t('workflow.always')}
-                  → {targetAgent?.name || '?'}
-                </span>
-                <button
-                  onClick={() => removeOutputRoute(agentId, route.id)}
-                  className="text-red-500 hover:text-red-700"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            );
-          })}
-
-          {/* Add new route */}
-          {otherAgents.length > 0 && (
-            <div className="space-y-2">
-              <select
-                value={newRoute.condition}
-                onChange={(e) => setNewRoute({ ...newRoute, condition: e.target.value as RouteCondition })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-              >
-                <option value="onComplete">{t('workflow.onComplete')}</option>
-                <option value="onError">{t('workflow.onError')}</option>
-                <option value="outputContains">{t('workflow.outputContains')}</option>
-                <option value="always">{t('workflow.always')}</option>
-              </select>
-
-              {newRoute.condition === 'outputContains' && (
-                <input
-                  type="text"
-                  value={newRoute.keyword}
-                  onChange={(e) => setNewRoute({ ...newRoute, keyword: e.target.value })}
-                  placeholder={t('workflow.keywordPlaceholder')}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-              )}
-
-              <select
-                value={newRoute.targetAgentId}
-                onChange={(e) => setNewRoute({ ...newRoute, targetAgentId: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-              >
-                <option value="">{t('workflow.selectTargetAgent')}</option>
-                {otherAgents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                onClick={handleAddRoute}
-                disabled={!newRoute.targetAgentId}
-                className="w-full px-3 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
-              >
-                + {t('workflow.addRoute')}
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Template Loader */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            {t('workflow.template')}
-          </label>
           <select
-            value=""
-            onChange={(e) => handleTemplateSelect(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={formData.provider}
+            onChange={(event) => setField('provider', event.target.value as ProviderName)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">{t('workflow.loadTemplate')}</option>
-            {AGENT_TEMPLATES.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.name}
+            <option value="">{t('workflow.selectProvider')}</option>
+            {[...new Set(configOptions.map((option) => option.provider))].map((provider) => (
+              <option key={provider} value={provider}>
+                {provider}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={formData.modelId}
+            onChange={(event) => setField('modelId', event.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">{t('workflow.selectModel')}</option>
+            {modelOptions.map((model) => (
+              <option key={model} value={model}>
+                {model}
               </option>
             ))}
           </select>
         </div>
       </div>
 
-      {!embedded && (
-        <div className="px-4 py-3 border-t border-gray-200">
-          <button
-            onClick={handleSave}
-            className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+      {connections.length > 0 && (
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            {t('workflow.waitingUpstream')}
+          </label>
+          <div className="flex flex-wrap gap-1">
+            {connections.map((connection) => {
+              const upstreamAgent = allAgents.find((item) => item.id === connection.sourceAgentId);
+              return upstreamAgent ? (
+                <span key={connection.id} className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
+                  {upstreamAgent.name}
+                </span>
+              ) : null;
+            })}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          {t('workflow.inputSource')}
+        </label>
+        <select
+          value={agent.inputFrom || ''}
+          onChange={(event) => setAgentInputFrom(agentId, event.target.value || null)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">{t('workflow.entryNode')}</option>
+          {otherAgents.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          {t('workflow.notifyOnComplete')}
+        </label>
+        <div className="space-y-2 rounded-xl border border-gray-200 p-3">
+          {otherAgents.length === 0 ? (
+            <div className="text-sm text-gray-400">{t('workflow.notifyOnCompleteEmpty')}</div>
+          ) : otherAgents.map((item) => (
+            <label key={item.id} className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={formData.notifyOnComplete.includes(item.id)}
+                onChange={(event) => setFormData((prev) => ({
+                  ...prev,
+                  notifyOnComplete: event.target.checked
+                    ? [...prev.notifyOnComplete, item.id]
+                    : prev.notifyOnComplete.filter((id) => id !== item.id),
+                }))}
+              />
+              {item.name}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <details className="rounded-xl border border-gray-200 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-gray-900">
+          {t('workflow.retryPolicy')}
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                {t('workflow.retryMaxAttempts')}
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={formData.retryPolicy.maxAttempts}
+                onChange={(event) => setFormData((prev) => ({
+                  ...prev,
+                  retryPolicy: { ...prev.retryPolicy, maxAttempts: Math.max(1, Number(event.target.value) || 1) },
+                }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                {t('workflow.retryBackoffMs')}
+              </label>
+              <input
+                type="number"
+                min={0}
+                step={100}
+                value={formData.retryPolicy.backoffMs}
+                onChange={(event) => setFormData((prev) => ({
+                  ...prev,
+                  retryPolicy: { ...prev.retryPolicy, backoffMs: Math.max(0, Number(event.target.value) || 0) },
+                }))}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              {t('workflow.retryFallbackConfigs')}
+            </label>
+            <div className="space-y-2 rounded-xl border border-gray-200 p-3">
+              {configOptions.map((option) => (
+                <label key={option.id} className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={formData.retryPolicy.fallbackConfigIds?.includes(option.id) || false}
+                    onChange={(event) => setFormData((prev) => ({
+                      ...prev,
+                      retryPolicy: {
+                        ...prev.retryPolicy,
+                        fallbackConfigIds: event.target.checked
+                          ? [...(prev.retryPolicy.fallbackConfigIds || []), option.id]
+                          : (prev.retryPolicy.fallbackConfigIds || []).filter((id) => id !== option.id),
+                      },
+                    }))}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          Soul Prompt
+        </label>
+        <textarea
+          value={formData.soulPrompt}
+          onChange={(event) => setField('soulPrompt', event.target.value)}
+          rows={6}
+          placeholder={t('workflow.systemPromptPlaceholder')}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="mb-2 block text-sm font-medium text-gray-700">
+          {t('workflow.executionMode')}
+        </label>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              checked={formData.execution.mode === 'single'}
+              onChange={() => setField('execution', { mode: 'single' })}
+            />
+            {t('workflow.singleExecution')}
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              checked={formData.execution.mode === 'multi-round'}
+              onChange={() => setField('execution', { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' })}
+            />
+            {t('workflow.multiExecution')}
+          </label>
+        </div>
+      </div>
+
+      {formData.execution.mode === 'multi-round' && (
+        <div className="space-y-3 rounded-xl border border-gray-200 p-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">{t('workflow.maxRounds')}</span>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={formData.execution.maxRounds || 3}
+              onChange={(event) => setField('execution', {
+                ...formData.execution,
+                maxRounds: Math.max(1, Number(event.target.value) || 3),
+              })}
+              className="w-20 rounded-lg border border-gray-300 px-2 py-1 text-sm"
+            />
+          </div>
+
+          <select
+            value={formData.execution.roundCondition || 'untilComplete'}
+            onChange={(event) => setField('execution', {
+              ...formData.execution,
+              roundCondition: event.target.value as 'untilComplete' | 'untilError' | 'fixed',
+            })}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
           >
-            {t('workflow.save')}
+            <option value="untilComplete">{t('workflow.untilComplete')}</option>
+            <option value="untilError">{t('workflow.untilError')}</option>
+            <option value="fixed">{t('workflow.fixedRounds')}</option>
+          </select>
+        </div>
+      )}
+
+      <div>
+        <label className="mb-2 block text-sm font-medium text-gray-700">
+          {t('workflow.outputRoutes')}
+        </label>
+
+        {missingRouteMarkers.length > 0 && (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <div className="font-medium">{t('workflow.missingOutputRouteWarning')}</div>
+            <div className="mt-1 text-amber-800">
+              {t('workflow.missingOutputRouteHint').replace('{markers}', missingRouteMarkers.join(', '))}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {agent.outputRoutes.map((route) => {
+            const targetAgent = otherAgents.find((item) => item.id === route.targetAgentId);
+            return (
+              <div key={route.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm">
+                <span className="text-gray-600">
+                  {route.condition === 'onComplete' && t('workflow.onComplete')}
+                  {route.condition === 'onError' && t('workflow.onError')}
+                  {route.condition === 'outputContains' && `${t('workflow.outputContains')} (${route.keywordMode || 'includes'}) "${route.keyword}"`}
+                  {route.condition === 'always' && t('workflow.always')}
+                  {' → '}
+                  {targetAgent?.name || '?'}
+                </span>
+                <button onClick={() => removeOutputRoute(agentId, route.id)} className="text-red-500 hover:text-red-700">
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {otherAgents.length > 0 && (
+          <div className="mt-3 space-y-2 rounded-xl border border-gray-200 p-3">
+            <select
+              value={newRoute.condition}
+              onChange={(event) => setNewRoute((prev) => ({ ...prev, condition: event.target.value as RouteCondition }))}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="onComplete">{t('workflow.onComplete')}</option>
+              <option value="onError">{t('workflow.onError')}</option>
+              <option value="outputContains">{t('workflow.outputContains')}</option>
+              <option value="always">{t('workflow.always')}</option>
+            </select>
+
+            {newRoute.condition === 'outputContains' && (
+              <>
+                <input
+                  type="text"
+                  value={newRoute.keyword}
+                  onChange={(event) => setNewRoute((prev) => ({ ...prev, keyword: event.target.value }))}
+                  placeholder={t('workflow.keywordPlaceholder')}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <select
+                  value={newRoute.keywordMode}
+                  onChange={(event) => setNewRoute((prev) => ({ ...prev, keywordMode: event.target.value as 'includes' | 'regex' }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="includes">{t('workflow.routeMatch.includes')}</option>
+                  <option value="regex">{t('workflow.routeMatch.regex')}</option>
+                </select>
+              </>
+            )}
+
+            <select
+              value={newRoute.targetAgentId}
+              onChange={(event) => setNewRoute((prev) => ({ ...prev, targetAgentId: event.target.value }))}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="">{t('workflow.selectTargetAgent')}</option>
+              {otherAgents.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+
+            <button
+              onClick={handleAddRoute}
+              disabled={!newRoute.targetAgentId}
+              className="w-full rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              + {t('workflow.addRoute')}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className="mb-2 block text-sm font-medium text-gray-700">
+          {t('workflow.template')}
+        </label>
+        <select
+          value=""
+          onChange={(event) => handleTemplateSelect(event.target.value)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">{t('workflow.loadTemplate')}</option>
+          {AGENT_TEMPLATES.map((template) => (
+            <option key={template.id} value={template.id}>
+              {template.name}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={`bg-white ${embedded ? '' : 'flex h-full flex-col'}`}>
+      {!embedded && (
+        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+          <h2 className="font-medium text-gray-900">{t('workflow.agentConfig')}</h2>
+          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:text-gray-600">
+            ×
           </button>
         </div>
       )}
+
+      {panelBody}
+
+      <div className={`${embedded ? 'px-4 pb-4' : 'border-t border-gray-200 px-4 py-3'}`}>
+        <button
+          onClick={handleSave}
+          className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+        >
+          {t('workflow.save')}
+        </button>
+      </div>
     </div>
   );
 }

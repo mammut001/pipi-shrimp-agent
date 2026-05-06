@@ -1,5 +1,11 @@
 import { invokeRustAPIStream } from './streamAdapter';
 import type { EngineEvent, ToolCallParams } from './types';
+import {
+  formatAgentConfigValidationError,
+  resolveActiveAgentConfig,
+  validateResolvedAgentConfig,
+  type ResolvedAgentConfig,
+} from '@/services/agentConfig';
 import { useSettingsStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
@@ -10,6 +16,7 @@ export async function* runChatTurn(
   systemPrompt: string,
   projectRoot?: string,
   allowBrowserTools: boolean = false,
+  requestConfig?: ResolvedAgentConfig,
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
   const maxRounds = settings?.maxToolRounds ?? 10;
@@ -40,9 +47,13 @@ export async function* runChatTurn(
     // Here we can inject Microcompact logic in the future easily, right before hitting the API.
     // await applyMicrocompact(currentMessages);
 
-    const apiConfig = useSettingsStore.getState().getActiveConfig();
-    if (!apiConfig?.apiKey) {
-      yield { type: 'error', error: new Error('API key not configured') };
+    const resolvedConfig = requestConfig ?? resolveActiveAgentConfig();
+    const validationIssues = validateResolvedAgentConfig(resolvedConfig);
+    if (validationIssues.length > 0) {
+      yield {
+        type: 'error',
+        error: new Error(formatAgentConfigValidationError(resolvedConfig, validationIssues)),
+      };
       return;
     }
     
@@ -57,12 +68,13 @@ export async function* runChatTurn(
     // [Phase 2: API Call]
     const stream = invokeRustAPIStream({
       messages: backendMessages,
-      apiKey: apiConfig.apiKey,
-      model: apiConfig.model,
-      baseUrl: apiConfig.baseUrl || '',
+      apiKey: resolvedConfig!.apiKey,
+      model: resolvedConfig!.model,
+      baseUrl: resolvedConfig!.baseUrl || '',
       systemPrompt,
       allowBrowserTools: allowBrowserTools,
       sessionId: sessionId,
+      apiFormat: resolvedConfig!.apiFormat || undefined,
     });
     
     let hasToolCalls = false;
@@ -89,7 +101,7 @@ export async function* runChatTurn(
             tokenUsage = {
               input_tokens: usage.input_tokens,
               output_tokens: usage.output_tokens,
-              model: chunk.response?.model || apiConfig.model
+              model: chunk.response?.model || resolvedConfig!.model,
             };
           }
         }

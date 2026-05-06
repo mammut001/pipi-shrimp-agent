@@ -11,12 +11,14 @@ import { useRef } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { workflowEngine } from '@/services/workflowEngine';
 import { t } from '@/i18n';
+import { GoalStatusBadge } from './GoalStatusBadge';
 
 export function WorkflowExecutionBar() {
   const currentInstance = useWorkflowStore((s) =>
     s.instances.find(i => i.id === s.currentInstanceId) ?? null
   );
   const agents = currentInstance?.agents ?? [];
+  const hasProjectGoal = Boolean(currentInstance?.projectGoal?.trim());
   const isRunning = useWorkflowStore((s) => s.isRunning);
   const currentRunningAgentId = useWorkflowStore((s) => s.currentRunningAgentId);
   const clearCanvas = useWorkflowStore((s) => s.clearCanvas);
@@ -26,7 +28,7 @@ export function WorkflowExecutionBar() {
   const currentAgentName = currentAgent?.name || '';
 
   const handleRun = async () => {
-    if (agents.length === 0 || isRunning || startingRef.current || workflowEngine.getIsRunning()) return;
+    if (agents.length === 0 || !hasProjectGoal || isRunning || startingRef.current || workflowEngine.getIsRunning()) return;
     startingRef.current = true;
     try {
       await workflowEngine.start();
@@ -57,7 +59,8 @@ export function WorkflowExecutionBar() {
       {/* Run button */}
       <button
         onClick={handleRun}
-        disabled={isRunning || agents.length === 0}
+        disabled={isRunning || agents.length === 0 || !hasProjectGoal}
+        title={!hasProjectGoal ? t('workflow.goalPanel.projectGoalRequired') : undefined}
         className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
       >
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -97,6 +100,8 @@ export function WorkflowExecutionBar() {
           </span>
         ) : t('workflow.ready')}
       </div>
+
+      <GoalStatusBadge />
 
       {/* Mini step indicators */}
       {agents.length > 1 && (

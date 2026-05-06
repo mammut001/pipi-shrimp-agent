@@ -29,6 +29,8 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import type { ProviderName } from '@/shared/providers';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { useUIStore } from '@/store/uiStore';
 import { workflowEngine } from '@/services/workflowEngine';
@@ -128,8 +130,9 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
           useWorkflowStore.getState().updateOutputRoute(agentId, routeId, updates);
         },
         onUpdateModel: (agentId: string, provider: string, modelId: string) => {
+          const configId = useSettingsStore.getState().apiConfigs.find((config) => config.provider === provider)?.id;
           useWorkflowStore.getState().updateAgent(agentId, {
-            model: { provider, modelId },
+            model: { configId, provider: provider as ProviderName, modelId },
           });
         },
         onSelect: (id: string) => onAgentSelect(id),
@@ -303,6 +306,7 @@ const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({ selectedAgentId, onAgen
         taskPrompt: template.taskPrompt,
         taskInstruction: template.taskInstruction,
         execution: template.execution,
+        role: template.recommendedRole,
       });
 
       // Update position if provided

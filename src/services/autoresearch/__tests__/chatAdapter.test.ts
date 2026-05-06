@@ -1,5 +1,9 @@
 const mockAppendLiveOutput = jest.fn();
 const mockRunHeadlessAgentTurn = jest.fn();
+const mockResolveActiveAgentConfig = jest.fn();
+const mockValidateResolvedAgentConfig = jest.fn();
+const mockFormatAgentConfigValidationError = jest.fn();
+const mockGetAgentConfigDiagnostics = jest.fn();
 
 jest.mock('@/store/autoresearchStore', () => ({
   useAutoResearchStore: {
@@ -10,14 +14,11 @@ jest.mock('@/store/autoresearchStore', () => ({
   },
 }));
 
-jest.mock('@/store', () => ({
-  useSettingsStore: {
-    getState: () => ({
-      getActiveConfig: () => ({
-        apiKey: 'test-key',
-      }),
-    }),
-  },
+jest.mock('@/services/agentConfig', () => ({
+  resolveActiveAgentConfig: () => mockResolveActiveAgentConfig(),
+  validateResolvedAgentConfig: (...args: unknown[]) => mockValidateResolvedAgentConfig(...args),
+  formatAgentConfigValidationError: (...args: unknown[]) => mockFormatAgentConfigValidationError(...args),
+  getAgentConfigDiagnostics: (...args: unknown[]) => mockGetAgentConfigDiagnostics(...args),
 }));
 
 jest.mock('@/services/headless/agentRunner', () => ({
@@ -34,9 +35,32 @@ jest.mock('../terminalRunner', () => ({
 }));
 
 describe('createAutoResearchSendMessage', () => {
+  const activeConfig = {
+    configId: 'cfg-1',
+    name: 'MiniMax Global',
+    provider: 'minimax',
+    model: 'MiniMax-M2.7',
+    baseUrl: 'https://api.minimaxi.com/v1',
+    apiFormat: 'openai',
+    hasApiKey: true,
+    apiKey: 'test-key',
+  };
+
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    mockResolveActiveAgentConfig.mockReturnValue(activeConfig);
+    mockValidateResolvedAgentConfig.mockReturnValue([]);
+    mockFormatAgentConfigValidationError.mockReturnValue('invalid config');
+    mockGetAgentConfigDiagnostics.mockReturnValue({
+      selectedConfigName: 'MiniMax Global',
+      selectedProvider: 'minimax',
+      selectedModel: 'MiniMax-M2.7',
+      hasApiKey: true,
+      hasBaseURL: true,
+      adapterName: 'minimax-openai',
+      authorizationHeaderPresent: true,
+    });
     mockRunHeadlessAgentTurn.mockImplementation(async (input) => {
       input.onTextDelta?.('partial output');
       input.onReasoningDelta?.('reasoning trace');
@@ -52,51 +76,43 @@ describe('createAutoResearchSendMessage', () => {
     });
   });
 
-  it('delegates iterations to the shared headless runner and preserves context history', async () => {
+  it('uses the resolved active config for headless agent execution', async () => {
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
 
     const sendMessage = createAutoResearchSendMessage('/tmp/research');
-    const firstResult = await sendMessage('system prompt', 'first question');
-    const secondResult = await sendMessage('system prompt', 'second question');
+    await expect(sendMessage('system prompt', 'first question')).resolves.toBe('final answer');
 
-    expect(firstResult).toBe('final answer');
-    expect(secondResult).toBe('final answer');
-    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        systemPrompt: 'system prompt',
-        workDir: '/tmp/research',
-        initialMessages: [
-          {
-            role: 'user',
-            content: 'first question',
-          },
-        ],
-      }),
-    );
-    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        initialMessages: [
-          {
-            role: 'user',
-            content: 'first question',
-          },
-          {
-            role: 'assistant',
-            content: 'final answer',
-          },
-          {
-            role: 'user',
-            content: 'second question',
-          },
-        ],
-      }),
-    );
+    expect(mockResolveActiveAgentConfig).toHaveBeenCalledTimes(1);
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
+      systemPrompt: 'system prompt',
+      workDir: '/tmp/research',
+      agentConfig: activeConfig,
+      initialMessages: [
+        {
+          role: 'user',
+          content: 'first question',
+        },
+      ],
+    }));
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('\n--- Iteration 3 ---\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('partial output');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('💭 reasoning trace');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('[status] working\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('  → read_file: README excerpt\n');
+  });
+
+  it('does not send requests when authorization would be empty', async () => {
+    mockResolveActiveAgentConfig.mockReturnValue({
+      ...activeConfig,
+      hasApiKey: false,
+      apiKey: '   ',
+    });
+    mockValidateResolvedAgentConfig.mockReturnValue([{ field: 'apiKey', message: 'missing key' }]);
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research');
+
+    await expect(sendMessage('system prompt', 'first question')).rejects.toThrow('invalid config');
+    expect(mockRunHeadlessAgentTurn).not.toHaveBeenCalled();
   });
 });
