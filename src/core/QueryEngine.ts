@@ -7,6 +7,7 @@ import {
   type ResolvedAgentConfig,
 } from '@/services/agentConfig';
 import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
+import { isContextOverflowError } from '@/services/context/contextBudget';
 import { useSettingsStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
@@ -68,46 +69,77 @@ export async function* runChatTurn(
     }));
 
     // [Phase 2: API Call]
-    const request = buildResolvedChatRequest(resolvedConfig!, {
-      messages: backendMessages,
-      systemPrompt,
-      allowBrowserTools,
-      sessionId,
-    });
-    const stream = invokeRustAPIStream(request.params);
-    
     let hasToolCalls = false;
     let pendingToolCalls: ToolCallParams[] = [];
-    let assistantMessageContent = "";
-    let assistantMessageReasoning = "";
+    let assistantMessageContent = '';
+    let assistantMessageReasoning = '';
     let tokenUsage: { input_tokens: number; output_tokens: number; model?: string } | undefined;
+    let strictBudgetRetry = false;
 
-    try {
-      // Consume the chunks stream
-      for await (const chunk of stream) {
-        if (chunk.type === 'text_delta') {
-          assistantMessageContent += chunk.content;
-          yield { type: 'text_delta', content: chunk.content };
-        } else if (chunk.type === 'reasoning_delta') {
-          assistantMessageReasoning += chunk.content;
-          yield { type: 'reasoning_delta', content: chunk.content };
-        } else if (chunk.type === 'tool_call') {
-          hasToolCalls = true;
-          pendingToolCalls.push(chunk.tool);
-        } else if (chunk.type === 'api_response_complete') {
-          const usage = chunk.response?.usage;
-          if (usage) {
-            tokenUsage = {
-              input_tokens: usage.input_tokens,
-              output_tokens: usage.output_tokens,
-              model: chunk.response?.model || resolvedConfig!.model,
-            };
+    while (true) {
+      const request = buildResolvedChatRequest(resolvedConfig!, {
+        messages: backendMessages,
+        systemPrompt,
+        allowBrowserTools,
+        sessionId,
+        contextBudget: { strict: strictBudgetRetry },
+      });
+      const stream = invokeRustAPIStream(request.params);
+
+      hasToolCalls = false;
+      pendingToolCalls = [];
+      assistantMessageContent = '';
+      assistantMessageReasoning = '';
+      tokenUsage = undefined;
+
+      try {
+        // Consume the chunks stream
+        for await (const chunk of stream) {
+          if (chunk.type === 'text_delta') {
+            assistantMessageContent += chunk.content;
+            yield { type: 'text_delta', content: chunk.content };
+          } else if (chunk.type === 'reasoning_delta') {
+            assistantMessageReasoning += chunk.content;
+            yield { type: 'reasoning_delta', content: chunk.content };
+          } else if (chunk.type === 'tool_call') {
+            hasToolCalls = true;
+            pendingToolCalls.push(chunk.tool);
+          } else if (chunk.type === 'api_response_complete') {
+            const usage = chunk.response?.usage;
+            if (usage) {
+              tokenUsage = {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                model: chunk.response?.model || resolvedConfig!.model,
+              };
+            }
           }
         }
+        break;
+      } catch (e) {
+        if (
+          !strictBudgetRetry
+          && isContextOverflowError(e)
+          && !assistantMessageContent
+          && !assistantMessageReasoning
+          && pendingToolCalls.length === 0
+        ) {
+          strictBudgetRetry = true;
+          yield { type: 'status_update', message: 'Context too large, retrying with a pruned request.' };
+          continue;
+        }
+
+        if (strictBudgetRetry && isContextOverflowError(e)) {
+          yield {
+            type: 'error',
+            error: new Error('当前上下文过大，已尝试自动精简但仍失败。请新建干净会话或移除大型引用。'),
+          };
+          return;
+        }
+
+        yield { type: 'error', error: toError(e, 'Chat request failed') };
+        return;
       }
-    } catch (e) {
-      yield { type: 'error', error: toError(e, 'Chat request failed') };
-      return;
     }
     
     // Record the Assistant's turn in the local history BEFORE yielding tool execution.

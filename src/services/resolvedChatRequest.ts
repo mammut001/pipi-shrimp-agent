@@ -5,6 +5,12 @@ import {
   validateResolvedAgentConfig,
   type ResolvedAgentConfig,
 } from './agentConfig';
+import {
+  DEFAULT_CONTEXT_BUDGET_LIMITS,
+  pruneMessagesForBudget,
+  pruneTextForBudget,
+  type ContextBudgetOptions,
+} from './context/contextBudget';
 import { extractErrorDetails } from '@/utils/errorFormat';
 
 export interface ResolvedChatRequestOptions {
@@ -13,6 +19,7 @@ export interface ResolvedChatRequestOptions {
   sessionId: string;
   allowBrowserTools?: boolean;
   noTools?: boolean;
+  contextBudget?: ContextBudgetOptions;
 }
 
 export interface ResolvedChatRequestDiagnostics {
@@ -26,6 +33,10 @@ export interface ResolvedChatRequestDiagnostics {
   endpointHost: string | null;
   endpointPreview: string;
   authorizationHeaderPresent: boolean;
+  estimatedContextChars: number;
+  contextWasPruned: boolean;
+  droppedContextCount: number;
+  droppedContextReasons: string[];
 }
 
 export interface ResolvedChatRequestBuildResult {
@@ -99,6 +110,10 @@ export function getResolvedChatDiagnostics(
     apiFormat: config.apiFormat || '',
     endpointHost: getEndpointHost(endpointPreview),
     endpointPreview,
+    estimatedContextChars: 0,
+    contextWasPruned: false,
+    droppedContextCount: 0,
+    droppedContextReasons: [],
   };
 }
 
@@ -118,19 +133,45 @@ export function buildResolvedChatRequest(
     );
   }
 
+  const systemPromptBudget = pruneTextForBudget(
+    options.systemPrompt,
+    options.contextBudget?.strict ? 40_000 : 60_000,
+    'system prompt',
+  );
+  const budgetedMessages = pruneMessagesForBudget(options.messages, {
+    ...options.contextBudget,
+    maxChars: Math.max(
+      4_000,
+      (options.contextBudget?.maxChars ?? DEFAULT_CONTEXT_BUDGET_LIMITS.maxChars) - systemPromptBudget.estimatedChars,
+    ),
+  });
+  const droppedContextReasons = [
+    ...systemPromptBudget.droppedReasons,
+    ...budgetedMessages.droppedReasons,
+  ];
+  const estimatedContextChars = systemPromptBudget.estimatedChars + budgetedMessages.estimatedChars;
+  const contextWasPruned = systemPromptBudget.wasPruned || budgetedMessages.wasPruned;
+  const droppedContextCount = budgetedMessages.droppedCount + (systemPromptBudget.wasPruned ? 1 : 0);
+
   return {
     params: {
-      messages: options.messages,
+      messages: budgetedMessages.messages,
       apiKey: config.apiKey,
       model: config.model,
       baseUrl: config.baseUrl || '',
-      systemPrompt: options.systemPrompt,
+      systemPrompt: systemPromptBudget.text,
       noTools: options.noTools,
       allowBrowserTools: options.allowBrowserTools,
       sessionId: options.sessionId,
       apiFormat: config.apiFormat || undefined,
     },
-    diagnostics,
+    diagnostics: {
+      ...diagnostics,
+      estimatedContextChars,
+      contextWasPruned,
+      droppedContextCount,
+      droppedContextReasons,
+    },
   };
 }
 
