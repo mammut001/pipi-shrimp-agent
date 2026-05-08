@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { AutoResearchIterationRecord, AutoResearchRunRecord } from '@/services/autoresearch/history';
+import { createAutoResearchDemoRun } from '@/services/autoresearch/demoRun';
+import { formatError as formatAutoResearchError } from '@/services/autoresearch/errors';
 import { buildAutoResearchRunDocument, redactSensitiveText } from '@/services/autoresearch/runDocument';
 import {
   buildIterationSummaries,
@@ -14,17 +16,21 @@ import {
   DocumentMetadataSidebar,
   MarkdownDocumentPreview,
 } from '@/components/document';
+import { AutoResearchDashboardView } from './AutoResearchDashboardView';
 import { AutoResearchMetricChart } from './AutoResearchMetricChart';
 import { AutoResearchIterationTable } from './AutoResearchIterationTable';
 
+export type DetailViewMode = 'dashboard' | 'document';
+
 interface AutoResearchRunDetailDocumentProps {
-  run: AutoResearchRunRecord;
+  run?: AutoResearchRunRecord | null;
   liveOutput?: string;
   onBack?: () => void;
   onOpen?: () => void;
   onClose?: () => void;
   headerActions?: ReactNode;
   className?: string;
+  defaultViewMode?: DetailViewMode;
 }
 
 function formatDateTime(value?: string | null): string {
@@ -51,6 +57,10 @@ function basename(path: string): string {
 
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function formatSafeError(error: unknown): string {
+  return formatAutoResearchError(error);
 }
 
 function StatCard({ label, value, tone = 'neutral' }: { label: string; value: ReactNode; tone?: 'neutral' | 'good' | 'warn' }) {
@@ -153,7 +163,54 @@ function SelectedIterationDetail({ summary, iteration }: { summary: AutoResearch
   );
 }
 
-export function AutoResearchRunDetailDocument({
+function composeHeaderActions(toggleLabel: string, onToggle: () => void, headerActions?: ReactNode): ReactNode {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="rounded-xl border border-[#e7ded1] bg-white/90 px-3 py-2 text-[12px] font-medium text-[#6f665c] transition-colors hover:border-[#d8cfc1] hover:text-[#2f251a]"
+      >
+        {toggleLabel}
+      </button>
+      {headerActions}
+    </>
+  );
+}
+
+function EmptyDocumentState({
+  onBack,
+  onClose,
+  headerActions,
+  onSwitchToDashboard,
+  className,
+}: {
+  onBack?: () => void;
+  onClose?: () => void;
+  headerActions?: ReactNode;
+  onSwitchToDashboard: () => void;
+  className?: string;
+}) {
+  return (
+    <DocumentDetailShell
+      title="No AutoResearch run selected"
+      subtitle="Document mode only renders real run data. Switch to dashboard view to preview the demo benchmark layout."
+      backLabel="Back to Runs"
+      onBack={onBack}
+      onClose={onClose}
+      headerActions={composeHeaderActions('Dashboard view', onSwitchToDashboard, headerActions)}
+      className={className}
+    >
+      <DocumentContentCard>
+        <div className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] px-4 py-6 text-sm text-[#6f665c]">
+          No run is available for the report-style detail view yet.
+        </div>
+      </DocumentContentCard>
+    </DocumentDetailShell>
+  );
+}
+
+function AutoResearchDocumentView({
   run,
   liveOutput,
   onBack,
@@ -161,7 +218,17 @@ export function AutoResearchRunDetailDocument({
   onClose,
   headerActions,
   className = '',
-}: AutoResearchRunDetailDocumentProps) {
+  onSwitchToDashboard,
+}: {
+  run: AutoResearchRunRecord;
+  liveOutput?: string;
+  onBack?: () => void;
+  onOpen?: () => void;
+  onClose?: () => void;
+  headerActions?: ReactNode;
+  className?: string;
+  onSwitchToDashboard: () => void;
+}) {
   const document = useMemo(() => buildAutoResearchRunDocument(run), [run]);
   const timeline = useMemo(() => buildMetricTimeline(run), [run]);
   const summaries = useMemo(() => buildIterationSummaries(run), [run]);
@@ -195,7 +262,7 @@ export function AutoResearchRunDetailDocument({
       onBack={onBack}
       onOpen={onOpen}
       onClose={onClose}
-      headerActions={headerActions}
+      headerActions={composeHeaderActions('Dashboard view', onSwitchToDashboard, headerActions)}
       className={className}
       sidebar={(
         <DocumentMetadataSidebar
@@ -328,6 +395,104 @@ export function AutoResearchRunDetailDocument({
       </DocumentContentCard>
     </DocumentDetailShell>
   );
+}
+
+export function AutoResearchRunDetailDocument({
+  run,
+  liveOutput,
+  onBack,
+  onOpen,
+  onClose,
+  headerActions,
+  className = '',
+  defaultViewMode,
+}: AutoResearchRunDetailDocumentProps) {
+  const effectiveRun = useMemo(() => run ?? createAutoResearchDemoRun(), [run]);
+  const resolvedDefaultViewMode = defaultViewMode ?? 'dashboard';
+  const [viewMode, setViewMode] = useState<DetailViewMode>(resolvedDefaultViewMode);
+
+  useEffect(() => {
+    setViewMode(resolvedDefaultViewMode);
+  }, [resolvedDefaultViewMode, run?.id]);
+
+  if (viewMode === 'dashboard') {
+    try {
+      return (
+        <AutoResearchDashboardView
+          run={effectiveRun}
+          onBack={onBack}
+          onClose={onClose}
+          onOpen={run ? onOpen : undefined}
+          onSwitchToDocument={() => setViewMode('document')}
+          headerActions={headerActions}
+          className={className}
+        />
+      );
+    } catch (error) {
+      return (
+        <DocumentDetailShell
+          title="AutoResearch Dashboard"
+          subtitle="The dashboard view hit a recoverable render error."
+          backLabel="Back to Runs"
+          onBack={onBack}
+          onClose={onClose}
+          headerActions={composeHeaderActions('Document view', () => setViewMode('document'), headerActions)}
+          className={className}
+        >
+          <DocumentContentCard>
+            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {formatSafeError(error)}
+            </div>
+          </DocumentContentCard>
+        </DocumentDetailShell>
+      );
+    }
+  }
+
+  if (!run) {
+    return (
+      <EmptyDocumentState
+        onBack={onBack}
+        onClose={onClose}
+        headerActions={headerActions}
+        onSwitchToDashboard={() => setViewMode('dashboard')}
+        className={className}
+      />
+    );
+  }
+
+  try {
+    return (
+      <AutoResearchDocumentView
+        run={run}
+        liveOutput={liveOutput}
+        onBack={onBack}
+        onOpen={onOpen}
+        onClose={onClose}
+        headerActions={headerActions}
+        className={className}
+        onSwitchToDashboard={() => setViewMode('dashboard')}
+      />
+    );
+  } catch (error) {
+    return (
+      <DocumentDetailShell
+        title="AutoResearch Document"
+        subtitle="The report view hit a recoverable render error."
+        backLabel="Back to Runs"
+        onBack={onBack}
+        onClose={onClose}
+        headerActions={composeHeaderActions('Dashboard view', () => setViewMode('dashboard'), headerActions)}
+        className={className}
+      >
+        <DocumentContentCard>
+          <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {formatSafeError(error)}
+          </div>
+        </DocumentContentCard>
+      </DocumentDetailShell>
+    );
+  }
 }
 
 export default AutoResearchRunDetailDocument;

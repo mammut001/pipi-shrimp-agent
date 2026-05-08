@@ -31,6 +31,7 @@ export interface AutoResearchIterationSummary {
   metricName: string;
   metricValue: number | null;
   impactLabel: string;
+  relativeImpact?: number | null;
   changeSummary: string;
   hypothesis?: string;
   reasoning?: string;
@@ -212,6 +213,27 @@ export function formatMetricImpact(impact: AutoResearchMetricImpact): string {
   return relative === null ? absoluteLabel : `${absoluteLabel} · ${formatSignedPercent(relative)}`;
 }
 
+export function formatCompactRelativeImpact(
+  value: number | null | undefined,
+  direction: 'higher' | 'lower',
+): string {
+  void direction;
+
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'N/A';
+  }
+
+  if (Math.abs(value) < EPSILON) {
+    return '0.0%';
+  }
+
+  const normalizedValue = value;
+  const sign = normalizedValue > 0 ? '+' : '';
+  const percent = (normalizedValue * 100).toFixed(1);
+
+  return `${sign}${percent}%`;
+}
+
 export function formatMetricValue(value: number | null | undefined): string {
   const normalized = normalizeMetricValue(value);
   if (normalized === null) {
@@ -316,6 +338,7 @@ export function buildIterationSummaries(run: AutoResearchRunRecord): AutoResearc
       metricName: baselinePoint.metricName,
       metricValue: baselinePoint.value,
       impactLabel: '0.0%',
+      relativeImpact: 0,
       changeSummary: 'Baseline',
       startedAt: baselinePoint.timestamp,
       endedAt: baselinePoint.timestamp,
@@ -350,6 +373,10 @@ export function buildIterationSummaries(run: AutoResearchRunRecord): AutoResearc
         relativeImpactFromBaseline: point.relativeImpactFromBaseline ?? null,
         relativeImpactFromPrevious: point.relativeImpactFromPrevious ?? null,
       }) : formatMetricImpact(impact),
+      relativeImpact: point?.relativeImpactFromBaseline
+        ?? impact.relativeImpactFromBaseline
+        ?? point?.relativeImpactFromPrevious
+        ?? impact.relativeImpactFromPrevious,
       changeSummary: summarizeIterationChange(iteration),
       hypothesis: iteration.hypothesis,
       reasoning: iteration.reasoning,

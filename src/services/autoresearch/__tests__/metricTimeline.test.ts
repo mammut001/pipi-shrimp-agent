@@ -5,6 +5,7 @@ import {
   buildMetricTimeline,
   calculateMetricImpact,
   classifyIterationDecision,
+  formatCompactRelativeImpact,
   formatMetricImpact,
   formatMetricValue,
   getBestMetricPoint,
@@ -124,6 +125,19 @@ describe('AutoResearch metric timeline', () => {
 
     expect(formatMetricValue(0.963284)).toBe('0.963284');
     expect(formatMetricImpact(impact)).toBe('+0.0047 abs · +0.49%');
+  });
+
+  it('formats compact relative impact safely for dashboard mode', () => {
+    expect(formatCompactRelativeImpact(0.139, 'higher')).toBe('+13.9%');
+    expect(formatCompactRelativeImpact(0.023, 'higher')).toBe('+2.3%');
+    expect(formatCompactRelativeImpact(0, 'higher')).toBe('0.0%');
+    expect(formatCompactRelativeImpact(0.00000001, 'higher')).toBe('0.0%');
+    expect(formatCompactRelativeImpact(-0.012, 'higher')).toBe('-1.2%');
+    expect(formatCompactRelativeImpact(0.139, 'lower')).toBe('+13.9%');
+    expect(formatCompactRelativeImpact(null, 'higher')).toBe('N/A');
+    expect(formatCompactRelativeImpact(undefined, 'higher')).toBe('N/A');
+    expect(formatCompactRelativeImpact(Number.NaN, 'higher')).toBe('N/A');
+    expect(formatCompactRelativeImpact(Number.POSITIVE_INFINITY, 'higher')).toBe('N/A');
   });
 
   it('builds summaries for old records without persisted decision fields', () => {
