@@ -1,6 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from '@jest/globals';
+import { createAutoResearchDemoRun } from '@/services/autoresearch/demoRun';
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 import { AutoResearchMetricChart } from '../AutoResearchMetricChart';
 
@@ -54,5 +55,16 @@ describe('AutoResearchMetricChart', () => {
     }));
 
     expect(html).toContain('No parsed metric points yet.');
+  });
+
+  it('renders dashboard variant styling for benchmark mode', () => {
+    const html = renderToStaticMarkup(React.createElement(AutoResearchMetricChart, {
+      run: createAutoResearchDemoRun(),
+      variant: 'dashboard',
+    }));
+
+    expect(html).toContain('data-variant="dashboard"');
+    expect(html).toContain('#b8c7e8');
+    expect(html).toContain('stroke-dasharray="4 6"');
   });
 });

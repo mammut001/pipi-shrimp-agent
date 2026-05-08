@@ -1,6 +1,7 @@
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 import {
   buildIterationSummaries,
+  formatCompactRelativeImpact,
   formatMetricValue,
   type AutoResearchIterationDecision,
   type AutoResearchIterationSummary,
@@ -12,6 +13,7 @@ interface AutoResearchIterationTableProps {
   selectedIteration?: number | null;
   onSelectIteration?: (iteration: number) => void;
   className?: string;
+  variant?: 'light' | 'dashboard';
 }
 
 function basename(path: string): string {
@@ -30,6 +32,37 @@ function statusClassName(status: AutoResearchIterationDecision): string {
     no_metric: 'bg-stone-50 text-stone-600 border-stone-100',
   };
   return styles[status];
+}
+
+function getDashboardStatusClass(status: string | undefined): string {
+  switch (status) {
+    case 'baseline':
+      return 'border-teal-400/25 bg-teal-400/10 text-teal-200';
+    case 'keep':
+      return 'border-[#ffd75a]/30 bg-[#ffd75a]/12 text-[#ffe494]';
+    case 'discard':
+      return 'border-orange-400/25 bg-orange-400/10 text-orange-200';
+    case 'failed':
+      return 'border-red-400/25 bg-red-400/10 text-red-200';
+    case 'running':
+      return 'border-blue-400/25 bg-blue-400/10 text-blue-200';
+    case 'pending':
+      return 'border-white/10 bg-white/[0.05] text-white/60';
+    case 'no_metric':
+    default:
+      return 'border-slate-400/20 bg-slate-400/10 text-slate-200';
+  }
+}
+
+function truncateText(value: string | null | undefined, maxLength = 60): string {
+  if (!value) {
+    return 'N/A';
+  }
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 export function AutoResearchDecisionBadge({ status }: { status: AutoResearchIterationDecision }) {
@@ -51,14 +84,89 @@ function commitOrArtifactLabel(summary: AutoResearchIterationSummary): string {
   return summary.iteration === 0 ? 'baseline' : `#${summary.iteration}`;
 }
 
+function getShortArtifactLabel(summary: AutoResearchIterationSummary): string {
+  if (summary.commitHash) {
+    return summary.commitHash.slice(0, 8);
+  }
+  const artifactPath = summary.artifactPaths?.[0];
+  if (artifactPath) {
+    return truncateText(basename(artifactPath), 20);
+  }
+  return summary.iteration === 0 ? 'baseline' : `#${summary.iteration}`;
+}
+
 export function AutoResearchIterationTable({
   run,
   summaries: providedSummaries,
   selectedIteration,
   onSelectIteration,
   className = '',
+  variant = 'light',
 }: AutoResearchIterationTableProps) {
   const summaries = providedSummaries ?? buildIterationSummaries(run);
+
+  if (variant === 'dashboard') {
+    return (
+      <div className={`overflow-hidden rounded-[16px] border border-white/10 bg-[#171717] ${className}`}>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm text-[#f4f4f4]">
+            <thead className="bg-white/[0.03] text-[11px] uppercase tracking-[0.14em] text-white/38">
+              <tr>
+                <th className="px-4 py-3 font-semibold">Iteration</th>
+                <th className="px-4 py-3 font-semibold">Commit/Artifact</th>
+                <th className="px-4 py-3 font-semibold">Status</th>
+                <th className="px-4 py-3 font-semibold">Change</th>
+                <th className="px-4 py-3 text-right font-semibold">Impact</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/10">
+              {summaries.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-center text-sm text-white/50" colSpan={5}>No iterations recorded yet.</td>
+                </tr>
+              ) : summaries.map((summary) => {
+                const selected = selectedIteration === summary.iteration;
+                return (
+                  <tr
+                    key={summary.iteration}
+                    role={onSelectIteration ? 'button' : undefined}
+                    tabIndex={onSelectIteration ? 0 : undefined}
+                    aria-selected={selected}
+                    onClick={() => onSelectIteration?.(summary.iteration)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onSelectIteration?.(summary.iteration);
+                      }
+                    }}
+                    className={`${onSelectIteration ? 'cursor-pointer' : ''} ${selected ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'}`}
+                  >
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-white/58">
+                      {summary.iteration === 0 ? 'Baseline' : `#${summary.iteration}`}
+                    </td>
+                    <td className="max-w-[180px] truncate px-4 py-3 font-mono text-xs text-white/55" title={getShortArtifactLabel(summary)}>
+                      {getShortArtifactLabel(summary)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${getDashboardStatusClass(summary.status)}`}>
+                        {summary.status.replace(/_/g, ' ')}
+                      </span>
+                    </td>
+                    <td className="max-w-[360px] px-4 py-3 text-white/78">
+                      <span>{truncateText(summary.changeSummary, 60)}</span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs text-[#f4f4f4]">
+                      {formatCompactRelativeImpact(summary.relativeImpact, run.config.direction)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`overflow-hidden rounded-2xl border border-[#ebe4d9] bg-white ${className}`}>
