@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
+import { t } from '@/i18n';
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
-import { AUTORESEARCH_DEMO_RUN_ID } from '@/services/autoresearch/demoRun';
+import { isDemoRun } from '@/services/autoresearch/demoRun';
 
 interface AutoResearchDashboardHeaderProps {
   run: AutoResearchRunRecord;
   onBack?: () => void;
   onClose?: () => void;
   onOpen?: () => void;
-  onSwitchToDocument?: () => void;
+  onOpenFullReport?: () => void;
   headerActions?: ReactNode;
   className?: string;
 }
@@ -57,17 +58,18 @@ export function AutoResearchDashboardHeader({
   onBack,
   onClose,
   onOpen,
-  onSwitchToDocument,
+  onOpenFullReport,
   headerActions,
   className = '',
 }: AutoResearchDashboardHeaderProps) {
   const statusLabel = run.status.replace(/_/g, ' ');
+  const demo = isDemoRun(run);
   const subtitleParts = [
     shortenRunId(run.id),
     statusLabel,
     formatDate(run.createdAt),
     safeString(run.config.metric),
-    run.config.direction === 'lower' ? 'lower is better' : 'higher is better',
+    run.config.direction === 'lower' ? t('autoresearch.lowerIsBetter') : t('autoresearch.higherIsBetter'),
   ].filter((value): value is string => typeof value === 'string' && value.length > 0);
 
   return (
@@ -75,8 +77,13 @@ export function AutoResearchDashboardHeader({
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/40">
-            {run.id === AUTORESEARCH_DEMO_RUN_ID ? 'Auto Research Demo' : 'Auto Research'}
+            {t('autoresearch.detail.autoResearch')}
           </span>
+          {demo && (
+            <span className="rounded-full border border-[#d9c078]/35 bg-[#d9c078]/10 px-2.5 py-1 text-[11px] font-medium text-[#f3deb0]">
+              {t('autoresearch.detail.demo')}
+            </span>
+          )}
           <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-white/70">
             {statusLabel}
           </span>
@@ -94,13 +101,13 @@ export function AutoResearchDashboardHeader({
       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
         {headerActions}
 
-        {onSwitchToDocument && (
+        {onOpenFullReport && (
           <button
             type="button"
-            onClick={onSwitchToDocument}
-            className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-medium text-white/72 transition-colors hover:bg-white/[0.08] hover:text-white"
+            onClick={onOpenFullReport}
+            className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/70 transition-colors hover:bg-white/[0.07]"
           >
-            Document view
+            {t('autoresearch.detail.fullReport')}
           </button>
         )}
 
@@ -110,27 +117,29 @@ export function AutoResearchDashboardHeader({
             onClick={onOpen}
             className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-medium text-white/72 transition-colors hover:bg-white/[0.08] hover:text-white"
           >
-            Open
+            {t('autoresearch.detail.open')}
           </button>
         )}
 
-        {onBack ? (
+        {onBack && (
           <button
             type="button"
             onClick={onBack}
             className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-medium text-white/72 transition-colors hover:bg-white/[0.08] hover:text-white"
           >
-            Back to Runs
+            {t('autoresearch.detail.backToRuns')}
           </button>
-        ) : onClose ? (
+        )}
+
+        {onClose && (
           <button
             type="button"
             onClick={onClose}
             className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-medium text-white/72 transition-colors hover:bg-white/[0.08] hover:text-white"
           >
-            Close
+            {t('autoresearch.detail.close')}
           </button>
-        ) : null}
+        )}
       </div>
     </header>
   );

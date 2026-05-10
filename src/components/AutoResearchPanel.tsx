@@ -391,7 +391,6 @@ export function AutoResearchPanel() {
                   <AutoResearchRunDetailDocument
                     run={selectedRun}
                     liveOutput={displayedLiveOutput}
-                    defaultViewMode="dashboard"
                     onBack={() => setDetailOpen(false)}
                     onOpen={handleOpenSelectedRunArtifact}
                     onClose={() => setDetailOpen(false)}

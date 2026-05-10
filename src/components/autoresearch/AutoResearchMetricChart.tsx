@@ -1,4 +1,5 @@
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
+import { t } from '@/i18n';
 import {
   buildMetricTimeline,
   formatMetricValue,
@@ -116,14 +117,14 @@ export function AutoResearchMetricChart({
   const bestPoint = getBestMetricPoint(points);
   const baselinePoint = points.find((point) => point.isBaseline && typeof point.value === 'number');
   const metricName = run.config.metric || points[0]?.metricName || 'metric';
-  const directionLabel = run.config.direction === 'higher' ? 'higher is better' : 'lower is better';
+  const directionLabel = run.config.direction === 'higher' ? t('autoresearch.higherIsBetter') : t('autoresearch.lowerIsBetter');
 
   if (numericPoints.length === 0) {
     return (
       <div data-variant={variant} className={`${theme.wrapperClassName} ${className}`}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${theme.eyebrowClassName}`}>Metric History</p>
+            <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${theme.eyebrowClassName}`}>{t('autoresearch.detail.metricHistory')}</p>
             <h4 className={`mt-1 text-base font-semibold ${theme.titleClassName}`}>{metricName}</h4>
           </div>
           <span className={theme.directionBadgeClassName}>
@@ -138,7 +139,7 @@ export function AutoResearchMetricChart({
             color: theme.emptyText,
           }}
         >
-          No parsed metric points yet.
+          {t('autoresearch.detail.noParsedMetricPoints')}
         </div>
       </div>
     );
@@ -153,25 +154,27 @@ export function AutoResearchMetricChart({
     y: yForValue(point.value, minValue, maxValue),
   }));
   const polyline = plottedPoints.map((item) => `${item.x},${item.y}`).join(' ');
-  const baselineY = baselinePoint ? yForValue(baselinePoint.value, minValue, maxValue) : null;
+  const baselineY = baselinePoint && typeof baselinePoint.value === 'number'
+    ? yForValue(baselinePoint.value, minValue, maxValue)
+    : null;
 
   return (
     <div data-variant={variant} className={`${theme.wrapperClassName} ${className}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${theme.eyebrowClassName}`}>Metric History</p>
+          <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${theme.eyebrowClassName}`}>{t('autoresearch.detail.metricHistory')}</p>
           <h4 className={`mt-1 text-base font-semibold ${theme.titleClassName}`}>{metricName}</h4>
           <p className={`mt-1 text-xs ${theme.subtitleClassName}`}>
             {directionLabel}
-            {baselinePoint ? ` · baseline ${formatMetricValue(baselinePoint.value)}` : ''}
+            {baselinePoint ? ` · ${t('autoresearch.detail.baseline').toLowerCase()} ${formatMetricValue(baselinePoint.value)}` : ''}
           </p>
         </div>
         <div className={theme.badgeClassName}>
-          <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${theme.eyebrowClassName}`}>Best</p>
+          <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${theme.eyebrowClassName}`}>{t('autoresearch.detail.best')}</p>
           <p className={`mt-0.5 font-mono text-sm font-semibold ${theme.titleClassName}`}>
             {bestPoint?.value !== null && bestPoint?.value !== undefined ? formatMetricValue(bestPoint.value) : 'N/A'}
           </p>
-          <p className={`text-[10px] ${theme.subtitleClassName}`}>iteration {bestPoint?.iteration ?? 'N/A'}</p>
+          <p className={`text-[10px] ${theme.subtitleClassName}`}>{t('autoresearch.detail.iterationAxis')} {bestPoint?.iteration ?? 'N/A'}</p>
         </div>
       </div>
 
@@ -205,7 +208,7 @@ export function AutoResearchMetricChart({
           <g>
             <line x1={padding.left} y1={baselineY} x2={chartWidth - padding.right} y2={baselineY} stroke="#0f766e" strokeDasharray="6 5" opacity="0.7" />
             <text x={chartWidth - padding.right} y={baselineY - 8} textAnchor="end" fill="#0f766e" className="text-[11px] font-semibold">
-              baseline
+              {t('autoresearch.detail.baseline').toLowerCase()}
             </text>
           </g>
         )}
@@ -238,16 +241,16 @@ export function AutoResearchMetricChart({
           );
         })}
         <text x={(chartWidth + padding.left - padding.right) / 2} y={chartHeight - 6} textAnchor="middle" fill={theme.axisText} className="text-[11px]">
-          iteration
+          {t('autoresearch.detail.iterationAxis')}
         </text>
       </svg>
 
       <div className={`mt-3 flex flex-wrap gap-2 text-[11px] ${theme.legendTextClassName}`}>
         {[
-          ['baseline', '#0f766e'],
-          [variant === 'dashboard' ? 'keep / breakthrough' : 'keep', variant === 'dashboard' ? '#ffd75a' : '#16a34a'],
-          ['discard', '#d97706'],
-          ['failed/no metric', '#dc2626'],
+          [t('autoresearch.detail.baseline').toLowerCase(), '#0f766e'],
+          [variant === 'dashboard' ? t('autoresearch.detail.keepBreakthrough') : 'keep', variant === 'dashboard' ? '#ffd75a' : '#16a34a'],
+          [t('autoresearch.detail.discard'), '#d97706'],
+          [t('autoresearch.detail.failedNoMetric'), '#dc2626'],
         ].map(([label, color]) => (
           <span key={label} className="inline-flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />

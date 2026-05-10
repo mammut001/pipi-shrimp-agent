@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildIterationSummaries, type AutoResearchIterationSummary } from '@/services/autoresearch/metricTimeline';
 import { formatError } from '@/services/autoresearch/errors';
+import { t } from '@/i18n';
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 import { AutoResearchIterationTable } from './AutoResearchIterationTable';
 
@@ -64,8 +65,8 @@ export function AutoResearchDashboardTable({
     <section className={`rounded-[16px] border border-white/10 bg-[#1a1a1a] p-4 ${className}`}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/40">Iterations</p>
-          <p className="mt-2 text-sm text-white/55">Compact benchmark deltas for each candidate run.</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/40">{t('autoresearch.detail.iterationsTitle')}</p>
+          <p className="mt-2 text-sm text-white/55">{t('autoresearch.detail.iterationsSubtitle')}</p>
         </div>
       </div>
 
@@ -75,7 +76,7 @@ export function AutoResearchDashboardTable({
         </div>
       ) : summaries.length === 0 ? (
         <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-6 text-sm text-white/50">
-          No iterations recorded yet.
+          {t('autoresearch.detail.noIterations')}
         </div>
       ) : (
         <AutoResearchIterationTable
