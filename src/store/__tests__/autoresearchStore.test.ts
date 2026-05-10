@@ -1,17 +1,34 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
+import { AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY } from '@/services/autoresearch/defaultConfig';
 import {
   getSelectedAutoResearchRun,
   useAutoResearchStore,
 } from '../autoresearchStore';
 
+const storage = {
+  data: {} as Record<string, string>,
+  getItem(key: string) {
+    return this.data[key] ?? null;
+  },
+  setItem(key: string, value: string) {
+    this.data[key] = value;
+  },
+  removeItem(key: string) {
+    delete this.data[key];
+  },
+};
+
+Object.defineProperty(globalThis, 'localStorage', {
+  value: storage,
+  configurable: true,
+});
+
 describe('autoresearchStore history behavior', () => {
   beforeEach(() => {
     const store = useAutoResearchStore.getState();
     store.resetSession();
-    useAutoResearchStore.setState({ runHistory: [], selectedRunId: null });
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('pipi-shrimp-autoresearch-history-v1');
-    }
+    useAutoResearchStore.setState({ runHistory: [], selectedRunId: null, lastUsedConfig: null });
+    storage.data = {};
   });
 
   it('creates a persistent run record when a session starts', () => {
@@ -142,5 +159,33 @@ describe('autoresearchStore history behavior', () => {
     expect(nextState.runHistory).toHaveLength(1);
     expect(getSelectedAutoResearchRun(nextState)?.id).toBe('run-2');
     expect(getSelectedAutoResearchRun(nextState)?.iterations[0]?.hypothesis).toBe('reduce lr');
+  });
+
+  it('persists the last used setup config and keeps it across session resets', () => {
+    const store = useAutoResearchStore.getState();
+
+    store.setLastUsedConfig({
+      workdir: '~/autoresearch',
+      experimentDir: '/tmp/experiment',
+      metric: 'cv_accuracy',
+      direction: 'higher',
+      iterations: 5,
+    });
+
+    expect(useAutoResearchStore.getState().lastUsedConfig).toEqual({
+      workdir: '~/autoresearch',
+      experimentDir: '/tmp/experiment',
+      metric: 'cv_accuracy',
+      direction: 'higher',
+      iterations: 5,
+    });
+    expect(localStorage.getItem(AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY)).toContain('"cv_accuracy"');
+
+    store.resetSession();
+    expect(useAutoResearchStore.getState().lastUsedConfig?.experimentDir).toBe('/tmp/experiment');
+
+    store.clearLastUsedConfig();
+    expect(useAutoResearchStore.getState().lastUsedConfig).toBeNull();
+    expect(localStorage.getItem(AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY)).toBeNull();
   });
 });

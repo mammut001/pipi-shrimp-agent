@@ -4,7 +4,7 @@
  * Layout: MainLayout with experiment timeline in center and detail panel on right.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, type FormEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
@@ -23,32 +23,27 @@ import {
   resolveActiveAgentConfig,
   validateResolvedAgentConfig,
 } from '@/services/agentConfig';
-import {
-  createAutoResearchSendMessage,
-  startExperimentLoop,
-  stopExperimentLoop,
-  pauseExperimentLoop,
-  resumeExperimentLoop,
-} from '@/services/autoresearch';
+import { stopExperimentLoop, pauseExperimentLoop, resumeExperimentLoop } from '@/services/autoresearch';
 import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
-import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
 import { formatError } from '@/services/autoresearch/errors';
-import { createAutoResearchRunId } from '@/services/autoresearch/history';
-import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
+import {
+  buildAutoResearchDefaultConfig,
+  getAutoResearchDefaultConfig,
+  resolveAutoResearchDefaultConfig,
+  type AutoResearchDefaultSource,
+} from '@/services/autoresearch/defaultConfig';
+import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
+import {
+  logAutoResearchSetupFailure,
+  parseOptionalBaseline,
+  startAutoResearchRun,
+  validateAutoResearchSetupDraft,
+} from '@/services/autoresearch/setupFlow';
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
-
-function parseOptionalBaseline(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
-}
 
 interface RawBashResult {
   stdout?: string;
@@ -63,13 +58,14 @@ type ConnectionTestState =
   | { status: 'error'; output: string };
 
 function loadPersistedSetup(): SshConfig {
+  const defaults = getAutoResearchDefaultConfig();
   const fallback: SshConfig = {
     mode: 'local',
     host: '',
     user: 'root',
     keyPath: '',
     port: 22,
-    remoteWorkDir: '',
+    remoteWorkDir: defaults.workdir,
     authMode: 'agent',
     password: '',
   };
@@ -178,6 +174,9 @@ function AutoResearchView() {
     terminalVisible, terminalSessionId, terminalCwd,
     openTerminalPanel, setTerminalReady, setTerminalVisible,
   } = useAutoResearchStore();
+  const lastUsedConfig = useAutoResearchStore((state) => state.lastUsedConfig);
+  const setLastUsedConfig = useAutoResearchStore((state) => state.setLastUsedConfig);
+  const clearLastUsedConfig = useAutoResearchStore((state) => state.clearLastUsedConfig);
   const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
   const activeConfigId = useSettingsStore((state) => state.activeConfigId);
@@ -185,11 +184,15 @@ function AutoResearchView() {
 
   const [showSetup, setShowSetup] = useState(!sshConfig && runHistory.length === 0);
   const [setupForm, setSetupForm] = useState<SshConfig>(() => loadPersistedSetup());
-  const [maxIter, setMaxIter] = useState(50);
-  const [metric, setMetric] = useState('val_bpb');
-  const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
+  const [maxIter, setMaxIter] = useState(getAutoResearchDefaultConfig().iterations);
+  const [metric, setMetric] = useState(getAutoResearchDefaultConfig().metric);
+  const [direction, setDirection] = useState<'lower' | 'higher'>(getAutoResearchDefaultConfig().direction);
+  const [experimentDir, setExperimentDir] = useState(getAutoResearchDefaultConfig().experimentDir);
   const [baselineInput, setBaselineInput] = useState('');
+  const [prefillSource, setPrefillSource] = useState<AutoResearchDefaultSource>('defaults');
   const [connectionTest, setConnectionTest] = useState<ConnectionTestState>({ status: 'idle', output: '' });
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
   const [showRunList, setShowRunList] = useState(false);
   const agentConfig = useMemo(
     () => resolveActiveAgentConfig(),
@@ -207,6 +210,24 @@ function AutoResearchView() {
     const { password: _password, ...persisted } = setupForm;
     localStorage.setItem(AUTORESEARCH_CONFIG_STORAGE_KEY, JSON.stringify(persisted));
   }, [setupForm]);
+
+  useEffect(() => {
+    if (!showSetup) {
+      return;
+    }
+    const resolved = resolveAutoResearchDefaultConfig(lastUsedConfig);
+    setSetupForm((current) => ({
+      ...current,
+      remoteWorkDir: resolved.config.workdir,
+    }));
+    setMetric(resolved.config.metric);
+    setDirection(resolved.config.direction);
+    setMaxIter(resolved.config.iterations);
+    setExperimentDir(resolved.config.experimentDir);
+    setPrefillSource(resolved.source);
+    setSetupError(null);
+    setIsStarting(false);
+  }, [lastUsedConfig, showSetup]);
 
   useEffect(() => {
     if (!showSetup) {
@@ -239,6 +260,10 @@ function AutoResearchView() {
     setupForm.remoteWorkDir,
   ]);
 
+  useEffect(() => {
+    setSetupError(null);
+  }, [agentConfigError, baselineInput, direction, experimentDir, maxIter, metric, setupForm, connectionTest.status]);
+
   const handlePickLocalWorkDir = useCallback(async () => {
     const selection = await open({
       directory: true,
@@ -253,11 +278,27 @@ function AutoResearchView() {
   const handleShowSetup = useCallback(async () => {
     try {
       await assertSupportedPlatform();
+      setSetupError(null);
       setShowSetup(true);
     } catch (error) {
       useAutoResearchStore.getState().setError(formatError(error));
     }
   }, []);
+
+  const handleResetToDefaults = useCallback(() => {
+    const defaults = getAutoResearchDefaultConfig();
+    clearLastUsedConfig();
+    setSetupForm((current) => ({
+      ...current,
+      remoteWorkDir: defaults.workdir,
+    }));
+    setMetric(defaults.metric);
+    setDirection(defaults.direction);
+    setMaxIter(defaults.iterations);
+    setExperimentDir(defaults.experimentDir);
+    setPrefillSource('defaults');
+    setSetupError(null);
+  }, [clearLastUsedConfig]);
 
   const handleTestConnection = useCallback(async () => {
     try {
@@ -267,7 +308,7 @@ function AutoResearchView() {
       return;
     }
 
-    const cfg = sshConfig || setupForm;
+    const cfg = setupForm;
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
@@ -299,104 +340,69 @@ function AutoResearchView() {
     } catch (error) {
       const message = formatError(error);
       setConnectionTest({ status: 'error', output: message });
-      useAutoResearchStore.getState().setError(message);
     }
-  }, [setupForm, sshConfig]);
+  }, [setupForm]);
 
   const handleStart = useCallback(async () => {
-    try {
-      await assertSupportedPlatform();
-    } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
+    const validation = validateAutoResearchSetupDraft({
+      sshConfig: setupForm,
+      experimentDir,
+      metric,
+      direction,
+      iterations: maxIter,
+      baselineInput,
+      agentConfigError,
+      requireConnectionTest: true,
+      connectionTestStatus: connectionTest.status,
+    });
+    if (!validation.value) {
+      setSetupError(validation.error);
       return;
     }
 
-    if (!sshConfig) {
-      if (setupForm.mode === 'ssh') {
-        if (!setupForm.host || !setupForm.user) return;
-        if (setupForm.authMode === 'password' && !setupForm.password) return;
-        if (setupForm.authMode === 'key' && !setupForm.keyPath) return;
-      } else if (!setupForm.remoteWorkDir) {
-        return;
-      }
-    }
-
-    const cfg = sshConfig || setupForm;
-    if (connectionTest.status !== 'success') {
-      useAutoResearchStore.getState().setError(t('autoresearch.connectionTestRequired'));
-      return;
-    }
-
-    let runConfig;
-    try {
-      runConfig = resolveAutoResearchRunConfig();
-    } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
-      return;
-    }
-
-    const sessionId = createAutoResearchRunId();
+    setIsStarting(true);
+    setSetupError(null);
 
     try {
-      const preflight = await runAutoResearchPreflight({
-        sshConfig: cfg,
-        experimentDir: useAutoResearchStore.getState().experimentDir || cfg.remoteWorkDir,
-        workDir: cfg.remoteWorkDir,
-        sessionId,
-        agentConfig: runConfig.agentConfig,
-      });
-
-      const resolvedConfig = {
-        ...cfg,
-        remoteWorkDir: preflight.resolvedWorkDir,
-      };
-
-      if (!sshConfig) {
-        setSshConfig(resolvedConfig);
-      }
-
-      initSession({
-        id: sessionId,
-        maxIterations: maxIter,
-        metricName: metric,
-        metricDirection: direction,
-        baseline: parseOptionalBaseline(baselineInput),
-        sshConfig: resolvedConfig,
-        experimentDir: preflight.resolvedExperimentDir,
-        sessionFilePath: preflight.sessionFilePath,
-        livingDocPath: preflight.livingDocPath,
-        agentConfigSnapshot: runConfig.snapshot,
+      const started = await startAutoResearchRun(validation.value, {
+        setSshConfig,
+        setLastUsedConfig,
+        initSession,
       });
 
       setShowSetup(false);
-      openTerminalPanel(`autoresearch-terminal-${Date.now()}`, resolvedConfig.mode === 'local' ? resolvedConfig.remoteWorkDir : '');
-
-      const sendMessage = createAutoResearchSendMessage(
-        preflight.resolvedExperimentDir,
-        preflight.agentConfig,
-        {
-          environmentSummary: preflight.environmentSummary,
-          metricName: metric,
-          direction,
-          maxIterations: maxIter,
-        },
+      openTerminalPanel(
+        `autoresearch-terminal-${Date.now()}`,
+        started.resolvedConfig.mode === 'local' ? started.resolvedConfig.remoteWorkDir : '',
       );
-      void startExperimentLoop(sendMessage);
     } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
+      setSetupError(logAutoResearchSetupFailure('page-start', error, {
+        mode: validation.value.sshConfig.mode,
+        experimentDir: validation.value.experimentDir,
+        workdir: validation.value.sshConfig.remoteWorkDir,
+      }));
+    } finally {
+      setIsStarting(false);
     }
   }, [
+    agentConfigError,
     baselineInput,
     connectionTest.status,
     direction,
+    experimentDir,
     initSession,
     maxIter,
     metric,
     openTerminalPanel,
+    setLastUsedConfig,
     setSshConfig,
     setupForm,
-    sshConfig,
   ]);
+
+  const handleSetupSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void handleStart();
+  }, [handleStart]);
 
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
   const handleResume = useCallback(() => resumeExperimentLoop(), []);
@@ -440,7 +446,7 @@ function AutoResearchView() {
   ) : null;
 
   // ---- Setup form ----
-  if (showSetup && loopState === 'idle') {
+  if (showSetup) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-md space-y-4">
@@ -449,7 +455,21 @@ function AutoResearchView() {
             {t('autoresearch.setupDescription')}
           </p>
 
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={handleSetupSubmit}>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              <span>
+                {prefillSource === 'last-used'
+                  ? t('autoresearch.prefillLastUsed')
+                  : t('autoresearch.prefillDefaults')}
+              </span>
+              <button
+                type="button"
+                className="font-semibold hover:text-blue-800"
+                onClick={handleResetToDefaults}
+              >
+                {t('autoresearch.resetToDefaults')}
+              </button>
+            </div>
             {/* Mode toggle */}
             <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
               <button
@@ -522,7 +542,7 @@ function AutoResearchView() {
                   className="flex-1 px-3 py-2 border rounded-lg text-sm"
                   placeholder={t('autoresearch.localWorkDirPlaceholder')}
                   value={setupForm.remoteWorkDir}
-                  onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
+                  onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
                 />
                 <button
                   type="button"
@@ -537,9 +557,16 @@ function AutoResearchView() {
                 className="w-full px-3 py-2 border rounded-lg text-sm"
                 placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
                 value={setupForm.remoteWorkDir}
-                onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: e.target.value }))}
+                onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
               />
             )}
+
+            <input
+              className="w-full px-3 py-2 border rounded-lg text-sm"
+              placeholder={t('autoresearch.experimentDirPlaceholder')}
+              value={experimentDir}
+              onChange={e => setExperimentDir(sanitizePathInput(e.target.value))}
+            />
 
             <button
               type="button"
@@ -550,9 +577,10 @@ function AutoResearchView() {
                       || (setupForm.authMode === 'password' && !setupForm.password)
                       || (setupForm.authMode === 'key' && !setupForm.keyPath)
                       || !setupForm.remoteWorkDir
+                      || !experimentDir
                         || Boolean(agentConfigError)
                         || baselineInvalid)
-                      : !setupForm.remoteWorkDir || Boolean(agentConfigError) || baselineInvalid
+                      : !setupForm.remoteWorkDir || !experimentDir || Boolean(agentConfigError) || baselineInvalid
               }
               onClick={handleTestConnection}
             >
@@ -598,39 +626,34 @@ function AutoResearchView() {
               onChange={e => setBaselineInput(e.target.value)}
             />
             {baselineInvalid && (
-              <div className="text-xs text-red-500">Baseline must be a number.</div>
+              <div className="text-xs text-red-500">{t('autoresearch.validationBaselineNumber')}</div>
             )}
             <input
               className="w-full px-3 py-2 border rounded-lg text-sm"
               placeholder={t('autoresearch.maxIterationsPlaceholder')}
               type="number"
               value={maxIter}
-              onChange={e => setMaxIter(parseInt(e.target.value) || 50)}
+              onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
             />
-          </div>
-
+            {setupError && setupError !== agentConfigError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+                {setupError}
+              </div>
+            )}
             <button
+              type="submit"
               className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-              disabled={
-                connectionTest.status !== 'success'
-                || (setupForm.mode === 'ssh'
-                  ? (!setupForm.host || !setupForm.user
-                      || (setupForm.authMode === 'password' && !setupForm.password)
-                      || (setupForm.authMode === 'key' && !setupForm.keyPath)
-                      || !setupForm.remoteWorkDir
-                        || Boolean(agentConfigError)
-                        || baselineInvalid)
-                      : !setupForm.remoteWorkDir || Boolean(agentConfigError) || baselineInvalid)
-              }
-              onClick={handleStart}
+              disabled={isStarting}
+              aria-busy={isStarting}
             >
-              {t('autoresearch.start')}
+              {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
             </button>
             {agentConfigError && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
                 {agentConfigError}
               </div>
             )}
+          </form>
         </div>
       </div>
     );

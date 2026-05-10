@@ -924,6 +924,7 @@ export type TranslationKeys = {
   'autoresearch.localWorkDirPlaceholder': string;
   'autoresearch.chooseDirectory': string;
   'autoresearch.remoteWorkDirPlaceholder': string;
+  'autoresearch.experimentDirPlaceholder': string;
   'autoresearch.testConnection': string;
   'autoresearch.connectionTesting': string;
   'autoresearch.connectionTestRequired': string;
@@ -931,7 +932,20 @@ export type TranslationKeys = {
   'autoresearch.lowerIsBetter': string;
   'autoresearch.higherIsBetter': string;
   'autoresearch.maxIterationsPlaceholder': string;
+  'autoresearch.maxIterationsShortPlaceholder': string;
+  'autoresearch.prefillDefaults': string;
+  'autoresearch.prefillLastUsed': string;
+  'autoresearch.resetToDefaults': string;
   'autoresearch.start': string;
+  'autoresearch.starting': string;
+  'autoresearch.validationHostRequired': string;
+  'autoresearch.validationUserRequired': string;
+  'autoresearch.validationPasswordRequired': string;
+  'autoresearch.validationKeyPathRequired': string;
+  'autoresearch.validationWorkdirRequired': string;
+  'autoresearch.validationExperimentDirRequired': string;
+  'autoresearch.validationMetricRequired': string;
+  'autoresearch.validationBaselineNumber': string;
   'autoresearch.loopStateIdle': string;
   'autoresearch.loopStateRunning': string;
   'autoresearch.loopStatePaused': string;
