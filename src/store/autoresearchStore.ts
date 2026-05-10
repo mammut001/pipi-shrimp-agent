@@ -17,6 +17,12 @@ import {
   type AutoResearchRunRecord,
   type AutoResearchRunStatus,
 } from '@/services/autoresearch/history';
+import {
+  buildAutoResearchDefaultConfig,
+  loadPersistedAutoResearchLastUsedConfig,
+  persistAutoResearchLastUsedConfig,
+  type AutoResearchDefaultConfig,
+} from '@/services/autoresearch/defaultConfig';
 
 export type { AutoResearchIterationRecord, AutoResearchRunRecord, AutoResearchRunStatus } from '@/services/autoresearch/history';
 
@@ -99,6 +105,7 @@ export interface ExperimentSession {
   terminalCwd: string;
   runHistory: AutoResearchRunRecord[];
   selectedRunId: string | null;
+  lastUsedConfig: AutoResearchDefaultConfig | null;
 }
 
 const defaultTelegramConfig: TelegramNotifyConfig = {
@@ -110,8 +117,9 @@ const defaultTelegramConfig: TelegramNotifyConfig = {
 };
 
 const persistedHistory = loadPersistedAutoResearchHistory();
+const persistedLastUsedConfig = loadPersistedAutoResearchLastUsedConfig();
 
-function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'selectedRunId'> {
+function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'selectedRunId' | 'lastUsedConfig'> {
   return {
     id: '',
     loopState: 'idle',
@@ -334,6 +342,8 @@ interface AutoResearchStore extends ExperimentSession {
   setTerminalVisible: (visible: boolean) => void;
   setTerminalCwd: (cwd: string) => void;
   setSshConfig: (cfg: SshConfig) => void;
+  setLastUsedConfig: (config: AutoResearchDefaultConfig) => void;
+  clearLastUsedConfig: () => void;
   setTelegramConfig: (cfg: Partial<TelegramNotifyConfig>) => void;
   showSetupModal: boolean;
   setShowSetupModal: (show: boolean) => void;
@@ -355,6 +365,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   ...createEmptySession(),
   runHistory: persistedHistory.runs,
   selectedRunId: persistedHistory.selectedRunId,
+  lastUsedConfig: persistedLastUsedConfig,
   showSetupModal: false,
 
   initSession: (opts) => set((state) => {
@@ -420,6 +431,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     ...createEmptySession(),
     runHistory: state.runHistory,
     selectedRunId: getFallbackSelectedRunId(state.runHistory, state.selectedRunId),
+    lastUsedConfig: state.lastUsedConfig,
     showSetupModal: state.showSetupModal,
   })),
 
@@ -664,6 +676,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   setTerminalCwd: (terminalCwd) => set({ terminalCwd }),
 
   setSshConfig: (cfg) => set({ sshConfig: withSshConfigDefaults(cfg) }),
+  setLastUsedConfig: (config) => set({ lastUsedConfig: buildAutoResearchDefaultConfig(config) }),
+  clearLastUsedConfig: () => set({ lastUsedConfig: null }),
   setTelegramConfig: (cfg) => set((state) => ({
     telegramConfig: { ...state.telegramConfig, ...cfg },
   })),
@@ -673,4 +687,5 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
 
 useAutoResearchStore.subscribe((state) => {
   persistAutoResearchHistory(state.runHistory, state.selectedRunId);
+  persistAutoResearchLastUsedConfig(state.lastUsedConfig);
 });

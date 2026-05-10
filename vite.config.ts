@@ -10,6 +10,13 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  define: {
+    __AUTORESEARCH_DEFAULT_WORKDIR__: JSON.stringify(process.env.AUTORESEARCH_DEFAULT_WORKDIR ?? null),
+    __AUTORESEARCH_DEFAULT_EXPERIMENT_DIR__: JSON.stringify(process.env.AUTORESEARCH_DEFAULT_EXPERIMENT_DIR ?? null),
+    __AUTORESEARCH_DEFAULT_METRIC__: JSON.stringify(process.env.AUTORESEARCH_DEFAULT_METRIC ?? null),
+    __AUTORESEARCH_DEFAULT_DIRECTION__: JSON.stringify(process.env.AUTORESEARCH_DEFAULT_DIRECTION ?? null),
+    __AUTORESEARCH_DEFAULT_ITERATIONS__: JSON.stringify(process.env.AUTORESEARCH_DEFAULT_ITERATIONS ?? null),
+  },
   css: {
     postcss: {
       plugins: [tailwindcss(), autoprefixer()],

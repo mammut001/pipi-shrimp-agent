@@ -6,41 +6,41 @@
  * - User clicks "Setup" button from the AutoResearch panel tab
  */
 
-import { useState, useCallback, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useState, useCallback, useEffect, useRef, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { t } from '@/i18n';
 import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
-import { useChatStore, useUIStore } from '@/store';
+import { useUIStore } from '@/store';
 import {
   formatAgentConfigValidationError,
   resolveActiveAgentConfig,
   validateResolvedAgentConfig,
 } from '@/services/agentConfig';
-import { startExperimentLoop } from '@/services/autoresearch';
-import { createAutoResearchSendMessage } from '@/services/autoresearch/chatAdapter';
-import { createAutoResearchRunId } from '@/services/autoresearch/history';
 import {
   isHorizontalArrowKey,
-  resolveInitialExperimentDir,
   sanitizePathInput,
 } from '@/services/autoresearch/pathInput';
-import { runAutoResearchPreflight } from '@/services/autoresearch/preflight';
-import { formatError } from '@/services/autoresearch/errors';
-import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
-
-function parseOptionalBaseline(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
-}
+import {
+  buildAutoResearchDefaultConfig,
+  getAutoResearchDefaultConfig,
+  resolveAutoResearchDefaultConfig,
+  type AutoResearchDefaultSource,
+} from '@/services/autoresearch/defaultConfig';
+import {
+  logAutoResearchSetupFailure,
+  parseOptionalBaseline,
+  startAutoResearchRun,
+  validateAutoResearchSetupDraft,
+} from '@/services/autoresearch/setupFlow';
+import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
   const setShowSetupModal = useAutoResearchStore(s => s.setShowSetupModal);
   const sshConfig = useAutoResearchStore(s => s.sshConfig);
-  const storedExperimentDir = useAutoResearchStore(s => s.experimentDir);
+  const lastUsedConfig = useAutoResearchStore(s => s.lastUsedConfig);
   const setSshConfig = useAutoResearchStore(s => s.setSshConfig);
+  const setLastUsedConfig = useAutoResearchStore(s => s.setLastUsedConfig);
+  const clearLastUsedConfig = useAutoResearchStore(s => s.clearLastUsedConfig);
   const initSession = useAutoResearchStore(s => s.initSession);
   const setAgentPanelTab = useUIStore(s => s.setAgentPanelTab);
   const agentConfig = resolveActiveAgentConfig();
@@ -52,7 +52,7 @@ export function AutoResearchSetupModal() {
   const modalRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState<SshConfig>({
-    mode: sshConfig?.mode || 'ssh',
+    mode: sshConfig?.mode || 'local',
     host: sshConfig?.host || '',
     user: sshConfig?.user || 'root',
     keyPath: sshConfig?.keyPath || '',
@@ -61,29 +61,54 @@ export function AutoResearchSetupModal() {
     authMode: sshConfig?.authMode || 'agent',
     password: sshConfig?.password || '',
   });
-  const [metric, setMetric] = useState('val_bpb');
-  const [direction, setDirection] = useState<'lower' | 'higher'>('lower');
-  const [maxIter, setMaxIter] = useState(50);
+  const [metric, setMetric] = useState(getAutoResearchDefaultConfig().metric);
+  const [direction, setDirection] = useState<'lower' | 'higher'>(getAutoResearchDefaultConfig().direction);
+  const [maxIter, setMaxIter] = useState(getAutoResearchDefaultConfig().iterations);
   const [baselineInput, setBaselineInput] = useState('');
-  const [experimentDir, setExperimentDir] = useState('');
+  const [experimentDir, setExperimentDir] = useState(getAutoResearchDefaultConfig().experimentDir);
+  const [prefillSource, setPrefillSource] = useState<AutoResearchDefaultSource>('defaults');
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
 
   // Sync form when sshConfig changes (e.g. from previous session)
   useEffect(() => {
     if (sshConfig) {
-      setForm({
+      setForm((current) => ({
+        ...current,
         ...sshConfig,
-        remoteWorkDir: sanitizePathInput(sshConfig.remoteWorkDir),
-      });
+      }));
     }
   }, [sshConfig]);
 
+  const applyPrefillConfig = useCallback((
+    source: AutoResearchDefaultSource,
+    config: ReturnType<typeof getAutoResearchDefaultConfig>,
+  ) => {
+    setForm((current) => ({
+      ...current,
+      remoteWorkDir: config.workdir,
+    }));
+    setMetric(config.metric);
+    setDirection(config.direction);
+    setMaxIter(config.iterations);
+    setExperimentDir(config.experimentDir);
+    setPrefillSource(source);
+  }, []);
+
   useEffect(() => {
-    if (!showSetupModal) return;
-    const chatState = useChatStore.getState();
-    const currentChatSession = chatState.sessions.find((session) => session.id === chatState.currentSessionId);
-    setExperimentDir(resolveInitialExperimentDir(storedExperimentDir, currentChatSession?.workDir));
-  }, [showSetupModal, storedExperimentDir]);
+    if (!showSetupModal) {
+      return;
+    }
+    setSubmitError(null);
+    setIsStarting(false);
+    const resolved = resolveAutoResearchDefaultConfig(lastUsedConfig);
+    applyPrefillConfig(resolved.source, resolved.config);
+  }, [applyPrefillConfig, lastUsedConfig, showSetupModal]);
+
+  useEffect(() => {
+    setSubmitError(null);
+  }, [agentConfigError, baselineInput, direction, experimentDir, form, maxIter, metric]);
 
   // Close on click outside
   useEffect(() => {
@@ -124,72 +149,69 @@ export function AutoResearchSetupModal() {
     setExperimentDir(sanitizePathInput(value));
   }, []);
 
+  const handleResetToDefaults = useCallback(() => {
+    clearLastUsedConfig();
+    applyPrefillConfig('defaults', getAutoResearchDefaultConfig());
+  }, [applyPrefillConfig, clearLastUsedConfig]);
+
   const handleStart = useCallback(async () => {
-    // Mode-specific validation
-    if (form.mode === 'ssh') {
-      if (!form.host || !form.user) return;
-      if (form.authMode === 'password' && !form.password) return;
-      if (form.authMode === 'key' && !form.keyPath) return;
+    if (import.meta.env.DEV) {
+      console.debug('[AutoResearch] Modal handleStart called', {
+        mode: form.mode,
+        experimentDir,
+        metric,
+        direction,
+        iterations: maxIter,
+      });
     }
 
-    const sessionId = createAutoResearchRunId();
-
-    let runConfig;
     try {
-      runConfig = resolveAutoResearchRunConfig();
+      await assertSupportedPlatform();
     } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
+      setSubmitError(error instanceof Error ? error.message : String(error));
       return;
     }
 
+    const validation = validateAutoResearchSetupDraft({
+      sshConfig: form,
+      experimentDir,
+      metric,
+      direction,
+      iterations: maxIter,
+      baselineInput,
+      agentConfigError,
+    });
+    if (!validation.value) {
+      setSubmitError(validation.error);
+      return;
+    }
+
+    setIsStarting(true);
+    setSubmitError(null);
+
     try {
-      const preflight = await runAutoResearchPreflight({
-        sshConfig: form,
-        experimentDir,
-        workDir: form.remoteWorkDir,
-        sessionId,
-        agentConfig: runConfig.agentConfig,
+      await startAutoResearchRun(validation.value, {
+        setSshConfig,
+        setLastUsedConfig,
+        initSession,
       });
-
-      const sanitizedForm = {
-        ...form,
-        remoteWorkDir: preflight.resolvedWorkDir,
-      };
-
-      setSshConfig(sanitizedForm);
-
-      initSession({
-        id: sessionId,
-        maxIterations: maxIter,
-        metricName: metric,
-        metricDirection: direction,
-        baseline: parseOptionalBaseline(baselineInput),
-        sshConfig: sanitizedForm,
-        experimentDir: preflight.resolvedExperimentDir,
-        sessionFilePath: preflight.sessionFilePath,
-        livingDocPath: preflight.livingDocPath,
-        agentConfigSnapshot: runConfig.snapshot,
-      });
-
       setShowSetupModal(false);
       setAgentPanelTab('autoresearch');
-
-      const sendMessage = createAutoResearchSendMessage(
-        preflight.resolvedExperimentDir,
-        preflight.agentConfig,
-        {
-          environmentSummary: preflight.environmentSummary,
-          metricName: metric,
-          direction,
-          maxIterations: maxIter,
-        },
-      );
-
-      void startExperimentLoop(sendMessage);
     } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
+      setSubmitError(logAutoResearchSetupFailure('modal-start', error, {
+        mode: validation.value.sshConfig.mode,
+        experimentDir: validation.value.experimentDir,
+        workdir: validation.value.sshConfig.remoteWorkDir,
+      }));
+    } finally {
+      setIsStarting(false);
     }
-  }, [agentConfig, agentConfigError, baselineInput, direction, experimentDir, form, initSession, maxIter, metric, setAgentPanelTab, setShowSetupModal, setSshConfig]);
+  }, [agentConfigError, baselineInput, direction, experimentDir, form, initSession, maxIter, metric, setAgentPanelTab, setLastUsedConfig, setShowSetupModal, setSshConfig]);
+
+  const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void handleStart();
+  }, [handleStart]);
 
   if (!showSetupModal) return null;
 
@@ -223,7 +245,7 @@ export function AutoResearchSetupModal() {
         </div>
 
         {/* Body */}
-        <div className="px-5 pb-5 space-y-3">
+        <form className="px-5 pb-5 space-y-3" onSubmit={handleSubmit}>
           {/* Target Section */}
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Execution Target</label>
@@ -305,7 +327,9 @@ export function AutoResearchSetupModal() {
 
             <input
               className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-              placeholder={form.mode === 'local' ? 'local work dir (absolute path)' : 'remote work dir'}
+              placeholder={form.mode === 'local'
+                ? t('autoresearch.localWorkDirPlaceholder')
+                : t('autoresearch.remoteWorkDirPlaceholder')}
               aria-label="AutoResearch workdir"
               value={form.remoteWorkDir}
               onChange={e => handleWorkDirChange(e.target.value)}
@@ -316,9 +340,23 @@ export function AutoResearchSetupModal() {
           {/* Experiment Section */}
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Experiment</label>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2.5 py-2 text-[10px] text-indigo-700">
+              <span>
+                {prefillSource === 'last-used'
+                  ? t('autoresearch.prefillLastUsed')
+                  : t('autoresearch.prefillDefaults')}
+              </span>
+              <button
+                type="button"
+                onClick={handleResetToDefaults}
+                className="font-semibold text-indigo-700 transition-colors hover:text-indigo-800"
+              >
+                {t('autoresearch.resetToDefaults')}
+              </button>
+            </div>
             <input
               className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors font-mono"
-              placeholder="experiment project directory"
+              placeholder={t('autoresearch.experimentDirPlaceholder')}
               aria-label="Experiment path"
               value={experimentDir}
               onChange={e => handleExperimentDirChange(e.target.value)}
@@ -330,7 +368,7 @@ export function AutoResearchSetupModal() {
             <div className="flex gap-2">
               <input
                 className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-                placeholder="metric name"
+                placeholder={t('autoresearch.metricNamePlaceholder')}
                 value={metric}
                 onChange={e => setMetric(e.target.value)}
               />
@@ -339,15 +377,15 @@ export function AutoResearchSetupModal() {
                 value={direction}
                 onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
               >
-                <option value="lower">↓ Lower</option>
-                <option value="higher">↑ Higher</option>
+                <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
+                <option value="higher">{t('autoresearch.higherIsBetter')}</option>
               </select>
               <input
                 className="w-16 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-                placeholder="max"
+                placeholder={t('autoresearch.maxIterationsShortPlaceholder')}
                 type="number"
                 value={maxIter}
-                onChange={e => setMaxIter(parseInt(e.target.value) || 50)}
+                onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
               />
             </div>
             <input
@@ -357,34 +395,31 @@ export function AutoResearchSetupModal() {
               onChange={e => setBaselineInput(e.target.value)}
             />
             {baselineInvalid && (
-              <p className="text-[10px] text-red-500">Baseline must be a number.</p>
+              <p className="text-[10px] text-red-500">{t('autoresearch.validationBaselineNumber')}</p>
             )}
           </div>
 
+          {submitError && submitError !== agentConfigError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+              {submitError}
+            </div>
+          )}
+
           {/* Start Button */}
           <button
+            type="submit"
             className="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-40 transition-all mt-1"
-            disabled={
-              form.mode === 'ssh'
-                ? (!form.host || !form.user
-                    || (form.authMode === 'password' && !form.password)
-                    || (form.authMode === 'key' && !form.keyPath)
-                    || !sanitizePathInput(form.remoteWorkDir, { trim: true })
-                    || !sanitizePathInput(experimentDir, { trim: true })
-                    || Boolean(agentConfigError)
-                    || baselineInvalid)
-                  : !sanitizePathInput(form.remoteWorkDir, { trim: true }) || !sanitizePathInput(experimentDir, { trim: true }) || Boolean(agentConfigError) || baselineInvalid
-            }
-            onClick={handleStart}
+            disabled={isStarting}
+            aria-busy={isStarting}
           >
-            Start Experiment Loop
+            {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
           </button>
           {agentConfigError && (
             <p className="text-[10px] text-red-500 leading-snug">
               {agentConfigError}
             </p>
           )}
-        </div>
+        </form>
       </div>
     </div>
   );
