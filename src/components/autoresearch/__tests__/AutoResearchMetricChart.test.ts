@@ -1,9 +1,23 @@
-import React from 'react';
+import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from '@jest/globals';
+import { beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { createAutoResearchDemoRun } from '@/services/autoresearch/demoRun';
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
-import { AutoResearchMetricChart } from '../AutoResearchMetricChart';
+
+jest.mock('@/i18n', () => ({
+  t: (key: string) => ({
+    'autoresearch.lowerIsBetter': 'lower is better',
+    'autoresearch.higherIsBetter': 'higher is better',
+    'autoresearch.detail.metricHistory': 'Metric History',
+    'autoresearch.detail.noParsedMetricPoints': 'No parsed metric points yet.',
+    'autoresearch.detail.baseline': 'Baseline',
+    'autoresearch.detail.best': 'Best',
+    'autoresearch.detail.iterationAxis': 'iteration',
+    'autoresearch.detail.keepBreakthrough': 'keep / breakthrough',
+    'autoresearch.detail.discard': 'discard',
+    'autoresearch.detail.failedNoMetric': 'failed/no metric',
+  }[key] ?? key),
+}));
 
 function createRun(iterations: AutoResearchRunRecord['iterations'] = []): AutoResearchRunRecord {
   return {
@@ -36,9 +50,15 @@ function createRun(iterations: AutoResearchRunRecord['iterations'] = []): AutoRe
   };
 }
 
+let AutoResearchMetricChart: typeof import('../AutoResearchMetricChart').AutoResearchMetricChart;
+
 describe('AutoResearchMetricChart', () => {
+  beforeAll(async () => {
+    ({ AutoResearchMetricChart } = await import('../AutoResearchMetricChart'));
+  });
+
   it('renders a baseline and metric points', () => {
-    const html = renderToStaticMarkup(React.createElement(AutoResearchMetricChart, {
+    const html = renderToStaticMarkup(createElement(AutoResearchMetricChart, {
       run: createRun([{ id: 'i1', index: 1, status: 'completed', metricValue: 0.968 }]),
     }));
 
@@ -49,7 +69,7 @@ describe('AutoResearchMetricChart', () => {
   });
 
   it('renders an empty state when no numeric metric exists', () => {
-    const html = renderToStaticMarkup(React.createElement(AutoResearchMetricChart, {
+    const html = renderToStaticMarkup(createElement(AutoResearchMetricChart, {
       run: createRun([]),
       points: [],
     }));
@@ -58,7 +78,7 @@ describe('AutoResearchMetricChart', () => {
   });
 
   it('renders dashboard variant styling for benchmark mode', () => {
-    const html = renderToStaticMarkup(React.createElement(AutoResearchMetricChart, {
+    const html = renderToStaticMarkup(createElement(AutoResearchMetricChart, {
       run: createAutoResearchDemoRun(),
       variant: 'dashboard',
     }));

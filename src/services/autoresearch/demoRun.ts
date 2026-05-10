@@ -2,6 +2,10 @@ import type { AutoResearchRunRecord } from './history';
 
 export const AUTORESEARCH_DEMO_RUN_ID = 'demo-autoresearch-run';
 
+export function isDemoRun(run: Pick<AutoResearchRunRecord, 'id'> | null | undefined): boolean {
+  return run?.id === AUTORESEARCH_DEMO_RUN_ID;
+}
+
 export function createAutoResearchDemoRun(): AutoResearchRunRecord {
   return {
     id: AUTORESEARCH_DEMO_RUN_ID,

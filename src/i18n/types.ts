@@ -949,6 +949,25 @@ export type TranslationKeys = {
   'autoresearch.terminalTitle': string;
   'autoresearch.hideTerminal': string;
   'autoresearch.showTerminal': string;
+  'autoresearch.detail.autoResearch': string;
+  'autoresearch.detail.demo': string;
+  'autoresearch.detail.fullReport': string;
+  'autoresearch.detail.open': string;
+  'autoresearch.detail.backToRuns': string;
+  'autoresearch.detail.backToDashboard': string;
+  'autoresearch.detail.close': string;
+  'autoresearch.detail.demoNotice': string;
+  'autoresearch.detail.metricHistory': string;
+  'autoresearch.detail.iterationsTitle': string;
+  'autoresearch.detail.iterationsSubtitle': string;
+  'autoresearch.detail.noIterations': string;
+  'autoresearch.detail.noParsedMetricPoints': string;
+  'autoresearch.detail.baseline': string;
+  'autoresearch.detail.best': string;
+  'autoresearch.detail.iterationAxis': string;
+  'autoresearch.detail.keepBreakthrough': string;
+  'autoresearch.detail.discard': string;
+  'autoresearch.detail.failedNoMetric': string;
 
   // Error Boundary
   'errorBoundary.title': string;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createAutoResearchDemoRun } from '../demoRun';
+import { createAutoResearchDemoRun, isDemoRun } from '../demoRun';
 import { buildIterationSummaries, buildMetricTimeline } from '../metricTimeline';
 
 describe('createAutoResearchDemoRun', () => {
@@ -22,5 +22,7 @@ describe('createAutoResearchDemoRun', () => {
     expect(() => buildMetricTimeline(run)).not.toThrow();
     expect(() => buildIterationSummaries(run)).not.toThrow();
     expect(summaries.filter((summary) => summary.status === 'keep').length).toBeGreaterThanOrEqual(2);
+    expect(isDemoRun(run)).toBe(true);
+    expect(isDemoRun({ id: 'real-run' })).toBe(false);
   });
 });
