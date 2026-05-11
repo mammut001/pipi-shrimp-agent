@@ -908,6 +908,9 @@ export type TranslationKeys = {
   'autoresearch.statusImproved': string;
   'autoresearch.statusNotImproved': string;
   'autoresearch.statusFailed': string;
+  'autoresearch.statusReflectionFailed': string;
+  'autoresearch.reflectionParseFailed': string;
+  'autoresearch.reflectionReason': string;
   'autoresearch.failedToResolveSessionFilePath': string;
   'autoresearch.setupTitle': string;
   'autoresearch.setupDescription': string;
@@ -982,6 +985,11 @@ export type TranslationKeys = {
   'autoresearch.detail.keepBreakthrough': string;
   'autoresearch.detail.discard': string;
   'autoresearch.detail.failedNoMetric': string;
+  'autoresearch.preflight.notGitRepoTitle': string;
+  'autoresearch.preflight.notGitRepoDescription': string;
+  'autoresearch.preflight.requiredFiles': string;
+  'screenshot.unavailable': string;
+  'screenshot.invalid': string;
 
   // Error Boundary
   'errorBoundary.title': string;

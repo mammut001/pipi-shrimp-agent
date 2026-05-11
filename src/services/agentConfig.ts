@@ -10,6 +10,7 @@ export interface ResolvedAgentConfig {
   configId: string | null;
   name: string;
   provider: ApiConfig['provider'];
+  providerLabel: string;
   model: string;
   baseUrl: string;
   apiFormat: ApiConfig['apiFormat'] | '';
@@ -28,15 +29,17 @@ function normalizeName(config: ApiConfig): string {
 }
 
 export function resolveAgentConfig(config: ApiConfig): ResolvedAgentConfig {
+  const providerDef = getProvider(config.provider);
   const baseUrl = resolveConfigBaseUrl(config.provider, config.baseUrl || '');
   const resolvedApiFormat = resolveConfigApiFormat(config.provider, config.apiFormat || '');
-  const apiFormat = resolvedApiFormat || getProvider(config.provider)?.defaultApiFormat || '';
+  const apiFormat = resolvedApiFormat || providerDef?.defaultApiFormat || '';
   const apiKey = sanitizeApiKeyValue(config.apiKey || '');
 
   return {
     configId: config.id,
     name: normalizeName(config),
     provider: config.provider,
+    providerLabel: providerDef?.label || config.provider,
     model: config.model?.trim() || '',
     baseUrl,
     apiFormat,
@@ -148,6 +151,7 @@ export function getAgentConfigDiagnostics(config: ResolvedAgentConfig) {
   return {
     selectedConfigName: config.name,
     selectedProvider: config.provider,
+    selectedProviderLabel: config.providerLabel,
     selectedModel: config.model,
     apiFormat: config.apiFormat,
     hasApiKey: config.hasApiKey,

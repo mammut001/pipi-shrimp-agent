@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { t } from '@/i18n';
 import {
   useAutoResearchStore,
   getSelectedAutoResearchRun,
@@ -20,12 +21,28 @@ import {
   pauseExperimentLoop,
   resumeExperimentLoop,
 } from '@/services/autoresearch';
+import {
+  buildAutoResearchModelDisplayFromSnapshot,
+} from '@/services/autoresearch/modelDisplay';
+
+function formatRunStatusLabel(status: AutoResearchRunRecord['status']): string {
+  return status === 'reflection_failed'
+    ? t('autoresearch.statusReflectionFailed')
+    : status.replace(/_/g, ' ');
+}
+
+function formatEventPhaseLabel(phase: AutoResearchRunRecord['events'][number]['phase']): string {
+  return phase === 'reflection_parse_failed'
+    ? t('autoresearch.reflectionParseFailed')
+    : phase.replace(/_/g, ' ');
+}
 
 function RunStatusBadge({ status }: { status: AutoResearchRunRecord['status'] }) {
   const styles: Record<AutoResearchRunRecord['status'], string> = {
     draft: 'bg-gray-100 text-gray-700',
     running: 'bg-green-100 text-green-700',
     waiting_rate_limit: 'bg-yellow-100 text-yellow-700',
+    reflection_failed: 'bg-red-100 text-red-700',
     stopped: 'bg-gray-100 text-gray-700',
     failed: 'bg-red-100 text-red-700',
     completed: 'bg-blue-100 text-blue-700',
@@ -34,7 +51,7 @@ function RunStatusBadge({ status }: { status: AutoResearchRunRecord['status'] })
 
   return (
     <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${styles[status]}`}>
-      {status.replace(/_/g, ' ')}
+      {formatRunStatusLabel(status)}
     </span>
   );
 }
@@ -122,6 +139,7 @@ export function AutoResearchPanel() {
   } = useAutoResearchStore();
   const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
+  const runReason = selectedRun?.reason || errorMessage;
 
   const liveOutputRef = useRef<HTMLDivElement>(null);
   const [liveExpanded, setLiveExpanded] = useState(true);
@@ -230,7 +248,7 @@ export function AutoResearchPanel() {
                 <span>·</span>
                 <span>{run.currentIteration}/{run.config.iterations}</span>
                 <span>·</span>
-                <span className="truncate">{run.config.configSnapshot.model || 'no model'}</span>
+                <span className="truncate">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</span>
               </div>
             </button>
           ))}
@@ -254,15 +272,22 @@ export function AutoResearchPanel() {
             </div>
             <div className="rounded-lg bg-gray-50 px-2 py-1.5 text-[9px] text-gray-500 space-y-0.5">
               <p className="font-medium text-gray-700">
-                {selectedRun.config.configSnapshot.configName} · {selectedRun.config.configSnapshot.provider} · {selectedRun.config.configSnapshot.model}
+                {buildAutoResearchModelDisplayFromSnapshot(selectedRun.config.configSnapshot).compactLabel}
               </p>
               <p className="break-all">{selectedRun.config.workdir}</p>
               <p className="break-all">{selectedRun.config.experimentDir}</p>
             </div>
 
-            {selectedRun.summary && (
+            {selectedRun.summary && selectedRun.status !== 'reflection_failed' && (
               <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5 text-[9px] text-yellow-800">
                 {redactSensitiveText(selectedRun.summary)}
+              </div>
+            )}
+
+            {selectedRun.status === 'reflection_failed' && runReason && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[9px] text-red-700">
+                <p className="font-semibold uppercase tracking-wider text-[8px] text-red-500">{t('autoresearch.reflectionReason')}</p>
+                <p className="mt-0.5">{redactSensitiveText(runReason)}</p>
               </div>
             )}
 
@@ -311,9 +336,9 @@ export function AutoResearchPanel() {
             )}
           </div>
 
-          {isSelectedRunActive && loopState === 'error' && errorMessage && (
+          {isSelectedRunActive && loopState === 'error' && runReason && (
             <div className="px-3 py-2 bg-red-50 border-b border-red-100 text-red-600 text-[10px]">
-              {errorMessage}
+              {redactSensitiveText(runReason)}
             </div>
           )}
 
@@ -352,7 +377,7 @@ export function AutoResearchPanel() {
               <div className="space-y-1 max-h-24 overflow-y-auto">
                 {selectedRun.events.slice(-6).reverse().map((event) => (
                   <div key={event.id} className="text-[9px] text-gray-500">
-                    <span className="font-semibold text-gray-700">{event.phase}</span>
+                    <span className="font-semibold text-gray-700">{formatEventPhaseLabel(event.phase)}</span>
                     <span className="text-gray-300"> · </span>
                     <span>{redactSensitiveText(event.message)}</span>
                   </div>

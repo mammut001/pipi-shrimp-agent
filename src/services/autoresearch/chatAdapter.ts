@@ -25,27 +25,25 @@ import {
   type AutoResearchFailureKind,
 } from './errors';
 import {
+  AutoResearchReflectionFailureError,
   buildFallbackReflectionDecision,
   buildReflectionInputFromState,
   getDeterministicRecoveryDecision,
+  isAutoResearchReflectionFailureError,
   requestReflectionDecision,
   type AutoResearchObservedToolResult,
   type AutoResearchReflectionDecision,
+  type AutoResearchReflectionDecisionResult,
 } from './reflection';
 import { appendTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
 import type { AutoResearchEnvironmentSummary } from './preflight';
+import { buildAutoResearchToolCatalog } from './toolCatalog';
 
 let adapterSessionCounter = 0;
 const MAX_HISTORY = 20;
 const MAX_RECOVERY_RETRIES = 1;
 const MAX_REFLECTION_PASSES = 2;
-const AUTORESEARCH_ALLOWED_TOOLS = [
-  'get_current_workspace',
-  'ssh_exec',
-  'ssh_read_file',
-  'ssh_upload_file',
-] as const;
 
 export interface AutoResearchSendMessageOptions {
   environmentSummary?: AutoResearchEnvironmentSummary;
@@ -86,19 +84,24 @@ async function appendIterationTranscript(section: string): Promise<void> {
 }
 
 function buildConvergenceRetryPrompt(systemPrompt: string, maxRounds: number | null): string {
+  const store = useAutoResearchStore.getState();
+  const allowedTools = buildAutoResearchToolCatalog(store.sshConfig);
   const limitLine = maxRounds
     ? `The previous attempt failed because it exceeded the tool-round budget (${maxRounds}).`
     : 'The previous attempt failed because it exceeded the tool-round budget.';
+  const toolDetourGuard = store.sshConfig?.mode === 'local'
+    ? 'Do not switch to SSH-only tools.'
+    : 'Do not switch to local file tools.';
 
   return `${systemPrompt}
 
 ## Strict Convergence Retry
 - ${limitLine}
 - Restart this SAME iteration from scratch.
-- Use only these tools: ${AUTORESEARCH_ALLOWED_TOOLS.join(', ')}.
+- Use only these tools: ${allowedTools.join(', ')}.
 - Do at most one batched inspection step before editing or running the experiment.
 - If the environment is still unclear after that inspection step, immediately write ${getCurrentRunDir()?.metricsPath ?? 'metrics.json'} with status FAILED and failReason "Exceeded tool-round budget while inspecting environment", then emit EXPERIMENT_RESULT and stop.
-- Do not keep exploring, do not ask for help, and do not switch to local file tools.`;
+- Do not keep exploring, do not ask for help, and ${toolDetourGuard}`;
 }
 
 function buildRecoveryPrompt(
@@ -198,6 +201,52 @@ async function persistReflectionDecision(decision: AutoResearchReflectionDecisio
   );
 }
 
+async function persistReflectionArtifacts(result: AutoResearchReflectionDecisionResult): Promise<void> {
+  const state = useAutoResearchStore.getState();
+  const runDir = getCurrentRunDir();
+  if (!state.sshConfig || !runDir) {
+    return;
+  }
+
+  await Promise.all([
+    writeTargetText(
+      state.sshConfig,
+      runDir.reflectionInputPath,
+      `${JSON.stringify(result.request, null, 2)}\n`,
+    ),
+    writeTargetText(
+      state.sshConfig,
+      runDir.reflectionRawPath,
+      result.rawText,
+    ),
+    writeTargetText(
+      state.sshConfig,
+      runDir.reflectionParsedPath,
+      `${JSON.stringify({
+        decision: result.decision.action,
+        summary: result.decision.summary,
+        next_action: result.decision.nextPlan ?? '',
+        parser_path: result.parserPath,
+        retry_count: result.retryCount,
+      }, null, 2)}\n`,
+    ),
+  ]);
+}
+
+function emitReflectionParseFailureEvents(result: AutoResearchReflectionDecisionResult): void {
+  result.parseFailedAttempts.forEach((attempt) => {
+    useAutoResearchStore.getState().addRunEvent?.({
+      level: 'warn',
+      phase: 'reflection_parse_failed',
+      message: `Reflection parse failed (${attempt.retryCount + 1}/${result.retryCount + 1}): ${attempt.preview}`,
+      metadata: {
+        retryCount: attempt.retryCount,
+        preview: attempt.preview,
+      },
+    });
+  });
+}
+
 /**
  * Create a sendMessage function suitable for startExperimentLoop().
  *
@@ -244,6 +293,7 @@ export function createAutoResearchSendMessage(
     let recoveryRetries = 0;
     let reflectionPasses = 0;
     let attemptPrompt = systemPrompt;
+    const allowedTools = buildAutoResearchToolCatalog(store.sshConfig);
 
     while (true) {
       const toolCallsById = new Map<string, { name: string; command?: string }>();
@@ -259,7 +309,7 @@ export function createAutoResearchSendMessage(
           systemPrompt: attemptPrompt,
           workDir,
           agentConfig: agentConfig!,
-          allowedTools: [...AUTORESEARCH_ALLOWED_TOOLS],
+          allowedTools,
           onTextDelta: (chunk) => {
             useAutoResearchStore.getState().appendLiveOutput(chunk);
           },
@@ -322,6 +372,7 @@ export function createAutoResearchSendMessage(
         const failureKind = classifyAutoResearchFailure(error);
 
         let decision = getDeterministicRecoveryDecision(reflectionInput);
+        let reflectionResult: AutoResearchReflectionDecisionResult | null = null;
         if (!decision && reflectionPasses < MAX_REFLECTION_PASSES) {
           const shouldReflect = isToolRoundLimitError(error)
             || toolResults.some((item) => (typeof item.exitCode === 'number' && item.exitCode !== 0) || Boolean(item.stderr));
@@ -329,7 +380,8 @@ export function createAutoResearchSendMessage(
           if (shouldReflect) {
             reflectionPasses += 1;
             try {
-              decision = await requestReflectionDecision(agentConfig!, reflectionInput);
+              reflectionResult = await requestReflectionDecision(agentConfig!, reflectionInput);
+              decision = reflectionResult.decision;
             } catch (reflectionError) {
               decision = buildFallbackReflectionDecision(reflectionInput, reflectionError);
             }
@@ -341,6 +393,10 @@ export function createAutoResearchSendMessage(
         }
 
         if (decision) {
+          if (reflectionResult) {
+            emitReflectionParseFailureEvents(reflectionResult);
+            await persistReflectionArtifacts(reflectionResult);
+          }
           await persistReflectionDecision(decision);
           if (decision.shouldRetry && recoveryRetries < MAX_RECOVERY_RETRIES) {
             recoveryRetries += 1;
@@ -352,7 +408,9 @@ export function createAutoResearchSendMessage(
             continue;
           }
 
-          lastError = new Error(decision.userMessage || decision.summary);
+          lastError = (decision.action === 'mark_iteration_failed' || decision.action === 'finish') && reflectionResult
+            ? new AutoResearchReflectionFailureError(decision.userMessage || decision.summary, reflectionResult)
+            : new Error(decision.userMessage || decision.summary);
         }
 
         break;
@@ -360,6 +418,9 @@ export function createAutoResearchSendMessage(
     }
 
     if (lastError) {
+      if (isAutoResearchReflectionFailureError(lastError)) {
+        throw lastError;
+      }
       const diagnosticMessage = buildAutoResearchAgentErrorMessage({
         phase: 'agent_execution',
         config: agentConfig!,

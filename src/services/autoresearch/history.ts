@@ -4,6 +4,7 @@ export type AutoResearchRunStatus =
   | 'draft'
   | 'running'
   | 'waiting_rate_limit'
+  | 'reflection_failed'
   | 'stopped'
   | 'failed'
   | 'completed'
@@ -12,8 +13,10 @@ export type AutoResearchRunStatus =
 export type AutoResearchIterationStatus = 'pending' | 'running' | 'failed' | 'completed' | 'skipped';
 
 export interface AutoResearchConfigSnapshot {
+  configId?: string | null;
   configName: string;
   provider: string;
+  providerLabel?: string;
   apiFormat?: string;
   baseUrl?: string;
   model: string;
@@ -56,7 +59,7 @@ export interface AutoResearchRunEvent {
   runId: string;
   timestamp: string;
   level: 'debug' | 'info' | 'warn' | 'error';
-  phase: 'preflight' | 'agent_execution' | 'evaluation' | 'rate_limit' | 'terminal' | 'system';
+  phase: 'preflight' | 'agent_execution' | 'evaluation' | 'rate_limit' | 'terminal' | 'system' | 'reflection_parse_failed';
   message: string;
   metadata?: Record<string, unknown>;
 }
@@ -77,6 +80,7 @@ export interface AutoResearchRunRecord {
   iterations: AutoResearchIterationRecord[];
   events: AutoResearchRunEvent[];
   summary?: string;
+  reason?: string;
   liveOutputExcerpt?: string;
 }
 
@@ -102,6 +106,7 @@ const MAX_ERROR_CHARS = 1_000;
 const MAX_PATH_CHARS = 600;
 const MAX_CONFIG_VALUE_CHARS = 600;
 const MAX_LIVE_OUTPUT_EXCERPT_CHARS = 20_000;
+const MAX_REASON_CHARS = 1_000;
 const REDACTED_VALUE = '[redacted]';
 
 function safeLocalStorage(): Storage | null {
@@ -168,8 +173,10 @@ function sanitizeMetadataValue(value: unknown, depth = 0): unknown {
 function normalizeConfigSnapshot(snapshot: unknown): AutoResearchConfigSnapshot {
   if (!isRecord(snapshot)) {
     return {
+      configId: null,
       configName: 'Unknown',
       provider: 'unknown',
+      providerLabel: undefined,
       model: '',
       keyPresent: false,
       source: 'unknown',
@@ -177,8 +184,10 @@ function normalizeConfigSnapshot(snapshot: unknown): AutoResearchConfigSnapshot 
   }
 
   return {
+    configId: typeof snapshot.configId === 'string' ? truncateString(snapshot.configId, MAX_CONFIG_VALUE_CHARS) : null,
     configName: sanitizeDisplayString(snapshot.configName, MAX_CONFIG_VALUE_CHARS) || 'Unknown',
     provider: sanitizeDisplayString(snapshot.provider, MAX_CONFIG_VALUE_CHARS) || 'unknown',
+    providerLabel: sanitizeDisplayString(snapshot.providerLabel, MAX_CONFIG_VALUE_CHARS),
     apiFormat: sanitizeDisplayString(snapshot.apiFormat, MAX_CONFIG_VALUE_CHARS),
     baseUrl: sanitizeDisplayString(snapshot.baseUrl, MAX_CONFIG_VALUE_CHARS),
     model: sanitizeDisplayString(snapshot.model, MAX_CONFIG_VALUE_CHARS) || '',
@@ -286,6 +295,7 @@ function normalizeRunRecord(record: unknown): AutoResearchRunRecord | null {
     iterations: iterations.slice(-MAX_PERSISTED_ITERATIONS_PER_RUN),
     events: events.slice(-MAX_PERSISTED_EVENTS_PER_RUN),
     summary: typeof record.summary === 'string' ? truncateString(record.summary, MAX_SUMMARY_CHARS) : undefined,
+    reason: typeof record.reason === 'string' ? truncateString(record.reason, MAX_REASON_CHARS) : undefined,
     liveOutputExcerpt: typeof record.liveOutputExcerpt === 'string'
       ? record.liveOutputExcerpt.slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS)
       : undefined,
@@ -306,8 +316,10 @@ export function clipLiveOutputExcerpt(value: string): string {
 export function toHistoryConfigSnapshot(snapshot?: AutoResearchAgentConfigSnapshot): AutoResearchConfigSnapshot {
   if (!snapshot) {
     return {
+      configId: null,
       configName: 'Unknown',
       provider: 'unknown',
+      providerLabel: undefined,
       model: '',
       keyPresent: false,
       source: 'unknown',
@@ -315,8 +327,10 @@ export function toHistoryConfigSnapshot(snapshot?: AutoResearchAgentConfigSnapsh
   }
 
   return {
+    configId: typeof snapshot.configId === 'string' ? truncateString(snapshot.configId, MAX_CONFIG_VALUE_CHARS) : null,
     configName: truncateString(snapshot.configName, MAX_CONFIG_VALUE_CHARS),
     provider: truncateString(snapshot.provider, MAX_CONFIG_VALUE_CHARS),
+    providerLabel: snapshot.providerLabel ? truncateString(snapshot.providerLabel, MAX_CONFIG_VALUE_CHARS) : undefined,
     apiFormat: snapshot.apiFormat ? truncateString(snapshot.apiFormat, MAX_CONFIG_VALUE_CHARS) : undefined,
     baseUrl: snapshot.baseUrl ? truncateString(snapshot.baseUrl, MAX_CONFIG_VALUE_CHARS) : undefined,
     model: truncateString(snapshot.model, MAX_CONFIG_VALUE_CHARS),
@@ -364,6 +378,7 @@ function compactRunRecord(record: AutoResearchRunRecord): AutoResearchRunRecord 
     iterations: [],
     events: [],
     summary: record.summary ? truncateString(record.summary, MAX_SUMMARY_CHARS) : undefined,
+    reason: record.reason ? truncateString(record.reason, MAX_REASON_CHARS) : undefined,
     liveOutputExcerpt: record.liveOutputExcerpt ? clipLiveOutputExcerpt(record.liveOutputExcerpt) : undefined,
   };
 }

@@ -4,6 +4,7 @@ import { t } from '@/i18n';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { useUIStore } from '@/store/uiStore';
+import { normalizeScreenshotSrc } from '@/utils/screenshot';
 import { safeInvoke } from '@/utils/safeInvoke';
 
 type RecoveryAction = 'retry' | 'continue' | 'takeover' | 'copy' | null;
@@ -17,6 +18,9 @@ export function BrowserFailureRecovery() {
   if (!snapshot) {
     return null;
   }
+
+  const screenshotSrc = normalizeScreenshotSrc(snapshot.screenshotPath);
+  const hasScreenshot = typeof snapshot.screenshotPath === 'string' && snapshot.screenshotPath.trim().length > 0;
 
   const handleRetryLastAction = async () => {
     setPendingAction('retry');
@@ -107,12 +111,21 @@ export function BrowserFailureRecovery() {
         </button>
       </div>
 
-      {snapshot.screenshotPath && (
-        <img
-          src={snapshot.screenshotPath}
-          alt={t('browser.failureRecovery')}
-          className="mt-3 max-h-44 w-full rounded-lg border border-red-200 object-cover"
-        />
+      {hasScreenshot && (
+        <div className="mt-3 overflow-hidden rounded-lg border border-red-200 bg-white/80">
+          {screenshotSrc ? (
+            <img
+              src={screenshotSrc}
+              alt={t('browser.failureRecovery')}
+              className="block max-h-72 w-full object-contain"
+              draggable={false}
+            />
+          ) : (
+            <div className="flex min-h-28 items-center justify-center px-4 py-6 text-center text-xs text-red-700">
+              {t('screenshot.invalid')}
+            </div>
+          )}
+        </div>
       )}
 
       <div className="mt-4 flex flex-wrap gap-2">

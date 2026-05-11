@@ -18,6 +18,7 @@ pub async fn send_claude_sdk_chat(
     model: String,
     base_url: Option<String>,
     system_prompt: Option<String>,
+    #[allow(non_snake_case)] responseFormat: Option<serde_json::Value>,
     #[allow(non_snake_case)] allowBrowserTools: Option<bool>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
 ) -> Result<ChatResponse, String> {
@@ -35,6 +36,7 @@ pub async fn send_claude_sdk_chat(
             model,
             base_url,
             system_prompt,
+            responseFormat,
             allow_browser_tools,
         )
         .await
@@ -54,6 +56,7 @@ pub async fn send_claude_sdk_chat_streaming(
     #[allow(non_snake_case)] allowBrowserTools: Option<bool>,
     #[allow(non_snake_case)] sessionId: String,
     apiFormat: Option<String>,
+    #[allow(non_snake_case)] responseFormat: Option<serde_json::Value>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: Window,
 ) -> Result<ChatResponse, String> {
@@ -78,6 +81,7 @@ pub async fn send_claude_sdk_chat_streaming(
             allow_browser_tools,
             sessionId,
             api_format,
+            responseFormat,
         )
         .await
         .map_err(|e| e.to_string())
@@ -113,7 +117,7 @@ pub async fn test_connection(
         state.client.clone()
     };
 
-    match client.chat(messages, apiKey, model, base_url, None, false).await {
+    match client.chat(messages, apiKey, model, base_url, None, None, false).await {
         Ok(_) => Ok(true),
         Err(e) => Err(e.to_string()),
     }

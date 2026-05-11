@@ -39,6 +39,7 @@ pub async fn send_request_impl(
     allow_browser_tools: bool,
     session_id: Option<&str>,
     api_format_hint: Option<&str>,
+    response_format: Option<serde_json::Value>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     let config = resolve_provider_config(api_key, model, base_url, api_format_hint);
     let adapter = get_adapter_for_config(&config);
@@ -68,7 +69,7 @@ pub async fn send_request_impl(
             }
         }
     }
-    let body = if streaming {
+    let mut body = if streaming {
         adapter.build_stream_body(
             &config,
             messages,
@@ -85,6 +86,11 @@ pub async fn send_request_impl(
             allow_browser_tools,
         )
     };
+    if config.api_format == super::ApiFormat::OpenAI {
+        if let Some(response_format) = response_format {
+            body["response_format"] = response_format;
+        }
+    }
     let estimated_input = estimate_request_input_tokens(
         config.provider_id,
         messages,
@@ -167,6 +173,7 @@ pub async fn send_streaming_request(
     allow_browser_tools: bool,
     session_id: &str,
     api_format_hint: Option<&str>,
+    response_format: Option<serde_json::Value>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     let cancel_token = CancellationToken::new();
     {
@@ -189,6 +196,7 @@ pub async fn send_streaming_request(
             allow_browser_tools,
             Some(session_id),
             api_format_hint,
+            response_format,
         ) => response,
     };
 

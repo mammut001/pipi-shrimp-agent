@@ -222,7 +222,10 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
                     "password": { "type": "string" },
                     "remoteWorkDir": { "type": "string" },
                     "timeout": { "type": "number" },
-                    "terminal": { "type": "boolean" }
+                    "terminal": {
+                        "type": "boolean",
+                        "description": "Defaults to false. Set true only when the command needs a PTY or live interactive terminal output."
+                    }
                 },
                 "required": ["command"],
                 "additionalProperties": false
@@ -230,11 +233,12 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
         }),
         serde_json::json!({
             "name": "ssh_upload_file",
-            "description": "Upload a local file to the target. In local mode this becomes a direct local copy; in ssh mode it uses SCP semantics.",
+            "description": "Upload a local file or inline content to the target. Provide exactly one of localPath or content. In local mode this becomes a direct local copy; in ssh mode it uses SCP semantics.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "localPath": { "type": "string" },
+                    "content": { "type": "string" },
                     "remotePath": { "type": "string" },
                     "mode": { "type": "string", "enum": ["local", "ssh"] },
                     "host": { "type": "string" },
@@ -245,7 +249,11 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
                     "password": { "type": "string" },
                     "remoteWorkDir": { "type": "string" }
                 },
-                "required": ["localPath", "remotePath"],
+                "required": ["remotePath"],
+                "oneOf": [
+                    { "required": ["localPath", "remotePath"] },
+                    { "required": ["content", "remotePath"] }
+                ],
                 "additionalProperties": false
             }
         }),

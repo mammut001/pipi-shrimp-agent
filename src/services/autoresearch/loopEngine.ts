@@ -33,6 +33,7 @@ import {
   isRateLimitError,
   isTerminalFailureError,
 } from './errors';
+import { isAutoResearchReflectionFailureError } from './reflection';
 import {
   getAutoResearchLivingDocPathFromWorkDir,
   getAutoResearchSessionFilePathFromWorkDir,
@@ -42,6 +43,7 @@ import {
   resolveTargetPath,
   type AutoResearchEnvironmentSummary,
 } from './preflight';
+import { formatAutoResearchToolCatalog, getAutoResearchToolProfile } from './toolCatalog';
 
 interface ParsedResult {
   metricName: string;
@@ -80,12 +82,20 @@ function buildSystemPrompt({
   environmentSummary,
 }: PromptInput): string {
   const isLocal = sshConfig.mode === 'local';
+  const toolProfile = getAutoResearchToolProfile(sshConfig);
+  const allowedTools = formatAutoResearchToolCatalog(sshConfig);
   const envLine = isLocal
     ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
     : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
   const toolCfgHint = isLocal
-    ? `For every target-side command or file read/write, use ssh_exec / ssh_upload_file / ssh_read_file with mode="local" and remoteWorkDir="${sshConfig.remoteWorkDir}".`
-    : `For every target-side command or file read/write, use ssh_exec / ssh_upload_file / ssh_read_file with mode="ssh", host="${sshConfig.host}", user="${sshConfig.user}", port=${sshConfig.port}, authMode="${sshConfig.authMode}"${sshConfig.authMode === 'key' ? `, keyPath="${sshConfig.keyPath}"` : ''}, remoteWorkDir="${sshConfig.remoteWorkDir}". Never ask for credentials.`;
+    ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${sshConfig.remoteWorkDir}". Use ${toolProfile.readTool} for file reads, ${toolProfile.writeTool} for file writes, and ${toolProfile.directoryTool} before writing new nested paths.`
+    : `Use ${toolProfile.commandTool} for target-side commands with mode="ssh", host="${sshConfig.host}", user="${sshConfig.user}", port=${sshConfig.port}, authMode="${sshConfig.authMode}"${sshConfig.authMode === 'key' ? `, keyPath="${sshConfig.keyPath}"` : ''}, remoteWorkDir="${sshConfig.remoteWorkDir}". Use ${toolProfile.readTool} for file reads. Use ${toolProfile.uploadTool} for remote file creation or replacement. Only set terminal=true when the command needs a PTY or live terminal output. Never ask for credentials.`;
+  const inspectionScope = isLocal
+    ? 'Read only the minimum files you need, and use only the local experiment tools listed above.'
+    : 'Read only the minimum files you need, and use only the SSH experiment tools listed above.';
+  const executionRequirement = isLocal
+    ? `Run the experiment command through ${toolProfile.commandTool} with cwd set to the experiment directory.`
+    : `Run the experiment command through ${toolProfile.commandTool}. Use terminal=true only when the command needs a PTY or live terminal output; otherwise keep it false or omitted.`;
 
   return `# AutoResearch Agent
 
@@ -95,7 +105,7 @@ You are running one autonomous experiment iteration inside Pipi-Shrimp AutoResea
 ## Environment
 - Execution target: ${envLine}
 - Tool config: ${toolCfgHint}
-- Only permitted experiment tools for this run: get_current_workspace, ssh_exec, ssh_upload_file, ssh_read_file
+- Only permitted experiment tools for this run: ${allowedTools}
 
 ## Environment Preflight
 - Experiment directory: ${environmentSummary.experimentDir}
@@ -119,9 +129,9 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 
 ## Requirements for this iteration
 1. Do exactly one hypothesis/change/run/evaluate cycle.
-2. Before making changes, do at most one batched inspection pass. Read only the minimum files you need, and use ssh_* tools only.
+2. Before making changes, do at most one batched inspection pass. ${inspectionScope}
 3. Write a short hypothesis summary to ${runDir.hypothesisPath}.
-4. Run the experiment command through ssh_exec so the user can watch the live terminal output.
+4. ${executionRequirement}
 5. After the run, write JSON to ${runDir.metricsPath} with:
    {"metricName":"<name>","metricValue":<number|null>,"status":"IMPROVED|NOT_IMPROVED|FAILED","hypothesis":"<one line>","failReason":"<optional>","extra":{"<optional>":"<optional>"}}
 6. Also emit a final fallback line:
@@ -339,10 +349,14 @@ async function writeRunStatus(
 function getRunArtifactPaths(runDir: RunDir): string[] {
   return [
     runDir.iterDir,
+    runDir.systemPromptPath,
     runDir.hypothesisPath,
     runDir.diffPath,
     runDir.metricsPath,
     runDir.statusPath,
+    runDir.reflectionInputPath,
+    runDir.reflectionRawPath,
+    runDir.reflectionParsedPath,
     runDir.transcriptPath,
     `${runDir.logsDir}/stdout.log`,
     `${runDir.logsDir}/stderr.log`,
@@ -472,7 +486,7 @@ export async function startExperimentLoop(
     }
     if (state.currentIteration >= state.maxIterations) {
       await notifier.onLoopStopped('Max iterations reached', state);
-      if (activeRun?.status !== 'failed') {
+      if (activeRun?.status !== 'failed' && activeRun?.status !== 'reflection_failed') {
         useAutoResearchStore.getState().setRunStatus('completed', {
           summary: 'Max iterations reached.',
           endedAt: new Date().toISOString(),
@@ -543,6 +557,7 @@ export async function startExperimentLoop(
         runDir,
         environmentSummary,
       });
+      await writeTargetText(artifactCfg, runDir.systemPromptPath, `${systemPrompt}\n`);
 
       const userMessage = `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
       const agentOutput = await sendMessage(systemPrompt, userMessage);
@@ -745,16 +760,19 @@ export async function startExperimentLoop(
       consecutiveRateLimitCount = 0;
       const finishedAt = new Date().toISOString();
       const durationMs = Date.now() - startMs;
+      const reflectionFailure = isAutoResearchReflectionFailureError(error);
       const failureMessage = formatError(error);
-      const failureKind = classifyAutoResearchFailure(error);
+      const failureKind = reflectionFailure ? 'reflection_failed' : classifyAutoResearchFailure(error);
       const entry: ExperimentEntry = {
         iteration,
-        hypothesis: 'Agent execution error',
+        hypothesis: reflectionFailure ? 'Reflection failed' : 'Agent execution error',
         change: 'N/A',
         metricValue: null,
         status: 'FAILED',
         failReason: failureMessage,
-        reasoning: 'The Agent failed to complete the iteration.',
+        reasoning: reflectionFailure
+          ? 'The reflection parser exhausted its contract and AutoResearch marked the iteration failed.'
+          : 'The Agent failed to complete the iteration.',
         timestamp: finishedAt,
         durationMs,
       };
@@ -765,15 +783,31 @@ export async function startExperimentLoop(
         metricValue: null,
         status: 'FAILED',
         failReason: failureMessage,
-        hypothesis: 'Agent execution error',
+        hypothesis: entry.hypothesis,
         commitHash: await captureCommitHash(experimentCfg),
         durationMs,
         startedAt,
         finishedAt,
+        reflection: reflectionFailure
+          ? {
+            parserPath: error.decisionResult.parserPath,
+            retryCount: error.decisionResult.retryCount,
+            reason: failureMessage,
+          }
+          : undefined,
       };
-      useAutoResearchStore.getState().setRunStatus('failed', {
-        summary: failureMessage,
-      });
+      if (reflectionFailure) {
+        useAutoResearchStore.getState().setReflectionFailed(failureMessage, {
+          summary: failureMessage,
+          endedAt: finishedAt,
+        });
+      } else {
+        useAutoResearchStore.getState().setRunStatus('failed', {
+          summary: failureMessage,
+          endedAt: finishedAt,
+          reason: failureMessage,
+        });
+      }
       useAutoResearchStore.getState().addExperiment(entry);
       useAutoResearchStore.getState().completeIterationRecord({
         iteration,
@@ -795,6 +829,8 @@ export async function startExperimentLoop(
           iteration,
           iterDir: runDir.iterDir,
           failureKind,
+          parserPath: reflectionFailure ? error.decisionResult.parserPath : undefined,
+          retryCount: reflectionFailure ? error.decisionResult.retryCount : undefined,
         },
       });
       useAutoResearchStore.getState().incrementConsecutiveFailures();

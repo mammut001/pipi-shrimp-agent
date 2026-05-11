@@ -17,8 +17,10 @@ import {
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { useChatStore } from '@/store/chatStore';
 import { useCdpStore } from '@/store/cdpStore';
+import { t } from '@/i18n';
 import type { BrowserElementBounds, BrowserPageViewport, BrowserScreenshotRef } from '@/types/browserPageState';
 import { saveBrowserBenchmarkArtifact } from '@/services/browserBenchmarkArtifacts';
+import { normalizeBrowserScreenshotSrc } from '@/utils/screenshot';
 import { exportBrowserBenchmarkReport } from '@/utils/browserObservabilityClient';
 
 function formatRelativeTime(timestamp: number | null): string {
@@ -62,22 +64,6 @@ function formatTimeout(timeoutMs?: number | null): string {
     return `${timeoutMs}ms`;
   }
   return `${Math.round(timeoutMs / 1_000)}s`;
-}
-
-function browserScreenshotUrl(screenshot?: BrowserScreenshotRef | null): string | null {
-  if (!screenshot?.value) {
-    return null;
-  }
-
-  if (screenshot.kind === 'base64_png') {
-    return `data:image/png;base64,${screenshot.value}`;
-  }
-
-  if (screenshot.kind === 'data_url') {
-    return screenshot.value;
-  }
-
-  return null;
 }
 
 function viewportHighlightStyle(
@@ -164,9 +150,13 @@ export function BrowserDebugPanel() {
   const visibleBenchmarkMetrics = useMemo(() => benchmarkReport?.metrics.slice(0, 6) ?? [], [benchmarkReport]);
   const visibleBenchmarkSamples = useMemo(() => benchmarkReport?.recent_samples.slice(0, 4) ?? [], [benchmarkReport]);
   const latestPageStateScreenshotUrl = useMemo(
-    () => browserScreenshotUrl(latestPageState?.screenshot),
+    () => normalizeBrowserScreenshotSrc(latestPageState?.screenshot),
     [latestPageState?.screenshot],
   );
+  const latestPageStateHasScreenshot = Boolean(latestPageState?.screenshot?.value?.trim());
+  const latestPageStateScreenshotAspectRatio = latestPageState?.viewport && latestPageState.viewport.width > 0 && latestPageState.viewport.height > 0
+    ? `${latestPageState.viewport.width} / ${latestPageState.viewport.height}`
+    : undefined;
   const latestPageStateHighlights = useMemo(() => {
     if (!latestPageState?.viewport) {
       return [];
@@ -502,7 +492,7 @@ export function BrowserDebugPanel() {
                 <StatCell label="DOM Version" value={latestPageState.domVersion} />
               </div>
 
-              {latestPageStateScreenshotUrl && latestPageState.viewport && (
+              {latestPageState.viewport && (
                 <div>
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Screenshot Preview</p>
@@ -511,26 +501,36 @@ export function BrowserDebugPanel() {
                     </p>
                   </div>
                   <div className="mt-2 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/70">
-                    <div className="relative">
-                      <img
-                        src={latestPageStateScreenshotUrl}
-                        alt={`PageState screenshot for ${latestPageState.title}`}
-                        className="block w-full"
-                      />
-                      <div className="pointer-events-none absolute inset-0">
-                        {latestPageStateHighlights.map(({ element, style }) => (
-                          <div
-                            key={`highlight-${element.id}`}
-                            className="absolute rounded border border-cyan-300/80 bg-cyan-400/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]"
-                            style={style}
-                          >
-                            <span className="absolute -left-px -top-5 rounded bg-cyan-300 px-1.5 py-0.5 text-[9px] font-bold text-slate-950">
-                              #{element.index ?? '?'}
-                            </span>
-                          </div>
-                        ))}
+                    {latestPageStateScreenshotUrl ? (
+                      <div
+                        className="relative mx-auto w-full max-w-full bg-slate-950/80"
+                        style={latestPageStateScreenshotAspectRatio ? { aspectRatio: latestPageStateScreenshotAspectRatio } : undefined}
+                      >
+                        <img
+                          src={latestPageStateScreenshotUrl}
+                          alt={`PageState screenshot for ${latestPageState.title}`}
+                          className="absolute inset-0 block h-full w-full object-contain"
+                          draggable={false}
+                        />
+                        <div className="pointer-events-none absolute inset-0">
+                          {latestPageStateHighlights.map(({ element, style }) => (
+                            <div
+                              key={`highlight-${element.id}`}
+                              className="absolute rounded border border-cyan-300/80 bg-cyan-400/10 shadow-[0_0_0_1px_rgba(34,211,238,0.25)]"
+                              style={style}
+                            >
+                              <span className="absolute -left-px -top-5 rounded bg-cyan-300 px-1.5 py-0.5 text-[9px] font-bold text-slate-950">
+                                #{element.index ?? '?'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex min-h-32 items-center justify-center px-4 py-8 text-center text-[11px] text-slate-400">
+                        {latestPageStateHasScreenshot ? t('screenshot.invalid') : t('screenshot.unavailable')}
+                      </div>
+                    )}
                   </div>
                   <p className="mt-2 text-[10px] text-slate-500">
                     Highlighted {latestPageStateHighlights.length} interactive elements with captured bounds.

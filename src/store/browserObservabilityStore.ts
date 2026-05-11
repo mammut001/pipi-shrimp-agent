@@ -68,6 +68,7 @@ interface BrowserObservabilityState {
   benchmarkReport: BrowserBenchmarkReport | null;
   failureSnapshots: BrowserFailureSnapshot[];
   activeFailureSnapshot: BrowserFailureSnapshot | null;
+  failurePreviewSuppressed: boolean;
   dismissedFailureIds: string[];
   setDebugPanelEnabled: (enabled: boolean) => void;
   markWiringReady: (ready: boolean) => void;
@@ -83,6 +84,7 @@ interface BrowserObservabilityState {
   invalidateSnapshots: (reason: string, source?: BrowserDebugSource) => void;
   syncFailureSnapshots: (snapshots: BrowserFailureSnapshot[]) => void;
   dismissFailureSnapshot: (taskId?: string) => void;
+  suppressFailurePreview: (suppressed: boolean) => void;
   clearTimeline: () => void;
 }
 
@@ -289,6 +291,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
   benchmarkReport: null,
   failureSnapshots: [],
   activeFailureSnapshot: null,
+  failurePreviewSuppressed: false,
   dismissedFailureIds: [],
 
   setDebugPanelEnabled: (enabled) => {
@@ -890,9 +893,9 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
       const dismissedFailureIds = state.dismissedFailureIds.filter((taskId) =>
         snapshots.some((snapshot) => snapshot.taskId === taskId),
       );
-      const activeFailureSnapshot = snapshots.find(
-        (snapshot) => !dismissedFailureIds.includes(snapshot.taskId),
-      ) ?? null;
+      const activeFailureSnapshot = state.failurePreviewSuppressed
+        ? null
+        : snapshots.find((snapshot) => !dismissedFailureIds.includes(snapshot.taskId)) ?? null;
 
       return {
         failureSnapshots: snapshots,
@@ -917,6 +920,17 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
           : [...state.dismissedFailureIds, targetTaskId],
       };
     });
+  },
+
+  suppressFailurePreview: (suppressed) => {
+    set((state) => ({
+      failurePreviewSuppressed: suppressed,
+      activeFailureSnapshot: suppressed
+        ? null
+        : state.failureSnapshots.find(
+          (snapshot) => !state.dismissedFailureIds.includes(snapshot.taskId),
+        ) ?? null,
+    }));
   },
 
   clearTimeline: () => {

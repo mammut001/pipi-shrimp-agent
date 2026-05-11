@@ -83,12 +83,13 @@ describe('autoresearch history storage', () => {
   });
 
   it('persists run history and selected run id', () => {
-    persistAutoResearchHistory([createRun({ status: 'completed' })], 'run-1');
+    persistAutoResearchHistory([createRun({ status: 'completed', reason: 'Reflection did not provide a summary.' })], 'run-1');
 
     const raw = storage.data[AUTORESEARCH_HISTORY_STORAGE_KEY];
     expect(raw).toBeDefined();
     expect(raw).toContain('"selectedRunId":"run-1"');
     expect(raw).toContain('"status":"completed"');
+    expect(raw).toContain('"reason":"Reflection did not provide a summary."');
   });
 
   it('falls back safely when persisted history is corrupted', () => {

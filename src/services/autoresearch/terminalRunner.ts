@@ -1,10 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
+import {
+  getActiveAutoResearchRun,
+  getAutoResearchRunReason,
+  isAutoResearchTerminalState,
+  useAutoResearchStore,
+  type SshConfig,
+} from '@/store/autoresearchStore';
 import { buildRemoteBashCommand, shellEscape, shellEscapePath } from '@/utils/remoteExec';
 import { readTargetText, type RunDir } from './runDir';
 
-const TERMINAL_READY_TIMEOUT_MS = 15_000;
+const TERMINAL_READY_TIMEOUT_MS = 20_000;
+const TERMINAL_ACTIVITY_TIMEOUT_MS = 60_000;
+const TERMINAL_WATCH_POLL_MS = 250;
 const TERMINAL_EXIT_MARKER = '__PIPI_AUTORESEARCH_EXIT__';
 
 export interface TerminalRunOptions {
@@ -37,6 +45,21 @@ export function getCurrentRunDir(): RunDir | null {
 
 export function clearCurrentRunDir(): void {
   currentRunDir = null;
+}
+
+function getTerminalRunSnapshot(): {
+  runState: ReturnType<typeof getActiveAutoResearchRun>['status'] | null;
+  reason?: string;
+} {
+  const state = useAutoResearchStore.getState();
+  return {
+    runState: getActiveAutoResearchRun(state)?.status ?? null,
+    reason: getAutoResearchRunReason(state),
+  };
+}
+
+function buildTerminalStopError(runState: string | null, reason?: string): Error {
+  return new Error(reason || `AutoResearch run ended before terminal activity completed (${runState || 'unknown'}).`);
 }
 
 function normalizeTerminalCwd(cfg: SshConfig, cwd?: string): string {
@@ -88,18 +111,49 @@ function waitForTerminalReady(sessionId: string): Promise<void> {
   }
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const poll = () => {
+      const snapshot = getTerminalRunSnapshot();
+      if (snapshot.runState && isAutoResearchTerminalState(snapshot.runState) && snapshot.runState !== 'running') {
+        cleanup();
+        reject(buildTerminalStopError(snapshot.runState, snapshot.reason));
+        return true;
+      }
+      const nextState = useAutoResearchStore.getState();
+      if (nextState.terminalSessionId === sessionId && nextState.terminalReady) {
+        cleanup();
+        resolve();
+        return true;
+      }
+      return false;
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      clearInterval(interval);
       unsubscribe();
-      reject(new Error('Timed out waiting for AutoResearch terminal'));
+    };
+
+    const timer = setTimeout(() => {
+      const snapshot = getTerminalRunSnapshot();
+      cleanup();
+      if (snapshot.runState === 'running') {
+        reject(new Error('Timed out opening AutoResearch terminal session'));
+        return;
+      }
+      reject(buildTerminalStopError(snapshot.runState, snapshot.reason));
     }, TERMINAL_READY_TIMEOUT_MS);
+    const interval = setInterval(() => {
+      void poll();
+    }, TERMINAL_WATCH_POLL_MS);
 
     const unsubscribe = useAutoResearchStore.subscribe((nextState) => {
       if (nextState.terminalSessionId === sessionId && nextState.terminalReady) {
-        clearTimeout(timer);
-        unsubscribe();
+        cleanup();
         resolve();
       }
     });
+
+    void poll();
   });
 }
 
@@ -145,14 +199,41 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
   return new Promise<TerminalRunResult>((resolve, reject) => {
     let pending = '';
     let settled = false;
+    let lastActivityAt = Date.now();
+    let unlistenOutput: (() => void) | undefined;
+
+    const cleanup = () => {
+      clearInterval(watchdog);
+      unlistenOutput?.();
+      unlistenOutput = undefined;
+    };
+
+    const watchdog = setInterval(() => {
+      if (settled) {
+        return;
+      }
+      const snapshot = getTerminalRunSnapshot();
+      if (snapshot.runState === 'running' && Date.now() - lastActivityAt >= TERMINAL_ACTIVITY_TIMEOUT_MS) {
+        settled = true;
+        cleanup();
+        reject(new Error('Timed out waiting for AutoResearch terminal'));
+        return;
+      }
+      if (snapshot.runState && isAutoResearchTerminalState(snapshot.runState) && snapshot.runState !== 'running') {
+        settled = true;
+        cleanup();
+        reject(buildTerminalStopError(snapshot.runState, snapshot.reason));
+      }
+    }, TERMINAL_WATCH_POLL_MS);
 
     void (async () => {
-      const unlisten = await listen<{ session_id: string; data: string }>('terminal-output', async (event) => {
+      unlistenOutput = await listen<{ session_id: string; data: string }>('terminal-output', async (event) => {
         if (event.payload.session_id !== sessionId || settled) {
           return;
         }
 
         try {
+          lastActivityAt = Date.now();
           pending += event.payload.data;
 
           const markerIndex = pending.indexOf(`${TERMINAL_EXIT_MARKER}:${token}:`);
@@ -170,7 +251,7 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
             }
 
             settled = true;
-            unlisten();
+            cleanup();
 
             await Promise.all([
               readTargetText(opts.cfg, stdoutPath),
@@ -194,19 +275,20 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
           }
         } catch (error) {
           settled = true;
-          unlisten();
+          cleanup();
           reject(error instanceof Error ? error : new Error(String(error)));
         }
       });
 
       try {
+        lastActivityAt = Date.now();
         await invoke('terminal_input', {
           sessionId,
           data: `${fullCommand}\r`,
         });
       } catch (error) {
         settled = true;
-        unlisten();
+        cleanup();
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     })();

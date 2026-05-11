@@ -36,12 +36,19 @@ import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
+import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 import {
   logAutoResearchSetupFailure,
   parseOptionalBaseline,
   startAutoResearchRun,
   validateAutoResearchSetupDraft,
 } from '@/services/autoresearch/setupFlow';
+
+function formatRunStatusLabel(status: NonNullable<ReturnType<typeof getSelectedAutoResearchRun>>['status']): string {
+  return status === 'reflection_failed'
+    ? t('autoresearch.statusReflectionFailed')
+    : status.replace(/_/g, ' ');
+}
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
 
@@ -169,7 +176,7 @@ function AutoResearchView() {
   const {
     id: activeRunId,
     loopState,
-    liveOutput, sshConfig, statusMessage,
+    liveOutput, sshConfig, statusMessage, errorMessage,
     setSelectedExperiment, initSession, setSshConfig, runHistory, selectRun,
     terminalVisible, terminalSessionId, terminalCwd,
     openTerminalPanel, setTerminalReady, setTerminalVisible,
@@ -204,6 +211,7 @@ function AutoResearchView() {
     : '';
   const displayRun = selectedRun;
   const displayedLiveOutput = displayRun?.id === activeRunId ? liveOutput : (displayRun?.liveOutputExcerpt || '');
+  const displayReason = displayRun?.reason || errorMessage;
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
 
   useEffect(() => {
@@ -712,13 +720,13 @@ function AutoResearchView() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <span className="rounded-full bg-[#dceeea] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
-                    {run.status.replace(/_/g, ' ')}
+                    {formatRunStatusLabel(run.status)}
                   </span>
                   <span className="font-mono text-[11px] text-[#8a7f72]">{run.currentIteration}/{run.config.iterations}</span>
                 </div>
                 <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-[#2f251a]">{run.title}</h3>
                 <p className="mt-2 truncate text-xs text-[#6f665c]">{run.config.metric} · {run.config.direction}</p>
-                <p className="mt-1 truncate text-xs text-[#8a7f72]">{run.config.configSnapshot.provider} · {run.config.configSnapshot.model || 'no model'}</p>
+                <p className="mt-1 truncate text-xs text-[#8a7f72]">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</p>
               </button>
             ))}
           </div>
@@ -734,9 +742,9 @@ function AutoResearchView() {
           {redactSensitiveText(statusMessage)}
         </div>
       )}
-      {loopState === 'error' && (
+      {loopState === 'error' && displayReason && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-          {redactSensitiveText(useAutoResearchStore.getState().errorMessage || '')}
+          {redactSensitiveText(displayReason)}
         </div>
       )}
       {displayRun && (

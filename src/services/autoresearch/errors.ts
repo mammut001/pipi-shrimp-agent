@@ -14,8 +14,10 @@ export type AutoResearchFailureKind =
   | 'unknown';
 
 export interface AutoResearchAgentConfigSnapshot {
+  configId?: string | null;
   configName: string;
   provider: string;
+  providerLabel?: string;
   apiFormat: string;
   baseUrl: string;
   model: string;
@@ -41,8 +43,10 @@ export function buildAutoResearchAgentConfigSnapshot(
   warning?: string,
 ): AutoResearchAgentConfigSnapshot {
   return {
+    configId: config.configId,
     configName: config.name,
     provider: config.provider,
+    providerLabel: config.providerLabel,
     apiFormat: config.apiFormat || '',
     baseUrl: config.baseUrl,
     model: config.model,

@@ -29,6 +29,7 @@ impl ClaudeClient {
         model: String,
         base_url: Option<String>,
         system_prompt: Option<String>,
+        response_format: Option<serde_json::Value>,
         allow_browser_tools: bool,
     ) -> AppResult<ChatResponse> {
         let normalized = validate_messages(messages, "chat")?;
@@ -46,6 +47,7 @@ impl ClaudeClient {
             allow_browser_tools,
             None,
             None,
+            response_format,
         )
         .await
         .map_err(Into::into)
@@ -64,6 +66,7 @@ impl ClaudeClient {
         allow_browser_tools: bool,
         session_id: String,
         api_format_hint: Option<String>,
+        response_format: Option<serde_json::Value>,
     ) -> AppResult<ChatResponse> {
         let normalized = validate_messages(messages, "chat_streaming")?;
 
@@ -79,6 +82,7 @@ impl ClaudeClient {
             allow_browser_tools,
             &session_id,
             api_format_hint.as_deref(),
+            response_format,
         )
         .await
         .map_err(Into::into)
@@ -99,6 +103,7 @@ pub async fn send_request(
     allow_browser_tools: bool,
     session_id: Option<&str>,
     api_format_hint: Option<&str>,
+    response_format: Option<serde_json::Value>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     send_request_impl(
         client,
@@ -113,6 +118,7 @@ pub async fn send_request(
         allow_browser_tools,
         session_id,
         api_format_hint,
+        response_format,
     )
     .await
 }

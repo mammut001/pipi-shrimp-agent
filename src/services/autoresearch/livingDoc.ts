@@ -45,7 +45,10 @@ export function renderLivingDoc(
     .map(entry => `- iter-${String(entry.iteration).padStart(3, '0')}: ${entry.hypothesis} - IMPROVED`);
   const reverted = metrics
     .filter(entry => entry.status !== 'IMPROVED')
-    .map(entry => `- iter-${String(entry.iteration).padStart(3, '0')}: ${entry.hypothesis} - ${entry.status}${entry.failReason ? ` (${entry.failReason})` : ''}`);
+    .map((entry) => {
+      const reflectionTag = entry.reflection?.reason ? ' [reflection failed]' : '';
+      return `- iter-${String(entry.iteration).padStart(3, '0')}: ${entry.hypothesis} - ${entry.status}${entry.failReason ? ` (${entry.failReason})` : ''}${reflectionTag}`;
+    });
   const deadEnds = buildDeadEnds(metrics);
   const bestLine = best
     ? `- iter-${String(best.iteration).padStart(3, '0')}${best.commitHash ? ` (commit ${best.commitHash})` : ''}: ${options.metricName} = ${formatMetric(best.metricValue)}`

@@ -6,6 +6,13 @@ import { AutoResearchRunChips } from './AutoResearchRunChips';
 import { AutoResearchDashboardHeader } from './AutoResearchDashboardHeader';
 import { AutoResearchDashboardMetricCard } from './AutoResearchDashboardMetricCard';
 import { AutoResearchDashboardTable } from './AutoResearchDashboardTable';
+import { redactSensitiveText } from '@/services/autoresearch/runDocument';
+
+function formatEventPhaseLabel(phase: AutoResearchRunRecord['events'][number]['phase']): string {
+  return phase === 'reflection_parse_failed'
+    ? t('autoresearch.reflectionParseFailed')
+    : phase.replace(/_/g, ' ');
+}
 
 interface AutoResearchDashboardViewProps {
   run: AutoResearchRunRecord;
@@ -52,6 +59,26 @@ export function AutoResearchDashboardView({
           <div className="mt-7 space-y-5 rounded-[16px] border border-white/10 bg-[#111111]/45 p-3 sm:p-4">
             <AutoResearchDashboardMetricCard run={run} />
             <AutoResearchDashboardTable run={run} />
+
+            {run.events.length > 0 && (
+              <section className="rounded-[16px] border border-white/10 bg-white/[0.03] p-3 sm:p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-sm font-semibold text-white/88">Recent Events</h2>
+                  <span className="text-[11px] uppercase tracking-[0.18em] text-white/35">
+                    {run.events.length}
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {run.events.slice(-6).reverse().map((event) => (
+                    <div key={event.id} className="rounded-2xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white/70">
+                      <span className="font-semibold text-white/90">{formatEventPhaseLabel(event.phase)}</span>
+                      <span className="mx-2 text-white/20">·</span>
+                      <span>{redactSensitiveText(event.message)}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         </section>
       </div>

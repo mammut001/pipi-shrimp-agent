@@ -18,6 +18,17 @@ const mockClipboardWriteText = jest.fn<() => Promise<void>>(() => Promise.resolv
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+function disposeView(root: Root, container: HTMLDivElement) {
+  const index = mountedRoots.findIndex((mounted) => mounted.root === root && mounted.container === container);
+  if (index >= 0) {
+    mountedRoots.splice(index, 1);
+  }
+  act(() => {
+    root.unmount();
+  });
+  container.remove();
+}
+
 jest.mock('../i18n', () => ({
   t: (key: string) => key,
 }));
@@ -73,6 +84,7 @@ describe('BrowserFailureRecovery', () => {
         ts: Date.now(),
       },
       failureSnapshots: [],
+      failurePreviewSuppressed: false,
       dismissedFailureIds: [],
     });
 
@@ -147,5 +159,61 @@ describe('BrowserFailureRecovery', () => {
       await Promise.resolve();
     });
     expect(mockClipboardWriteText).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders normalized screenshots with object-contain and shows a fallback for invalid screenshot data', () => {
+    useBrowserObservabilityStore.setState({
+      activeFailureSnapshot: {
+        taskId: 'failure-2',
+        sessionId: 'session-1',
+        lastSuccessAction: 'click',
+        failedAction: 'type_text',
+        url: 'https://example.com/dashboard',
+        title: 'Dashboard',
+        screenshotPath: 'A'.repeat(64),
+        domSnapshotId: 'snapshot-1',
+        errorKind: 'browser.execution_failed',
+        errorMessage: 'input element went stale',
+        ts: Date.now(),
+      },
+    });
+
+    const validView = renderRecovery();
+    const screenshot = validView.container.querySelector('img');
+    expect(screenshot?.getAttribute('src')).toContain('data:image/png;base64,');
+    expect(screenshot?.getAttribute('class')).toContain('object-contain');
+
+    disposeView(validView.root, validView.container);
+
+    useBrowserObservabilityStore.setState({
+      activeFailureSnapshot: {
+        taskId: 'failure-3',
+        sessionId: 'session-1',
+        lastSuccessAction: 'click',
+        failedAction: 'type_text',
+        url: 'https://example.com/dashboard',
+        title: 'Dashboard',
+        screenshotPath: 'broken-screenshot',
+        domSnapshotId: 'snapshot-1',
+        errorKind: 'browser.execution_failed',
+        errorMessage: 'input element went stale',
+        ts: Date.now(),
+      },
+    });
+
+    const invalidView = renderRecovery();
+    expect(invalidView.container.textContent).toContain('screenshot.invalid');
+    expect(invalidView.container.querySelector('img')).toBeNull();
+  });
+
+  it('dismisses the active recovery card when closed', async () => {
+    const view = renderRecovery();
+
+    await act(async () => {
+      getButton(view.container, 'common.close').click();
+      await Promise.resolve();
+    });
+
+    expect(useBrowserObservabilityStore.getState().activeFailureSnapshot).toBeNull();
   });
 });

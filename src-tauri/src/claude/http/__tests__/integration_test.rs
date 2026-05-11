@@ -6,11 +6,24 @@ use std::sync::{
 use serde_json::json;
 use wiremock::{
     matchers::{method, path},
-    Mock, MockServer, Request, Respond, ResponseTemplate,
+    Match, Mock, MockServer, Request, Respond, ResponseTemplate,
 };
 
 use super::super::super::http_client::send_request;
 use super::super::super::message::Message;
+
+struct ResponseFormatMatcher;
+
+impl Match for ResponseFormatMatcher {
+    fn matches(&self, request: &Request) -> bool {
+        serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .and_then(|body| body.get("response_format").cloned())
+            == Some(json!({
+                "type": "json_object"
+            }))
+    }
+}
 
 fn sample_messages() -> Vec<Message> {
     vec![Message {
@@ -94,6 +107,7 @@ async fn send_request_parses_openai_response_from_mock_server() {
         false,
         None,
         Some("openai"),
+        None,
     )
     .await
     .expect("mocked request should succeed");
@@ -133,10 +147,63 @@ async fn send_request_retries_retryable_http_failures() {
         false,
         None,
         Some("openai"),
+        None,
     )
     .await
     .expect("request should succeed after retry");
 
     assert_eq!(response.content, "retry worked");
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn send_request_forwards_openai_response_format() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(ResponseFormatMatcher)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-3",
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "json mode enabled"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 3,
+                "total_tokens": 8
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::new();
+    let base_url = format!("{}/v1", server.uri());
+
+    let response = send_request(
+        &client,
+        &sample_messages(),
+        "test-token",
+        "gpt-4o",
+        Some(&base_url),
+        Some("system"),
+        false,
+        false,
+        None,
+        false,
+        None,
+        Some("openai"),
+        Some(json!({
+            "type": "json_object"
+        })),
+    )
+    .await
+    .expect("request should include response_format");
+
+    assert_eq!(response.content, "json mode enabled");
 }

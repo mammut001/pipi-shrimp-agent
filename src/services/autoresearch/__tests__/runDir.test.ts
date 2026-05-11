@@ -41,8 +41,15 @@ describe('runDir', () => {
     await Promise.all([
       fs.access(first.logsDir),
       fs.access(path.join(first.iterDir, 'code')),
+      fs.access(first.systemPromptPath),
+      fs.access(first.reflectionRawPath),
       fs.access(second.logsDir),
       fs.access(third.logsDir),
     ]);
+
+    expect(path.basename(first.systemPromptPath)).toBe('system_prompt.txt');
+    expect(path.basename(first.reflectionInputPath)).toBe('reflection.input.json');
+    expect(path.basename(first.reflectionRawPath)).toBe('reflection.raw.txt');
+    expect(path.basename(first.reflectionParsedPath)).toBe('reflection.parsed.json');
   });
 });
