@@ -5,6 +5,7 @@ import {
   formatMetricValue,
   getBestMetricPoint,
 } from './metricTimeline';
+import { buildAutoResearchModelDisplayFromSnapshot } from './modelDisplay';
 
 export interface AutoResearchRunDocument {
   title: string;
@@ -54,11 +55,19 @@ function formatEvent(event: AutoResearchRunEvent): string {
 
 function buildConfigMarkdown(run: AutoResearchRunRecord): string[] {
   const snapshot = run.config.configSnapshot;
+  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(snapshot);
+  const providerIdLine = snapshot.provider && snapshot.provider !== modelDisplay.providerLabel
+    ? `- Provider ID: ${markdownValue(snapshot.provider)}`
+    : '';
+
   return [
     `- Config: ${markdownValue(snapshot.configName)}`,
-    `- Provider: ${markdownValue(snapshot.provider)}`,
+    snapshot.configId ? `- Config ID: ${markdownValue(snapshot.configId)}` : '',
+    `- Provider: ${markdownValue(modelDisplay.providerLabel)}`,
+    providerIdLine,
     `- API format: ${markdownValue(snapshot.apiFormat)}`,
     `- Base URL: ${markdownValue(snapshot.baseUrl)}`,
+    `- Model display: ${markdownValue(modelDisplay.compactLabel)}`,
     `- Model: ${markdownValue(snapshot.model)}`,
     `- Key present: ${snapshot.keyPresent ? 'yes' : 'no'}`,
     `- Key preview: ${markdownValue(snapshot.keyPreview)}`,

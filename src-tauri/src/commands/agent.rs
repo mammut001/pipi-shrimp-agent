@@ -169,6 +169,7 @@ async fn execute_agent(request: &AgentRequest) -> AgentResponse {
             model,
             base_url,
             Some(system_prompt),
+            None,
             false, // browser_connected
         )
         .await

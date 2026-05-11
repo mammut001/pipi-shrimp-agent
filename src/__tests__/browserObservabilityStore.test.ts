@@ -52,6 +52,7 @@ describe('browserObservabilityStore', () => {
       },
       failureSnapshots: [],
       activeFailureSnapshot: null,
+      failurePreviewSuppressed: false,
       dismissedFailureIds: [],
     });
   });
@@ -192,6 +193,36 @@ describe('browserObservabilityStore', () => {
 
     store.syncFailureSnapshots(state.failureSnapshots);
     state = useBrowserObservabilityStore.getState();
+    expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
+  });
+
+  it('suppresses and restores the active failure preview without deleting snapshots', () => {
+    const store = useBrowserObservabilityStore.getState();
+
+    store.syncFailureSnapshots([
+      {
+        taskId: 'failure-1',
+        failedAction: 'click',
+        url: 'https://example.com',
+        title: 'Example',
+        errorKind: 'browser.timeout',
+        errorMessage: 'button not reachable',
+        ts: 2,
+      },
+    ]);
+
+    let state = useBrowserObservabilityStore.getState();
+    expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
+
+    store.suppressFailurePreview(true);
+    state = useBrowserObservabilityStore.getState();
+    expect(state.failurePreviewSuppressed).toBe(true);
+    expect(state.activeFailureSnapshot).toBeNull();
+    expect(state.failureSnapshots).toHaveLength(1);
+
+    store.suppressFailurePreview(false);
+    state = useBrowserObservabilityStore.getState();
+    expect(state.failurePreviewSuppressed).toBe(false);
     expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
   });
 });

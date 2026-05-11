@@ -13,10 +13,14 @@ export interface RunDir {
   iterDir: string;
   logsDir: string;
   transcriptPath: string;
+  systemPromptPath: string;
   hypothesisPath: string;
   diffPath: string;
   metricsPath: string;
   statusPath: string;
+  reflectionInputPath: string;
+  reflectionRawPath: string;
+  reflectionParsedPath: string;
 }
 
 export interface SessionRunPaths {
@@ -50,10 +54,14 @@ function buildRunDir(sessionDir: string, iter: number, directoryName: string): R
     iterDir,
     logsDir: `${iterDir}/logs`,
     transcriptPath: `${iterDir}/transcript.md`,
+    systemPromptPath: `${iterDir}/system_prompt.txt`,
     hypothesisPath: `${iterDir}/hypothesis.md`,
     diffPath: `${iterDir}/diff.patch`,
     metricsPath: `${iterDir}/metrics.json`,
     statusPath: `${iterDir}/status.json`,
+    reflectionInputPath: `${iterDir}/reflection.input.json`,
+    reflectionRawPath: `${iterDir}/reflection.raw.txt`,
+    reflectionParsedPath: `${iterDir}/reflection.parsed.json`,
   };
 }
 
@@ -169,8 +177,10 @@ export async function createRunDir(
     `  mkdir -p ${shellEscapePath(codeDir)}`,
     `  tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
     `fi`,
+    `: > ${shellEscapePath(runDir.systemPromptPath)}`,
     `: > ${shellEscapePath(runDir.hypothesisPath)}`,
     `: > ${shellEscapePath(runDir.diffPath)}`,
+    `: > ${shellEscapePath(runDir.reflectionRawPath)}`,
   ].join('\n');
 
   const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, script, 300);

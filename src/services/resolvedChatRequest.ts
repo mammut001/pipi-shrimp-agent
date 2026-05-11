@@ -20,6 +20,7 @@ export interface ResolvedChatRequestOptions {
   allowBrowserTools?: boolean;
   noTools?: boolean;
   contextBudget?: ContextBudgetOptions;
+  responseFormat?: { type: 'json_object' };
 }
 
 export interface ResolvedChatRequestDiagnostics {
@@ -50,6 +51,7 @@ export interface ResolvedChatRequestBuildResult {
     allowBrowserTools?: boolean;
     sessionId: string;
     apiFormat?: string;
+    responseFormat?: { type: 'json_object' };
   };
   diagnostics: ResolvedChatRequestDiagnostics;
 }
@@ -164,6 +166,7 @@ export function buildResolvedChatRequest(
       allowBrowserTools: options.allowBrowserTools,
       sessionId: options.sessionId,
       apiFormat: config.apiFormat || undefined,
+      responseFormat: options.responseFormat,
     },
     diagnostics: {
       ...diagnostics,

@@ -13,6 +13,7 @@ import {
 
 export type AutoResearchReflectionAction =
   | 'continue'
+  | 'finish'
   | 'retry_with_plan'
   | 'switch_command'
   | 'stop_environment_error'
@@ -58,11 +59,59 @@ export interface AutoResearchReflectionDecision {
   confidence: 'low' | 'medium' | 'high';
 }
 
+export type AutoResearchReflectionParserPath = 'json' | 'json_block' | 'markdown_heading' | 'first_paragraph';
+
+export interface AutoResearchReflectionRequestMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AutoResearchReflectionContractPayload {
+  summary: string;
+  decision: 'continue' | 'mark_iteration_failed' | 'finish';
+  next_action: string;
+}
+
+export interface AutoResearchReflectionParseFailureAttempt {
+  retryCount: number;
+  rawText: string;
+  preview: string;
+}
+
+export interface AutoResearchReflectionDecisionResult {
+  decision: AutoResearchReflectionDecision;
+  rawText: string;
+  parserPath: AutoResearchReflectionParserPath | null;
+  retryCount: number;
+  request: {
+    systemPrompt: string;
+    messages: AutoResearchReflectionRequestMessage[];
+    responseFormat: { type: 'json_object' } | null;
+  };
+  parseFailedAttempts: AutoResearchReflectionParseFailureAttempt[];
+}
+
+export class AutoResearchReflectionFailureError extends Error {
+  readonly decisionResult: AutoResearchReflectionDecisionResult;
+
+  constructor(message: string, decisionResult: AutoResearchReflectionDecisionResult) {
+    super(message);
+    this.name = 'AutoResearchReflectionFailureError';
+    this.decisionResult = decisionResult;
+  }
+}
+
+export function isAutoResearchReflectionFailureError(error: unknown): error is AutoResearchReflectionFailureError {
+  return error instanceof AutoResearchReflectionFailureError;
+}
+
 const MAX_OBJECTIVE_CHARS = 700;
 const MAX_CONTEXT_CHARS = 400;
 const MAX_COMMAND_CHARS = 240;
 const MAX_EVENT_COUNT = 6;
 const MAX_TOOL_RESULT_COUNT = 4;
+const MAX_REFLECTION_RETRIES = 2;
+const INVALID_JSON_RETRY_PROMPT = 'Your previous output was not valid JSON matching the required schema. Output ONLY the JSON object, no prose.';
 
 function sanitizeSensitiveText(value: string, maxChars: number): string {
   const truncated = value.length > maxChars
@@ -98,46 +147,225 @@ function extractFirstSection(source: string, startHeading: string, endHeading?: 
   return (endIndex >= 0 ? tail.slice(0, endIndex) : tail).trim();
 }
 
-function extractJsonObject(text: string): string | null {
+function buildReflectionParseFailurePreview(text: string): string {
+  const compact = compactWhitespace(text || '');
+  if (!compact) {
+    return '<empty>';}
+  return compact.length <= 200 ? compact : `${compact.slice(0, 200)}...`;
+}
+
+function extractFirstBalancedJsonObject(text: string): string | null {
+  const source = text.trim();
+  if (!source) {
+    return null;
+  }
+
+  let depth = 0;
+  let startIndex = -1;
+  let inString = false;
+  let escaping = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaping = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      if (depth === 0) {
+        startIndex = index;
+      }
+      depth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      if (depth === 0) {
+        continue;
+      }
+      depth -= 1;
+      if (depth === 0 && startIndex >= 0) {
+        return source.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeContractPayload(candidate: unknown): AutoResearchReflectionContractPayload | null {
+  if (!candidate || typeof candidate !== 'object') {
+    return null;
+  }
+
+  const record = candidate as Record<string, unknown>;
+  const summary = sanitizeString(record.summary, MAX_OBJECTIVE_CHARS);
+  const decision = typeof record.decision === 'string' ? record.decision : null;
+  const nextAction = typeof record.next_action === 'string'
+    ? sanitizeSensitiveText(compactWhitespace(record.next_action), MAX_CONTEXT_CHARS)
+    : typeof record.nextAction === 'string'
+      ? sanitizeSensitiveText(compactWhitespace(record.nextAction), MAX_CONTEXT_CHARS)
+      : '';
+
+  if (!summary || !decision || !['continue', 'mark_iteration_failed', 'finish'].includes(decision)) {
+    return null;
+  }
+
+  return {
+    summary,
+    decision: decision as AutoResearchReflectionContractPayload['decision'],
+    next_action: nextAction,
+  };
+}
+
+function parseReflectionJson(text: string): AutoResearchReflectionContractPayload | null {
+  try {
+    return normalizeContractPayload(JSON.parse(text) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+function extractMarkdownSummary(text: string): string | null {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    const inlineMatch = line.match(/^summary\s*:\s*(.+)$/i);
+    if (inlineMatch) {
+      return sanitizeString(inlineMatch[1], MAX_OBJECTIVE_CHARS) || null;
+    }
+
+    if (!/^#{2,3}\s*summary\s*$/i.test(line) && !/^summary\s*:\s*$/i.test(line)) {
+      continue;
+    }
+
+    const contentLines: string[] = [];
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const candidate = lines[cursor];
+      if (/^#{1,6}\s+/.test(candidate.trim())) {
+        break;
+      }
+      contentLines.push(candidate);
+    }
+
+    const summary = sanitizeString(contentLines.join('\n'), MAX_OBJECTIVE_CHARS);
+    if (summary) {
+      return summary;
+    }
+  }
+
+  return null;
+}
+
+function extractFirstParagraph(text: string): string | null {
+  const paragraphs = text
+    .replace(/\r\n/g, '\n')
+    .split(/\n\s*\n/)
+    .map((paragraph) => compactWhitespace(paragraph))
+    .filter(Boolean);
+
+  return paragraphs.length > 0
+    ? sanitizeSensitiveText(paragraphs[0], MAX_OBJECTIVE_CHARS)
+    : null;
+}
+
+function toReflectionDecision(
+  payload: AutoResearchReflectionContractPayload,
+  parserPath: AutoResearchReflectionParserPath,
+): AutoResearchReflectionDecision {
+  const confidence = parserPath === 'json'
+    ? 'high'
+    : parserPath === 'json_block'
+      ? 'medium'
+      : 'low';
+
+  return {
+    action: payload.decision,
+    summary: payload.summary,
+    nextPlan: payload.next_action || undefined,
+    userMessage: payload.decision === 'mark_iteration_failed' ? payload.summary : undefined,
+    shouldRetry: payload.decision === 'continue',
+    confidence,
+  };
+}
+
+export function parseReflectionDecisionText(text: string): {
+  decision: AutoResearchReflectionDecision;
+  parserPath: AutoResearchReflectionParserPath;
+  payload: AutoResearchReflectionContractPayload;
+} | null {
   const trimmed = text.trim();
   if (!trimmed) {
     return null;
   }
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    return trimmed;
+
+  const directJson = parseReflectionJson(trimmed);
+  if (directJson) {
+    return {
+      decision: toReflectionDecision(directJson, 'json'),
+      parserPath: 'json',
+      payload: directJson,
+    };
   }
 
-  const first = trimmed.indexOf('{');
-  const last = trimmed.lastIndexOf('}');
-  if (first < 0 || last <= first) {
-    return null;
+  const jsonBlock = extractFirstBalancedJsonObject(trimmed);
+  if (jsonBlock) {
+    const parsed = parseReflectionJson(jsonBlock);
+    if (parsed) {
+      return {
+        decision: toReflectionDecision(parsed, 'json_block'),
+        parserPath: 'json_block',
+        payload: parsed,
+      };
+    }
   }
-  return trimmed.slice(first, last + 1);
-}
 
-function normalizeDecision(candidate: unknown): AutoResearchReflectionDecision {
-  if (!candidate || typeof candidate !== 'object') {
-    throw new Error('Reflection returned an invalid JSON payload.');
+  const markdownSummary = extractMarkdownSummary(trimmed);
+  if (markdownSummary) {
+    const payload: AutoResearchReflectionContractPayload = {
+      summary: markdownSummary,
+      decision: 'continue',
+      next_action: '',
+    };
+    return {
+      decision: toReflectionDecision(payload, 'markdown_heading'),
+      parserPath: 'markdown_heading',
+      payload,
+    };
   }
 
-  const record = candidate as Record<string, unknown>;
-  const action = typeof record.action === 'string' ? record.action as AutoResearchReflectionAction : 'mark_iteration_failed';
-  const summary = sanitizeString(record.summary, MAX_OBJECTIVE_CHARS) || 'Reflection did not provide a summary.';
-  const shouldRetry = Boolean(record.shouldRetry);
-  const confidence = record.confidence === 'high' || record.confidence === 'medium' || record.confidence === 'low'
-    ? record.confidence
-    : 'low';
+  const firstParagraph = extractFirstParagraph(trimmed);
+  if (firstParagraph) {
+    const payload: AutoResearchReflectionContractPayload = {
+      summary: firstParagraph,
+      decision: 'continue',
+      next_action: '',
+    };
+    return {
+      decision: toReflectionDecision(payload, 'first_paragraph'),
+      parserPath: 'first_paragraph',
+      payload,
+    };
+  }
 
-  return {
-    action,
-    summary,
-    rootCause: sanitizeString(record.rootCause, MAX_CONTEXT_CHARS),
-    nextCommand: sanitizeString(record.nextCommand, MAX_COMMAND_CHARS),
-    nextPlan: sanitizeString(record.nextPlan, MAX_CONTEXT_CHARS),
-    userMessage: sanitizeString(record.userMessage, MAX_CONTEXT_CHARS),
-    shouldRetry,
-    confidence,
-  };
+  return null;
 }
 
 function formatEnvironmentSummary(summary?: AutoResearchEnvironmentSummary): string | undefined {
@@ -202,16 +430,15 @@ function buildReflectionSystemPrompt(): string {
   return [
     'You are the AutoResearch recovery critic.',
     'You are not executing commands directly.',
-    'Diagnose why the current AutoResearch iteration is stuck and choose the safest next action.',
-    'Return JSON only.',
-    'Do not provide hidden chain-of-thought.',
-    'Allowed actions: continue, retry_with_plan, switch_command, stop_environment_error, stop_rate_limited, stop_tool_exhausted, mark_iteration_failed, ask_user.',
+    'Diagnose why the current AutoResearch iteration is stuck and decide whether the loop should continue, fail the iteration, or finish.',
+    'Return EXACTLY one JSON object with this shape and no extra text:',
+    '{"summary": string, "decision": "continue"|"mark_iteration_failed"|"finish", "next_action": string}',
     'Rules:',
-    '- If a command failed because it was not found, do not recommend repeating the same command.',
-    '- If preflight detected python3 but the failed command used python, recommend switching to python3.',
-    '- If no Python interpreter is available, stop with environment error.',
-    '- If the issue is a provider rate limit, prefer a stop/wait decision over repeated retries.',
-    '- Keep the next plan short, specific, and execution-focused.',
+    '- Output JSON only. No markdown, no prose, no code fences.',
+    '- summary must be a short, concrete sentence.',
+    '- decision must be one of continue, mark_iteration_failed, finish.',
+    '- next_action must be a short action string. Use an empty string if there is no next action.',
+    '- Do not include any keys other than summary, decision, next_action.',
   ].join('\n');
 }
 
@@ -318,35 +545,109 @@ export function getDeterministicRecoveryDecision(
 export async function requestReflectionDecision(
   agentConfig: ResolvedAgentConfig,
   input: AutoResearchReflectionInput,
-): Promise<AutoResearchReflectionDecision> {
+): Promise<AutoResearchReflectionDecisionResult> {
   const compactInput = buildCompactReflectionInput(input);
-  const sessionId = `autoresearch-reflection-${Date.now()}`;
-  const request = buildResolvedChatRequest(agentConfig, {
-    messages: [
-      {
-        role: 'user',
-        content: JSON.stringify(compactInput, null, 2),
-      },
-    ],
-    systemPrompt: buildReflectionSystemPrompt(),
-    sessionId,
-    allowBrowserTools: false,
-    noTools: true,
-  });
+  const systemPrompt = buildReflectionSystemPrompt();
+  const requestMessages: AutoResearchReflectionRequestMessage[] = [
+    {
+      role: 'user',
+      content: JSON.stringify(compactInput, null, 2),
+    },
+  ];
+  const parseFailedAttempts: AutoResearchReflectionParseFailureAttempt[] = [];
+  const responseFormat = agentConfig.apiFormat === 'openai'
+    ? { type: 'json_object' as const }
+    : null;
 
-  let text = '';
-  for await (const chunk of invokeRustAPIStream(request.params)) {
-    if (chunk.type === 'text_delta') {
-      text += chunk.content;
+  for (let attempt = 0; attempt <= MAX_REFLECTION_RETRIES; attempt += 1) {
+    const sessionId = `autoresearch-reflection-${Date.now()}-${attempt}`;
+    const request = buildResolvedChatRequest(agentConfig, {
+      messages: requestMessages,
+      systemPrompt,
+      sessionId,
+      allowBrowserTools: false,
+      noTools: true,
+      responseFormat: responseFormat ?? undefined,
+    });
+
+    let text = '';
+    for await (const chunk of invokeRustAPIStream(request.params)) {
+      if (chunk.type === 'text_delta') {
+        text += chunk.content;
+      }
     }
+
+    const parsed = parseReflectionDecisionText(text);
+    if (parsed) {
+      return {
+        decision: parsed.decision,
+        rawText: text,
+        parserPath: parsed.parserPath,
+        retryCount: attempt,
+        request: {
+          systemPrompt,
+          messages: requestMessages.map((message) => ({ ...message })),
+          responseFormat,
+        },
+        parseFailedAttempts,
+      };
+    }
+
+    parseFailedAttempts.push({
+      retryCount: attempt,
+      rawText: text,
+      preview: buildReflectionParseFailurePreview(text),
+    });
+
+    if (attempt < MAX_REFLECTION_RETRIES) {
+      requestMessages.push({
+        role: 'user',
+        content: INVALID_JSON_RETRY_PROMPT,
+      });
+      continue;
+    }
+
+    const summary = 'Reflection did not provide a summary.';
+    return {
+      decision: {
+        action: 'mark_iteration_failed',
+        summary,
+        rootCause: `Reflection output could not be parsed after ${MAX_REFLECTION_RETRIES + 1} attempts.`,
+        userMessage: summary,
+        shouldRetry: false,
+        confidence: 'low',
+      },
+      rawText: text,
+      parserPath: null,
+      retryCount: attempt,
+      request: {
+        systemPrompt,
+        messages: requestMessages.map((message) => ({ ...message })),
+        responseFormat,
+      },
+      parseFailedAttempts,
+    };
   }
 
-  const jsonText = extractJsonObject(text);
-  if (!jsonText) {
-    throw new Error(`Reflection returned non-JSON output: ${sanitizeSensitiveText(text, MAX_CONTEXT_CHARS)}`);
-  }
-
-  return normalizeDecision(JSON.parse(jsonText) as unknown);
+  return {
+    decision: {
+      action: 'mark_iteration_failed',
+      summary: 'Reflection did not provide a summary.',
+      rootCause: 'Reflection retries exhausted unexpectedly.',
+      userMessage: 'Reflection did not provide a summary.',
+      shouldRetry: false,
+      confidence: 'low',
+    },
+    rawText: '',
+    parserPath: null,
+    retryCount: MAX_REFLECTION_RETRIES,
+    request: {
+      systemPrompt,
+      messages: requestMessages.map((message) => ({ ...message })),
+      responseFormat,
+    },
+    parseFailedAttempts,
+  };
 }
 
 export function buildReflectionInputFromState(input: {

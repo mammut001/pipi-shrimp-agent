@@ -98,6 +98,7 @@ export interface ExperimentSession {
   selectedExperiment: number;
   errorMessage?: string;
   statusMessage?: string;
+  reason?: string;
   agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
   terminalVisible: boolean;
   terminalReady: boolean;
@@ -139,6 +140,7 @@ function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'selectedR
     liveOutput: '',
     selectedExperiment: -1,
     statusMessage: undefined,
+    reason: undefined,
     agentConfigSnapshot: undefined,
     terminalVisible: false,
     terminalReady: false,
@@ -268,6 +270,7 @@ function buildRunRecordFromInit(opts: {
     iterations: [],
     events: [],
     summary: undefined,
+    reason: undefined,
     liveOutputExcerpt: '',
   };
 }
@@ -290,6 +293,25 @@ export function getSelectedAutoResearchRun(
   return state.runHistory.find((run) => run.id === targetId) ?? state.runHistory[0] ?? null;
 }
 
+export function getActiveAutoResearchRun(
+  state: Pick<ExperimentSession, 'runHistory' | 'id'>,
+): AutoResearchRunRecord | null {
+  if (!state.id) {
+    return null;
+  }
+  return state.runHistory.find((run) => run.id === state.id) ?? null;
+}
+
+export function isAutoResearchTerminalState(status: AutoResearchRunStatus | null | undefined): boolean {
+  return Boolean(status && ['reflection_failed', 'failed', 'completed', 'stopped', 'interrupted'].includes(status));
+}
+
+export function getAutoResearchRunReason(
+  state: Pick<ExperimentSession, 'runHistory' | 'id' | 'reason' | 'errorMessage'>,
+): string | undefined {
+  return getActiveAutoResearchRun(state)?.reason ?? state.reason ?? state.errorMessage;
+}
+
 interface AutoResearchStore extends ExperimentSession {
   initSession: (opts: {
     id: string;
@@ -307,7 +329,8 @@ interface AutoResearchStore extends ExperimentSession {
   resetSession: () => void;
   selectRun: (runId: string) => void;
   setLoopState: (state: LoopState) => void;
-  setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string }) => void;
+  setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string; reason?: string }) => void;
+  setReflectionFailed: (reason: string, options?: { summary?: string; endedAt?: string }) => void;
   setError: (msg: string) => void;
   setStatusMessage: (msg?: string) => void;
   updateRunPaths: (paths: { sshConfig?: SshConfig; experimentDir?: string; sessionFilePath?: string; livingDocPath?: string; terminalCwd?: string }) => void;
@@ -418,6 +441,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       selectedExperiment: -1,
       errorMessage: undefined,
       statusMessage: undefined,
+      reason: undefined,
       terminalVisible: false,
       terminalReady: false,
       terminalSessionId: null,
@@ -442,15 +466,59 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
 
   setLoopState: (loopState) => set({ loopState }),
 
-  setRunStatus: (status, options) => set((state) => ({
-    ...withActiveRunUpdate(state, (run) => ({
-      ...run,
-      status,
-      updatedAt: options?.endedAt ?? new Date().toISOString(),
-      endedAt: options?.endedAt ?? (status === 'running' ? undefined : run.endedAt ?? new Date().toISOString()),
-      summary: options?.summary ?? run.summary,
-    })),
-  })),
+  setRunStatus: (status, options) => set((state) => {
+    const updatedAt = options?.endedAt ?? new Date().toISOString();
+    const clearReason = ['running', 'waiting_rate_limit', 'completed', 'stopped'].includes(status);
+    const nextReason = options?.reason !== undefined
+      ? options.reason
+      : clearReason
+        ? undefined
+        : state.reason;
+
+    return {
+      reason: nextReason,
+      ...withActiveRunUpdate(state, (run) => ({
+        ...run,
+        status,
+        updatedAt,
+        endedAt: options?.endedAt ?? (clearReason ? undefined : run.endedAt ?? updatedAt),
+        summary: options?.summary ?? run.summary,
+        reason: options?.reason !== undefined
+          ? options.reason
+          : clearReason
+            ? undefined
+            : run.reason,
+      })),
+    };
+  }),
+
+  setReflectionFailed: (reason, options) => set((state) => {
+    const endedAt = options?.endedAt ?? new Date().toISOString();
+    return {
+      loopState: 'error',
+      errorMessage: reason,
+      statusMessage: undefined,
+      reason,
+      terminalReady: false,
+      ...withActiveRunUpdate(state, (run) => ({
+        ...run,
+        status: 'reflection_failed',
+        updatedAt: endedAt,
+        endedAt,
+        summary: options?.summary ?? reason,
+        reason,
+        events: [...run.events, createRunEvent(run.id, {
+          timestamp: endedAt,
+          level: 'error',
+          phase: 'system',
+          message: 'Run state changed: running → reflection_failed',
+          metadata: {
+            reason,
+          },
+        })],
+      })),
+    };
+  }),
 
   setError: (msg) => set((state) => {
     const endedAt = new Date().toISOString();
@@ -458,12 +526,14 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       loopState: 'error',
       errorMessage: msg,
       statusMessage: undefined,
+      reason: msg,
       ...withActiveRunUpdate(state, (run) => ({
         ...run,
         status: 'failed',
         updatedAt: endedAt,
         endedAt,
         summary: msg,
+        reason: msg,
         events: [...run.events, createRunEvent(run.id, {
           timestamp: endedAt,
           level: 'error',

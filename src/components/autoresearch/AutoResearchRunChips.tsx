@@ -1,5 +1,6 @@
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 import { formatMetricValue } from '@/services/autoresearch/metricTimeline';
+import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 
 interface AutoResearchRunChipsProps {
   run: AutoResearchRunRecord;
@@ -59,6 +60,7 @@ export function AutoResearchRunChips({ run, className = '' }: AutoResearchRunChi
   const baselineLabel = typeof run.config.baseline === 'number'
     ? formatMetricValue(run.config.baseline)
     : null;
+  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot);
 
   const chips: ChipItem[] = [
     primaryChip,
@@ -66,8 +68,8 @@ export function AutoResearchRunChips({ run, className = '' }: AutoResearchRunChi
     stringifyChipValue(run.config.iterations) ? { id: 'iterations', label: `max_iterations=${run.config.iterations}` } : null,
     baselineLabel ? { id: 'baseline', label: `baseline=${baselineLabel}` } : null,
     stringifyChipValue(run.config.direction) ? { id: 'direction', label: `direction=${run.config.direction}` } : null,
-    stringifyChipValue(run.config.configSnapshot.model) ? { id: 'model', label: `model=${truncateValue(run.config.configSnapshot.model, 36)}` } : null,
-    stringifyChipValue(run.config.configSnapshot.provider) ? { id: 'provider', label: `provider=${run.config.configSnapshot.provider}` } : null,
+    { id: 'model', label: `model=${truncateValue(modelDisplay.modelLabel, 36)}` },
+    { id: 'provider', label: `provider=${truncateValue(modelDisplay.providerLabel, 40)}` },
     stringifyChipValue(run.config.configSnapshot.configName) ? { id: 'config', label: `config=${truncateValue(run.config.configSnapshot.configName, 40)}` } : null,
   ].filter((chip): chip is ChipItem => chip !== null);
 

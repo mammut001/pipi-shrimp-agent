@@ -55,7 +55,9 @@ jest.mock('../preflight', () => ({
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
 import { startExperimentLoop } from '../loopEngine';
 import { getCurrentRunDir } from '../terminalRunner';
-import { getSessionRunPaths, readTargetText } from '../runDir';
+import { getSessionRunPaths, listIterations, readTargetText } from '../runDir';
+import { AutoResearchReflectionFailureError } from '../reflection';
+import { formatAutoResearchToolCatalog } from '../toolCatalog';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 
 describe('loopEngine integration', () => {
@@ -148,6 +150,11 @@ describe('loopEngine integration', () => {
     expect(livingDoc).toContain('## Tried (kept)');
     expect(livingDoc).toContain('- iter-001: lower learning rate - IMPROVED');
     expect(livingDoc).toContain('## Tried (reverted)');
+
+    const [firstRun] = await listIterations(cfg, 'autoresearch-integration');
+    const firstSystemPrompt = await readTargetText(cfg, firstRun.systemPromptPath);
+    expect(firstSystemPrompt).toContain(`Only permitted experiment tools for this run: ${formatAutoResearchToolCatalog(cfg)}`);
+    expect(firstSystemPrompt).toContain('Run the experiment command through execute_command');
 
     expect(mockNotifier.onLoopStopped).toHaveBeenCalledWith('3 consecutive failures', expect.any(Object));
   });
@@ -297,5 +304,55 @@ describe('loopEngine integration', () => {
     const failedRun = store.runHistory.find((run) => run.id === 'autoresearch-terminal-failure');
     expect(failedRun?.status).toBe('failed');
     expect(failedRun?.events.some((event) => event.phase === 'terminal')).toBe(true);
+  });
+
+  it('transitions the run to reflection_failed instead of surfacing a fake terminal timeout', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-reflection-failure',
+      maxIterations: 1,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      throw new AutoResearchReflectionFailureError('Reflection did not provide a summary.', {
+        decision: {
+          action: 'mark_iteration_failed',
+          summary: 'Reflection did not provide a summary.',
+          userMessage: 'Reflection did not provide a summary.',
+          shouldRetry: false,
+          confidence: 'low',
+        },
+        rawText: 'not json',
+        parserPath: null,
+        retryCount: 2,
+        request: {
+          systemPrompt: 'system',
+          messages: [{ role: 'user', content: 'reflect' }],
+          responseFormat: { type: 'json_object' },
+        },
+        parseFailedAttempts: [
+          {
+            retryCount: 0,
+            rawText: 'not json',
+            preview: 'not json',
+          },
+        ],
+      });
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const failedRun = store.runHistory.find((run) => run.id === 'autoresearch-reflection-failure');
+    expect(store.loopState).toBe('error');
+    expect(store.reason).toBe('Reflection did not provide a summary.');
+    expect(failedRun?.status).toBe('reflection_failed');
+    expect(failedRun?.reason).toBe('Reflection did not provide a summary.');
+    expect(failedRun?.events.some((event) => event.phase === 'terminal' && event.message.includes('Timed out waiting for AutoResearch terminal'))).toBe(false);
+    expect(failedRun?.events.some((event) => event.phase === 'agent_execution' && event.metadata?.failureKind === 'reflection_failed')).toBe(true);
   });
 });

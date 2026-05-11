@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useCallback } from 'react';
 import { moveBrowserSurface, setEmbeddedSurfaceVisibility } from '@/utils/browserCommands';
 import { useBrowserAgentStore } from '@/store';
+import { useAutoResearchStore } from '@/store/autoresearchStore';
 
 interface BrowserSurfaceViewportProps {
   mode: 'mini' | 'expanded';
@@ -16,9 +17,10 @@ export function BrowserSurfaceViewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isWindowOpen, presentationMode } = useBrowserAgentStore();
+  const autoResearchSetupVisible = useAutoResearchStore((state) => state.showSetupModal);
 
   // This viewport is "active" only when isWindowOpen AND our mode matches presentationMode
-  const isActive = isWindowOpen && presentationMode === mode;
+  const isActive = isWindowOpen && presentationMode === mode && !autoResearchSetupVisible;
 
   const clearRetry = useCallback(() => {
     if (retryRef.current) {

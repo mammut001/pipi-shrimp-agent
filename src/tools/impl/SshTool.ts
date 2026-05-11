@@ -12,6 +12,8 @@ import {
 import { runInTerminal, getCurrentRunDir } from '@/services/autoresearch/terminalRunner';
 import { readTargetText } from '@/services/autoresearch/runDir';
 
+const SSH_EXEC_PTY_ALLOCATION_ERROR = 'Failed to allocate PTY for ssh_exec terminal=true';
+
 // ============== SSH Config (legacy shape — kept for callers) ==============
 
 export interface SshConfig {
@@ -104,7 +106,7 @@ const SshExecInputSchema = z.object({
   command: z.string().describe('The command to execute on the target'),
   ...TargetFields,
   timeout: z.number().optional().describe('Timeout in seconds (default: 300, max: 600)'),
-  terminal: z.boolean().optional().describe('When true, run through the embedded PTY terminal instead of the silent bash command path.'),
+  terminal: z.boolean().optional().describe('Defaults to false. Set true only when the command needs a PTY or live interactive terminal output; otherwise the silent bash path is used.'),
 });
 
 const SshExecOutputSchema = z.object({
@@ -132,28 +134,35 @@ export async function runSshExec(
 
   const timeout = Math.min(input.timeout || 300, 600);
   const activeRun = getCurrentRunDir();
-  const shouldUseTerminal = Boolean(options.forceTerminal ?? input.terminal ?? activeRun);
+  const shouldUseTerminal = Boolean(options.forceTerminal ?? input.terminal ?? false);
 
   if (shouldUseTerminal && activeRun) {
-    const result = await runInTerminal({
-      cfg,
-      cmd: input.command,
-      cwd: input.remoteWorkDir || cfg.remoteWorkDir,
-      logsDir: activeRun.logsDir,
-      timeoutSecs: timeout,
-      label: labelForCommand(input.command),
-    });
+    try {
+      const result = await runInTerminal({
+        cfg,
+        cmd: input.command,
+        cwd: input.remoteWorkDir || cfg.remoteWorkDir,
+        logsDir: activeRun.logsDir,
+        timeoutSecs: timeout,
+        label: labelForCommand(input.command),
+      });
 
-    const [stdout, stderr] = await Promise.all([
-      readTargetText(cfg, result.stdoutPath),
-      readTargetText(cfg, result.stderrPath),
-    ]);
+      const [stdout, stderr] = await Promise.all([
+        readTargetText(cfg, result.stdoutPath),
+        readTargetText(cfg, result.stderrPath),
+      ]);
 
-    return {
-      stdout: stdout || '',
-      stderr: stderr || '',
-      exitCode: result.exitCode,
-    };
+      return {
+        stdout: stdout || '',
+        stderr: stderr || '',
+        exitCode: result.exitCode,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Timed out opening AutoResearch terminal session') {
+        throw new Error(SSH_EXEC_PTY_ALLOCATION_ERROR);
+      }
+      throw error;
+    }
   }
 
   const fullCmd = buildRemoteBashCommand(cfg, input.command);
@@ -203,9 +212,21 @@ export class SshExecTool extends BaseTool<SshExecInput, SshExecOutput> {
 // ============== ssh_upload_file ==============
 
 const SshUploadInputSchema = z.object({
-  localPath: z.string().describe('Local source file path'),
+  localPath: z.string().optional().describe('Local source file path. Provide this or content, but not both.'),
+  content: z.string().optional().describe('Inline file content to materialize locally and then upload. Provide this or localPath, but not both.'),
   remotePath: z.string().describe('Destination path (remote for mode=ssh, local for mode=local)'),
   ...TargetFields,
+}).superRefine((input, ctx) => {
+  const hasLocalPath = Boolean(input.localPath?.trim());
+  const hasContent = typeof input.content === 'string';
+
+  if (hasLocalPath === hasContent) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Provide exactly one of localPath or content.',
+      path: hasLocalPath ? ['content'] : ['localPath'],
+    });
+  }
 });
 
 const SshUploadOutputSchema = z.object({
@@ -216,6 +237,33 @@ const SshUploadOutputSchema = z.object({
 type SshUploadInput = z.infer<typeof SshUploadInputSchema>;
 type SshUploadOutput = z.infer<typeof SshUploadOutputSchema>;
 
+function createTempUploadPath(): string {
+  return `/tmp/pipi-shrimp-ssh-upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.txt`;
+}
+
+async function writeInlineUploadContent(content: string): Promise<string> {
+  const tempPath = createTempUploadPath();
+  await invoke<string>('write_file', {
+    path: tempPath,
+    content,
+    workDir: null,
+  });
+  return tempPath;
+}
+
+async function cleanupInlineUploadFile(path: string): Promise<void> {
+  try {
+    await invoke<RawBashResult>('execute_bash', {
+      args: {
+        command: `rm -f ${shellEscapePath(path)}`,
+        timeoutSecs: 15,
+      },
+    });
+  } catch {
+    // Best-effort cleanup for temporary inline upload files.
+  }
+}
+
 export async function runSshUpload(input: SshUploadInput): Promise<SshUploadOutput> {
   const cfg = toCfg(input);
   const check = await preflight(cfg);
@@ -223,18 +271,30 @@ export async function runSshUpload(input: SshUploadInput): Promise<SshUploadOutp
     throw new Error('error' in check ? check.error : 'SSH preflight failed');
   }
 
-  const cmd = buildUploadCommand(cfg, input.localPath, input.remotePath);
-  const result = await invoke<RawBashResult>('execute_bash', {
-    args: {
-      command: cmd,
-      timeoutSecs: 120,
-    },
-  });
-  const exitCode = result.exit_code ?? 0;
-  if (exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || `upload failed (exit ${exitCode})`);
+  const uploadSourcePath = input.content !== undefined
+    ? await writeInlineUploadContent(input.content)
+    : input.localPath!;
+
+  try {
+    const cmd = buildUploadCommand(cfg, uploadSourcePath, input.remotePath);
+    const result = await invoke<RawBashResult>('execute_bash', {
+      args: {
+        command: cmd,
+        timeoutSecs: 120,
+      },
+    });
+    const exitCode = result.exit_code ?? 0;
+    if (exitCode !== 0) {
+      throw new Error(result.stderr || result.stdout || `upload failed (exit ${exitCode})`);
+    }
+
+    const sourceLabel = input.content !== undefined ? 'inline content' : input.localPath!;
+    return { success: true, message: `Uploaded ${sourceLabel} → ${input.remotePath}` };
+  } finally {
+    if (input.content !== undefined) {
+      await cleanupInlineUploadFile(uploadSourcePath);
+    }
   }
-  return { success: true, message: `Uploaded ${input.localPath} → ${input.remotePath}` };
 }
 
 export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput> {
@@ -259,7 +319,7 @@ export class SshUploadFileTool extends BaseTool<SshUploadInput, SshUploadOutput>
   }
 
   async describe(): Promise<string> {
-    return 'Upload a local file to the target (scp for SSH, cp for local).';
+    return 'Upload a local file or inline content to the target (scp for SSH, cp for local).';
   }
 
   isReadOnly(): boolean { return false; }

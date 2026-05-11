@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { t } from '@/i18n';
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 import { isDemoRun } from '@/services/autoresearch/demoRun';
+import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
+import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 
 interface AutoResearchDashboardHeaderProps {
   run: AutoResearchRunRecord;
@@ -62,8 +64,14 @@ export function AutoResearchDashboardHeader({
   headerActions,
   className = '',
 }: AutoResearchDashboardHeaderProps) {
-  const statusLabel = run.status.replace(/_/g, ' ');
+  const statusLabel = run.status === 'reflection_failed'
+    ? t('autoresearch.statusReflectionFailed')
+    : run.status.replace(/_/g, ' ');
   const demo = isDemoRun(run);
+  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot);
+  const reflectionReason = run.status === 'reflection_failed'
+    ? safeString(run.reason) ?? safeString(run.summary)
+    : null;
   const subtitleParts = [
     shortenRunId(run.id),
     statusLabel,
@@ -96,6 +104,19 @@ export function AutoResearchDashboardHeader({
         <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
           {subtitleParts.join(' · ')}
         </p>
+
+        <p className="mt-3 inline-flex max-w-full items-center rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/72">
+          <span className="truncate">{modelDisplay.compactLabel}</span>
+        </p>
+
+        {reflectionReason && (
+          <div className="mt-4 max-w-3xl rounded-2xl border border-[#7f1d1d]/45 bg-[#7f1d1d]/16 px-4 py-3 text-sm text-[#fecaca]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#fca5a5]">
+              {t('autoresearch.reflectionReason')}
+            </p>
+            <p className="mt-1 leading-6">{redactSensitiveText(reflectionReason)}</p>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 lg:justify-end">

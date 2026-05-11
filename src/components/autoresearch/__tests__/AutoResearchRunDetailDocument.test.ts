@@ -30,6 +30,9 @@ jest.mock('@/i18n', () => ({
     'autoresearch.detail.keepBreakthrough': 'keep / breakthrough',
     'autoresearch.detail.discard': 'discard',
     'autoresearch.detail.failedNoMetric': 'failed/no metric',
+    'autoresearch.model.unknownProvider': 'Unknown provider',
+    'autoresearch.model.unknownModel': 'Unknown model',
+    'autoresearch.model.unknownCompact': 'Unknown provider · Unknown model',
   }[key] ?? key),
 }));
 
@@ -190,5 +193,35 @@ describe('AutoResearchRunDetailDocument', () => {
 
     expect(view.container.textContent).toContain('Demo');
     expect(view.container.textContent).toContain('Benchmark fixture optimization sweep');
+  });
+
+  it('renders the snapshot-based model label in the dashboard header and chips', () => {
+    const run = {
+      ...createAutoResearchDemoRun(),
+      id: 'real-run',
+      title: 'Snapshot-backed run',
+      config: {
+        ...createAutoResearchDemoRun().config,
+        configSnapshot: {
+          configId: 'cfg-openai',
+          configName: 'Primary Config',
+          provider: 'openai',
+          providerLabel: 'OpenAI',
+          apiFormat: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4.1',
+          keyPreview: 'sk-xxxx',
+          keyPresent: true,
+          source: 'settings.activeConfig' as const,
+        },
+      },
+    };
+
+    const view = renderDetail({ run });
+
+    expect(view.container.textContent).toContain('Primary Config · OpenAI · gpt-4.1');
+    expect(view.container.textContent).toContain('provider=OpenAI');
+    expect(view.container.textContent).toContain('model=gpt-4.1');
+    expect(view.container.textContent).not.toContain('[object Object]');
   });
 });

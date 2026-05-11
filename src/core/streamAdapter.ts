@@ -21,6 +21,7 @@ interface InvokeParams {
   sessionId: string;
   /** Optional explicit API format override: "anthropic" | "openai" */
   apiFormat?: string;
+  responseFormat?: { type: 'json_object' };
 }
 
 /** Default timeout for a single streaming API call (60s). */

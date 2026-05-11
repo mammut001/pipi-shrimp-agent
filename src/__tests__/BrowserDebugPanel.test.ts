@@ -25,6 +25,13 @@ jest.mock('../utils/browserObservabilityClient', () => ({
   exportBrowserBenchmarkReport: jest.fn().mockResolvedValue('# Browser Benchmark Report'),
 }));
 
+jest.mock('../i18n', () => ({
+  t: (key: string) => ({
+    'screenshot.unavailable': 'Screenshot unavailable.',
+    'screenshot.invalid': 'Screenshot data is invalid.',
+  }[key] ?? key),
+}));
+
 jest.mock('@/services/browserBenchmarkArtifacts', () => ({
   DOCS_CHANGED_EVENT: 'pipi:docs-changed',
   saveBrowserBenchmarkArtifact: jest.fn(),
@@ -414,6 +421,7 @@ describe('BrowserDebugPanel', () => {
     expect(markup).toContain('Viewport 1280x720');
     expect(markup).toContain('Highlighted 1 interactive elements with captured bounds.');
     expect(markup).toContain('PageState screenshot for Next Page');
+    expect(markup).toContain('object-contain');
     expect(markup).toContain('#1 · backend_node_id 101');
     expect(markup).toContain('Next Page · nav-43');
     expect(markup).toContain('current-entry');
@@ -496,5 +504,66 @@ describe('BrowserDebugPanel', () => {
     expect(markup).toContain('No page state snapshot yet.');
     expect(markup).toContain('No cache lifecycle events yet.');
     expect(markup).toContain('Cache is empty.');
+  });
+
+  it('renders a safe fallback when screenshot data is invalid', () => {
+    mockUseBrowserObservabilityStore.mockImplementation(() => ({
+      debugPanelEnabled: true,
+      wiringReady: true,
+      isUsingMockData: false,
+      session: {
+        connected: true,
+        mode: 'attach',
+        wsStatus: 'healthy',
+        currentTarget: 'example.com',
+        lastHealthPingAt: Date.now() - 2_000,
+        sessionId: 'session-1',
+        targetId: 'target-1',
+        websocketUrl: 'ws://127.0.0.1:9222/devtools/browser/test',
+        currentUrl: 'https://example.com/dashboard',
+        lastError: null,
+        source: 'backend',
+      },
+      timeline: [],
+      recentCommands: [],
+      recentActions: [],
+      latestPageState: {
+        id: 'snapshot-2',
+        cacheKey: 'target-1:nav-43:mini:dom-2',
+        url: 'https://example.com/next',
+        title: 'Next Page',
+        viewport: {
+          page_x: 0,
+          page_y: 96,
+          width: 1280,
+          height: 720,
+        },
+        warnings: [],
+        elements: [],
+        screenshot: {
+          kind: 'base64_png',
+          value: 'broken',
+        },
+        createdAt: Date.now() - 1_500,
+        navigationId: 'nav-43',
+        domVersion: 'dom-2',
+        viewportSignature: 'mini',
+        source: 'backend',
+      },
+      snapshotCache: {
+        activeKey: null,
+        entries: [],
+        hitCount: 0,
+        missCount: 0,
+        evictionCount: 0,
+        invalidationCount: 0,
+      },
+      benchmarkReport: null,
+      clearTimeline: jest.fn(),
+    }));
+
+    const markup = renderToStaticMarkup(createElement(BrowserDebugPanel));
+
+    expect(markup).toContain('Screenshot data is invalid.');
   });
 });

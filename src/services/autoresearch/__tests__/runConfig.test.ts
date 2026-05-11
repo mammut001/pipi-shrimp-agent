@@ -19,11 +19,12 @@ describe('resolveAutoResearchRunConfig', () => {
   });
 
   it('uses the latest active Settings model for each new run resolution', async () => {
-    const configV25 = {
+    const configV21 = {
       configId: 'cfg-1',
       name: 'MiniMax',
       provider: 'minimax',
-      model: 'MiniMax-M2.5',
+      providerLabel: 'MiniMax',
+      model: 'MiniMax-M2.1',
       baseUrl: 'https://api.minimaxi.com/v1',
       apiFormat: 'openai',
       hasApiKey: true,
@@ -31,12 +32,12 @@ describe('resolveAutoResearchRunConfig', () => {
       apiKey: 'first-secret-key',
     };
     const configV27 = {
-      ...configV25,
+      ...configV21,
       model: 'MiniMax-M2.7',
       apiKey: 'second-secret-key',
     };
     mockResolveActiveAgentConfig
-      .mockReturnValueOnce(configV25)
+      .mockReturnValueOnce(configV21)
       .mockReturnValueOnce(configV27);
 
     const { resolveAutoResearchRunConfig } = await import('../runConfig');
@@ -44,11 +45,11 @@ describe('resolveAutoResearchRunConfig', () => {
     const firstRun = resolveAutoResearchRunConfig();
     const secondRun = resolveAutoResearchRunConfig();
 
-    expect(firstRun.agentConfig.model).toBe('MiniMax-M2.5');
-    expect(firstRun.snapshot.model).toBe('MiniMax-M2.5');
+    expect(firstRun.agentConfig.model).toBe('MiniMax-M2.1');
+    expect(firstRun.snapshot.model).toBe('MiniMax-M2.1');
     expect(secondRun.agentConfig.model).toBe('MiniMax-M2.7');
     expect(secondRun.snapshot.model).toBe('MiniMax-M2.7');
-    expect(firstRun.snapshot.model).toBe('MiniMax-M2.5');
+    expect(firstRun.snapshot.model).toBe('MiniMax-M2.1');
     expect(firstRun.snapshot.source).toBe('settings.activeConfig');
     expect(secondRun.snapshot.keyPreview).toContain('chars');
   });

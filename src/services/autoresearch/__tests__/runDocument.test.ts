@@ -21,8 +21,10 @@ function createRun(overrides: Partial<AutoResearchRunRecord> = {}): AutoResearch
       iterations: 5,
       baseline: 0.963284,
       configSnapshot: {
+        configId: 'cfg-minimax',
         configName: 'MiniMax',
         provider: 'minimax',
+        providerLabel: 'MiniMax',
         apiFormat: 'openai',
         baseUrl: 'https://api.minimaxi.com/v1',
         model: 'MiniMax-M2.7',
@@ -89,6 +91,8 @@ describe('AutoResearch run document', () => {
     expect(document.tags).toEqual(expect.arrayContaining(['autoresearch', 'cv_accuracy', 'failed', 'minimax', 'MiniMax-M2.7']));
     expect(document.markdown).toContain('Baseline: 0.963284');
     expect(document.markdown).toContain('Best: 0.968 at iteration 1');
+    expect(document.markdown).toContain('Provider: MiniMax');
+    expect(document.markdown).toContain('Model display: MiniMax · MiniMax-M2.7');
     expect(document.markdown).toContain('| #1 | keep | 0.968 | +0.0047 abs · +0.49% | Adjusted C value |');
     expect(document.markdown).toContain('/Users/yuhansong/autoresearch/run-1/iter-1/metrics.json');
     expect(document.markdown).toContain('Iteration completed.');

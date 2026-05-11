@@ -224,4 +224,106 @@ describe('runHeadlessAgentTurn', () => {
       durationMs: 0,
     });
   });
+
+  it('allows the local AutoResearch tool catalog to write files and execute commands', async () => {
+    const resolveAll = jest.fn();
+    mockPartitionTools.mockImplementation((tools: unknown[]) => ({
+      concurrent: [],
+      serial: tools,
+    }));
+    mockExecuteBatch
+      .mockResolvedValueOnce({
+        results: [
+          {
+            id: 'tool-1',
+            content: 'Successfully wrote 4 bytes to notes.txt',
+            is_error: false,
+            execution_time_ms: 4,
+          },
+        ],
+        totalExecutionTime: 4,
+        errors: [],
+      })
+      .mockResolvedValueOnce({
+        results: [
+          {
+            id: 'tool-2',
+            content: '{"stdout":"ok","stderr":"","exitCode":0}',
+            is_error: false,
+            execution_time_ms: 8,
+          },
+        ],
+        totalExecutionTime: 8,
+        errors: [],
+      });
+    mockRunChatTurn.mockReturnValue(
+      createAsyncGenerator([
+        {
+          type: 'tool_batch_request',
+          tools: [
+            { id: 'tool-1', name: 'write_file', arguments: '{"path":"notes.txt","content":"note"}' },
+            { id: 'tool-2', name: 'execute_command', arguments: '{"command":"python3 run_experiment.py","cwd":"/tmp/headless"}' },
+          ],
+          _resolveAll: resolveAll,
+        },
+        {
+          type: 'turn_complete',
+          tokenUsage: {
+            inputTokens: 3,
+            outputTokens: 2,
+            totalTokens: 5,
+          },
+        },
+      ]),
+    );
+
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+    const { buildAutoResearchToolCatalog } = await import('@/services/autoresearch/toolCatalog');
+    await runHeadlessAgentTurn({
+      sessionId: 'session-local-autoresearch',
+      initialMessages: [{ role: 'user', content: 'Run locally' }],
+      systemPrompt: 'system prompt',
+      allowedTools: buildAutoResearchToolCatalog({ mode: 'local' }),
+      resolveWorkDir: jest.fn().mockResolvedValue('/tmp/headless'),
+    });
+
+    expect(resolveAll).toHaveBeenCalledWith([
+      {
+        id: 'tool-1',
+        content: 'Successfully wrote 4 bytes to notes.txt',
+      },
+      {
+        id: 'tool-2',
+        content: '{"stdout":"ok","stderr":"","exitCode":0}',
+      },
+    ]);
+    expect(mockExecuteBatch).toHaveBeenNthCalledWith(
+      1,
+      [
+        {
+          id: 'tool-1',
+          name: 'write_file',
+          arguments: { path: 'notes.txt', content: 'note' },
+        },
+      ],
+      expect.objectContaining({
+        sessionId: 'session-local-autoresearch',
+        workDir: '/tmp/headless',
+      }),
+    );
+    expect(mockExecuteBatch).toHaveBeenNthCalledWith(
+      2,
+      [
+        {
+          id: 'tool-2',
+          name: 'execute_command',
+          arguments: { command: 'python3 run_experiment.py', cwd: '/tmp/headless' },
+        },
+      ],
+      expect.objectContaining({
+        sessionId: 'session-local-autoresearch',
+        workDir: '/tmp/headless',
+      }),
+    );
+  });
 });

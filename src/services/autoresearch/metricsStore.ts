@@ -15,6 +15,11 @@ export interface IterationMetrics {
   startedAt: string;
   finishedAt: string;
   extra?: Record<string, number | string | boolean>;
+  reflection?: {
+    parserPath?: string | null;
+    retryCount?: number;
+    reason?: string;
+  };
 }
 
 export interface MetricsSummary {

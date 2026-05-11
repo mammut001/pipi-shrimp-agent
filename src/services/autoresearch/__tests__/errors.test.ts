@@ -30,6 +30,7 @@ describe('formatError', () => {
       configId: 'cfg-1',
       name: 'MiniMax',
       provider: 'minimax',
+      providerLabel: 'MiniMax',
       model: 'MiniMax-M2.7',
       baseUrl: 'https://api.minimaxi.com/v1',
       apiFormat: 'openai',

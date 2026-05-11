@@ -5,6 +5,7 @@ import {
   validateResolvedAgentConfig,
   type ResolvedAgentConfig,
 } from '@/services/agentConfig';
+import { t } from '@/i18n';
 import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
 import { isAuthConnectionError } from '@/services/settings/settingsConnection';
 import type { SshConfig } from '@/store/autoresearchStore';
@@ -83,6 +84,23 @@ function buildRequiredPath(parentDir: string, fileName: string): string {
   return `${parentDir.replace(/[\\/]+$/, '')}/${fileName}`;
 }
 
+function buildNotGitRepoMessage(experimentDir: string): string {
+  return [
+    t('autoresearch.preflight.notGitRepoTitle'),
+    '',
+    t('autoresearch.preflight.notGitRepoDescription'),
+    '',
+    t('autoresearch.preflight.requiredFiles'),
+    '- run_experiment.py',
+    '- AUTORESEARCH.md',
+    '',
+    `cd ${experimentDir}`,
+    'git init',
+    'git add .',
+    'git commit -m "Initial AutoResearch experiment"',
+  ].join('\n');
+}
+
 async function assertTargetPathExists(
   cfg: SshConfig,
   label: string,
@@ -113,7 +131,7 @@ function parseEnvironmentSummary(raw: string, experimentDir: string): AutoResear
 
   const gitRepo = values.get('git_repo') === '1';
   if (!gitRepo) {
-    throw new Error(`Experiment directory must be a git repository: ${experimentDir}`);
+    throw new Error(buildNotGitRepoMessage(experimentDir));
   }
 
   const worktreeWritable = values.get('worktree_writable') === '1';

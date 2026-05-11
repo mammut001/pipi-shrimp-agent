@@ -1,4 +1,8 @@
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
+import { buildAutoResearchToolCatalog, getAutoResearchToolProfile } from '../toolCatalog';
+
+const localToolCatalog = buildAutoResearchToolCatalog({ mode: 'local' });
+const localCommandTool = getAutoResearchToolProfile({ mode: 'local' }).commandTool;
 
 const mockAppendLiveOutput = jest.fn();
 const mockRunHeadlessAgentTurn = jest.fn();
@@ -11,11 +15,31 @@ const mockRequestReflectionDecision = jest.fn();
 const mockGetDeterministicRecoveryDecision = jest.fn();
 const mockBuildFallbackReflectionDecision = jest.fn();
 
+class MockAutoResearchReflectionFailureError extends Error {
+  readonly decisionResult: unknown;
+
+  constructor(message: string, decisionResult: unknown) {
+    super(message);
+    this.name = 'AutoResearchReflectionFailureError';
+    this.decisionResult = decisionResult;
+  }
+}
+
 jest.mock('@/store/autoresearchStore', () => ({
   useAutoResearchStore: {
     getState: () => ({
       id: 'run-1',
       currentIteration: 3,
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/research',
+        authMode: 'agent',
+        password: '',
+      },
       metricName: 'cv_accuracy',
       metricDirection: 'higher',
       maxIterations: 5,
@@ -54,11 +78,38 @@ jest.mock('../terminalRunner', () => ({
 }));
 
 jest.mock('../reflection', () => ({
+  AutoResearchReflectionFailureError: MockAutoResearchReflectionFailureError,
   buildReflectionInputFromState: (input: unknown) => input,
+  isAutoResearchReflectionFailureError: (error: unknown) => error instanceof MockAutoResearchReflectionFailureError,
   requestReflectionDecision: (...args: unknown[]) => mockRequestReflectionDecision(...args),
   getDeterministicRecoveryDecision: (...args: unknown[]) => mockGetDeterministicRecoveryDecision(...args),
   buildFallbackReflectionDecision: (...args: unknown[]) => mockBuildFallbackReflectionDecision(...args),
 }));
+
+function createReflectionResult(overrides: Record<string, unknown> = {}) {
+  return {
+    decision: {
+      action: 'mark_iteration_failed',
+      summary: 'Reflection did not provide a summary.',
+      userMessage: 'Reflection did not provide a summary.',
+      shouldRetry: false,
+      confidence: 'low',
+      ...((overrides.decision as Record<string, unknown> | undefined) ?? {}),
+    },
+    rawText: 'raw reflection output',
+    parserPath: null,
+    retryCount: 2,
+    request: {
+      systemPrompt: 'system',
+      messages: [
+        { role: 'user', content: 'first request' },
+      ],
+      responseFormat: { type: 'json_object' },
+    },
+    parseFailedAttempts: [],
+    ...overrides,
+  };
+}
 
 describe('createAutoResearchSendMessage', () => {
   const activeConfig: ResolvedAgentConfig = {
@@ -123,12 +174,7 @@ describe('createAutoResearchSendMessage', () => {
       systemPrompt: 'system prompt',
       workDir: '/tmp/research',
       agentConfig: activeConfig,
-      allowedTools: [
-        'get_current_workspace',
-        'ssh_exec',
-        'ssh_read_file',
-        'ssh_upload_file',
-      ],
+      allowedTools: localToolCatalog,
       initialMessages: [
         {
           role: 'user',
@@ -185,12 +231,12 @@ describe('createAutoResearchSendMessage', () => {
       .mockImplementationOnce(async (input) => {
         await input.onToolCall?.({
           id: 'tool-1',
-          name: 'ssh_exec',
+          name: localCommandTool,
           arguments: '{"command":"python run_experiment.py"}',
         });
         await input.onToolResult?.({
           id: 'tool-1',
-          name: 'ssh_exec',
+          name: localCommandTool,
           result: '{"stdout":"","stderr":"bash: python: command not found\\n","exitCode":127}',
           durationMs: 42,
         });
@@ -248,14 +294,15 @@ describe('createAutoResearchSendMessage', () => {
 
   it('runs reflection before surfacing a tool-round exhaustion failure', async () => {
     mockRunHeadlessAgentTurn.mockRejectedValueOnce(new Error('Exceeded maximum tool rounds (17)'));
-    mockRequestReflectionDecision.mockResolvedValue({
-      action: 'stop_tool_exhausted',
-      summary: 'The agent exhausted the tool budget without producing the metric.',
-      rootCause: 'python command not found',
-      userMessage: '工具调用轮数已耗尽。最近的关键错误是：python: command not found。',
-      shouldRetry: false,
-      confidence: 'medium',
-    });
+    mockRequestReflectionDecision.mockResolvedValue(createReflectionResult({
+      decision: {
+        action: 'mark_iteration_failed',
+        summary: 'The agent exhausted the tool budget without producing the metric.',
+        userMessage: '工具调用轮数已耗尽。最近的关键错误是：python: command not found。',
+        shouldRetry: false,
+        confidence: 'medium',
+      },
+    }));
 
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
     const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
@@ -265,7 +312,48 @@ describe('createAutoResearchSendMessage', () => {
     );
     expect(mockRequestReflectionDecision).toHaveBeenCalledTimes(1);
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Reflection decision: stop_tool_exhausted — The agent exhausted the tool budget without producing the metric.',
+      message: 'Reflection decision: mark_iteration_failed — The agent exhausted the tool budget without producing the metric.',
     }));
+  });
+
+  it('retries the agent turn when reflection returns continue', async () => {
+    mockRunHeadlessAgentTurn
+      .mockRejectedValueOnce(new Error('Exceeded maximum tool rounds (17)'))
+      .mockResolvedValueOnce({
+        finalText: 'recovered after reflection',
+        finalReasoning: '',
+      });
+    mockRequestReflectionDecision.mockResolvedValue(createReflectionResult({
+      decision: {
+        action: 'continue',
+        summary: 'Retry once with a tighter action plan.',
+        nextPlan: 'python3 run_experiment.py',
+        shouldRetry: true,
+        confidence: 'medium',
+      },
+      parseFailedAttempts: [
+        {
+          retryCount: 0,
+          rawText: 'not json',
+          preview: 'not json',
+        },
+      ],
+    }));
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
+
+    await expect(sendMessage('system prompt', 'reflect and continue')).resolves.toBe('recovered after reflection');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(2);
+    expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'reflection_parse_failed',
+      message: expect.stringContaining('not json'),
+    }));
+    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('python3 run_experiment.py'),
+      }),
+    );
   });
 });

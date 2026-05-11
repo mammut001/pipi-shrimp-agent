@@ -6,6 +6,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
+import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { startAutoResearchRun } from '@/services/autoresearch/setupFlow';
 
 const mockSetAgentPanelTab = jest.fn();
@@ -45,6 +46,7 @@ jest.mock('@/services/agentConfig', () => ({
   resolveActiveAgentConfig: jest.fn(() => ({
     name: 'AutoResearch Test Config',
     provider: 'test',
+    providerLabel: 'Test Provider',
     model: 'test-model',
   })),
   validateResolvedAgentConfig: jest.fn(() => []),
@@ -76,6 +78,17 @@ let AutoResearchSetupModal: typeof import('../AutoResearchSetupModal').AutoResea
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+function disposeView(root: Root, container: HTMLDivElement) {
+  const index = mountedRoots.findIndex((mounted) => mounted.root === root && mounted.container === container);
+  if (index >= 0) {
+    mountedRoots.splice(index, 1);
+  }
+  act(() => {
+    root.unmount();
+  });
+  container.remove();
+}
+
 function renderModal() {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -105,6 +118,12 @@ describe('AutoResearchSetupModal', () => {
       statusMessage: undefined,
       sshConfig: null,
       lastUsedConfig: null,
+    });
+    useBrowserObservabilityStore.setState({
+      failureSnapshots: [],
+      activeFailureSnapshot: null,
+      failurePreviewSuppressed: false,
+      dismissedFailureIds: [],
     });
   });
 
@@ -140,6 +159,7 @@ describe('AutoResearchSetupModal', () => {
             configId: 'cfg-1',
             name: 'AutoResearch Test Config',
             provider: 'anthropic',
+            providerLabel: 'Anthropic',
             model: 'test-model',
             apiFormat: 'openai',
             baseUrl: 'https://example.com',
@@ -216,6 +236,7 @@ describe('AutoResearchSetupModal', () => {
           configId: 'cfg-1',
           name: 'AutoResearch Test Config',
           provider: 'anthropic',
+          providerLabel: 'Anthropic',
           model: 'test-model',
           apiFormat: 'openai',
           baseUrl: 'https://example.com',
@@ -258,5 +279,44 @@ describe('AutoResearchSetupModal', () => {
 
     expect(view.container.textContent).toContain('SSH host is required.');
     expect(jest.mocked(startAutoResearchRun)).not.toHaveBeenCalled();
+  });
+
+  it('suppresses browser failure previews while the modal is open and restores them on unmount', () => {
+    useBrowserObservabilityStore.setState({
+      failureSnapshots: [
+        {
+          taskId: 'failure-1',
+          failedAction: 'click',
+          url: 'https://example.com',
+          title: 'Example',
+          errorKind: 'browser.timeout',
+          errorMessage: 'button not reachable',
+          ts: 1,
+        },
+      ],
+      activeFailureSnapshot: {
+        taskId: 'failure-1',
+        failedAction: 'click',
+        url: 'https://example.com',
+        title: 'Example',
+        errorKind: 'browser.timeout',
+        errorMessage: 'button not reachable',
+        ts: 1,
+      },
+      failurePreviewSuppressed: false,
+      dismissedFailureIds: [],
+    });
+
+    const view = renderModal();
+    let state = useBrowserObservabilityStore.getState();
+    expect(state.failurePreviewSuppressed).toBe(true);
+    expect(state.activeFailureSnapshot).toBeNull();
+    expect(state.failureSnapshots).toHaveLength(1);
+
+    disposeView(view.root, view.container);
+
+    state = useBrowserObservabilityStore.getState();
+    expect(state.failurePreviewSuppressed).toBe(false);
+    expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
   });
 });
