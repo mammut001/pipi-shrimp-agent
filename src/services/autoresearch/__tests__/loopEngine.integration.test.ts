@@ -154,7 +154,9 @@ describe('loopEngine integration', () => {
     const [firstRun] = await listIterations(cfg, 'autoresearch-integration');
     const firstSystemPrompt = await readTargetText(cfg, firstRun.systemPromptPath);
     expect(firstSystemPrompt).toContain(`Only permitted experiment tools for this run: ${formatAutoResearchToolCatalog(cfg)}`);
-    expect(firstSystemPrompt).toContain('Run the experiment command through execute_command');
+    expect(firstSystemPrompt).toContain('## WORKSPACE CONTRACT');
+    expect(firstSystemPrompt).toContain(`Modify run_experiment.py in ${firstRun.iterDir}/code, NOT in the original experiment dir`);
+    expect(firstSystemPrompt).toContain(`Run the experiment from ${firstRun.iterDir}/code using `);
 
     expect(mockNotifier.onLoopStopped).toHaveBeenCalledWith('3 consecutive failures', expect.any(Object));
   });
@@ -281,6 +283,62 @@ describe('loopEngine integration', () => {
     expect(store.consecutiveFailures).toBe(0);
     expect(store.statusMessage).toBeUndefined();
     expect(store.experiments[0]?.iteration).toBe(1);
+  });
+
+  it('completes two local cv_accuracy iterations and records iter-002 metrics', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-cv-accuracy-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("run")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-cv-accuracy',
+      maxIterations: 2,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    const metrics = [0.9633, 0.9684];
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      const metricValue = metrics[runDir.iter - 1];
+      const hypothesis = `improve cv_accuracy iteration ${runDir.iter}`;
+      await fs.writeFile(runDir.hypothesisPath, `${hypothesis}\n`, 'utf8');
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue,
+          status: 'IMPROVED',
+          hypothesis,
+        }, null, 2),
+        'utf8',
+      );
+
+      return `EXPERIMENT_RESULT: metric_value=${metricValue} status=IMPROVED hypothesis="${hypothesis}"`;
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const runs = await listIterations(cfg, 'autoresearch-cv-accuracy');
+    expect(runs).toHaveLength(2);
+
+    const secondRun = runs[1];
+    const hypothesis = await readTargetText(cfg, secondRun.hypothesisPath);
+    const metricsJson = await readTargetText(cfg, secondRun.metricsPath);
+    expect(hypothesis?.trim().length).toBeGreaterThan(0);
+    expect(metricsJson).toContain('"metricName": "cv_accuracy"');
+    expect(metricsJson).toContain('"metricValue": 0.9684');
   });
 
   it('marks the run as failed instead of leaving it running after agent execution errors', async () => {

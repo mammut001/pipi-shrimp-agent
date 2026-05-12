@@ -8,6 +8,15 @@ use crate::utils::{AppError, AppResult};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct LocalFileToolError {
+    pub error: bool,
+    pub error_kind: String,
+    pub message: String,
+    pub path: String,
+    pub cause: String,
+}
+
 /// Allowed root directories for file operations (path sandbox)
 fn allowed_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
@@ -93,6 +102,34 @@ fn validate_in_scope(
     Ok(())
 }
 
+fn classify_file_tool_error_kind(cause: &str) -> &'static str {
+    let normalized = cause.to_lowercase();
+    if normalized.contains("permission denied")
+        || normalized.contains("access denied")
+        || normalized.contains("outside the bound work directory")
+    {
+        return "access_denied";
+    }
+    if normalized.contains("not found") || normalized.contains("no such file") {
+        return "not_found";
+    }
+    if normalized.contains("invalid") || normalized.contains("missing") {
+        return "argument_invalid";
+    }
+    "io_error"
+}
+
+fn build_local_file_tool_error(path: &str, operation: &str, cause: impl Into<String>) -> LocalFileToolError {
+    let cause = cause.into();
+    LocalFileToolError {
+        error: true,
+        error_kind: classify_file_tool_error_kind(&cause).to_string(),
+        message: format!("Failed to {} '{}': {}", operation, path, cause),
+        path: path.to_string(),
+        cause,
+    }
+}
+
 pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
     let scope_root = match work_dir {
         Some(dir) => Some(expand_home(dir).canonicalize().map_err(|e| {
@@ -115,6 +152,52 @@ pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
     Ok(canonical)
 }
 
+pub fn read_file_for_tool(path: &str, work_dir: Option<&str>) -> Result<FileResponse, LocalFileToolError> {
+    let expanded_path = resolve_path(path, work_dir)
+        .map_err(|e| build_local_file_tool_error(path, "read file", e.to_string()))?;
+    let content = fs::read_to_string(&expanded_path)
+        .map_err(|e| build_local_file_tool_error(path, "read file", e.to_string()))?;
+
+    Ok(FileResponse {
+        content,
+        path: expanded_path.to_string_lossy().to_string(),
+    })
+}
+
+pub fn write_file_for_tool(
+    path: &str,
+    content: &str,
+    work_dir: Option<&str>,
+) -> Result<String, LocalFileToolError> {
+    let expanded_path = resolve_path(path, work_dir)
+        .map_err(|e| build_local_file_tool_error(path, "write file", e.to_string()))?;
+
+    if let Some(parent) = expanded_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| build_local_file_tool_error(path, "create parent directory", e.to_string()))?;
+        }
+    }
+
+    fs::write(&expanded_path, content)
+        .map_err(|e| build_local_file_tool_error(path, "write file", e.to_string()))?;
+
+    Ok(format!(
+        "Successfully wrote {} bytes to {}",
+        content.len(),
+        expanded_path.display()
+    ))
+}
+
+pub fn create_directory_for_tool(path: &str, work_dir: Option<&str>) -> Result<String, LocalFileToolError> {
+    let expanded_path = resolve_path(path, work_dir)
+        .map_err(|e| build_local_file_tool_error(path, "create directory", e.to_string()))?;
+    fs::create_dir_all(&expanded_path)
+        .map_err(|e| build_local_file_tool_error(path, "create directory", e.to_string()))?;
+
+    Ok(format!("Directory created successfully: {}", expanded_path.display()))
+}
+
 /**
  * Read a file from the filesystem
  *
@@ -122,14 +205,7 @@ pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
  */
 #[tauri::command]
 pub async fn read_file(path: String, work_dir: Option<String>) -> AppResult<FileResponse> {
-    let expanded_path = resolve_path(&path, work_dir.as_deref())?;
-    let content =
-        fs::read_to_string(&expanded_path).map_err(|e| AppError::FileError(e.to_string()))?;
-
-    Ok(FileResponse {
-        content,
-        path: expanded_path.to_string_lossy().to_string(),
-    })
+    read_file_for_tool(&path, work_dir.as_deref()).map_err(|e| AppError::FileError(e.message))
 }
 
 /**
@@ -164,10 +240,8 @@ pub async fn write_file(
     content: String,
     work_dir: Option<String>,
 ) -> AppResult<String> {
-    let expanded_path = resolve_path(&path, work_dir.as_deref())?;
-    fs::write(&expanded_path, &content).map_err(|e| AppError::FileError(e.to_string()))?;
-
-    Ok("File written successfully".to_string())
+    write_file_for_tool(&path, &content, work_dir.as_deref())
+        .map_err(|e| AppError::FileError(e.message))
 }
 
 /**
@@ -184,10 +258,8 @@ pub async fn path_exists(path: String, work_dir: Option<String>) -> AppResult<bo
  */
 #[tauri::command]
 pub async fn create_directory(path: String, work_dir: Option<String>) -> AppResult<String> {
-    let expanded_path = resolve_path(&path, work_dir.as_deref())?;
-    fs::create_dir_all(&expanded_path).map_err(|e| AppError::FileError(e.to_string()))?;
-
-    Ok("Directory created successfully".to_string())
+    create_directory_for_tool(&path, work_dir.as_deref())
+        .map_err(|e| AppError::FileError(e.message))
 }
 
 /// A single memory file entry, returned by scan_memory_files.
@@ -386,6 +458,75 @@ pub struct ProjectFingerprint {
     pub key_files: Vec<FileInfo>,
     pub structure_summary: String,
     pub language_stats: std::collections::HashMap<String, usize>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    fn create_temp_root(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough for tests")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("pipi-shrimp-file-test-{}-{}", label, unique));
+        fs::create_dir_all(&root).expect("temp root should be created");
+        root
+    }
+
+    #[test]
+    fn write_file_round_trip_reads_same_content() {
+        let root = create_temp_root("round-trip");
+        let root_string = root.to_string_lossy().to_string();
+        let relative_path = "nested/output/result.txt";
+        let expected = "alpha\nbeta\ngamma\n";
+
+        let write_result = write_file_for_tool(relative_path, expected, Some(root_string.as_str()))
+            .expect("write_file_for_tool should succeed");
+        let read_result = read_file_for_tool(relative_path, Some(root_string.as_str()))
+            .expect("read_file_for_tool should succeed");
+
+        assert!(write_result.contains("Successfully wrote"));
+        assert_eq!(read_result.content, expected);
+
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_file_returns_structured_error_for_permission_denied() {
+        let root = create_temp_root("permission-denied");
+        let root_string = root.to_string_lossy().to_string();
+        let read_only_dir = root.join("readonly");
+        fs::create_dir_all(&read_only_dir).expect("read-only dir should be created");
+
+        let mut permissions = fs::metadata(&read_only_dir)
+            .expect("metadata should exist")
+            .permissions();
+        permissions.set_mode(0o555);
+        fs::set_permissions(&read_only_dir, permissions).expect("permissions should be set");
+
+        let error = write_file_for_tool("readonly/blocked.txt", "blocked", Some(root_string.as_str()))
+            .expect_err("write_file_for_tool should fail in read-only dir");
+
+        assert_eq!(error.error_kind, "access_denied");
+        assert_eq!(error.path, "readonly/blocked.txt");
+        assert!(error.message.contains("readonly/blocked.txt"));
+        assert!(error.cause.to_lowercase().contains("permission denied"));
+
+        let mut cleanup_permissions = fs::metadata(&read_only_dir)
+            .expect("metadata should still exist")
+            .permissions();
+        cleanup_permissions.set_mode(0o755);
+        fs::set_permissions(&read_only_dir, cleanup_permissions).expect("permissions should be restorable");
+        fs::remove_dir_all(root).expect("temp root should be removed");
+    }
 }
 
 /// Analyze a project folder and generate a fingerprint for AI auto-onboarding

@@ -44,6 +44,7 @@ export function AutoResearchRunDetailDocument({
     return (
       <AutoResearchDashboardView
         run={effectiveRun}
+        liveOutput={usesDemoFallback ? effectiveRun.liveOutputExcerpt : liveOutput}
         onBack={onBack}
         onClose={onClose}
         onOpen={usesDemoFallback ? undefined : onOpen}

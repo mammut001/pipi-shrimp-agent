@@ -55,6 +55,50 @@ export interface BatchExecutionResult {
   errors: ToolResult[];
 }
 
+interface StructuredToolErrorPayload {
+  error: true;
+  error_kind: string;
+  message: string;
+  tool: string;
+  path?: string;
+  cause: string;
+}
+
+function buildStructuredToolError(
+  toolName: string,
+  args: Record<string, any>,
+  error: unknown,
+  fallbackKind = 'transient_failure',
+): string {
+  const cause = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : JSON.stringify(error);
+  const payload: StructuredToolErrorPayload = {
+    error: true,
+    error_kind: fallbackKind,
+    message: cause || `Tool execution failed: ${toolName}`,
+    tool: toolName,
+    cause: cause || 'Unknown tool execution error',
+  };
+
+  if (typeof args.path === 'string' && args.path.trim()) {
+    payload.path = args.path;
+  }
+
+  return JSON.stringify(payload);
+}
+
+function isStructuredToolError(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    return parsed?.error === true || typeof parsed?.error_kind === 'string';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Read-only tools that can be executed concurrently without side effects.
  * Names must match exactly what the Rust execute_tool command accepts.
@@ -312,7 +356,9 @@ export class StreamingToolExecutor {
       // execute_tool returns a plain string (the tool result).
       // Detect Rust-side AppError by checking for JSON error shape as fallback.
       const content = typeof result === 'string' ? result : JSON.stringify(result);
-      const isError = content.startsWith('Error:') || content.startsWith('ERROR:');
+      const isError = content.startsWith('Error:')
+        || content.startsWith('ERROR:')
+        || isStructuredToolError(content);
       return {
         id: request.id,
         content,
@@ -323,9 +369,9 @@ export class StreamingToolExecutor {
       const executionTime = Date.now() - startTime;
       return {
         id: request.id,
-        content: '',
+        content: buildStructuredToolError(request.name, request.arguments, error),
         is_error: true,
-        error_message: error instanceof Error ? error.message : 'Tool execution failed',
+        error_message: error instanceof Error ? error.message : undefined,
         execution_time_ms: executionTime,
       };
     }

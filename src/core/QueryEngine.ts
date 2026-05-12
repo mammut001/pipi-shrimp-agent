@@ -10,8 +10,14 @@ import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { isContextOverflowError } from '@/services/context/contextBudget';
 import { useSettingsStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
+import {
+  appendToolBudgetEntries,
+  createToolBudgetSummary,
+  withToolBudgetSummary,
+} from '@/services/tools/toolBudget';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
 import { prepareMessagesForVision } from '@/services/vision/visionMessagePrep';
+import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
 import { toError } from '@/utils/errorFormat';
 
 export async function* runChatTurn(
@@ -23,12 +29,15 @@ export async function* runChatTurn(
   requestConfig?: ResolvedAgentConfig,
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
-  const maxRounds = settings?.maxToolRounds ?? 10;
+  const maxToolBudget = settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
+  const maxModelRounds = Math.max(maxToolBudget + 8, 25);
   
   // Clone to avoid mutating the original array passed from Zustand directly
   let currentMessages = [...initialMessages];
   let round = 0;
   let isTurnComplete = false;
+  let toolBudgetSummary = createToolBudgetSummary(maxToolBudget);
+  let reserveFinalResponseRound = false;
 
   // Memory hook — fires after each final (no-tool-call) response
   const memoryHook = createMemoryHook({ projectRoot });
@@ -44,7 +53,11 @@ export async function* runChatTurn(
   // 3. Tool wall-clock timeouts & Retries
   // This will prevent slow or polling tools from prematurely exhausting the agent loop budget.
 
-  while (!isTurnComplete && round < maxRounds) {
+  while (
+    !isTurnComplete
+    && round < maxModelRounds
+    && (toolBudgetSummary.toolBudgetUsedRaw < maxToolBudget || reserveFinalResponseRound)
+  ) {
     round++;
     
     // [Phase 1: Pre-process]
@@ -162,6 +175,19 @@ export async function* runChatTurn(
       break; 
     }
 
+    if (reserveFinalResponseRound) {
+      yield {
+        type: 'error',
+        error: withToolBudgetSummary(
+          new Error(
+            `Exceeded maximum tool rounds (${maxToolBudget}); tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; failed_calls=${toolBudgetSummary.failedCalls}; successful_calls=${toolBudgetSummary.successfulCalls}`,
+          ),
+          toolBudgetSummary,
+        ),
+      };
+      return;
+    }
+
     const toolResults: { id: string; content: string }[] = [];
 
     // Yield all tools as a single batch — lets the consumer execute read-only
@@ -187,6 +213,16 @@ export async function* runChatTurn(
       } as EngineEvent;
 
       const allContent = await Promise.all(promises);
+      toolBudgetSummary = appendToolBudgetEntries(
+        toolBudgetSummary,
+        pendingToolCalls.map((tool, index) => ({
+          name: tool.name,
+          content: allContent[index] ?? 'Error: no result returned for tool',
+        })),
+      );
+      if (toolBudgetSummary.toolBudgetUsedRaw >= maxToolBudget) {
+        reserveFinalResponseRound = true;
+      }
       for (let i = 0; i < pendingToolCalls.length; i++) {
         toolResults.push({
           id: pendingToolCalls[i].id,
@@ -206,7 +242,28 @@ export async function* runChatTurn(
     }
   }
 
-  if (!isTurnComplete && round >= maxRounds) {
-    yield { type: 'error', error: new Error(`Exceeded maximum tool rounds (${maxRounds})`) };
+  if (!isTurnComplete && toolBudgetSummary.toolBudgetUsedRaw >= maxToolBudget && !reserveFinalResponseRound) {
+    yield {
+      type: 'error',
+      error: withToolBudgetSummary(
+        new Error(
+          `Exceeded maximum tool rounds (${maxToolBudget}); tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; failed_calls=${toolBudgetSummary.failedCalls}; successful_calls=${toolBudgetSummary.successfulCalls}`,
+        ),
+        toolBudgetSummary,
+      ),
+    };
+    return;
+  }
+
+  if (!isTurnComplete && round >= maxModelRounds) {
+    yield {
+      type: 'error',
+      error: withToolBudgetSummary(
+        new Error(
+          `Exceeded maximum model rounds (${maxModelRounds}) before completing the turn; tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; failed_calls=${toolBudgetSummary.failedCalls}; successful_calls=${toolBudgetSummary.successfulCalls}`,
+        ),
+        toolBudgetSummary,
+      ),
+    };
   }
 }

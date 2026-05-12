@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings, AgentSettings } from '../types/settings';
-import { DEFAULT_BUDGET_SETTINGS, DEFAULT_VISION_SETTINGS_STATE } from '../types/settings';
+import { DEFAULT_AGENT_SETTINGS, DEFAULT_BUDGET_SETTINGS, DEFAULT_VISION_SETTINGS_STATE } from '../types/settings';
 import { resolvePricing } from '../shared/providers';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
 import { saveSecret, loadSecret, migrateLegacySecret } from '../utils/secureSecrets';
@@ -34,7 +34,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   language: 'en',
   importedFiles: [],
   budgetSettings: DEFAULT_BUDGET_SETTINGS,
-  agentSettings: { maxToolRounds: 50 },
+  agentSettings: DEFAULT_AGENT_SETTINGS,
   visionSettings: DEFAULT_VISION_SETTINGS_STATE,
 
   // ========== Imported Files Methods ==========
