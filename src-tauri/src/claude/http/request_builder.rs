@@ -349,7 +349,7 @@ pub fn build_anthropic_body(
     no_tools: bool,
     streaming: bool,
 ) -> Value {
-    let thinking_enabled = config.capabilities.supports_thinking || supports_thinking(&config.model);
+    let thinking_enabled = config.capabilities.supports_thinking;
     let max_tokens = if thinking_enabled { 64_000 } else { 16_384 };
     let mut body = serde_json::json!({
         "model": config.model,

@@ -4,8 +4,20 @@
  */
 
 import { create } from 'zustand';
-import type { SettingsState, ApiConfig, ImportedFile, BudgetSettings, AgentSettings } from '../types/settings';
-import { DEFAULT_AGENT_SETTINGS, DEFAULT_BUDGET_SETTINGS, DEFAULT_VISION_SETTINGS_STATE } from '../types/settings';
+import type {
+  SettingsState,
+  ApiConfig,
+  ImportedFile,
+  BudgetSettings,
+  AgentSettings,
+  AutoResearchLlmSettings,
+} from '../types/settings';
+import {
+  DEFAULT_AGENT_SETTINGS,
+  DEFAULT_AUTORESEARCH_LLM_SETTINGS,
+  DEFAULT_BUDGET_SETTINGS,
+  DEFAULT_VISION_SETTINGS_STATE,
+} from '../types/settings';
 import { resolvePricing } from '../shared/providers';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
 import { saveSecret, loadSecret, migrateLegacySecret } from '../utils/secureSecrets';
@@ -18,6 +30,39 @@ import {
   removeSettingsItem,
   SETTINGS_STORAGE_KEYS,
 } from './settings/settingsStorage';
+
+function hasConfiguredApiKey(config: Pick<ApiConfig, 'apiKey'>): boolean {
+  return typeof config.apiKey === 'string' && config.apiKey.trim().length > 0;
+}
+
+function resolvePreferredActiveConfigId(
+  configs: ApiConfig[],
+  candidateId?: string | null,
+): string | null {
+  if (candidateId && configs.some((config) => config.id === candidateId)) {
+    return candidateId;
+  }
+
+  return configs.find((config) => hasConfiguredApiKey(config))?.id
+    ?? configs[0]?.id
+    ?? null;
+}
+
+function sanitizeAutoResearchLlmSettings(
+  settings: Partial<AutoResearchLlmSettings> | null | undefined,
+  configs: ApiConfig[],
+): AutoResearchLlmSettings {
+  const validIds = new Set(configs.map((config) => config.id));
+  const normalizeId = (value: string | null | undefined): string | null => (
+    value && validIds.has(value) ? value : null
+  );
+
+  return {
+    defaultConfigId: normalizeId(settings?.defaultConfigId),
+    agentConfigId: normalizeId(settings?.agentConfigId),
+    reflectionConfigId: normalizeId(settings?.reflectionConfigId),
+  };
+}
 
 /**
  * Settings store using Zustand
@@ -35,6 +80,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   importedFiles: [],
   budgetSettings: DEFAULT_BUDGET_SETTINGS,
   agentSettings: DEFAULT_AGENT_SETTINGS,
+  autoResearchLlmSettings: DEFAULT_AUTORESEARCH_LLM_SETTINGS,
   visionSettings: DEFAULT_VISION_SETTINGS_STATE,
 
   // ========== Imported Files Methods ==========
@@ -54,16 +100,29 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const updatedConfigs = [...apiConfigs, newConfig];
 
     // If this is the first config, auto-activate it
-    const activeId = apiConfigs.length === 0 ? newConfig.id : get().activeConfigId;
+    const activeId = resolvePreferredActiveConfigId(
+      updatedConfigs,
+      apiConfigs.length === 0 ? newConfig.id : get().activeConfigId,
+    );
     const activeConfig = activeId === newConfig.id ? newConfig : get().apiConfig;
+    const autoResearchLlmSettings = sanitizeAutoResearchLlmSettings(
+      get().autoResearchLlmSettings,
+      updatedConfigs,
+    );
 
     set({
       apiConfigs: updatedConfigs,
       activeConfigId: activeId,
       apiConfig: activeConfig,
+      autoResearchLlmSettings,
     });
 
     persistApiConfigs(updatedConfigs, activeId);
+    persistSettingsJson(
+      SETTINGS_STORAGE_KEYS.autoResearchLlmSettings,
+      autoResearchLlmSettings,
+      'Failed to persist AutoResearch LLM settings:',
+    );
     return newConfig;
   },
 
@@ -76,17 +135,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       c.id === id ? { ...c, ...updates } : c
     );
 
+    const nextActiveConfigId = resolvePreferredActiveConfigId(updatedConfigs, activeConfigId);
+
     // Update apiConfig if the active one was modified
-    const activeConfig = activeConfigId
-      ? updatedConfigs.find((c) => c.id === activeConfigId) || null
+    const activeConfig = nextActiveConfigId
+      ? updatedConfigs.find((c) => c.id === nextActiveConfigId) || null
       : null;
+    const autoResearchLlmSettings = sanitizeAutoResearchLlmSettings(
+      get().autoResearchLlmSettings,
+      updatedConfigs,
+    );
 
     set({
       apiConfigs: updatedConfigs,
+      activeConfigId: nextActiveConfigId,
       apiConfig: activeConfig,
+      autoResearchLlmSettings,
     });
 
-    persistApiConfigs(updatedConfigs, activeConfigId);
+    persistApiConfigs(updatedConfigs, nextActiveConfigId);
+    persistSettingsJson(
+      SETTINGS_STORAGE_KEYS.autoResearchLlmSettings,
+      autoResearchLlmSettings,
+      'Failed to persist AutoResearch LLM settings:',
+    );
   },
 
   /**
@@ -97,22 +169,32 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const updatedConfigs = apiConfigs.filter((c) => c.id !== id);
 
     // If we removed the active config, switch to first remaining
-    let newActiveId = activeConfigId;
-    if (activeConfigId === id) {
-      newActiveId = updatedConfigs.length > 0 ? updatedConfigs[0].id : null;
-    }
+    const newActiveId = resolvePreferredActiveConfigId(
+      updatedConfigs,
+      activeConfigId === id ? null : activeConfigId,
+    );
 
     const activeConfig = newActiveId
       ? updatedConfigs.find((c) => c.id === newActiveId) || null
       : null;
+    const autoResearchLlmSettings = sanitizeAutoResearchLlmSettings(
+      get().autoResearchLlmSettings,
+      updatedConfigs,
+    );
 
     set({
       apiConfigs: updatedConfigs,
       activeConfigId: newActiveId,
       apiConfig: activeConfig,
+      autoResearchLlmSettings,
     });
 
     persistApiConfigs(updatedConfigs, newActiveId);
+    persistSettingsJson(
+      SETTINGS_STORAGE_KEYS.autoResearchLlmSettings,
+      autoResearchLlmSettings,
+      'Failed to persist AutoResearch LLM settings:',
+    );
   },
 
   /**
@@ -135,8 +217,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
    */
   getActiveConfig: () => {
     const { apiConfigs, activeConfigId } = get();
-    if (!activeConfigId) return null;
-    return apiConfigs.find((c) => c.id === activeConfigId) || null;
+    const resolvedActiveId = resolvePreferredActiveConfigId(apiConfigs, activeConfigId);
+    if (!resolvedActiveId) {
+      return null;
+    }
+    return apiConfigs.find((c) => c.id === resolvedActiveId) || null;
   },
 
   // ========== Legacy Methods (backward compat) ==========
@@ -340,6 +425,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  updateAutoResearchLlmSettings: (settings) => {
+    const nextSettings = sanitizeAutoResearchLlmSettings(
+      {
+        ...get().autoResearchLlmSettings,
+        ...settings,
+      },
+      get().apiConfigs,
+    );
+
+    set({ autoResearchLlmSettings: nextSettings });
+
+    try {
+      persistSettingsJson(
+        SETTINGS_STORAGE_KEYS.autoResearchLlmSettings,
+        nextSettings,
+        'Failed to persist AutoResearch LLM settings:',
+      );
+    } catch (error) {
+      console.error('Failed to persist AutoResearch LLM settings:', error);
+    }
+  },
+
   updateVisionSettings: (settings) => {
     const currentSettings = get().visionSettings;
     const newSettings = {
@@ -507,9 +614,7 @@ const initializeSettings = () => {
         ...c,
         modelProviderId: c.modelProviderId ?? c.provider,
       }));
-      const activeId = storedActiveId && configs.some((c) => c.id === storedActiveId)
-        ? storedActiveId
-        : configs.length > 0 ? configs[0].id : null;
+      const activeId = resolvePreferredActiveConfigId(configs, storedActiveId);
       const activeConfig = activeId
         ? configs.find((c) => c.id === activeId) || null
         : null;
@@ -533,13 +638,25 @@ const initializeSettings = () => {
         const configs = [migratedConfig];
         useSettingsStore.setState({
           apiConfigs: configs,
-          activeConfigId: migratedConfig.id,
+          activeConfigId: resolvePreferredActiveConfigId(configs, migratedConfig.id),
           apiConfig: migratedConfig,
         });
 
         // Persist in new format and clean up legacy
         persistApiConfigs(configs, migratedConfig.id);
         localStorage.removeItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
+      }
+    }
+
+    const storedAutoResearchLlmSettings = localStorage.getItem(SETTINGS_STORAGE_KEYS.autoResearchLlmSettings);
+    if (storedAutoResearchLlmSettings) {
+      try {
+        const parsed = JSON.parse(storedAutoResearchLlmSettings) as Partial<AutoResearchLlmSettings>;
+        useSettingsStore.setState((state) => ({
+          autoResearchLlmSettings: sanitizeAutoResearchLlmSettings(parsed, state.apiConfigs),
+        }));
+      } catch (error) {
+        console.error('Failed to parse AutoResearch LLM settings:', error);
       }
     }
   } catch (error) {

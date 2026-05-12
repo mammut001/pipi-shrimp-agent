@@ -333,6 +333,40 @@ describe('createAutoResearchSendMessage', () => {
     }));
   });
 
+  it('uses the reflection override without changing the agent execution config', async () => {
+    const reflectionConfig = {
+      ...activeConfig,
+      configId: 'cfg-reflection',
+      name: 'Anthropic Reflection',
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-5',
+      apiFormat: 'anthropic',
+      baseUrl: 'https://api.anthropic.com/v1',
+    } as ResolvedAgentConfig;
+
+    mockRunHeadlessAgentTurn.mockRejectedValueOnce(new Error('Exceeded maximum tool rounds (17)'));
+    mockRequestReflectionDecision.mockResolvedValue(createReflectionResult({
+      decision: {
+        action: 'mark_iteration_failed',
+        summary: 'Reflection override answered.',
+        userMessage: 'Reflection override answered.',
+        shouldRetry: false,
+        confidence: 'medium',
+      },
+    }));
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig, {
+      reflectionConfig,
+    });
+
+    await expect(sendMessage('system prompt', 'use override')).rejects.toThrow('Reflection override answered.');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
+      agentConfig: activeConfig,
+    }));
+    expect(mockRequestReflectionDecision).toHaveBeenCalledWith(reflectionConfig, expect.anything());
+  });
+
   it('retries the agent turn when reflection returns continue', async () => {
     mockRunHeadlessAgentTurn
       .mockRejectedValueOnce(new Error('Exceeded maximum tool rounds (17)'))

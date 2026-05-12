@@ -1,5 +1,6 @@
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
+import { getCapability } from '@/services/llm/capabilities';
 import { invokeRustAPIStream } from '@/core/streamAdapter';
 import { extractErrorDetails } from '@/utils/errorFormat';
 import type { AutoResearchEnvironmentSummary } from './preflight';
@@ -547,6 +548,7 @@ export async function requestReflectionDecision(
   input: AutoResearchReflectionInput,
 ): Promise<AutoResearchReflectionDecisionResult> {
   const compactInput = buildCompactReflectionInput(input);
+  const capability = getCapability(agentConfig.provider);
   const systemPrompt = buildReflectionSystemPrompt();
   const requestMessages: AutoResearchReflectionRequestMessage[] = [
     {
@@ -555,7 +557,7 @@ export async function requestReflectionDecision(
     },
   ];
   const parseFailedAttempts: AutoResearchReflectionParseFailureAttempt[] = [];
-  const responseFormat = agentConfig.apiFormat === 'openai'
+  const responseFormat = capability.jsonMode
     ? { type: 'json_object' as const }
     : null;
 

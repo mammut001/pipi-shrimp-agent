@@ -37,6 +37,19 @@ const activeConfig: ResolvedAgentConfig = {
   apiKey: 'test-key',
 };
 
+const anthropicConfig: ResolvedAgentConfig = {
+  configId: 'cfg-2',
+  name: 'Anthropic Reflection',
+  provider: 'anthropic',
+  providerLabel: 'Anthropic',
+  model: 'claude-sonnet-4-5',
+  baseUrl: 'https://api.anthropic.com/v1',
+  apiFormat: 'anthropic',
+  hasApiKey: true,
+  hasBaseUrl: true,
+  apiKey: 'test-key',
+};
+
 function createReflectionInput() {
   return {
     objective: 'Improve cv_accuracy on digits',
@@ -265,5 +278,19 @@ describe('AutoResearch reflection helpers', () => {
       shouldRetry: false,
     }));
     expect(result.parseFailedAttempts).toHaveLength(3);
+  });
+
+  it('omits json mode for providers without jsonMode capability', async () => {
+    mockInvokeRustAPIStream.mockImplementation(() => streamText('## Summary\nRetry with the latest clean checkpoint.'));
+
+    const result = await requestReflectionDecision(anthropicConfig, createReflectionInput());
+
+    expect(result.parserPath).toBe('markdown_heading');
+    expect(mockBuildResolvedChatRequest).toHaveBeenCalledWith(
+      anthropicConfig,
+      expect.objectContaining({
+        responseFormat: undefined,
+      }),
+    );
   });
 });

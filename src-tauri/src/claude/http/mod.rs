@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod error_mapping;
 pub mod provider_adapter;
 pub mod request_builder;

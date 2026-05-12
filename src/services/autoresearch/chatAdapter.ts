@@ -55,6 +55,7 @@ export interface AutoResearchSendMessageOptions {
   metricName?: string;
   direction?: 'higher' | 'lower';
   maxIterations?: number;
+  reflectionConfig?: ResolvedAgentConfig | null;
 }
 
 function truncateTranscriptResult(result: string, limit = 4000): string {
@@ -306,6 +307,7 @@ export function createAutoResearchSendMessage(
 
   return async (systemPrompt: string, userMessage: string): Promise<string> => {
     const agentConfig = fixedAgentConfig ?? resolveActiveAgentConfig();
+    const reflectionConfig = options.reflectionConfig ?? agentConfig;
     const validationIssues = validateResolvedAgentConfig(agentConfig);
     if (validationIssues.length > 0) {
       throw new Error(formatAgentConfigValidationError(agentConfig, validationIssues));
@@ -431,7 +433,7 @@ export function createAutoResearchSendMessage(
           if (shouldReflect) {
             reflectionPasses += 1;
             try {
-              reflectionResult = await requestReflectionDecision(agentConfig!, reflectionInput);
+              reflectionResult = await requestReflectionDecision(reflectionConfig!, reflectionInput);
               decision = reflectionResult.decision;
             } catch (reflectionError) {
               decision = buildFallbackReflectionDecision(reflectionInput, reflectionError);

@@ -6,6 +6,11 @@ import {
   type ResolvedAgentConfig,
 } from './agentConfig';
 import {
+  buildProviderExecutionCapabilities,
+  resolveProviderRequestHint,
+  type ProviderExecutionCapabilities,
+} from '@/services/llm/capabilities';
+import {
   DEFAULT_CONTEXT_BUDGET_LIMITS,
   pruneMessagesForBudget,
   pruneTextForBudget,
@@ -50,7 +55,9 @@ export interface ResolvedChatRequestBuildResult {
     noTools?: boolean;
     allowBrowserTools?: boolean;
     sessionId: string;
+    provider?: string;
     apiFormat?: string;
+    providerCapabilities?: ProviderExecutionCapabilities;
     responseFormat?: { type: 'json_object' };
   };
   diagnostics: ResolvedChatRequestDiagnostics;
@@ -165,7 +172,13 @@ export function buildResolvedChatRequest(
       noTools: options.noTools,
       allowBrowserTools: options.allowBrowserTools,
       sessionId: options.sessionId,
+      provider: resolveProviderRequestHint(config.provider, config.apiFormat),
       apiFormat: config.apiFormat || undefined,
+      providerCapabilities: buildProviderExecutionCapabilities({
+        provider: config.provider,
+        apiFormat: config.apiFormat,
+        model: config.model,
+      }),
       responseFormat: options.responseFormat,
     },
     diagnostics: {

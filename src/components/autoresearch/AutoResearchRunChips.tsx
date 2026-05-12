@@ -83,8 +83,8 @@ export function AutoResearchRunChips({ run, className = '' }: AutoResearchRunChi
         <span
           key={chip.id}
           className={chip.accent
-            ? 'rounded-full border border-[#d9c078]/35 bg-[#d9c078]/10 px-3 py-1 text-xs font-medium text-[#f3deb0]'
-            : 'rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/70 transition-colors hover:bg-white/[0.07]'
+            ? 'rounded-full border border-[#c9dfd5] bg-[#e5f1ec] px-3 py-1 text-xs font-medium text-[#21685a]'
+            : 'rounded-full border border-[#e3d8cb] bg-[#f7f2eb] px-3 py-1 text-xs text-[#6b5f52] transition-colors hover:bg-white'
           }
           title={chip.label}
         >

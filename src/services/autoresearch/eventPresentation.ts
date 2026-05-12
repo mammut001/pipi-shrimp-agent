@@ -39,6 +39,8 @@ export function getAutoResearchEventMetadataBadges(event: AutoResearchRunEvent):
 
 export function buildAutoResearchLiveOutputFilename(run: AutoResearchRunRecord): string {
   const safeRunId = run.id.replace(/[^a-zA-Z0-9_-]+/g, '-');
-  const iteration = Math.max(run.currentIteration, 1);
-  return `${safeRunId}-iter-${String(iteration).padStart(3, '0')}-live.log`;
+  if (typeof run.currentIteration === 'number' && run.currentIteration > 0) {
+    return `${safeRunId}-iter-${String(run.currentIteration).padStart(3, '0')}-live.log`;
+  }
+  return `${safeRunId}-live.log`;
 }

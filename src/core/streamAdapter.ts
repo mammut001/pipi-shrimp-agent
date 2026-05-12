@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { ToolCallParams } from './types';
+import type { ProviderExecutionCapabilities } from '@/services/llm/capabilities';
 import { toError } from '@/utils/errorFormat';
 
 export type APIChunkEvent =
@@ -19,8 +20,10 @@ interface InvokeParams {
   noTools?: boolean;
   allowBrowserTools?: boolean;
   sessionId: string;
+  provider?: string;
   /** Optional explicit API format override: "anthropic" | "openai" */
   apiFormat?: string;
+  providerCapabilities?: ProviderExecutionCapabilities;
   responseFormat?: { type: 'json_object' };
 }
 

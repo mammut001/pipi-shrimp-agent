@@ -12,11 +12,6 @@ import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore'
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { useUIStore } from '@/store';
 import {
-  formatAgentConfigValidationError,
-  resolveActiveAgentConfig,
-  validateResolvedAgentConfig,
-} from '@/services/agentConfig';
-import {
   isHorizontalArrowKey,
   sanitizePathInput,
 } from '@/services/autoresearch/pathInput';
@@ -33,6 +28,7 @@ import {
   validateAutoResearchSetupDraft,
 } from '@/services/autoresearch/setupFlow';
 import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
+import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
@@ -44,12 +40,14 @@ export function AutoResearchSetupModal() {
   const clearLastUsedConfig = useAutoResearchStore(s => s.clearLastUsedConfig);
   const initSession = useAutoResearchStore(s => s.initSession);
   const setAgentPanelTab = useUIStore(s => s.setAgentPanelTab);
+  const toggleSettings = useUIStore(s => s.toggleSettings);
   const suppressFailurePreview = useBrowserObservabilityStore((state) => state.suppressFailurePreview);
-  const agentConfig = resolveActiveAgentConfig();
-  const agentConfigIssues = validateResolvedAgentConfig(agentConfig);
-  const agentConfigError = agentConfigIssues.length > 0
-    ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
-    : '';
+  let agentConfigError = '';
+  try {
+    resolveAutoResearchRunConfig();
+  } catch (error) {
+    agentConfigError = error instanceof Error ? error.message : String(error);
+  }
 
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -412,6 +410,21 @@ export function AutoResearchSetupModal() {
           {submitError && submitError !== agentConfigError && (
             <div className="whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
               {submitError}
+            </div>
+          )}
+
+          {agentConfigError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" role="alert">
+              <p>{agentConfigError}</p>
+              {agentConfigError.includes('Configure a provider first') && (
+                <button
+                  type="button"
+                  onClick={toggleSettings}
+                  className="mt-2 inline-flex rounded-md bg-amber-100 px-2 py-1 font-semibold text-amber-900 transition-colors hover:bg-amber-200"
+                >
+                  Open Settings
+                </button>
+              )}
             </div>
           )}
 

@@ -18,7 +18,7 @@ use tauri::Window;
 
 use crate::utils::{AppError, AppResult};
 
-use super::adapter::{get_adapter_for_config, StreamContext, StreamEvent};
+use super::http::{get_adapter_for_config, StreamContext, StreamEvent};
 use super::provider::ResolvedProviderConfig;
 
 /// Parse a single SSE data line into a string
