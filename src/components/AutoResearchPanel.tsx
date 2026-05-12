@@ -4,7 +4,7 @@
  * Shows the current run plus persistent run history.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { t } from '@/i18n';
 import {
@@ -17,6 +17,11 @@ import { AutoResearchRunDetailDocument } from './autoresearch/AutoResearchRunDet
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
 import {
+  buildAutoResearchLiveOutputFilename,
+  formatAutoResearchEventDump,
+  formatAutoResearchEventLine,
+} from '@/services/autoresearch/eventPresentation';
+import {
   stopExperimentLoop,
   pauseExperimentLoop,
   resumeExperimentLoop,
@@ -24,6 +29,78 @@ import {
 import {
   buildAutoResearchModelDisplayFromSnapshot,
 } from '@/services/autoresearch/modelDisplay';
+import { downloadTextFile, stripAnsiText, writeClipboardText } from '@/utils/clipboard';
+
+type LiveOutputFeedback = 'copied' | 'cleared' | null;
+
+function CopyIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V5a2 2 0 012-2h7a2 2 0 012 2v7a2 2 0 01-2 2h-2m-7 3h7a2 2 0 002-2V10a2 2 0 00-2-2H8a2 2 0 00-2 2v7a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function DownloadIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v11m0 0l4-4m-4 4l-4-4M4 17v1a3 3 0 003 3h10a3 3 0 003-3v-1" />
+    </svg>
+  );
+}
+
+function ClearIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>
+  );
+}
+
+function HeaderActionButton({
+  label,
+  title,
+  icon,
+  onClick,
+  className = '',
+  dataCopyTarget,
+}: {
+  label: string;
+  title?: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  className?: string;
+  dataCopyTarget?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={title || label}
+      data-copy-target={dataCopyTarget}
+      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-400/70 ${className}`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function RowCopyButton({ onClick, label, dataCopyTarget }: { onClick: () => void; label: string; dataCopyTarget?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      data-copy-target={dataCopyTarget}
+      className="rounded-md p-1 text-gray-400 opacity-0 transition-[opacity,color,background-color] hover:bg-gray-200 hover:text-gray-700 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-400/70 group-hover:opacity-100"
+    >
+      <CopyIcon className="h-3 w-3" />
+    </button>
+  );
+}
 
 function formatRunStatusLabel(status: AutoResearchRunRecord['status']): string {
   return status === 'reflection_failed'
@@ -144,15 +221,44 @@ export function AutoResearchPanel() {
   const liveOutputRef = useRef<HTMLDivElement>(null);
   const [liveExpanded, setLiveExpanded] = useState(true);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [clearedLiveChars, setClearedLiveChars] = useState(0);
+  const [liveOutputFeedback, setLiveOutputFeedback] = useState<LiveOutputFeedback>(null);
 
   const isSelectedRunActive = Boolean(selectedRun && activeRunId && selectedRun.id === activeRunId);
-  const displayedLiveOutput = isSelectedRunActive
+  const rawLiveOutput = isSelectedRunActive
     ? liveOutput
     : selectedRun?.liveOutputExcerpt || '';
+  const normalizedLiveOutput = useMemo(() => stripAnsiText(rawLiveOutput), [rawLiveOutput]);
+  const visibleLiveOutput = normalizedLiveOutput.slice(Math.min(clearedLiveChars, normalizedLiveOutput.length));
+  const displayedLiveOutput = redactSensitiveText(visibleLiveOutput);
   const iterations = selectedRun?.iterations ?? [];
   const selectedIterationIndex = selectedExperiment >= 0 && selectedExperiment < iterations.length
     ? selectedExperiment
     : -1;
+  const recentEvents = selectedRun?.events.slice(-6).reverse() ?? [];
+  const allEventLines = useMemo(
+    () => formatAutoResearchEventDump(selectedRun?.events ?? []),
+    [selectedRun?.events],
+  );
+
+  const showLiveOutputFeedback = useCallback((next: Exclude<LiveOutputFeedback, null>) => {
+    setLiveOutputFeedback(next);
+  }, []);
+
+  useEffect(() => {
+    if (!liveOutputFeedback) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setLiveOutputFeedback(null);
+    }, 1500);
+    return () => window.clearTimeout(timeoutId);
+  }, [liveOutputFeedback]);
+
+  useEffect(() => {
+    setClearedLiveChars(0);
+    setLiveOutputFeedback(null);
+  }, [selectedRun?.id]);
 
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
   const handleResume = useCallback(() => resumeExperimentLoop(), []);
@@ -165,6 +271,34 @@ export function AutoResearchPanel() {
       void openFileExternal(targetPath);
     }
   }, [selectedRun]);
+
+  const handleCopyLiveOutput = useCallback(() => {
+    if (!visibleLiveOutput) {
+      return;
+    }
+    void writeClipboardText(visibleLiveOutput)
+      .then(() => showLiveOutputFeedback('copied'))
+      .catch(() => undefined);
+  }, [showLiveOutputFeedback, visibleLiveOutput]);
+
+  const handleDownloadLiveOutput = useCallback(() => {
+    if (!visibleLiveOutput || !selectedRun) {
+      return;
+    }
+    downloadTextFile(buildAutoResearchLiveOutputFilename(selectedRun), visibleLiveOutput);
+  }, [selectedRun, visibleLiveOutput]);
+
+  const handleClearLiveOutput = useCallback(() => {
+    setClearedLiveChars(normalizedLiveOutput.length);
+    showLiveOutputFeedback('cleared');
+  }, [normalizedLiveOutput.length, showLiveOutputFeedback]);
+
+  const handleCopyAllEvents = useCallback(() => {
+    if (!allEventLines) {
+      return;
+    }
+    void writeClipboardText(allEventLines).catch(() => undefined);
+  }, [allEventLines]);
 
   useEffect(() => {
     if (liveOutputRef.current && liveExpanded) {
@@ -373,34 +507,90 @@ export function AutoResearchPanel() {
 
           {selectedRun.events.length > 0 && (
             <div className="border-t border-gray-200 bg-white px-2 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-1">Recent Events</p>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Recent Events</p>
+                <HeaderActionButton
+                  label={t('autoresearch.recentEvents.copyAll')}
+                  icon={<CopyIcon className="h-3 w-3" />}
+                  onClick={handleCopyAllEvents}
+                  dataCopyTarget="recent-events-all"
+                  className="text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                />
+              </div>
               <div className="space-y-1 max-h-24 overflow-y-auto">
-                {selectedRun.events.slice(-6).reverse().map((event) => (
-                  <div key={event.id} className="text-[9px] text-gray-500">
-                    <span className="font-semibold text-gray-700">{formatEventPhaseLabel(event.phase)}</span>
-                    <span className="text-gray-300"> · </span>
-                    <span>{redactSensitiveText(event.message)}</span>
+                {recentEvents.map((event) => (
+                  <div key={event.id} className="group flex items-start justify-between gap-2 text-[9px] text-gray-500">
+                    <div className="min-w-0 flex-1">
+                      <span className="font-semibold text-gray-700">{formatEventPhaseLabel(event.phase)}</span>
+                      <span className="text-gray-300"> · </span>
+                      <span>{redactSensitiveText(event.message)}</span>
+                    </div>
+                    <RowCopyButton
+                      onClick={() => {
+                        void writeClipboardText(formatAutoResearchEventLine(event)).catch(() => undefined);
+                      }}
+                      label={t('autoresearch.recentEvents.copyOne')}
+                      dataCopyTarget="recent-event-line"
+                    />
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {displayedLiveOutput && (
+          {normalizedLiveOutput && (
             <div className="border-t border-gray-800 bg-gray-900">
-              <button
-                onClick={() => setLiveExpanded((value) => !value)}
-                className="w-full flex items-center justify-between px-2 py-1 text-[9px] text-gray-500 hover:text-gray-300 transition-colors"
-              >
-                <span className="font-bold uppercase tracking-widest">Live Output</span>
-                <span>{liveExpanded ? '▾' : '▸'}</span>
-              </button>
+              <div className="flex items-center justify-between gap-2 px-2 py-1">
+                <button
+                  onClick={() => setLiveExpanded((value) => !value)}
+                  className="flex min-w-0 items-center gap-2 text-[9px] text-gray-500 transition-colors hover:text-gray-300"
+                  aria-label="Toggle live output"
+                >
+                  <span className="font-bold uppercase tracking-widest">Live Output</span>
+                  <span>{liveExpanded ? '▾' : '▸'}</span>
+                </button>
+                <div className="relative flex items-center gap-1">
+                  {liveOutputFeedback && (
+                    <span
+                      role="status"
+                      aria-live="polite"
+                      className="absolute bottom-full right-0 mb-1 whitespace-nowrap rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-[9px] font-medium text-gray-100 shadow-lg"
+                      data-live-output-feedback={liveOutputFeedback}
+                    >
+                      {liveOutputFeedback === 'copied'
+                        ? t('autoresearch.liveOutput.copied')
+                        : t('autoresearch.liveOutput.cleared')}
+                    </span>
+                  )}
+                  <HeaderActionButton
+                    label={t('autoresearch.liveOutput.copy')}
+                    icon={<CopyIcon />}
+                    onClick={handleCopyLiveOutput}
+                    dataCopyTarget="live-output-copy"
+                    className="text-gray-400 hover:bg-gray-800 hover:text-gray-100"
+                  />
+                  <HeaderActionButton
+                    label={t('autoresearch.liveOutput.download')}
+                    icon={<DownloadIcon />}
+                    onClick={handleDownloadLiveOutput}
+                    dataCopyTarget="live-output-download"
+                    className="text-gray-400 hover:bg-gray-800 hover:text-gray-100"
+                  />
+                  <HeaderActionButton
+                    label={t('autoresearch.liveOutput.clear')}
+                    icon={<ClearIcon />}
+                    onClick={handleClearLiveOutput}
+                    dataCopyTarget="live-output-clear"
+                    className="text-gray-400 hover:bg-gray-800 hover:text-gray-100"
+                  />
+                </div>
+              </div>
               {liveExpanded && (
                 <div
                   ref={liveOutputRef}
                   className="max-h-32 overflow-y-auto text-green-400 text-[9px] font-mono px-2 pb-2"
                 >
-                  <pre className="whitespace-pre-wrap break-words">{redactSensitiveText(displayedLiveOutput)}</pre>
+                  <pre className="whitespace-pre-wrap break-words" data-live-output-content>{displayedLiveOutput}</pre>
                 </div>
               )}
             </div>
@@ -419,7 +609,7 @@ export function AutoResearchPanel() {
                     onBack={() => setDetailOpen(false)}
                     onOpen={handleOpenSelectedRunArtifact}
                     onClose={() => setDetailOpen(false)}
-                    className="min-h-screen sm:min-h-[calc(100vh-2rem)] sm:rounded-[28px] sm:border sm:border-white/70"
+                    className="min-h-screen sm:min-h-[calc(100vh-2rem)] sm:rounded-[28px] sm:border sm:border-[#e7ded1]"
                   />
                 </div>
               </div>

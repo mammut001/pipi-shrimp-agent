@@ -4,6 +4,7 @@ use tauri::Window;
 use tokio::sync::Mutex;
 
 use crate::claude::{self, ChatResponse, ClaudeClient, Message};
+use crate::claude::provider::ProviderCapabilities;
 
 /// State for the Claude-compatible SDK client.
 pub struct ClaudeState {
@@ -55,7 +56,9 @@ pub async fn send_claude_sdk_chat_streaming(
     #[allow(non_snake_case)] noTools: Option<bool>,
     #[allow(non_snake_case)] allowBrowserTools: Option<bool>,
     #[allow(non_snake_case)] sessionId: String,
+    provider: Option<String>,
     apiFormat: Option<String>,
+    #[allow(non_snake_case)] providerCapabilities: Option<ProviderCapabilities>,
     #[allow(non_snake_case)] responseFormat: Option<serde_json::Value>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: Window,
@@ -80,7 +83,9 @@ pub async fn send_claude_sdk_chat_streaming(
             window,
             allow_browser_tools,
             sessionId,
+            provider,
             api_format,
+            providerCapabilities,
             responseFormat,
         )
         .await

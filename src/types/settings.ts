@@ -24,7 +24,7 @@ export interface ModelPricing {
   cacheWritePrice?: number;   // $/1M tokens（缓存写入，Anthropic 特有）
   maxTokens?: number;         // 模型单次输出上限
   contextWindow: number;       // 模型上下文窗口大小（tokens）
-  provider: 'anthropic' | 'openai' | 'minimax' | 'deepseek' | 'other';
+  provider: 'anthropic' | 'openai' | 'minimax' | 'gemini' | 'deepseek' | 'other';
 }
 
 /** API configuration interface */
@@ -66,9 +66,21 @@ export interface AgentSettings {
   maxToolRounds: number;  // Maximum tool loop rounds (default: 17)
 }
 
+export interface AutoResearchLlmSettings {
+  defaultConfigId: string | null;
+  agentConfigId: string | null;
+  reflectionConfigId: string | null;
+}
+
 /** Default agent settings */
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   maxToolRounds: 17,
+};
+
+export const DEFAULT_AUTORESEARCH_LLM_SETTINGS: AutoResearchLlmSettings = {
+  defaultConfigId: null,
+  agentConfigId: null,
+  reflectionConfigId: null,
 };
 
 /** Source of a model entry — for observability and debugging */
@@ -97,6 +109,7 @@ export interface SettingsState {
   importedFiles: ImportedFile[];
   budgetSettings: BudgetSettings;    // Budget alert settings
   agentSettings: AgentSettings;      // Agent behavior settings
+  autoResearchLlmSettings: AutoResearchLlmSettings;
   visionSettings: VisionSettings;
 
   // ========== Action Methods ==========
@@ -187,6 +200,7 @@ export interface SettingsState {
    * Update agent settings
    */
   updateAgentSettings: (settings: Partial<AgentSettings>) => void;
+  updateAutoResearchLlmSettings: (settings: Partial<AutoResearchLlmSettings>) => void;
   updateVisionSettings: (settings: Partial<VisionSettings>) => void;
 
   /**

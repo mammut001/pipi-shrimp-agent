@@ -4,6 +4,7 @@ import { deobfuscateInline, obfuscateInline } from '../../utils/secureSecrets';
 export const SETTINGS_STORAGE_KEYS = {
   apiConfigs: 'ai-agent-api-configs',
   activeConfig: 'ai-agent-active-config',
+  autoResearchLlmSettings: 'ai-agent-autoresearch-llm-settings',
   telegramToken: 'ai-agent-telegram-token',
   theme: 'ai-agent-theme',
   language: 'ai-agent-language',

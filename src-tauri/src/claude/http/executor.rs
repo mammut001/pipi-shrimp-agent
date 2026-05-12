@@ -38,10 +38,19 @@ pub async fn send_request_impl(
     window: Option<Window>,
     allow_browser_tools: bool,
     session_id: Option<&str>,
+    provider_hint: Option<&str>,
     api_format_hint: Option<&str>,
+    provider_capabilities: Option<super::ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
-    let config = resolve_provider_config(api_key, model, base_url, api_format_hint);
+    let config = resolve_provider_config(
+        api_key,
+        model,
+        base_url,
+        provider_hint,
+        api_format_hint,
+        provider_capabilities,
+    );
     let adapter = get_adapter_for_config(&config);
     let url = adapter.build_url(&config);
     let headers = adapter.build_headers(&config);
@@ -54,8 +63,8 @@ pub async fn send_request_impl(
             format!("****(len={})", config.api_key.len())
         };
         eprintln!(
-            "[claude-http] provider={:?} format={:?} url={} key={} hint={:?}",
-            config.provider_id, config.api_format, url, key_preview, api_format_hint
+            "[claude-http] provider={:?} format={:?} url={} key={} provider_hint={:?} format_hint={:?}",
+            config.provider_id, config.api_format, url, key_preview, provider_hint, api_format_hint
         );
         for (name, value) in headers.iter() {
             let val_str = value.to_str().unwrap_or("<non-ascii>");
@@ -172,7 +181,9 @@ pub async fn send_streaming_request(
     window: Window,
     allow_browser_tools: bool,
     session_id: &str,
+    provider_hint: Option<&str>,
     api_format_hint: Option<&str>,
+    provider_capabilities: Option<super::ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     let cancel_token = CancellationToken::new();
@@ -195,7 +206,9 @@ pub async fn send_streaming_request(
             Some(window),
             allow_browser_tools,
             Some(session_id),
+            provider_hint,
             api_format_hint,
+            provider_capabilities,
             response_format,
         ) => response,
     };

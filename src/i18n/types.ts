@@ -986,7 +986,10 @@ export type TranslationKeys = {
   'autoresearch.detail.discard': string;
   'autoresearch.detail.failedNoMetric': string;
   'autoresearch.liveOutput.copy': string;
+  'autoresearch.liveOutput.copied': string;
   'autoresearch.liveOutput.download': string;
+  'autoresearch.liveOutput.clear': string;
+  'autoresearch.liveOutput.cleared': string;
   'autoresearch.recentEvents.copyAll': string;
   'autoresearch.recentEvents.copyOne': string;
   'autoresearch.preflight.notGitRepoTitle': string;

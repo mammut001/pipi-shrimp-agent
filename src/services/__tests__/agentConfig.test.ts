@@ -52,7 +52,7 @@ describe('agentConfig resolver', () => {
       selectedModel: 'MiniMax-M2.7',
       hasApiKey: true,
       hasBaseURL: true,
-      adapterName: 'minimax-openai',
+      adapterName: 'openai',
       authorizationHeaderPresent: true,
     });
   });

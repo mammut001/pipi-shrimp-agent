@@ -103,6 +103,7 @@ impl ApiFormat {
 
 /// Provider capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities {
     /// Model supports extended thinking/reasoning
     pub supports_thinking: bool,
@@ -159,18 +160,29 @@ impl ResolvedProviderConfig {
         base_url: Option<&str>,
         provider_hint: Option<ProviderId>,
     ) -> Self {
+        Self::resolve_with_hints(model, api_key, base_url, provider_hint, None, None)
+    }
+
+    pub fn resolve_with_hints(
+        model: &str,
+        api_key: &str,
+        base_url: Option<&str>,
+        provider_hint: Option<ProviderId>,
+        api_format_hint: Option<ApiFormat>,
+        capability_hint: Option<ProviderCapabilities>,
+    ) -> Self {
         // Detect or use hinted provider
         let provider_id =
             provider_hint.unwrap_or_else(|| ProviderId::detect(base_url, model, api_key));
 
         // Determine API format
-        let api_format = ApiFormat::for_provider(provider_id);
+        let api_format = api_format_hint.unwrap_or_else(|| ApiFormat::for_provider(provider_id));
 
         // Resolve base URL based on provider
         let base_url = Self::resolve_base_url(provider_id, base_url);
 
         // Resolve capabilities
-        let capabilities = Self::resolve_capabilities(provider_id, model);
+        let capabilities = capability_hint.unwrap_or_else(|| Self::resolve_capabilities(provider_id, model));
 
         Self {
             provider_id,
@@ -385,6 +397,30 @@ mod tests {
         assert_eq!(config.provider_id, ProviderId::Custom);
         assert_eq!(config.api_format, ApiFormat::OpenAI);
         assert_eq!(config.base_url, "https://custom.ai/v1");
+    }
+
+    #[test]
+    fn test_resolve_with_explicit_capability_hint() {
+        let config = ResolvedProviderConfig::resolve_with_hints(
+            "claude-3-7-sonnet-20250219",
+            "sk-ant-...",
+            Some("https://api.example.com"),
+            Some(ProviderId::Anthropic),
+            Some(ApiFormat::Anthropic),
+            Some(ProviderCapabilities {
+                supports_thinking: false,
+                supports_tool_calls: true,
+                supports_streaming: true,
+                uses_responses_api: false,
+                requires_tool_ordering: false,
+                thinking_budget: None,
+                max_output_tokens: None,
+            }),
+        );
+
+        assert_eq!(config.provider_id, ProviderId::Anthropic);
+        assert_eq!(config.api_format, ApiFormat::Anthropic);
+        assert!(!config.capabilities.supports_thinking);
     }
 
     #[test]

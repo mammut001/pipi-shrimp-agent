@@ -8,8 +8,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@j
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { startAutoResearchRun } from '@/services/autoresearch/setupFlow';
+import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
 
 const mockSetAgentPanelTab = jest.fn();
+const mockToggleSettings = jest.fn();
 
 jest.mock('@/i18n', () => ({
   t: (key: string) => ({
@@ -37,8 +39,9 @@ jest.mock('@/i18n', () => ({
 }));
 
 jest.mock('@/store', () => ({
-  useUIStore: (selector: (state: { setAgentPanelTab: typeof mockSetAgentPanelTab }) => unknown) => selector({
+  useUIStore: (selector: (state: { setAgentPanelTab: typeof mockSetAgentPanelTab; toggleSettings: typeof mockToggleSettings }) => unknown) => selector({
     setAgentPanelTab: mockSetAgentPanelTab,
+    toggleSettings: mockToggleSettings,
   }),
 }));
 
@@ -60,6 +63,10 @@ jest.mock('@/services/autoresearch/setupFlow', () => {
     startAutoResearchRun: jest.fn(),
   };
 });
+
+jest.mock('@/services/autoresearch/runConfig', () => ({
+  resolveAutoResearchRunConfig: jest.fn(),
+}));
 
 function findButtonByText(container: ParentNode, label: string): HTMLButtonElement | null {
   return Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes(label)) as HTMLButtonElement | null;
@@ -109,7 +116,184 @@ describe('AutoResearchSetupModal', () => {
 
   beforeEach(() => {
     mockSetAgentPanelTab.mockReset();
+    mockToggleSettings.mockReset();
     jest.mocked(startAutoResearchRun).mockReset();
+    jest.mocked(resolveAutoResearchRunConfig).mockReset();
+    jest.mocked(resolveAutoResearchRunConfig).mockReturnValue({
+      defaultConfig: {
+        configId: 'cfg-1',
+        name: 'AutoResearch Test Config',
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        model: 'gpt-4.1',
+        apiFormat: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        hasBaseUrl: true,
+        apiKey: 'key',
+        hasApiKey: true,
+      },
+      agentConfig: {
+        configId: 'cfg-1',
+        name: 'AutoResearch Test Config',
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        model: 'gpt-4.1',
+        apiFormat: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        hasBaseUrl: true,
+        apiKey: 'key',
+        hasApiKey: true,
+      },
+      reflectionConfig: {
+        configId: 'cfg-1',
+        name: 'AutoResearch Test Config',
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        model: 'gpt-4.1',
+        apiFormat: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        hasBaseUrl: true,
+        apiKey: 'key',
+        hasApiKey: true,
+      },
+      snapshot: {
+        configId: 'cfg-1',
+        configName: 'AutoResearch Test Config',
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        apiFormat: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4.1',
+        keyPreview: 'key',
+        keyPresent: true,
+        source: 'settings.activeConfig',
+      },
+      featureSnapshots: {
+        default: {
+          configId: 'cfg-1',
+          configName: 'AutoResearch Test Config',
+          provider: 'openai',
+          providerLabel: 'OpenAI',
+          apiFormat: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4.1',
+          keyPreview: 'key',
+          keyPresent: true,
+          source: 'settings.activeConfig',
+        },
+        agent: {
+          configId: 'cfg-1',
+          configName: 'AutoResearch Test Config',
+          provider: 'openai',
+          providerLabel: 'OpenAI',
+          apiFormat: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4.1',
+          keyPreview: 'key',
+          keyPresent: true,
+          source: 'settings.activeConfig',
+        },
+        reflection: {
+          configId: 'cfg-1',
+          configName: 'AutoResearch Test Config',
+          provider: 'openai',
+          providerLabel: 'OpenAI',
+          apiFormat: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4.1',
+          keyPreview: 'key',
+          keyPresent: true,
+          source: 'settings.activeConfig',
+        },
+      },
+      runConfigSnapshot: {
+        createdAt: new Date().toISOString(),
+        selectedConfigIds: {
+          activeConfigId: 'cfg-1',
+          defaultConfigId: null,
+          agentConfigId: null,
+          reflectionConfigId: null,
+        },
+        resolvedSources: {
+          default: 'settings.activeConfig',
+          agent: 'settings.activeConfig',
+          reflection: 'settings.activeConfig',
+        },
+        configs: {
+          default: {
+            configId: 'cfg-1',
+            configName: 'AutoResearch Test Config',
+            provider: 'openai',
+            providerLabel: 'OpenAI',
+            apiFormat: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-4.1',
+            keyPreview: 'key',
+            keyPresent: true,
+            source: 'settings.activeConfig',
+          },
+          agent: {
+            configId: 'cfg-1',
+            configName: 'AutoResearch Test Config',
+            provider: 'openai',
+            providerLabel: 'OpenAI',
+            apiFormat: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-4.1',
+            keyPreview: 'key',
+            keyPresent: true,
+            source: 'settings.activeConfig',
+          },
+          reflection: {
+            configId: 'cfg-1',
+            configName: 'AutoResearch Test Config',
+            provider: 'openai',
+            providerLabel: 'OpenAI',
+            apiFormat: 'openai',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-4.1',
+            keyPreview: 'key',
+            keyPresent: true,
+            source: 'settings.activeConfig',
+          },
+        },
+        capabilities: {
+          default: {
+            id: 'openai',
+            displayName: 'OpenAI',
+            streaming: true,
+            toolCalls: 'openai',
+            jsonMode: true,
+            jsonSchema: true,
+            vision: true,
+            maxContextTokens: 1000000,
+            recommendedFor: ['agent'],
+          },
+          agent: {
+            id: 'openai',
+            displayName: 'OpenAI',
+            streaming: true,
+            toolCalls: 'openai',
+            jsonMode: true,
+            jsonSchema: true,
+            vision: true,
+            maxContextTokens: 1000000,
+            recommendedFor: ['agent'],
+          },
+          reflection: {
+            id: 'openai',
+            displayName: 'OpenAI',
+            streaming: true,
+            toolCalls: 'openai',
+            jsonMode: true,
+            jsonSchema: true,
+            vision: true,
+            maxContextTokens: 1000000,
+            recommendedFor: ['agent'],
+          },
+        },
+      },
+    });
     useAutoResearchStore.getState().resetSession();
     useAutoResearchStore.setState({
       showSetupModal: true,

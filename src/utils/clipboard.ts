@@ -1,8 +1,41 @@
-export async function writeClipboardText(text: string): Promise<void> {
-  if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-    throw new Error('Clipboard API is unavailable in this environment.');
+export function stripAnsiText(text: string): string {
+  return text.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+function writeClipboardTextFallback(text: string): void {
+  if (typeof document === 'undefined') {
+    throw new Error('Clipboard fallback is unavailable in this environment.');
   }
-  await navigator.clipboard.writeText(text);
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) {
+    throw new Error('Clipboard fallback copy command failed.');
+  }
+}
+
+export async function writeClipboardText(text: string): Promise<void> {
+  const normalized = stripAnsiText(text);
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(normalized);
+      return;
+    } catch {
+      // Fall through to execCommand for Tauri webview compatibility.
+    }
+  }
+
+  writeClipboardTextFallback(normalized);
 }
 
 export function downloadTextFile(

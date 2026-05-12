@@ -6,6 +6,7 @@ use super::http::{
     ClaudeHttpError,
 };
 use super::message::{ChatResponse, Message};
+use super::provider::ProviderCapabilities;
 
 pub use super::http::{has_running_request, stop_current_request};
 
@@ -47,6 +48,8 @@ impl ClaudeClient {
             allow_browser_tools,
             None,
             None,
+            None,
+            None,
             response_format,
         )
         .await
@@ -65,7 +68,9 @@ impl ClaudeClient {
         window: Window,
         allow_browser_tools: bool,
         session_id: String,
+        provider_hint: Option<String>,
         api_format_hint: Option<String>,
+        provider_capabilities: Option<ProviderCapabilities>,
         response_format: Option<serde_json::Value>,
     ) -> AppResult<ChatResponse> {
         let normalized = validate_messages(messages, "chat_streaming")?;
@@ -81,7 +86,9 @@ impl ClaudeClient {
             window,
             allow_browser_tools,
             &session_id,
+            provider_hint.as_deref(),
             api_format_hint.as_deref(),
+            provider_capabilities,
             response_format,
         )
         .await
@@ -102,7 +109,9 @@ pub async fn send_request(
     window: Option<Window>,
     allow_browser_tools: bool,
     session_id: Option<&str>,
+    provider_hint: Option<&str>,
     api_format_hint: Option<&str>,
+    provider_capabilities: Option<ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     send_request_impl(
@@ -117,7 +126,9 @@ pub async fn send_request(
         window,
         allow_browser_tools,
         session_id,
+        provider_hint,
         api_format_hint,
+        provider_capabilities,
         response_format,
     )
     .await

@@ -108,9 +108,37 @@ describe('resolvedChatRequest', () => {
     });
 
     expect(request.params.apiKey).toBe('secret-key');
+    expect(request.params.provider).toBe('minimax');
     expect(request.diagnostics.authorizationHeaderPresent).toBe(true);
     expect(request.params.apiFormat).toBe('openai');
     expect(request.params.baseUrl).toBe('https://api.minimaxi.com/v1');
+    expect(request.params.providerCapabilities).toMatchObject({
+      supportsThinking: false,
+      supportsToolCalls: true,
+      supportsStreaming: true,
+      usesResponsesApi: false,
+    });
+  });
+
+  it('carries provider capability hints for deepseek requests', () => {
+    const request = buildResolvedChatRequest({
+      ...minimaxConfig,
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+      baseUrl: 'https://api.deepseek.com',
+    }, {
+      messages: [{ role: 'user', content: 'ping' }],
+      systemPrompt: 'test',
+      sessionId: 'deepseek-test',
+      noTools: true,
+    });
+
+    expect(request.params.provider).toBe('deepseek');
+    expect(request.params.providerCapabilities).toMatchObject({
+      supportsToolCalls: true,
+      supportsStreaming: true,
+      maxOutputTokens: 8192,
+    });
   });
 
   it('prunes oversized request context before invoking the model', () => {

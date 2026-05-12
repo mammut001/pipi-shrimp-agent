@@ -1,4 +1,3 @@
-pub mod adapter;
 pub mod composer;
 pub mod http;
 pub mod http_client;

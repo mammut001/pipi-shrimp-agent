@@ -1,5 +1,6 @@
 import { useSettingsStore } from '@/store';
 import { getProvider } from '@/shared/providers';
+import { getCapability } from '@/services/llm/capabilities';
 import {
   resolveConfigApiFormat,
   resolveConfigBaseUrl,
@@ -135,16 +136,14 @@ function getEndpointHost(baseUrl: string): string | null {
 }
 
 export function getAgentAdapterName(config: ResolvedAgentConfig): string {
-  if (config.provider === 'minimax') {
-    return 'minimax-openai';
+  if (config.provider.endsWith('compatible')) {
+    return `${config.apiFormat === 'anthropic' ? 'anthropic' : 'openai'}-compatible`;
   }
-  if (config.provider === 'openai-compatible') {
-    return 'openai-compatible';
-  }
-  if (config.provider === 'anthropic-compatible') {
-    return 'anthropic-compatible';
-  }
-  return config.apiFormat === 'anthropic' ? 'anthropic' : 'openai';
+
+  const capability = getCapability(config.provider);
+  return capability.toolCalls === 'anthropic' || config.apiFormat === 'anthropic'
+    ? 'anthropic'
+    : 'openai';
 }
 
 export function getAgentConfigDiagnostics(config: ResolvedAgentConfig) {

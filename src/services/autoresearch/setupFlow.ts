@@ -150,9 +150,14 @@ export async function startAutoResearchRun(
   await assertSupportedPlatform();
 
   const sessionId = createAutoResearchRunId();
-  const [{ runAutoResearchPreflight }, { resolveAutoResearchRunConfig }] = await Promise.all([
+  const [
+    { runAutoResearchPreflight },
+    { resolveAutoResearchRunConfig },
+    { ensureSessionDir, getSessionRunPaths, writeTargetText },
+  ] = await Promise.all([
     import('./preflight'),
     import('./runConfig'),
+    import('./runDir'),
   ]);
   const runConfig = resolveAutoResearchRunConfig();
   const preflight = await runAutoResearchPreflight({
@@ -167,6 +172,14 @@ export async function startAutoResearchRun(
     ...setup.sshConfig,
     remoteWorkDir: preflight.resolvedWorkDir,
   };
+
+  await ensureSessionDir(resolvedConfig, sessionId);
+  const sessionPaths = getSessionRunPaths(resolvedConfig, sessionId);
+  await writeTargetText(
+    resolvedConfig,
+    sessionPaths.runConfigPath,
+    `${JSON.stringify(runConfig.runConfigSnapshot, null, 2)}\n`,
+  );
 
   callbacks.setSshConfig(resolvedConfig);
   callbacks.setLastUsedConfig({
@@ -196,12 +209,13 @@ export async function startAutoResearchRun(
 
   const sendMessage = createAutoResearchSendMessage(
     preflight.resolvedExperimentDir,
-    preflight.agentConfig,
+    runConfig.agentConfig,
     {
       environmentSummary: preflight.environmentSummary,
       metricName: setup.metric,
       direction: setup.direction,
       maxIterations: setup.iterations,
+      reflectionConfig: runConfig.reflectionConfig,
     },
   );
 

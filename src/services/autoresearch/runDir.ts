@@ -28,6 +28,7 @@ export interface SessionRunPaths {
   sessionFilePath: string;
   livingDocPath: string;
   metricsJsonlPath: string;
+  runConfigPath: string;
 }
 
 function trimTrailingSlash(value: string): string {
@@ -86,6 +87,7 @@ export function getSessionRunPaths(cfg: SshConfig, sessionId: string): SessionRu
     sessionFilePath: `${sessionDir}/session.md`,
     livingDocPath: `${sessionDir}/autoresearch.md`,
     metricsJsonlPath: `${sessionDir}/metrics.jsonl`,
+    runConfigPath: `${sessionDir}/run_config.json`,
   };
 }
 

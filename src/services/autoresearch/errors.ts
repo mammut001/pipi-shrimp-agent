@@ -2,7 +2,14 @@ import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { formatError as formatSharedError, extractErrorDetails } from '@/utils/errorFormat';
 import { sanitize } from '@/utils/errorLogger';
 
-export type AutoResearchConfigSource = 'settings.activeConfig' | 'savedRunConfig' | 'fallback';
+export type AutoResearchConfigSource =
+  | 'settings.activeConfig'
+  | 'settings.fallbackValidConfig'
+  | 'autoresearch.defaultConfig'
+  | 'autoresearch.agentOverride'
+  | 'autoresearch.reflectionOverride'
+  | 'savedRunConfig'
+  | 'fallback';
 export type AutoResearchFailureKind =
   | 'environment'
   | 'command_not_found'

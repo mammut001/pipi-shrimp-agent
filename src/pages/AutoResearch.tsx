@@ -756,7 +756,7 @@ function AutoResearchView() {
             onOpen={handleOpenRunArtifact}
             onClose={() => setShowRunList(true)}
             headerActions={runControls}
-            className="min-h-[calc(100vh-2rem)] rounded-[28px] border border-white/70"
+            className="min-h-[calc(100vh-2rem)] rounded-[28px] border border-[#e7ded1]"
           />
         </div>
       )}

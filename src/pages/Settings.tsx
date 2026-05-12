@@ -39,6 +39,7 @@ import { formatCost } from '@/utils/pricing';
 import { TelegramSettings } from '@/components/settings/TelegramSettings';
 import { MCPSettingsSection } from '@/components/settings/MCPSettingsSection';
 import { AgentBehaviorSettings } from '@/components/settings/AgentBehaviorSettings';
+import { AutoResearchLlmSettingsSection } from '@/components/settings/AutoResearchLlmSettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { DatabaseHealthSection } from '@/components/settings/DatabaseHealthSection';
 import type { Locale } from '@/i18n/types';
@@ -62,6 +63,7 @@ export function Settings() {
     theme,
     availableModelEntries,
     agentSettings,
+    autoResearchLlmSettings,
     addApiConfig,
     updateApiConfig,
     removeApiConfig,
@@ -70,6 +72,7 @@ export function Settings() {
     setTheme,
     setLanguage,
     updateAgentSettings,
+    updateAutoResearchLlmSettings,
   } = useSettingsStore();
 
   const {
@@ -945,6 +948,13 @@ export function Settings() {
               </div>
             </div>
           </div>
+
+          <AutoResearchLlmSettingsSection
+            apiConfigs={apiConfigs}
+            activeConfigId={activeConfigId}
+            settings={autoResearchLlmSettings}
+            onUpdate={updateAutoResearchLlmSettings}
+          />
 
           {/* ====== Telegram Section ====== */}
           <TelegramSettings />

@@ -14,6 +14,7 @@ export type ProviderName =
   | 'anthropic'
   | 'openai'
   | 'minimax'
+  | 'gemini'
   | 'deepseek'
   | 'anthropic-compatible'
   | 'openai-compatible';
@@ -244,6 +245,29 @@ const minimaxProvider: ProviderDef = {
   },
 };
 
+const geminiProvider: ProviderDef = {
+  id: 'gemini',
+  label: 'Gemini',
+  defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+  defaultApiFormat: 'openai',
+  requiresApiKey: true,
+  supportsModelFetch: false,
+  showBaseUrl: true,
+  requiresBaseUrl: false,
+  baseUrlPlaceholder: 'https://generativelanguage.googleapis.com/v1beta/openai',
+  baseUrlHelp: 'Gemini uses the Google OpenAI-compatible endpoint for chat completions.',
+  defaultModels: [
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', supportsImage: true },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', supportsImage: true },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', supportsImage: true },
+  ],
+  defaultPricing: {
+    'gemini-2.5-pro': { inputPrice: 0, outputPrice: 0, contextWindow: 1_000_000 },
+    'gemini-2.5-flash': { inputPrice: 0, outputPrice: 0, contextWindow: 1_000_000 },
+    'gemini-2.0-flash': { inputPrice: 0, outputPrice: 0, contextWindow: 1_000_000 },
+  },
+};
+
 const deepseekProvider: ProviderDef = {
   id: 'deepseek',
   label: 'DeepSeek',
@@ -305,6 +329,7 @@ export const PROVIDER_REGISTRY: Record<ProviderName, ProviderDef> = {
   anthropic: anthropicProvider,
   openai: openaiProvider,
   minimax: minimaxProvider,
+  gemini: geminiProvider,
   deepseek: deepseekProvider,
   'anthropic-compatible': anthropicCompatibleProvider,
   'openai-compatible': openaiCompatibleProvider,
