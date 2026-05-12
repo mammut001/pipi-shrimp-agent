@@ -40,10 +40,10 @@ function createInstance(overrides: Partial<WorkflowInstance> = {}): WorkflowInst
 
 describe('workflowGoalEvaluator', () => {
   it('rule evaluator reaches goal when all agents completed without failure markers', () => {
-    const agents = [createAgent('writer', 'writer'), createAgent('coder', 'coder')];
+    const agents = [createAgent('writer', 'writer'), createAgent('developer', 'developer')];
     const outputs = new Map([
       ['writer', 'requirements ready'],
-      ['coder', 'implementation ready [[GOAL_COMPLETE]]'],
+      ['developer', 'implementation ready [[WORKFLOW:PASS]]'],
     ]);
 
     const result = evaluateGoalWithRules({
@@ -58,7 +58,7 @@ describe('workflowGoalEvaluator', () => {
   });
 
   it('llm evaluator parses valid json output', async () => {
-    const agents = [createAgent('writer', 'writer'), createAgent('coder', 'coder')];
+    const agents = [createAgent('writer', 'writer'), createAgent('developer', 'developer')];
 
     const result = await evaluateWorkflowGoal(
       {
@@ -66,7 +66,7 @@ describe('workflowGoalEvaluator', () => {
         agents,
         agentOutputs: new Map([
           ['writer', 'doc'],
-          ['coder', 'code'],
+          ['developer', 'code'],
         ]),
         iteration: 2,
       },
@@ -83,18 +83,18 @@ describe('workflowGoalEvaluator', () => {
 
     expect(result.reached).toBe(true);
     expect(result.confidence).toBe(0.85);
-    expect(result.nextAgentIdHint).toBe('coder');
+    expect(result.nextAgentIdHint).toBe('developer');
   });
 
   it('falls back to rule evaluator when llm json parsing fails', async () => {
-    const agents = [createAgent('tester', 'tester')];
+    const agents = [createAgent('qa', 'qa')];
 
     const result = await evaluateWorkflowGoal(
       {
         instance: createInstance({ agents }),
         agents,
         agentOutputs: new Map([
-          ['tester', 'failure [[TESTS_FAIL_CODE]]'],
+          ['qa', 'failure [[WORKFLOW:TESTS_FAIL_CODE]]'],
         ]),
         iteration: 1,
       },

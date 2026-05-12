@@ -12,23 +12,6 @@ import { create } from 'zustand';
 import { listen } from '@tauri-apps/api/event';
 import { t } from '../i18n';
 
-// Module-level ref-count guard: multiple components call setupEventListeners()
-// (ChatBrowserWorkspaceShell, BrowserPanel, BrowserMiniPreview). We only want ONE
-// set of Tauri event listeners active at a time. Each caller still gets a cleanup
-// function that decrements the count; the last one to clean up actually unlisten()s.
-let _listenerRefCount = 0;
-let _listenerCleanup: (() => void) | null = null;
-// Guard against concurrent async registration: if two callers invoke
-// setupEventListeners() before the first await completes, both would see
-// _listenerCleanup as null and register duplicate listeners. We store the
-// in-flight promise so subsequent callers await the same registration.
-let _listenerSetupPromise: Promise<() => void> | null = null;
-
-// Timer tracking to prevent race conditions between tasks
-let _completionTimerId: ReturnType<typeof setTimeout> | null = null;
-let _completionTimerTaskId: string | null = null;
-let _errorTimerId: ReturnType<typeof setTimeout> | null = null;
-let _errorTimerTaskId: string | null = null;
 import { useSettingsStore } from './settingsStore';
 import {
   registerDiagnosticsTask,
@@ -66,34 +49,14 @@ import {
 import {
   matchProfileByUrl,
 } from '../utils/browserProfiles';
+import { registerWithRefCount, clearListeners } from './listenerGuard';
+import { clearPendingTimers } from './timerGuard';
 
 /**
  * Format timestamp for log entries
  */
 const formatTimestamp = (): string => {
   return new Date().toLocaleTimeString('zh-CN', { hour12: false });
-};
-
-/**
- * Cancel pending auto-reset timers safely.
- * Also validates the task ID so stale timers don't reset wrong state.
- */
-const clearPendingTimers = (currentTaskId: string | null) => {
-  if (_completionTimerId !== null) {
-    clearTimeout(_completionTimerId);
-    // Only clear the task ID marker if this timer belongs to the current task
-    if (_completionTimerTaskId === currentTaskId) {
-      _completionTimerTaskId = null;
-    }
-    _completionTimerId = null;
-  }
-  if (_errorTimerId !== null) {
-    clearTimeout(_errorTimerId);
-    if (_errorTimerTaskId === currentTaskId) {
-      _errorTimerTaskId = null;
-    }
-    _errorTimerId = null;
-  }
 };
 
 /**

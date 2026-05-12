@@ -6,8 +6,15 @@
  */
 
 import { t } from '@/i18n';
-import type { AutoResearchAgentConfigSnapshot } from './errors';
+import type { AutoResearchAgentConfigSnapshot, AutoResearchConfigSource } from './errors';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
+
+type AutoResearchModelSnapshot = Pick<
+  AutoResearchAgentConfigSnapshot,
+  'configName' | 'provider' | 'providerLabel' | 'model'
+> & {
+  source?: AutoResearchConfigSource | 'unknown' | null;
+};
 
 export interface AutoResearchModelDisplay {
   /** Human-readable provider label, e.g. "OpenAI" */
@@ -57,7 +64,7 @@ export function buildAutoResearchModelDisplayFromResolvedConfig(
  * Build a model display object from a run's config snapshot (used in history/UI).
  */
 export function buildAutoResearchModelDisplayFromSnapshot(
-  snapshot: AutoResearchAgentConfigSnapshot | null | undefined,
+  snapshot: AutoResearchModelSnapshot | null | undefined,
 ): AutoResearchModelDisplay {
   if (!snapshot) {
     return createUnknownModelDisplay();
@@ -149,7 +156,7 @@ function formatCompactLabel(input: {
     return compactLabel;
   }
 
-  if (!provider || provider.trim().length === 0) {
+  if (!input.providerId || input.providerId.trim().length === 0) {
     return t('autoresearch.model.unknownProvider');
   }
 

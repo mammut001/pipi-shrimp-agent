@@ -44,15 +44,18 @@ export async function* runChatTurn(
   const memoryHook = createMemoryHook({ projectRoot });
   
   // [ROUND ACCOUNTING CONTRACT]
-  // Current Behavior: Every iteration of this loop increments `round` by 1, regardless of whether it's
-  // a true model reasoning step, a tool retry, or polling/waiting. If a tool fails transiently or polling 
-  // requires many checks, these eat into the single `maxRounds` limit indiscriminately.
-  // 
-  // Target Behavior: We need an Explicit Execution Budget distinguishing:
-  // 1. Model reasoning rounds (maxModelRounds)
-  // 2. Tool execution attempts (maxToolExecutions)
-  // 3. Tool wall-clock timeouts & Retries
-  // This will prevent slow or polling tools from prematurely exhausting the agent loop budget.
+  // Known Issue: `round` increments for every loop iteration, including tool retries
+  // and polling/waiting steps. This means transient tool failures can prematurely
+  // exhaust maxModelRounds.
+  //
+  // Current Mitigation: maxModelRounds = maxToolBudget + 8, providing ~8 extra rounds
+  // beyond the tool budget to absorb retries/polling overhead.
+  //
+  // TODO (AUDIT-019): Separate model reasoning rounds (incremented only at API call time)
+  // from tool execution rounds (tracked via toolBudgetSummary). This requires:
+  // 1. A separate `modelRound` counter incremented only when making an API call
+  // 2. Keeping `round` for overall iteration tracking
+  // 3. Checking modelRound < maxModelRounds before API calls, not round < maxModelRounds
 
   while (
     !isTurnComplete

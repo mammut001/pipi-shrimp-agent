@@ -10,46 +10,68 @@
 import { useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useChatStore, useUIStore } from '@/store';
+import {
+  getResumeTemplateDefinition,
+  RESUME_TEMPLATE_REGISTRY,
+} from '@/skills/resume/templateRegistry';
+import { shouldSkipResumeTemplateSelection } from '@/skills/resume/resumeFlow';
 
 export interface ResumeTemplate {
   id: string;
   name: string;
   description: string;
-  preview: string; // URL to SVG preview (e.g. /resume-previews/basic-resume.svg)
+  previewPath: string;
 }
 
-const BUILT_IN_TEMPLATES: ResumeTemplate[] = [
-  {
-    id: 'basic-resume',
-    name: 'Basic Resume',
-    description: 'Clean single-column layout. Great for software engineers and new grads.',
-    preview: '/resume-previews/basic-resume.png',
-  },
-  {
-    id: 'brilliant-cv',
-    name: 'Brilliant CV',
-    description: 'Photo sidebar with color accent. Multi-language support, great for international roles.',
-    preview: '/resume-previews/brilliant-cv.png',
-  },
-  {
-    id: 'calligraphics',
-    name: 'Calligraphics',
-    description: 'Elegant two-column design with artistic flair. Perfect for creative professionals.',
-    preview: '/resume-previews/calligraphics.png',
-  },
-  {
-    id: 'grotesk-cv',
-    name: 'Grotesk CV',
-    description: 'Modern sans-serif style with warm tones. Professional and distinctive.',
-    preview: '/resume-previews/grotesk-cv.png',
-  },
-  {
-    id: 'nabcv',
-    name: 'NAB CV',
-    description: 'TOML-driven sidebar layout with icons. Structured and data-focused.',
-    preview: '/resume-previews/nabcv.png',
-  },
-];
+const BUILT_IN_TEMPLATES: ResumeTemplate[] = RESUME_TEMPLATE_REGISTRY.map((template) => ({
+  id: template.id,
+  name: template.name,
+  description: template.description,
+  previewPath: template.previewPath,
+}));
+
+function normalizeTemplates(dataJson?: string): ResumeTemplate[] {
+  if (!dataJson) return BUILT_IN_TEMPLATES;
+
+  try {
+    const parsed = JSON.parse(dataJson);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return BUILT_IN_TEMPLATES;
+    }
+
+    const normalized = parsed
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+
+        const template = item as Record<string, unknown>;
+        const id = typeof template.id === 'string' ? template.id : null;
+        const name = typeof template.name === 'string' ? template.name : null;
+        const previewPath = typeof template.previewPath === 'string'
+          ? template.previewPath
+          : typeof template.preview === 'string'
+            ? template.preview
+            : null;
+
+        if (!id || !name || !previewPath) {
+          return null;
+        }
+
+        return {
+          id,
+          name,
+          description: typeof template.description === 'string' ? template.description : '',
+          previewPath,
+        } satisfies ResumeTemplate;
+      })
+      .filter((template): template is ResumeTemplate => template !== null);
+
+    return normalized.length > 0 ? normalized : BUILT_IN_TEMPLATES;
+  } catch {
+    return BUILT_IN_TEMPLATES;
+  }
+}
 
 interface ResumeTemplateCarouselProps {
   /** Optional JSON override — if omitted, uses built-in templates */
@@ -57,15 +79,7 @@ interface ResumeTemplateCarouselProps {
 }
 
 export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps) {
-  const templates: ResumeTemplate[] = (() => {
-    if (!dataJson) return BUILT_IN_TEMPLATES;
-    try {
-      const parsed = JSON.parse(dataJson);
-      return Array.isArray(parsed) && parsed.length > 0 ? parsed : BUILT_IN_TEMPLATES;
-    } catch {
-      return BUILT_IN_TEMPLATES;
-    }
-  })();
+  const templates = normalizeTemplates(dataJson);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
@@ -79,6 +93,9 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
   const selectedId = currentSessionId ? selectedResumeTemplates[currentSessionId] ?? null : null;
   const hasSelectedTemplate = selectedId !== null;
   const isSessionBusy = Boolean(currentSessionId && isStreaming && streamingSessionId === currentSessionId);
+  const selectedTemplate = selectedId
+    ? getResumeTemplateDefinition(selectedId) ?? templates.find((template) => template.id === selectedId)
+    : null;
 
   // Scroll helpers
   const scroll = useCallback((dir: 'left' | 'right') => {
@@ -103,6 +120,18 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
   const lightboxNext = useCallback(() => {
     setLightboxIdx((i) => (i !== null ? (i + 1) % templates.length : null));
   }, [templates.length]);
+
+  if (shouldSkipResumeTemplateSelection(selectedId)) {
+    return (
+      <div className="my-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        <div className="font-semibold">Resume template already selected</div>
+        <div className="mt-1">
+          Continuing with <span className="font-medium">{selectedTemplate?.name ?? selectedId}</span>.
+          Ask to switch templates if you want to reopen template selection.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="my-4">
@@ -153,7 +182,7 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
                   onClick={() => setLightboxIdx(idx)}
                 >
                   <img
-                    src={tpl.preview}
+                    src={tpl.previewPath}
                     alt={tpl.name}
                     className="w-full h-full object-cover object-top"
                     loading="lazy"
@@ -240,7 +269,7 @@ export function ResumeTemplateCarousel({ dataJson }: ResumeTemplateCarouselProps
               </span>
             </div>
             <img
-              src={templates[lightboxIdx].preview}
+              src={templates[lightboxIdx].previewPath}
               alt={templates[lightboxIdx].name}
               className="w-auto max-h-[80vh]"
             />

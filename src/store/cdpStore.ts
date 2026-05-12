@@ -17,15 +17,15 @@ import {
   type CdpStatus,
 } from './browser/browserConnection';
 
-let monitorRefCount = 0;
-let monitorInterval: ReturnType<typeof setInterval> | null = null;
-
 interface CdpState {
   status: CdpStatus;
   errorMessage: string | null;
   connectionState: BrowserConnectionStatePayload | null;
   attachFailureReason: AttachFailureReason | null;
   lastSyncedAt: number | null;
+  // Internal monitor state (moved from module-level to fix AUDIT-007)
+  _monitorRefCount: number;
+  _monitorInterval: ReturnType<typeof setInterval> | null;
   setupConnectionMonitor: () => () => void;
   connect: () => Promise<boolean>;
   disconnect: () => Promise<void>;
@@ -107,22 +107,29 @@ export const useCdpStore = create<CdpState>((set, get) => {
     connectionState: null,
     attachFailureReason: null,
     lastSyncedAt: null,
+    // Internal monitor state (moved from module-level to fix AUDIT-007)
+    _monitorRefCount: 0,
+    _monitorInterval: null,
 
     setupConnectionMonitor: () => {
-      monitorRefCount += 1;
+      const newRefCount = get()._monitorRefCount + 1;
+      set({ _monitorRefCount: newRefCount });
 
-      if (!monitorInterval) {
+      if (!get()._monitorInterval) {
         void get().syncConnectionState();
-        monitorInterval = setInterval(() => {
+        const interval = setInterval(() => {
           void get().syncConnectionState();
         }, 1500);
+        set({ _monitorInterval: interval });
       }
 
       return () => {
-        monitorRefCount = Math.max(0, monitorRefCount - 1);
-        if (monitorRefCount === 0 && monitorInterval) {
-          clearInterval(monitorInterval);
-          monitorInterval = null;
+        const currentRefCount = get()._monitorRefCount;
+        const newCount = Math.max(0, currentRefCount - 1);
+        set({ _monitorRefCount: newCount });
+        if (newCount === 0 && get()._monitorInterval) {
+          clearInterval(get()._monitorInterval);
+          set({ _monitorInterval: null });
         }
       };
     },

@@ -2,11 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore } from '@/store/settingsStore';
 import {
-  DEFAULT_EXECUTION_CONFIG,
-  DEFAULT_RETRY_POLICY,
   type WorkflowAgent,
 } from '@/types/workflow';
-import { COMPLETION_MARKER_REGEX } from '@/services/workflowPromptBuilder';
+import {
+  DEFAULT_EXECUTION_CONFIG,
+  DEFAULT_RETRY_POLICY,
+} from '@/services/workflow/defaults';
+import { hasWorkflowCompletionMarker } from '@/services/workflow/templates/markers';
 import type {
   WorkflowTranscriptEntry,
   WorkflowTranscriptManager,
@@ -248,7 +250,7 @@ async function executeMultiRound(
 
     switch (roundCondition) {
       case 'untilComplete':
-        shouldContinue = !COMPLETION_MARKER_REGEX.test(lastOutput);
+        shouldContinue = !hasWorkflowCompletionMarker(lastOutput);
         break;
       case 'fixed':
         shouldContinue = round < maxRounds;

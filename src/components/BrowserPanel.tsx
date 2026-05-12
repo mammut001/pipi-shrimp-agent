@@ -54,10 +54,37 @@ interface InlineNotice {
   descriptionKey: string;
 }
 
-const getQuickTasks = (url: string): string[] => {
-  const lowerUrl = url.toLowerCase();
+/**
+ * Extract hostname from URL string safely
+ */
+function extractHostname(url: string): string | null {
+  try {
+    // Handle URLs that might not have protocol
+    const urlToCheck = url.startsWith('http') ? url : `https://${url}`;
+    const parsed = new URL(urlToCheck);
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
-  if (lowerUrl.includes('news') || lowerUrl.includes('cbc') || lowerUrl.includes('bbc')) {
+/**
+ * Check if hostname matches a domain (including subdomains)
+ */
+function hostnameMatches(hostname: string | null, ...patterns: string[]): boolean {
+  if (!hostname) return false;
+  const lower = hostname.toLowerCase();
+  return patterns.some((pattern) => {
+    const patternLower = pattern.toLowerCase();
+    // Exact match or subdomain match (e.g., github.com matches www.github.com)
+    return lower === patternLower || lower.endsWith(`.${patternLower}`);
+  });
+}
+
+const getQuickTasks = (url: string): string[] => {
+  const hostname = extractHostname(url);
+
+  if (hostnameMatches(hostname, 'news.google.com', 'cbc.ca', 'bbc.com', 'news.ycombinator.com')) {
     return [
       'browser.quickTask.extractHeadlines',
       'browser.quickTask.findTechNews',
@@ -65,7 +92,7 @@ const getQuickTasks = (url: string): string[] => {
     ];
   }
 
-  if (lowerUrl.includes('reddit')) {
+  if (hostnameMatches(hostname, 'reddit.com', 'www.reddit.com', 'old.reddit.com')) {
     return [
       'browser.quickTask.findHotPosts',
       'browser.quickTask.searchDiscussions',
@@ -73,7 +100,7 @@ const getQuickTasks = (url: string): string[] => {
     ];
   }
 
-  if (lowerUrl.includes('github')) {
+  if (hostnameMatches(hostname, 'github.com', 'www.github.com')) {
     return [
       'browser.quickTask.findHotRepos',
       'browser.quickTask.searchProjects',
@@ -81,7 +108,7 @@ const getQuickTasks = (url: string): string[] => {
     ];
   }
 
-  if (lowerUrl.includes('youtube')) {
+  if (hostnameMatches(hostname, 'youtube.com', 'www.youtube.com', 'youtu.be')) {
     return [
       'browser.quickTask.extractVideoTitle',
       'browser.quickTask.findRelatedRecommendations',
@@ -89,7 +116,7 @@ const getQuickTasks = (url: string): string[] => {
     ];
   }
 
-  if (lowerUrl.includes('whatsapp')) {
+  if (hostnameMatches(hostname, 'web.whatsapp.com', 'whatsapp.com')) {
     return [
       'browser.quickTask.searchContacts',
       'browser.quickTask.sendTestMessage',
@@ -97,7 +124,7 @@ const getQuickTasks = (url: string): string[] => {
     ];
   }
 
-  if (lowerUrl.includes('amazon') || lowerUrl.includes('shopping')) {
+  if (hostnameMatches(hostname, 'amazon.com', 'www.amazon.com', 'smile.amazon.com', 'shopping.google.com')) {
     return [
       'browser.quickTask.searchProducts',
       'browser.quickTask.extractPriceInfo',

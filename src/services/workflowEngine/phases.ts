@@ -4,6 +4,7 @@ import type {
   WorkflowConnection,
 } from '@/types/workflow';
 import { parseAgentStatusBlock } from '@/services/workflowPromptBuilder';
+import { resolveAgentIdByRole } from '@/services/workflow/templates/roles';
 import {
   collectDownstreamAgentIds,
   findReentryAgent,
@@ -50,9 +51,19 @@ export function evaluateNextAgent(
   agents: WorkflowAgent[],
   agentStatus: 'completed' | 'error' = 'completed',
 ): WorkflowAgent | null {
-  const routes = currentAgent.outputRoutes || [];
+  const routes = connections
+    .filter((connection) => connection.sourceAgentId === currentAgent.id)
+    .map((connection) => ({
+      id: connection.id,
+      condition: connection.condition,
+      keyword: connection.keyword,
+      keywordMode: connection.keywordMode,
+      targetAgentId: connection.targetAgentId,
+    }));
 
-  for (const route of routes) {
+  const candidateRoutes = routes.length > 0 ? routes : (currentAgent.outputRoutes || []);
+
+  for (const route of candidateRoutes) {
     let matched = false;
     switch (route.condition) {
       case 'onComplete':
@@ -98,7 +109,7 @@ export function buildExecutionPlan(
 
 function collectTriggeredLoopTargets(
   agents: WorkflowAgent[],
-  _connections: WorkflowConnection[],
+  connections: WorkflowConnection[],
   agentOutputs: Map<string, string>,
 ): string[] {
   const triggered = new Set<string>();
@@ -107,24 +118,24 @@ function collectTriggeredLoopTargets(
     const output = agentOutputs.get(agent.id);
     if (!output) continue;
 
-    for (const route of agent.outputRoutes ?? []) {
-      if (route.condition === 'onComplete' || route.condition === 'always') {
+    for (const connection of connections.filter((item) => item.sourceAgentId === agent.id)) {
+      if (connection.condition === 'onComplete' || connection.condition === 'always') {
         continue;
       }
-      if (route.condition === 'outputContains' && !routeMatchesOutput(output, route.keyword, route.keywordMode ?? 'includes')) {
+      if (connection.condition === 'outputContains' && !routeMatchesOutput(output, connection.keyword, connection.keywordMode ?? 'includes')) {
         continue;
       }
-      if (route.condition === 'onError') {
+      if (connection.condition === 'onError') {
         continue;
       }
-      triggered.add(route.targetAgentId);
+      triggered.add(connection.targetAgentId);
     }
 
     const status = parseAgentStatusBlock(output);
     if (status?.needs_followup && status.hand_off_to_role) {
-      const nextAgent = agents.find((candidate) => candidate.role === status.hand_off_to_role);
-      if (nextAgent) {
-        triggered.add(nextAgent.id);
+      const nextAgentId = resolveAgentIdByRole(agents, status.hand_off_to_role);
+      if (nextAgentId) {
+        triggered.add(nextAgentId);
       }
     }
   }

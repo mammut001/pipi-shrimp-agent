@@ -73,6 +73,7 @@ impl ToolRegistry {
                         error_msgs.join("; ")
                     ),
                     is_error: true,
+                    error_code: Some("schema_validation".to_string()),
                 });
             }
         }

@@ -3,6 +3,8 @@ import type {
   WorkflowAgent,
   WorkflowConnection,
 } from '@/types/workflow';
+import { parseWorkflowMarkers } from '@/services/workflow/templates/markers';
+import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
 
 function buildOutgoingMap(
   agents: WorkflowAgent[],
@@ -15,12 +17,6 @@ function buildOutgoingMap(
 
   for (const conn of connections) {
     outgoing.get(conn.sourceAgentId)?.add(conn.targetAgentId);
-  }
-
-  for (const agent of agents) {
-    if (agent.inputFrom) {
-      outgoing.get(agent.inputFrom)?.add(agent.id);
-    }
   }
 
   return outgoing;
@@ -86,11 +82,6 @@ export function getPredecessorIds(
     }
   }
 
-  const agent = agents.find((item) => item.id === agentId);
-  if (agent?.inputFrom) {
-    predecessors.add(agent.inputFrom);
-  }
-
   return Array.from(predecessors);
 }
 
@@ -127,10 +118,11 @@ export function getBlockingFailures(
   for (const predId of predecessorIds) {
     if (!failedAgentIds.has(predId)) continue;
 
-    const predAgent = agents.find((item) => item.id === predId);
-    const hasErrorRoute = predAgent?.outputRoutes.some(
-      (route) => route.condition === 'onError' && route.targetAgentId === agent.id,
-    ) ?? false;
+    const hasErrorRoute = connections.some((connection) => (
+      connection.sourceAgentId === predId
+      && connection.targetAgentId === agent.id
+      && connection.condition === 'onError'
+    ));
 
     if (!hasErrorRoute) {
       blocking.push(predId);
@@ -144,7 +136,7 @@ function findFirstAgentByRole(
   agents: WorkflowAgent[],
   role: WorkflowAgent['role'],
 ): WorkflowAgent | undefined {
-  return agents.find((agent) => agent.role === role);
+  return agents.find((agent) => normalizeWorkflowAgentRole(agent.role) === normalizeWorkflowAgentRole(role));
 }
 
 function chooseByFailureMarker(
@@ -153,20 +145,23 @@ function chooseByFailureMarker(
 ): WorkflowAgent | undefined {
   const outputs = [...agentOutputs.entries()].reverse();
   for (const [, output] of outputs) {
-    if (/\[\[TESTS_FAIL_CODE\]\]/i.test(output)) {
-      return findFirstAgentByRole(agents, 'coder') ?? findFirstAgentByRole(agents, 'tester');
+    const markers = parseWorkflowMarkers(output);
+
+    if (markers.includes('TESTS_FAIL_CODE')) {
+      return findFirstAgentByRole(agents, 'developer') ?? findFirstAgentByRole(agents, 'qa');
     }
-    if (/\[\[TESTS_FAIL_SPEC\]\]/i.test(output)) {
-      return findFirstAgentByRole(agents, 'writer') ?? findFirstAgentByRole(agents, 'tester');
+    if (markers.includes('TESTS_FAIL_SPEC')) {
+      return findFirstAgentByRole(agents, 'writer') ?? findFirstAgentByRole(agents, 'qa');
     }
-    if (/\[\[REVIEW_REJECT\]\]/i.test(output)) {
-      return findFirstAgentByRole(agents, 'coder') ?? findFirstAgentByRole(agents, 'reviewer');
+    if (markers.includes('REVIEW_REJECT')) {
+      return findFirstAgentByRole(agents, 'developer') ?? findFirstAgentByRole(agents, 'reviewer');
     }
-    if (/\[\[GOAL_NOT_REACHED\]\]/i.test(output)) {
+    if (markers.includes('GOAL_NOT_REACHED')) {
       return (
-        findFirstAgentByRole(agents, 'coder')
+        findFirstAgentByRole(agents, 'developer')
         ?? findFirstAgentByRole(agents, 'writer')
-        ?? findFirstAgentByRole(agents, 'tester')
+        ?? findFirstAgentByRole(agents, 'qa')
+        ?? findFirstAgentByRole(agents, 'planner')
       );
     }
   }
@@ -190,10 +185,11 @@ export function findReentryAgent(
 
   if (evaluation.missingItems.length > 0) {
     return (
-      findFirstAgentByRole(agents, 'coder')
+      findFirstAgentByRole(agents, 'developer')
       ?? findFirstAgentByRole(agents, 'writer')
-      ?? findFirstAgentByRole(agents, 'tester')
+      ?? findFirstAgentByRole(agents, 'qa')
       ?? findFirstAgentByRole(agents, 'reviewer')
+      ?? findFirstAgentByRole(agents, 'planner')
       ?? agents.find((agent) => agent.role !== 'goal-evaluator')
       ?? null
     );

@@ -35,8 +35,14 @@ If a session `workDir` is already provided, treat it as the final resume workspa
 
 ### Character escaping
 
-- Inside `.typ` files: `@` must be escaped as `\@` (e.g., `user\@example.com`). This is because `@` starts a label in Typst syntax.
-- Inside `.toml` files: Do **NOT** escape `@`. Write it as-is (e.g., `user@example.com`).
+- **All user-provided values must be serialized before writing files. Never interpolate raw user text and never hand-escape only `@`.**
+- Typst quoted strings (`author: "..."`, `email: "..."`) must use the equivalent of `escapeTypstString(...)`.
+- Typst content blocks and bullet bodies (`- ...`, `[ ... ]`) must use the equivalent of `escapeTypstContent(...)` so `#`, `[`, `]`, `*`, `_`, `@`, backslashes, Chinese text, and multiline notes stay deterministic.
+- TOML scalar strings must use the equivalent of `toTomlString(...)`.
+- TOML string arrays must use the equivalent of `toTomlArray(...)`.
+- URLs should be normalized first with the equivalent of `normalizeResumeUrl(...)` before serialization.
+- Example Typst string: `email: "user\@example.com"`
+- Example TOML string: `summary = "First line\nSecond line"`
 - Inside user-visible strings (chat messages, log entries): no escaping.
 
 ### Compilation attempts
@@ -59,6 +65,8 @@ If no template has been selected, output exactly the following — a fenced code
 ```
 
 The UI will render an interactive carousel showing all 5 available templates. Wait for the user's selection before proceeding.
+
+This template table must stay in sync with `src/skills/resume/templateRegistry.ts`. Tests validate the 5 template IDs and runtime preview paths.
 
 **Available templates** (the carousel knows these; listed here for your reference):
 
@@ -125,6 +133,8 @@ After the user submits basic info, ask for resume content:
 
 If the user already mentioned specific information in their message (e.g., "I'm John Doe, a Python developer"), pre-fill those fields and don't re-ask. Only ask for what's missing.
 
+Keep the collection flow to exactly these two `AskUserQuestion` stages. The field sets are mirrored in `src/skills/resume/resumeFlow.ts` and covered by tests.
+
 ---
 
 ## Step 3 — Generate Resume
@@ -138,6 +148,11 @@ When writing the resume, expand the user's rough notes into professional prose:
 - **NEVER fabricate specific numbers** the user didn't provide. If you want to suggest a metric but don't have the data, use a placeholder like `[N]` or `[X%]` and tell the user at the end to fill it in.
 - **Translate naturally if needed**: "做了个聊天机器人" → "Designed and deployed a production chatbot". Don't translate literally.
 - **Keep bullets concise**: Ideal is 1–2 lines per bullet, starting with a verb.
+- **Use consistent section titles**:
+  - English resumes: `Summary`, `Experience`, `Projects`, `Education`, `Skills`
+  - 中文简历: `个人信息`、`教育背景`、`工作经历`、`项目经历`、`专业技能`
+  - Bilingual resumes: either one single mixed document or clearly separated Chinese/English sections
+- **中文 bullet 必须像中文简历，不要机械翻译英文 action verbs。** Prefer verbs such as `主导`、`负责`、`设计`、`优化`、`落地`、`提升`、`降低`.
 
 ### 3b. Language-aware font selection
 
@@ -157,6 +172,8 @@ When in doubt for Chinese, use:
 ### 3c. Write files to `{workDir}`
 
 Use the EXACT code structure from the matching template below. Only change data values — never invent new function signatures or argument names.
+
+Before writing any file, serialize every user-supplied value using the escaping contract above. This applies to names, emails, phones, summaries, bullets, URLs, multiline text, Chinese content, and TOML arrays.
 
 ---
 
@@ -653,7 +670,7 @@ If you used placeholder metrics (like `[N]` or `[X%]`), add a separate note:
 
 Triggered when the chosen template fails twice. This template uses ONLY built-in Typst features and is guaranteed to compile on any working Typst installation.
 
-Write ONE file: `{workDir}/resume.typ` using this exact structure. Use `render_typst_to_svg` for the preview and `render_typst_to_pdf` to save.
+Write ONE file: `{workDir}/resume.typ` using this exact structure. Compile it with the same `compile_typst_file` tool used for the primary templates so the fallback returns the same `pdf_path` / `svg_path` structure and error handling path.
 
 ```typ
 // === Self-contained resume template (no @preview imports) ===
@@ -730,6 +747,8 @@ Write ONE file: `{workDir}/resume.typ` using this exact structure. Use `render_t
 When delivering a Fallback result, tell the user:
 
 > ℹ️ The original template had a compatibility issue, so I used a built-in fallback template. The content is identical — only the visual style is simpler. Let me know if you'd like to try a different template.
+
+Do **NOT** say that the original template generated successfully if fallback was used.
 
 ---
 

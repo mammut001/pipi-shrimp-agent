@@ -3,9 +3,12 @@ import type {
   WorkflowAgent,
   WorkflowInstance,
 } from '@/types/workflow';
-import { AGENT_TEMPLATES } from '@/types/workflow';
+import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
 import {
-  WORKFLOW_MARKERS,
+  parseWorkflowMarkers,
+} from '@/services/workflow/templates/markers';
+import { resolveAgentIdByRole } from '@/services/workflow/templates/roles';
+import {
   parseAgentStatusBlock,
 } from './workflowPromptBuilder';
 
@@ -46,28 +49,31 @@ function truncateOutput(output: string): string {
     : output;
 }
 
-function resolveNextAgentIdByRole(
+function resolveNextAgentReference(
   agents: WorkflowAgent[],
   roleHint?: string,
 ): string | undefined {
   if (!roleHint) return undefined;
-  return agents.find((agent) => agent.role === roleHint)?.id;
+  return resolveAgentIdByRole(agents, roleHint)
+    ?? agents.find((agent) => agent.id === roleHint || agent.name === roleHint)?.id;
 }
 
 function extractMissingItemsFromOutputs(outputs: Map<string, string>): string[] {
   const items = new Set<string>();
 
   for (const output of outputs.values()) {
-    if (output.includes(WORKFLOW_MARKERS.GOAL_NOT_REACHED)) {
+    const markers = parseWorkflowMarkers(output);
+
+    if (markers.includes('GOAL_NOT_REACHED')) {
       items.add('存在未满足的总体目标项。');
     }
-    if (output.includes(WORKFLOW_MARKERS.REVIEW_REJECT)) {
+    if (markers.includes('REVIEW_REJECT')) {
       items.add('代码审查仍有未修复问题。');
     }
-    if (output.includes(WORKFLOW_MARKERS.TESTS_FAIL_CODE)) {
+    if (markers.includes('TESTS_FAIL_CODE')) {
       items.add('测试仍发现代码缺陷。');
     }
-    if (output.includes(WORKFLOW_MARKERS.TESTS_FAIL_SPEC)) {
+    if (markers.includes('TESTS_FAIL_SPEC')) {
       items.add('需求或文档仍需澄清。');
     }
 
@@ -89,12 +95,7 @@ export function evaluateGoalWithRules(
     .every((agent) => Boolean(context.agentOutputs.get(agent.id)));
 
   const hasFailureMarker = outputs.some((output) => (
-    output.includes(WORKFLOW_MARKERS.GOAL_NOT_REACHED)
-    || output.includes(WORKFLOW_MARKERS.REVIEW_REJECT)
-    || output.includes(WORKFLOW_MARKERS.TESTS_FAIL_CODE)
-    || output.includes(WORKFLOW_MARKERS.TESTS_FAIL_SPEC)
-    || output.includes('[[REJECT]]')
-    || output.includes('[[BUG_FOUND]]')
+    parseWorkflowMarkers(output).some((marker) => marker !== 'PASS')
   ));
 
   const missingItems = extractMissingItemsFromOutputs(context.agentOutputs);
@@ -141,7 +142,7 @@ function parseLlmEvaluation(
       reached: Boolean(parsed.reached),
       confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : DEFAULT_CONFIDENCE,
       missingItems: Array.isArray(parsed.missing_items) ? parsed.missing_items.filter(Boolean) : [],
-      nextAgentIdHint: resolveNextAgentIdByRole(context.agents, parsed.next_agent_role_hint),
+      nextAgentIdHint: resolveNextAgentReference(context.agents, parsed.next_agent_role_hint),
       reasoning: parsed.reasoning?.trim() || 'LLM evaluator returned no reasoning.',
       rawOutput,
       timestamp: Date.now(),

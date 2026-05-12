@@ -38,12 +38,14 @@ import {
   renderTranscriptFile,
   type WorkflowTranscriptEntry,
 } from './transcript';
+import { workflowRunFileService } from '@/services/workflow/runFileService';
 
 const MAX_TOTAL_STEPS = 50;
 
 interface WorkflowEngineDeps {
   createRunDirectory: (runId: string) => Promise<string>;
-  writeFile: (path: string, content: string) => Promise<void>;
+  writeFile?: (path: string, content: string) => Promise<void>;
+  writeRunFile?: (runDirectory: string, relativePath: string, content: string) => Promise<string>;
   runAgent: typeof runAgentWithRetry;
   evaluateGoal: typeof evaluateWorkflowGoal;
   notify: typeof notifyOnComplete;
@@ -53,7 +55,9 @@ interface WorkflowEngineDeps {
 function defaultDeps(): WorkflowEngineDeps {
   return {
     createRunDirectory: (runId) => invoke<string>('create_workflow_run_directory', { runId }),
-    writeFile: (path, content) => invoke('write_file', { path, content, workDir: null }),
+    writeRunFile: (runDirectory, relativePath, content) => (
+      workflowRunFileService.writeRunFile(runDirectory, relativePath, content)
+    ),
     runAgent: runAgentWithRetry,
     evaluateGoal: evaluateWorkflowGoal,
     notify: notifyOnComplete,
@@ -112,7 +116,19 @@ export class WorkflowEngine {
 
   async stop(): Promise<void> {
     this.stopRequested = true;
-    useWorkflowStore.getState().setRunning(false, null);
+    const store = useWorkflowStore.getState();
+    if (this.currentRunId) {
+      store.updateWorkflowRun(this.currentRunId, {
+        status: 'stopped',
+        endTime: this.deps.now(),
+        reachedGoal: false,
+      });
+    }
+    store.setRunning(false, null);
+  }
+
+  private shouldAcceptRunMutation(runId: string): boolean {
+    return !this.stopRequested && this.currentRunId === runId;
   }
 
   private deriveWorkflowGoal(agents: WorkflowAgent[], explicitGoal?: string): string {
@@ -139,51 +155,69 @@ export class WorkflowEngine {
     prompt: string,
     options?: { systemPromptOverride?: string; disableStreaming?: boolean },
   ): Promise<string> {
+    const runId = this.currentRunId;
+
     return this.deps.runAgent(
       agent,
       prompt,
       {
-        runId: this.currentRunId,
-        onStreamChunk: options?.disableStreaming ? undefined : this.onStreamChunk,
+        runId,
+        onStreamChunk: options?.disableStreaming ? undefined : ((agentId, chunk, fullContent) => {
+          if (!this.shouldAcceptRunMutation(runId)) return;
+          this.onStreamChunk?.(agentId, chunk, fullContent);
+        }),
         transcript: this.transcripts,
       },
       { systemPromptOverride: options?.systemPromptOverride },
     );
   }
 
-  private async saveOutputToFile(agent: WorkflowAgent, output: string): Promise<void> {
+  private async writeRunFile(relativePath: string, content: string): Promise<string | null> {
     if (!this.workingDirectory) return;
-    const baseName = buildAgentArtifactBaseName(agent);
-    const filePath = `${this.workingDirectory}/${baseName}-output.md`;
+    if (this.deps.writeRunFile) {
+      return this.deps.writeRunFile(this.workingDirectory, relativePath, content);
+    }
+
+    if (this.deps.writeFile) {
+      const absolutePath = workflowRunFileService.resolvePath(this.workingDirectory, relativePath);
+      await this.deps.writeFile(absolutePath, content);
+      return absolutePath;
+    }
+
+    return null;
+  }
+
+  private async saveOutputToFile(agent: WorkflowAgent, artifactBaseName: string, output: string, runId: string): Promise<string | null> {
+    if (!this.shouldAcceptRunMutation(runId)) return null;
     const content = `<!--
 Agent: ${agent.name}
 Executed: ${new Date(this.deps.now()).toLocaleString()}
-Run ID: ${this.currentRunId}
+Run ID: ${runId}
 -->
 
 ${output}
 `;
-    await this.deps.writeFile(filePath, content);
+    return this.writeRunFile(`${artifactBaseName}-output.md`, content);
   }
 
-  private async saveTranscriptToFile(agent: WorkflowAgent): Promise<void> {
-    if (!this.workingDirectory) return;
+  private async saveTranscriptToFile(agent: WorkflowAgent, artifactBaseName: string, runId: string): Promise<string | null> {
+    if (!this.shouldAcceptRunMutation(runId)) return null;
     const entries = this.transcripts.get(agent.id);
-    if (entries.length === 0) return;
-    const baseName = buildAgentArtifactBaseName(agent);
-    const filePath = `${this.workingDirectory}/${baseName}-transcript.md`;
-    const content = renderTranscriptFile(agent.id, this.currentRunId, entries);
-    await this.deps.writeFile(filePath, content);
+    if (entries.length === 0) return null;
+    const content = renderTranscriptFile(agent.id, runId, entries);
+    return this.writeRunFile(`${artifactBaseName}-transcript.md`, content);
   }
 
   private async updateGoalEvaluatorStatus(
     evaluatorAgentId: string | null | undefined,
     status: WorkflowAgent['status'],
+    runId: string,
   ): Promise<void> {
     if (!evaluatorAgentId) return;
+    if (!this.shouldAcceptRunMutation(runId)) return;
     const store = useWorkflowStore.getState();
     store.setAgentStatus(evaluatorAgentId, status);
-    store.updateRunAgent(this.currentRunId, evaluatorAgentId, {
+    store.updateRunAgent(runId, evaluatorAgentId, {
       status: status === 'completed' ? 'completed' : status === 'running' ? 'running' : 'error',
       endTime: status === 'running' ? undefined : this.deps.now(),
     });
@@ -200,7 +234,9 @@ ${output}
       throw new Error('工作流实例不存在，无法执行 Goal 评估。');
     }
 
-    await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'running');
+    const runId = this.currentRunId;
+
+    await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'running', runId);
 
     try {
       const result = await this.deps.evaluateGoal(
@@ -222,10 +258,10 @@ ${output}
         },
       );
 
-      await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'completed');
+      await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'completed', runId);
       return result;
     } catch (error) {
-      await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'error');
+      await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'error', runId);
       throw error;
     }
   }
@@ -241,10 +277,11 @@ ${output}
     failedAgents: Set<string>,
   ): Promise<void> {
     const store = useWorkflowStore.getState();
+    const runId = this.currentRunId;
     const blockingFailures = getBlockingFailures(agent, agents, connections, failedAgents);
     if (blockingFailures.length > 0) {
       store.setAgentStatus(agent.id, 'error');
-      store.updateRunAgent(this.currentRunId, agent.id, { status: 'skipped', endTime: this.deps.now() });
+      store.updateRunAgent(runId, agent.id, { status: 'skipped', endTime: this.deps.now() });
       return;
     }
 
@@ -262,20 +299,29 @@ ${output}
       }));
     const inboxMessages = readAgentInbox(agent.id, this.currentRunId, agents);
     const prompt = predecessorIds.length === 0 && inboxMessages.length === 0
-      ? buildEntryAgentPrompt(projectGoal, agent, successCriteria, iteration, previousEvaluation)
-      : buildDownstreamAgentPrompt(
+      ? buildEntryAgentPrompt({
           projectGoal,
-          agent,
-          upstreams,
-          iteration,
           successCriteria,
-          inboxMessages,
+          agent,
+          iteration,
           previousEvaluation,
+          inboxMessages,
+        })
+      : buildDownstreamAgentPrompt(
+          {
+            projectGoal,
+            successCriteria,
+            agent,
+            upstreams,
+            iteration,
+            previousEvaluation,
+            inboxMessages,
+          },
         );
 
     store.setRunning(true, agent.id);
     store.setAgentStatus(agent.id, 'running');
-    store.updateRunAgent(this.currentRunId, agent.id, {
+    store.updateRunAgent(runId, agent.id, {
       status: 'running',
       startTime: this.deps.now(),
       iteration,
@@ -283,39 +329,59 @@ ${output}
 
     try {
       const output = await this.executeAgent(agent, prompt);
+      if (!this.shouldAcceptRunMutation(runId)) {
+        return;
+      }
+
+      const artifactBaseName = buildAgentArtifactBaseName(agent);
       this.agentOutputs.set(agent.id, output);
-      await this.saveOutputToFile(agent, output);
+      const outputFilePath = await this.saveOutputToFile(agent, artifactBaseName, output, runId);
+      if (!this.shouldAcceptRunMutation(runId)) {
+        return;
+      }
       this.transcripts.record(agent.id, {
         timestamp: this.deps.now(),
         type: 'agent_completed',
         content: output,
       });
-      await this.saveTranscriptToFile(agent);
+      const transcriptFilePath = await this.saveTranscriptToFile(agent, artifactBaseName, runId);
+      if (!this.shouldAcceptRunMutation(runId)) {
+        return;
+      }
       store.setAgentStatus(agent.id, 'completed');
       store.clearAgentDirty(agent.id);
-      store.updateRunAgent(this.currentRunId, agent.id, {
+      store.updateRunAgent(runId, agent.id, {
         status: 'completed',
         endTime: this.deps.now(),
         output: output.slice(0, 2000),
         iteration,
+        outputFilePath: outputFilePath ?? undefined,
+        transcriptFilePath: transcriptFilePath ?? undefined,
+        artifactBaseName,
       });
       failedAgents.delete(agent.id);
-      await this.deps.notify(agent, agents, output, this.currentRunId);
+      await this.deps.notify(agent, agents, output, runId);
     } catch (error) {
+      if (!this.shouldAcceptRunMutation(runId)) {
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : '未知错误';
-      this.agentOutputs.set(agent.id, `[[GOAL_NOT_REACHED]]\n${errorMessage}`);
+      this.agentOutputs.set(agent.id, `[[WORKFLOW:GOAL_NOT_REACHED]]\n${errorMessage}`);
       this.transcripts.record(agent.id, {
         timestamp: this.deps.now(),
         type: 'agent_error',
         content: errorMessage,
       });
-      await this.saveTranscriptToFile(agent);
+      const artifactBaseName = buildAgentArtifactBaseName(agent);
+      const transcriptFilePath = await this.saveTranscriptToFile(agent, artifactBaseName, runId);
       store.setAgentStatus(agent.id, 'error');
-      store.updateRunAgent(this.currentRunId, agent.id, {
+      store.updateRunAgent(runId, agent.id, {
         status: 'error',
         endTime: this.deps.now(),
         output: errorMessage.slice(0, 2000),
         iteration,
+        transcriptFilePath: transcriptFilePath ?? undefined,
+        artifactBaseName,
       });
       failedAgents.add(agent.id);
     }
@@ -361,6 +427,7 @@ ${output}
 
     store.resetAllStatuses();
     store.setRunning(true, null);
+    store.setActiveRunId(localRunId);
 
     try {
       this.workingDirectory = await this.deps.createRunDirectory(localRunId);
@@ -435,6 +502,9 @@ ${output}
           instance.agents,
           iteration,
         );
+        if (!this.shouldAcceptRunMutation(localRunId)) {
+          break;
+        }
         store.appendGoalEvaluation(localRunId, lastEvaluation);
 
         if (lastEvaluation.reached) {
@@ -496,6 +566,7 @@ ${output}
       if (this.currentRunId === localRunId) {
         this.isRunning = false;
         store.setRunning(false, null);
+        this.currentRunId = '';
       }
     }
   }

@@ -16,10 +16,12 @@ import type {
   GoalEvaluationResult, OutputRoute
 } from '../types/workflow';
 import {
-  AGENT_TEMPLATES,
   DEFAULT_EXECUTION_CONFIG,
   DEFAULT_MAX_GOAL_ITERATIONS,
-} from '../types/workflow';
+  DEFAULT_RETRY_POLICY,
+} from '@/services/workflow/defaults';
+import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
+import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
 
 const STORAGE_KEY_V2 = 'pipi-workflow-v2';
 const STORAGE_KEY_V1 = 'pipi-workflow-v1';
@@ -33,7 +35,7 @@ function normalizeOutputRoute(route: OutputRoute): OutputRoute {
   };
 }
 
-function normalizeAgent(agent: WorkflowAgent): WorkflowAgent {
+function normalizeAgentBase(agent: WorkflowAgent): WorkflowAgent {
   return {
     ...agent,
     position: agent.position ?? { x: 100, y: 200 },
@@ -41,10 +43,144 @@ function normalizeAgent(agent: WorkflowAgent): WorkflowAgent {
     outputRoutes: (agent.outputRoutes ?? []).map(normalizeOutputRoute),
     execution: agent.execution ?? DEFAULT_EXECUTION_CONFIG,
     inputFrom: agent.inputFrom ?? null,
-    role: agent.role ?? 'custom',
+    role: normalizeWorkflowAgentRole(agent.role),
+    retryPolicy: {
+      ...DEFAULT_RETRY_POLICY,
+      ...agent.retryPolicy,
+      fallbackConfigIds: agent.retryPolicy?.fallbackConfigIds ?? [],
+    },
     notifyOnComplete: agent.notifyOnComplete ?? [],
     visionPolicy: agent.visionPolicy ?? 'inherit',
   };
+}
+
+function normalizeAgent(agent: WorkflowAgent): WorkflowAgent {
+  return normalizeAgentBase(agent);
+}
+
+function normalizeConnection(connection: WorkflowConnection): WorkflowConnection {
+  const normalizedCondition = connection.condition ?? 'onComplete';
+  const normalizedKeywordMode = normalizedCondition === 'outputContains'
+    ? connection.keywordMode ?? 'includes'
+    : undefined;
+
+  return {
+    ...connection,
+    condition: normalizedCondition,
+    keyword: normalizedCondition === 'outputContains' ? connection.keyword?.trim() : undefined,
+    keywordMode: normalizedKeywordMode,
+    type: connection.type ?? 'sequential',
+  };
+}
+
+function buildConnectionSignature(connection: Pick<WorkflowConnection, 'sourceAgentId' | 'targetAgentId' | 'condition' | 'keyword' | 'keywordMode' | 'type'>): string {
+  return [
+    connection.sourceAgentId,
+    connection.targetAgentId,
+    connection.condition,
+    connection.keyword?.trim().toLowerCase() ?? '',
+    connection.keywordMode ?? '',
+    connection.type ?? 'sequential',
+  ].join('::');
+}
+
+function extractLegacyConnections(agents: WorkflowAgent[]): WorkflowConnection[] {
+  const legacyConnections: WorkflowConnection[] = [];
+
+  for (const agent of agents) {
+    if (agent.inputFrom) {
+      legacyConnections.push(normalizeConnection({
+        id: `${agent.inputFrom}->${agent.id}:primary`,
+        sourceAgentId: agent.inputFrom,
+        targetAgentId: agent.id,
+        condition: 'onComplete',
+        type: 'sequential',
+      }));
+    }
+
+    for (const route of agent.outputRoutes ?? []) {
+      legacyConnections.push(normalizeConnection({
+        id: route.id,
+        sourceAgentId: agent.id,
+        targetAgentId: route.targetAgentId,
+        condition: route.condition,
+        keyword: route.keyword,
+        keywordMode: route.keywordMode,
+        type: 'sequential',
+      }));
+    }
+  }
+
+  return legacyConnections;
+}
+
+function mergeConnections(agents: WorkflowAgent[], connections: WorkflowConnection[]): WorkflowConnection[] {
+  const connectionMap = new Map<string, WorkflowConnection>();
+  const candidates = [...connections, ...extractLegacyConnections(agents)];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeConnection(candidate);
+    const signature = buildConnectionSignature(normalized);
+    if (!connectionMap.has(signature)) {
+      connectionMap.set(signature, normalized);
+    }
+  }
+
+  return Array.from(connectionMap.values());
+}
+
+function deriveOutputRoutes(connections: WorkflowConnection[], agentId: string): OutputRoute[] {
+  return connections
+    .filter((connection) => connection.sourceAgentId === agentId)
+    .map((connection) => normalizeOutputRoute({
+      id: connection.id,
+      condition: connection.condition,
+      keyword: connection.keyword,
+      keywordMode: connection.keywordMode,
+      targetAgentId: connection.targetAgentId,
+    }));
+}
+
+function derivePrimaryInputFrom(connections: WorkflowConnection[], agentId: string): string | null {
+  const incoming = connections.filter((connection) => (
+    connection.targetAgentId === agentId
+    && connection.condition === 'onComplete'
+    && (connection.type ?? 'sequential') === 'sequential'
+  ));
+
+  return incoming.length === 1 ? incoming[0].sourceAgentId : null;
+}
+
+function reconcileGraphState(
+  instance: WorkflowInstance,
+  overrides: Partial<Pick<WorkflowInstance, 'agents' | 'connections' | 'dirtyAgentIds'>> = {},
+): Pick<WorkflowInstance, 'agents' | 'connections' | 'dirtyAgentIds'> {
+  const baseAgents = (overrides.agents ?? instance.agents).map(normalizeAgentBase);
+  const baseConnections = mergeConnections(baseAgents, overrides.connections ?? instance.connections ?? []);
+  const projectedAgents = baseAgents.map((agent) => normalizeAgent({
+    ...agent,
+    outputRoutes: deriveOutputRoutes(baseConnections, agent.id),
+    inputFrom: derivePrimaryInputFrom(baseConnections, agent.id),
+  }));
+  const validAgentIds = new Set(projectedAgents.map((agent) => agent.id));
+
+  return {
+    agents: projectedAgents,
+    connections: baseConnections,
+    dirtyAgentIds: (overrides.dirtyAgentIds ?? instance.dirtyAgentIds ?? []).filter((agentId) => validAgentIds.has(agentId)),
+  };
+}
+
+export function selectAgentIncomingConnections(instance: WorkflowInstance | null, agentId: string): WorkflowConnection[] {
+  return (instance?.connections ?? []).filter((connection) => connection.targetAgentId === agentId);
+}
+
+export function selectAgentOutgoingConnections(instance: WorkflowInstance | null, agentId: string): WorkflowConnection[] {
+  return (instance?.connections ?? []).filter((connection) => connection.sourceAgentId === agentId);
+}
+
+export function selectAgentOutputRoutes(instance: WorkflowInstance | null, agentId: string): OutputRoute[] {
+  return deriveOutputRoutes(instance?.connections ?? [], agentId);
 }
 
 function normalizeRun(run: WorkflowRun): WorkflowRun {
@@ -53,11 +189,12 @@ function normalizeRun(run: WorkflowRun): WorkflowRun {
     successCriteria: run.successCriteria ?? '',
     currentIteration: run.currentIteration ?? 0,
     goalEvaluations: run.goalEvaluations ?? [],
+    reachedGoal: run.reachedGoal ?? false,
   };
 }
 
 function normalizeInstance(instance: WorkflowInstance): WorkflowInstance {
-  return {
+  const normalizedBase: WorkflowInstance = {
     ...instance,
     projectGoal: instance.projectGoal ?? '',
     successCriteria: instance.successCriteria ?? '',
@@ -65,8 +202,16 @@ function normalizeInstance(instance: WorkflowInstance): WorkflowInstance {
     maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
     activeRunId: instance.activeRunId ?? null,
     dirtyAgentIds: instance.dirtyAgentIds ?? [],
-    agents: (instance.agents ?? []).map(normalizeAgent),
+    agents: (instance.agents ?? []).map(normalizeAgentBase),
+    connections: (instance.connections ?? []).map(normalizeConnection),
     workflowRuns: (instance.workflowRuns ?? []).map(normalizeRun),
+    createdAt: instance.createdAt,
+    updatedAt: instance.updatedAt,
+  };
+
+  return {
+    ...normalizedBase,
+    ...reconcileGraphState(normalizedBase),
   };
 }
 
@@ -95,8 +240,8 @@ function loadFromStorage(): Partial<WorkflowState> {
           successCriteria: '',
           goalEvaluatorAgentId: null,
           maxGoalIterations: DEFAULT_MAX_GOAL_ITERATIONS,
-          agents: (old.agents || []).map(normalizeAgent),
-          connections: old.connections || [],
+          agents: (old.agents || []).map(normalizeAgentBase),
+          connections: (old.connections || []).map(normalizeConnection),
           workflowRuns: (old.workflowRuns || []).map(normalizeRun),
           activeRunId: null,
           dirtyAgentIds: [],
@@ -206,7 +351,12 @@ export interface WorkflowStore extends WorkflowState {
   clearAgentDirty: (agentId: string) => void;
 
   // Connection CRUD (operates on current instance)
-  addConnection: (sourceId: string, targetId: string, condition: string) => WorkflowConnection;
+  addConnection: (
+    sourceId: string,
+    targetId: string,
+    condition: WorkflowConnection['condition'],
+    options?: Pick<WorkflowConnection, 'keyword' | 'keywordMode' | 'type'>,
+  ) => WorkflowConnection;
   removeConnection: (id: string) => void;
 
   // OutputRoute management (operates on current instance)
@@ -222,6 +372,7 @@ export interface WorkflowStore extends WorkflowState {
   updateRunAgent: (runId: string, agentId: string, updates: Partial<WorkflowRunAgentEntry>) => void;
   appendGoalEvaluation: (runId: string, evaluation: GoalEvaluationResult) => void;
   selectRun: (id: string | null) => void;
+  setActiveRunId: (id: string | null) => void;
 
   // Execution state
   setRunning: (running: boolean, agentId?: string | null) => void;
@@ -378,6 +529,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       execution: data.execution || DEFAULT_EXECUTION_CONFIG,
       inputFrom: data.inputFrom ?? null,
       role: data.role ?? 'custom',
+      retryPolicy: { ...DEFAULT_RETRY_POLICY, fallbackConfigIds: [] },
       notifyOnComplete: [],
     };
 
@@ -385,7 +537,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       const newState = {
         ...state,
         ...updateCurrentInstance(state, (inst) => ({
-          agents: [...inst.agents, newAgent],
+          ...reconcileGraphState(inst, { agents: [...inst.agents, newAgent] }),
         })),
       };
       saveToStorage(newState);
@@ -396,13 +548,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   updateAgent: (id, updates) => {
+    const { inputFrom: _ignoredInputFrom, outputRoutes: _ignoredOutputRoutes, ...safeUpdates } = updates;
     set((state) => {
       const newState = {
         ...state,
         ...updateCurrentInstance(state, (inst) => ({
-          agents: inst.agents.map(agent =>
-            agent.id === id ? normalizeAgent({ ...agent, ...updates }) : agent
-          ),
+          agents: inst.agents.map(agent => (
+            agent.id === id ? normalizeAgent({ ...agent, ...safeUpdates }) : agent
+          )),
         })),
       };
       saveToStorage(newState);
@@ -419,12 +572,13 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           const newConnections = inst.connections.filter(
             c => c.sourceAgentId !== id && c.targetAgentId !== id
           );
-          const newAgentsWithCleanRoutes = newAgents.map(agent => ({
-            ...agent,
-            outputRoutes: agent.outputRoutes.filter(r => r.targetAgentId !== id),
-            inputFrom: agent.inputFrom === id ? null : agent.inputFrom,
-          }));
-          return { agents: newAgentsWithCleanRoutes, connections: newConnections };
+          return {
+            ...reconcileGraphState(inst, {
+              agents: newAgents,
+              connections: newConnections,
+              dirtyAgentIds: (inst.dirtyAgentIds ?? []).filter((agentId) => agentId !== id),
+            }),
+          };
         }),
       };
       saveToStorage(newState);
@@ -477,57 +631,29 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set((state) => {
       const inst = state.instances.find(i => i.id === state.currentInstanceId);
       if (!inst) return state;
-
-      const currentAgent = inst.agents.find(a => a.id === agentId);
-      if (!currentAgent) return state;
-
-      const previousFromId = currentAgent.inputFrom;
-
-      let newConnections = inst.connections.filter(
-        c => !(c.sourceAgentId === previousFromId && c.targetAgentId === agentId)
-      );
-
-      let newAgents = inst.agents.map(agent => {
-        if (agent.id === previousFromId) {
-          return {
-            ...agent,
-            outputRoutes: agent.outputRoutes.filter(r => r.targetAgentId !== agentId),
-          };
-        }
-        if (agent.id === agentId) {
-          return { ...agent, inputFrom: fromId };
-        }
-        return agent;
-      });
+      const newConnections = inst.connections
+        .filter((connection) => !(
+          connection.targetAgentId === agentId
+          && connection.condition === 'onComplete'
+          && (connection.type ?? 'sequential') === 'sequential'
+        ));
 
       if (fromId) {
-        const newConnection: WorkflowConnection = {
+        newConnections.push(normalizeConnection({
           id: crypto.randomUUID(),
           sourceAgentId: fromId,
           targetAgentId: agentId,
           condition: 'onComplete',
           type: 'sequential',
-        };
-        newConnections = [...newConnections, newConnection];
-
-        newAgents = newAgents.map(agent => {
-          if (agent.id === fromId) {
-            const newRoute: OutputRoute = {
-              id: crypto.randomUUID(),
-              condition: 'onComplete',
-              targetAgentId: agentId,
-            };
-            return { ...agent, outputRoutes: [...agent.outputRoutes, newRoute] };
-          }
-          return agent;
-        });
+        }));
       }
 
       const newState = {
         ...state,
         ...updateCurrentInstance(state, () => ({
-          agents: newAgents,
-          connections: newConnections,
+          ...reconcileGraphState(inst, {
+            connections: newConnections,
+          }),
         })),
       };
       saveToStorage(newState);
@@ -563,35 +689,56 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   // ============ Connection CRUD ============
 
-  addConnection: (sourceId, targetId, condition) => {
-    const newConnection: WorkflowConnection = {
+  addConnection: (sourceId, targetId, condition, options) => {
+    const newConnection: WorkflowConnection = normalizeConnection({
       id: crypto.randomUUID(),
       sourceAgentId: sourceId,
       targetAgentId: targetId,
       condition,
-      type: 'sequential',
-    };
+      keyword: options?.keyword,
+      keywordMode: options?.keywordMode,
+      type: options?.type ?? 'sequential',
+    });
+    let createdConnection = newConnection;
 
     set((state) => {
+      const inst = state.instances.find((item) => item.id === state.currentInstanceId);
+      if (!inst) return state;
+
+      const existing = inst.connections.find((connection) => (
+        buildConnectionSignature(connection) === buildConnectionSignature(newConnection)
+      ));
+      if (existing) {
+        createdConnection = existing;
+        return state;
+      }
+
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
-          connections: [...inst.connections, newConnection],
+        ...updateCurrentInstance(state, () => ({
+          ...reconcileGraphState(inst, {
+            connections: [...inst.connections, newConnection],
+          }),
         })),
       };
       saveToStorage(newState);
       return newState;
     });
 
-    return newConnection;
+    return createdConnection;
   },
 
   removeConnection: (id) => {
     set((state) => {
+      const inst = state.instances.find((item) => item.id === state.currentInstanceId);
+      if (!inst) return state;
+
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
-          connections: inst.connections.filter(c => c.id !== id),
+        ...updateCurrentInstance(state, () => ({
+          ...reconcileGraphState(inst, {
+            connections: inst.connections.filter(c => c.id !== id),
+          }),
         })),
       };
       saveToStorage(newState);
@@ -602,60 +749,34 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   // ============ OutputRoute Management ============
 
   addOutputRoute: (agentId, route) => {
-    const newRoute: OutputRoute = normalizeOutputRoute({ ...route, id: crypto.randomUUID() });
-
-    set((state) => {
-      const newConnection: WorkflowConnection = {
-        id: crypto.randomUUID(),
-        sourceAgentId: agentId,
-        targetAgentId: route.targetAgentId,
-        condition: route.condition,
-        type: 'sequential',
-      };
-
-      const newState = {
-        ...state,
-        ...updateCurrentInstance(state, (inst) => {
-          const newAgents = inst.agents.map(agent => {
-            if (agent.id === agentId) {
-              return { ...agent, outputRoutes: [...agent.outputRoutes, newRoute] };
-            }
-            if (agent.id === route.targetAgentId) {
-              return { ...agent, inputFrom: agentId };
-            }
-            return agent;
-          });
-
-          const newConnections = [
-            ...inst.connections.filter(
-              c => !(c.sourceAgentId === agentId && c.targetAgentId === route.targetAgentId)
-            ),
-            newConnection,
-          ];
-
-          return { agents: newAgents, connections: newConnections };
-        }),
-      };
-      saveToStorage(newState);
-      return newState;
+    get().addConnection(agentId, route.targetAgentId, route.condition, {
+      keyword: route.keyword,
+      keywordMode: route.keywordMode,
+      type: 'sequential',
     });
   },
 
   updateOutputRoute: (agentId, routeId, updates) => {
     set((state) => {
+      const inst = state.instances.find((item) => item.id === state.currentInstanceId);
+      if (!inst) return state;
+
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
-          agents: inst.agents.map(agent =>
-            agent.id === agentId
-              ? {
-                  ...agent,
-                  outputRoutes: agent.outputRoutes.map(route =>
-                    route.id === routeId ? normalizeOutputRoute({ ...route, ...updates }) : route
-                  ),
-                }
-              : agent
-          ),
+        ...updateCurrentInstance(state, () => ({
+          ...reconcileGraphState(inst, {
+            connections: inst.connections.map((connection) => (
+              connection.id === routeId && connection.sourceAgentId === agentId
+                ? normalizeConnection({
+                    ...connection,
+                    condition: updates.condition ?? connection.condition,
+                    keyword: updates.keyword,
+                    keywordMode: updates.keywordMode ?? connection.keywordMode,
+                    targetAgentId: updates.targetAgentId ?? connection.targetAgentId,
+                  })
+                : connection
+            )),
+          }),
         })),
       };
       saveToStorage(newState);
@@ -664,39 +785,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   removeOutputRoute: (agentId, routeId) => {
-    set((state) => {
-      const inst = state.instances.find(i => i.id === state.currentInstanceId);
-      if (!inst) return state;
-
-      const routeToRemove = inst.agents
-        .find(a => a.id === agentId)
-        ?.outputRoutes.find(r => r.id === routeId);
-      const targetAgentId = routeToRemove?.targetAgentId;
-
-      const newState = {
-        ...state,
-        ...updateCurrentInstance(state, (innerInst) => {
-          const newConnections = innerInst.connections.filter(
-            c => !(c.sourceAgentId === agentId && c.targetAgentId === targetAgentId)
-          );
-          const newAgents = innerInst.agents.map(agent => {
-            if (agent.id === agentId) {
-              return {
-                ...agent,
-                outputRoutes: agent.outputRoutes.filter(r => r.id !== routeId),
-              };
-            }
-            if (agent.id === targetAgentId && agent.inputFrom === agentId) {
-              return { ...agent, inputFrom: null };
-            }
-            return agent;
-          });
-          return { agents: newAgents, connections: newConnections };
-        }),
-      };
-      saveToStorage(newState);
-      return newState;
-    });
+    const instance = get().getCurrentInstance();
+    const route = selectAgentOutputRoutes(instance, agentId).find((item) => item.id === routeId);
+    if (!route) return;
+    get().removeConnection(routeId);
   },
 
   // ============ Workflow Run (History) ============
@@ -824,6 +916,17 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ selectedRunId: id });
   },
 
+  setActiveRunId: (id) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        ...updateCurrentInstance(state, () => ({ activeRunId: id })),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
   // ============ Execution State ============
 
   setRunning: (running, agentId = null) => {
@@ -852,12 +955,16 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   clearCanvas: () => {
     set((state) => {
+        const inst = state.instances.find((item) => item.id === state.currentInstanceId);
+        if (!inst) return state;
         const newState = {
           ...state,
           ...updateCurrentInstance(state, () => ({
-            agents: [],
-            connections: [],
-            dirtyAgentIds: [],
+            ...reconcileGraphState(inst, {
+              agents: [],
+              connections: [],
+              dirtyAgentIds: [],
+            }),
           })),
         };
       saveToStorage(newState);
@@ -893,7 +1000,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       soulPrompt: devTemplate?.soulPrompt || '',
       execution: { mode: 'single' },
       inputFrom: agentA.id,
-      role: 'coder',
+      role: 'developer',
     });
 
     const agentC = addAgent({
@@ -904,11 +1011,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       soulPrompt: qaTemplate?.soulPrompt || '',
       execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
       inputFrom: agentB.id,
-      role: 'tester',
+      role: 'qa',
     });
 
-    addConnection(agentA.id, agentB.id, 'A → B');
-    addConnection(agentB.id, agentC.id, 'B → C');
+    addConnection(agentA.id, agentB.id, 'onComplete');
+    addConnection(agentB.id, agentC.id, 'onComplete');
 
     return { agentA, agentB, agentC };
   },

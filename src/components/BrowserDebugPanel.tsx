@@ -18,7 +18,7 @@ import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore'
 import { useChatStore } from '@/store/chatStore';
 import { useCdpStore } from '@/store/cdpStore';
 import { t } from '@/i18n';
-import type { BrowserElementBounds, BrowserPageViewport, BrowserScreenshotRef } from '@/types/browserPageState';
+import type { BrowserElementBounds, BrowserPageViewport } from '@/types/browserPageState';
 import { saveBrowserBenchmarkArtifact } from '@/services/browserBenchmarkArtifacts';
 import { normalizeBrowserScreenshotSrc } from '@/utils/screenshot';
 import { exportBrowserBenchmarkReport } from '@/utils/browserObservabilityClient';

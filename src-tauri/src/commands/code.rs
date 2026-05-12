@@ -71,33 +71,34 @@ pub struct ExecuteBashArgs {
 fn check_command_safety(command: &str) -> AppResult<()> {
     // Normalize whitespace for pattern matching (collapse runs of spaces/tabs)
     let normalized: String = command.split_whitespace().collect::<Vec<_>>().join(" ");
-    let lower = normalized.to_lowercase();
 
-    // Patterns checked against normalized lowercase form to prevent trivial bypasses
-    // (e.g. extra spaces, mixed case). Regex-level checks are in the TypeScript layer;
-    // this is a last-resort Rust guard.
-    let blocked_patterns = [
-        "rm -rf /",
-        "rm -rf ~",
-        "rm -r /",
-        "rm -r ~",
-        "mkfs",
-        "dd if=",
-        "> /dev/sda",
-        ":(){ :|:& };", // fork bomb
-        "chmod -r 777 /",
-        "chown -r",
-        "shutdown",
-        "reboot",
-        "halt",
-        "poweroff",
+    // Use regex patterns for more robust matching (prevents bypass via case/Unicode)
+    // Pre-compiled patterns for performance
+    use regex::Regex;
+
+    static BLOCKED_PATTERNS: &[(&str, &str)] = &[
+        (r"(?i)\brm\s+(-rf?)\s+/\s*$", "Attempting to delete root filesystem"),
+        (r"(?i)\brm\s+(-rf?)\s+~\s*$", "Attempting to delete home directory"),
+        (r"(?i)\bmkfs\b", "Filesystem creation command"),
+        (r"(?i)\bdd\s+if=\S+\s+of=/dev", "Writing to block device"),
+        (r":\(\)\s*:\s*\|\s*:\s*&", "Fork bomb"),
+        (r"(?i)\bchmod\s+(-R\s+)?777\s+/\s*$", "Making root filesystem world-writable"),
+        (r"(?i)\bchmod\s+(-R\s+)?777\s+~\s*$", "Making home directory world-writable"),
+        (r"(?i)\bchown\s+(-R\s+)?\S+:\S+\s+/\s*$", "Changing root ownership"),
+        (r"(?i)\bshutdown\b", "System shutdown command"),
+        (r"(?i)\breboot\b", "System reboot command"),
+        (r"(?i)\bhalt\b", "System halt command"),
+        (r"(?i)\bpoweroff\b", "System poweroff command"),
     ];
-    for pattern in &blocked_patterns {
-        if lower.contains(pattern) {
-            return Err(AppError::ProcessError(format!(
-                "Command blocked for safety: contains forbidden pattern '{}'",
-                pattern
-            )));
+
+    for (pattern, description) in BLOCKED_PATTERNS {
+        if let Ok(re) = Regex::new(pattern) {
+            if re.is_match(&normalized) {
+                return Err(AppError::ProcessError(format!(
+                    "Command blocked for safety: {}",
+                    description
+                )));
+            }
         }
     }
     Ok(())

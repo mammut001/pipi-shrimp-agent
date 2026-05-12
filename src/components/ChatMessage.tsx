@@ -16,6 +16,10 @@ import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
+import {
+  normalizeResumeTemplateMarkdown,
+  shouldRenderResumeTemplateCarousel,
+} from '@/skills/resume/resumeFlow';
 import { buildImageDataUrl } from '@/services/vision/imageAttachments';
 import { ChatImage } from './ChatImage';
 import { ArtifactsBadge } from './ArtifactsBadge';
@@ -47,37 +51,6 @@ const formatTimestamp = (timestamp: number): string => {
     minute: '2-digit',
   });
 };
-
-function normalizeResumeTemplateMarkdown(content: string): string {
-  let normalized = content;
-
-  normalized = normalized.replace(
-    /```resume-templates\s*(\[[\s\S]*?\])\s*```/g,
-    '\n```resume-templates\n$1\n```\n',
-  );
-
-  normalized = normalized.replace(
-    /```resume-templates\s*(\[[\s\S]*?\])\s*$/g,
-    '\n```resume-templates\n$1\n```\n',
-  );
-
-  normalized = normalized.replace(/```resume-templates\s*$/g, '\n```resume-templates\n[]\n```');
-
-  const openingIndex = normalized.indexOf('```resume-templates');
-  if (openingIndex === -1) {
-    return normalized;
-  }
-
-  const afterOpening = normalized.slice(openingIndex + '```resume-templates'.length);
-  if (afterOpening.includes('```')) {
-    return normalized;
-  }
-
-  const payload = afterOpening.trim();
-  const normalizedPayload = payload.startsWith('[') ? payload : '[]';
-  const prefix = normalized.slice(0, openingIndex).trimEnd();
-  return prefix + '\n\n```resume-templates\n' + normalizedPayload + '\n```\n';
-}
 
 /**
  * Single chat message component
@@ -245,7 +218,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                         return <ChatImage src={codeContent} isSVG alt="SVG Preview" />;
                       }
 
-                      if (language === 'resume-templates' || language === 'resume') {
+                      if (shouldRenderResumeTemplateCarousel(language)) {
                         return (
                           <Suspense fallback={<div className="p-4 text-gray-400 text-sm">Loading carousel...</div>}>
                             <ResumeTemplateCarousel dataJson={codeContent} />

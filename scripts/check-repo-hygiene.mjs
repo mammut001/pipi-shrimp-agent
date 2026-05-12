@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { checkSkillSync } from './check-skill-sync.mjs';
 
 const repoRoot = process.cwd();
 const maxAssetBytes = 1024 * 1024;
@@ -101,6 +102,8 @@ for (const entry of rootEntries) {
 }
 
 const files = await walk();
+const skillSyncFailures = await checkSkillSync();
+failures.push(...skillSyncFailures);
 
 for (const relativePath of files) {
   if (relativePath.startsWith('src/') && relativePath.endsWith('.patch')) {

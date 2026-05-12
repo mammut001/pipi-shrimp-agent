@@ -4,13 +4,27 @@ import { useWorkflowStore } from '@/store/workflowStore';
 import { getProviderDefaultModelIds, type ProviderName } from '@/shared/providers';
 import type { TranslationKeys } from '@/i18n';
 import {
-  AGENT_TEMPLATES,
+  type RouteCondition,
+  type WorkflowAgentRole,
+} from '@/types/workflow';
+import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
+import {
   DEFAULT_EXECUTION_CONFIG,
   DEFAULT_RETRY_POLICY,
+} from '@/services/workflow/defaults';
+import {
+  WORKFLOW_AGENT_ROLES,
   getRoleModelHint,
-  type AgentRole,
-  type RouteCondition,
-} from '@/types/workflow';
+  normalizeWorkflowAgentRole,
+} from '@/services/workflow/templates/roles';
+import {
+  extractWorkflowMarkerTokens,
+  normalizeWorkflowMarkerToken,
+} from '@/services/workflow/templates/markers';
+import {
+  selectAgentIncomingConnections,
+  selectAgentOutputRoutes,
+} from '@/store/workflowStore';
 import { t } from '@/i18n';
 
 interface AgentConfigPanelProps {
@@ -20,29 +34,14 @@ interface AgentConfigPanelProps {
   embedded?: boolean;
 }
 
-const ROUTE_MARKER_REGEX = /\[\[[A-Z0-9_:-]+\]\]|<[A-Z0-9:_-]+>/g;
-const AGENT_ROLES: AgentRole[] = [
-  'writer',
-  'coder',
-  'tester',
-  'reviewer',
-  'security',
-  'devops',
-  'data-analyst',
-  'translator',
-  'goal-evaluator',
-  'custom',
-];
-
-const ROLE_LABEL_KEYS: Record<AgentRole, keyof TranslationKeys> = {
+const ROLE_LABEL_KEYS: Record<WorkflowAgentRole, keyof TranslationKeys> = {
+  planner: 'workflow.role.custom',
   writer: 'workflow.role.writer',
-  coder: 'workflow.role.coder',
-  tester: 'workflow.role.tester',
+  developer: 'workflow.role.coder',
+  qa: 'workflow.role.tester',
   reviewer: 'workflow.role.reviewer',
   security: 'workflow.role.security',
   devops: 'workflow.role.devops',
-  'data-analyst': 'workflow.role.data-analyst',
-  translator: 'workflow.role.translator',
   'goal-evaluator': 'workflow.role.goal-evaluator',
   custom: 'workflow.role.custom',
 };
@@ -56,16 +55,16 @@ function getMissingExplicitRouteMarkers(agent: {
   const declaredMarkers = new Set(
     [agent.taskPrompt, agent.taskInstruction, agent.soulPrompt]
       .filter(Boolean)
-      .flatMap((value) => value!.match(ROUTE_MARKER_REGEX) ?? []),
+      .flatMap((value) => extractWorkflowMarkerTokens(value!)),
   );
 
   const explicitKeywords = new Set(
     agent.outputRoutes
       .filter((route) => route.condition === 'outputContains' && route.keyword)
-      .map((route) => route.keyword!.trim().toLowerCase()),
+      .map((route) => normalizeWorkflowMarkerToken(route.keyword!) ?? route.keyword!.trim()),
   );
 
-  return [...declaredMarkers].filter((marker) => !explicitKeywords.has(marker.toLowerCase()));
+  return [...declaredMarkers].filter((marker) => !explicitKeywords.has(marker));
 }
 
 export function AgentConfigPanel({
@@ -94,7 +93,7 @@ export function AgentConfigPanel({
     taskInstruction: '',
     soulPrompt: '',
     execution: DEFAULT_EXECUTION_CONFIG,
-    role: 'custom' as AgentRole,
+    role: 'custom' as WorkflowAgentRole,
     configId: '',
     provider: '' as ProviderName | '',
     modelId: '',
@@ -118,7 +117,7 @@ export function AgentConfigPanel({
       taskInstruction: agent.taskInstruction || '',
       soulPrompt: agent.soulPrompt || '',
       execution: agent.execution || DEFAULT_EXECUTION_CONFIG,
-      role: agent.role || 'custom',
+      role: normalizeWorkflowAgentRole(agent.role),
       configId: agent.model?.configId || '',
       provider: (agent.model?.provider || '') as ProviderName | '',
       modelId: agent.model?.modelId || '',
@@ -140,8 +139,14 @@ export function AgentConfigPanel({
       : getProviderDefaultModelIds(effectiveProvider)
     : [];
   const otherAgents = allAgents.filter((item) => item.id !== agentId);
-  const connections = (currentInstance?.connections ?? []).filter((connection) => connection.targetAgentId === agentId);
-  const missingRouteMarkers = agent ? getMissingExplicitRouteMarkers(agent) : [];
+  const connections = selectAgentIncomingConnections(currentInstance, agentId);
+  const outputRoutes = selectAgentOutputRoutes(currentInstance, agentId);
+  const missingRouteMarkers = agent ? getMissingExplicitRouteMarkers({
+    taskPrompt: agent.taskPrompt,
+    taskInstruction: agent.taskInstruction,
+    soulPrompt: agent.soulPrompt,
+    outputRoutes,
+  }) : [];
 
   const configOptions = useMemo(() => apiConfigs.map((config) => ({
     id: config.id,
@@ -249,10 +254,10 @@ export function AgentConfigPanel({
         </label>
         <select
           value={formData.role}
-          onChange={(event) => setField('role', event.target.value as AgentRole)}
+          onChange={(event) => setField('role', event.target.value as WorkflowAgentRole)}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
-          {AGENT_ROLES.map((role) => (
+          {WORKFLOW_AGENT_ROLES.map((role) => (
             <option key={role} value={role}>
               {t(ROLE_LABEL_KEYS[role])}
             </option>
@@ -588,7 +593,7 @@ export function AgentConfigPanel({
         )}
 
         <div className="space-y-2">
-          {agent.outputRoutes.map((route) => {
+          {outputRoutes.map((route) => {
             const targetAgent = otherAgents.find((item) => item.id === route.targetAgentId);
             return (
               <div key={route.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm">

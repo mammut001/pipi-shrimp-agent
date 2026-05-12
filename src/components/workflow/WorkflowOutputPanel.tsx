@@ -18,12 +18,17 @@ import { t } from '@/i18n';
 
 type Tab = 'output' | 'files';
 
+function extractOutputBody(content: string): string {
+  return content.replace(/^<!--[\s\S]*?-->\s*/u, '');
+}
+
 export function WorkflowOutputPanel() {
   const currentInstance = useWorkflowStore((s) =>
     s.instances.find(i => i.id === s.currentInstanceId) ?? null
   );
   const agents = currentInstance?.agents ?? [];
   const workflowRuns = currentInstance?.workflowRuns ?? [];
+  const activeRunId = currentInstance?.activeRunId ?? null;
   const isRunning = useWorkflowStore((s) => s.isRunning);
   const selectedRunId = useWorkflowStore((s) => s.selectedRunId);
   const selectedPreviewFile = useWorkflowStore((s) => s.selectedPreviewFile);
@@ -42,6 +47,20 @@ export function WorkflowOutputPanel() {
     ? workflowRuns.find((r) => r.id === selectedRunId) ?? workflowRuns[0]
     : workflowRuns[0];
   const runDirectory = activeRun?.runDirectory || '';
+  const displayAgents = activeRun?.agents.map((entry) => {
+    const currentAgent = agents.find((agent) => agent.id === entry.agentId);
+    return {
+      id: entry.agentId,
+      name: entry.agentName,
+      status: entry.status,
+      task: currentAgent?.task,
+    };
+  }) ?? agents.map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    status: agent.status,
+    task: agent.task,
+  }));
 
   // Stream callback
   useEffect(() => {
@@ -54,15 +73,58 @@ export function WorkflowOutputPanel() {
     });
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const shouldLoadPersistedOutputs = !isRunning || activeRun?.id !== activeRunId;
+
+    async function loadHistoricalOutputs(): Promise<void> {
+      if (!activeRun) {
+        setAgentOutputs(new Map());
+        return;
+      }
+
+       if (!shouldLoadPersistedOutputs) {
+        return;
+      }
+
+      const nextOutputs = new Map<string, string>();
+      for (const entry of activeRun.agents) {
+        if (entry.outputFilePath) {
+          try {
+            const result = await workflowService.readFile(entry.outputFilePath);
+            nextOutputs.set(entry.agentId, extractOutputBody(result.content));
+            continue;
+          } catch {
+            // Fall through to summary output.
+          }
+        }
+
+        if (entry.output) {
+          nextOutputs.set(entry.agentId, entry.output);
+        }
+      }
+
+      if (!cancelled) {
+        setAgentOutputs(nextOutputs);
+      }
+    }
+
+    void loadHistoricalOutputs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRun, activeRunId, isRunning]);
+
   // Auto-expand running agent
   useEffect(() => {
     if (isRunning) {
-      const runningAgent = agents.find((a) => a.status === 'running');
+      const runningAgent = displayAgents.find((agent) => agent.status === 'running');
       if (runningAgent) {
         setExpandedAgents((prev) => new Set(prev).add(runningAgent.id));
       }
     }
-  }, [isRunning, agents]);
+  }, [displayAgents, isRunning]);
 
   // Refresh file list
   const refreshFiles = useCallback(async () => {
@@ -149,7 +211,7 @@ export function WorkflowOutputPanel() {
           {t('workflow.output.openWorkDir')}
         </button>
         <span className="ml-auto pr-4 text-xs text-gray-400">
-          {t('workflow.output.agentCount').replace('{done}', String(agents.filter((a) => agentOutputs.has(a.id)).length)).replace('{total}', String(agents.length))}
+          {t('workflow.output.agentCount').replace('{done}', String(displayAgents.filter((agent) => agentOutputs.has(agent.id)).length)).replace('{total}', String(displayAgents.length))}
         </span>
       </div>
 
@@ -157,12 +219,12 @@ export function WorkflowOutputPanel() {
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {activeTab === 'output' ? (
           /* ===== Output tab ===== */
-          agents.length === 0 ? (
+          displayAgents.length === 0 ? (
             <div className="flex items-center justify-center h-full text-gray-400 text-sm">
               {t('workflow.output.noAgents')}
             </div>
           ) : (
-            agents.map((agent) => {
+            displayAgents.map((agent) => {
               const output = agentOutputs.get(agent.id) || '';
               const isExpanded = expandedAgents.has(agent.id);
               const running = agent.status === 'running';

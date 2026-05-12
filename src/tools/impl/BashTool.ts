@@ -9,12 +9,13 @@ export type CommandCategory = 'SEARCH' | 'READ' | 'LIST' | 'EDIT' | 'OTHER';
 
 /**
  * 危险命令列表
+ * 使用 case-insensitive 标志防止大小写绕过 (如 RM -RF /)
  */
 const DANGEROUS_PATTERNS = [
-  /rm\s+-rf\s+\//,                    // rm -rf /
-  /:\(\)\s*:\s*\|:\s*&/,              // Fork bomb
-  /mkfs/,                             // Format disk
-  /dd\s+if=.*of=\/dev\//,             // Direct disk write
+  /rm\s+-rf\s+\//i,                    // rm -rf / (case insensitive)
+  /:\(\)\s*:\s*\|:\s*&/,              // Fork bomb (no case variation)
+  /mkfs/i,                            // Format disk (case insensitive)
+  /dd\s+if=.*of=\/dev\//i,           // Direct disk write (case insensitive)
   /渗透|exploit|黑客/i,               // 中文危险词
 ];
 

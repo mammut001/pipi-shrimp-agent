@@ -68,21 +68,24 @@ describe('WorkflowEngine routing', () => {
     const reviewer = createAgent({
       id: 'reviewer',
       name: '校对',
-      outputRoutes: [{
-        id: 'route-1',
-        condition: 'outputContains',
-        keyword: '<NEEDS_REWORK>',
-        targetAgentId: 'editor',
-      }],
     });
     const editor = createAgent({ id: 'editor', name: '编辑' });
     const proofreader = createAgent({ id: 'proofreader', name: '审稿' });
+    const connections = [{
+      id: 'route-1',
+      sourceAgentId: 'reviewer',
+      targetAgentId: 'editor',
+      condition: 'outputContains' as const,
+      keyword: '<NEEDS_REWORK>',
+      keywordMode: 'includes' as const,
+      type: 'sequential' as const,
+    }];
 
     expect(
       engine.evaluateNextAgent(
         reviewer,
         'Please revise this.\n<NEEDS_REWORK>',
-        [],
+        connections,
         [reviewer, editor, proofreader],
         'completed',
       ),
