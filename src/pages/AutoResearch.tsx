@@ -15,6 +15,7 @@ import { useSettingsStore } from '@/store';
 import {
   useAutoResearchStore,
   type SshConfig,
+  getSelectedAutoResearchRunContext,
   getSelectedAutoResearchRun,
   getSortedAutoResearchRuns,
 } from '@/store/autoresearchStore';
@@ -175,8 +176,7 @@ function ExperimentDetailPanel() {
 function AutoResearchView() {
   const {
     id: activeRunId,
-    loopState,
-    liveOutput, sshConfig, statusMessage, errorMessage,
+    sshConfig,
     setSelectedExperiment, initSession, setSshConfig, runHistory, selectRun,
     terminalVisible, terminalSessionId, terminalCwd,
     openTerminalPanel, setTerminalReady, setTerminalVisible,
@@ -184,7 +184,8 @@ function AutoResearchView() {
   const lastUsedConfig = useAutoResearchStore((state) => state.lastUsedConfig);
   const setLastUsedConfig = useAutoResearchStore((state) => state.setLastUsedConfig);
   const clearLastUsedConfig = useAutoResearchStore((state) => state.clearLastUsedConfig);
-  const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
+  const selectedRunContext = useAutoResearchStore(getSelectedAutoResearchRunContext);
+  const selectedRun = selectedRunContext.run;
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
   const activeConfigId = useSettingsStore((state) => state.activeConfigId);
   const apiConfigs = useSettingsStore((state) => state.apiConfigs);
@@ -210,8 +211,10 @@ function AutoResearchView() {
     ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
     : '';
   const displayRun = selectedRun;
-  const displayedLiveOutput = displayRun?.id === activeRunId ? liveOutput : (displayRun?.liveOutputExcerpt || '');
-  const displayReason = displayRun?.reason || errorMessage;
+  const displayedLiveOutput = selectedRunContext.liveOutput;
+  const displayReason = selectedRunContext.reason;
+  const loopState = selectedRunContext.loopState;
+  const statusMessage = selectedRunContext.statusMessage;
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
 
   useEffect(() => {
@@ -428,7 +431,7 @@ function AutoResearchView() {
     }
   }, [displayRun]);
 
-  const runControls = displayRun?.id === activeRunId ? (
+  const runControls = selectedRunContext.isActive ? (
     <div className="flex flex-wrap items-center gap-2">
       {loopState === 'running' && (
         <>

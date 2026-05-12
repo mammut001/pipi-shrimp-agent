@@ -112,6 +112,24 @@ function createReflectionResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createToolBudgetSummary(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    toolBudgetUsed: 13,
+    toolBudgetUsedRaw: 13,
+    toolBudgetMax: 17,
+    failedCalls: 1,
+    successfulCalls: 12,
+    categoryCounts: {
+      tool_not_found: 0,
+      tool_disabled: 0,
+      argument_invalid: 0,
+      transient_failure: 1,
+      successful_call: 12,
+    },
+    ...overrides,
+  };
+}
+
 describe('createAutoResearchSendMessage', () => {
   const activeConfig: ResolvedAgentConfig = {
     configId: 'cfg-1',
@@ -189,6 +207,47 @@ describe('createAutoResearchSendMessage', () => {
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('💭 reasoning trace');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('[status] working\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('  → read_file: README excerpt\n');
+  });
+
+  it('does not reuse freeform transcripts from previous iterations', async () => {
+    mockRunHeadlessAgentTurn
+      .mockResolvedValueOnce({
+        finalText: 'first answer',
+        finalReasoning: '',
+      })
+      .mockResolvedValueOnce({
+        finalText: 'second answer',
+        finalReasoning: '',
+      });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
+
+    await expect(sendMessage('system prompt', 'first question')).resolves.toBe('first answer');
+    await expect(sendMessage('system prompt', 'second question')).resolves.toBe('second answer');
+
+    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        initialMessages: [
+          {
+            role: 'user',
+            content: 'first question',
+          },
+        ],
+      }),
+    );
+    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        initialMessages: [
+          {
+            role: 'user',
+            content: 'second question',
+          },
+        ],
+      }),
+    );
   });
 
   it('binds local file tools to the current iteration root when available', async () => {
@@ -309,8 +368,11 @@ describe('createAutoResearchSendMessage', () => {
     );
   });
 
-  it('runs reflection before surfacing a tool-round exhaustion failure', async () => {
-    mockRunHeadlessAgentTurn.mockRejectedValueOnce(new Error('Exceeded maximum tool rounds (17)'));
+  it('finalizes the iteration instead of surfacing a run-level reflection failure on tool-round exhaustion', async () => {
+    const error = Object.assign(new Error('Exceeded maximum tool rounds (17)'), {
+      toolBudgetSummary: createToolBudgetSummary(),
+    });
+    mockRunHeadlessAgentTurn.mockRejectedValueOnce(error);
     mockRequestReflectionDecision.mockResolvedValue(createReflectionResult({
       decision: {
         action: 'mark_iteration_failed',
@@ -324,12 +386,14 @@ describe('createAutoResearchSendMessage', () => {
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
     const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
 
-    await expect(sendMessage('system prompt', 'reflect please')).rejects.toThrow(
-      '工具调用轮数已耗尽。最近的关键错误是：python: command not found。',
-    );
+    await expect(sendMessage('system prompt', 'reflect please')).resolves.toContain('tool budget exhausted before evaluation completed');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
     expect(mockRequestReflectionDecision).toHaveBeenCalledTimes(1);
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
       message: 'Reflection decision: mark_iteration_failed — The agent exhausted the tool budget without producing the metric.',
+    }));
+    expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('budget_near_limit:'),
     }));
   });
 
@@ -367,13 +431,11 @@ describe('createAutoResearchSendMessage', () => {
     expect(mockRequestReflectionDecision).toHaveBeenCalledWith(reflectionConfig, expect.anything());
   });
 
-  it('retries the agent turn when reflection returns continue', async () => {
+  it('does not retry the same iteration when tool-round exhaustion already consumed the finalize budget', async () => {
     mockRunHeadlessAgentTurn
-      .mockRejectedValueOnce(new Error('Exceeded maximum tool rounds (17)'))
-      .mockResolvedValueOnce({
-        finalText: 'recovered after reflection',
-        finalReasoning: '',
-      });
+      .mockRejectedValueOnce(Object.assign(new Error('Exceeded maximum tool rounds (17)'), {
+        toolBudgetSummary: createToolBudgetSummary(),
+      }));
     mockRequestReflectionDecision.mockResolvedValue(createReflectionResult({
       decision: {
         action: 'continue',
@@ -394,16 +456,100 @@ describe('createAutoResearchSendMessage', () => {
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
     const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
 
-    await expect(sendMessage('system prompt', 'reflect and continue')).resolves.toBe('recovered after reflection');
-    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(2);
+    await expect(sendMessage('system prompt', 'reflect and continue')).resolves.toContain('tool budget exhausted before evaluation completed');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
       phase: 'reflection_parse_failed',
       message: expect.stringContaining('not json'),
     }));
+  });
+
+  it('does not retry an expensive experiment command more than once in one iteration', async () => {
+    mockRunHeadlessAgentTurn.mockImplementationOnce(async (input) => {
+      await input.onToolCall?.({
+        id: 'tool-1',
+        name: localCommandTool,
+        arguments: '{"command":"python3 run_experiment.py"}',
+      });
+      await input.onToolResult?.({
+        id: 'tool-1',
+        name: localCommandTool,
+        result: '{"stdout":"","stderr":"training failed\n","exitCode":1}',
+        durationMs: 42,
+      });
+      throw new Error('phase=agent_execution; message=training failed');
+    });
+    mockGetDeterministicRecoveryDecision.mockReturnValue({
+      action: 'retry_with_plan',
+      summary: 'Patch the code and rerun the experiment.',
+      nextPlan: 'Modify the training script and rerun python3 run_experiment.py.',
+      shouldRetry: true,
+      confidence: 'medium',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig, {
+      environmentSummary: {
+        experimentDir: '/tmp/research',
+        gitRepo: true,
+        repoStatus: 'clean',
+        dirtyFileCount: 0,
+        preferredPythonCommand: 'python3',
+        worktreeWritable: true,
+        runScriptPath: '/tmp/research/run_experiment.py',
+        notesPath: '/tmp/research/AUTORESEARCH.md',
+        recommendedRunCommand: 'python3 run_experiment.py',
+      },
+      metricName: 'cv_accuracy',
+      direction: 'higher',
+      maxIterations: 5,
+    });
+
+    await expect(sendMessage('system prompt', 'run once only')).resolves.toContain('training failed');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('repeats the metrics contract and local tool lane in recovery retries', async () => {
+    mockGetCurrentRunDir.mockReturnValue({
+      iterDir: '/tmp/research/runs/run-1/iter-003',
+      metricsPath: '/tmp/research/runs/run-1/iter-003/metrics.json',
+    });
+    mockRunHeadlessAgentTurn
+      .mockRejectedValueOnce(new Error('phase=agent_execution; message=disabled ssh tool'))
+      .mockResolvedValueOnce({
+        finalText: 'recovered with metrics contract',
+        finalReasoning: '',
+      });
+    mockGetDeterministicRecoveryDecision.mockReturnValue({
+      action: 'retry_with_plan',
+      summary: 'Stay on the local tool lane.',
+      rootCause: 'disallowed ssh tool usage',
+      nextPlan: 'Use execute_command for the experiment command and read_file/write_file/create_directory for file access. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.',
+      shouldRetry: true,
+      confidence: 'high',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
+
+    await expect(sendMessage('system prompt', 'recover with local lane')).resolves.toBe('recovered with metrics contract');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(2);
     expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        systemPrompt: expect.stringContaining('python3 run_experiment.py'),
+        systemPrompt: expect.stringContaining('Allowed tools for this retry: get_current_workspace, execute_command, read_file, write_file, create_directory.'),
+      }),
+    );
+    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('/tmp/research/runs/run-1/iter-003/metrics.json'),
+      }),
+    );
+    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'),
       }),
     );
   });

@@ -60,6 +60,8 @@ import { AutoResearchReflectionFailureError } from '../reflection';
 import { formatAutoResearchToolCatalog } from '../toolCatalog';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 
+const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
+
 describe('loopEngine integration', () => {
   let workDir: string;
   let sessionFilePath: string;
@@ -157,6 +159,8 @@ describe('loopEngine integration', () => {
     expect(firstSystemPrompt).toContain('## WORKSPACE CONTRACT');
     expect(firstSystemPrompt).toContain(`Modify run_experiment.py in ${firstRun.iterDir}/code, NOT in the original experiment dir`);
     expect(firstSystemPrompt).toContain(`Run the experiment from ${firstRun.iterDir}/code using `);
+    expect(firstSystemPrompt).toContain('Never call ssh_exec, ssh_read_file, or ssh_upload_file in this local run.');
+    expect(firstSystemPrompt).toContain('If the metric is missing, the command crashes, or the run times out, still write the JSON object with status FAILED, metricValue null, and a concrete failReason.');
 
     expect(mockNotifier.onLoopStopped).toHaveBeenCalledWith('3 consecutive failures', expect.any(Object));
   });
@@ -339,6 +343,437 @@ describe('loopEngine integration', () => {
     expect(hypothesis?.trim().length).toBeGreaterThan(0);
     expect(metricsJson).toContain('"metricName": "cv_accuracy"');
     expect(metricsJson).toContain('"metricValue": 0.9684');
+  });
+
+  it('stores structured iteration facts from metrics.json into the run record', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-structured-facts-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("run")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-structured-facts',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath: sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      const reportPath = path.join(runDir.iterDir, 'analysis.md');
+      await fs.writeFile(runDir.hypothesisPath, 'introduce cached preprocessing\n', 'utf8');
+      await fs.writeFile(reportPath, '# Analysis\n', 'utf8');
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: 0.9721,
+          status: 'IMPROVED',
+          hypothesis: 'introduce cached preprocessing',
+          change: 'Cache fold-local transformed batches',
+          reasoning: 'The profile showed repeated preprocessing dominating each fold, so caching should cut redundant work.',
+          artifactPaths: [reportPath],
+        }, null, 2),
+        'utf8',
+      );
+
+      return 'EXPERIMENT_RESULT: metric_value=0.9721 status=IMPROVED hypothesis="introduce cached preprocessing"';
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const run = useAutoResearchStore.getState().runHistory.find((entry) => entry.id === 'autoresearch-structured-facts');
+    expect(run?.iterations[0]?.change).toBe('Cache fold-local transformed batches');
+    expect(run?.iterations[0]?.reasoning).toContain('repeated preprocessing');
+    expect(run?.iterations[0]?.artifactPaths).toEqual(expect.arrayContaining([expect.stringContaining('analysis.md')]));
+  });
+
+  it('parses plain JSON agent output when metrics.json is missing', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-agent-json',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => JSON.stringify({
+      metricName: 'cv_accuracy',
+      metricValue: 0.9732,
+      status: 'IMPROVED',
+      hypothesis: 'cache folds before training',
+      change: 'Cache per-fold datasets before each run',
+      reasoning: 'This removes repeated preprocessing work across folds.',
+      artifactPaths: ['analysis.md'],
+    }));
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-agent-json');
+    expect(store.experiments[0]?.status).toBe('IMPROVED');
+    expect(store.experiments[0]?.metricValue).toBe(0.9732);
+    expect(run?.iterations[0]?.change).toBe('Cache per-fold datasets before each run');
+    expect(run?.iterations[0]?.reasoning).toContain('repeated preprocessing');
+  });
+
+  it('parses fenced JSON agent output with quoted fields when metrics.json is missing', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-fenced-json',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const payload = {
+      metricName: 'cv_accuracy',
+      metricValue: 0.9755,
+      status: 'IMPROVED' as const,
+      hypothesis: 'tune the "dropout" schedule',
+      change: 'Set "dropout" to 0.2 and keep "warmup" short',
+      reasoning: 'The "variance" spike suggested over-regularization, so a smaller dropout should help.',
+    };
+    const fencedPayload = ['Final result:', '', '```json', JSON.stringify(payload, null, 2), '```'].join('\n');
+    const sendMessage = jest.fn(async () => fencedPayload);
+
+    await startExperimentLoop(sendMessage);
+
+    const run = useAutoResearchStore.getState().runHistory.find((entry) => entry.id === 'autoresearch-fenced-json');
+    expect(run?.iterations[0]?.hypothesis).toBe('tune the "dropout" schedule');
+    expect(run?.iterations[0]?.change).toBe('Set "dropout" to 0.2 and keep "warmup" short');
+    expect(run?.iterations[0]?.reasoning).toContain('"variance" spike');
+  });
+
+  it('records an explicit parse error when structured output uses an invalid status', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-invalid-status',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => JSON.stringify({
+      metricName: 'cv_accuracy',
+      metricValue: 0.9701,
+      status: 'BROKEN',
+      hypothesis: 'invalid status should fail loudly',
+    }));
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    expect(store.experiments[0]?.status).toBe('FAILED');
+    expect(store.experiments[0]?.failReason).toContain('Invalid structured result status "BROKEN"');
+  });
+
+  it('keeps EXPERIMENT_RESULT as a deprecated fallback and emits a warning event', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-legacy-fallback',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => (
+      'EXPERIMENT_RESULT: metric_value=0.9711 status=IMPROVED hypothesis="legacy fallback path"'
+    ));
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-legacy-fallback');
+    expect(store.experiments[0]?.metricValue).toBe(0.9711);
+    expect(run?.events.some((event) => event.message.includes('deprecated EXPERIMENT_RESULT fallback'))).toBe(true);
+  });
+
+  it('completes an iteration from metrics.json after tool budget exhaustion without entering reflection_failed', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-metrics-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("baseline")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-budget-metrics',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: 0.9777,
+          status: 'IMPROVED',
+          hypothesis: 'budget exhausted after metrics were already written',
+          change: 'keep the written metrics artifact',
+          reasoning: 'The host should trust metrics.json first after budget exhaustion.',
+        }, null, 2),
+        'utf8',
+      );
+
+      return `${TOOL_BUDGET_EXHAUSTED_MARKER}\n${JSON.stringify({
+        metricName: 'cv_accuracy',
+        metricValue: null,
+        status: 'FAILED',
+        hypothesis: 'tool budget exhausted before evaluation completed',
+        change: '',
+        reasoning: 'synthetic fallback',
+        artifactPaths: [],
+        failReason: 'tool budget exhausted before evaluation completed',
+      }, null, 2)}`;
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-budget-metrics');
+    expect(store.experiments[0]?.status).toBe('IMPROVED');
+    expect(store.experiments[0]?.metricValue).toBe(0.9777);
+    expect(run?.status).not.toBe('reflection_failed');
+    expect(run?.events.some((event) => event.message.includes('evaluation_fallback_from_metrics'))).toBe(true);
+  });
+
+  it('fails a budget-exhausted iteration, rolls back its workspace, and continues the run', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-continue-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("baseline")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-budget-continue',
+      maxIterations: 3,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      if (runDir.iter === 1) {
+        await fs.writeFile(
+          runDir.metricsPath,
+          JSON.stringify({
+            metricName: 'cv_accuracy',
+            metricValue: 0.963,
+            status: 'IMPROVED',
+            hypothesis: 'first success',
+          }, null, 2),
+          'utf8',
+        );
+        return 'EXPERIMENT_RESULT: metric_value=0.963 status=IMPROVED hypothesis="first success"';
+      }
+
+      if (runDir.iter === 2) {
+        await fs.writeFile(path.join(runDir.codeDir, 'run_experiment.py'), 'print("budget changed")\n', 'utf8');
+        return `${TOOL_BUDGET_EXHAUSTED_MARKER}\n${JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: null,
+          status: 'FAILED',
+          hypothesis: 'tool budget exhausted before evaluation completed',
+          change: '',
+          reasoning: 'budget exhausted after the experiment attempt',
+          artifactPaths: [],
+          failReason: 'tool budget exhausted before evaluation completed',
+        }, null, 2)}`;
+      }
+
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: 0.971,
+          status: 'IMPROVED',
+          hypothesis: 'final recovery iteration',
+        }, null, 2),
+        'utf8',
+      );
+      return 'EXPERIMENT_RESULT: metric_value=0.971 status=IMPROVED hypothesis="final recovery iteration"';
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-budget-continue');
+    const runs = await listIterations(cfg, 'autoresearch-budget-continue');
+    const rolledBackCode = await readTargetText(cfg, path.join(runs[1].iterDir, 'code', 'run_experiment.py'));
+
+    expect(store.experiments.map((entry) => entry.status)).toEqual(['IMPROVED', 'FAILED', 'IMPROVED']);
+    expect(rolledBackCode).toBe('print("baseline")\n');
+    expect(run?.status).toBe('completed');
+    expect(run?.events.some((event) => event.message.includes('iteration_failed_due_to_budget'))).toBe(true);
+    expect(run?.events.some((event) => event.message.includes('rollback_completed'))).toBe(true);
+  });
+
+  it('stops after three consecutive budget-exhausted failures', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-threshold-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("baseline")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-budget-threshold',
+      maxIterations: 5,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => `${TOOL_BUDGET_EXHAUSTED_MARKER}\n${JSON.stringify({
+      metricName: 'cv_accuracy',
+      metricValue: null,
+      status: 'FAILED',
+      hypothesis: 'tool budget exhausted before evaluation completed',
+      change: '',
+      reasoning: 'budget exhausted repeatedly',
+      artifactPaths: [],
+      failReason: 'tool budget exhausted before evaluation completed',
+    }, null, 2)}`);
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-budget-threshold');
+    expect(store.experiments).toHaveLength(3);
+    expect(store.consecutiveFailures).toBe(3);
+    expect(store.loopState).toBe('stopped');
+    expect(run?.status).toBe('failed');
+  });
+
+  it('captures diffs from the iteration workspace without mutating the source experiment repo', async () => {
+    const worktreeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-iter-workspace-'));
+    extraCleanupDirs.add(worktreeRoot);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-source-experiment-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("original")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    const cfg = createLocalSshConfig(worktreeRoot);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-iter-workspace',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath: path.join(worktreeRoot, 'session.md'),
+    });
+
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      await fs.writeFile(path.join(runDir.codeDir, 'run_experiment.py'), 'print("iteration change")\n', 'utf8');
+      await fs.writeFile(runDir.hypothesisPath, 'change only the iteration snapshot\n', 'utf8');
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: null,
+          status: 'FAILED',
+          hypothesis: 'change only the iteration snapshot',
+          failReason: 'expected failure for rollback path',
+        }, null, 2),
+        'utf8',
+      );
+
+      return 'EXPERIMENT_RESULT: metric_value=null status=FAILED fail_reason="expected failure for rollback path" hypothesis="change only the iteration snapshot"';
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const [firstRun] = await listIterations(cfg, 'autoresearch-iter-workspace');
+    const diff = await readTargetText(cfg, firstRun.diffPath);
+    const sourceExperiment = await fs.readFile(path.join(experimentDir, 'run_experiment.py'), 'utf8');
+
+    expect(diff).toContain('-print("original")');
+    expect(diff).toContain('+print("iteration change")');
+    expect(sourceExperiment).toBe('print("original")\n');
+  });
+
+  it('refuses to start when the source experiment repo is already dirty', async () => {
+    const worktreeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-dirty-workspace-'));
+    extraCleanupDirs.add(worktreeRoot);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-dirty-source-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("baseline")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+    await fs.writeFile(path.join(experimentDir, 'run_experiment.py'), 'print("dirty local edit")\n', 'utf8');
+
+    const cfg = createLocalSshConfig(worktreeRoot);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-dirty-source',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath: path.join(worktreeRoot, 'session.md'),
+    });
+
+    const sendMessage = jest.fn(async () => 'should not run');
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const dirtySource = await fs.readFile(path.join(experimentDir, 'run_experiment.py'), 'utf8');
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.errorMessage).toContain('AutoResearch will not reset a dirty repository automatically');
+    expect(dirtySource).toBe('print("dirty local edit")\n');
   });
 
   it('marks the run as failed instead of leaving it running after agent execution errors', async () => {

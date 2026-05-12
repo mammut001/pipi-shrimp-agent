@@ -17,7 +17,7 @@ jest.mock('../runDir', () => ({
 
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { createLocalSshConfig } from './helpers';
-import { ensureAutoResearchTerminal, runInTerminal } from '../terminalRunner';
+import { clearCurrentRunDir, ensureAutoResearchTerminal, getCurrentRunDir, runInTerminal, setCurrentRunDir } from '../terminalRunner';
 
 describe('terminalRunner reflection failure handling', () => {
   const workDir = '/tmp/autoresearch-terminal-test';
@@ -41,7 +41,40 @@ describe('terminalRunner reflection failure handling', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+    clearCurrentRunDir();
     useAutoResearchStore.getState().resetSession();
+  });
+
+  it('hides stale currentRunDir values once a different run becomes active', () => {
+    setCurrentRunDir({
+      sessionId: 'autoresearch-terminal-runner',
+      iter: 1,
+      iterDir: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z`,
+      codeDir: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/code`,
+      logsDir: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/logs`,
+      transcriptPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/transcript.md`,
+      systemPromptPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/system_prompt.txt`,
+      hypothesisPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/hypothesis.md`,
+      diffPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/diff.patch`,
+      metricsPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/metrics.json`,
+      statusPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/status.json`,
+      reflectionInputPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/reflection.input.json`,
+      reflectionRawPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/reflection.raw.txt`,
+      reflectionParsedPath: `${workDir}/runs/autoresearch-terminal-runner/iter-001-2026-05-12T00-00-00Z/reflection.parsed.json`,
+    });
+
+    expect(getCurrentRunDir()?.sessionId).toBe('autoresearch-terminal-runner');
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-terminal-next-run',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: createLocalSshConfig(workDir),
+      sessionFilePath: `${workDir}/session-next.md`,
+    });
+
+    expect(getCurrentRunDir()).toBeNull();
   });
 
   it('stops waiting for terminal readiness when the run becomes reflection_failed', async () => {

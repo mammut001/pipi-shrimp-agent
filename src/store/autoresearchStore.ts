@@ -11,6 +11,7 @@ import {
   clipLiveOutputExcerpt,
   loadPersistedAutoResearchHistory,
   persistAutoResearchHistory,
+  redactAutoResearchSensitiveText,
   toHistoryConfigSnapshot,
   type AutoResearchIterationRecord,
   type AutoResearchRunEvent,
@@ -191,9 +192,13 @@ function createRunEvent(
     timestamp,
     level: input.level,
     phase: input.phase,
-    message: input.message,
+    message: redactAutoResearchSensitiveText(input.message),
     metadata: input.metadata,
   };
+}
+
+function sanitizeOptionalText(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : redactAutoResearchSensitiveText(value);
 }
 
 function mapExperimentStatusToIterationStatus(status: ExperimentStatus): AutoResearchIterationRecord['status'] {
@@ -212,11 +217,11 @@ function toIterationRecord(entry: ExperimentEntry, existing?: AutoResearchIterat
     id: existing?.id ?? `iter-${entry.iteration}`,
     index: entry.iteration,
     status: mapExperimentStatusToIterationStatus(entry.status),
-    hypothesis: entry.hypothesis,
-    change: entry.change,
-    reasoning: entry.reasoning || existing?.reasoning,
+    hypothesis: redactAutoResearchSensitiveText(entry.hypothesis),
+    change: redactAutoResearchSensitiveText(entry.change),
+    reasoning: entry.reasoning ? redactAutoResearchSensitiveText(entry.reasoning) : existing?.reasoning,
     metricValue: entry.metricValue,
-    error: entry.failReason ?? existing?.error ?? null,
+    error: entry.failReason ? redactAutoResearchSensitiveText(entry.failReason) : existing?.error ?? null,
     commitHash: existing?.commitHash,
     startedAt: existing?.startedAt,
     endedAt: entry.timestamp,
@@ -310,6 +315,55 @@ export function getAutoResearchRunReason(
   state: Pick<ExperimentSession, 'runHistory' | 'id' | 'reason' | 'errorMessage'>,
 ): string | undefined {
   return getActiveAutoResearchRun(state)?.reason ?? state.reason ?? state.errorMessage;
+}
+
+function mapRunStatusToLoopState(status: AutoResearchRunStatus | undefined): LoopState {
+  switch (status) {
+    case 'running':
+    case 'waiting_rate_limit':
+      return 'running';
+    case 'reflection_failed':
+    case 'failed':
+      return 'error';
+    case 'stopped':
+    case 'completed':
+    case 'interrupted':
+      return 'stopped';
+    case 'draft':
+    default:
+      return 'idle';
+  }
+}
+
+export interface AutoResearchSelectedRunContext {
+  run: AutoResearchRunRecord | null;
+  isActive: boolean;
+  liveOutput: string;
+  reason?: string;
+  statusMessage?: string;
+  loopState: LoopState;
+  selectedIterationIndex: number;
+}
+
+export function getSelectedAutoResearchRunContext(
+  state: Pick<ExperimentSession, 'runHistory' | 'selectedRunId' | 'id' | 'liveOutput' | 'errorMessage' | 'reason' | 'statusMessage' | 'loopState' | 'selectedExperiment'>,
+): AutoResearchSelectedRunContext {
+  const run = getSelectedAutoResearchRun(state);
+  const isActive = Boolean(run && state.id && run.id === state.id);
+  const iterations = run?.iterations ?? [];
+  const selectedIterationIndex = state.selectedExperiment >= 0 && state.selectedExperiment < iterations.length
+    ? state.selectedExperiment
+    : -1;
+
+  return {
+    run,
+    isActive,
+    liveOutput: isActive ? state.liveOutput : (run?.liveOutputExcerpt || ''),
+    reason: isActive ? (run?.reason ?? state.reason ?? state.errorMessage) : run?.reason,
+    statusMessage: isActive ? state.statusMessage : undefined,
+    loopState: isActive ? state.loopState : mapRunStatusToLoopState(run?.status),
+    selectedIterationIndex,
+  };
 }
 
 interface AutoResearchStore extends ExperimentSession {
@@ -470,10 +524,11 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     const updatedAt = options?.endedAt ?? new Date().toISOString();
     const clearReason = ['running', 'waiting_rate_limit', 'completed', 'stopped'].includes(status);
     const nextReason = options?.reason !== undefined
-      ? options.reason
+      ? sanitizeOptionalText(options.reason)
       : clearReason
         ? undefined
         : state.reason;
+    const nextSummary = sanitizeOptionalText(options?.summary);
 
     return {
       reason: nextReason,
@@ -482,9 +537,9 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         status,
         updatedAt,
         endedAt: options?.endedAt ?? (clearReason ? undefined : run.endedAt ?? updatedAt),
-        summary: options?.summary ?? run.summary,
+        summary: nextSummary ?? run.summary,
         reason: options?.reason !== undefined
-          ? options.reason
+          ? sanitizeOptionalText(options.reason)
           : clearReason
             ? undefined
             : run.reason,
@@ -494,26 +549,28 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
 
   setReflectionFailed: (reason, options) => set((state) => {
     const endedAt = options?.endedAt ?? new Date().toISOString();
+    const sanitizedReason = redactAutoResearchSensitiveText(reason);
+    const sanitizedSummary = sanitizeOptionalText(options?.summary);
     return {
       loopState: 'error',
-      errorMessage: reason,
+      errorMessage: sanitizedReason,
       statusMessage: undefined,
-      reason,
+      reason: sanitizedReason,
       terminalReady: false,
       ...withActiveRunUpdate(state, (run) => ({
         ...run,
         status: 'reflection_failed',
         updatedAt: endedAt,
         endedAt,
-        summary: options?.summary ?? reason,
-        reason,
+        summary: sanitizedSummary ?? sanitizedReason,
+        reason: sanitizedReason,
         events: [...run.events, createRunEvent(run.id, {
           timestamp: endedAt,
           level: 'error',
           phase: 'system',
           message: 'Run state changed: running → reflection_failed',
           metadata: {
-            reason,
+            reason: sanitizedReason,
           },
         })],
       })),
@@ -522,34 +579,35 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
 
   setError: (msg) => set((state) => {
     const endedAt = new Date().toISOString();
+    const sanitizedMessage = redactAutoResearchSensitiveText(msg);
     return {
       loopState: 'error',
-      errorMessage: msg,
+      errorMessage: sanitizedMessage,
       statusMessage: undefined,
-      reason: msg,
+      reason: sanitizedMessage,
       ...withActiveRunUpdate(state, (run) => ({
         ...run,
         status: 'failed',
         updatedAt: endedAt,
         endedAt,
-        summary: msg,
-        reason: msg,
+        summary: sanitizedMessage,
+        reason: sanitizedMessage,
         events: [...run.events, createRunEvent(run.id, {
           timestamp: endedAt,
           level: 'error',
           phase: 'system',
-          message: msg,
+          message: sanitizedMessage,
         })],
       })),
     };
   }),
 
   setStatusMessage: (msg) => set((state) => ({
-    statusMessage: msg,
+    statusMessage: sanitizeOptionalText(msg),
     ...withActiveRunUpdate(state, (run) => ({
       ...run,
       updatedAt: new Date().toISOString(),
-      summary: msg ?? run.summary,
+      summary: sanitizeOptionalText(msg) ?? run.summary,
     })),
   })),
 
@@ -600,7 +658,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         iterations: nextIterations,
         bestMetricValue: shouldUpdateBest ? entry.metricValue : run.bestMetricValue ?? null,
         bestIteration: shouldUpdateBest ? entry.iteration : run.bestIteration,
-        summary: entry.failReason ?? run.summary,
+        summary: entry.failReason ? redactAutoResearchSensitiveText(entry.failReason) : run.summary,
       };
     }),
   })),
@@ -633,13 +691,13 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         id: existing?.id ?? `${run.id}-iter-${input.iteration}`,
         index: input.iteration,
         status: input.status,
-        hypothesis: input.hypothesis ?? existing?.hypothesis,
-        change: input.change ?? existing?.change,
-        reasoning: input.reasoning ?? existing?.reasoning,
+        hypothesis: input.hypothesis ? redactAutoResearchSensitiveText(input.hypothesis) : existing?.hypothesis,
+        change: input.change ? redactAutoResearchSensitiveText(input.change) : existing?.change,
+        reasoning: input.reasoning ? redactAutoResearchSensitiveText(input.reasoning) : existing?.reasoning,
         metricValue: input.metricValue ?? existing?.metricValue,
         improvement: input.improvement ?? existing?.improvement,
         commitHash: input.commitHash ?? existing?.commitHash,
-        error: input.error ?? existing?.error ?? null,
+        error: input.error ? redactAutoResearchSensitiveText(input.error) : existing?.error ?? null,
         startedAt: existing?.startedAt,
         endedAt: input.endedAt ?? existing?.endedAt,
         artifactPaths: input.artifactPaths ?? existing?.artifactPaths,

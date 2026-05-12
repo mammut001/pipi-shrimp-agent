@@ -15,6 +15,15 @@ interface RawBashResult {
   exit_code?: number;
 }
 
+function normalizePath(value: string): string {
+  return value.replace(/[\\/]+$/, '');
+}
+
+function isAutoResearchWorkspacePath(path: string): boolean {
+  const normalized = normalizePath(path);
+  return /\/runs\/.+\/iter-\d{3}-[^/]+\/code$/.test(normalized);
+}
+
 async function runRemote(
   cfg: SshConfig,
   cmd: string,
@@ -60,6 +69,13 @@ export async function rollback(
   cfg: SshConfig,
   options: { terminal?: boolean } = {},
 ): Promise<{ success: boolean; message: string }> {
+  if (!isAutoResearchWorkspacePath(cfg.remoteWorkDir)) {
+    return {
+      success: false,
+      message: `Refusing to rollback outside the AutoResearch iteration workspace: ${cfg.remoteWorkDir}`,
+    };
+  }
+
   // Revert all changes
   await runRemote(cfg, 'git checkout -- .', 30, options.terminal ?? false);
   // Also clean untracked files created by the experiment
@@ -84,6 +100,13 @@ export async function commitExperiment(
   metricValue: number,
   options: { terminal?: boolean } = {},
 ): Promise<{ success: boolean; commitHash?: string; message: string }> {
+  if (!isAutoResearchWorkspacePath(cfg.remoteWorkDir)) {
+    return {
+      success: false,
+      message: `Refusing to commit outside the AutoResearch iteration workspace: ${cfg.remoteWorkDir}`,
+    };
+  }
+
   const msg = `exp-${iteration}: ${description} | ${metricName}=${metricValue}`;
 
   // Stage all

@@ -30,6 +30,7 @@ export async function* runChatTurn(
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
   const maxToolBudget = settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
+  const toolBudgetReserve = Math.min(4, Math.max(1, maxToolBudget - 1));
   const maxModelRounds = Math.max(maxToolBudget + 8, 25);
   
   // Clone to avoid mutating the original array passed from Zustand directly
@@ -220,7 +221,7 @@ export async function* runChatTurn(
           content: allContent[index] ?? 'Error: no result returned for tool',
         })),
       );
-      if (toolBudgetSummary.toolBudgetUsedRaw >= maxToolBudget) {
+      if (toolBudgetSummary.toolBudgetUsedRaw >= Math.max(0, maxToolBudget - toolBudgetReserve)) {
         reserveFinalResponseRound = true;
       }
       for (let i = 0; i < pendingToolCalls.length; i++) {

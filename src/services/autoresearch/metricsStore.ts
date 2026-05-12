@@ -10,6 +10,9 @@ export interface IterationMetrics {
   status: ExperimentStatus;
   failReason?: string;
   hypothesis: string;
+  change?: string;
+  reasoning?: string;
+  artifactPaths?: string[];
   commitHash?: string;
   durationMs: number;
   startedAt: string;

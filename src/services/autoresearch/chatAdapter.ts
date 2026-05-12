@@ -49,6 +49,9 @@ let adapterSessionCounter = 0;
 const MAX_HISTORY = 20;
 const MAX_RECOVERY_RETRIES = 1;
 const MAX_REFLECTION_PASSES = 2;
+const TOOL_BUDGET_RESERVE = 4;
+const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
+const TOOL_BUDGET_EXHAUSTION_FAIL_REASON = 'tool budget exhausted before evaluation completed';
 
 export interface AutoResearchSendMessageOptions {
   environmentSummary?: AutoResearchEnvironmentSummary;
@@ -63,6 +66,94 @@ function truncateTranscriptResult(result: string, limit = 4000): string {
     return result;
   }
   return `${result.slice(0, limit)}\n...[truncated ${result.length - limit} chars]`;
+}
+
+function isNearToolBudgetLimit(summary: ToolBudgetSummary | undefined): boolean {
+  if (!summary) {
+    return false;
+  }
+  return summary.toolBudgetUsedRaw >= Math.max(0, summary.toolBudgetMax - TOOL_BUDGET_RESERVE);
+}
+
+function emitBudgetNearLimitEvent(summary: ToolBudgetSummary | undefined): void {
+  if (!isNearToolBudgetLimit(summary)) {
+    return;
+  }
+
+  useAutoResearchStore.getState().addRunEvent?.({
+    level: 'warn',
+    phase: 'agent_execution',
+    message: `budget_near_limit: ${summary!.toolBudgetUsed}/${summary!.toolBudgetMax} used; reserving ${TOOL_BUDGET_RESERVE} tool calls for evaluation and cleanup.`,
+    metadata: {
+      tool_budget_used: summary!.toolBudgetUsed,
+      tool_budget_max: summary!.toolBudgetMax,
+      reserve: TOOL_BUDGET_RESERVE,
+      remaining: getRemainingToolBudget(summary!),
+    },
+  });
+}
+
+function isExperimentRunCommand(command: string | undefined, environmentSummary?: AutoResearchEnvironmentSummary): boolean {
+  const normalized = command?.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const recommended = environmentSummary?.recommendedRunCommand?.trim();
+  if (recommended && (normalized.includes(recommended) || recommended.includes(normalized))) {
+    return true;
+  }
+
+  const runScriptPath = environmentSummary?.runScriptPath?.trim();
+  if (runScriptPath && normalized.includes(runScriptPath)) {
+    return true;
+  }
+
+  return /\brun_experiment\.py\b/.test(normalized);
+}
+
+function getLatestExperimentFailure(
+  toolResults: AutoResearchObservedToolResult[],
+  environmentSummary?: AutoResearchEnvironmentSummary,
+): AutoResearchObservedToolResult | null {
+  for (let index = toolResults.length - 1; index >= 0; index -= 1) {
+    const result = toolResults[index];
+    const failed = Boolean(result.stderr) || (typeof result.exitCode === 'number' && result.exitCode !== 0);
+    if (!failed) {
+      continue;
+    }
+    if (isExperimentRunCommand(result.command, environmentSummary)) {
+      return result;
+    }
+  }
+  return null;
+}
+
+function isReflectionParserFailure(result: AutoResearchReflectionDecisionResult | null): boolean {
+  return Boolean(result && result.parserPath === null && result.parseFailedAttempts.length > 0);
+}
+
+function buildIterationFailureOutput(input: {
+  metricName: string;
+  failReason: string;
+  hypothesis: string;
+  reasoning: string;
+  budgetExhausted?: boolean;
+}): string {
+  const payload = {
+    metricName: input.metricName,
+    metricValue: null,
+    status: 'FAILED',
+    hypothesis: input.hypothesis,
+    change: '',
+    reasoning: input.reasoning,
+    artifactPaths: [],
+    failReason: input.failReason,
+  };
+
+  return input.budgetExhausted
+    ? `${TOOL_BUDGET_EXHAUSTED_MARKER}\n${JSON.stringify(payload, null, 2)}`
+    : JSON.stringify(payload, null, 2);
 }
 
 async function writeIterationTranscriptHeader(userMessage: string): Promise<void> {
@@ -106,6 +197,8 @@ function buildConvergenceRetryPrompt(systemPrompt: string, maxRounds: number | n
 - Restart this SAME iteration from scratch.
 - Use only these tools: ${allowedTools.join(', ')}.
 - Do at most one batched inspection step before editing or running the experiment.
+- Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for reading metrics/logs, writing the final result, and cleanup.
+- Run the expensive experiment command at most once in this iteration. If it fails, read logs/metrics and emit FAILED instead of retrying.
 - If the environment is still unclear after that inspection step, immediately write ${getCurrentRunDir()?.metricsPath ?? 'metrics.json'} with status FAILED and failReason "Exceeded tool-round budget while inspecting environment", then emit EXPERIMENT_RESULT and stop.
 - Do not keep exploring, do not ask for help, and ${toolDetourGuard}`;
 }
@@ -115,8 +208,14 @@ function buildRecoveryPrompt(
   decision: AutoResearchReflectionDecision,
   failureKind: AutoResearchFailureKind,
 ): string {
+  const store = useAutoResearchStore.getState();
+  const allowedTools = buildAutoResearchToolCatalog(store.sshConfig);
+  const metricsPath = getCurrentRunDir()?.metricsPath ?? 'metrics.json';
   const nextCommand = decision.nextCommand ? `- If you run the experiment again, use this exact command: ${decision.nextCommand}` : '';
   const nextPlan = decision.nextPlan ? `- Recovery plan: ${decision.nextPlan}` : '';
+  const toolLaneGuard = store.sshConfig?.mode === 'local'
+    ? 'Stay on the local tool lane only: execute_command, read_file, write_file, create_directory. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'
+    : 'Stay on the SSH tool lane only: ssh_exec, ssh_read_file, ssh_upload_file. Do not call execute_command, read_file, write_file, or create_directory.';
 
   return `${systemPrompt}
 
@@ -125,9 +224,14 @@ function buildRecoveryPrompt(
 - Reflection decision: ${decision.action}
 - Summary: ${decision.summary}
 ${decision.rootCause ? `- Root cause: ${decision.rootCause}` : ''}
+- Allowed tools for this retry: ${allowedTools.join(', ')}.
 ${nextCommand}
 ${nextPlan}
+- Before finishing the retry, write ${metricsPath} with a single valid JSON object matching the metrics contract, even on FAILED/null-metric outcomes.
 - Do not repeat the failed command/tool choice if a better recovery path is already specified above.
+- Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for metrics/log reads, final result writing, and rollback/cleanup.
+- If the expensive experiment command already failed once in this iteration, do not patch and rerun it. Read logs/metrics and finalize FAILED.
+- ${toolLaneGuard}
 - Keep the retry bounded: one focused recovery attempt only.`;
 }
 
@@ -302,9 +406,6 @@ export function createAutoResearchSendMessage(
   fixedAgentConfig?: ResolvedAgentConfig | null,
   options: AutoResearchSendMessageOptions = {},
 ): (systemPrompt: string, userMessage: string) => Promise<string> {
-  // Persistent message history across iterations within one loop session
-  const messageHistory: any[] = [];
-
   return async (systemPrompt: string, userMessage: string): Promise<string> => {
     const agentConfig = fixedAgentConfig ?? resolveActiveAgentConfig();
     const reflectionConfig = options.reflectionConfig ?? agentConfig;
@@ -313,13 +414,7 @@ export function createAutoResearchSendMessage(
       throw new Error(formatAgentConfigValidationError(agentConfig, validationIssues));
     }
 
-    // Build messages for this iteration. Keep a sliding window to avoid unbounded growth.
-    if (messageHistory.length > MAX_HISTORY * 2) {
-      messageHistory.splice(0, messageHistory.length - MAX_HISTORY);
-    }
-
     const turnMessages = [
-      ...messageHistory,
       {
         role: 'user',
         content: userMessage,
@@ -398,6 +493,7 @@ export function createAutoResearchSendMessage(
         });
 
         emitToolBudgetEvent(result.toolBudgetSummary);
+        emitBudgetNearLimitEvent(result.toolBudgetSummary);
         assistantText = result.finalText;
         lastError = undefined;
         break;
@@ -406,6 +502,7 @@ export function createAutoResearchSendMessage(
         const storeState = useAutoResearchStore.getState();
         const toolBudgetSummary = getToolBudgetSummaryFromUnknown(error);
         emitToolBudgetEvent(toolBudgetSummary);
+        emitBudgetNearLimitEvent(toolBudgetSummary);
         const reflectionInput = buildReflectionInputFromState({
           systemPrompt,
           metric: options.metricName ?? storeState.metricName,
@@ -423,6 +520,7 @@ export function createAutoResearchSendMessage(
             : (isToolRoundLimitError(error) ? 0 : undefined),
         });
         const failureKind = classifyAutoResearchFailure(error);
+          const experimentFailure = getLatestExperimentFailure(toolResults, options.environmentSummary);
 
         let decision = getDeterministicRecoveryDecision(reflectionInput);
         let reflectionResult: AutoResearchReflectionDecisionResult | null = null;
@@ -451,6 +549,37 @@ export function createAutoResearchSendMessage(
             await persistReflectionArtifacts(reflectionResult);
           }
           await persistReflectionDecision(decision, toolBudgetSummary);
+          const reflectionParserFailure = isReflectionParserFailure(reflectionResult);
+          const shouldFinalizeAsIterationFailure = isToolRoundLimitError(error)
+            || Boolean(experimentFailure)
+            || (decision.action === 'mark_iteration_failed' && !reflectionParserFailure)
+            || decision.action === 'stop_tool_exhausted';
+
+          if (shouldFinalizeAsIterationFailure) {
+            const failReason = isToolRoundLimitError(error)
+              ? TOOL_BUDGET_EXHAUSTION_FAIL_REASON
+              : experimentFailure?.stderr?.trim()
+                || decision.userMessage
+                || decision.summary;
+            const reasoning = isToolRoundLimitError(error)
+              ? `${decision.summary}${decision.rootCause ? ` Root cause: ${decision.rootCause}` : ''}`.trim()
+              : experimentFailure?.stderr?.trim()
+                || decision.summary
+                || formatError(error);
+
+            assistantText = buildIterationFailureOutput({
+              metricName: options.metricName ?? storeState.metricName,
+              failReason,
+              hypothesis: isToolRoundLimitError(error)
+                ? 'tool budget exhausted before evaluation completed'
+                : 'experiment command failed before evaluation completed',
+              reasoning,
+              budgetExhausted: isToolRoundLimitError(error),
+            });
+            lastError = undefined;
+            break;
+          }
+
           if (decision.shouldRetry && recoveryRetries < MAX_RECOVERY_RETRIES) {
             recoveryRetries += 1;
             attemptPrompt = decision.action === 'switch_command'
@@ -487,16 +616,6 @@ export function createAutoResearchSendMessage(
       });
       throw new Error(diagnosticMessage);
     }
-
-    // Record assistant response in history for context continuity
-    messageHistory.push({
-      role: 'user',
-      content: userMessage,
-    });
-    messageHistory.push({
-      role: 'assistant',
-      content: assistantText,
-    });
 
     return assistantText;
   };

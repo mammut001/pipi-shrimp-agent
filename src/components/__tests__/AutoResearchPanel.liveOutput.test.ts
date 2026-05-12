@@ -81,6 +81,15 @@ const mockState = {
   setShowSetupModal: mockSetShowSetupModal,
   resetSession: mockResetSession,
   selectedRun: run,
+  selectedRunContext: {
+    run,
+    isActive: true,
+    liveOutput: '\u001b[31mline 1\u001b[0m\nline 2\n',
+    reason: undefined,
+    statusMessage: undefined,
+    loopState: 'running' as const,
+    selectedIterationIndex: -1,
+  },
   sortedRuns: [run],
 };
 
@@ -88,6 +97,10 @@ function resolveState() {
   return {
     ...mockState,
     selectedRun: run,
+    selectedRunContext: {
+      ...mockState.selectedRunContext,
+      run,
+    },
     sortedRuns: [run],
   };
 }
@@ -98,6 +111,7 @@ jest.mock('@/store/autoresearchStore', () => ({
     return typeof selector === 'function' ? selector(state) : state;
   },
   getSelectedAutoResearchRun: (state: ReturnType<typeof resolveState>) => state.selectedRun,
+  getSelectedAutoResearchRunContext: (state: ReturnType<typeof resolveState>) => state.selectedRunContext,
   getSortedAutoResearchRuns: (state: ReturnType<typeof resolveState>) => state.sortedRuns,
 }));
 

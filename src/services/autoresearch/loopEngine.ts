@@ -4,7 +4,7 @@
 
 import { useAutoResearchStore, type ExperimentEntry, type ExperimentStatus, type SshConfig } from '@/store/autoresearchStore';
 import { logExperiment } from './expLogger';
-import { rollback, isRemoteClean, getRemoteDiff } from './rollback';
+import { rollback, getRemoteDiff } from './rollback';
 import { createNotifier } from './notifier';
 import { describeTarget, ensureSshpassAvailable, shellEscapePath } from '@/utils/remoteExec';
 import { assertSupportedPlatform } from './platformGuard';
@@ -50,8 +50,17 @@ interface ParsedResult {
   metricValue: number | null;
   status: ExperimentStatus;
   hypothesis: string;
+  change: string;
+  reasoning: string;
+  artifactPaths: string[];
+  parseSource: 'metrics_json' | 'agent_json' | 'deprecated_result_line';
   failReason?: string;
   extra?: Record<string, number | string | boolean>;
+}
+
+interface ParsedIterationMetricsResult {
+  parsed: ParsedResult | null;
+  parseError?: string;
 }
 
 interface PromptInput {
@@ -70,6 +79,9 @@ interface StartupContext {
   sessionContent: string;
 }
 
+const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
+const TOOL_BUDGET_RESERVE = 4;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -84,7 +96,7 @@ function buildSystemPrompt({
   const isLocal = sshConfig.mode === 'local';
   const toolProfile = getAutoResearchToolProfile(sshConfig);
   const allowedTools = formatAutoResearchToolCatalog(sshConfig);
-  const iterationCodeDir = `${runDir.iterDir}/code`;
+  const iterationCodeDir = runDir.codeDir;
   const envLine = isLocal
     ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
     : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
@@ -97,6 +109,9 @@ function buildSystemPrompt({
   const executionRequirement = isLocal
     ? `Run the experiment command through ${toolProfile.commandTool} with cwd set to ${iterationCodeDir}.`
     : `Run the experiment command through ${toolProfile.commandTool}. Use terminal=true only when the command needs a PTY or live terminal output; otherwise keep it false or omitted.`;
+  const toolLaneGuard = isLocal
+    ? 'Never call ssh_exec, ssh_read_file, or ssh_upload_file in this local run.'
+    : 'Never call execute_command, read_file, write_file, or create_directory in this SSH run.';
 
   return `# AutoResearch Agent
 
@@ -142,15 +157,19 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 2. Before making changes, do at most one batched inspection pass. ${inspectionScope}
 3. Write a short hypothesis summary to ${runDir.hypothesisPath}.
 4. ${executionRequirement}
-5. After the run, write JSON to ${runDir.metricsPath} with:
-   {"metricName":"<name>","metricValue":<number|null>,"status":"IMPROVED|NOT_IMPROVED|FAILED","hypothesis":"<one line>","failReason":"<optional>","extra":{"<optional>":"<optional>"}}
-6. Also emit a final fallback line:
+5. Before finishing, write exactly one valid JSON object to ${runDir.metricsPath} with:
+  {"metricName":"<name>","metricValue":<number|null>,"status":"IMPROVED|NOT_IMPROVED|FAILED","hypothesis":"<one line>","change":"<short summary>","reasoning":"<brief reasoning>","artifactPaths":["<optional path>"],"failReason":"<optional>","extra":{"<optional>":"<optional>"}}
+6. If the metric is missing, the command crashes, or the run times out, still write the JSON object with status FAILED, metricValue null, and a concrete failReason.
+7. Also emit a final fallback line as a deprecated backup only if the host cannot read metrics.json:
    EXPERIMENT_RESULT: metric_value=<number|null> status=<IMPROVED|NOT_IMPROVED|FAILED> hypothesis="<one line>"
    or
    EXPERIMENT_RESULT: metric_value=null status=FAILED fail_reason="<reason>" hypothesis="<one line>"
-7. If the change is not improved or the run fails, revert your working tree before finishing.
-8. Do not repeat dead ends from the living doc unless you have a materially different reason.
-9. If you are still exploring after the first inspection pass, stop exploring and either run the experiment or emit a FAILED result with a concrete failReason.
+8. Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for reading metrics/logs, writing the final result, and cleanup. If you are near that reserve, stop exploring or modifying code and finalize.
+9. Run the expensive experiment or training/evaluation command at most once in this iteration. If it fails, read logs or metrics and emit FAILED instead of patching and rerunning.
+10. If the change is not improved or the run fails, revert your working tree before finishing.
+11. ${toolLaneGuard}
+12. Do not repeat dead ends from the living doc unless you have a materially different reason.
+13. If you are still exploring after the first inspection pass, stop exploring and either run the experiment or emit a FAILED result with a concrete failReason.
 `;
 }
 
@@ -171,44 +190,246 @@ function parseMetricNumber(value: unknown): number | null {
   return null;
 }
 
-function normalizeParsedResult(
-  candidate: Record<string, unknown>,
-  metricName: string,
-): ParsedResult | null {
-  const hypothesis = String(candidate.hypothesis ?? candidate.hypothesis_text ?? '').trim();
-  const status = String(candidate.status ?? '').trim() as ExperimentStatus;
-  if (!hypothesis || !['IMPROVED', 'NOT_IMPROVED', 'FAILED'].includes(status)) {
-    return null;
+function parseMetricValue(value: unknown): { value: number | null; error?: string } {
+  if (value === null) {
+    return { value: null };
+  }
+
+  if (value === undefined) {
+    return {
+      value: null,
+      error: 'Invalid structured result metricValue "<missing>". Expected a finite number or null.',
+    };
+  }
+
+  const parsed = parseMetricNumber(value);
+  if (parsed !== null) {
+    return { value: parsed };
+  }
+
+  if (typeof value === 'string' && value.trim().toLowerCase() === 'null') {
+    return { value: null };
   }
 
   return {
-    metricName: String(candidate.metricName ?? candidate.metric_name ?? metricName),
-    metricValue: parseMetricNumber(candidate.metricValue ?? candidate.metric_value),
-    status,
-    hypothesis,
-    failReason: candidate.failReason ? String(candidate.failReason) : candidate.fail_reason ? String(candidate.fail_reason) : undefined,
-    extra: candidate.extra && typeof candidate.extra === 'object'
-      ? candidate.extra as Record<string, number | string | boolean>
-      : undefined,
+    value: null,
+    error: `Invalid structured result metricValue "${String(value)}". Expected a finite number or null.`,
   };
 }
 
-function parseExperimentResult(agentOutput: string, metricName: string): ParsedResult | null {
+function extractBalancedJsonObjects(text: string): string[] {
+  const matches: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      if (depth === 0) {
+        start = index;
+      }
+      depth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      if (depth === 0) {
+        continue;
+      }
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        matches.push(text.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return matches;
+}
+
+function parseStructuredJsonCandidates(
+  candidates: string[],
+  metricName: string,
+): ParsedIterationMetricsResult {
+  let parseError: string | undefined;
+
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = candidates[index]?.trim();
+    if (!candidate) {
+      continue;
+    }
+
+    try {
+      const raw = JSON.parse(candidate);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        parseError ??= 'Invalid structured result: expected a JSON object.';
+        continue;
+      }
+
+      const normalized = normalizeParsedResult(raw as Record<string, unknown>, metricName, 'agent_json');
+      if (normalized.parsed) {
+        return normalized;
+      }
+      parseError ??= normalized.parseError;
+    } catch (error) {
+      parseError ??= `Invalid structured JSON result: ${formatError(error)}`;
+    }
+  }
+
+  return { parsed: null, parseError };
+}
+
+function parseAgentJsonResult(agentOutput: string, metricName: string): ParsedIterationMetricsResult {
+  let parseError: string | undefined;
+  const fencedBlocks = [...agentOutput.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)]
+    .map((match) => match[1])
+    .filter((block): block is string => typeof block === 'string' && block.includes('{'));
+
+  if (fencedBlocks.length > 0) {
+    const fencedResult = parseStructuredJsonCandidates(
+      fencedBlocks.flatMap((block) => extractBalancedJsonObjects(block).length > 0 ? extractBalancedJsonObjects(block) : [block]),
+      metricName,
+    );
+    if (fencedResult.parsed) {
+      return fencedResult;
+    }
+    parseError = fencedResult.parseError;
+  }
+
+  const plainResult = parseStructuredJsonCandidates(extractBalancedJsonObjects(agentOutput), metricName);
+  if (plainResult.parsed) {
+    return plainResult;
+  }
+
+  return {
+    parsed: null,
+    parseError: parseError ?? plainResult.parseError,
+  };
+}
+
+function normalizeParsedResult(
+  candidate: Record<string, unknown>,
+  metricName: string,
+  parseSource: ParsedResult['parseSource'],
+): ParsedIterationMetricsResult {
+  const hypothesis = String(candidate.hypothesis ?? candidate.hypothesis_text ?? '').trim();
+  if (!hypothesis) {
+    return {
+      parsed: null,
+      parseError: 'Invalid structured result: hypothesis must be a non-empty string.',
+    };
+  }
+
+  const rawStatus = String(candidate.status ?? '').trim();
+  if (!['IMPROVED', 'NOT_IMPROVED', 'FAILED'].includes(rawStatus)) {
+    return {
+      parsed: null,
+      parseError: `Invalid structured result status "${rawStatus || '<missing>'}". Expected IMPROVED, NOT_IMPROVED, or FAILED.`,
+    };
+  }
+
+  const metric = parseMetricValue(candidate.metricValue ?? candidate.metric_value);
+  if (metric.error) {
+    return {
+      parsed: null,
+      parseError: metric.error,
+    };
+  }
+
+  const change = typeof candidate.change === 'string'
+    ? candidate.change.trim()
+    : typeof candidate.patchSummary === 'string'
+      ? candidate.patchSummary.trim()
+      : '';
+  const reasoning = typeof candidate.reasoning === 'string'
+    ? candidate.reasoning.trim()
+    : typeof candidate.analysis === 'string'
+      ? candidate.analysis.trim()
+      : '';
+  const artifactPaths = Array.isArray(candidate.artifactPaths)
+    ? candidate.artifactPaths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : Array.isArray(candidate.artifacts)
+      ? candidate.artifacts.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      : [];
+
+  return {
+    parsed: {
+      metricName: String(candidate.metricName ?? candidate.metric_name ?? metricName),
+      metricValue: metric.value,
+      status: rawStatus as ExperimentStatus,
+      hypothesis,
+      change,
+      reasoning,
+      artifactPaths,
+      parseSource,
+      failReason: candidate.failReason ? String(candidate.failReason) : candidate.fail_reason ? String(candidate.fail_reason) : undefined,
+      extra: candidate.extra && typeof candidate.extra === 'object'
+        ? candidate.extra as Record<string, number | string | boolean>
+        : undefined,
+    },
+  };
+}
+
+function parseExperimentResult(agentOutput: string, metricName: string): ParsedIterationMetricsResult {
   const match = agentOutput.match(
     /EXPERIMENT_RESULT:\s*metric_value=(\S+)\s+status=(\S+)(?:\s+fail_reason="([^"]*)")?\s+hypothesis="([^"]*)"/,
   );
   if (!match) {
-    return null;
+    return { parsed: null };
   }
 
-  const rawMetric = match[1];
-  const parsed = rawMetric === 'null' ? null : Number.parseFloat(rawMetric);
+  const metric = parseMetricValue(match[1]);
+  if (metric.error) {
+    return { parsed: null, parseError: metric.error };
+  }
+
+  const status = match[2]?.trim() ?? '';
+  if (!['IMPROVED', 'NOT_IMPROVED', 'FAILED'].includes(status)) {
+    return {
+      parsed: null,
+      parseError: `Invalid structured result status "${status || '<missing>'}". Expected IMPROVED, NOT_IMPROVED, or FAILED.`,
+    };
+  }
+
+  const hypothesis = match[4]?.trim() ?? '';
+  if (!hypothesis) {
+    return {
+      parsed: null,
+      parseError: 'Invalid structured result: hypothesis must be a non-empty string.',
+    };
+  }
+
   return {
-    metricName,
-    metricValue: Number.isFinite(parsed) ? parsed : null,
-    status: match[2] as ExperimentStatus,
-    failReason: match[3] || undefined,
-    hypothesis: match[4],
+    parsed: {
+      metricName,
+      metricValue: metric.value,
+      status: status as ExperimentStatus,
+      failReason: match[3] || undefined,
+      hypothesis,
+      change: '',
+      reasoning: '',
+      artifactPaths: [],
+      parseSource: 'deprecated_result_line',
+    },
   };
 }
 
@@ -308,33 +529,105 @@ async function parseIterationMetrics(
   runDir: RunDir,
   metricName: string,
   agentOutput: string,
-): Promise<ParsedResult | null> {
+): Promise<ParsedIterationMetricsResult> {
   const metricsContent = await readTargetText(cfg, runDir.metricsPath);
   if (metricsContent) {
     try {
-      const parsed = normalizeParsedResult(JSON.parse(metricsContent) as Record<string, unknown>, metricName);
-      if (parsed) {
-        return parsed;
-      }
-    } catch {
-      // Fall back to regex parsing below.
+      return normalizeParsedResult(
+        JSON.parse(metricsContent) as Record<string, unknown>,
+        metricName,
+        'metrics_json',
+      );
+    } catch (error) {
+      return {
+        parsed: null,
+        parseError: `Invalid metrics.json content: ${formatError(error)}`,
+      };
     }
   }
-  return parseExperimentResult(agentOutput, metricName);
+
+  const structuredOutput = parseAgentJsonResult(agentOutput, metricName);
+  if (structuredOutput.parsed) {
+    return structuredOutput;
+  }
+
+  const fallback = parseExperimentResult(agentOutput, metricName);
+  if (fallback.parsed) {
+    return fallback;
+  }
+
+  return {
+    parsed: null,
+    parseError: structuredOutput.parseError ?? fallback.parseError ?? 'Could not parse metrics.json or structured agent output.',
+  };
+}
+
+function buildIterationWorkspaceCfg(cfg: SshConfig, runDir: RunDir): SshConfig {
+  return {
+    ...cfg,
+    remoteWorkDir: runDir.codeDir,
+  };
+}
+
+function isBudgetExhaustedIterationSignal(agentOutput: string): boolean {
+  return agentOutput.includes(TOOL_BUDGET_EXHAUSTED_MARKER);
+}
+
+async function rollbackIterationWorkspace(
+  cfg: SshConfig,
+  iteration: number,
+  runDir: RunDir,
+  options: { terminal?: boolean; reason: string },
+): Promise<{ success: boolean; message: string }> {
+  useAutoResearchStore.getState().addRunEvent({
+    level: 'info',
+    phase: 'system',
+    message: `rollback_started: iteration ${iteration} rollback requested.`,
+    metadata: {
+      iteration,
+      iterDir: runDir.iterDir,
+      reason: options.reason,
+    },
+  });
+
+  const result = await rollback(cfg, { terminal: options.terminal ?? false });
+  useAutoResearchStore.getState().addRunEvent({
+    level: result.success ? 'info' : 'error',
+    phase: 'system',
+    message: result.success
+      ? `rollback_completed: iteration ${iteration} workspace reverted.`
+      : `rollback_failed: iteration ${iteration} workspace could not be reverted.`,
+    metadata: {
+      iteration,
+      iterDir: runDir.iterDir,
+      reason: options.reason,
+      rollbackMessage: result.message,
+    },
+  });
+
+  return result;
+}
+
+function buildDirtyRepoMessage(summary: AutoResearchEnvironmentSummary): string {
+  return `Experiment repository has ${summary.dirtyFileCount} uncommitted change(s). AutoResearch will not reset a dirty repository automatically. Commit or stash those changes before starting a run.`;
 }
 
 function toExperimentEntry(record: IterationMetrics): ExperimentEntry {
   return {
     iteration: record.iteration,
     hypothesis: record.hypothesis,
-    change: 'Applied via Agent tool calls',
+    change: record.change || 'Applied via Agent tool calls',
     metricValue: record.metricValue,
     status: record.status,
     failReason: record.failReason,
-    reasoning: '',
+    reasoning: record.reasoning || '',
     timestamp: record.finishedAt,
     durationMs: record.durationMs,
   };
+}
+
+function mergeArtifactPaths(...groups: Array<string[] | undefined>): string[] {
+  return Array.from(new Set(groups.flatMap((group) => group ?? []).filter((value) => value.trim().length > 0)));
 }
 
 async function hydrateSessionFromDisk(cfg: SshConfig, sessionId: string, direction: 'lower' | 'higher'): Promise<void> {
@@ -464,11 +757,20 @@ export async function startExperimentLoop(
   }
 
   try {
-    const clean = await isRemoteClean(experimentCfg);
-    if (!clean) {
-      await rollback(experimentCfg);
-    }
     environmentSummary = await inspectAutoResearchEnvironment(experimentCfg, startup.experimentDir);
+    if (environmentSummary.repoStatus !== 'clean') {
+      useAutoResearchStore.getState().addRunEvent({
+        level: 'error',
+        phase: 'preflight',
+        message: buildDirtyRepoMessage(environmentSummary),
+        metadata: {
+          experimentDir: environmentSummary.experimentDir,
+          dirtyFileCount: environmentSummary.dirtyFileCount,
+        },
+      });
+      useAutoResearchStore.getState().setError(buildDirtyRepoMessage(environmentSummary));
+      return;
+    }
     useAutoResearchStore.getState().addRunEvent({
       level: 'info',
       phase: 'preflight',
@@ -536,6 +838,7 @@ export async function startExperimentLoop(
       break;
     }
     setCurrentRunDir(runDir);
+    const iterationCfg = buildIterationWorkspaceCfg(experimentCfg, runDir);
     useAutoResearchStore.getState().startIterationRecord({
       iteration,
       startedAt,
@@ -555,7 +858,7 @@ export async function startExperimentLoop(
       metricValue: null,
       failReason: null,
       durationMs: 0,
-      commitHash: await captureCommitHash(experimentCfg),
+      commitHash: await captureCommitHash(iterationCfg),
     });
 
     try {
@@ -572,22 +875,24 @@ export async function startExperimentLoop(
       const userMessage = `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
       const agentOutput = await sendMessage(systemPrompt, userMessage);
       consecutiveRateLimitCount = 0;
-      const parsed = await parseIterationMetrics(artifactCfg, runDir, state.metricName, agentOutput);
-      const diff = await getRemoteDiff(experimentCfg);
-      const commitHash = await captureCommitHash(experimentCfg);
+      const budgetExhausted = isBudgetExhaustedIterationSignal(agentOutput);
+      const { parsed, parseError } = await parseIterationMetrics(artifactCfg, runDir, state.metricName, agentOutput);
+      const diff = await getRemoteDiff(iterationCfg);
+      const commitHash = await captureCommitHash(iterationCfg);
       const finishedAt = new Date().toISOString();
       const durationMs = Date.now() - startMs;
 
       await writeTargetText(artifactCfg, runDir.diffPath, diff);
 
       if (!parsed) {
+        const failureReason = parseError ?? 'Could not parse metrics.json or structured agent output.';
         const failedRecord: IterationMetrics = {
           iteration,
           sessionId,
           metricName: state.metricName,
           metricValue: null,
           status: 'FAILED',
-          failReason: 'Could not parse iteration metrics',
+          failReason: failureReason,
           hypothesis: 'Unparseable result',
           commitHash,
           durationMs,
@@ -612,6 +917,18 @@ export async function startExperimentLoop(
           endedAt: finishedAt,
           artifactPaths: getRunArtifactPaths(runDir),
         });
+        if (budgetExhausted) {
+          useAutoResearchStore.getState().addRunEvent({
+            level: 'warn',
+            phase: 'evaluation',
+            message: `iteration_failed_due_to_budget: iteration ${iteration} exhausted the tool budget before evaluation completed.`,
+            metadata: {
+              iteration,
+              iterDir: runDir.iterDir,
+              failReason: failureReason,
+            },
+          });
+        }
         useAutoResearchStore.getState().addRunEvent({
           level: 'warn',
           phase: 'evaluation',
@@ -631,7 +948,9 @@ export async function startExperimentLoop(
           durationMs,
           commitHash,
         });
-        await rollback(experimentCfg, { terminal: true });
+        const rollbackResult = await rollbackIterationWorkspace(iterationCfg, iteration, runDir, {
+          reason: budgetExhausted ? 'budget_exhaustion_parse_failure' : 'parse_failure',
+        });
         await rebuildLivingDoc(artifactCfg, sessionId, {
           startedAt: state.startedAt,
           workDir: startup.workDir,
@@ -640,6 +959,10 @@ export async function startExperimentLoop(
         });
         await logExperiment(entry, useAutoResearchStore.getState());
         await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
+        if (!rollbackResult.success) {
+          useAutoResearchStore.getState().setError(rollbackResult.message);
+          break;
+        }
         continue;
       }
 
@@ -651,6 +974,9 @@ export async function startExperimentLoop(
         status: parsed.status,
         failReason: parsed.failReason,
         hypothesis: parsed.hypothesis,
+        change: parsed.change,
+        reasoning: parsed.reasoning,
+        artifactPaths: parsed.artifactPaths,
         commitHash,
         durationMs,
         startedAt,
@@ -660,6 +986,41 @@ export async function startExperimentLoop(
 
       const entry = toExperimentEntry(metricsRecord);
       useAutoResearchStore.getState().addExperiment(entry);
+      if (budgetExhausted && parsed.parseSource === 'metrics_json') {
+        useAutoResearchStore.getState().addRunEvent({
+          level: 'info',
+          phase: 'evaluation',
+          message: `evaluation_fallback_from_metrics: iteration ${iteration} completed using metrics.json after tool budget exhaustion.`,
+          metadata: {
+            iteration,
+            iterDir: runDir.iterDir,
+            parser: parsed.parseSource,
+          },
+        });
+      }
+      if (budgetExhausted && parsed.status === 'FAILED') {
+        useAutoResearchStore.getState().addRunEvent({
+          level: 'warn',
+          phase: 'evaluation',
+          message: `iteration_failed_due_to_budget: iteration ${iteration} exhausted the tool budget before evaluation completed.`,
+          metadata: {
+            iteration,
+            iterDir: runDir.iterDir,
+            failReason: parsed.failReason ?? null,
+          },
+        });
+      }
+      if (parsed.parseSource === 'deprecated_result_line') {
+        useAutoResearchStore.getState().addRunEvent({
+          level: 'warn',
+          phase: 'evaluation',
+          message: `Iteration ${iteration} used deprecated EXPERIMENT_RESULT fallback parsing.`,
+          metadata: {
+            iterDir: runDir.iterDir,
+            parser: parsed.parseSource,
+          },
+        });
+      }
       useAutoResearchStore.getState().completeIterationRecord({
         iteration,
         status: parsed.status === 'FAILED' ? 'failed' : 'completed',
@@ -670,7 +1031,7 @@ export async function startExperimentLoop(
         commitHash,
         error: entry.failReason ?? null,
         endedAt: finishedAt,
-        artifactPaths: getRunArtifactPaths(runDir),
+        artifactPaths: mergeArtifactPaths(getRunArtifactPaths(runDir), parsed.artifactPaths),
       });
       useAutoResearchStore.getState().addRunEvent({
         level: parsed.status === 'FAILED' ? 'warn' : 'info',
@@ -701,6 +1062,11 @@ export async function startExperimentLoop(
         durationMs,
         commitHash,
       });
+      const rollbackResult = parsed.status === 'FAILED'
+        ? await rollbackIterationWorkspace(iterationCfg, iteration, runDir, {
+          reason: budgetExhausted ? 'budget_exhaustion_failed_iteration' : 'failed_iteration',
+        })
+        : { success: true, message: '' };
       await rebuildLivingDoc(artifactCfg, sessionId, {
         startedAt: state.startedAt,
         workDir: startup.workDir,
@@ -709,6 +1075,10 @@ export async function startExperimentLoop(
       });
       await logExperiment(entry, useAutoResearchStore.getState());
       await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
+      if (!rollbackResult.success) {
+        useAutoResearchStore.getState().setError(rollbackResult.message);
+        break;
+      }
 
       const trendInterval = useAutoResearchStore.getState().telegramConfig.trendReportInterval;
       if (iteration % trendInterval === 0) {
@@ -759,10 +1129,16 @@ export async function startExperimentLoop(
           metricValue: null,
           failReason: message,
           durationMs: Date.now() - startMs,
-          commitHash: await captureCommitHash(experimentCfg),
+          commitHash: await captureCommitHash(iterationCfg),
           retryAfterSeconds: cooldownSeconds,
         });
-        await rollback(experimentCfg);
+        const rollbackResult = await rollbackIterationWorkspace(iterationCfg, iteration, runDir, {
+          reason: 'rate_limit',
+        });
+        if (!rollbackResult.success) {
+          useAutoResearchStore.getState().setError(rollbackResult.message);
+          break;
+        }
         await sleep(cooldownSeconds * 1000);
         continue;
       }
@@ -794,7 +1170,7 @@ export async function startExperimentLoop(
         status: 'FAILED',
         failReason: failureMessage,
         hypothesis: entry.hypothesis,
-        commitHash: await captureCommitHash(experimentCfg),
+        commitHash: await captureCommitHash(iterationCfg),
         durationMs,
         startedAt,
         finishedAt,
@@ -859,9 +1235,15 @@ export async function startExperimentLoop(
         metricName: useAutoResearchStore.getState().metricName,
         direction: useAutoResearchStore.getState().metricDirection,
       });
-      await rollback(experimentCfg, { terminal: !isTerminalFailureError(error) });
+      const rollbackResult = await rollbackIterationWorkspace(iterationCfg, iteration, runDir, {
+        terminal: !isTerminalFailureError(error),
+        reason: reflectionFailure ? 'reflection_failure' : 'agent_execution_error',
+      });
       await logExperiment(entry, useAutoResearchStore.getState());
       await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
+      if (!rollbackResult.success) {
+        useAutoResearchStore.getState().setError(rollbackResult.message);
+      }
     } finally {
       clearCurrentRunDir();
     }

@@ -9,8 +9,10 @@ interface RawBashResult {
 }
 
 export interface RunDir {
+  sessionId: string;
   iter: number;
   iterDir: string;
+  codeDir: string;
   logsDir: string;
   transcriptPath: string;
   systemPromptPath: string;
@@ -48,11 +50,14 @@ function getParentDirectory(path: string): string {
   return idx > 0 ? path.slice(0, idx) : '.';
 }
 
-function buildRunDir(sessionDir: string, iter: number, directoryName: string): RunDir {
+function buildRunDir(sessionDir: string, sessionId: string, iter: number, directoryName: string): RunDir {
   const iterDir = `${sessionDir}/${directoryName}`;
+  const codeDir = `${iterDir}/code`;
   return {
+    sessionId,
     iter,
     iterDir,
+    codeDir,
     logsDir: `${iterDir}/logs`,
     transcriptPath: `${iterDir}/transcript.md`,
     systemPromptPath: `${iterDir}/system_prompt.txt`,
@@ -164,20 +169,19 @@ export async function createRunDir(
 ): Promise<RunDir> {
   const sessionDir = await ensureSessionDir(cfg, sessionId);
   const directoryName = `iter-${padIteration(iter)}-${formatTimestamp()}`;
-  const runDir = buildRunDir(sessionDir, iter, directoryName);
-  const codeDir = `${runDir.iterDir}/code`;
+  const runDir = buildRunDir(sessionDir, sessionId, iter, directoryName);
   const snapshotSourceDir = options.snapshotSourceDir || cfg.remoteWorkDir;
 
   const script = [
     `mkdir -p ${shellEscapePath(runDir.iterDir)} ${shellEscapePath(runDir.logsDir)}`,
     `if [ -d ${shellEscapePath(snapshotSourceDir)} ] && git -C ${shellEscapePath(snapshotSourceDir)} rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
-    `  if ! git -C ${shellEscapePath(snapshotSourceDir)} worktree add --detach ${shellEscapePath(codeDir)} HEAD >/dev/null 2>&1; then`,
-    `    mkdir -p ${shellEscapePath(codeDir)}`,
-    `    tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
+    `  if ! git -C ${shellEscapePath(snapshotSourceDir)} worktree add --detach ${shellEscapePath(runDir.codeDir)} HEAD >/dev/null 2>&1; then`,
+    `    mkdir -p ${shellEscapePath(runDir.codeDir)}`,
+    `    tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(runDir.codeDir)}`,
     `  fi`,
     `else`,
-    `  mkdir -p ${shellEscapePath(codeDir)}`,
-    `  tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(codeDir)}`,
+    `  mkdir -p ${shellEscapePath(runDir.codeDir)}`,
+    `  tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(runDir.codeDir)}`,
     `fi`,
     `: > ${shellEscapePath(runDir.systemPromptPath)}`,
     `: > ${shellEscapePath(runDir.hypothesisPath)}`,
@@ -211,7 +215,7 @@ export async function listIterations(cfg: SshConfig, sessionId: string): Promise
       const name = iterDir.slice(sessionDir.length + 1);
       const match = name.match(/^iter-(\d+)-/);
       const iter = match ? Number.parseInt(match[1], 10) : 0;
-      return buildRunDir(sessionDir, iter, name);
+      return buildRunDir(sessionDir, sessionId, iter, name);
     })
     .sort((a, b) => a.iter - b.iter);
 }
