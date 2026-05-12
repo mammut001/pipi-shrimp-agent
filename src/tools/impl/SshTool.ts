@@ -9,6 +9,7 @@ import {
   type SshAuthMode,
   shellEscapePath,
 } from '../../utils/remoteExec';
+import type { SshConfig } from '@/types/ssh';
 import { runInTerminal, getCurrentRunDir } from '@/services/autoresearch/terminalRunner';
 import { readTargetText } from '@/services/autoresearch/runDir';
 
@@ -16,16 +17,8 @@ const SSH_EXEC_PTY_ALLOCATION_ERROR = 'Failed to allocate PTY for ssh_exec termi
 
 // ============== SSH Config (legacy shape — kept for callers) ==============
 
-export interface SshConfig {
-  mode: ExecMode;
-  host: string;
-  user: string;
-  keyPath: string;
-  port: number;
-  remoteWorkDir: string;
-  authMode: SshAuthMode;
-  password: string;
-}
+// Re-exported from shared types for backwards compatibility
+export type { SshConfig, ExecMode, SshAuthMode } from '@/types/ssh';
 
 // ============== Dangerous-pattern guard ==============
 

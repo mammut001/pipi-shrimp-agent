@@ -45,7 +45,10 @@ export default function FeaturesPage() {
         <div className="max-w-[1200px] mx-auto px-6">
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             {t.features.list.map((feature, index) => (
-              <div className="p-8 bg-white rounded-2xl border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-lg transition-all duration-300 group">
+              <div
+                key={feature.title}
+                className="p-8 bg-white rounded-2xl border border-[var(--border)] hover:border-[var(--accent)] hover:shadow-lg transition-all duration-300 group"
+              >
                 <div className="w-12 h-12 mb-5 flex items-center justify-center bg-[var(--accent)]/10 rounded-xl group-hover:bg-[var(--accent)]/20 transition-colors">
                   <div className="text-[var(--accent)] group-hover:text-[var(--accent)] transition-colors">
                     {featureIcons[index]}

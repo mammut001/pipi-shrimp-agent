@@ -3,20 +3,13 @@ import type {
   GoalEvaluationResult,
   WorkflowAgent,
 } from '@/types/workflow';
+import {
+  buildWorkflowMarkerToken,
+  getExpectedMarkersForRole,
+} from '@/services/workflow/templates/markers';
+import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
 
 const MAX_UPSTREAM_CHARS = 5000;
-
-export const WORKFLOW_MARKERS = {
-  GOAL_COMPLETE: '[[GOAL_COMPLETE]]',
-  GOAL_NOT_REACHED: '[[GOAL_NOT_REACHED]]',
-  REVIEW_PASS: '[[REVIEW_PASS]]',
-  REVIEW_REJECT: '[[REVIEW_REJECT]]',
-  TESTS_PASS: '[[TESTS_PASS]]',
-  TESTS_FAIL_CODE: '[[TESTS_FAIL_CODE]]',
-  TESTS_FAIL_SPEC: '[[TESTS_FAIL_SPEC]]',
-} as const;
-
-export const COMPLETION_MARKER_REGEX = /\[\[(GOAL_COMPLETE|REVIEW_PASS|TESTS_PASS)\]\]/i;
 
 const STATUS_BLOCK_REGEX = /\[\[STATUS\]\]([\s\S]*?)\[\[\/STATUS\]\]/i;
 
@@ -65,18 +58,7 @@ export function parseAgentStatusBlock(output: string): AgentStatusBlock | null {
 }
 
 function buildMarkersForRole(role?: AgentRole): string[] {
-  switch (role) {
-    case 'reviewer':
-      return [WORKFLOW_MARKERS.REVIEW_PASS, WORKFLOW_MARKERS.REVIEW_REJECT];
-    case 'tester':
-      return [
-        WORKFLOW_MARKERS.TESTS_PASS,
-        WORKFLOW_MARKERS.TESTS_FAIL_CODE,
-        WORKFLOW_MARKERS.TESTS_FAIL_SPEC,
-      ];
-    default:
-      return [WORKFLOW_MARKERS.GOAL_COMPLETE, WORKFLOW_MARKERS.GOAL_NOT_REACHED];
-  }
+  return getExpectedMarkersForRole(normalizeWorkflowAgentRole(role)).map(buildWorkflowMarkerToken);
 }
 
 function buildUpstreamSection(upstreams: UpstreamOutput[]): string {
@@ -122,13 +104,17 @@ function buildEvaluationSection(
   iteration: number,
   previousEvaluation?: GoalEvaluationResult | null,
 ): string | null {
-  if (iteration <= 1 || !previousEvaluation?.missingItems?.length) {
+  if (iteration <= 1 || !previousEvaluation) {
     return null;
   }
 
   return [
     '## 上一轮 Goal 评估反馈',
-    '上一轮 evaluator 指出的缺失项如下，请优先补齐这些问题：',
+    `上一轮结论：${previousEvaluation.reached ? '已达成' : '未达成'}，置信度 ${previousEvaluation.confidence.toFixed(2)}`,
+    `原因：${previousEvaluation.reasoning}`,
+    previousEvaluation.missingItems.length > 0
+      ? '上一轮 evaluator 指出的缺失项如下，请优先补齐这些问题：'
+      : '上一轮 evaluator 未列出明确缺失项，但你仍需根据上述原因继续收口。',
     ...previousEvaluation.missingItems.map((item) => `- ${item}`),
   ].join('\n');
 }
@@ -185,37 +171,18 @@ export function buildWorkflowAgentPrompt(options: BuildWorkflowPromptOptions): s
 }
 
 export function buildEntryAgentPrompt(
-  projectGoal: string,
-  agent: WorkflowAgent,
-  successCriteria = '',
-  iteration = 1,
-  previousEvaluation?: GoalEvaluationResult | null,
+  options: Omit<BuildWorkflowPromptOptions, 'upstreams'>,
 ): string {
   return buildWorkflowAgentPrompt({
-    projectGoal,
-    successCriteria,
-    agent,
-    iteration,
-    previousEvaluation,
+    ...options,
+    upstreams: [],
   });
 }
 
 export function buildDownstreamAgentPrompt(
-  projectGoal: string,
-  agent: WorkflowAgent,
-  upstreams: UpstreamOutput[],
-  iteration = 1,
-  successCriteria = '',
-  inboxMessages: WorkflowInboxPromptItem[] = [],
-  previousEvaluation?: GoalEvaluationResult | null,
+  options: BuildWorkflowPromptOptions & { upstreams: UpstreamOutput[] },
 ): string {
   return buildWorkflowAgentPrompt({
-    projectGoal,
-    successCriteria,
-    agent,
-    upstreams,
-    inboxMessages,
-    iteration,
-    previousEvaluation,
+    ...options,
   });
 }

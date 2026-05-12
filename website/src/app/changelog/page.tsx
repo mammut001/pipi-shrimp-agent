@@ -37,7 +37,7 @@ export default function ChangelogPage() {
         }
         const data = await response.json();
         setCommits(data);
-      } catch (err) {
+      } catch {
         setError(t.changelog.error);
       } finally {
         setLoading(false);
@@ -89,7 +89,7 @@ export default function ChangelogPage() {
             </div>
           ) : (
             <div className="space-y-6">
-              {commits.map((commit, index) => (
+              {commits.map((commit) => (
                 <div
                   key={commit.sha}
                   className="p-6 bg-white rounded-xl border border-[var(--border)] hover:border-[var(--accent)] transition-colors"

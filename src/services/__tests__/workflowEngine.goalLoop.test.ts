@@ -138,6 +138,9 @@ function installWorkflowStore(instance: WorkflowInstance) {
         agent.id === agentId ? { ...agent, status } : agent
       ));
     },
+    setActiveRunId: jest.fn((runId: string | null) => {
+      state.instance.activeRunId = runId;
+    }),
     markAgentDirty: jest.fn((agentId: string) => {
       state.instance.dirtyAgentIds = Array.from(new Set([...(state.instance.dirtyAgentIds || []), agentId]));
     }),
@@ -158,10 +161,10 @@ describe('WorkflowEngine goal loop', () => {
 
   it('stops after one iteration when the goal is reached immediately', async () => {
     const writer = createAgent({ id: 'writer', role: 'writer' });
-    const coder = createAgent({ id: 'coder', role: 'coder', inputFrom: 'writer' });
+    const developer = createAgent({ id: 'developer', role: 'developer', inputFrom: 'writer' });
     const instance = createInstance(
-      [writer, coder],
-      [{ id: 'c1', sourceAgentId: 'writer', targetAgentId: 'coder', condition: 'onComplete' }],
+      [writer, developer],
+      [{ id: 'c1', sourceAgentId: 'writer', targetAgentId: 'developer', condition: 'onComplete' }],
     );
     installWorkflowStore(instance);
 
@@ -187,7 +190,7 @@ describe('WorkflowEngine goal loop', () => {
 
     await engine.start();
 
-    expect(runAgent.mock.calls.map((call: [WorkflowAgent]) => call[0].id)).toEqual(['writer', 'coder']);
+    expect(runAgent.mock.calls.map((call: [WorkflowAgent]) => call[0].id)).toEqual(['writer', 'developer']);
     expect(instance.workflowRuns[0].currentIteration).toBe(1);
     expect(instance.workflowRuns[0].reachedGoal).toBe(true);
     expect(instance.workflowRuns[0].status).toBe('completed');
@@ -195,13 +198,13 @@ describe('WorkflowEngine goal loop', () => {
 
   it('runs a second iteration only for dirty agents and their downstream', async () => {
     const writer = createAgent({ id: 'writer', role: 'writer' });
-    const coder = createAgent({ id: 'coder', role: 'coder', inputFrom: 'writer' });
-    const tester = createAgent({ id: 'tester', role: 'tester', inputFrom: 'coder' });
+    const developer = createAgent({ id: 'developer', role: 'developer', inputFrom: 'writer' });
+    const qa = createAgent({ id: 'qa', role: 'qa', inputFrom: 'developer' });
     const instance = createInstance(
-      [writer, coder, tester],
+      [writer, developer, qa],
       [
-        { id: 'c1', sourceAgentId: 'writer', targetAgentId: 'coder', condition: 'onComplete' },
-        { id: 'c2', sourceAgentId: 'coder', targetAgentId: 'tester', condition: 'onComplete' },
+        { id: 'c1', sourceAgentId: 'writer', targetAgentId: 'developer', condition: 'onComplete' },
+        { id: 'c2', sourceAgentId: 'developer', targetAgentId: 'qa', condition: 'onComplete' },
       ],
     );
     const store = installWorkflowStore(instance);
@@ -219,7 +222,7 @@ describe('WorkflowEngine goal loop', () => {
         reached: false,
         confidence: 0.5,
         missingItems: ['fix code'],
-        nextAgentIdHint: 'coder',
+        nextAgentIdHint: 'developer',
         reasoning: 'need another pass',
         timestamp: 1,
       })
@@ -248,27 +251,27 @@ describe('WorkflowEngine goal loop', () => {
 
     expect(runAgent.mock.calls.map((call: [WorkflowAgent]) => call[0].id)).toEqual([
       'writer',
-      'coder',
-      'tester',
-      'coder',
-      'tester',
+      'developer',
+      'qa',
+      'developer',
+      'qa',
     ]);
-    expect(store.markAgentDirty).toHaveBeenCalledWith('coder');
+    expect(store.markAgentDirty).toHaveBeenCalledWith('developer');
     expect(instance.workflowRuns[0].goalEvaluations).toHaveLength(2);
   });
 
   it('marks run completed with reachedGoal=false after max iterations', async () => {
-    const coder = createAgent({ id: 'coder', role: 'coder' });
-    const instance = createInstance([coder], [], 2);
+    const developer = createAgent({ id: 'developer', role: 'developer' });
+    const instance = createInstance([developer], [], 2);
     installWorkflowStore(instance);
 
-    const runAgent = jest.fn(async () => 'coder-output');
+    const runAgent = jest.fn(async () => 'developer-output');
     const evaluateGoal = jest.fn(async ({ iteration }: { iteration: number }) => ({
       iteration,
       reached: false,
       confidence: 0.2,
       missingItems: ['still missing'],
-      nextAgentIdHint: 'coder',
+      nextAgentIdHint: 'developer',
       reasoning: 'keep iterating',
       timestamp: iteration,
     }));
@@ -293,14 +296,14 @@ describe('WorkflowEngine goal loop', () => {
     expect(instance.workflowRuns[0].goalEvaluations).toHaveLength(2);
   });
 
-  it('executeMultiRound stops once [[GOAL_COMPLETE]] appears', async () => {
+  it('executeMultiRound stops once [[WORKFLOW:PASS]] appears', async () => {
     invokeMock.mockImplementation(async (_command: string, params: { sessionId: string }) => {
       const tokenHandler = listenHandlers.get('claude-token');
       const callCount = invokeMock.mock.calls.length;
       tokenHandler?.({
         payload: {
           session_id: params.sessionId,
-          content: callCount === 1 ? 'round-1 output' : 'round-2 [[GOAL_COMPLETE]]',
+          content: callCount === 1 ? 'round-1 output' : 'round-2 [[WORKFLOW:PASS]]',
         },
       });
       return undefined;
@@ -308,8 +311,8 @@ describe('WorkflowEngine goal loop', () => {
 
     const result = await runAgentWithRetry(
       createAgent({
-        id: 'tester',
-        role: 'tester',
+        id: 'qa',
+        role: 'qa',
         execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
       }),
       'prompt',
@@ -320,6 +323,47 @@ describe('WorkflowEngine goal loop', () => {
     );
 
     expect(invokeMock).toHaveBeenCalledTimes(2);
-    expect(result).toContain('[[GOAL_COMPLETE]]');
+    expect(result).toContain('[[WORKFLOW:PASS]]');
+  });
+
+  it('marks the run as stopped and ignores stale stream chunks after stop', async () => {
+    const developer = createAgent({ id: 'developer', role: 'developer' });
+    const instance = createInstance([developer], []);
+    const store = installWorkflowStore(instance);
+    const streamed: string[] = [];
+
+    const engine = new WorkflowEngine({
+      createRunDirectory: async () => '/tmp/workflow-run',
+      writeFile: async () => undefined,
+      runAgent: jest.fn(async (_agent: WorkflowAgent, _prompt: string, context: { onStreamChunk?: (agentId: string, chunk: string, fullContent: string) => void }) => {
+        context.onStreamChunk?.('developer', 'chunk-1', 'chunk-1');
+        await engine.stop();
+        context.onStreamChunk?.('developer', 'chunk-2', 'chunk-1chunk-2');
+        return 'final-output';
+      }),
+      evaluateGoal: async () => ({
+        iteration: 1,
+        reached: false,
+        confidence: 0.1,
+        missingItems: ['stopped'],
+        reasoning: 'run was stopped',
+        timestamp: 1,
+      }),
+      notify: async () => undefined,
+      now: (() => {
+        let current = 1;
+        return () => current++;
+      })(),
+    });
+    engine.setStreamChunkCallback((_agentId, _chunk, fullContent) => {
+      streamed.push(fullContent);
+    });
+
+    await engine.start();
+
+    expect(streamed).toEqual(['chunk-1']);
+    expect(instance.workflowRuns[0].status).toBe('stopped');
+    expect(instance.workflowRuns[0].agents[0].output).toBeUndefined();
+    expect(store.setRunning).toHaveBeenLastCalledWith(false, null);
   });
 });

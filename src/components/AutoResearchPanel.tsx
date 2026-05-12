@@ -10,7 +10,6 @@ import { t } from '@/i18n';
 import {
   useAutoResearchStore,
   getSelectedAutoResearchRunContext,
-  getSelectedAutoResearchRun,
   getSortedAutoResearchRuns,
   type AutoResearchRunRecord,
 } from '@/store/autoresearchStore';

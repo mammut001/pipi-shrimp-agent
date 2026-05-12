@@ -28,9 +28,17 @@ export interface RemoteExecConfig {
   remoteWorkDir: string;
 }
 
-/** POSIX single-quote escape. Wraps s in '…' and escapes embedded '. */
+/** POSIX single-quote escape. Wraps s in '…' and escapes embedded '. 
+ * Also rejects null bytes which are invalid in shell arguments.
+ */
 export function shellEscape(s: string): string {
-  return "'" + String(s ?? '').replace(/'/g, "'\\''") + "'";
+  const str = String(s ?? '');
+  // Reject null bytes - they are invalid in shell arguments and can cause
+  // unexpected behavior in different shells
+  if (str.includes('\0')) {
+    throw new Error('Invalid argument: contains null byte');
+  }
+  return "'" + str.replace(/'/g, "'\\''") + "'";
 }
 
 /**

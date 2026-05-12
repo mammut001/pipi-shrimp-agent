@@ -37,6 +37,10 @@ pub struct ToolCallResult {
     pub content: String,
     /// Whether this result represents an error
     pub is_error: bool,
+    /// Standardized error code for programmatic error handling.
+    /// Present when is_error is true. Values: "schema_validation",
+    /// "invalid_arguments", "not_found", "permission_denied", "io_error", "internal_error"
+    pub error_code: Option<String>,
 }
 
 /// Tool metadata used by the scheduler for dispatch decisions

@@ -19,7 +19,6 @@ import {
   BackgroundVariant,
   useNodesState,
   useEdgesState,
-  addEdge,
   Connection,
   Edge,
   Node,
@@ -77,7 +76,9 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
   const connections = currentInstance?.connections ?? [];
   const {
     addAgent,
+    addConnection,
     removeAgent,
+    removeConnection,
     updateAgentPosition,
   } = useWorkflowStore();
   const currentView = useUIStore((s) => s.currentView);
@@ -147,7 +148,9 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
       source: conn.sourceAgentId,
       target: conn.targetAgentId,
       type: 'custom',
-      label: conn.condition,
+      label: conn.condition === 'outputContains' && conn.keyword
+        ? `${conn.condition}:${conn.keyword}`
+        : conn.condition,
       labelBgStyle: { fill: '#f9fafb' },
       markerEnd: { type: MarkerType.ArrowClosed },
       style: { stroke: '#9CA3AF', strokeWidth: 2 },
@@ -168,9 +171,6 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
     setEdges(initialEdges);
   }, [initialEdges, setEdges]);
 
-  // Handle new visual connections (edges)
-  // Note: Connections should be configured in the panel, not by dragging
-  // This only adds visual edges without modifying the store
   const onConnect = useCallback(
     (params: Connection) => {
       if (!isWorkflowActive) {
@@ -179,53 +179,23 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
       }
       if (!params.source || !params.target) return;
 
-      // Check if connection already exists in store
-      const exists = connections.some(
-        (c) => c.sourceAgentId === params.source && c.targetAgentId === params.target
-      );
-
-      if (!exists) {
-        // Don't allow manual connection creation - show a hint instead
-        // The user should configure connections in the agent panel
-        console.info(t('workflow.notInWorkflowPage'));
-        return;
-      }
-
-      // If connection exists, add visual edge
-      const conn = connections.find(
-        (c) => c.sourceAgentId === params.source && c.targetAgentId === params.target
-      );
-
-      setEdges((eds) =>
-        addEdge(
-          {
-            ...params,
-            id: conn?.id || crypto.randomUUID(),
-            type: 'custom',
-            label: conn?.condition || 'onComplete',
-            markerEnd: { type: MarkerType.ArrowClosed },
-            style: { stroke: '#9CA3AF', strokeWidth: 2 },
-          },
-          eds
-        )
-      );
+      addConnection(params.source, params.target, 'onComplete');
     },
-    [connections, isWorkflowActive, notifyWorkflowLocked, setEdges]
+    [addConnection, isWorkflowActive, notifyWorkflowLocked]
   );
 
-  // Handle edge deletion - only removes visual edge, not the actual connection
-  // Actual connection removal should be done in the panel
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
       if (!isWorkflowActive) {
         notifyWorkflowLocked();
         return;
       }
-      // Just remove visual edges, don't touch the store
-      // Store connections are managed through the panel
-      setEdges((eds) => eds.filter((e) => !deletedEdges.some((de) => de.id === e.id)));
+
+      for (const deletedEdge of deletedEdges) {
+        removeConnection(deletedEdge.id);
+      }
     },
-    [isWorkflowActive, notifyWorkflowLocked, setEdges]
+    [isWorkflowActive, notifyWorkflowLocked, removeConnection]
   );
 
   // Handle node selection

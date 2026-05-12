@@ -27,6 +27,8 @@ export function Chat() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [showFullHistory, setShowFullHistory] = useState(false);
+  // Debounce timer for scroll events to prevent rapid state updates during fast scrolling
+  const scrollDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     currentMessages,
@@ -100,12 +102,17 @@ export function Chat() {
     setShowFullHistory(false);
   }, [currentSessionData?.id]);
 
-  // Detect if user has scrolled up (away from bottom)
+  // Detect if user has scrolled up (away from bottom) - debounced to avoid rapid updates
   const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setUserScrolledUp(distanceFromBottom > 100); // Consider user scrolled up if >100px from bottom
+    if (scrollDebounceTimer.current) {
+      clearTimeout(scrollDebounceTimer.current);
+    }
+    scrollDebounceTimer.current = setTimeout(() => {
+      const el = scrollContainerRef.current;
+      if (!el) return;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setUserScrolledUp(distanceFromBottom > 100); // Consider user scrolled up if >100px from bottom
+    }, 100); // 100ms debounce
   }, []);
 
   // Terminal panel drag-resize handler

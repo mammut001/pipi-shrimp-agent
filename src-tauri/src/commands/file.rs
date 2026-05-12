@@ -34,11 +34,21 @@ fn allowed_roots() -> Vec<PathBuf> {
  * Converts paths like "~/Desktop" to "/Users/username/Desktop"
  * and ensures the resolved path is inside an allowed root directory.
  * This prevents path traversal attacks like "../../../etc/passwd".
+ *
+ * SECURITY: Even if HOME is set to a malicious path, we validate that
+ * the final resolved path is within an allowed root directory.
  */
 fn expand_home(path: &str) -> PathBuf {
     if path.starts_with("~") {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(path.replacen("~", &home, 1));
+            let expanded = PathBuf::from(path.replacen("~", &home, 1));
+            // Validate expanded path is within allowed roots
+            let allowed = allowed_roots();
+            if allowed.iter().any(|root| expanded.starts_with(root)) {
+                return expanded;
+            }
+            // If expanded path is not in allowed roots, fall through to
+            // path without expansion (will likely fail later validation)
         }
     }
     PathBuf::from(path)

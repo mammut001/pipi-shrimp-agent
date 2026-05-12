@@ -44,6 +44,8 @@ pub fn run() {
             if let Err(e) = init_database() {
                 eprintln!("❌ CRITICAL: Failed to initialize database: {}", e);
                 eprintln!("   Make sure the database file is writable at: ~/.local/share/pipi-shrimp-agent/data.db");
+                // TODO (AUDIT-026): Consider using tauri dialog for user-facing error message
+                // instead of raw panic, which provides a better UX and suggests solutions.
                 panic!("Database initialization failed: {}. Application cannot start.", e);
             }
 

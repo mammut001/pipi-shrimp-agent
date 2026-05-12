@@ -61,7 +61,7 @@ pub async fn fetch_openai_models(
         .chars()
         .filter(|c| c.is_ascii() && !c.is_control() && !c.is_whitespace())
         .collect();
-    
+
     if api_key.is_empty() {
         return Err("API key is empty after trimming. Please check your settings.".to_string());
     }

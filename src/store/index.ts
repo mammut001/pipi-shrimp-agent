@@ -103,9 +103,12 @@ export type {
 
 export {
   AGENT_TEMPLATES,
-  DEFAULT_EXECUTION_CONFIG,
   AGENT_COLORS,
-} from '../types/workflow';
+} from '../services/workflow/templates/agentTemplates';
+
+export {
+  DEFAULT_EXECUTION_CONFIG,
+} from '../services/workflow/defaults';
 
 // Export Telegram types
 export type {

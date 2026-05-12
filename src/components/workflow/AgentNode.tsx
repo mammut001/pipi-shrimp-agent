@@ -14,9 +14,10 @@
 import React, { memo, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
-import { getRoleModelHint, type WorkflowAgent, type RouteCondition } from '@/types/workflow';
+import type { WorkflowAgent, type RouteCondition } from '@/types/workflow';
 import { useSettingsStore } from '@/store/settingsStore';
 import { getProviderDefaultModelIds } from '@/shared/providers';
+import { getRoleModelHint } from '@/services/workflow/templates/roles';
 import { t } from '@/i18n';
 
 interface AgentNodeData {

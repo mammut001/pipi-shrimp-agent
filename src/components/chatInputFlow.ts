@@ -3,7 +3,19 @@ export type ChatInputSubmissionDecision =
   | { type: 'confirm-browser'; message: string }
   | { type: 'send-regular'; message: string };
 
-export const MAX_CHAT_DRAFT_CHARS = 30000;
+/**
+ * Maximum character length for chat draft content before it's considered "stale".
+ *
+ * Heuristic rationale: A user typing continuously for many messages will rarely
+ * exceed 30KB of text. Drafts larger than this (without a timestamp indicating
+ * recent activity) likely represent abandoned or forgotten input that can be
+ * safely cleaned up to prevent unbounded localStorage growth.
+ *
+ * IMPORTANT: This is a content-based heuristic only. For proper staleness
+ * detection, drafts should include timestamp metadata. This approach is a
+ * fallback for drafts stored without timestamps.
+ */
+export const MAX_CHAT_DRAFT_CHARS = 30_000;
 
 interface DecideChatInputSubmissionArgs {
   input: string;

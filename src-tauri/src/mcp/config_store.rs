@@ -28,11 +28,37 @@ impl MCPConfigStore {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let data = std::fs::read_to_string(&path)
-            .map_err(|e| MCPError::ConfigError(format!("Failed to read config: {}", e)))?;
-        let servers: Vec<MCPServer> = serde_json::from_str(&data)
-            .map_err(|e| MCPError::ConfigError(format!("Failed to parse config: {}", e)))?;
-        Ok(servers)
+
+        // Distinguish between "file not found" and "file exists but is corrupted"
+        let data = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Race condition: file was deleted between exists() and read()
+                return Ok(Vec::new());
+            }
+            Err(e) => {
+                return Err(MCPError::ConfigError(format!(
+                    "Failed to read MCP config file '{}': {}",
+                    path.display(),
+                    e
+                )));
+            }
+        };
+
+        serde_json::from_str(&data).map_err(|e| {
+            let json_error_message = if e.to_string().contains("trailing") {
+                "invalid JSON (trailing characters or incomplete content)"
+            } else if e.to_string().contains("expect") {
+                "malformed JSON structure"
+            } else {
+                "JSON parse error"
+            };
+            MCPError::ConfigError(format!(
+                "Failed to parse MCP config file '{}': {}. File content may be corrupted or incomplete.",
+                path.display(),
+                json_error_message
+            ))
+        })
     }
 
     /// Save all server configurations to disk

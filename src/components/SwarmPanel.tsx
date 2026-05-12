@@ -111,7 +111,7 @@ function MessageRow({ msg, agents }: { msg: SwarmMessage; agents: SwarmAgent[] }
     permission_result: 'bg-green-100 text-green-700',
   };
 
-  const isLong = true;
+  const isLong = (msg.content?.length || 0) > 80;
 
   return (
     <div
@@ -154,7 +154,7 @@ function TranscriptRow({ entry }: { entry: TranscriptEntry }) {
   };
 
   const config = eventConfig[entry.eventType] || { icon: '·', bg: 'bg-gray-50' };
-  const isLong = true;
+  const isLong = (entry.content?.length || 0) > 80;
 
   return (
     <div

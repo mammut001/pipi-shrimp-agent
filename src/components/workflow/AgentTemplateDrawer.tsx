@@ -5,8 +5,8 @@
  * when user wants to quickly add a pre-configured agent.
  */
 
-import { AGENT_TEMPLATES } from '@/types/workflow';
 import type { AgentTemplate } from '@/types/workflow';
+import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
 
 interface AgentTemplateDrawerProps {
   isOpen: boolean;
