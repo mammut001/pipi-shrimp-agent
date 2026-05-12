@@ -109,6 +109,17 @@ const MAX_LIVE_OUTPUT_EXCERPT_CHARS = 20_000;
 const MAX_REASON_CHARS = 1_000;
 const REDACTED_VALUE = '[redacted]';
 
+export function redactAutoResearchSensitiveText(value: string): string {
+  return value
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"']+/ig, '$1[redacted]')
+    .replace(/(x-api-key\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/(api[_ -]?key\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/((?:key[_ -]?path|ssh[_ -]?key[_ -]?path|private[_ -]?key[_ -]?path)\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/(password\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/(secret\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/(token\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]');
+}
+
 function safeLocalStorage(): Storage | null {
   try {
     if (typeof localStorage === 'undefined') {
@@ -132,7 +143,9 @@ function truncateString(value: string, maxChars: number): string {
 }
 
 function sanitizeDisplayString(value: unknown, maxChars: number): string | undefined {
-  return typeof value === 'string' ? truncateString(value, maxChars) : undefined;
+  return typeof value === 'string'
+    ? truncateString(redactAutoResearchSensitiveText(value), maxChars)
+    : undefined;
 }
 
 function sanitizePath(value: unknown): string | undefined {
@@ -140,7 +153,7 @@ function sanitizePath(value: unknown): string | undefined {
 }
 
 function isSensitiveMetadataKey(key: string): boolean {
-  return /(api.?key|authorization|password|secret|token)/i.test(key);
+  return /(api.?key|authorization|password|secret|token|key.?path|ssh.?key)/i.test(key);
 }
 
 function sanitizeMetadataValue(value: unknown, depth = 0): unknown {
@@ -149,7 +162,7 @@ function sanitizeMetadataValue(value: unknown, depth = 0): unknown {
   }
 
   if (typeof value === 'string') {
-    return truncateString(value, MAX_EVENT_MESSAGE_CHARS);
+    return truncateString(redactAutoResearchSensitiveText(value), MAX_EVENT_MESSAGE_CHARS);
   }
 
   if (Array.isArray(value)) {
@@ -220,7 +233,7 @@ function normalizeIterationRecord(record: unknown, fallbackRunId: string, index:
     improvement: typeof record.improvement === 'number' || record.improvement === null ? record.improvement : undefined,
     commitHash: sanitizeDisplayString(record.commitHash, MAX_CONFIG_VALUE_CHARS),
     error: typeof record.error === 'string'
-      ? truncateString(record.error, MAX_ERROR_CHARS)
+      ? truncateString(redactAutoResearchSensitiveText(record.error), MAX_ERROR_CHARS)
       : record.error === null ? null : undefined,
     startedAt: typeof record.startedAt === 'string' ? record.startedAt : undefined,
     endedAt: typeof record.endedAt === 'string' ? record.endedAt : undefined,
@@ -244,7 +257,9 @@ function normalizeEvent(event: unknown, runId: string, index: number): AutoResea
     timestamp: typeof event.timestamp === 'string' ? event.timestamp : new Date(0).toISOString(),
     level: typeof event.level === 'string' ? event.level as AutoResearchRunEvent['level'] : 'info',
     phase: typeof event.phase === 'string' ? event.phase as AutoResearchRunEvent['phase'] : 'system',
-    message: typeof event.message === 'string' ? truncateString(event.message, MAX_EVENT_MESSAGE_CHARS) : '',
+    message: typeof event.message === 'string'
+      ? truncateString(redactAutoResearchSensitiveText(event.message), MAX_EVENT_MESSAGE_CHARS)
+      : '',
     metadata: isRecord(event.metadata)
       ? sanitizeMetadataValue(event.metadata) as Record<string, unknown> | undefined
       : undefined,
@@ -294,10 +309,14 @@ function normalizeRunRecord(record: unknown): AutoResearchRunRecord | null {
     failureCount: typeof record.failureCount === 'number' ? record.failureCount : 0,
     iterations: iterations.slice(-MAX_PERSISTED_ITERATIONS_PER_RUN),
     events: events.slice(-MAX_PERSISTED_EVENTS_PER_RUN),
-    summary: typeof record.summary === 'string' ? truncateString(record.summary, MAX_SUMMARY_CHARS) : undefined,
-    reason: typeof record.reason === 'string' ? truncateString(record.reason, MAX_REASON_CHARS) : undefined,
+    summary: typeof record.summary === 'string'
+      ? truncateString(redactAutoResearchSensitiveText(record.summary), MAX_SUMMARY_CHARS)
+      : undefined,
+    reason: typeof record.reason === 'string'
+      ? truncateString(redactAutoResearchSensitiveText(record.reason), MAX_REASON_CHARS)
+      : undefined,
     liveOutputExcerpt: typeof record.liveOutputExcerpt === 'string'
-      ? record.liveOutputExcerpt.slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS)
+      ? clipLiveOutputExcerpt(record.liveOutputExcerpt)
       : undefined,
   };
 }
@@ -310,7 +329,7 @@ function sortRuns(runs: AutoResearchRunRecord[]): AutoResearchRunRecord[] {
 }
 
 export function clipLiveOutputExcerpt(value: string): string {
-  return value.slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS);
+  return redactAutoResearchSensitiveText(value).slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS);
 }
 
 export function toHistoryConfigSnapshot(snapshot?: AutoResearchAgentConfigSnapshot): AutoResearchConfigSnapshot {

@@ -4,6 +4,7 @@ import { getCapability } from '@/services/llm/capabilities';
 import { invokeRustAPIStream } from '@/core/streamAdapter';
 import { extractErrorDetails } from '@/utils/errorFormat';
 import type { AutoResearchEnvironmentSummary } from './preflight';
+import { buildAutoResearchToolCatalog } from './toolCatalog';
 import {
   formatError,
   getToolRoundLimit,
@@ -113,6 +114,8 @@ const MAX_EVENT_COUNT = 6;
 const MAX_TOOL_RESULT_COUNT = 4;
 const MAX_REFLECTION_RETRIES = 2;
 const INVALID_JSON_RETRY_PROMPT = 'Your previous output was not valid JSON matching the required schema. Output ONLY the JSON object, no prose.';
+const LOCAL_ALLOWED_TOOLS = new Set(buildAutoResearchToolCatalog({ mode: 'local' }));
+const SSH_ALLOWED_TOOLS = new Set(buildAutoResearchToolCatalog({ mode: 'ssh' }));
 
 function sanitizeSensitiveText(value: string, maxChars: number): string {
   const truncated = value.length > maxChars
@@ -136,6 +139,37 @@ function sanitizeString(value: unknown, maxChars: number): string | undefined {
   }
   const compact = compactWhitespace(value);
   return compact ? sanitizeSensitiveText(compact, maxChars) : undefined;
+}
+
+function parseAllowedToolsFromDisabledMessage(text: string): Set<string> {
+  const match = text.match(/Allowed tools:\s*(.+)$/i);
+  if (!match) {
+    return new Set();
+  }
+
+  return new Set(
+    match[1]
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+}
+
+function setHasIntersection(source: Set<string>, target: Set<string>): boolean {
+  for (const value of source) {
+    if (target.has(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isLocalLaneTool(tool?: string): boolean {
+  return typeof tool === 'string' && LOCAL_ALLOWED_TOOLS.has(tool);
+}
+
+function isSshLaneTool(tool?: string): boolean {
+  return typeof tool === 'string' && SSH_ALLOWED_TOOLS.has(tool);
 }
 
 function extractFirstSection(source: string, startHeading: string, endHeading?: string): string {
@@ -505,16 +539,33 @@ export function getDeterministicRecoveryDecision(
   const stderr = failedToolResult.stderr || '';
   const command = failedToolResult.command || compact.failedCommands.slice(-1)[0];
   const detectedPython = compact.detectedPythonCommand;
+  const allowedTools = parseAllowedToolsFromDisabledMessage(stderr);
 
-  if (failedToolResult.tool === 'execute_command' || stderr.includes('disabled for this AutoResearch run')) {
-    return {
-      action: 'retry_with_plan',
-      summary: 'The agent attempted a disallowed local command tool. It must stay on the ssh_exec tool lane.',
-      rootCause: 'disallowed local tool usage',
-      nextPlan: 'Use ssh_exec for the experiment command and ssh_read_file/ssh_upload_file for file access. Do not call execute_command.',
-      shouldRetry: true,
-      confidence: 'high',
-    };
+  if (stderr.includes('disabled for this AutoResearch run')) {
+    const localLaneAllowed = setHasIntersection(allowedTools, LOCAL_ALLOWED_TOOLS) || isLocalLaneTool(failedToolResult.tool);
+    const sshLaneAllowed = setHasIntersection(allowedTools, SSH_ALLOWED_TOOLS) || isSshLaneTool(failedToolResult.tool);
+
+    if (localLaneAllowed && !sshLaneAllowed) {
+      return {
+        action: 'retry_with_plan',
+        summary: 'The previous attempt drifted onto SSH-only tools during a local AutoResearch run.',
+        rootCause: 'disallowed ssh tool usage',
+        nextPlan: 'Use execute_command for the experiment command and read_file/write_file/create_directory for file access. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.',
+        shouldRetry: true,
+        confidence: 'high',
+      };
+    }
+
+    if (sshLaneAllowed && !localLaneAllowed) {
+      return {
+        action: 'retry_with_plan',
+        summary: 'The previous attempt drifted onto local-only tools during an SSH AutoResearch run.',
+        rootCause: 'disallowed local tool usage',
+        nextPlan: 'Use ssh_exec for the experiment command and ssh_read_file/ssh_upload_file for file access. Do not call execute_command, read_file, write_file, or create_directory.',
+        shouldRetry: true,
+        confidence: 'high',
+      };
+    }
   }
 
   if (isCommandNotFoundText(stderr) && command && /\bpython\b/.test(command) && detectedPython && detectedPython !== 'python') {

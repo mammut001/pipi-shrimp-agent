@@ -40,6 +40,15 @@ export function setCurrentRunDir(runDir: RunDir | null): void {
 }
 
 export function getCurrentRunDir(): RunDir | null {
+  if (!currentRunDir) {
+    return null;
+  }
+
+  const activeRunId = useAutoResearchStore.getState().id;
+  if (!activeRunId || currentRunDir.sessionId !== activeRunId) {
+    return null;
+  }
+
   return currentRunDir;
 }
 

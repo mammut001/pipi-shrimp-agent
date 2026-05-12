@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
 import { AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY } from '@/services/autoresearch/defaultConfig';
 import {
+  getSelectedAutoResearchRunContext,
   getSelectedAutoResearchRun,
   useAutoResearchStore,
 } from '../autoresearchStore';
@@ -187,5 +188,92 @@ describe('autoresearchStore history behavior', () => {
     store.clearLastUsedConfig();
     expect(useAutoResearchStore.getState().lastUsedConfig).toBeNull();
     expect(localStorage.getItem(AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY)).toBeNull();
+  });
+
+  it('builds a single selected-run context for active and historical runs', () => {
+    useAutoResearchStore.setState({
+      id: 'run-active',
+      loopState: 'running',
+      liveOutput: 'live active output',
+      errorMessage: 'active error',
+      statusMessage: 'active status',
+      reason: 'active reason',
+      selectedExperiment: 0,
+      runHistory: [
+        {
+          id: 'run-active',
+          title: 'active',
+          status: 'running',
+          createdAt: '2026-05-05T00:00:00.000Z',
+          updatedAt: '2026-05-05T00:00:01.000Z',
+          config: {
+            experimentDir: '/tmp/active-exp',
+            workdir: '/tmp/active-work',
+            metric: 'cv_accuracy',
+            direction: 'higher',
+            iterations: 5,
+            configSnapshot: {
+              configName: 'Primary',
+              provider: 'openai',
+              model: 'gpt-4.1',
+              keyPresent: true,
+              source: 'settings.activeConfig',
+            },
+          },
+          currentIteration: 1,
+          bestMetricValue: null,
+          bestIteration: null,
+          failureCount: 0,
+          iterations: [{ id: 'run-active-iter-1', index: 1, status: 'running' }],
+          events: [],
+          liveOutputExcerpt: 'stale excerpt',
+        },
+        {
+          id: 'run-old',
+          title: 'history',
+          status: 'completed',
+          createdAt: '2026-05-04T00:00:00.000Z',
+          updatedAt: '2026-05-04T00:00:01.000Z',
+          config: {
+            experimentDir: '/tmp/history-exp',
+            workdir: '/tmp/history-work',
+            metric: 'cv_accuracy',
+            direction: 'higher',
+            iterations: 5,
+            configSnapshot: {
+              configName: 'Primary',
+              provider: 'openai',
+              model: 'gpt-4.1',
+              keyPresent: true,
+              source: 'settings.activeConfig',
+            },
+          },
+          currentIteration: 5,
+          bestMetricValue: 0.97,
+          bestIteration: 5,
+          failureCount: 0,
+          iterations: [{ id: 'run-old-iter-1', index: 1, status: 'completed' }],
+          events: [],
+          reason: 'historical reason',
+          liveOutputExcerpt: 'historical excerpt',
+        },
+      ],
+      selectedRunId: 'run-active',
+    });
+
+    const activeContext = getSelectedAutoResearchRunContext(useAutoResearchStore.getState());
+    expect(activeContext.isActive).toBe(true);
+    expect(activeContext.liveOutput).toBe('live active output');
+    expect(activeContext.reason).toBe('active reason');
+    expect(activeContext.statusMessage).toBe('active status');
+    expect(activeContext.selectedIterationIndex).toBe(0);
+
+    useAutoResearchStore.setState({ selectedRunId: 'run-old' });
+    const historicalContext = getSelectedAutoResearchRunContext(useAutoResearchStore.getState());
+    expect(historicalContext.isActive).toBe(false);
+    expect(historicalContext.liveOutput).toBe('historical excerpt');
+    expect(historicalContext.reason).toBe('historical reason');
+    expect(historicalContext.statusMessage).toBeUndefined();
+    expect(historicalContext.loopState).toBe('stopped');
   });
 });

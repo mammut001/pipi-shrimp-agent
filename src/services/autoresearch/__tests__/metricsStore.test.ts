@@ -40,6 +40,9 @@ describe('metricsStore', () => {
       metricValue: 0.9,
       status: 'IMPROVED',
       hypothesis: 'lower learning rate',
+      change: 'lowered lr from 1e-3 to 5e-4',
+      reasoning: 'The prior run overfit early, so a smaller lr should stabilize validation loss.',
+      artifactPaths: ['/tmp/session-1/iter-1/plot.png'],
       durationMs: 1000,
       startedAt: '2026-05-05T00:00:00.000Z',
       finishedAt: '2026-05-05T00:00:01.000Z',
@@ -60,10 +63,14 @@ describe('metricsStore', () => {
     const metrics = await readAllMetrics(cfg, 'session-1');
     expect(metrics).toHaveLength(2);
     expect(metrics[0].hypothesis).toBe('lower learning rate');
+    expect(metrics[0].change).toBe('lowered lr from 1e-3 to 5e-4');
+    expect(metrics[0].reasoning).toContain('smaller lr');
+    expect(metrics[0].artifactPaths).toEqual(['/tmp/session-1/iter-1/plot.png']);
 
     const metricsFile = JSON.parse(await fs.readFile(runDir.metricsPath, 'utf8'));
     expect(metricsFile.iteration).toBe(1);
     expect(metricsFile.metricValue).toBe(0.9);
+    expect(metricsFile.change).toBe('lowered lr from 1e-3 to 5e-4');
   });
 
   it('summarizes numeric metrics', () => {

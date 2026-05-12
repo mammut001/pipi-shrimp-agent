@@ -1,5 +1,10 @@
 import { t } from '@/i18n';
-import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
+import {
+  getActiveAutoResearchRun,
+  isAutoResearchTerminalState,
+  useAutoResearchStore,
+  type SshConfig,
+} from '@/store/autoresearchStore';
 import type { AutoResearchAgentConfigSnapshot } from './errors';
 import { formatError } from './errors';
 import { createAutoResearchRunId } from './history';
@@ -143,11 +148,25 @@ export function logAutoResearchSetupFailure(phase: string, error: unknown, conte
   return formatError(error);
 }
 
+function assertNoConcurrentAutoResearchRun(): void {
+  const state = useAutoResearchStore.getState();
+  const activeRun = getActiveAutoResearchRun(state);
+  const activeRunInProgress = Boolean(activeRun && !isAutoResearchTerminalState(activeRun.status));
+  const loopBusy = Boolean(state.id) && (state.loopState === 'running' || state.loopState === 'paused');
+
+  if (!activeRunInProgress && !loopBusy) {
+    return;
+  }
+
+  throw new Error('Another AutoResearch run is already in progress. Stop it or wait for it to finish before starting a new run.');
+}
+
 export async function startAutoResearchRun(
   setup: AutoResearchValidatedSetup,
   callbacks: StartCallbacks,
 ): Promise<StartAutoResearchRunResult> {
   await assertSupportedPlatform();
+  assertNoConcurrentAutoResearchRun();
 
   const sessionId = createAutoResearchRunId();
   const [

@@ -158,6 +158,49 @@ describe('AutoResearch reflection helpers', () => {
     }));
   });
 
+  it('keeps local runs on the local tool lane when ssh_exec is disabled', () => {
+    const decision = getDeterministicRecoveryDecision(buildReflectionInputFromState({
+      systemPrompt: '## Session File\nGoal: improve cv_accuracy\n## Living AutoResearch Notes\nnone',
+      metric: 'cv_accuracy',
+      direction: 'higher',
+      cwd: '/tmp/research',
+      iteration: 2,
+      maxIterations: 5,
+      environmentSummary: {
+        experimentDir: '/tmp/research',
+        gitRepo: true,
+        repoStatus: 'clean',
+        dirtyFileCount: 0,
+        preferredPythonCommand: 'python3',
+        worktreeWritable: true,
+        runScriptPath: '/tmp/research/run_experiment.py',
+        notesPath: '/tmp/research/AUTORESEARCH.md',
+        recommendedRunCommand: 'python3 run_experiment.py',
+      },
+      recentEvents: [],
+      recentToolResults: [
+        {
+          tool: 'ssh_exec',
+          command: 'python3 run_experiment.py',
+          stdout: '',
+          stderr: 'Error: Tool "ssh_exec" is disabled for this AutoResearch run. Allowed tools: get_current_workspace, execute_command, read_file, write_file, create_directory',
+          exitCode: 1,
+        },
+      ],
+      failedCommands: ['python3 run_experiment.py'],
+      lastError: 'Tool disabled',
+      remainingToolBudget: 6,
+    }));
+
+    expect(decision).toEqual(expect.objectContaining({
+      action: 'retry_with_plan',
+      rootCause: 'disallowed ssh tool usage',
+      shouldRetry: true,
+    }));
+    expect(decision?.nextPlan).toContain('execute_command');
+    expect(decision?.nextPlan).toContain('Do not call ssh_exec');
+  });
+
   it('preserves the last meaningful tool error in fallback stop decisions', () => {
     const decision = buildFallbackReflectionDecision({
       objective: 'Improve cv_accuracy',

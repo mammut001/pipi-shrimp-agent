@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockBuildResolvedChatRequest = jest.fn();
 const mockInvokeRustAPIStream = jest.fn();
 const mockOnTurnComplete = jest.fn();
+const mockGetSettingsState = jest.fn(() => ({
+  agentSettings: { maxToolRounds: 4 },
+}));
 
 jest.mock('@/store', () => ({
   useSettingsStore: {
-    getState: () => ({
-      agentSettings: { maxToolRounds: 4 },
-    }),
+    getState: () => mockGetSettingsState(),
   },
 }));
 
@@ -53,6 +54,9 @@ describe('QueryEngine context overflow fallback', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetSettingsState.mockReturnValue({
+      agentSettings: { maxToolRounds: 4 },
+    });
     mockBuildResolvedChatRequest.mockImplementation((_config, rawOptions) => {
       const options = rawOptions as {
         messages: Array<Record<string, unknown>>;
@@ -131,5 +135,53 @@ describe('QueryEngine context overflow fallback', () => {
       resolvedConfig,
       expect.objectContaining({ contextBudget: { strict: true } }),
     );
+  });
+
+  it('reserves a final response round before hard tool exhaustion', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* firstToolTurn() {
+        yield {
+          type: 'tool_call',
+          tool: { id: 'tool-1', name: 'read_file', arguments: '{"path":"README.md"}' },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      })
+      .mockImplementationOnce(async function* secondToolTurn() {
+        yield {
+          type: 'tool_call',
+          tool: { id: 'tool-2', name: 'write_file', arguments: '{"path":"README.md","content":"x"}' },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const iterator = runChatTurn(
+      'session-2',
+      [{ role: 'user', content: 'hello' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    );
+
+    const statusEvent = await iterator.next();
+    expect(statusEvent.value).toEqual({
+      type: 'status_update',
+      message: 'Executing 1 tool(s): read_file',
+    });
+
+    const toolBatchEvent = await iterator.next();
+    expect(toolBatchEvent.value.type).toBe('tool_batch_request');
+    toolBatchEvent.value._resolveAll([{ id: 'tool-1', content: 'README contents' }]);
+
+    const errorEvent = await iterator.next();
+    expect(errorEvent.value.type).toBe('error');
+    expect((errorEvent.value.error as Error).message).toContain('Exceeded maximum tool rounds (4)');
+    expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(2);
   });
 });

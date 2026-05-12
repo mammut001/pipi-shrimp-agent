@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import { t } from '@/i18n';
 import {
   useAutoResearchStore,
+  getSelectedAutoResearchRunContext,
   getSelectedAutoResearchRun,
   getSortedAutoResearchRuns,
   type AutoResearchRunRecord,
@@ -203,20 +204,17 @@ function IterationDetail({ run, index }: { run: AutoResearchRunRecord; index: nu
 
 export function AutoResearchPanel() {
   const {
-    loopState,
-    errorMessage,
-    liveOutput,
-    selectedExperiment,
     selectedRunId,
-    id: activeRunId,
     setSelectedExperiment,
     selectRun,
     setShowSetupModal,
     resetSession,
   } = useAutoResearchStore();
-  const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
+  const selectedRunContext = useAutoResearchStore(getSelectedAutoResearchRunContext);
+  const selectedRun = selectedRunContext.run;
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
-  const runReason = selectedRun?.reason || errorMessage;
+  const loopState = selectedRunContext.loopState;
+  const runReason = selectedRunContext.reason;
 
   const liveOutputRef = useRef<HTMLDivElement>(null);
   const [liveExpanded, setLiveExpanded] = useState(true);
@@ -224,17 +222,13 @@ export function AutoResearchPanel() {
   const [clearedLiveChars, setClearedLiveChars] = useState(0);
   const [liveOutputFeedback, setLiveOutputFeedback] = useState<LiveOutputFeedback>(null);
 
-  const isSelectedRunActive = Boolean(selectedRun && activeRunId && selectedRun.id === activeRunId);
-  const rawLiveOutput = isSelectedRunActive
-    ? liveOutput
-    : selectedRun?.liveOutputExcerpt || '';
+  const isSelectedRunActive = selectedRunContext.isActive;
+  const rawLiveOutput = selectedRunContext.liveOutput;
   const normalizedLiveOutput = useMemo(() => stripAnsiText(rawLiveOutput), [rawLiveOutput]);
   const visibleLiveOutput = normalizedLiveOutput.slice(Math.min(clearedLiveChars, normalizedLiveOutput.length));
   const displayedLiveOutput = redactSensitiveText(visibleLiveOutput);
   const iterations = selectedRun?.iterations ?? [];
-  const selectedIterationIndex = selectedExperiment >= 0 && selectedExperiment < iterations.length
-    ? selectedExperiment
-    : -1;
+  const selectedIterationIndex = selectedRunContext.selectedIterationIndex;
   const recentEvents = selectedRun?.events.slice(-6).reverse() ?? [];
   const allEventLines = useMemo(
     () => formatAutoResearchEventDump(selectedRun?.events ?? []),

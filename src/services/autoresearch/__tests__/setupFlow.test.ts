@@ -1,6 +1,13 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { validateAutoResearchSetupDraft } from '../setupFlow';
 
+const mockStoreState = {
+  id: '',
+  loopState: 'idle',
+  runHistory: [] as Array<{ id: string; status: string }>,
+  setError: jest.fn(),
+};
+
 jest.mock('@/i18n', () => ({
   t: (key: string) => ({
     'autoresearch.connectionTestRequired': 'Run a successful connection test before starting AutoResearch.',
@@ -13,6 +20,18 @@ jest.mock('@/i18n', () => ({
     'autoresearch.validationMetricRequired': 'Metric name is required.',
     'autoresearch.validationBaselineNumber': 'Baseline must be a number.',
   }[key] ?? key),
+}));
+
+jest.mock('@/store/autoresearchStore', () => ({
+  useAutoResearchStore: {
+    getState: () => mockStoreState,
+  },
+  getActiveAutoResearchRun: () => mockStoreState.runHistory.find((run) => run.id === mockStoreState.id) ?? null,
+  isAutoResearchTerminalState: (status: string | null | undefined) => Boolean(status && ['reflection_failed', 'failed', 'completed', 'stopped', 'interrupted'].includes(status)),
+}));
+
+jest.mock('../platformGuard', () => ({
+  assertSupportedPlatform: jest.fn().mockResolvedValue(undefined),
 }));
 
 describe('validateAutoResearchSetupDraft', () => {
@@ -101,5 +120,39 @@ describe('validateAutoResearchSetupDraft', () => {
 
     expect(result.value).toBeNull();
     expect(result.error).toBe('SSH host is required.');
+  });
+
+  it('refuses to start a new run while another run is already active', async () => {
+    mockStoreState.id = 'run-active';
+    mockStoreState.loopState = 'running';
+    mockStoreState.runHistory = [{ id: 'run-active', status: 'running' }];
+
+    const { startAutoResearchRun } = await import('../setupFlow');
+
+    await expect(startAutoResearchRun({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '~/Documents/tiny-autoresearch-digits',
+      metric: 'cv_accuracy',
+      direction: 'higher',
+      iterations: 5,
+      baseline: null,
+    }, {
+      setSshConfig: jest.fn(),
+      setLastUsedConfig: jest.fn(),
+      initSession: jest.fn(),
+    })).rejects.toThrow('Another AutoResearch run is already in progress. Stop it or wait for it to finish before starting a new run.');
+
+    mockStoreState.id = '';
+    mockStoreState.loopState = 'idle';
+    mockStoreState.runHistory = [];
   });
 });

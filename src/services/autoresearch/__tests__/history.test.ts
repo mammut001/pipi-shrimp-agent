@@ -106,7 +106,7 @@ describe('autoresearch history storage', () => {
 
   it('prunes oversized history and truncates event/live output content', () => {
     const longMessage = 'x'.repeat(5000);
-    const longOutput = 'y'.repeat(50000);
+    const longOutput = `${'y'.repeat(500)} token=super-secret-token ${'z'.repeat(49500)}`;
     const runs = Array.from({ length: 45 }, (_, index) => createRun({
       id: `run-${index}`,
       updatedAt: `2026-05-05T00:00:${String(index).padStart(2, '0')}.000Z`,
@@ -127,8 +127,8 @@ describe('autoresearch history storage', () => {
           timestamp: '2026-05-05T00:00:00.000Z',
           level: 'info' as const,
           phase: 'system' as const,
-          message: longMessage,
-          metadata: { apiKey: 'super-secret-key', note: longMessage },
+          message: `password=super-secret-password ${longMessage}`,
+          metadata: { apiKey: 'super-secret-key', note: 'keyPath=/Users/demo/.ssh/id_ed25519' },
         },
       ],
     }));
@@ -143,6 +143,9 @@ describe('autoresearch history storage', () => {
     expect(history.runs[0]?.events[0]?.message.length).toBeLessThanOrEqual(1000);
     expect(history.runs[0]?.iterations[0]?.commitHash).toBe('abcdef1234567890');
     expect(raw).not.toContain('super-secret-key');
+    expect(raw).not.toContain('super-secret-token');
+    expect(raw).not.toContain('super-secret-password');
+    expect(raw).not.toContain('/Users/demo/.ssh/id_ed25519');
     expect(raw).not.toContain('"apiKey":"super-secret-key"');
   });
 
