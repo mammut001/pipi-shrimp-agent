@@ -2,6 +2,15 @@ import { runChatTurn } from '@/core/QueryEngine';
 import type { ToolCallParams, TokenUsage } from '@/core/types';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { StreamingToolExecutor, partitionTools } from '@/services/StreamingToolExecutor';
+import { useSettingsStore } from '@/store';
+import {
+  appendToolBudgetEntries,
+  createToolBudgetSummary,
+  getToolBudgetSummaryFromUnknown,
+  withToolBudgetSummary,
+  type ToolBudgetSummary,
+} from '@/services/tools/toolBudget';
+import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
 
 const WORKSPACE_SENSITIVE_TOOLS = new Set([
   'get_current_workspace',
@@ -48,6 +57,7 @@ export interface HeadlessAgentRunnerResult {
   finalText: string;
   finalReasoning: string;
   tokenUsage?: TokenUsage;
+  toolBudgetSummary: ToolBudgetSummary;
 }
 
 function previewToolResult(content: string): string {
@@ -61,19 +71,31 @@ function previewToolResult(content: string): string {
     : normalized;
 }
 
-function toolResultContent(content: string, errorMessage?: string): string {
+function toolResultContent(toolName: string, content: string, errorMessage?: string): string {
   if (content) {
     return content;
   }
   if (errorMessage) {
     return `Error: ${errorMessage}`;
   }
-  return 'Error: tool execution failed';
+  return JSON.stringify({
+    error: true,
+    error_kind: 'transient_failure',
+    tool: toolName,
+    message: `Tool execution failed: ${toolName}`,
+    cause: 'No tool result content or error message was returned.',
+  });
 }
 
 function buildDisallowedToolResult(toolName: string, allowedTools: Set<string>): string {
   const allowedList = [...allowedTools].join(', ');
-  return `Error: Tool "${toolName}" is disabled for this AutoResearch run. Allowed tools: ${allowedList}`;
+  return JSON.stringify({
+    error: true,
+    error_kind: 'tool_disabled',
+    tool: toolName,
+    message: `Tool "${toolName}" is disabled for this AutoResearch run. Allowed tools: ${allowedList}`,
+    cause: `Allowed tools: ${allowedList}`,
+  });
 }
 
 async function ensureHeadlessWorkDir(
@@ -158,7 +180,7 @@ async function executeToolBatch(
 
     for (const result of batchResult.results) {
       const request = concurrent.find((candidate) => candidate.id === result.id);
-      const content = toolResultContent(result.content, result.error_message);
+      const content = toolResultContent(request?.name ?? 'unknown', result.content, result.error_message);
       results.push({
         id: result.id,
         name: request?.name ?? 'unknown',
@@ -175,7 +197,7 @@ async function executeToolBatch(
       workDir,
     });
     const result = batchResult.results[0];
-    const content = toolResultContent(result?.content ?? '', result?.error_message);
+    const content = toolResultContent(request.name, result?.content ?? '', result?.error_message);
     results.push({
       id: request.id,
       name: request.name,
@@ -208,6 +230,9 @@ export async function runHeadlessAgentTurn(
   let finalReasoning = '';
   let assistantTurnBuffer = '';
   let tokenUsage: TokenUsage | undefined;
+  let toolBudgetSummary = createToolBudgetSummary(
+    useSettingsStore.getState().agentSettings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds,
+  );
 
   for await (const event of engine) {
     switch (event.type) {
@@ -249,6 +274,10 @@ export async function runHeadlessAgentTurn(
           currentWorkDir,
           allowedTools,
         );
+        toolBudgetSummary = appendToolBudgetEntries(
+          toolBudgetSummary,
+          results.map(({ name, content }) => ({ name, content })),
+        );
         for (const result of results) {
           input.onToolSummary?.(result.name, previewToolResult(result.content));
           await input.onToolResult?.({
@@ -284,6 +313,12 @@ export async function runHeadlessAgentTurn(
           allowedTools,
         );
         if (result) {
+          toolBudgetSummary = appendToolBudgetEntries(
+            toolBudgetSummary,
+            [{ name: result.name, content: result.content }],
+          );
+        }
+        if (result) {
           input.onToolSummary?.(result.name, previewToolResult(result.content));
           await input.onToolResult?.({
             id: result.id,
@@ -305,7 +340,10 @@ export async function runHeadlessAgentTurn(
         break;
 
       case 'error':
-        throw event.error;
+        throw withToolBudgetSummary(
+          event.error,
+          getToolBudgetSummaryFromUnknown(event.error) ?? toolBudgetSummary,
+        );
 
       default:
         break;
@@ -316,5 +354,6 @@ export async function runHeadlessAgentTurn(
     finalText,
     finalReasoning,
     tokenUsage,
+    toolBudgetSummary,
   };
 }

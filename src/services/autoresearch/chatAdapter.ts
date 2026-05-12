@@ -39,6 +39,11 @@ import { appendTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
 import type { AutoResearchEnvironmentSummary } from './preflight';
 import { buildAutoResearchToolCatalog } from './toolCatalog';
+import {
+  getRemainingToolBudget,
+  getToolBudgetSummaryFromUnknown,
+  type ToolBudgetSummary,
+} from '@/services/tools/toolBudget';
 
 let adapterSessionCounter = 0;
 const MAX_HISTORY = 20;
@@ -146,8 +151,17 @@ function parseToolResult(
     const parsed = JSON.parse(call.result) as Record<string, unknown>;
     stdout = typeof parsed.stdout === 'string' ? parsed.stdout : undefined;
     stderr = typeof parsed.stderr === 'string' ? parsed.stderr : undefined;
+    if (!stderr && parsed.error === true) {
+      const message = typeof parsed.message === 'string' ? parsed.message : null;
+      const cause = typeof parsed.cause === 'string' ? parsed.cause : null;
+      stderr = [message, cause].filter((value): value is string => Boolean(value)).join(' | ') || call.result;
+    }
     const rawExitCode = parsed.exitCode ?? parsed.exit_code;
-    exitCode = typeof rawExitCode === 'number' ? rawExitCode : null;
+    exitCode = typeof rawExitCode === 'number'
+      ? rawExitCode
+      : parsed.error === true
+        ? 1
+        : null;
   } catch {
     stderr = call.result;
     exitCode = null;
@@ -173,7 +187,29 @@ function getRecentEventSummaries(): string[] {
     .map((event) => `${event.phase}: ${event.message}`);
 }
 
-async function persistReflectionDecision(decision: AutoResearchReflectionDecision): Promise<void> {
+function emitToolBudgetEvent(summary: ToolBudgetSummary | undefined): void {
+  if (!summary || (summary.successfulCalls === 0 && summary.failedCalls === 0)) {
+    return;
+  }
+
+  useAutoResearchStore.getState().addRunEvent?.({
+    level: summary.failedCalls > 0 ? 'warn' : 'info',
+    phase: 'agent_execution',
+    message: `Tool budget ${summary.toolBudgetUsed}/${summary.toolBudgetMax} used (${summary.successfulCalls} successful, ${summary.failedCalls} failed).`,
+    metadata: {
+      tool_budget_used: summary.toolBudgetUsed,
+      tool_budget_max: summary.toolBudgetMax,
+      failed_calls: summary.failedCalls,
+      successful_calls: summary.successfulCalls,
+      category_counts: summary.categoryCounts,
+    },
+  });
+}
+
+async function persistReflectionDecision(
+  decision: AutoResearchReflectionDecision,
+  toolBudgetSummary?: ToolBudgetSummary,
+): Promise<void> {
   useAutoResearchStore.getState().addRunEvent?.({
     level: decision.shouldRetry ? 'info' : 'warn',
     phase: 'agent_execution',
@@ -182,6 +218,12 @@ async function persistReflectionDecision(decision: AutoResearchReflectionDecisio
       action: decision.action,
       rootCause: decision.rootCause,
       confidence: decision.confidence,
+      ...(toolBudgetSummary ? {
+        tool_budget_used: toolBudgetSummary.toolBudgetUsed,
+        tool_budget_max: toolBudgetSummary.toolBudgetMax,
+        failed_calls: toolBudgetSummary.failedCalls,
+        successful_calls: toolBudgetSummary.successfulCalls,
+      } : {}),
     },
   });
   useAutoResearchStore.getState().appendLiveOutput(
@@ -294,6 +336,10 @@ export function createAutoResearchSendMessage(
     let reflectionPasses = 0;
     let attemptPrompt = systemPrompt;
     const allowedTools = buildAutoResearchToolCatalog(store.sshConfig);
+    const currentRunDir = getCurrentRunDir();
+    const effectiveWorkDir = store.sshConfig?.mode === 'local'
+      ? (currentRunDir?.iterDir || workDir)
+      : workDir;
 
     while (true) {
       const toolCallsById = new Map<string, { name: string; command?: string }>();
@@ -307,7 +353,7 @@ export function createAutoResearchSendMessage(
           sessionId: attemptSessionId,
           initialMessages: turnMessages,
           systemPrompt: attemptPrompt,
-          workDir,
+          workDir: effectiveWorkDir,
           agentConfig: agentConfig!,
           allowedTools,
           onTextDelta: (chunk) => {
@@ -349,17 +395,20 @@ export function createAutoResearchSendMessage(
           },
         });
 
+        emitToolBudgetEvent(result.toolBudgetSummary);
         assistantText = result.finalText;
         lastError = undefined;
         break;
       } catch (error) {
         lastError = error;
         const storeState = useAutoResearchStore.getState();
+        const toolBudgetSummary = getToolBudgetSummaryFromUnknown(error);
+        emitToolBudgetEvent(toolBudgetSummary);
         const reflectionInput = buildReflectionInputFromState({
           systemPrompt,
           metric: options.metricName ?? storeState.metricName,
           direction: options.direction ?? storeState.metricDirection,
-          cwd: workDir ?? '',
+          cwd: effectiveWorkDir ?? '',
           iteration: storeState.currentIteration,
           maxIterations: options.maxIterations ?? storeState.maxIterations,
           environmentSummary: options.environmentSummary,
@@ -367,7 +416,9 @@ export function createAutoResearchSendMessage(
           recentToolResults: toolResults,
           failedCommands,
           lastError: formatError(error),
-          remainingToolBudget: isToolRoundLimitError(error) ? 0 : undefined,
+          remainingToolBudget: toolBudgetSummary
+            ? getRemainingToolBudget(toolBudgetSummary)
+            : (isToolRoundLimitError(error) ? 0 : undefined),
         });
         const failureKind = classifyAutoResearchFailure(error);
 
@@ -397,7 +448,7 @@ export function createAutoResearchSendMessage(
             emitReflectionParseFailureEvents(reflectionResult);
             await persistReflectionArtifacts(reflectionResult);
           }
-          await persistReflectionDecision(decision);
+          await persistReflectionDecision(decision, toolBudgetSummary);
           if (decision.shouldRetry && recoveryRetries < MAX_RECOVERY_RETRIES) {
             recoveryRetries += 1;
             attemptPrompt = decision.action === 'switch_command'
@@ -429,7 +480,7 @@ export function createAutoResearchSendMessage(
       });
       console.error('[AutoResearch] Agent execution failed', {
         ...getAgentConfigDiagnostics(agentConfig!),
-        cwd: workDir,
+        cwd: effectiveWorkDir,
         diagnosticMessage,
       });
       throw new Error(diagnosticMessage);

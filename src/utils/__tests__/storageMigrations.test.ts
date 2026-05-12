@@ -28,7 +28,7 @@ describe('storageMigrations', () => {
 
   it('bumps the old agent tool-round default to the current default', () => {
     expect(normalizePersistedAgentSettings(JSON.stringify({ maxToolRounds: 10 }))).toEqual({
-      agentSettings: { maxToolRounds: 50 },
+      agentSettings: { maxToolRounds: 17 },
       migrated: true,
     });
   });
@@ -39,14 +39,14 @@ describe('storageMigrations', () => {
       migrated: true,
     });
     expect(normalizePersistedAgentSettings(JSON.stringify({ maxToolRounds: 0 }))).toEqual({
-      agentSettings: { maxToolRounds: 50 },
+      agentSettings: { maxToolRounds: 17 },
       migrated: true,
     });
   });
 
   it('handles malformed agent settings storage safely', () => {
     expect(normalizePersistedAgentSettings('{bad json')).toEqual({
-      agentSettings: { maxToolRounds: 50 },
+      agentSettings: { maxToolRounds: 17 },
       migrated: true,
     });
   });

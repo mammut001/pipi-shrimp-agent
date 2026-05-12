@@ -63,12 +63,12 @@ export interface BudgetSettings {
 
 /** Agent behavior settings */
 export interface AgentSettings {
-  maxToolRounds: number;  // Maximum tool loop rounds (default: 50)
+  maxToolRounds: number;  // Maximum tool loop rounds (default: 17)
 }
 
 /** Default agent settings */
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
-  maxToolRounds: 50,
+  maxToolRounds: 17,
 };
 
 /** Source of a model entry — for observability and debugging */

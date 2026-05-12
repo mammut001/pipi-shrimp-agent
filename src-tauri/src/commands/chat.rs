@@ -270,8 +270,17 @@ pub async fn execute_tool(
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for read_file".to_string()))?;
-            let result = crate::commands::file::read_file(path.to_string(), work_dir.clone()).await?;
-            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
+            match crate::commands::file::read_file_for_tool(path, work_dir.as_deref()) {
+                Ok(result) => serde_json::to_string(&result)
+                    .map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?,
+                Err(error) => serde_json::json!({
+                    "error": true,
+                    "error_kind": error.error_kind,
+                    "message": error.message,
+                    "path": error.path,
+                    "cause": error.cause,
+                }).to_string(),
+            }
         }
         "write_file" => {
             let path = args.get("path")
@@ -280,8 +289,17 @@ pub async fn execute_tool(
             let content = args.get("content")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'content' argument for write_file".to_string()))?;
-            let result = crate::commands::file::write_file(path.to_string(), content.to_string(), work_dir.clone()).await?;
-            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
+            match crate::commands::file::write_file_for_tool(path, content, work_dir.as_deref()) {
+                Ok(result) => serde_json::to_string(&result)
+                    .map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?,
+                Err(error) => serde_json::json!({
+                    "error": true,
+                    "error_kind": error.error_kind,
+                    "message": error.message,
+                    "path": error.path,
+                    "cause": error.cause,
+                }).to_string(),
+            }
         }
         "execute_command" => {
             let command = args.get("command")
@@ -303,8 +321,17 @@ pub async fn execute_tool(
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'path' argument for create_directory".to_string()))?;
-            let result = crate::commands::file::create_directory(path.to_string(), work_dir.clone()).await?;
-            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
+            match crate::commands::file::create_directory_for_tool(path, work_dir.as_deref()) {
+                Ok(result) => serde_json::to_string(&result)
+                    .map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?,
+                Err(error) => serde_json::json!({
+                    "error": true,
+                    "error_kind": error.error_kind,
+                    "message": error.message,
+                    "path": error.path,
+                    "cause": error.cause,
+                }).to_string(),
+            }
         }
         "path_exists" => {
             let path = args.get("path")
@@ -502,11 +529,14 @@ pub async fn execute_tool(
             ];
             return Ok(serde_json::json!({
                 "error": true,
+                "error_kind": "tool_not_found",
                 "message": format!(
                     "工具 '{}' 不存在或暂不支持。可用工具: {}",
                     tool_name,
                     supported_tools.join(", ")
-                )
+                ),
+                "tool": tool_name,
+                "cause": format!("Supported tools: {}", supported_tools.join(", "))
             }).to_string());
         }
     };

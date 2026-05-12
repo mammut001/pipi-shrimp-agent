@@ -14,6 +14,7 @@ const mockAddRunEvent = jest.fn();
 const mockRequestReflectionDecision = jest.fn();
 const mockGetDeterministicRecoveryDecision = jest.fn();
 const mockBuildFallbackReflectionDecision = jest.fn();
+const mockGetCurrentRunDir = jest.fn();
 
 class MockAutoResearchReflectionFailureError extends Error {
   readonly decisionResult: unknown;
@@ -74,7 +75,7 @@ jest.mock('../runDir', () => ({
 }));
 
 jest.mock('../terminalRunner', () => ({
-  getCurrentRunDir: () => null,
+  getCurrentRunDir: () => mockGetCurrentRunDir(),
 }));
 
 jest.mock('../reflection', () => ({
@@ -161,6 +162,7 @@ describe('createAutoResearchSendMessage', () => {
       shouldRetry: false,
       confidence: 'medium',
     }));
+    mockGetCurrentRunDir.mockReturnValue(null);
   });
 
   it('uses the resolved active config for headless agent execution', async () => {
@@ -187,6 +189,21 @@ describe('createAutoResearchSendMessage', () => {
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('💭 reasoning trace');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('[status] working\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('  → read_file: README excerpt\n');
+  });
+
+  it('binds local file tools to the current iteration root when available', async () => {
+    mockGetCurrentRunDir.mockReturnValue({
+      iterDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research/source', activeConfig);
+
+    await expect(sendMessage('system prompt', 'use iteration workspace')).resolves.toBe('final answer');
+
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
+      workDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z',
+    }));
   });
 
   it('does not send requests when authorization would be empty', async () => {

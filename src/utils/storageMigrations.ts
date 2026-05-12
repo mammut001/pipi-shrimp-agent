@@ -36,7 +36,7 @@ export interface AgentSettingsMigrationResult {
 }
 
 const DEFAULT_AGENT_SETTINGS: PersistedAgentSettings = {
-  maxToolRounds: 50,
+  maxToolRounds: 17,
 };
 
 const MIN_TOOL_ROUNDS = 1;

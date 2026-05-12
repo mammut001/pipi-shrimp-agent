@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { t } from '@/i18n';
+import {
+  buildAutoResearchLiveOutputFilename,
+  formatAutoResearchEventDump,
+  formatAutoResearchEventLine,
+  getAutoResearchEventMetadataBadges,
+} from '@/services/autoresearch/eventPresentation';
 import type { AutoResearchIterationRecord, AutoResearchRunRecord } from '@/services/autoresearch/history';
 import { formatError as formatAutoResearchError } from '@/services/autoresearch/errors';
 import { buildAutoResearchRunDocument, redactSensitiveText } from '@/services/autoresearch/runDocument';
@@ -16,6 +22,7 @@ import {
   DocumentMetadataSidebar,
   MarkdownDocumentPreview,
 } from '@/components/document';
+import { downloadTextFile, writeClipboardText } from '@/utils/clipboard';
 import { AutoResearchMetricChart } from './AutoResearchMetricChart';
 import { AutoResearchIterationTable } from './AutoResearchIterationTable';
 
@@ -212,6 +219,18 @@ export function AutoResearchDocumentReport({
     : undefined;
   const artifacts = uniqueValues(run.iterations.flatMap((iteration) => iteration.artifactPaths ?? []));
   const displayedLiveOutput = liveOutput || run.liveOutputExcerpt || '';
+  const allEventLines = useMemo(() => formatAutoResearchEventDump(run.events), [run.events]);
+
+  const handleCopy = (text: string) => {
+    void writeClipboardText(text).catch(() => undefined);
+  };
+
+  const handleDownload = () => {
+    if (!displayedLiveOutput) {
+      return;
+    }
+    downloadTextFile(buildAutoResearchLiveOutputFilename(run), displayedLiveOutput);
+  };
   const baseline = typeof run.config.baseline === 'number' ? run.config.baseline : null;
   const bestValue = typeof run.bestMetricValue === 'number' ? run.bestMetricValue : bestPoint?.value ?? null;
   const bestIteration = typeof run.bestIteration === 'number' ? run.bestIteration : bestPoint?.iteration ?? null;
@@ -347,25 +366,81 @@ export function AutoResearchDocumentReport({
 
           {run.events.length > 0 && (
             <section className="space-y-3">
-              <SectionTitle>Recent Events</SectionTitle>
+              <div className="flex items-center justify-between gap-3">
+                <SectionTitle>Recent Events</SectionTitle>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(allEventLines)}
+                  data-copy-target="recent-events-all"
+                  className="rounded-full border border-[#d8d0c3] bg-white px-3 py-1 text-[11px] font-semibold text-[#6f665c] transition-colors hover:bg-[#f3efe8]"
+                >
+                  {t('autoresearch.recentEvents.copyAll')}
+                </button>
+              </div>
               <div className="space-y-2">
-                {run.events.slice(-10).reverse().map((event) => (
-                  <div key={event.id} className="rounded-xl border border-[#ebe4d9] bg-[#fbfaf7] px-3 py-2 text-xs text-[#6f665c]">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-[#2f251a]">{event.phase}</span>
-                      <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-[#8a7f72]">{event.level}</span>
-                      <span className="text-[#998c7e]">{formatDateTime(event.timestamp)}</span>
+                {run.events.slice(-10).reverse().map((event) => {
+                  const metadataBadges = getAutoResearchEventMetadataBadges(event);
+                  return (
+                    <div key={event.id} className="group rounded-xl border border-[#ebe4d9] bg-[#fbfaf7] px-3 py-2 text-xs text-[#6f665c]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-[#2f251a]">{event.phase}</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-[#8a7f72]">{event.level}</span>
+                            <span className="text-[#998c7e]">{formatDateTime(event.timestamp)}</span>
+                          </div>
+                          <p className="mt-1 leading-5">{redactSensitiveText(event.message)}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(formatAutoResearchEventLine(event))}
+                          data-copy-target="recent-event-line"
+                          className="rounded-full border border-[#d8d0c3] bg-white px-2 py-0.5 text-[10px] font-semibold text-[#8a7f72] opacity-0 transition-opacity hover:bg-[#f3efe8] group-hover:opacity-100"
+                          aria-label={t('autoresearch.recentEvents.copyOne')}
+                          title={t('autoresearch.recentEvents.copyOne')}
+                        >
+                          {t('autoresearch.recentEvents.copyOne')}
+                        </button>
+                      </div>
+                      {metadataBadges.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {metadataBadges.map((badge) => (
+                            <span key={`${event.id}-${badge}`} className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[#8a7f72] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+                              {badge}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <p className="mt-1 leading-5">{redactSensitiveText(event.message)}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           )}
 
           {displayedLiveOutput && (
             <section className="space-y-3">
-              <SectionTitle>Live Output Excerpt</SectionTitle>
+              <div className="flex items-center justify-between gap-3">
+                <SectionTitle>Live Output Excerpt</SectionTitle>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(displayedLiveOutput)}
+                    data-copy-target="live-output-copy"
+                    className="rounded-full border border-[#d8d0c3] bg-white px-3 py-1 text-[11px] font-semibold text-[#6f665c] transition-colors hover:bg-[#f3efe8]"
+                  >
+                    {t('autoresearch.liveOutput.copy')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownload}
+                    data-copy-target="live-output-download"
+                    className="rounded-full border border-[#d8d0c3] bg-white px-3 py-1 text-[11px] font-semibold text-[#6f665c] transition-colors hover:bg-[#f3efe8]"
+                  >
+                    {t('autoresearch.liveOutput.download')}
+                  </button>
+                </div>
+              </div>
               <pre className="max-h-72 overflow-auto rounded-2xl border border-[#2c303a] bg-[#111827] p-4 text-xs leading-5 text-green-300 whitespace-pre-wrap">
                 {redactSensitiveText(displayedLiveOutput)}
               </pre>

@@ -84,17 +84,18 @@ function buildSystemPrompt({
   const isLocal = sshConfig.mode === 'local';
   const toolProfile = getAutoResearchToolProfile(sshConfig);
   const allowedTools = formatAutoResearchToolCatalog(sshConfig);
+  const iterationCodeDir = `${runDir.iterDir}/code`;
   const envLine = isLocal
     ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
     : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
   const toolCfgHint = isLocal
-    ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${sshConfig.remoteWorkDir}". Use ${toolProfile.readTool} for file reads, ${toolProfile.writeTool} for file writes, and ${toolProfile.directoryTool} before writing new nested paths.`
+    ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${iterationCodeDir}". Use ${toolProfile.readTool} for file reads, ${toolProfile.writeTool} for file writes, and ${toolProfile.directoryTool} before writing new nested paths.`
     : `Use ${toolProfile.commandTool} for target-side commands with mode="ssh", host="${sshConfig.host}", user="${sshConfig.user}", port=${sshConfig.port}, authMode="${sshConfig.authMode}"${sshConfig.authMode === 'key' ? `, keyPath="${sshConfig.keyPath}"` : ''}, remoteWorkDir="${sshConfig.remoteWorkDir}". Use ${toolProfile.readTool} for file reads. Use ${toolProfile.uploadTool} for remote file creation or replacement. Only set terminal=true when the command needs a PTY or live terminal output. Never ask for credentials.`;
   const inspectionScope = isLocal
     ? 'Read only the minimum files you need, and use only the local experiment tools listed above.'
     : 'Read only the minimum files you need, and use only the SSH experiment tools listed above.';
   const executionRequirement = isLocal
-    ? `Run the experiment command through ${toolProfile.commandTool} with cwd set to the experiment directory.`
+    ? `Run the experiment command through ${toolProfile.commandTool} with cwd set to ${iterationCodeDir}.`
     : `Run the experiment command through ${toolProfile.commandTool}. Use terminal=true only when the command needs a PTY or live terminal output; otherwise keep it false or omitted.`;
 
   return `# AutoResearch Agent
@@ -123,9 +124,18 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 
 ## Iteration Workspace
 - Iteration directory: ${runDir.iterDir}
+- Iteration code checkout: ${iterationCodeDir}
 - Hypothesis file: ${runDir.hypothesisPath}
 - Metrics file: ${runDir.metricsPath}
 - Diff file: ${runDir.diffPath}
+
+## WORKSPACE CONTRACT
+- Per-iteration code lives in: ${iterationCodeDir} (already a clean git checkout)
+- Modify run_experiment.py in ${iterationCodeDir}, NOT in the original experiment dir
+- Run the experiment from ${iterationCodeDir} using `python3 run_experiment.py`
+- Write hypothesis.md, metrics.json, diff.patch into ${runDir.iterDir}/ (one level above code/)
+- The host will diff ${iterationCodeDir} vs the parent run's baseline to produce diff.patch
+- Do NOT touch the original experiment directory directly
 
 ## Requirements for this iteration
 1. Do exactly one hypothesis/change/run/evaluate cycle.
