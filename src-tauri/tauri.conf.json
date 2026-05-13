@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../dist"
   },
   "app": {
@@ -20,11 +20,11 @@
         "fullscreen": false,
         "center": true,
         "label": "main",
-        "visible": false
+        "visible": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: blob: asset: https://asset.localhost; font-src 'self' https: data:; frame-src https:; media-src 'self' https: blob: asset: https://asset.localhost;"
+      "csp": "default-src 'self'; connect-src 'self' http: https: ws: wss: ipc: tauri:; script-src 'self' 'unsafe-inline' 'unsafe-eval' http: https:; style-src 'self' 'unsafe-inline' http: https:; img-src 'self' data: http: https: blob: asset: https://asset.localhost; font-src 'self' http: https: data:; frame-src http: https:; media-src 'self' http: https: blob: asset: https://asset.localhost;"
     }
   },
   "bundle": {

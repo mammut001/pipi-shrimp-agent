@@ -7,11 +7,11 @@ import {
   updateDiagnosticsTask,
 } from '@/store/taskRegistryStore';
 import {
-  DEFAULT_MAX_GOAL_ITERATIONS,
   type GoalEvaluationResult,
   type WorkflowAgent,
   type WorkflowRun,
 } from '@/types/workflow';
+import { DEFAULT_MAX_GOAL_ITERATIONS } from '@/services/workflow/defaults';
 import {
   buildDownstreamAgentPrompt,
   buildEntryAgentPrompt,
