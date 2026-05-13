@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value};
 use tokio::fs;
 use tokio::process::Command;
 
-use crate::claude::http::{build_http_client, send_request, ProviderCapabilities};
+use crate::claude::http::{build_http_client, send_request_impl, ProviderCapabilities};
 use crate::claude::message::Message;
 use crate::commands::file::resolve_path;
 use crate::utils::{AppError, AppResult};
@@ -384,7 +384,7 @@ async fn run_json_bootstrap_inference(
         tool_call_id: None,
     }];
 
-    let response = send_request(
+    let response = send_request_impl(
         &client,
         &messages,
         &provider.api_key,

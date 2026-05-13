@@ -6,10 +6,12 @@ use super::{detect_artifacts, ProviderAdapter, StreamContext, StreamEvent};
 use super::super::{request_builder, stream::split_think_content};
 
 pub struct OpenAIAdapter {
+    #[allow(dead_code)]
     provider: ProviderId,
 }
 
 impl OpenAIAdapter {
+    #[allow(dead_code)]
     pub fn new(provider: ProviderId) -> Self {
         Self { provider }
     }

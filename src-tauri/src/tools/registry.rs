@@ -57,77 +57,75 @@ impl ToolRegistry {
                 compiled_schema,
             },
         );
+    }
 
-        fn validate_request<'a>(
-            &'a self,
-            req: &ToolCallRequest,
-        ) -> anyhow::Result<(&'a ToolEntry, serde_json::Value)> {
-            let entry = self
-                .tools
-                .get(&req.name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", req.name))?;
+    fn validate_request(&self, req: &ToolCallRequest) -> anyhow::Result<(&ToolEntry, serde_json::Value)> {
+        let entry = self
+            .tools
+            .get(&req.name)
+            .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", req.name))?;
 
-            let args: serde_json::Value = serde_json::from_str(&req.arguments).map_err(|e| {
-                anyhow::anyhow!("Invalid JSON arguments for tool '{}': {}", req.name, e)
-            })?;
+        let args: serde_json::Value = serde_json::from_str(&req.arguments).map_err(|e| {
+            anyhow::anyhow!("Invalid JSON arguments for tool '{}': {}", req.name, e)
+        })?;
 
-            if let Some(schema) = &entry.compiled_schema {
-                if let Err(errors) = schema.validate(&args) {
-                    let error_msgs: Vec<String> =
-                        errors.map(|e: ValidationError| format!("{}", e)).collect();
-                    return Ok((
-                        entry,
-                        serde_json::json!({
-                            "__schema_validation_error": true,
-                            "messages": error_msgs,
-                        }),
-                    ));
-                }
+        if let Some(schema) = &entry.compiled_schema {
+            if let Err(errors) = schema.validate(&args) {
+                let error_msgs: Vec<String> =
+                    errors.map(|e: ValidationError| format!("{}", e)).collect();
+                return Ok((
+                    entry,
+                    serde_json::json!({
+                        "__schema_validation_error": true,
+                        "messages": error_msgs,
+                    }),
+                ));
             }
-
-            Ok((entry, args))
         }
+
+        Ok((entry, args))
     }
 
     /// Execute a single tool call request
-            let (entry, args) = self.validate_request(req)?;
+    pub fn execute(&self, req: &ToolCallRequest) -> anyhow::Result<ToolCallResult> {
+        let (entry, args) = self.validate_request(req)?;
 
-            if args
-                .get("__schema_validation_error")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-            {
-                let error_msgs = args
-                    .get("messages")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(serde_json::Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                return Ok(ToolCallResult {
-                    id: req.id.clone(),
-                    name: req.name.clone(),
-                    content: format!(
-                        "Schema validation failed for tool '{}': {}",
-                        req.name, error_msgs
-                    ),
-                    is_error: true,
-                    error_code: Some("schema_validation".to_string()),
-                });
-            }
+        if args
+            .get("__schema_validation_error")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            let error_msgs = args
+                .get("messages")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Ok(ToolCallResult {
+                id: req.id.clone(),
+                name: req.name.clone(),
+                content: format!(
+                    "Schema validation failed for tool '{}': {}",
+                    req.name, error_msgs
+                ),
+                is_error: true,
+                error_code: Some("schema_validation".to_string()),
+            });
+        }
 
-            if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
-                return Ok(ToolCallResult {
-                    id: req.id.clone(),
-                    name: req.name.clone(),
-                    content: format!(
-                        "Error: bootstrap tool '{}' requires execute_with_context()",
-                        req.name
-                    ),
-                    is_error: true,
-                    error_code: Some("invalid_arguments".to_string()),
-                });
+        if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
+            return Ok(ToolCallResult {
+                id: req.id.clone(),
+                name: req.name.clone(),
+                content: format!(
+                    "Error: bootstrap tool '{}' requires execute_with_context()",
+                    req.name
+                ),
+                is_error: true,
+                error_code: Some("invalid_arguments".to_string()),
+            });
         }
 
         match (entry.handler)(args) {
@@ -136,101 +134,101 @@ impl ToolRegistry {
                 name: req.name.clone(),
                 content,
                 is_error: false,
-                    error_code: None,
+                error_code: None,
             }),
             Err(e) => Ok(ToolCallResult {
                 id: req.id.clone(),
                 name: req.name.clone(),
                 content: format!("Error: {}", e),
                 is_error: true,
-                    error_code: Some("internal_error".to_string()),
+                error_code: Some("internal_error".to_string()),
             }),
         }
     }
 
-        pub async fn execute_with_context(
-            &self,
-            req: &ToolCallRequest,
-        ) -> anyhow::Result<ToolCallResult> {
-            let (_entry, args) = self.validate_request(req)?;
+    pub async fn execute_with_context(
+        &self,
+        req: &ToolCallRequest,
+    ) -> anyhow::Result<ToolCallResult> {
+        let (_entry, args) = self.validate_request(req)?;
 
-            if args
-                .get("__schema_validation_error")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-            {
-                let error_msgs = args
-                    .get("messages")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(serde_json::Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                return Ok(ToolCallResult {
-                    id: req.id.clone(),
-                    name: req.name.clone(),
-                    content: format!(
-                        "Schema validation failed for tool '{}': {}",
-                        req.name, error_msgs
-                    ),
-                    is_error: true,
-                    error_code: Some("schema_validation".to_string()),
-                });
-            }
+        if args
+            .get("__schema_validation_error")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            let error_msgs = args
+                .get("messages")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Ok(ToolCallResult {
+                id: req.id.clone(),
+                name: req.name.clone(),
+                content: format!(
+                    "Schema validation failed for tool '{}': {}",
+                    req.name, error_msgs
+                ),
+                is_error: true,
+                error_code: Some("schema_validation".to_string()),
+            });
+        }
 
-            if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
-                let provider_context = match (&req.api_key, &req.model) {
-                    (Some(api_key), Some(model)) if !api_key.trim().is_empty() && !model.trim().is_empty() => {
-                        Some(BootstrapProviderContext {
-                            api_key: api_key.clone(),
-                            model: model.clone(),
-                            base_url: req.base_url.clone(),
-                            provider: req.provider.clone(),
-                            api_format: req.api_format.clone(),
-                            provider_capabilities: req.provider_capabilities.clone(),
-                        })
-                    }
-                    _ => None,
-                };
-                let context = BootstrapExecutionContext {
-                    work_dir: req.work_dir.clone(),
-                    provider: provider_context,
-                };
+        if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
+            let provider_context = match (&req.api_key, &req.model) {
+                (Some(api_key), Some(model)) if !api_key.trim().is_empty() && !model.trim().is_empty() => {
+                    Some(BootstrapProviderContext {
+                        api_key: api_key.clone(),
+                        model: model.clone(),
+                        base_url: req.base_url.clone(),
+                        provider: req.provider.clone(),
+                        api_format: req.api_format.clone(),
+                        provider_capabilities: req.provider_capabilities.clone(),
+                    })
+                }
+                _ => None,
+            };
+            let context = BootstrapExecutionContext {
+                work_dir: req.work_dir.clone(),
+                provider: provider_context,
+            };
 
-                match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
-                    Ok(Some(content)) => {
-                        return Ok(ToolCallResult {
-                            id: req.id.clone(),
-                            name: req.name.clone(),
-                            content,
-                            is_error: false,
-                            error_code: None,
-                        })
-                    }
-                    Ok(None) => {
-                        return Ok(ToolCallResult {
-                            id: req.id.clone(),
-                            name: req.name.clone(),
-                            content: format!("Error: Unknown tool: {}", req.name),
-                            is_error: true,
-                            error_code: Some("not_found".to_string()),
-                        })
-                    }
-                    Err(error) => {
-                        return Ok(ToolCallResult {
-                            id: req.id.clone(),
-                            name: req.name.clone(),
-                            content: format!("Error: {}", error),
-                            is_error: true,
-                            error_code: Some(error.code.clone()),
-                        })
-                    }
+            match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
+                Ok(Some(content)) => {
+                    return Ok(ToolCallResult {
+                        id: req.id.clone(),
+                        name: req.name.clone(),
+                        content,
+                        is_error: false,
+                        error_code: None,
+                    })
+                }
+                Ok(None) => {
+                    return Ok(ToolCallResult {
+                        id: req.id.clone(),
+                        name: req.name.clone(),
+                        content: format!("Error: Unknown tool: {}", req.name),
+                        is_error: true,
+                        error_code: Some("not_found".to_string()),
+                    })
+                }
+                Err(error) => {
+                    return Ok(ToolCallResult {
+                        id: req.id.clone(),
+                        name: req.name.clone(),
+                        content: format!("Error: {}", error),
+                        is_error: true,
+                        error_code: Some(error.code.clone()),
+                    })
                 }
             }
-
-            self.execute(req)
         }
+
+        self.execute(req)
+    }
 
     /// Check if a tool is concurrency-safe
     pub fn is_concurrency_safe(&self, name: &str) -> bool {
@@ -306,12 +304,13 @@ fn register_bootstrap_tool(
     is_read_only: bool,
     is_concurrency_safe: bool,
 ) {
+    let name_owned = name.to_string();
     registry.register(
         name,
         Arc::new(move |_| {
             Err(anyhow::anyhow!(
                 "bootstrap tool '{}' requires execute_with_context()",
-                name
+                name_owned
             ))
         }),
         ToolMetadata {

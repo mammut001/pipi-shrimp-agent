@@ -128,7 +128,7 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
             }
         })?;
         let wd_canonical_str = wd_canonical.to_string_lossy();
-        if !canonical_str.starts_with(&wd_canonical_str) {
+        if !canonical_str.starts_with(&*wd_canonical_str) {
             return Err(PathSecurityError {
                 message: format!(
                     "Path traversal detected: '{}' resolves to '{}' which is outside work directory '{}'",
@@ -174,32 +174,6 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
     }
 
     Ok(())
-}
-
-/// Normalize path by resolving . and ..
-fn normalize_path(p: &str) -> String {
-    let parts: Vec<&str> = p
-        .split('/')
-        .filter(|s| !s.is_empty() && *s != ".")
-        .collect();
-    let mut resolved: Vec<&str> = Vec::new();
-
-    for part in parts {
-        if part == ".." {
-            if !resolved.is_empty() {
-                resolved.pop();
-            }
-        } else {
-            resolved.push(part);
-        }
-    }
-
-    let result = resolved.join("/");
-    if p.starts_with('/') {
-        format!("/{}", result)
-    } else {
-        result
-    }
 }
 
 /// Validate a command string for dangerous patterns (defense-in-depth)

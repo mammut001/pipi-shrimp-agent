@@ -62,6 +62,7 @@ fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult
 pub struct ExecuteBashArgs {
     pub command: String,
     pub work_dir: Option<String>,
+    #[allow(dead_code)]
     pub timeout_secs: Option<u64>,
 }
 

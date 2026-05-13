@@ -5,12 +5,10 @@ use crate::commands::web::{self, BrowserController};
  *
  * Handles chat session management and message sending using SQLite
  */
-use crate::database;
 use crate::models::{SendMessageRequest, SendMessageResponse};
 use crate::services::chat::browser_tool_service::{
-    browser_not_connected_message, browser_target_from_args, execute_browser_chat_tool_call,
-    is_browser_not_connected_error, parse_browser_chat_tool_call, serialize_page_state_for_chat,
-    BrowserChatRuntime, BrowserChatToolCall, BrowserToolTarget,
+    execute_browser_chat_tool_call, parse_browser_chat_tool_call, BrowserChatRuntime,
+    BrowserToolTarget,
 };
 use crate::services::chat::session_service::{
     delete_session_service, get_session_service, list_sessions_service,
@@ -24,6 +22,12 @@ use tauri::AppHandle;
 use tokio::sync::Mutex;
 
 pub use crate::services::chat::session_service::SessionData;
+
+#[cfg(test)]
+use crate::services::chat::browser_tool_service::{
+    browser_not_connected_message, browser_target_from_args, serialize_page_state_for_chat,
+    BrowserChatToolCall,
+};
 
 struct LiveBrowserChatRuntime<'a> {
     browser_state: tauri::State<'a, Arc<Mutex<BrowserController>>>,
