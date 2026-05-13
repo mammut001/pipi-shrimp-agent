@@ -1,0 +1,26 @@
+{
+  "templateId": "python-ml-baseline",
+  "language": "python",
+  "entryCommand": "python3 run_experiment.py",
+  "requiredVars": [
+    "project_name",
+    "research_goal",
+    "success_criteria",
+    "primary_metric",
+    "baseline_name",
+    "dataset_name",
+    "train_command",
+    "eval_command",
+    "requirements_extra"
+  ],
+  "files": [
+    { "output": "README.md", "source": "README.md.tmpl", "purpose": "Project overview and usage notes." },
+    { "output": "AUTORESEARCH.md", "source": "AUTORESEARCH.md.tmpl", "purpose": "AutoResearch session notes and guardrails." },
+    { "output": "requirements.txt", "source": "requirements.txt.tmpl", "purpose": "Python dependencies." },
+    { "output": "configs/baseline.yaml", "source": "configs/baseline.yaml.tmpl", "purpose": "Baseline configuration seed." },
+    { "output": "train.py", "source": "train.py.tmpl", "purpose": "Training entrypoint placeholder." },
+    { "output": "eval.py", "source": "eval.py.tmpl", "purpose": "Evaluation entrypoint placeholder." },
+    { "output": "run_experiment.py", "source": "run_experiment.py.tmpl", "purpose": "Loop-compatible experiment entrypoint." },
+    { "output": ".gitignore", "source": ".gitignore", "purpose": "Ignore local artifacts." }
+  ]
+}

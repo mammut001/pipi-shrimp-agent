@@ -17,7 +17,7 @@ describe('messageWindowing', () => {
 
     expect(visible).toHaveLength(DEFAULT_MESSAGE_WINDOW_SIZE);
     expect(visible[0]?.id).toBe('2');
-    expect(visible.at(-1)?.id).toBe(String(DEFAULT_MESSAGE_WINDOW_SIZE + 1));
+    expect(visible[visible.length - 1]?.id).toBe(String(DEFAULT_MESSAGE_WINDOW_SIZE + 1));
   });
 
   it('reports hidden message count defensively', () => {

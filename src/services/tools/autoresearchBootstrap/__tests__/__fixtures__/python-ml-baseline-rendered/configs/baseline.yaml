@@ -1,0 +1,4 @@
+project: test-project
+baseline: ResNet50
+dataset: CIFAR10
+metric: accuracy

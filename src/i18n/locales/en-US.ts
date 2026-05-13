@@ -61,6 +61,8 @@ const enUS: TranslationKeys = {
   'autoresearch.statusNotImproved': 'Not Improved',
   'autoresearch.statusFailed': 'Failed',
   'autoresearch.statusReflectionFailed': 'Reflection failed',
+  'autoresearch.tabs.conversational': 'Conversational Bootstrap',
+  'autoresearch.tabs.advanced': 'Advanced Workdir',
   'autoresearch.reflectionParseFailed': 'Reflection parse failed',
   'autoresearch.reflectionReason': 'Reflection reason',
   'autoresearch.failedToResolveSessionFilePath': 'Failed to resolve AutoResearch session file path: {message}',

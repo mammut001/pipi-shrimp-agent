@@ -10,6 +10,7 @@
  * - Layer 3: Concurrent scheduler (scheduler.rs)
  * - Layer 4: Tauri command exposure (commands/tools.rs)
  */
+pub mod autoresearch_bootstrap;
 pub mod registry;
 pub mod scheduler;
 
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 /// Tool call request extracted from API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCallRequest {
     /// Unique tool call ID (from API)
     pub id: String,
@@ -24,6 +26,27 @@ pub struct ToolCallRequest {
     pub name: String,
     /// JSON-encoded arguments
     pub arguments: String,
+    /// Bound work directory for scoped path execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_dir: Option<String>,
+    /// Active provider API key for LLM-backed tool execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// Active model name for LLM-backed tool execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Optional provider base URL hint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// Optional provider id hint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Optional API format hint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
+    /// Optional execution capability hints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_capabilities: Option<crate::claude::provider::ProviderCapabilities>,
 }
 
 /// Tool execution result

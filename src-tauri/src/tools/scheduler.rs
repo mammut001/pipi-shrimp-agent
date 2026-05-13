@@ -75,7 +75,7 @@ async fn execute_single(
         );
     }
 
-    let result = registry.execute(req);
+    let result = registry.execute_with_context(req).await;
 
     match result {
         Ok(tool_result) => {
@@ -99,6 +99,7 @@ async fn execute_single(
                 name: req.name.clone(),
                 content: format!("Error: {}", e),
                 is_error: true,
+                error_code: Some("internal_error".to_string()),
             };
             if let Some(w) = window {
                 let _ = w.emit(
@@ -220,16 +221,37 @@ mod tests {
                 id: "1".into(),
                 name: "read_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
             ToolCallRequest {
                 id: "2".into(),
                 name: "read_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
             ToolCallRequest {
                 id: "3".into(),
                 name: "list_files".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);
@@ -250,21 +272,49 @@ mod tests {
                 id: "1".into(),
                 name: "read_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
             ToolCallRequest {
                 id: "2".into(),
                 name: "read_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
             ToolCallRequest {
                 id: "3".into(),
                 name: "write_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
             ToolCallRequest {
                 id: "4".into(),
                 name: "read_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);
@@ -285,11 +335,25 @@ mod tests {
                 id: "1".into(),
                 name: "write_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
             ToolCallRequest {
                 id: "2".into(),
                 name: "write_file".into(),
                 arguments: "{}".into(),
+                work_dir: None,
+                api_key: None,
+                model: None,
+                base_url: None,
+                provider: None,
+                api_format: None,
+                provider_capabilities: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);

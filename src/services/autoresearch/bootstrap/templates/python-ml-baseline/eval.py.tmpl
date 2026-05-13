@@ -1,0 +1,17 @@
+import json
+from pathlib import Path
+
+
+def main() -> None:
+    Path('artifacts').mkdir(exist_ok=True)
+    payload = {
+        'metric': '{{primary_metric}}',
+        'baseline': '{{baseline_name}}',
+        'dataset': '{{dataset_name}}',
+        'value': 0.0,
+    }
+    print(json.dumps(payload))
+
+
+if __name__ == '__main__':
+    main()

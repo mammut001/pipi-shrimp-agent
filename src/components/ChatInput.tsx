@@ -84,15 +84,17 @@ function cleanupOldDrafts(): void {
  */
 interface ChatInputProps {
   /** Optional callback when message is sent */
-  onSend?: (message: string) => void;
+  onSend?: (message: string, attachments?: ImageAttachment[]) => void | Promise<void>;
   /** Key used to namespace the draft in localStorage (default: 'default') */
   draftKey?: string;
+  /** Submit mode. callback-only skips the global chat store and forwards text to onSend. */
+  submitMode?: 'chat-store' | 'callback-only';
 }
 
 /**
  * Chat input component
  */
-export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
+export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-store' }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [isBindingFolder, setIsBindingFolder] = useState(false);
@@ -271,6 +273,25 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
    * Handle message submission
    */
   const handleSubmit = useCallback(async () => {
+    if (submitMode === 'callback-only') {
+      const message = input.trim();
+      if (!message || isSubmitting) {
+        return;
+      }
+
+      setIsSubmitting(true);
+      try {
+        await onSend?.(message, attachments);
+        clearInputDraft();
+      } catch (error) {
+        console.error('[ChatInput] callback-only onSend failed, preserving input:', error);
+        setInput(message);
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     const decision = decideChatInputSubmission({
       input,
       hasAttachments: attachments.length > 0,
@@ -289,7 +310,7 @@ export function ChatInput({ onSend, draftKey = 'default' }: ChatInputProps) {
     }
 
     await sendAsRegularChat(decision.message, attachments);
-  }, [attachments, input, isStreaming, isSubmitting, sendAsRegularChat]);
+  }, [attachments, clearInputDraft, input, isStreaming, isSubmitting, onSend, sendAsRegularChat, submitMode]);
 
   const handleConfirmBrowserIntent = useCallback(async () => {
     if (!browserIntentCandidate || isSubmitting) return;

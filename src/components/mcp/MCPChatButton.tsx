@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
 import { useMCPStore } from '@/store/mcpStore';
 import { usePolling } from '@/hooks/usePolling';
 

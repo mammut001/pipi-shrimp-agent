@@ -44,6 +44,7 @@ describe('QueryEngine context overflow fallback', () => {
     configId: 'cfg-1',
     name: 'MiniMax Global',
     provider: 'minimax' as const,
+    providerLabel: 'MiniMax',
     model: 'MiniMax-M2.7',
     baseUrl: 'https://api.minimaxi.com/v1',
     apiFormat: 'openai' as const,

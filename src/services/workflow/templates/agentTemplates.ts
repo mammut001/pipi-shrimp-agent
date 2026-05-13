@@ -10,6 +10,7 @@ import {
   normalizeWorkflowAgentRole,
 } from './roles';
 import { buildWorkflowMarkerToken } from './markers';
+import { AUTORESEARCH_BOOTSTRAP_TEMPLATE } from '@/services/agents/templates/autoresearchBootstrap';
 
 export const AGENT_COLORS = [
   '#10B981',
@@ -186,6 +187,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     recommendedRole: 'goal-evaluator',
     recommendedModelHints: hintFor('goal-evaluator'),
   },
+  AUTORESEARCH_BOOTSTRAP_TEMPLATE,
 ];
 
 export function getAgentTemplateById(templateId: string): AgentTemplate | undefined {

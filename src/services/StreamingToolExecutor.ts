@@ -9,7 +9,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { useMCPStore } from '@/store/mcpStore';
 import { parseMCPToolName } from '@/services/mcp/toolNormalizer';
 import type { ToolResult as MCPToolResult, ContentBlock } from '@/services/mcp/types';
+import { resolveActiveAgentConfig } from '@/services/agentConfig';
+import {
+  buildProviderExecutionCapabilities,
+  resolveProviderRequestHint,
+} from '@/services/llm/capabilities';
 import { runSshExec, runSshReadFile, runSshUpload } from '@/tools/impl/SshTool';
+import {
+  AUTORESEARCH_BOOTSTRAP_TOOL_NAMES,
+} from '@/services/tools/autoresearchBootstrap';
 
 /** Convert MCP ContentBlock array to a plain string for tool output */
 function contentBlocksToString(blocks: ContentBlock[]): string {
@@ -122,6 +130,17 @@ const READ_ONLY_TOOLS = new Set([
   'render_typst_to_svg',
   // Skill loading is read-only (reads a SKILL.md file, no side effects)
   'Skill',
+  'pdf_read',
+  'paper_extract_meta',
+  'baseline_extract',
+  'arxiv_search',
+]);
+
+const AUTORESEARCH_BOOTSTRAP_TOOL_SET = new Set<string>(AUTORESEARCH_BOOTSTRAP_TOOL_NAMES);
+const FRONTEND_ONLY_TOOLS = new Set([
+  'ssh_exec',
+  'ssh_upload_file',
+  'ssh_read_file',
 ]);
 
 /**
@@ -173,6 +192,10 @@ export function partitionTools(toolRequests: ToolRequest[]): {
   return { concurrent, serial };
 }
 
+function isFrontendOnlyTool(toolName: string): boolean {
+  return toolName.startsWith('mcp__') || FRONTEND_ONLY_TOOLS.has(toolName);
+}
+
 /**
  * Streaming Tool Executor with concurrency control
  */
@@ -185,6 +208,27 @@ export class StreamingToolExecutor {
     this.timeoutMs = options.timeoutMs ?? 30000; // 30 seconds
   }
 
+  private getBootstrapProviderContext() {
+    const activeConfig = resolveActiveAgentConfig();
+    if (!activeConfig) {
+      return {
+        activeConfig: null,
+        provider: null,
+        providerCapabilities: null,
+      };
+    }
+
+    return {
+      activeConfig,
+      provider: resolveProviderRequestHint(activeConfig.provider, activeConfig.apiFormat),
+      providerCapabilities: buildProviderExecutionCapabilities({
+        provider: activeConfig.provider,
+        apiFormat: activeConfig.apiFormat,
+        model: activeConfig.model,
+      }),
+    };
+  }
+
   /**
    * Execute tools with intelligent partitioning and concurrency
    */
@@ -193,16 +237,11 @@ export class StreamingToolExecutor {
     options: ToolExecutionOptions
   ): Promise<BatchExecutionResult> {
     const startTime = Date.now();
-    const { onProgress, workDir } = options;
+    const { onProgress, workDir, sessionId } = options;
 
     if (toolRequests.length === 0) {
       return { results: [], totalExecutionTime: 0, errors: [] };
     }
-
-    // Partition tools
-    const { concurrent, serial } = partitionTools(toolRequests);
-    const allResults: ToolResult[] = [];
-    const errors: ToolResult[] = [];
 
     let completed = 0;
     const total = toolRequests.length;
@@ -213,49 +252,40 @@ export class StreamingToolExecutor {
       onProgress?.(completed, total, currentTool);
     };
 
-    // Execute concurrent tools in parallel (with limit)
-    if (concurrent.length > 0) {
-      const concurrentResults = await this.executeConcurrent(concurrent, reportProgress, workDir);
-      allResults.push(...concurrentResults.results);
-      errors.push(...concurrentResults.errors);
+    const frontendOnlyRequests = toolRequests.filter((request) => isFrontendOnlyTool(request.name));
+    const nativeRequests = toolRequests.filter((request) => !isFrontendOnlyTool(request.name));
+
+    const [frontendResults, nativeResults] = await Promise.all([
+      this.executeFrontendOnlyBatch(frontendOnlyRequests, reportProgress, workDir),
+      this.executeNativeBatch(nativeRequests, sessionId, reportProgress, workDir),
+    ]);
+
+    const resultsById = new Map<string, ToolResult>();
+    for (const result of [...frontendResults.results, ...nativeResults.results]) {
+      resultsById.set(result.id, result);
     }
 
-    // Execute serial tools one by one
-    for (const request of serial) {
-      try {
-        const result = await this.executeSingleTool(request, workDir);
-        allResults.push(result);
-        if (result.is_error) {
-          errors.push(result);
-        }
-        reportProgress(request.name);
-      } catch (error) {
-        const errorResult: ToolResult = {
-          id: request.id,
-          content: '',
-          is_error: true,
-          error_message: error instanceof Error ? error.message : 'Unknown error',
-          execution_time_ms: 0,
-        };
-        allResults.push(errorResult);
-        errors.push(errorResult);
-        reportProgress(request.name);
-      }
-    }
+    const allResults = toolRequests.map((request) => resultsById.get(request.id) ?? {
+      id: request.id,
+      content: buildStructuredToolError(request.name, request.arguments, new Error(`Missing tool result: ${request.name}`)),
+      is_error: true,
+      error_message: `Missing tool result: ${request.name}`,
+      execution_time_ms: 0,
+    });
 
-    const totalExecutionTime = Date.now() - startTime;
+    const errors = allResults.filter((result) => result.is_error);
 
     return {
       results: allResults,
-      totalExecutionTime,
+      totalExecutionTime: Date.now() - startTime,
       errors,
     };
   }
 
   /**
-   * Execute read-only tools concurrently with rate limiting
+   * Execute frontend-only tools with rate limiting.
    */
-  private async executeConcurrent(
+  private async executeFrontendOnlyBatch(
     toolRequests: ToolRequest[],
     onProgress: (toolName: string) => void,
     workDir?: string,
@@ -267,7 +297,7 @@ export class StreamingToolExecutor {
     for (let i = 0; i < toolRequests.length; i += this.concurrencyLimit) {
       const batch = toolRequests.slice(i, i + this.concurrencyLimit);
       const batchPromises = batch.map(request =>
-        this.executeSingleTool(request, workDir).then(result => {
+        this.executeFrontendOnlyTool(request, workDir).then(result => {
           onProgress(request.name);
           return result;
         }).catch(error => {
@@ -296,9 +326,90 @@ export class StreamingToolExecutor {
   }
 
   /**
-   * Execute a single tool with timeout
+   * Execute Rust-backed tools via the authoritative batch scheduler.
    */
-  private async executeSingleTool(
+  private async executeNativeBatch(
+    toolRequests: ToolRequest[],
+    sessionId: string,
+    onProgress: (toolName: string) => void,
+    workDir?: string,
+  ): Promise<{ results: ToolResult[]; errors: ToolResult[] }> {
+    if (toolRequests.length === 0) {
+      return { results: [], errors: [] };
+    }
+
+    const startTime = Date.now();
+    const { activeConfig, provider, providerCapabilities } = toolRequests.some((tool) => AUTORESEARCH_BOOTSTRAP_TOOL_SET.has(tool.name))
+      ? this.getBootstrapProviderContext()
+      : { activeConfig: null, provider: null, providerCapabilities: null };
+
+    try {
+      const rawResults = await Promise.race([
+        invoke<any[]>('execute_tool_batch', {
+          toolCalls: toolRequests.map((tool) => ({
+            id: tool.id,
+            name: tool.name,
+            arguments: JSON.stringify(tool.arguments),
+            workDir: workDir ?? null,
+            apiKey: activeConfig?.apiKey ?? null,
+            model: activeConfig?.model ?? null,
+            baseUrl: activeConfig?.baseUrl || null,
+            provider,
+            apiFormat: activeConfig?.apiFormat || null,
+            providerCapabilities,
+          })),
+          sessionId,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Tool batch execution timeout: ${toolRequests.map((tool) => tool.name).join(', ')}`)),
+            this.timeoutMs * Math.max(1, toolRequests.length),
+          )
+        ),
+      ]);
+
+      const elapsed = Date.now() - startTime;
+      const results = rawResults.map((result) => {
+        const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+        return {
+          id: result.id,
+          content,
+          is_error: Boolean(result.is_error),
+          error_message: result.is_error ? content : undefined,
+          execution_time_ms: elapsed,
+        } satisfies ToolResult;
+      });
+
+      for (const request of toolRequests) {
+        onProgress(request.name);
+      }
+
+      return {
+        errors: results.filter((result) => result.is_error),
+        results,
+      };
+    } catch (error) {
+      const elapsed = Date.now() - startTime;
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const results = toolRequests.map((request) => {
+        onProgress(request.name);
+        return {
+          id: request.id,
+          content: buildStructuredToolError(request.name, request.arguments, error),
+          is_error: true,
+          error_message: message,
+          execution_time_ms: elapsed,
+        } satisfies ToolResult;
+      });
+
+      return { results, errors: results };
+    }
+  }
+
+  /**
+   * Execute a single frontend-only tool with timeout.
+   */
+  private async executeFrontendOnlyTool(
     request: ToolRequest,
     workDir?: string,
   ): Promise<ToolResult> {
@@ -340,31 +451,7 @@ export class StreamingToolExecutor {
         };
       }
 
-      const result = await Promise.race([
-        invoke<any>('execute_tool', {
-          toolName: request.name,
-          arguments: JSON.stringify(request.arguments),
-          workDir: workDir ?? null,
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Tool execution timeout: ${request.name}`)), this.timeoutMs)
-        ),
-      ]);
-
-      const executionTime = Date.now() - startTime;
-
-      // execute_tool returns a plain string (the tool result).
-      // Detect Rust-side AppError by checking for JSON error shape as fallback.
-      const content = typeof result === 'string' ? result : JSON.stringify(result);
-      const isError = content.startsWith('Error:')
-        || content.startsWith('ERROR:')
-        || isStructuredToolError(content);
-      return {
-        id: request.id,
-        content,
-        is_error: isError,
-        execution_time_ms: executionTime,
-      };
+      throw new Error(`Frontend-only executor received unsupported tool: ${request.name}`);
     } catch (error) {
       const executionTime = Date.now() - startTime;
       return {
@@ -444,24 +531,15 @@ export class StreamingToolExecutor {
    */
   async executeLegacyBatch(
     toolRequests: ToolRequest[],
-    sessionId: string
+    sessionId: string,
+    workDir?: string,
   ): Promise<ToolResult[]> {
-    const results = await invoke<any[]>('execute_tool_batch', {
-      toolCalls: toolRequests.map(tc => ({
-        id: tc.id,
-        name: tc.name,
-        arguments: tc.arguments,
-      })),
+    const batch = await this.executeBatch(toolRequests, {
       sessionId,
+      workDir,
     });
 
-    return results.map(result => ({
-      id: result.id,
-      content: result.content,
-      is_error: result.is_error,
-      error_message: result.error_message,
-      execution_time_ms: result.execution_time_ms || 0,
-    }));
+    return batch.results;
   }
 }
 

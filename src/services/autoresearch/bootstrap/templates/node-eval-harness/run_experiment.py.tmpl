@@ -1,0 +1,5 @@
+import subprocess
+
+
+if __name__ == '__main__':
+    raise SystemExit(subprocess.run('{{node_eval_command}}', shell=True, check=False).returncode)

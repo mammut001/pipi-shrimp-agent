@@ -61,6 +61,8 @@ const zhCN: TranslationKeys = {
   'autoresearch.statusNotImproved': '未改善',
   'autoresearch.statusFailed': '失败',
   'autoresearch.statusReflectionFailed': '反射失败',
+  'autoresearch.tabs.conversational': '对话式 Bootstrap',
+  'autoresearch.tabs.advanced': '高级工作目录',
   'autoresearch.reflectionParseFailed': '反射解析失败',
   'autoresearch.reflectionReason': '反射原因',
   'autoresearch.failedToResolveSessionFilePath': '无法解析 AutoResearch 会话文件路径：{message}',
