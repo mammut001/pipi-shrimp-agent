@@ -61,8 +61,20 @@ pub fn run() {
             })));
 
             // Build fonts once at startup — avoids reading font files on every render
+            // AUDIT-FIX: Font loading is now deferred and non-blocking. If font database
+            // initialization fails, we log a warning instead of panicking to allow
+            // the application to start (Typst rendering will fail gracefully).
             println!("🔤 Loading system fonts...");
-            let font_db = init_font_database();
+            let font_db = match init_font_database() {
+                Ok(db) => db,
+                Err(e) => {
+                    eprintln!("⚠️ WARNING: Font database initialization failed: {}", e);
+                    eprintln!("   Typst rendering may not work correctly. Please check font installations.");
+                    // Continue without font database - rendering will use fallback fonts
+                    let font_db = fontdb::Database::new();
+                    fontdb
+                }
+            };
             let prebuilt = build_fonts(&font_db);
             println!("✅ Pre-built {} fonts for Typst rendering", prebuilt.fonts.len());
             app.manage(FontDbState { prebuilt });

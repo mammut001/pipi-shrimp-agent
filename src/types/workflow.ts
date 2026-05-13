@@ -90,7 +90,9 @@ export interface WorkflowAgent {
   position: { x: number; y: number };
   width?: number;
   height?: number;
-  status: 'idle' | 'running' | 'completed' | 'error';
+  // AUDIT-007 FIX: Align status type with WorkflowRunAgentEntry.status
+  // Both now use 'pending' | 'running' | 'completed' | 'error' | 'skipped'
+  status: 'pending' | 'running' | 'completed' | 'error' | 'skipped';
   outputRoutes: OutputRoute[];
   execution: AgentExecutionConfig;
   model?: WorkflowAgentModel;

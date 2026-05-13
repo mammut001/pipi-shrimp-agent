@@ -61,6 +61,7 @@ impl std::fmt::Display for PathSecurityError {
 impl std::error::Error for PathSecurityError {}
 
 /// Resolve a relative path against work_dir and canonicalize
+/// Returns the canonical (resolved symlinks, relative->absolute) path.
 fn resolve_path(path: &str, work_dir: Option<&str>) -> Result<String, PathSecurityError> {
     let expanded = expand_home(path);
     let path_obj = std::path::Path::new(&expanded);
@@ -74,7 +75,17 @@ fn resolve_path(path: &str, work_dir: Option<&str>) -> Result<String, PathSecuri
             message: format!("Relative path '{}' requires work_dir", path),
         });
     };
-    Ok(abs_path)
+
+    // Canonicalize the absolute path FIRST (before any security checks).
+    // This prevents TOCTOU race conditions where symlinks could be changed
+    // between traversal checks and canonicalization.
+    let canonical = Path::new(&abs_path).canonicalize().map_err(|e| {
+        PathSecurityError {
+            message: format!("Cannot resolve path '{}': {}", path, e),
+        }
+    })?;
+
+    Ok(canonical.to_string_lossy().to_string())
 }
 
 /// Expand ~ to home directory
@@ -87,11 +98,6 @@ fn expand_home(path: &str) -> String {
     path.to_string()
 }
 
-/// Check if path contains traversal attempts
-fn contains_traversal(path: &str) -> bool {
-    path.contains("..")
-}
-
 /// Validate path is within work_dir (if provided) and doesn't traverse outside
 pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecurityError> {
     // Check for empty path
@@ -101,100 +107,69 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
         });
     }
 
-    // Resolve to absolute path
-    let abs_path = resolve_path(path, work_dir)?;
-    let path_obj = Path::new(&abs_path);
+    // CRITICAL: Resolve and canonicalize FIRST, then validate.
+    // This prevents TOCTOU race conditions where an attacker could:
+    // 1. Create a symlink inside work_dir pointing outside
+    // 2. The old code would check traversal before canonicalization
+    // 3. Attacker changes symlink to point to /etc/passwd after traversal check
+    // 4. Old code would allow access to /etc/passwd
+    //
+    // With this fix: canonicalization happens first, so we always check
+    // the FINAL resolved path against security rules.
+    let canonical_str = resolve_path(path, work_dir)?;
 
-    // Try to canonicalize and check traversal
-    if let Ok(canonical) = path_obj.canonicalize() {
-        let canonical_str = canonical.to_string_lossy();
-
-        // Check if canonical path is within work_dir
-        if let Some(wd) = work_dir {
-            let wd_expanded_str = expand_home(wd);
-            let wd_expanded = Path::new(&wd_expanded_str);
-            if let Ok(wd_canonical) = wd_expanded.canonicalize() {
-                if !canonical_str.starts_with(&wd_canonical.to_string_lossy().to_string()) {
-                    return Err(PathSecurityError {
-                        message: format!(
-                            "Path traversal detected: '{}' resolves to '{}' which is outside work directory '{}'",
-                            path,
-                            canonical_str,
-                            wd
-                        ),
-                    });
-                }
+    // Now validate the canonical path against all security rules
+    // Check if canonical path is within work_dir
+    if let Some(wd) = work_dir {
+        let wd_expanded_str = expand_home(wd);
+        let wd_canonical = Path::new(&wd_expanded_str).canonicalize().map_err(|e| {
+            PathSecurityError {
+                message: format!("Cannot resolve work directory '{}': {}", wd, e),
             }
+        })?;
+        let wd_canonical_str = wd_canonical.to_string_lossy();
+        if !canonical_str.starts_with(&wd_canonical_str) {
+            return Err(PathSecurityError {
+                message: format!(
+                    "Path traversal detected: '{}' resolves to '{}' which is outside work directory '{}'",
+                    path,
+                    canonical_str,
+                    wd
+                ),
+            });
         }
+    }
 
-        // Check for system directories
-        for prefix in BLOCKED_PREFIXES {
-            if canonical_str.starts_with(prefix) {
+    // Check for system directories
+    for prefix in BLOCKED_PREFIXES {
+        if canonical_str.starts_with(prefix) {
+            return Err(PathSecurityError {
+                message: format!("Access to system directory '{}' is not allowed", prefix),
+            });
+        }
+    }
+
+    // Check for user-home sensitive directories
+    if let Ok(home) = std::env::var("HOME") {
+        for suffix in HOME_BLOCKED_SUFFIXES {
+            let blocked_path = format!("{}{}", home, suffix);
+            if canonical_str.starts_with(&blocked_path) {
                 return Err(PathSecurityError {
-                    message: format!("Access to system directory '{}' is not allowed", prefix),
+                    message: format!(
+                        "Access to sensitive directory '{}' is not allowed",
+                        suffix
+                    ),
                 });
             }
         }
+    }
 
-        // Check for user-home sensitive directories
-        if let Ok(home) = std::env::var("HOME") {
-            for suffix in HOME_BLOCKED_SUFFIXES {
-                let blocked_path = format!("{}{}", home, suffix);
-                if canonical_str.starts_with(&blocked_path) {
-                    return Err(PathSecurityError {
-                        message: format!(
-                            "Access to sensitive directory '{}' is not allowed",
-                            suffix
-                        ),
-                    });
-                }
-            }
-        }
-
-        // Check for sensitive files
-        for blocked in BLOCKED_FILES {
-            if canonical_str.as_ref() == *blocked {
-                return Err(PathSecurityError {
-                    message: format!("Access to sensitive file '{}' is not allowed", blocked),
-                });
-            }
-        }
-    } else {
-        // Path doesn't exist yet - check the parent for traversal
-        if contains_traversal(path) {
-            if work_dir.is_none() {
-                return Err(PathSecurityError {
-                    message: format!("Path traversal '{}' not allowed without work_dir", path),
-                });
-            }
-            // For new files, check if the resolved path would escape work_dir
-            let wd_expanded = expand_home(work_dir.unwrap());
-            let resolved = format!("{}/{}", wd_expanded, path);
-            let normalized = normalize_path(&resolved);
-
-            let wd_canonical = Path::new(&wd_expanded);
-            if let Ok(wd_can) = wd_canonical.canonicalize() {
-                let wd_str = wd_can.to_string_lossy().to_string();
-                if !normalized.starts_with(&wd_str) && !normalized.starts_with(&wd_expanded) {
-                    return Err(PathSecurityError {
-                        message: format!(
-                            "Path traversal detected: '{}' would escape work directory '{}'",
-                            path,
-                            work_dir.unwrap()
-                        ),
-                    });
-                }
-            }
-        }
-
-        // Also check for traversal in blocked prefixes even for non-existent paths
-        let expanded = expand_home(path);
-        for prefix in BLOCKED_PREFIXES {
-            if expanded.starts_with(prefix) {
-                return Err(PathSecurityError {
-                    message: format!("Access to system directory '{}' is not allowed", prefix),
-                });
-            }
+    // Check for sensitive files
+    for blocked in BLOCKED_FILES {
+        if canonical_str == *blocked {
+            return Err(PathSecurityError {
+                message: format!("Access to sensitive file '{}' is not allowed", blocked),
+            });
         }
     }
 

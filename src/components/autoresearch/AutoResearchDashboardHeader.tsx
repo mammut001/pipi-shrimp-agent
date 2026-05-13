@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { t } from '@/i18n';
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 import { isDemoRun } from '@/services/autoresearch/demoRun';
+import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 
@@ -68,7 +69,7 @@ export function AutoResearchDashboardHeader({
     ? t('autoresearch.statusReflectionFailed')
     : run.status.replace(/_/g, ' ');
   const demo = isDemoRun(run);
-  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot);
+  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(toAgentConfigSnapshot(run.config.configSnapshot));
   const reflectionReason = run.status === 'reflection_failed'
     ? safeString(run.reason) ?? safeString(run.summary)
     : null;

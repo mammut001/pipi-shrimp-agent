@@ -25,6 +25,20 @@ export class FileWriteTool extends BaseTool<FileWriteInput, FileWriteOutput> {
         isUpdate = false;
       }
 
+      // AUDIT-FIX: For updates, require explicit confirmation via force flag
+      // or check if sandbox permission mode allows destructive operations
+      if (isUpdate && context.settings.permissionMode !== 'bypass') {
+        // Check if the caller explicitly wants to overwrite
+        if (input.force !== true) {
+          // Return error asking for explicit overwrite confirmation
+          return {
+            success: false,
+            error: `File '${input.file_path}' already exists. Use force=true to overwrite.`,
+            requiresConfirmation: true
+          };
+        }
+      }
+
       // Write file via Rust (returns success string)
       await invoke<string>('write_file', {
         path: input.file_path,
@@ -66,7 +80,8 @@ export class FileWriteTool extends BaseTool<FileWriteInput, FileWriteOutput> {
 
 export const FileWriteInputSchema = z.object({
   file_path: z.string().describe('Path to the file to write'),
-  content: z.string().describe('Content to write to the file')
+  content: z.string().describe('Content to write to the file'),
+  force: z.boolean().optional().describe('Explicitly overwrite existing file (recommended to set to true only when intentionally replacing)')
 });
 
 export const FileWriteOutputSchema = z.object({

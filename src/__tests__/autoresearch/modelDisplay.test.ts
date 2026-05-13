@@ -11,7 +11,11 @@ import {
   formatAutoResearchModelDisplay,
   type AutoResearchModelDisplay,
 } from '@/services/autoresearch/modelDisplay';
-import type { AutoResearchAgentConfigSnapshot } from '@/services/autoresearch/errors';
+import {
+  toAgentConfigSnapshot,
+  type AutoResearchAgentConfigSnapshot,
+} from '@/services/autoresearch/errors';
+import type { AutoResearchConfigSnapshot } from '@/services/autoresearch/history';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 
 // Mock i18n
@@ -194,6 +198,33 @@ describe('AutoResearch Model Display', () => {
       expect(result.providerLabel).toBe('Anthropic');
       expect(result.modelLabel).toBe('claude-sonnet-4-20250514');
       expect(result.compactLabel).toBe('Anthropic Config · Anthropic · claude-sonnet-4-20250514');
+    });
+
+    it('adapts persisted history snapshots into agent snapshots before display helpers consume them', () => {
+      const historySnapshot: AutoResearchConfigSnapshot = {
+        configId: 'run-openai',
+        configName: 'Recovered Run Config',
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        model: 'gpt-4.1',
+        keyPresent: true,
+        source: 'unknown',
+      };
+
+      const adapted = toAgentConfigSnapshot(historySnapshot);
+
+      expect(adapted).toEqual(expect.objectContaining({
+        configId: 'run-openai',
+        configName: 'Recovered Run Config',
+        provider: 'openai',
+        apiFormat: '',
+        baseUrl: '',
+        model: 'gpt-4.1',
+        keyPreview: '<UNKNOWN>',
+        keyPresent: true,
+        source: 'savedRunConfig',
+      }));
+      expect(buildAutoResearchModelDisplayFromSnapshot(adapted).compactLabel).toBe('Recovered Run Config · OpenAI · gpt-4.1');
     });
   });
 

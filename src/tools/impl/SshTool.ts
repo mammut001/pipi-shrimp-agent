@@ -79,6 +79,9 @@ async function preflight(cfg: SshConfig): Promise<{ ok: true } | { ok: false; er
       if (!cfg.password) return { ok: false, error: 'password is required for authMode=password' };
       const avail = await ensureSshpassAvailable();
       if (!avail.ok) return { ok: false, error: avail.hint ?? 'sshpass unavailable' };
+      // AUDIT-FIX: Log warning that password will be passed via environment variable
+      // rather than command-line argument to avoid ps visibility
+      console.warn('[Security] SSH password auth via sshpass -e (env var SSHPASS)');
     }
     if (cfg.authMode === 'key' && !cfg.keyPath) {
       return { ok: false, error: 'keyPath is required for authMode=key' };

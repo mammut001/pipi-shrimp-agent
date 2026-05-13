@@ -70,6 +70,7 @@ interface PromptInput {
   sshConfig: SshConfig;
   runDir: RunDir;
   environmentSummary: AutoResearchEnvironmentSummary;
+  maxIterations: number;
 }
 
 interface StartupContext {
@@ -81,7 +82,13 @@ interface StartupContext {
 }
 
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
-const TOOL_BUDGET_RESERVE = 4;
+
+// AUDIT-016 FIX: Budget reserve is now calculated dynamically based on remaining iterations.
+// This ensures the reserve is meaningful even when maxIterations is small (e.g., 1).
+function calculateBudgetReserve(maxIterations: number): number {
+  // Reserve 2 rounds or 25% of maxIterations, whichever is smaller but at least 1
+  return Math.max(1, Math.min(2, Math.floor(maxIterations * 0.25)));
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -93,7 +100,10 @@ function buildSystemPrompt({
   sshConfig,
   runDir,
   environmentSummary,
+  maxIterations,
 }: PromptInput): string {
+  // AUDIT-016 FIX: Calculate budget reserve dynamically based on maxIterations
+  const budgetReserve = calculateBudgetReserve(maxIterations);
   const isLocal = sshConfig.mode === 'local';
   const toolProfile = getAutoResearchToolProfile(sshConfig);
   const allowedTools = formatAutoResearchToolCatalog(sshConfig);
@@ -162,7 +172,7 @@ ${livingDoc || 'No prior iterations recorded yet.'}
   {"metricName":"<name>","metricValue":<number|null>,"status":"IMPROVED|NOT_IMPROVED|FAILED","hypothesis":"<one line>","change":"<short summary>","reasoning":"<brief reasoning>","artifactPaths":["<optional path>"],"failReason":"<optional>","extra":{"<optional>":"<optional>"}}
 6. If the metric is missing, the command crashes, or the run times out, still write the JSON object with status FAILED, metricValue null, and a concrete failReason.
 7. Also emit a final fallback line as a deprecated backup only if the host cannot read metrics.json:
-   EXPERIMENT_RESULT: metric_value=<number|null> status=<IMPROVED|NOT_IMPROVED|FAILED> hypothesis="<one line>"
+   EXPERIMENT_RESULT: budgetReserver|null> status=<IMPROVED|NOT_IMPROVED|FAILED> hypothesis="<one line>"
    or
    EXPERIMENT_RESULT: metric_value=null status=FAILED fail_reason="<reason>" hypothesis="<one line>"
 8. Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for reading metrics/logs, writing the final result, and cleanup. If you are near that reserve, stop exploring or modifying code and finalize.
@@ -880,6 +890,7 @@ export async function startExperimentLoop(
         sshConfig: experimentCfg,
         runDir,
         environmentSummary,
+        maxIterations: store.maxIterations,
       });
       await writeTargetText(artifactCfg, runDir.systemPromptPath, `${systemPrompt}\n`);
 
