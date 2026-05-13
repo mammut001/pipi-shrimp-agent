@@ -19,6 +19,7 @@ import {
   DocumentMetadataSidebar,
   type DocumentMetadataSection,
 } from '@/components/document';
+import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { downloadTextFile, writeClipboardText } from '@/utils/clipboard';
 
 function formatEventPhaseLabel(phase: AutoResearchRunRecord['events'][number]['phase']): string {
@@ -112,7 +113,7 @@ export function AutoResearchDashboardView({
   const statusLabel = run.status === 'reflection_failed'
     ? t('autoresearch.statusReflectionFailed')
     : run.status.replace(/_/g, ' ');
-  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot);
+  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(toAgentConfigSnapshot(run.config.configSnapshot));
   const reflectionReason = run.status === 'reflection_failed'
     ? safeString(run.reason) ?? safeString(run.summary)
     : null;

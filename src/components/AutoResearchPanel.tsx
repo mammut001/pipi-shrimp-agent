@@ -29,6 +29,7 @@ import {
 import {
   buildAutoResearchModelDisplayFromSnapshot,
 } from '@/services/autoresearch/modelDisplay';
+import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { downloadTextFile, stripAnsiText, writeClipboardText } from '@/utils/clipboard';
 
 type LiveOutputFeedback = 'copied' | 'cleared' | null;
@@ -375,7 +376,7 @@ export function AutoResearchPanel() {
                 <span>·</span>
                 <span>{run.currentIteration}/{run.config.iterations}</span>
                 <span>·</span>
-                <span className="truncate">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</span>
+                <span className="truncate">{buildAutoResearchModelDisplayFromSnapshot(toAgentConfigSnapshot(run.config.configSnapshot)).compactLabel}</span>
               </div>
             </button>
           ))}
@@ -399,7 +400,7 @@ export function AutoResearchPanel() {
             </div>
             <div className="rounded-lg bg-gray-50 px-2 py-1.5 text-[9px] text-gray-500 space-y-0.5">
               <p className="font-medium text-gray-700">
-                {buildAutoResearchModelDisplayFromSnapshot(selectedRun.config.configSnapshot).compactLabel}
+                {buildAutoResearchModelDisplayFromSnapshot(toAgentConfigSnapshot(selectedRun.config.configSnapshot)).compactLabel}
               </p>
               <p className="break-all">{selectedRun.config.workdir}</p>
               <p className="break-all">{selectedRun.config.experimentDir}</p>

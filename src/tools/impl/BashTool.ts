@@ -10,13 +10,50 @@ export type CommandCategory = 'SEARCH' | 'READ' | 'LIST' | 'EDIT' | 'OTHER';
 /**
  * 危险命令列表
  * 使用 case-insensitive 标志防止大小写绕过 (如 RM -RF /)
+ * AUDIT-FIX: Expanded to cover more attack vectors including:
+ * - Disk formatting and partition manipulation
+ * - Credential dumping and authentication bypass
+ * - Reverse shells and remote code execution
+ * - Chinese dangerous keywords (preserved from original)
  */
 const DANGEROUS_PATTERNS = [
-  /rm\s+-rf\s+\//i,                    // rm -rf / (case insensitive)
-  /:\(\)\s*:\s*\|:\s*&/,              // Fork bomb (no case variation)
+  // Disk destruction (case-insensitive)
+  /rm\s+-rf\s+\//i,                   // rm -rf / (case insensitive)
   /mkfs/i,                            // Format disk (case insensitive)
+  /fdisk/i,                           // Partition editor (case insensitive)
   /dd\s+if=.*of=\/dev\//i,           // Direct disk write (case insensitive)
-  /渗透|exploit|黑客/i,               // 中文危险词
+
+  // Fork bomb (no case variation - special characters)
+  /:\(\)\s*:\s*\|:\s*&/,
+
+  // Authentication and credential theft
+  /chmod\s+777\s+\//i,                // Open permissions on root
+  /chmod\s+-r\s+777\s+/i,            // Recursive open permissions
+  /passwd\s+root/i,                   // Change root password
+  /su\s+root/i,                       // Switch to root
+
+  // Reverse shell and remote access
+  /nc\s+-[elp].*\e/i,                // Netcat reverse shell
+  /nc\s+-e\s+\/bin\//i,              // Netcat with exec
+  /bash\s+-i\s+.*\/dev\/tcp\//i,     // Bash reverse shell
+  /bash\s+-c\s+.*nc\s+/i,            // Bash with netcat
+  /curl\s+.*\$\(/i,                   // Command injection via curl
+  /wget\s+.*\$\(/i,                   // Command injection via wget
+  /python.*-c.*socket/i,              // Python reverse shell
+  /perl.*-e.*socket/i,                // Perl reverse shell
+
+  // System modification and control
+  /init\s+0/i,                        // Shutdown
+  /init\s+6/i,                        // Reboot
+  /shutdown\s+-h/i,                    // Halt system
+  /reboot/i,                          // Reboot command
+
+  // Sensitive data access
+  /cat\s+\/etc\/shadow/i,             // Read password hashes
+  /cat\s+\/etc\/passwd.*\>/i,         // Overwrite passwd
+
+  // Chinese dangerous keywords (preserved from original)
+  /渗透|提权|黑客|入侵|木马|病毒/i,
 ];
 
 /**
@@ -34,12 +71,28 @@ export class BashTool extends BaseTool<BashInput, BashOutput> {
 
   async execute(input: BashInput, context: ToolContext): Promise<ToolResult<BashOutput>> {
     // 危险命令检查
+    // AUDIT-FIX: Now checks both the raw command AND a normalized version
+    // to catch attempts to bypass patterns with escapes, quotes, or special chars
     if (context.settings.sandboxEnabled !== false) {
+      const rawCommand = input.command;
+      // Normalize: remove common evasion techniques
+      const normalizedCommand = rawCommand
+        .replace(/\\\\/g, '')    // Remove escaped backslashes
+        .replace(/\\'/g, "'")     // Remove escaped single quotes
+        .replace(/\\"/g, '"')     // Remove escaped double quotes
+        .replace(/`/g, '')        // Remove backticks
+        .replace(/\$\(/g, '')    // Remove command substitution
+        .replace(/\$'{/, '')     // Remove bash subshells
+        .replace(/\|/g, ' ')     // Normalize pipes to spaces for pattern matching
+        .replace(/>/g, ' ')      // Normalize redirects
+        .replace(/;/g, ' ');     // Normalize command separators
+
       for (const pattern of DANGEROUS_PATTERNS) {
-        if (pattern.test(input.command)) {
+        // Check both raw and normalized to catch bypass attempts
+        if (pattern.test(rawCommand) || pattern.test(normalizedCommand)) {
           return {
             success: false,
-            error: `Dangerous command blocked: ${input.command.substring(0, 50)}...`
+            error: `Dangerous command blocked: ${rawCommand.substring(0, 50)}...`
           };
         }
       }

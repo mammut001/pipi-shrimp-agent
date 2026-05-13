@@ -27,12 +27,14 @@ export class FileReadTool extends BaseTool<FileReadInput, FileReadOutput> {
         // For images, try to read as binary via Rust and return base64
         // If Rust doesn't support binary read yet, return error with clear message
         try {
-          const binaryResult = await invoke<{ content: string; path: string }>('read_binary_file', {
+          const binaryResult = await invoke<{ content: string; path: string; dimensions?: { width: number; height: number } }>('read_binary_file', {
             path: input.file_path,
             workDir: context.cwd || undefined
           });
 
           // Rust returns base64-encoded content in 'content' field
+          // and optionally dimensions if image metadata could be extracted
+          const dimensions = binaryResult.dimensions ?? { width: 0, height: 0 };
           return {
             success: true,
             data: {
@@ -41,7 +43,7 @@ export class FileReadTool extends BaseTool<FileReadInput, FileReadOutput> {
                 base64: binaryResult.content || '',
                 type: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
                 originalSize: binaryResult.content?.length ? Math.ceil(binaryResult.content.length * 3 / 4) : 0,
-                dimensions: { width: 0, height: 0 }  // TODO: extract from image metadata
+                dimensions
               }
             }
           };

@@ -42,27 +42,19 @@ export async function* runChatTurn(
 
   // Memory hook — fires after each final (no-tool-call) response
   const memoryHook = createMemoryHook({ projectRoot });
-  
-  // [ROUND ACCOUNTING CONTRACT]
-  // Known Issue: `round` increments for every loop iteration, including tool retries
-  // and polling/waiting steps. This means transient tool failures can prematurely
-  // exhaust maxModelRounds.
-  //
-  // Current Mitigation: maxModelRounds = maxToolBudget + 8, providing ~8 extra rounds
-  // beyond the tool budget to absorb retries/polling overhead.
-  //
-  // TODO (AUDIT-019): Separate model reasoning rounds (incremented only at API call time)
-  // from tool execution rounds (tracked via toolBudgetSummary). This requires:
-  // 1. A separate `modelRound` counter incremented only when making an API call
-  // 2. Keeping `round` for overall iteration tracking
-  // 3. Checking modelRound < maxModelRounds before API calls, not round < maxModelRounds
+
+  // AUDIT-019 FIX: Separate model reasoning rounds from tool execution rounds.
+  // modelRound only increments when we make an actual API call, not on tool retries.
+  // This prevents transient tool failures from prematurely exhausting maxModelRounds.
+  let modelRound = 0;
 
   while (
     !isTurnComplete
-    && round < maxModelRounds
+    && modelRound < maxModelRounds
     && (toolBudgetSummary.toolBudgetUsedRaw < maxToolBudget || reserveFinalResponseRound)
   ) {
-    round++;
+    round++; // round tracks overall loop iterations for logging/debugging
+    modelRound++; // modelRound tracks actual API calls made
     
     // [Phase 1: Pre-process]
     // Here we can inject Microcompact logic in the future easily, right before hitting the API.
@@ -96,6 +88,17 @@ export async function* runChatTurn(
     let strictBudgetRetry = false;
 
     while (true) {
+      // AUDIT-019 FIX: Check modelRound against maxModelRounds at API call time,
+      // not the overall round counter. This ensures retries don't prematurely
+      // exhaust the API call budget.
+      if (modelRound >= maxModelRounds) {
+        yield {
+          type: 'error',
+          error: new Error(`Exceeded maximum model reasoning rounds (${maxModelRounds}). The conversation is too long or complex.`),
+        };
+        return;
+      }
+
       const request = buildResolvedChatRequest(resolvedConfig!, {
         messages: backendMessages,
         systemPrompt,

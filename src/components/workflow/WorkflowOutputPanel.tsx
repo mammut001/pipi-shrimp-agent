@@ -47,20 +47,27 @@ export function WorkflowOutputPanel() {
     ? workflowRuns.find((r) => r.id === selectedRunId) ?? workflowRuns[0]
     : workflowRuns[0];
   const runDirectory = activeRun?.runDirectory || '';
-  const displayAgents = activeRun?.agents.map((entry) => {
-    const currentAgent = agents.find((agent) => agent.id === entry.agentId);
-    return {
-      id: entry.agentId,
-      name: entry.agentName,
-      status: entry.status,
-      task: currentAgent?.task,
-    };
-  }) ?? agents.map((agent) => ({
-    id: agent.id,
-    name: agent.name,
-    status: agent.status,
-    task: agent.task,
-  }));
+
+  // AUDIT-011 FIX: Properly handle the fallback chain for displayAgents.
+  // Previously: activeRun?.agents.map() ?? agents.map() — this doesn't work because
+  // an empty array is still truthy. Now we explicitly check if activeRun.agents exists
+  // and has entries before using it.
+  const displayAgents = (activeRun?.agents && activeRun.agents.length > 0)
+    ? activeRun.agents.map((entry) => {
+        const currentAgent = agents.find((agent) => agent.id === entry.agentId);
+        return {
+          id: entry.agentId,
+          name: entry.agentName,
+          status: entry.status,
+          task: currentAgent?.task,
+        };
+      })
+    : agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        status: agent.status,
+        task: agent.task,
+      }));
 
   // Stream callback
   useEffect(() => {

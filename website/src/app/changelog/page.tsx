@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -98,9 +99,11 @@ export default function ChangelogPage() {
                     {/* Avatar */}
                     <div className="flex-shrink-0">
                       {commit.author ? (
-                        <img
+                        <Image
                           src={commit.author.avatar_url}
                           alt={commit.author.login}
+                          width={40}
+                          height={40}
                           className="w-10 h-10 rounded-full"
                         />
                       ) : (

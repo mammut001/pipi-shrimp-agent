@@ -1,4 +1,5 @@
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
+import type { AutoResearchConfigSnapshot } from './history';
 import { formatError as formatSharedError, extractErrorDetails } from '@/utils/errorFormat';
 import { sanitize } from '@/utils/errorLogger';
 
@@ -61,6 +62,22 @@ export function buildAutoResearchAgentConfigSnapshot(
     keyPresent: config.hasApiKey,
     source,
     ...(warning ? { warning } : {}),
+  };
+}
+
+export function toAgentConfigSnapshot(snapshot: AutoResearchConfigSnapshot): AutoResearchAgentConfigSnapshot {
+  return {
+    configId: snapshot.configId ?? null,
+    configName: snapshot.configName,
+    provider: snapshot.provider,
+    providerLabel: snapshot.providerLabel,
+    apiFormat: snapshot.apiFormat ?? '',
+    baseUrl: snapshot.baseUrl ?? '',
+    model: snapshot.model,
+    keyPreview: snapshot.keyPreview ?? (snapshot.keyPresent ? '<UNKNOWN>' : '<EMPTY>'),
+    keyPresent: snapshot.keyPresent,
+    source: snapshot.source === 'unknown' ? 'savedRunConfig' : snapshot.source,
+    warning: snapshot.warning,
   };
 }
 

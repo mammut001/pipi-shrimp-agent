@@ -1,4 +1,5 @@
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
+import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { formatMetricValue } from '@/services/autoresearch/metricTimeline';
 import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 
@@ -60,7 +61,7 @@ export function AutoResearchRunChips({ run, className = '' }: AutoResearchRunChi
   const baselineLabel = typeof run.config.baseline === 'number'
     ? formatMetricValue(run.config.baseline)
     : null;
-  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot);
+  const modelDisplay = buildAutoResearchModelDisplayFromSnapshot(toAgentConfigSnapshot(run.config.configSnapshot));
 
   const chips: ChipItem[] = [
     primaryChip,

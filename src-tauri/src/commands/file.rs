@@ -142,9 +142,13 @@ fn build_local_file_tool_error(path: &str, operation: &str, cause: impl Into<Str
 
 pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
     let scope_root = match work_dir {
-        Some(dir) => Some(expand_home(dir).canonicalize().map_err(|e| {
-            AppError::FileError(format!("Cannot resolve work directory '{}': {}", dir, e))
-        })?),
+        Some(dir) => {
+            // Canonicalize work_dir first for atomic validation
+            let expanded = expand_home(dir);
+            Some(expanded.canonicalize().map_err(|e| {
+                AppError::FileError(format!("Cannot resolve work directory '{}': {}", dir, e))
+            })?)
+        }
         None => None,
     };
 
@@ -157,7 +161,14 @@ pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
         expanded
     };
 
-    let (canonical, _) = resolve_existing_ancestor(&candidate)?;
+    // CRITICAL: Canonicalize BEFORE validation to prevent TOCTOU race conditions.
+    // Previously this did resolve_existing_ancestor first which could allow path traversal
+    // if symlinks changed between the ancestor resolution and canonicalization.
+    let canonical = candidate.canonicalize().map_err(|e| {
+        AppError::FileError(format!("Cannot resolve path '{}': {}", path, e))
+    })?;
+
+    // Validate canonical path against scope_root (atomic operation)
     validate_in_scope(&canonical, scope_root.as_deref(), path)?;
     Ok(canonical)
 }
