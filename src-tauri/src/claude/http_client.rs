@@ -8,7 +8,7 @@ use super::http::{
 use super::message::{ChatResponse, Message};
 use super::provider::ProviderCapabilities;
 
-pub use super::http::{has_running_request, stop_current_request};
+pub use super::http::stop_current_request;
 
 /// Claude HTTP client using reqwest.
 #[derive(Clone)]

@@ -39,6 +39,7 @@ pub struct StreamContext {
     pub content: String,
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
+    #[allow(dead_code)]
     pub artifacts: Vec<Artifact>,
     pub usage: UsageInfo,
     pub model: String,
@@ -134,8 +135,10 @@ impl StreamContext {
 
 /// Provider adapter trait implemented by each protocol family.
 pub trait ProviderAdapter: Send + Sync {
+    #[allow(dead_code)]
     fn provider_id(&self) -> ProviderId;
 
+    #[allow(dead_code)]
     fn api_format(&self) -> ApiFormat;
 
     fn build_url(&self, config: &ResolvedProviderConfig) -> String;
@@ -192,6 +195,7 @@ pub trait ProviderAdapter: Send + Sync {
         })
     }
 
+    #[allow(dead_code)]
     fn get_max_tokens(&self, config: &ResolvedProviderConfig) -> i32 {
         if config.capabilities.supports_thinking {
             config.capabilities.thinking_budget.unwrap_or(5000) + 1000

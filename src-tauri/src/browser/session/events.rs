@@ -1,8 +1,6 @@
-use crate::browser::cdp::CdpConfig;
 use crate::browser::observability::{BrowserBenchmarkKind, BrowserEventKind, BrowserEventLevel};
 
 use super::manager::BrowserSessionManager;
-use super::state::{BrowserLaunchMode, BrowserSession};
 
 impl BrowserSessionManager {
     pub fn record_action_started(&mut self, action_name: &str, detail: Option<String>) {
@@ -90,7 +88,9 @@ impl BrowserSessionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::BrowserSessionManager;
+    use crate::browser::cdp::CdpConfig;
+    use crate::browser::session::state::{BrowserLaunchMode, BrowserSession};
 
     #[test]
     fn test_action_events_and_benchmarks_are_recorded() {

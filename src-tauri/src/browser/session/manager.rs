@@ -165,7 +165,7 @@ impl BrowserSessionManager {
         self.touch_activity();
     }
 
-    pub fn worker_snapshot(&self) -> Option<WorkerSnapshot> {
+    pub(super) fn worker_snapshot(&self) -> Option<WorkerSnapshot> {
         let page = self.page.clone()?;
         Some(WorkerSnapshot {
             client: self.client.clone(),

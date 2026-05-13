@@ -57,6 +57,7 @@ pub async fn send_claude_sdk_chat_streaming(
     #[allow(non_snake_case)] allowBrowserTools: Option<bool>,
     #[allow(non_snake_case)] sessionId: String,
     provider: Option<String>,
+    #[allow(non_snake_case)]
     apiFormat: Option<String>,
     #[allow(non_snake_case)] providerCapabilities: Option<ProviderCapabilities>,
     #[allow(non_snake_case)] responseFormat: Option<serde_json::Value>,
