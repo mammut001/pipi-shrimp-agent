@@ -39,6 +39,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
+        .on_page_load(|webview, _payload| {
+            if webview.label() == "main" {
+                if let Err(error) = webview.show() {
+                    eprintln!("⚠️ Failed to show main window after page load: {}", error);
+                }
+            }
+        })
         .setup(|app| {
             // Initialize database - CRITICAL, cannot proceed without it
             if let Err(e) = init_database() {
@@ -49,7 +56,7 @@ pub fn run() {
                 panic!("Database initialization failed: {}. Application cannot start.", e);
             }
 
-            // Get the main window
+            // Confirm the main window exists.
             let _window = app.get_webview_window("main").unwrap();
 
             // Initialize Claude HTTP client (no Node.js required)

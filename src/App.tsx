@@ -30,6 +30,28 @@ const Workflow = lazy(() => import('@/pages/Workflow'));
 const Skill = lazy(() => import('@/pages/Skill'));
 const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
 
+function AppLoadingShell() {
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="text-center">
+        <div className="mb-6">
+          <img
+            src="/shrimp-avatar.png"
+            alt="PiPi Shrimp"
+            className="h-24 w-24 mx-auto rounded-full shadow-lg object-cover"
+          />
+        </div>
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">
+          PiPi Shrimp Agent
+        </h1>
+        <p className="text-sm text-gray-500">
+          Loading workspace...
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function DeprecatedBrowserViewFallback() {
   const setCurrentView = useUIStore((state) => state.setCurrentView);
   const setBrowserDockMode = useUIStore((state) => state.setBrowserDockMode);
@@ -58,9 +80,9 @@ export default function App() {
   // Keyboard shortcuts handler
   const { showShortcuts, setShowShortcuts } = useKeyboardShortcuts();
 
-  // Load critical state first, then show the window once the app can render.
-  // Window starts hidden (visible: false in tauri.conf.json) to avoid the
-  // white-screen flash while the JS bundle is parsing and React is mounting.
+  // Load critical state first, then kick off background initialization.
+  // The window is now visible by default; we prefer showing a loading shell
+  // over risking a hidden or unreachable app window during development.
   useEffect(() => {
     let disposed = false;
     let cleanupBrowserObservability: (() => void) | null = null;
@@ -113,11 +135,9 @@ export default function App() {
         }
 
         try {
-          // Always show the window — even if init partially failed, a blank/error
-          // UI is better than a window that never appears.
           await getCurrentWindow().show();
         } catch (error) {
-          console.error('Failed to show main window after initialization:', error);
+          console.error('Failed to confirm main window visibility after initialization:', error);
         }
 
         if (!disposed) {
@@ -155,7 +175,7 @@ export default function App() {
 
   return (
     <>
-      <Suspense fallback={null}>
+      <Suspense fallback={<AppLoadingShell />}>
         {renderMainContent()}
         {settingsOpen && <Settings />}
       </Suspense>

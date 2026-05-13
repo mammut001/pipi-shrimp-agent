@@ -4,10 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https: wss: ipc: tauri:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self';"
-    />
+    <!--
+      Keep CSP out of the dev HTML entrypoint.
+      In Tauri/Vite dev, an inline meta CSP here can block module bootstrap or HMR
+      before React mounts, which shows up as a pure white window with no fallback UI.
+      Production CSP is still enforced through the Tauri app config.
+    -->
     <title>AI Agent</title>
   </head>
   <body>
