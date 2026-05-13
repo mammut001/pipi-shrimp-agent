@@ -155,6 +155,7 @@ export interface WorkflowRun {
   title: string;
   projectGoal: string;
   successCriteria: string;
+  bootstrapKind?: 'conversational' | 'manual';
   status: 'idle' | 'running' | 'completed' | 'completed-not-reached' | 'error' | 'stopped';
   startTime: number;
   endTime?: number;
@@ -206,6 +207,7 @@ export interface AgentTemplate {
   taskInstruction?: string;
   soulPrompt: string;
   execution: AgentExecutionConfig;
+  allowedTools?: string[];
   recommendedRole?: WorkflowAgentRole;
   recommendedModelHints?: RoleModelHint[];
   requiredOutputMarkers?: WorkflowMarkerCode[];

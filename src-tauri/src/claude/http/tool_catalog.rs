@@ -302,6 +302,107 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
             }
         }),
         serde_json::json!({
+            "name": "pdf_read",
+            "description": "Read and extract plain text from a local PDF file path.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "paper_extract_meta",
+            "description": "Extract structured paper metadata from grounded source text. Return JSON-only metadata.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" }
+                },
+                "required": ["text"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "baseline_extract",
+            "description": "Extract baseline methods and reported metrics from grounded paper text. Return JSON-only baselines.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string" }
+                },
+                "required": ["text"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "arxiv_search",
+            "description": "Search arXiv and return a small list of relevant paper metadata.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "number" }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "scaffold_generate",
+            "description": "Generate a deterministic AutoResearch scaffold into the requested workDir using a known template.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "templateId": { "type": "string", "enum": ["python-ml-baseline", "node-eval-harness"] },
+                    "workDir": { "type": "string" },
+                    "researchGoal": { "type": "string" },
+                    "successCriteria": { "type": "string" },
+                    "primaryMetric": { "type": "string" },
+                    "baselineName": { "type": "string" },
+                    "datasetName": { "type": "string" },
+                    "projectName": { "type": "string" }
+                },
+                "required": ["templateId", "workDir", "researchGoal", "successCriteria", "primaryMetric"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "git_init_workdir",
+            "description": "Initialize a Git repository in the specified workDir and create the initial commit.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "workDir": { "type": "string" }
+                },
+                "required": ["workDir"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
+            "name": "bootstrap_finalize",
+            "description": "Validate and persist the final AutoResearch bootstrap plan. Returns a structured bootstrap result.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "researchGoal": { "type": "string" },
+                    "successCriteria": { "type": "string" },
+                    "primaryMetric": { "type": "string" },
+                    "secondaryMetrics": { "type": "array", "items": { "type": "string" } },
+                    "papers": { "type": "array", "items": { "type": "object" } },
+                    "baselines": { "type": "array", "items": { "type": "object" } },
+                    "scaffold": { "type": "object" },
+                    "gitInitialized": { "type": "boolean" },
+                    "initialCommitSha": { "type": "string" },
+                    "conversationalTemplateId": { "type": "string", "enum": ["reproduce-paper", "beat-baseline", "ablation", "from-scratch"] }
+                },
+                "required": ["researchGoal", "successCriteria", "primaryMetric", "papers", "baselines", "scaffold", "gitInitialized", "conversationalTemplateId"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
             "name": "path_exists",
             "description": "Check if a file or directory exists.",
             "input_schema": {

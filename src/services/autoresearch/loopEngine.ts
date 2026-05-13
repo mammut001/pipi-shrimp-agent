@@ -44,6 +44,7 @@ import {
   type AutoResearchEnvironmentSummary,
 } from './preflight';
 import { formatAutoResearchToolCatalog, getAutoResearchToolProfile } from './toolCatalog';
+import { applyBootstrapIfPresent } from './bootstrap/applyBootstrap';
 
 interface ParsedResult {
   metricName: string;
@@ -718,6 +719,16 @@ export async function startExperimentLoop(
       useAutoResearchStore.getState().setError(avail.hint ?? 'sshpass unavailable');
       return;
     }
+  }
+
+  try {
+    await applyBootstrapIfPresent(cfg, sessionId);
+  } catch (error) {
+    useAutoResearchStore.getState().addRunEvent({
+      level: 'warn',
+      phase: 'preflight',
+      message: `Bootstrap metadata could not be applied: ${formatError(error)}`,
+    });
   }
 
   let startup: StartupContext;

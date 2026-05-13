@@ -223,6 +223,12 @@ pub async fn execute_tool(
     work_dir: Option<String>,
     browser_state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
     font_state: tauri::State<'_, crate::FontDbState>,
+    #[allow(non_snake_case)] apiKey: Option<String>,
+    model: Option<String>,
+    #[allow(non_snake_case)] baseUrl: Option<String>,
+    provider: Option<String>,
+    #[allow(non_snake_case)] apiFormat: Option<String>,
+    #[allow(non_snake_case)] providerCapabilities: Option<crate::claude::provider::ProviderCapabilities>,
 ) -> AppResult<String> {
     println!("🔧 Executing tool: {} with args: {}", tool_name, arguments);
 
@@ -249,6 +255,20 @@ pub async fn execute_tool(
                 }
             }
         }
+        "pdf_read" => {
+            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
+                    return Err(AppError::SecurityError(e.message.clone()));
+                }
+            }
+        }
+        "scaffold_generate" | "git_init_workdir" => {
+            if let Some(path) = args.get("workDir").and_then(|v| v.as_str()) {
+                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
+                    return Err(AppError::SecurityError(e.message.clone()));
+                }
+            }
+        }
         "execute_command" => {
             if let Some(command) = args.get("command").and_then(|v| v.as_str()) {
                 if let Err(e) = path_security::validate_command(command) {
@@ -266,6 +286,39 @@ pub async fn execute_tool(
 
     // Execute tool and convert result to JSON
     let result_json = match tool_name.as_str() {
+        "pdf_read"
+        | "paper_extract_meta"
+        | "baseline_extract"
+        | "arxiv_search"
+        | "scaffold_generate"
+        | "git_init_workdir"
+        | "bootstrap_finalize" => {
+            let provider_context = match (apiKey, model) {
+                (Some(api_key), Some(model_name)) if !api_key.trim().is_empty() && !model_name.trim().is_empty() => {
+                    Some(crate::tools::autoresearch_bootstrap::BootstrapProviderContext {
+                        api_key,
+                        model: model_name,
+                        base_url: baseUrl.filter(|value| !value.trim().is_empty()),
+                        provider: provider.filter(|value| !value.trim().is_empty()),
+                        api_format: apiFormat.filter(|value| !value.trim().is_empty()),
+                        provider_capabilities: providerCapabilities,
+                    })
+                }
+                _ => None,
+            };
+
+            let context = crate::tools::autoresearch_bootstrap::BootstrapExecutionContext {
+                work_dir: work_dir.clone(),
+                provider: provider_context,
+            };
+
+            match crate::tools::autoresearch_bootstrap::execute_tool(&tool_name, &args, &context)
+                .await?
+            {
+                Some(result) => result,
+                None => unreachable!("bootstrap tool should have been handled"),
+            }
+        }
         "read_file" => {
             let path = args.get("path")
                 .and_then(|v| v.as_str())

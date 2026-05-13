@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import { TerminalPanel } from '@/components';
+import { AutoResearchTabs } from '@/components/autoresearch/AutoResearchTabs';
 import { AutoResearchRunDetailDocument } from '@/components/autoresearch/AutoResearchRunDetailDocument';
 import { MainLayout } from '@/layout';
 import { useSettingsStore } from '@/store';
@@ -804,7 +805,7 @@ export function AutoResearch() {
       rightPanelContent={<ExperimentDetailPanel />}
       rightPanelWidthClassName="w-[360px]"
     >
-      <AutoResearchView />
+      <AutoResearchTabs />
     </MainLayout>
   );
 }

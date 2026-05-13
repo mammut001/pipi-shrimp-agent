@@ -138,6 +138,22 @@ The local SQLite database now maintains a managed backup flow for schema migrati
 
 Browser automation failures now produce a persisted recovery snapshot under `data/browser-failures/`, which the frontend uses to surface retry, continue-from-current-page, manual takeover, and copy-diagnostics actions.
 
+### AutoResearch Conversational Bootstrap
+
+AutoResearch now supports a conversational bootstrap flow in addition to the existing advanced workdir setup. The conversational tab guides the user through goal clarification, paper grounding, baseline extraction, metric selection, scaffold generation, Git initialization, and final bootstrap handoff into the existing AutoResearch loop.
+
+```mermaid
+flowchart LR
+  A[User goal] --> B[Paper grounding]
+  B --> C[Baseline extraction]
+  C --> D[Metric and success criteria]
+  D --> E[Scaffold + git init]
+  E --> F[bootstrap_finalize]
+  F --> G[startExperimentLoop]
+```
+
+The resulting bootstrap artifact is persisted at `workDir/.pipi-shrimp/autoresearch.bootstrap.json`, and the loop consumes it exactly once to seed the living doc and baseline metadata before the first iteration starts.
+
 ### 🛠️ Tech Stack
 
 - **Frontend**: React 18, TypeScript, Tailwind CSS, Zustand, Vite
@@ -290,6 +306,22 @@ pipi-shrimp-agent/
 ### 浏览器失败恢复
 
 浏览器自动化失败后，现在会在 `data/browser-failures/` 下持久化 recovery snapshot，前端会据此展示重试上一步、从当前页继续、手动接管以及复制诊断等恢复操作。
+
+### AutoResearch 对话式 Bootstrap
+
+AutoResearch 现在除了原有的高级工作目录配置流之外，还支持一条对话式 bootstrap 流。对话标签页会依次引导用户明确研究目标、收集论文、抽取 baseline、锁定指标与成功标准、生成脚手架、初始化 Git，然后把结果交给现有 AutoResearch loop 启动。
+
+```mermaid
+flowchart LR
+  A[用户目标] --> B[论文归档]
+  B --> C[Baseline 抽取]
+  C --> D[指标与成功标准]
+  D --> E[脚手架与 git 初始化]
+  E --> F[bootstrap_finalize]
+  F --> G[startExperimentLoop]
+```
+
+最终 bootstrap 结果会写入 `workDir/.pipi-shrimp/autoresearch.bootstrap.json`，现有 loop 会在第一次迭代前精确消费一次，用来初始化 living doc 和 baseline 元数据。
 
 ### 🛠️ 技术栈
 

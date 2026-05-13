@@ -65,6 +65,8 @@ export interface ExperimentSession {
   bestMetric: number | null;
   metricDirection: 'lower' | 'higher';
   metricName: string;
+  successCriteria: string;
+  bootstrapKind: 'conversational' | 'manual' | null;
   consecutiveFailures: number;
   experimentDir: string;
   sessionFilePath: string;
@@ -108,6 +110,8 @@ function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'selectedR
     bestMetric: null,
     metricDirection: 'lower',
     metricName: 'val_bpb',
+    successCriteria: '',
+    bootstrapKind: null,
     consecutiveFailures: 0,
     experimentDir: '',
     sessionFilePath: '',
@@ -385,6 +389,9 @@ interface AutoResearchStore extends ExperimentSession {
   addRunEvent: (input: Omit<AutoResearchRunEvent, 'id' | 'runId' | 'timestamp'> & { timestamp?: string }) => void;
   updateBestMetric: (value: number) => void;
   setBestMetric: (value: number | null) => void;
+  setPrimaryMetric: (metricName: string) => void;
+  setSuccessCriteria: (successCriteria: string) => void;
+  setBootstrapKind: (bootstrapKind: ExperimentSession['bootstrapKind']) => void;
   setCurrentIterationValue: (iteration: number) => void;
   incrementConsecutiveFailures: () => void;
   resetConsecutiveFailures: () => void;
@@ -460,6 +467,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       bestMetric: opts.baseline ?? null,
       metricDirection: opts.metricDirection,
       metricName: opts.metricName,
+      successCriteria: state.successCriteria,
+      bootstrapKind: state.bootstrapKind,
       consecutiveFailures: 0,
       experimentDir: opts.experimentDir || opts.sshConfig.remoteWorkDir || '',
       sessionFilePath: opts.sessionFilePath || '',
@@ -718,6 +727,22 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       bestMetricValue: value,
     })),
   })),
+
+  setPrimaryMetric: (metricName) => set((state) => ({
+    metricName,
+    ...withActiveRunUpdate(state, (run) => ({
+      ...run,
+      updatedAt: new Date().toISOString(),
+      config: {
+        ...run.config,
+        metric: metricName,
+      },
+    })),
+  })),
+
+  setSuccessCriteria: (successCriteria) => set({ successCriteria }),
+
+  setBootstrapKind: (bootstrapKind) => set({ bootstrapKind }),
 
   setCurrentIterationValue: (iteration) => set((state) => ({
     currentIteration: iteration,

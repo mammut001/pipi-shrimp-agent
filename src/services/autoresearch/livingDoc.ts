@@ -1,4 +1,6 @@
 import type { SshConfig } from '@/store/autoresearchStore';
+import { BootstrapPlanSchema } from './bootstrap/schema';
+import type { BootstrapPlan } from './bootstrap/types';
 import { readAllMetrics, summarize, type IterationMetrics } from './metricsStore';
 import { getSessionRunPaths, readTargetText, writeTargetText } from './runDir';
 
@@ -7,6 +9,16 @@ export interface LivingDocOptions {
   workDir: string;
   metricName: string;
   direction: 'lower' | 'higher';
+}
+
+interface BootstrapDocSeed {
+  createdAt: string;
+  plan: BootstrapPlan;
+}
+
+function getBootstrapPlanSidecarPath(sessionId: string, cfg: SshConfig): string {
+  const paths = getSessionRunPaths(cfg, sessionId);
+  return `${paths.sessionDir}/bootstrap.plan.json`;
 }
 
 function formatMetric(value: number | null): string {
@@ -32,11 +44,54 @@ function renderSection(title: string, items: string[], fallback: string): string
   return [`## ${title}`, items.length > 0 ? items.join('\n') : fallback, ''].join('\n');
 }
 
+function renderBootstrapSection(plan: BootstrapPlan): string[] {
+  const paperLines = plan.papers.map((paper) => `- ${paper.title}${paper.year ? ` (${paper.year})` : ''}`);
+  const baselineLines = plan.baselines.map((baseline) => {
+    const metrics = baseline.reportedMetrics.map((metric) => `${metric.name}=${metric.value}`).join(', ');
+    return `- ${baseline.name} on ${baseline.dataset}${metrics ? ` (${metrics})` : ''}`;
+  });
+
+  return [
+    '## Bootstrap Goal',
+    plan.researchGoal,
+    '',
+    '## Success Criteria',
+    plan.successCriteria,
+    '',
+    '## Primary Metric',
+    `${plan.primaryMetric}${plan.secondaryMetrics.length > 0 ? `; secondary: ${plan.secondaryMetrics.join(', ')}` : ''}`,
+    '',
+    renderSection('Bootstrap Baselines', baselineLines, '- None recorded.'),
+    renderSection('Bootstrap Papers', paperLines, '- None recorded.'),
+  ].join('\n').split('\n');
+}
+
+async function readBootstrapSeed(cfg: SshConfig, sessionId: string): Promise<BootstrapDocSeed | null> {
+  const raw = await readTargetText(cfg, getBootstrapPlanSidecarPath(sessionId, cfg));
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { createdAt?: string; plan?: unknown };
+    if (typeof parsed.createdAt !== 'string') {
+      return null;
+    }
+    return {
+      createdAt: parsed.createdAt,
+      plan: BootstrapPlanSchema.parse(parsed.plan),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function renderLivingDoc(
   sessionId: string,
   objective: string,
   metrics: IterationMetrics[],
   options: LivingDocOptions,
+  bootstrapPlan?: BootstrapPlan | null,
 ): string {
   const summary = summarize(metrics, options.direction);
   const best = summary.best;
@@ -63,6 +118,7 @@ export function renderLivingDoc(
     '## Objective',
     objective.trim() || '(empty objective)',
     '',
+    ...(bootstrapPlan ? [...renderBootstrapSection(bootstrapPlan), ''] : []),
     '## Best so far',
     bestLine,
     '',
@@ -78,14 +134,60 @@ export async function rebuildLivingDoc(
   options: LivingDocOptions,
 ): Promise<string> {
   const paths = getSessionRunPaths(cfg, sessionId);
-  const [metrics, objective] = await Promise.all([
+  const [metrics, objective, bootstrapSeed] = await Promise.all([
     readAllMetrics(cfg, sessionId),
     readTargetText(cfg, paths.sessionFilePath),
+    readBootstrapSeed(cfg, sessionId),
   ]);
 
-  const content = renderLivingDoc(sessionId, objective || '', metrics, options);
+  const content = renderLivingDoc(sessionId, objective || '', metrics, options, bootstrapSeed?.plan ?? null);
   await writeTargetText(cfg, paths.livingDocPath, `${content}\n`);
   return content;
+}
+
+export async function seedFromBootstrap(
+  cfg: SshConfig,
+  sessionId: string,
+  plan: BootstrapPlan,
+  createdAt?: string,
+): Promise<boolean> {
+  const paths = getSessionRunPaths(cfg, sessionId);
+  const seedId = createdAt ?? new Date().toISOString();
+  const marker = `<!-- bootstrap-seeded:${seedId} -->`;
+  const existing = await readTargetText(cfg, paths.sessionFilePath);
+  if (existing?.includes(marker)) {
+    return false;
+  }
+
+  const bootstrapSummary = [
+    marker,
+    '# Bootstrap Goal',
+    plan.researchGoal,
+    '',
+    '## Success Criteria',
+    plan.successCriteria,
+    '',
+    '## Primary Metric',
+    plan.primaryMetric,
+    '',
+    '## Baselines',
+    ...plan.baselines.map((baseline) => `- ${baseline.name}: ${baseline.reportedMetrics.map((metric) => `${metric.name}=${metric.value}`).join(', ')}`),
+    '',
+    '## Papers',
+    ...plan.papers.map((paper) => `- ${paper.title}${paper.year ? ` (${paper.year})` : ''}`),
+    '',
+  ].join('\n');
+
+  const nextContent = existing && existing.trim().length > 0
+    ? `${existing.trim()}\n\n${bootstrapSummary}\n`
+    : `${bootstrapSummary}\n`;
+  await writeTargetText(cfg, paths.sessionFilePath, nextContent);
+  await writeTargetText(
+    cfg,
+    getBootstrapPlanSidecarPath(sessionId, cfg),
+    `${JSON.stringify({ createdAt: seedId, plan }, null, 2)}\n`,
+  );
+  return true;
 }
 
 export async function readLivingDoc(

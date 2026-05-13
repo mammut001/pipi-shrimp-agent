@@ -1,0 +1,22 @@
+{
+  "templateId": "node-eval-harness",
+  "language": "node",
+  "entryCommand": "python3 run_experiment.py",
+  "requiredVars": [
+    "project_name",
+    "research_goal",
+    "success_criteria",
+    "primary_metric",
+    "baseline_name",
+    "dataset_name",
+    "node_eval_command"
+  ],
+  "files": [
+    { "output": "README.md", "source": "README.md.tmpl", "purpose": "Project overview and usage notes." },
+    { "output": "AUTORESEARCH.md", "source": "AUTORESEARCH.md.tmpl", "purpose": "AutoResearch session notes and guardrails." },
+    { "output": "package.json", "source": "package.json.tmpl", "purpose": "Node runtime and scripts." },
+    { "output": "index.ts", "source": "index.ts.tmpl", "purpose": "Evaluation harness entrypoint." },
+    { "output": "run_experiment.py", "source": "run_experiment.py.tmpl", "purpose": "Loop-compatible wrapper entrypoint." },
+    { "output": ".gitignore", "source": ".gitignore", "purpose": "Ignore local artifacts." }
+  ]
+}

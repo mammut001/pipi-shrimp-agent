@@ -48,16 +48,30 @@ pub async fn execute_single_tool(
     #[allow(non_snake_case)] toolCallId: String,
     name: String,
     arguments: String,
+    #[allow(non_snake_case)] workDir: Option<String>,
+    #[allow(non_snake_case)] apiKey: Option<String>,
+    model: Option<String>,
+    #[allow(non_snake_case)] baseUrl: Option<String>,
+    provider: Option<String>,
+    #[allow(non_snake_case)] apiFormat: Option<String>,
+    #[allow(non_snake_case)] providerCapabilities: Option<crate::claude::provider::ProviderCapabilities>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<ToolCallResult, String> {
     let req = ToolCallRequest {
         id: toolCallId,
         name,
         arguments,
+        work_dir: workDir,
+        api_key: apiKey,
+        model,
+        base_url: baseUrl,
+        provider,
+        api_format: apiFormat,
+        provider_capabilities: providerCapabilities,
     };
 
     let registry = state.0.lock().await;
-    registry.execute(&req).map_err(|e| e.to_string())
+    registry.execute_with_context(&req).await.map_err(|e| e.to_string())
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { ExperimentStatus, SshConfig } from '@/store/autoresearchStore';
+import type { BootstrapPlan } from './bootstrap/types';
 import { appendTargetText, getSessionRunPaths, readTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
 
@@ -31,6 +32,17 @@ export interface MetricsSummary {
   std: number | null;
   noiseFloor: number | null;
   confidence: number | null;
+}
+
+interface BootstrapMetricSeed {
+  createdAt: string;
+  primaryMetric: string;
+  references: Array<{ baselineName: string; value: number }>;
+}
+
+function getBootstrapMetricsSidecarPath(cfg: SshConfig, sessionId: string): string {
+  const paths = getSessionRunPaths(cfg, sessionId);
+  return `${paths.sessionDir}/bootstrap.metrics.json`;
 }
 
 function metricComparator(direction: 'lower' | 'higher') {
@@ -117,4 +129,38 @@ export function summarize(
     noiseFloor,
     confidence: Number.isFinite(confidenceBase) ? confidenceBase : 0,
   };
+}
+
+export async function initFromBootstrap(
+  cfg: SshConfig,
+  sessionId: string,
+  plan: BootstrapPlan,
+  createdAt?: string,
+): Promise<boolean> {
+  const path = getBootstrapMetricsSidecarPath(cfg, sessionId);
+  const seedId = createdAt ?? new Date().toISOString();
+  const existing = await readTargetText(cfg, path);
+  if (existing) {
+    try {
+      const parsed = JSON.parse(existing) as BootstrapMetricSeed;
+      if (parsed.createdAt === seedId) {
+        return false;
+      }
+    } catch {
+      // Rewrite malformed sidecar below.
+    }
+  }
+
+  const targetMetric = plan.primaryMetric.trim().toLowerCase();
+  const references = plan.baselines.flatMap((baseline) => baseline.reportedMetrics
+    .filter((metric) => metric.name.trim().toLowerCase() === targetMetric)
+    .map((metric) => ({ baselineName: baseline.name, value: metric.value })));
+
+  await writeTargetText(path === '' ? cfg : cfg, path, `${JSON.stringify({
+    createdAt: seedId,
+    primaryMetric: plan.primaryMetric,
+    references,
+  } satisfies BootstrapMetricSeed, null, 2)}\n`);
+
+  return true;
 }

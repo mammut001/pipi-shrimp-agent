@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::autoresearch_bootstrap::{self, BootstrapExecutionContext, BootstrapProviderContext};
 use super::{ToolCallRequest, ToolCallResult, ToolMetadata};
 use crate::commands::path_security::validate_path;
 use jsonschema::{JSONSchema, ValidationError};
@@ -27,6 +28,16 @@ struct ToolEntry {
 pub struct ToolRegistry {
     tools: HashMap<String, ToolEntry>,
 }
+
+const BOOTSTRAP_TOOL_NAMES: &[&str] = &[
+    "pdf_read",
+    "paper_extract_meta",
+    "baseline_extract",
+    "arxiv_search",
+    "scaffold_generate",
+    "git_init_workdir",
+    "bootstrap_finalize",
+];
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -46,36 +57,77 @@ impl ToolRegistry {
                 compiled_schema,
             },
         );
+
+        fn validate_request<'a>(
+            &'a self,
+            req: &ToolCallRequest,
+        ) -> anyhow::Result<(&'a ToolEntry, serde_json::Value)> {
+            let entry = self
+                .tools
+                .get(&req.name)
+                .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", req.name))?;
+
+            let args: serde_json::Value = serde_json::from_str(&req.arguments).map_err(|e| {
+                anyhow::anyhow!("Invalid JSON arguments for tool '{}': {}", req.name, e)
+            })?;
+
+            if let Some(schema) = &entry.compiled_schema {
+                if let Err(errors) = schema.validate(&args) {
+                    let error_msgs: Vec<String> =
+                        errors.map(|e: ValidationError| format!("{}", e)).collect();
+                    return Ok((
+                        entry,
+                        serde_json::json!({
+                            "__schema_validation_error": true,
+                            "messages": error_msgs,
+                        }),
+                    ));
+                }
+            }
+
+            Ok((entry, args))
+        }
     }
 
     /// Execute a single tool call request
-    pub fn execute(&self, req: &ToolCallRequest) -> anyhow::Result<ToolCallResult> {
-        let entry = self
-            .tools
-            .get(&req.name)
-            .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", req.name))?;
+            let (entry, args) = self.validate_request(req)?;
 
-        let args: serde_json::Value = serde_json::from_str(&req.arguments).map_err(|e| {
-            anyhow::anyhow!("Invalid JSON arguments for tool '{}': {}", req.name, e)
-        })?;
-
-        // Schema validation
-        if let Some(schema) = &entry.compiled_schema {
-            if let Err(errors) = schema.validate(&args) {
-                let error_msgs: Vec<String> =
-                    errors.map(|e: ValidationError| format!("{}", e)).collect();
+            if args
+                .get("__schema_validation_error")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                let error_msgs = args
+                    .get("messages")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 return Ok(ToolCallResult {
                     id: req.id.clone(),
                     name: req.name.clone(),
                     content: format!(
                         "Schema validation failed for tool '{}': {}",
-                        req.name,
-                        error_msgs.join("; ")
+                        req.name, error_msgs
                     ),
                     is_error: true,
                     error_code: Some("schema_validation".to_string()),
                 });
             }
+
+            if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
+                return Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content: format!(
+                        "Error: bootstrap tool '{}' requires execute_with_context()",
+                        req.name
+                    ),
+                    is_error: true,
+                    error_code: Some("invalid_arguments".to_string()),
+                });
         }
 
         match (entry.handler)(args) {
@@ -84,15 +136,101 @@ impl ToolRegistry {
                 name: req.name.clone(),
                 content,
                 is_error: false,
+                    error_code: None,
             }),
             Err(e) => Ok(ToolCallResult {
                 id: req.id.clone(),
                 name: req.name.clone(),
                 content: format!("Error: {}", e),
                 is_error: true,
+                    error_code: Some("internal_error".to_string()),
             }),
         }
     }
+
+        pub async fn execute_with_context(
+            &self,
+            req: &ToolCallRequest,
+        ) -> anyhow::Result<ToolCallResult> {
+            let (_entry, args) = self.validate_request(req)?;
+
+            if args
+                .get("__schema_validation_error")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                let error_msgs = args
+                    .get("messages")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content: format!(
+                        "Schema validation failed for tool '{}': {}",
+                        req.name, error_msgs
+                    ),
+                    is_error: true,
+                    error_code: Some("schema_validation".to_string()),
+                });
+            }
+
+            if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
+                let provider_context = match (&req.api_key, &req.model) {
+                    (Some(api_key), Some(model)) if !api_key.trim().is_empty() && !model.trim().is_empty() => {
+                        Some(BootstrapProviderContext {
+                            api_key: api_key.clone(),
+                            model: model.clone(),
+                            base_url: req.base_url.clone(),
+                            provider: req.provider.clone(),
+                            api_format: req.api_format.clone(),
+                            provider_capabilities: req.provider_capabilities.clone(),
+                        })
+                    }
+                    _ => None,
+                };
+                let context = BootstrapExecutionContext {
+                    work_dir: req.work_dir.clone(),
+                    provider: provider_context,
+                };
+
+                match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
+                    Ok(Some(content)) => {
+                        return Ok(ToolCallResult {
+                            id: req.id.clone(),
+                            name: req.name.clone(),
+                            content,
+                            is_error: false,
+                            error_code: None,
+                        })
+                    }
+                    Ok(None) => {
+                        return Ok(ToolCallResult {
+                            id: req.id.clone(),
+                            name: req.name.clone(),
+                            content: format!("Error: Unknown tool: {}", req.name),
+                            is_error: true,
+                            error_code: Some("not_found".to_string()),
+                        })
+                    }
+                    Err(error) => {
+                        return Ok(ToolCallResult {
+                            id: req.id.clone(),
+                            name: req.name.clone(),
+                            content: format!("Error: {}", error),
+                            is_error: true,
+                            error_code: Some(error.code.clone()),
+                        })
+                    }
+                }
+            }
+
+            self.execute(req)
+        }
 
     /// Check if a tool is concurrency-safe
     pub fn is_concurrency_safe(&self, name: &str) -> bool {
@@ -158,6 +296,32 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+}
+
+fn register_bootstrap_tool(
+    registry: &mut ToolRegistry,
+    name: &str,
+    description: &str,
+    input_schema: serde_json::Value,
+    is_read_only: bool,
+    is_concurrency_safe: bool,
+) {
+    registry.register(
+        name,
+        Arc::new(move |_| {
+            Err(anyhow::anyhow!(
+                "bootstrap tool '{}' requires execute_with_context()",
+                name
+            ))
+        }),
+        ToolMetadata {
+            name: name.to_string(),
+            description: description.to_string(),
+            is_read_only,
+            is_concurrency_safe,
+            input_schema,
+        },
+    );
 }
 
 /// Register all built-in tools
@@ -425,4 +589,202 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             }),
         },
     );
+
+    register_bootstrap_tool(
+        registry,
+        "pdf_read",
+        "Read and extract plain text from a local PDF file path.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" }
+            },
+            "required": ["path"],
+            "additionalProperties": false,
+        }),
+        true,
+        true,
+    );
+    register_bootstrap_tool(
+        registry,
+        "paper_extract_meta",
+        "Extract structured paper metadata from grounded source text. Return JSON-only metadata.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string" }
+            },
+            "required": ["text"],
+            "additionalProperties": false,
+        }),
+        true,
+        true,
+    );
+    register_bootstrap_tool(
+        registry,
+        "baseline_extract",
+        "Extract baseline methods and reported metrics from grounded paper text. Return JSON-only baselines.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string" }
+            },
+            "required": ["text"],
+            "additionalProperties": false,
+        }),
+        true,
+        true,
+    );
+    register_bootstrap_tool(
+        registry,
+        "arxiv_search",
+        "Search arXiv and return a small list of relevant paper metadata.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" },
+                "limit": { "type": "number" }
+            },
+            "required": ["query"],
+            "additionalProperties": false,
+        }),
+        true,
+        true,
+    );
+    register_bootstrap_tool(
+        registry,
+        "scaffold_generate",
+        "Generate a deterministic AutoResearch scaffold into the requested workDir using a known template.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "templateId": { "type": "string", "enum": ["python-ml-baseline", "node-eval-harness"] },
+                "workDir": { "type": "string" },
+                "researchGoal": { "type": "string" },
+                "successCriteria": { "type": "string" },
+                "primaryMetric": { "type": "string" },
+                "baselineName": { "type": "string" },
+                "datasetName": { "type": "string" },
+                "projectName": { "type": "string" }
+            },
+            "required": ["templateId", "workDir", "researchGoal", "successCriteria", "primaryMetric"],
+            "additionalProperties": false,
+        }),
+        false,
+        false,
+    );
+    register_bootstrap_tool(
+        registry,
+        "git_init_workdir",
+        "Initialize a Git repository in the specified workDir and create the initial commit.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "workDir": { "type": "string" }
+            },
+            "required": ["workDir"],
+            "additionalProperties": false,
+        }),
+        false,
+        false,
+    );
+    register_bootstrap_tool(
+        registry,
+        "bootstrap_finalize",
+        "Validate and persist the final AutoResearch bootstrap plan. Returns a structured bootstrap result.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "researchGoal": { "type": "string" },
+                "successCriteria": { "type": "string" },
+                "primaryMetric": { "type": "string" },
+                "secondaryMetrics": { "type": "array", "items": { "type": "string" } },
+                "papers": { "type": "array", "items": { "type": "object" } },
+                "baselines": { "type": "array", "items": { "type": "object" } },
+                "scaffold": { "type": "object" },
+                "gitInitialized": { "type": "boolean" },
+                "initialCommitSha": { "type": "string" },
+                "conversationalTemplateId": { "type": "string", "enum": ["reproduce-paper", "beat-baseline", "ablation", "from-scratch"] }
+            },
+            "required": ["researchGoal", "successCriteria", "primaryMetric", "papers", "baselines", "scaffold", "gitInitialized", "conversationalTemplateId"],
+            "additionalProperties": false,
+        }),
+        false,
+        false,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn make_request(name: &str, arguments: serde_json::Value) -> ToolCallRequest {
+        ToolCallRequest {
+            id: "tool-1".to_string(),
+            name: name.to_string(),
+            arguments: arguments.to_string(),
+            work_dir: None,
+            api_key: None,
+            model: None,
+            base_url: None,
+            provider: None,
+            api_format: None,
+            provider_capabilities: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_llm_tool_requires_provider_context() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        let result = registry
+            .execute_with_context(&make_request(
+                "paper_extract_meta",
+                serde_json::json!({ "text": "A paper about strong baselines." }),
+            ))
+            .await
+            .expect("execution should return structured result");
+
+        assert!(result.is_error);
+        assert_eq!(result.error_code.as_deref(), Some("invalid_input"));
+        assert!(result.content.contains("requires active provider context"));
+    }
+
+    #[tokio::test]
+    async fn scaffold_generate_executes_through_contextual_registry_path() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        let work_dir = std::env::temp_dir().join(format!(
+            "pipi-bootstrap-registry-{}",
+            Uuid::new_v4()
+        ));
+        let request = make_request(
+            "scaffold_generate",
+            serde_json::json!({
+                "templateId": "python-ml-baseline",
+                "workDir": work_dir.to_string_lossy(),
+                "researchGoal": "Improve benchmark accuracy",
+                "successCriteria": "Beat the baseline by at least 1 point.",
+                "primaryMetric": "accuracy",
+                "baselineName": "ResNet50",
+                "datasetName": "CIFAR10",
+                "projectName": "registry-test",
+            }),
+        );
+
+        let result = registry
+            .execute_with_context(&request)
+            .await
+            .expect("execution should succeed");
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("python-ml-baseline"));
+        assert!(work_dir.join("run_experiment.py").exists());
+        assert!(work_dir.join("AUTORESEARCH.md").exists());
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
 }
