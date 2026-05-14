@@ -38,6 +38,7 @@ import {
   getAutoResearchLivingDocPathFromWorkDir,
   getAutoResearchSessionFilePathFromWorkDir,
 } from './paths';
+import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEvents';
 import {
   inspectAutoResearchEnvironment,
   resolveTargetPath,
@@ -112,7 +113,7 @@ function buildSystemPrompt({
     ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
     : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
   const toolCfgHint = isLocal
-    ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${iterationCodeDir}". Use ${toolProfile.readTool} for file reads, ${toolProfile.writeTool} for file writes, and ${toolProfile.directoryTool} before writing new nested paths.`
+    ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${iterationCodeDir}". Use ${toolProfile.readTool} for file reads and ${toolProfile.writeTool} for file writes. Before writing new nested paths, create parent directories with ${toolProfile.commandTool} and \`mkdir -p <path>\`.`
     : `Use ${toolProfile.commandTool} for target-side commands with mode="ssh", host="${sshConfig.host}", user="${sshConfig.user}", port=${sshConfig.port}, authMode="${sshConfig.authMode}"${sshConfig.authMode === 'key' ? `, keyPath="${sshConfig.keyPath}"` : ''}, remoteWorkDir="${sshConfig.remoteWorkDir}". Use ${toolProfile.readTool} for file reads. Use ${toolProfile.uploadTool} for remote file creation or replacement. Only set terminal=true when the command needs a PTY or live terminal output. Never ask for credentials.`;
   const inspectionScope = isLocal
     ? 'Read only the minimum files you need, and use only the local experiment tools listed above.'
@@ -173,10 +174,10 @@ ${livingDoc || 'No prior iterations recorded yet.'}
   {"metricName":"<name>","metricValue":<number|null>,"status":"IMPROVED|NOT_IMPROVED|FAILED","hypothesis":"<one line>","change":"<short summary>","reasoning":"<brief reasoning>","artifactPaths":["<optional path>"],"failReason":"<optional>","extra":{"<optional>":"<optional>"}}
 6. If the metric is missing, the command crashes, or the run times out, still write the JSON object with status FAILED, metricValue null, and a concrete failReason.
 7. Also emit a final fallback line as a deprecated backup only if the host cannot read metrics.json:
-   EXPERIMENT_RESULT: budgetReserver|null> status=<IMPROVED|NOT_IMPROVED|FAILED> hypothesis="<one line>"
+   EXPERIMENT_RESULT: metric_value=<number_or_null> status=<IMPROVED|NOT_IMPROVED|FAILED> hypothesis="<one line>"
    or
    EXPERIMENT_RESULT: metric_value=null status=FAILED fail_reason="<reason>" hypothesis="<one line>"
-8. Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for reading metrics/logs, writing the final result, and cleanup. If you are near that reserve, stop exploring or modifying code and finalize.
+8. Reserve the last ${budgetReserve} tool calls for reading metrics/logs, writing the final result, and cleanup. If you are near that reserve, stop exploring or modifying code and finalize.
 9. Run the expensive experiment or training/evaluation command at most once in this iteration. If it fails, read logs or metrics and emit FAILED instead of patching and rerunning.
 10. If the change is not improved or the run fails, revert your working tree before finishing.
 11. ${toolLaneGuard}
@@ -644,6 +645,59 @@ function mergeArtifactPaths(...groups: Array<string[] | undefined>): string[] {
   return Array.from(new Set(groups.flatMap((group) => group ?? []).filter((value) => value.trim().length > 0)));
 }
 
+function buildIterationNarrative(input: {
+  hypothesis: string;
+  change?: string;
+  status: ExperimentStatus;
+  metricName: string;
+  metricValue: number | null;
+  failReason?: string;
+  nextStep?: string;
+}): string {
+  const changeSummary = input.change?.trim() || 'No code change summary recorded.';
+  const outcome = input.status === 'FAILED'
+    ? `Experiment failed${input.failReason ? `: ${input.failReason}` : '.'}`
+    : input.metricValue === null
+      ? `Experiment completed without a parsed ${input.metricName}.`
+      : `Experiment completed with ${input.metricName}=${input.metricValue}.`;
+  const next = input.nextStep?.trim() || 'No follow-up recommendation recorded.';
+  return `${input.hypothesis}. Changed: ${changeSummary}. ${outcome} Next: ${next}`;
+}
+
+function buildIterationParsedMetrics(
+  metricName: string,
+  metricValue: number | null,
+  extra?: Record<string, number | string | boolean>,
+): Record<string, number | string | boolean | null> {
+  return {
+    [metricName]: metricValue,
+    ...(extra ?? {}),
+  };
+}
+
+function buildIterationRecoveryActions(options: {
+  status: ExperimentStatus;
+  hasLogs: boolean;
+}): Array<{ type: 'retry_failed_phase' | 'retry_iteration' | 'switch_provider' | 'open_raw_request_summary' | 'open_logs' | 'abort_run'; supported: boolean; label?: string; reason?: string }> {
+  if (options.status !== 'FAILED') {
+    return [];
+  }
+
+  return [
+    {
+      type: 'open_raw_request_summary',
+      supported: true,
+      label: 'Open raw request summary',
+    },
+    {
+      type: 'open_logs',
+      supported: options.hasLogs,
+      label: 'Open logs',
+      reason: options.hasLogs ? undefined : 'No log artifact is available for this iteration.',
+    },
+  ];
+}
+
 async function hydrateSessionFromDisk(cfg: SshConfig, sessionId: string, direction: 'lower' | 'higher'): Promise<void> {
   const metrics = await readAllMetrics(cfg, sessionId);
   const entries = metrics.map(toExperimentEntry);
@@ -713,10 +767,13 @@ export async function startExperimentLoop(
   const sessionId = store.id;
   const cfg = store.sshConfig;
   useAutoResearchStore.getState().setRunStatus('running', { summary: 'Run started.' });
-  useAutoResearchStore.getState().addRunEvent({
+  useAutoResearchStore.getState().setCurrentPhase('INIT');
+  emitAutoResearchRuntimeEvent({
     level: 'info',
-    phase: 'system',
+    phase: 'INIT',
+    type: 'run_started',
     message: 'AutoResearch loop started.',
+    summary: 'Run started.',
   });
 
   try {
@@ -767,9 +824,8 @@ export async function startExperimentLoop(
       metricName: store.metricName,
       direction: store.metricDirection,
     });
-    useAutoResearchStore.getState().addRunEvent({
-      level: 'info',
-      phase: 'preflight',
+    setAutoResearchPhase('READ_CONTEXT', {
+      summary: 'Run artifacts initialized.',
       message: 'Run artifacts initialized.',
       metadata: {
         sessionDir: sessionPaths.sessionDir,
@@ -783,10 +839,12 @@ export async function startExperimentLoop(
   try {
     environmentSummary = await inspectAutoResearchEnvironment(experimentCfg, startup.experimentDir);
     if (environmentSummary.repoStatus !== 'clean') {
-      useAutoResearchStore.getState().addRunEvent({
+      emitAutoResearchRuntimeEvent({
         level: 'error',
-        phase: 'preflight',
+        phase: 'READ_CONTEXT',
+        type: 'provider_error',
         message: buildDirtyRepoMessage(environmentSummary),
+        summary: 'Preflight failed because the repository is dirty.',
         metadata: {
           experimentDir: environmentSummary.experimentDir,
           dirtyFileCount: environmentSummary.dirtyFileCount,
@@ -795,10 +853,12 @@ export async function startExperimentLoop(
       useAutoResearchStore.getState().setError(buildDirtyRepoMessage(environmentSummary));
       return;
     }
-    useAutoResearchStore.getState().addRunEvent({
+    emitAutoResearchRuntimeEvent({
       level: 'info',
-      phase: 'preflight',
+      phase: 'READ_CONTEXT',
+      type: 'phase_started',
       message: `Environment ready: ${environmentSummary.preferredPythonCommand}, git ${environmentSummary.repoStatus}.`,
+      summary: 'Environment ready.',
       metadata: {
         experimentDir: environmentSummary.experimentDir,
         recommendedRunCommand: environmentSummary.recommendedRunCommand,
@@ -827,6 +887,13 @@ export async function startExperimentLoop(
           summary: 'Max iterations reached.',
           endedAt: new Date().toISOString(),
         });
+        emitAutoResearchRuntimeEvent({
+          level: 'info',
+          phase: 'DONE',
+          type: 'run_completed',
+          message: 'Run completed after reaching max iterations.',
+          summary: 'Run completed.',
+        });
       }
       useAutoResearchStore.getState().setLoopState('stopped');
       break;
@@ -836,6 +903,13 @@ export async function startExperimentLoop(
       useAutoResearchStore.getState().setRunStatus('failed', {
         summary: 'Stopped after 3 consecutive failures.',
         endedAt: new Date().toISOString(),
+      });
+      emitAutoResearchRuntimeEvent({
+        level: 'error',
+        phase: 'FAILED',
+        type: 'run_completed',
+        message: 'Run stopped after 3 consecutive failures.',
+        summary: 'Run failed after 3 consecutive failures.',
       });
       useAutoResearchStore.getState().setLoopState('stopped');
       break;
@@ -868,13 +942,24 @@ export async function startExperimentLoop(
       startedAt,
       artifactPaths: getRunArtifactPaths(runDir),
     });
-    useAutoResearchStore.getState().addRunEvent({
-      level: 'info',
-      phase: 'agent_execution',
+    setAutoResearchPhase('INIT', {
+      iteration,
+      summary: `Iteration ${iteration} started.`,
       message: `Iteration ${iteration} started.`,
       metadata: {
         iterDir: runDir.iterDir,
       },
+    });
+    emitAutoResearchRuntimeEvent({
+      level: 'info',
+      phase: 'INIT',
+      type: 'iteration_started',
+      message: `Iteration ${iteration} started.`,
+      summary: `Iteration ${iteration} started.`,
+      metadata: {
+        iterDir: runDir.iterDir,
+      },
+      iterationId: `${sessionId}-iter-${iteration}`,
     });
     await writeRunStatus(artifactCfg, runDir, {
       iteration,
@@ -886,6 +971,10 @@ export async function startExperimentLoop(
     });
 
     try {
+      setAutoResearchPhase('READ_CONTEXT', {
+        iteration,
+        summary: `Iteration ${iteration} is loading context and run artifacts.`,
+      });
       const livingDoc = await readLivingDoc(artifactCfg, sessionId) || '';
       const systemPrompt = buildSystemPrompt({
         sessionContent,
@@ -898,9 +987,17 @@ export async function startExperimentLoop(
       await writeTargetText(artifactCfg, runDir.systemPromptPath, `${systemPrompt}\n`);
 
       const userMessage = `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
+      setAutoResearchPhase('PLAN_HYPOTHESIS', {
+        iteration,
+        summary: `Iteration ${iteration} is planning the next hypothesis.`,
+      });
       const agentOutput = await sendMessage(systemPrompt, userMessage);
       consecutiveRateLimitCount = 0;
       const budgetExhausted = isBudgetExhaustedIterationSignal(agentOutput);
+      setAutoResearchPhase('PARSE_METRICS', {
+        iteration,
+        summary: `Iteration ${iteration} is parsing experiment metrics.`,
+      });
       const { parsed, parseError } = await parseIterationMetrics(artifactCfg, runDir, state.metricName, agentOutput);
       const diff = await getRemoteDiff(iterationCfg);
       const commitHash = await captureCommitHash(iterationCfg);
@@ -929,39 +1026,72 @@ export async function startExperimentLoop(
           change: 'See agent output',
           reasoning: agentOutput.slice(-1000),
         };
+        const narrative = buildIterationNarrative({
+          hypothesis: entry.hypothesis,
+          change: entry.change,
+          status: 'FAILED',
+          metricName: state.metricName,
+          metricValue: null,
+          failReason: failureReason,
+          nextStep: entry.reasoning,
+        });
         useAutoResearchStore.getState().addExperiment(entry);
         useAutoResearchStore.getState().completeIterationRecord({
           iteration,
           status: 'failed',
+          phase: 'FAILED',
           hypothesis: entry.hypothesis,
           change: entry.change,
           reasoning: entry.reasoning,
+          narrative,
+          codeChangesSummary: entry.change,
+          durationMs,
+          parsedMetrics: buildIterationParsedMetrics(state.metricName, null),
+          reflectionSummary: entry.reasoning,
           metricValue: entry.metricValue,
           commitHash,
           error: entry.failReason ?? null,
           endedAt: finishedAt,
           artifactPaths: getRunArtifactPaths(runDir),
+          recoveryActions: buildIterationRecoveryActions({
+            status: 'FAILED',
+            hasLogs: true,
+          }),
+        });
+        setAutoResearchPhase('FAILED', {
+          iteration,
+          level: 'warn',
+          summary: `Iteration ${iteration} failed while parsing metrics.`,
+          metadata: {
+            failReason: failureReason,
+          },
         });
         if (budgetExhausted) {
-          useAutoResearchStore.getState().addRunEvent({
+          emitAutoResearchRuntimeEvent({
             level: 'warn',
-            phase: 'evaluation',
+            phase: 'FAILED',
+            type: 'provider_error',
             message: `iteration_failed_due_to_budget: iteration ${iteration} exhausted the tool budget before evaluation completed.`,
+            summary: `Iteration ${iteration} exhausted the tool budget.`,
             metadata: {
               iteration,
               iterDir: runDir.iterDir,
               failReason: failureReason,
             },
+            iterationId: `${sessionId}-iter-${iteration}`,
           });
         }
-        useAutoResearchStore.getState().addRunEvent({
+        emitAutoResearchRuntimeEvent({
           level: 'warn',
-          phase: 'evaluation',
+          phase: 'FAILED',
+          type: 'iteration_failed',
           message: `Iteration ${iteration} finished without parseable metrics.`,
+          summary: `Iteration ${iteration} failed: no parseable metrics were produced.`,
           metadata: {
             failReason: entry.failReason ?? null,
             iterDir: runDir.iterDir,
           },
+          iterationId: `${sessionId}-iter-${iteration}`,
         });
         useAutoResearchStore.getState().incrementConsecutiveFailures();
         await appendIterationMetrics(artifactCfg, sessionId, failedRecord);
@@ -1010,63 +1140,119 @@ export async function startExperimentLoop(
       };
 
       const entry = toExperimentEntry(metricsRecord);
+      const narrative = buildIterationNarrative({
+        hypothesis: parsed.hypothesis,
+        change: parsed.change,
+        status: parsed.status,
+        metricName: parsed.metricName,
+        metricValue: parsed.metricValue,
+        failReason: parsed.failReason,
+        nextStep: parsed.reasoning,
+      });
       useAutoResearchStore.getState().addExperiment(entry);
       if (budgetExhausted && parsed.parseSource === 'metrics_json') {
-        useAutoResearchStore.getState().addRunEvent({
+        emitAutoResearchRuntimeEvent({
           level: 'info',
-          phase: 'evaluation',
+          phase: 'PARSE_METRICS',
+          type: 'metrics_parsed',
           message: `evaluation_fallback_from_metrics: iteration ${iteration} completed using metrics.json after tool budget exhaustion.`,
+          summary: `Iteration ${iteration} recovered metrics from metrics.json after budget exhaustion.`,
           metadata: {
             iteration,
             iterDir: runDir.iterDir,
             parser: parsed.parseSource,
           },
+          iterationId: `${sessionId}-iter-${iteration}`,
         });
       }
       if (budgetExhausted && parsed.status === 'FAILED') {
-        useAutoResearchStore.getState().addRunEvent({
+        emitAutoResearchRuntimeEvent({
           level: 'warn',
-          phase: 'evaluation',
+          phase: 'FAILED',
+          type: 'provider_error',
           message: `iteration_failed_due_to_budget: iteration ${iteration} exhausted the tool budget before evaluation completed.`,
+          summary: `Iteration ${iteration} exhausted the tool budget.`,
           metadata: {
             iteration,
             iterDir: runDir.iterDir,
             failReason: parsed.failReason ?? null,
           },
+          iterationId: `${sessionId}-iter-${iteration}`,
         });
       }
       if (parsed.parseSource === 'deprecated_result_line') {
-        useAutoResearchStore.getState().addRunEvent({
+        emitAutoResearchRuntimeEvent({
           level: 'warn',
-          phase: 'evaluation',
+          phase: 'PARSE_METRICS',
+          type: 'metrics_parsed',
           message: `Iteration ${iteration} used deprecated EXPERIMENT_RESULT fallback parsing.`,
+          summary: `Iteration ${iteration} used deprecated fallback parsing.`,
           metadata: {
             iterDir: runDir.iterDir,
             parser: parsed.parseSource,
           },
+          iterationId: `${sessionId}-iter-${iteration}`,
         });
       }
+      setAutoResearchPhase('DECIDE_NEXT', {
+        iteration,
+        summary: `Iteration ${iteration} is deciding the next step.`,
+      });
       useAutoResearchStore.getState().completeIterationRecord({
         iteration,
         status: parsed.status === 'FAILED' ? 'failed' : 'completed',
+        phase: parsed.status === 'FAILED' ? 'FAILED' : 'DONE',
         hypothesis: entry.hypothesis,
         change: entry.change,
         reasoning: entry.reasoning,
+        narrative,
+        codeChangesSummary: parsed.change,
+        durationMs,
+        parsedMetrics: buildIterationParsedMetrics(parsed.metricName, parsed.metricValue, parsed.extra),
+        reflectionSummary: parsed.reasoning,
         metricValue: entry.metricValue,
         commitHash,
         error: entry.failReason ?? null,
         endedAt: finishedAt,
         artifactPaths: mergeArtifactPaths(getRunArtifactPaths(runDir), parsed.artifactPaths),
+        recoveryActions: buildIterationRecoveryActions({
+          status: parsed.status,
+          hasLogs: true,
+        }),
       });
-      useAutoResearchStore.getState().addRunEvent({
+      emitAutoResearchRuntimeEvent({
         level: parsed.status === 'FAILED' ? 'warn' : 'info',
-        phase: 'evaluation',
+        phase: parsed.status === 'FAILED' ? 'FAILED' : 'DONE',
+        type: 'metrics_parsed',
+        message: `Metrics parsed for iteration ${iteration}.`,
+        summary: parsed.metricValue === null
+          ? `Iteration ${iteration} produced no metric value.`
+          : `Iteration ${iteration} reached ${parsed.metricName}=${parsed.metricValue}.`,
+        metadata: {
+          metricName: parsed.metricName,
+          metricValue: parsed.metricValue,
+          parser: parsed.parseSource,
+          iterDir: runDir.iterDir,
+        },
+        iterationId: `${sessionId}-iter-${iteration}`,
+      });
+      emitAutoResearchRuntimeEvent({
+        level: parsed.status === 'FAILED' ? 'warn' : 'info',
+        phase: parsed.status === 'FAILED' ? 'FAILED' : 'DONE',
+        type: parsed.status === 'FAILED' ? 'iteration_failed' : 'iteration_completed',
         message: `Iteration ${iteration} completed with status ${parsed.status}.`,
+        summary: `Iteration ${iteration} ${parsed.status === 'FAILED' ? 'failed' : 'completed'}.`,
         metadata: {
           metricValue: parsed.metricValue,
           failReason: parsed.failReason ?? null,
           iterDir: runDir.iterDir,
         },
+        iterationId: `${sessionId}-iter-${iteration}`,
+      });
+      setAutoResearchPhase(parsed.status === 'FAILED' ? 'FAILED' : 'DONE', {
+        iteration,
+        level: parsed.status === 'FAILED' ? 'warn' : 'info',
+        summary: `Iteration ${iteration} ${parsed.status === 'FAILED' ? 'failed' : 'completed'}.`,
       });
 
       if (parsed.status === 'IMPROVED' && parsed.metricValue !== null) {
@@ -1135,15 +1321,26 @@ export async function startExperimentLoop(
         useAutoResearchStore.getState().setStatusMessage(
           `Provider rate limited this run. Waiting ${cooldownSeconds}s before retrying iteration ${iteration}.`,
         );
-        useAutoResearchStore.getState().addRunEvent({
+        setAutoResearchPhase('FAILED', {
+          iteration,
           level: 'warn',
-          phase: 'rate_limit',
+          summary: `Iteration ${iteration} is waiting for provider cooldown.`,
+          metadata: {
+            cooldownSeconds,
+          },
+        });
+        emitAutoResearchRuntimeEvent({
+          level: 'warn',
+          phase: 'FAILED',
+          type: 'provider_error',
           message,
+          summary: `Provider rate limited iteration ${iteration}.`,
           metadata: {
             iteration,
             cooldownSeconds,
             iterDir: runDir.iterDir,
           },
+          iterationId: `${sessionId}-iter-${iteration}`,
         });
         useAutoResearchStore.getState().appendLiveOutput(
           `[rate-limit] ${message}\n[rate-limit] waiting ${cooldownSeconds}s before retrying iteration ${iteration}\n`,
@@ -1207,6 +1404,15 @@ export async function startExperimentLoop(
           }
           : undefined,
       };
+      const narrative = buildIterationNarrative({
+        hypothesis: entry.hypothesis,
+        change: entry.change,
+        status: 'FAILED',
+        metricName: useAutoResearchStore.getState().metricName,
+        metricValue: null,
+        failReason: failureMessage,
+        nextStep: entry.reasoning,
+      });
       if (reflectionFailure) {
         useAutoResearchStore.getState().setReflectionFailed(failureMessage, {
           summary: failureMessage,
@@ -1223,19 +1429,36 @@ export async function startExperimentLoop(
       useAutoResearchStore.getState().completeIterationRecord({
         iteration,
         status: 'failed',
+        phase: 'FAILED',
         hypothesis: entry.hypothesis,
         change: entry.change,
         reasoning: entry.reasoning,
+        narrative,
+        codeChangesSummary: entry.change,
+        durationMs,
+        parsedMetrics: buildIterationParsedMetrics(useAutoResearchStore.getState().metricName, null),
+        reflectionSummary: entry.reasoning,
         metricValue: entry.metricValue,
         commitHash: failedRecord.commitHash,
         error: entry.failReason ?? null,
         endedAt: finishedAt,
         artifactPaths: getRunArtifactPaths(runDir),
+        recoveryActions: buildIterationRecoveryActions({
+          status: 'FAILED',
+          hasLogs: true,
+        }),
       });
-      useAutoResearchStore.getState().addRunEvent({
+      setAutoResearchPhase('FAILED', {
+        iteration,
         level: 'error',
-        phase: isTerminalFailureError(error) ? 'terminal' : 'agent_execution',
+        summary: `Iteration ${iteration} failed during ${reflectionFailure ? 'reflection' : 'agent execution'}.`,
+      });
+      emitAutoResearchRuntimeEvent({
+        level: 'error',
+        phase: 'FAILED',
+        type: reflectionFailure ? 'provider_error' : 'iteration_failed',
         message: entry.failReason ?? 'Agent execution error',
+        summary: `Iteration ${iteration} failed.`,
         metadata: {
           iteration,
           iterDir: runDir.iterDir,
@@ -1243,6 +1466,7 @@ export async function startExperimentLoop(
           parserPath: reflectionFailure ? error.decisionResult.parserPath : undefined,
           retryCount: reflectionFailure ? error.decisionResult.retryCount : undefined,
         },
+        iterationId: `${sessionId}-iter-${iteration}`,
       });
       useAutoResearchStore.getState().incrementConsecutiveFailures();
       await appendIterationMetrics(artifactCfg, sessionId, failedRecord);
@@ -1280,19 +1504,23 @@ export function stopExperimentLoop(): void {
     summary: 'Stopped by user.',
     endedAt: new Date().toISOString(),
   });
-  useAutoResearchStore.getState().addRunEvent({
+  emitAutoResearchRuntimeEvent({
     level: 'warn',
-    phase: 'system',
+    phase: 'DONE',
+    type: 'run_status_changed',
     message: 'Run stopped by user.',
+    summary: 'Run stopped by user.',
   });
   useAutoResearchStore.getState().setLoopState('stopped');
 }
 
 export function pauseExperimentLoop(): void {
-  useAutoResearchStore.getState().addRunEvent({
+  emitAutoResearchRuntimeEvent({
     level: 'info',
-    phase: 'system',
+    phase: 'DECIDE_NEXT',
+    type: 'run_status_changed',
     message: 'Run paused by user.',
+    summary: 'Run paused by user.',
   });
   useAutoResearchStore.getState().setLoopState('paused');
 }
@@ -1303,10 +1531,12 @@ export function resumeExperimentLoop(): void {
     useAutoResearchStore.getState().setRunStatus('running', {
       summary: 'Run resumed.',
     });
-    useAutoResearchStore.getState().addRunEvent({
+    emitAutoResearchRuntimeEvent({
       level: 'info',
-      phase: 'system',
+      phase: 'DECIDE_NEXT',
+      type: 'run_status_changed',
       message: 'Run resumed by user.',
+      summary: 'Run resumed by user.',
     });
     useAutoResearchStore.getState().setLoopState('running');
   }

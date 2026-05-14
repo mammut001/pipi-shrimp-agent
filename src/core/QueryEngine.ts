@@ -15,13 +15,59 @@ import {
   createToolBudgetSummary,
   withToolBudgetSummary,
 } from '@/services/tools/toolBudget';
+import { buildProviderExecutionCapabilities } from '@/services/llm/capabilities';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
 import { prepareMessagesForVision } from '@/services/vision/visionMessagePrep';
 import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
 import { toError } from '@/utils/errorFormat';
 
+const OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM = `## Tool Calling Protocol
+- You MUST invoke tools via the structured OpenAI function-calling channel named tool_calls.
+- Do not emit XML tags like <tool_calls>, <invoke>, or <parameter>.
+- Do not describe tool calls in plain text.
+- If you need a tool, respond with structured tool_calls only.`;
+
+const MALFORMED_TOOL_CALL_RETRY_NOTE = 'Your previous response used text-form tool calls, which were ignored. Use the structured tool_calls channel only.';
+
+function shouldInjectOpenAIToolProtocol(
+  config: ResolvedAgentConfig,
+  options?: RunChatTurnOptions,
+): boolean {
+  if (options?.noTools) {
+    return false;
+  }
+
+  if (options?.allowedTools && options.allowedTools.length === 0) {
+    return false;
+  }
+
+  const capabilities = buildProviderExecutionCapabilities({
+    provider: config.provider,
+    apiFormat: config.apiFormat,
+    model: config.model,
+  });
+
+  return capabilities.supportsToolCalls && capabilities.supportsToolOpenAI;
+}
+
+function buildEffectiveSystemPrompt(
+  baseSystemPrompt: string,
+  injectToolProtocol: boolean,
+): string {
+  if (!injectToolProtocol || baseSystemPrompt.includes('structured OpenAI function-calling channel named tool_calls')) {
+    return baseSystemPrompt;
+  }
+
+  return `${baseSystemPrompt}\n\n${OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM}`;
+}
+
+function isMalformedToolCallError(error: unknown): boolean {
+  return toError(error, 'Chat request failed').message.includes('malformed_tool_call');
+}
+
 export interface RunChatTurnOptions {
   noTools?: boolean;
+  allowedTools?: string[];
 }
 
 export async function* runChatTurn(
@@ -44,6 +90,7 @@ export async function* runChatTurn(
   let isTurnComplete = false;
   let toolBudgetSummary = createToolBudgetSummary(maxToolBudget);
   let reserveFinalResponseRound = false;
+  let malformedToolCallRetried = false;
 
   // Memory hook — fires after each final (no-tool-call) response
   const memoryHook = createMemoryHook({ projectRoot });
@@ -83,6 +130,8 @@ export async function* runChatTurn(
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id
     })), resolvedConfig!);
+    const injectOpenAIToolProtocol = shouldInjectOpenAIToolProtocol(resolvedConfig!, options);
+    const effectiveSystemPrompt = buildEffectiveSystemPrompt(systemPrompt, injectOpenAIToolProtocol);
 
     // [Phase 2: API Call]
     let hasToolCalls = false;
@@ -91,6 +140,7 @@ export async function* runChatTurn(
     let assistantMessageReasoning = '';
     let tokenUsage: { input_tokens: number; output_tokens: number; model?: string } | undefined;
     let strictBudgetRetry = false;
+    let retryDueToMalformedToolCall = false;
 
     while (true) {
       // AUDIT-019 FIX: Check modelRound against maxModelRounds at API call time,
@@ -106,11 +156,12 @@ export async function* runChatTurn(
 
       const request = buildResolvedChatRequest(resolvedConfig!, {
         messages: backendMessages,
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         allowBrowserTools,
         sessionId,
         contextBudget: { strict: strictBudgetRetry },
         noTools: options?.noTools,
+        allowedTools: options?.allowedTools,
       });
       const stream = invokeRustAPIStream(request.params);
 
@@ -165,9 +216,31 @@ export async function* runChatTurn(
           return;
         }
 
+        if (
+          injectOpenAIToolProtocol
+          && !malformedToolCallRetried
+          && isMalformedToolCallError(e)
+        ) {
+          malformedToolCallRetried = true;
+          currentMessages.push({
+            role: 'user',
+            content: MALFORMED_TOOL_CALL_RETRY_NOTE,
+          });
+          yield {
+            type: 'status_update',
+            message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+          };
+          retryDueToMalformedToolCall = true;
+          break;
+        }
+
         yield { type: 'error', error: toError(e, 'Chat request failed') };
         return;
       }
+    }
+
+    if (retryDueToMalformedToolCall) {
+      continue;
     }
     
     // Record the Assistant's turn in the local history BEFORE yielding tool execution.

@@ -8,7 +8,6 @@ export interface AutoResearchToolProfile {
   commandTool: 'execute_command' | 'ssh_exec';
   readTool: 'read_file' | 'ssh_read_file';
   writeTool?: 'write_file';
-  directoryTool?: 'create_directory';
   uploadTool?: 'ssh_upload_file';
 }
 
@@ -23,7 +22,6 @@ export function buildAutoResearchToolCatalog(config?: AutoResearchMode): string[
       'execute_command',
       'read_file',
       'write_file',
-      'create_directory',
     ];
   }
 
@@ -43,7 +41,6 @@ export function getAutoResearchToolProfile(config?: AutoResearchMode): AutoResea
       commandTool: 'execute_command',
       readTool: 'read_file',
       writeTool: 'write_file',
-      directoryTool: 'create_directory',
     };
   }
 

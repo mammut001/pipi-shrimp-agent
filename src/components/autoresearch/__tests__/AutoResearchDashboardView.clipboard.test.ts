@@ -114,13 +114,17 @@ describe('AutoResearchDashboardView clipboard actions', () => {
       }));
     });
 
+    const timelineButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Timeline');
+    expect(timelineButton).not.toBeNull();
+    await act(async () => {
+      timelineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
     const copyAllButton = container.querySelector('[data-copy-target="recent-events-all"]') as HTMLButtonElement | null;
     const copyOneButton = container.querySelector('[data-copy-target="recent-event-line"]') as HTMLButtonElement | null;
-    const copyLiveOutputButton = container.querySelector('[data-copy-target="live-output-copy"]') as HTMLButtonElement | null;
 
     expect(copyAllButton).not.toBeNull();
     expect(copyOneButton).not.toBeNull();
-    expect(copyLiveOutputButton).not.toBeNull();
 
     await act(async () => {
       copyAllButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -131,6 +135,15 @@ describe('AutoResearchDashboardView clipboard actions', () => {
       copyOneButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(writeText).toHaveBeenNthCalledWith(2, formatAutoResearchEventLine(run.events[1]));
+
+    const debugButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Debug');
+    expect(debugButton).not.toBeNull();
+    await act(async () => {
+      debugButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const copyLiveOutputButton = container.querySelector('[data-copy-target="live-output-copy"]') as HTMLButtonElement | null;
+    expect(copyLiveOutputButton).not.toBeNull();
 
     await act(async () => {
       copyLiveOutputButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));

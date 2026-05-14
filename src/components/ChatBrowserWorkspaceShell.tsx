@@ -32,6 +32,7 @@ import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
 import { getHiddenMessageCount, getVisibleMessageWindow } from './chat/messageWindowing';
+import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
 
 /**
  * Draggable wrapper for SwarmPanel — allows free positioning anywhere on screen.
@@ -160,6 +161,7 @@ export function ChatBrowserWorkspaceShell() {
   // Once the terminal has been opened at least once, keep it mounted so the
   // PTY session survives hide/show toggles (avoids clearing the session).
   const [terminalEverOpened, setTerminalEverOpened] = useState(false);
+  const [fallbackTerminalCwd, setFallbackTerminalCwd] = useState<string | undefined>();
   useEffect(() => {
     if (terminalPanelVisible && !terminalEverOpened) {
       setTerminalEverOpened(true);
@@ -206,11 +208,12 @@ export function ChatBrowserWorkspaceShell() {
     error,
     clearError,
     retryLastMessage,
+    ensureSessionWorkDir,
   } = useChatStore();
 
   // Memoized token usage
   const currentSessionData = currentSession();
-  const terminalCwd = currentSessionData?.workDir;
+  const terminalCwd = currentSessionData?.workDir || fallbackTerminalCwd;
   const canPreviewWorkspace = Boolean(currentSessionData?.workDir);
   const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
   const isSplitMode = browserDockMode === 'split';
@@ -227,6 +230,27 @@ export function ChatBrowserWorkspaceShell() {
     refreshEntries: refreshWorkspaceEntries,
     revealInFinder: revealWorkspacePath,
   } = useSessionWorkspacePreview(currentSessionData?.workDir ?? null, previewWorkspaceActive);
+
+  useEffect(() => {
+    if (!terminalPanelVisible || currentSessionData?.workDir || fallbackTerminalCwd) {
+      return;
+    }
+
+    let cancelled = false;
+    const cwdPromise = currentSessionId
+      ? ensureSessionWorkDir(currentSessionId).then((cwd) => cwd ?? undefined)
+      : resolveFallbackTerminalCwd();
+
+    void cwdPromise.then((cwd) => {
+      if (!cancelled) {
+        setFallbackTerminalCwd(cwd);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSessionData?.workDir, currentSessionId, ensureSessionWorkDir, fallbackTerminalCwd, terminalPanelVisible]);
 
   // Get pricing from settings store
   const getModelPricing = useSettingsStore((s) => s.getModelPricing);

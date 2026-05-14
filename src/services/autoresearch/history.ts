@@ -12,6 +12,50 @@ export type AutoResearchRunStatus =
 
 export type AutoResearchIterationStatus = 'pending' | 'running' | 'failed' | 'completed' | 'skipped';
 
+export type AutoResearchRunPhase =
+  | 'INIT'
+  | 'READ_CONTEXT'
+  | 'PLAN_HYPOTHESIS'
+  | 'EDIT_CODE'
+  | 'RUN_EXPERIMENT'
+  | 'PARSE_METRICS'
+  | 'REFLECT'
+  | 'DECIDE_NEXT'
+  | 'DONE'
+  | 'FAILED';
+
+export type AutoResearchRunEventLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export type AutoResearchRunEventType =
+  | 'run_started'
+  | 'run_completed'
+  | 'run_status_changed'
+  | 'iteration_started'
+  | 'iteration_completed'
+  | 'iteration_failed'
+  | 'phase_started'
+  | 'agent_plan'
+  | 'thinking'
+  | 'tool_call_started'
+  | 'tool_call_completed'
+  | 'tool_call_failed'
+  | 'tool_result'
+  | 'file_changed'
+  | 'experiment_command_started'
+  | 'experiment_command_completed'
+  | 'metrics_parsed'
+  | 'reflection_generated'
+  | 'provider_error'
+  | 'recovery_suggested'
+  | 'raw';
+
+export interface AutoResearchRecoveryAction {
+  type: 'retry_failed_phase' | 'retry_iteration' | 'switch_provider' | 'open_raw_request_summary' | 'open_logs' | 'abort_run';
+  supported: boolean;
+  label?: string;
+  reason?: string;
+}
+
 export interface AutoResearchConfigSnapshot {
   configId?: string | null;
   configName: string;
@@ -42,9 +86,17 @@ export interface AutoResearchIterationRecord {
   id: string;
   index: number;
   status: AutoResearchIterationStatus;
+  phase?: AutoResearchRunPhase;
   hypothesis?: string;
   change?: string;
   reasoning?: string;
+  narrative?: string;
+  codeChangesSummary?: string;
+  executionCommand?: string;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  parsedMetrics?: Record<string, number | string | boolean | null>;
+  reflectionSummary?: string;
   metricValue?: number | null;
   improvement?: number | null;
   commitHash?: string;
@@ -52,15 +104,20 @@ export interface AutoResearchIterationRecord {
   startedAt?: string;
   endedAt?: string;
   artifactPaths?: string[];
+  recoveryActions?: AutoResearchRecoveryAction[];
 }
 
 export interface AutoResearchRunEvent {
   id: string;
   runId: string;
+  iterationId?: string;
   timestamp: string;
-  level: 'debug' | 'info' | 'warn' | 'error';
-  phase: 'preflight' | 'agent_execution' | 'evaluation' | 'rate_limit' | 'terminal' | 'system' | 'reflection_parse_failed';
+  level: AutoResearchRunEventLevel;
+  phase: AutoResearchRunPhase | 'preflight' | 'agent_execution' | 'evaluation' | 'rate_limit' | 'terminal' | 'system' | 'reflection_parse_failed';
+  type?: AutoResearchRunEventType;
   message: string;
+  summary?: string;
+  detail?: unknown;
   metadata?: Record<string, unknown>;
 }
 
@@ -72,6 +129,7 @@ export interface AutoResearchRunRecord {
   updatedAt: string;
   startedAt?: string;
   endedAt?: string;
+  currentPhase?: AutoResearchRunPhase;
   config: AutoResearchRunConfig;
   currentIteration: number;
   bestMetricValue?: number | null;
@@ -107,7 +165,66 @@ const MAX_PATH_CHARS = 600;
 const MAX_CONFIG_VALUE_CHARS = 600;
 const MAX_LIVE_OUTPUT_EXCERPT_CHARS = 20_000;
 const MAX_REASON_CHARS = 1_000;
+const MAX_NARRATIVE_CHARS = 2_000;
+const MAX_EVENT_SUMMARY_CHARS = 400;
 const REDACTED_VALUE = '[redacted]';
+
+function isRunPhase(value: unknown): value is AutoResearchRunPhase {
+  return value === 'INIT'
+    || value === 'READ_CONTEXT'
+    || value === 'PLAN_HYPOTHESIS'
+    || value === 'EDIT_CODE'
+    || value === 'RUN_EXPERIMENT'
+    || value === 'PARSE_METRICS'
+    || value === 'REFLECT'
+    || value === 'DECIDE_NEXT'
+    || value === 'DONE'
+    || value === 'FAILED';
+}
+
+function isRecoveryActionType(value: unknown): value is AutoResearchRecoveryAction['type'] {
+  return value === 'retry_failed_phase'
+    || value === 'retry_iteration'
+    || value === 'switch_provider'
+    || value === 'open_raw_request_summary'
+    || value === 'open_logs'
+    || value === 'abort_run';
+}
+
+function sanitizeParsedMetrics(value: unknown): Record<string, number | string | boolean | null> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const next: Record<string, number | string | boolean | null> = {};
+  for (const [key, entry] of Object.entries(value).slice(0, MAX_PERSISTED_METADATA_ENTRIES)) {
+    if (typeof entry === 'number' || typeof entry === 'boolean' || typeof entry === 'string' || entry === null) {
+      next[key] = typeof entry === 'string'
+        ? truncateString(redactAutoResearchSensitiveText(entry), MAX_EVENT_MESSAGE_CHARS)
+        : entry;
+    }
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function normalizeRecoveryActions(value: unknown): AutoResearchRecoveryAction[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const actions = value
+    .filter((item): item is Record<string, unknown> => isRecord(item) && isRecoveryActionType(item.type))
+    .slice(0, 8)
+    .map((item) => ({
+      type: item.type as AutoResearchRecoveryAction['type'],
+      supported: item.supported !== false,
+      label: sanitizeDisplayString(item.label, MAX_CONFIG_VALUE_CHARS),
+      reason: sanitizeDisplayString(item.reason, MAX_EVENT_MESSAGE_CHARS),
+    }));
+
+  return actions.length > 0 ? actions : undefined;
+}
 
 export function redactAutoResearchSensitiveText(value: string): string {
   return value
@@ -226,9 +343,17 @@ function normalizeIterationRecord(record: unknown, fallbackRunId: string, index:
     id: typeof record.id === 'string' ? record.id : `${fallbackRunId}-iter-${index}`,
     index: typeof record.index === 'number' ? record.index : index,
     status: typeof record.status === 'string' ? record.status as AutoResearchIterationStatus : 'pending',
+    phase: isRunPhase(record.phase) ? record.phase : undefined,
     hypothesis: sanitizeDisplayString(record.hypothesis, MAX_HYPOTHESIS_CHARS),
     change: sanitizeDisplayString(record.change, MAX_CHANGE_CHARS),
     reasoning: sanitizeDisplayString(record.reasoning, MAX_REASONING_CHARS),
+    narrative: sanitizeDisplayString(record.narrative, MAX_NARRATIVE_CHARS),
+    codeChangesSummary: sanitizeDisplayString(record.codeChangesSummary, MAX_CHANGE_CHARS),
+    executionCommand: sanitizeDisplayString(record.executionCommand, MAX_CHANGE_CHARS),
+    exitCode: typeof record.exitCode === 'number' || record.exitCode === null ? record.exitCode : undefined,
+    durationMs: typeof record.durationMs === 'number' || record.durationMs === null ? record.durationMs : undefined,
+    parsedMetrics: sanitizeParsedMetrics(record.parsedMetrics),
+    reflectionSummary: sanitizeDisplayString(record.reflectionSummary, MAX_REASONING_CHARS),
     metricValue: typeof record.metricValue === 'number' || record.metricValue === null ? record.metricValue : undefined,
     improvement: typeof record.improvement === 'number' || record.improvement === null ? record.improvement : undefined,
     commitHash: sanitizeDisplayString(record.commitHash, MAX_CONFIG_VALUE_CHARS),
@@ -243,6 +368,7 @@ function normalizeIterationRecord(record: unknown, fallbackRunId: string, index:
         .slice(0, MAX_PERSISTED_ARTIFACT_PATHS)
         .map((value) => truncateString(value, MAX_PATH_CHARS))
       : undefined,
+    recoveryActions: normalizeRecoveryActions(record.recoveryActions),
   };
 }
 
@@ -254,12 +380,18 @@ function normalizeEvent(event: unknown, runId: string, index: number): AutoResea
   return {
     id: typeof event.id === 'string' ? event.id : `${runId}-event-${index}`,
     runId: typeof event.runId === 'string' ? event.runId : runId,
+    iterationId: typeof event.iterationId === 'string' ? event.iterationId : undefined,
     timestamp: typeof event.timestamp === 'string' ? event.timestamp : new Date(0).toISOString(),
     level: typeof event.level === 'string' ? event.level as AutoResearchRunEvent['level'] : 'info',
     phase: typeof event.phase === 'string' ? event.phase as AutoResearchRunEvent['phase'] : 'system',
+    type: typeof event.type === 'string' ? event.type as AutoResearchRunEventType : undefined,
     message: typeof event.message === 'string'
       ? truncateString(redactAutoResearchSensitiveText(event.message), MAX_EVENT_MESSAGE_CHARS)
       : '',
+    summary: typeof event.summary === 'string'
+      ? truncateString(redactAutoResearchSensitiveText(event.summary), MAX_EVENT_SUMMARY_CHARS)
+      : undefined,
+    detail: sanitizeMetadataValue(event.detail),
     metadata: isRecord(event.metadata)
       ? sanitizeMetadataValue(event.metadata) as Record<string, unknown> | undefined
       : undefined,
@@ -290,6 +422,7 @@ function normalizeRunRecord(record: unknown): AutoResearchRunRecord | null {
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date(0).toISOString(),
     startedAt: typeof record.startedAt === 'string' ? record.startedAt : undefined,
     endedAt: typeof record.endedAt === 'string' ? record.endedAt : undefined,
+    currentPhase: isRunPhase(record.currentPhase) ? record.currentPhase : undefined,
     config: {
       experimentDir: sanitizePath(configRecord.experimentDir) || '',
       workdir: sanitizePath(configRecord.workdir) || '',
@@ -379,6 +512,7 @@ function compactRunRecord(record: AutoResearchRunRecord): AutoResearchRunRecord 
     updatedAt: record.updatedAt,
     startedAt: record.startedAt,
     endedAt: record.endedAt,
+    currentPhase: record.currentPhase,
     config: {
       experimentDir: truncateString(record.config.experimentDir, MAX_PATH_CHARS),
       workdir: truncateString(record.config.workdir, MAX_PATH_CHARS),

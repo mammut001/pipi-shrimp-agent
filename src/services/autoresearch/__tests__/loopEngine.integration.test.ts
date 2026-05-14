@@ -1,9 +1,18 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { ResolvedAgentConfig } from '@/services/agentConfig';
 
 const mockInvoke = jest.fn();
 const mockLogExperiment = jest.fn().mockResolvedValue(undefined);
+const mockRunHeadlessAgentTurn = jest.fn();
+const mockResolveActiveAgentConfig = jest.fn();
+const mockValidateResolvedAgentConfig = jest.fn();
+const mockFormatAgentConfigValidationError = jest.fn();
+const mockGetAgentConfigDiagnostics = jest.fn();
+const mockRequestReflectionDecision = jest.fn();
+const mockGetDeterministicRecoveryDecision = jest.fn();
+const mockBuildFallbackReflectionDecision = jest.fn();
 const mockNotifier = {
   onExperimentComplete: jest.fn().mockResolvedValue(undefined),
   onLoopStopped: jest.fn().mockResolvedValue(undefined),
@@ -25,6 +34,27 @@ jest.mock('../notifier', () => ({
 jest.mock('../platformGuard', () => ({
   assertSupportedPlatform: jest.fn().mockResolvedValue(undefined),
 }));
+
+jest.mock('@/services/agentConfig', () => ({
+  resolveActiveAgentConfig: () => mockResolveActiveAgentConfig(),
+  validateResolvedAgentConfig: (...args: unknown[]) => mockValidateResolvedAgentConfig(...args),
+  formatAgentConfigValidationError: (...args: unknown[]) => mockFormatAgentConfigValidationError(...args),
+  getAgentConfigDiagnostics: (...args: unknown[]) => mockGetAgentConfigDiagnostics(...args),
+}));
+
+jest.mock('@/services/headless/agentRunner', () => ({
+  runHeadlessAgentTurn: (...args: unknown[]) => mockRunHeadlessAgentTurn(...args),
+}));
+
+jest.mock('../reflection', () => {
+  const actual = jest.requireActual('../reflection') as typeof import('../reflection');
+  return {
+    ...actual,
+    requestReflectionDecision: (...args: unknown[]) => mockRequestReflectionDecision(...args),
+    getDeterministicRecoveryDecision: (...args: unknown[]) => mockGetDeterministicRecoveryDecision(...args),
+    buildFallbackReflectionDecision: (...args: unknown[]) => mockBuildFallbackReflectionDecision(...args),
+  };
+});
 
 jest.mock('../preflight', () => ({
   resolveTargetPath: jest.fn(async (_cfg: unknown, _fieldName: string, value: string) => {
@@ -53,14 +83,52 @@ jest.mock('../preflight', () => ({
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
+import { createAutoResearchSendMessage } from '../chatAdapter';
 import { startExperimentLoop } from '../loopEngine';
 import { getCurrentRunDir } from '../terminalRunner';
 import { getSessionRunPaths, listIterations, readTargetText } from '../runDir';
 import { AutoResearchReflectionFailureError } from '../reflection';
 import { formatAutoResearchToolCatalog } from '../toolCatalog';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
+import {
+  deepseekBudgetExhaustedAfterMetricsFixture,
+  deepseekMixedFailureTranscriptFixture,
+  deepseekThreeConsecutiveApiFailuresFixture,
+} from './fixtures/deepseekMixedFailureTranscript.fixture';
+import { installDynamicTranscriptFixture } from './transcriptHarness';
 
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
+
+const activeConfig: ResolvedAgentConfig = {
+  configId: 'cfg-deepseek',
+  name: 'DeepSeek Default',
+  provider: 'deepseek',
+  model: 'deepseek-chat',
+  baseUrl: 'https://api.deepseek.com/v1',
+  apiFormat: 'openai',
+  hasApiKey: true,
+  hasBaseUrl: true,
+  apiKey: 'test-key',
+};
+
+function buildChatAdapterSendMessage(experimentDir: string) {
+  return createAutoResearchSendMessage(experimentDir, activeConfig, {
+    environmentSummary: {
+      experimentDir,
+      gitRepo: true,
+      repoStatus: 'clean',
+      dirtyFileCount: 0,
+      preferredPythonCommand: 'python3',
+      worktreeWritable: true,
+      runScriptPath: path.join(experimentDir, 'run_experiment.py'),
+      notesPath: path.join(experimentDir, 'AUTORESEARCH.md'),
+      recommendedRunCommand: 'python3 run_experiment.py',
+    },
+    metricName: 'cv_accuracy',
+    direction: 'higher',
+    maxIterations: 1,
+  });
+}
 
 describe('loopEngine integration', () => {
   let workDir: string;
@@ -71,6 +139,34 @@ describe('loopEngine integration', () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-loop-'));
     sessionFilePath = path.join(workDir, 'session.md');
     installLocalInvokeMock(mockInvoke);
+    mockRunHeadlessAgentTurn.mockReset();
+    mockResolveActiveAgentConfig.mockReset();
+    mockValidateResolvedAgentConfig.mockReset();
+    mockFormatAgentConfigValidationError.mockReset();
+    mockGetAgentConfigDiagnostics.mockReset();
+    mockRequestReflectionDecision.mockReset();
+    mockGetDeterministicRecoveryDecision.mockReset();
+    mockBuildFallbackReflectionDecision.mockReset();
+    mockResolveActiveAgentConfig.mockReturnValue(activeConfig);
+    mockValidateResolvedAgentConfig.mockReturnValue([]);
+    mockFormatAgentConfigValidationError.mockReturnValue('invalid config');
+    mockGetAgentConfigDiagnostics.mockReturnValue({
+      selectedConfigName: 'DeepSeek Default',
+      selectedProvider: 'deepseek',
+      selectedModel: 'deepseek-chat',
+      hasApiKey: true,
+      hasBaseURL: true,
+      adapterName: 'deepseek-openai',
+      authorizationHeaderPresent: true,
+    });
+    mockGetDeterministicRecoveryDecision.mockReturnValue(null);
+    mockBuildFallbackReflectionDecision.mockImplementation((_input: unknown, error: unknown) => ({
+      action: 'stop_tool_exhausted',
+      summary: error instanceof Error ? error.message : 'fallback stop',
+      userMessage: error instanceof Error ? error.message : 'fallback stop',
+      shouldRetry: false,
+      confidence: 'medium',
+    }));
     await initGitRepo(workDir, {
       'train.py': 'print("train")\n',
       'session.md': '# Objective\nImprove validation loss.\n',
@@ -343,6 +439,203 @@ describe('loopEngine integration', () => {
     expect(hypothesis?.trim().length).toBeGreaterThan(0);
     expect(metricsJson).toContain('"metricName": "cv_accuracy"');
     expect(metricsJson).toContain('"metricValue": 0.9684');
+  });
+
+  it('replays the mixed DeepSeek failure transcript through chatAdapter and loopEngine end-to-end', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-chat-adapter-e2e-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("run")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-chat-adapter-mixed-fixture',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    mockGetDeterministicRecoveryDecision.mockReturnValue({
+      action: 'retry_with_plan',
+      summary: 'Use execute_command for directory inspection.',
+      nextPlan: 'Use execute_command with ls -la instead of list_files.',
+      shouldRetry: true,
+      confidence: 'high',
+    });
+    const { getMaterializedFixture } = installDynamicTranscriptFixture({
+      target: mockRunHeadlessAgentTurn,
+      fixture: deepseekMixedFailureTranscriptFixture,
+      getRunDir: () => getCurrentRunDir(),
+      options: {
+        onWriteFile: async ({ path: targetPath, content }) => {
+          await fs.mkdir(path.dirname(targetPath), { recursive: true });
+          await fs.writeFile(targetPath, content, 'utf8');
+        },
+      },
+    });
+
+    const sendMessage = buildChatAdapterSendMessage(experimentDir);
+
+    await startExperimentLoop(sendMessage);
+
+    const resolvedFixture = getMaterializedFixture();
+    const runs = await listIterations(cfg, 'autoresearch-chat-adapter-mixed-fixture');
+    expect(runs).toHaveLength(1);
+    const [firstRun] = runs;
+    const metricsJson = await readTargetText(cfg, firstRun.metricsPath);
+    const transcript = await readTargetText(cfg, firstRun.transcriptPath);
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-chat-adapter-mixed-fixture');
+    const thirdCallInput = mockRunHeadlessAgentTurn.mock.calls[2]?.[0] as {
+      workDir: string;
+      allowedTools: string[];
+      systemPrompt: string;
+      initialMessages: Array<{ role: string; content: string }>;
+    };
+
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(3);
+    expect(mockRequestReflectionDecision).not.toHaveBeenCalled();
+    expect(resolvedFixture?.runDir.metricsPath).toBe(firstRun.metricsPath);
+    expect(thirdCallInput.workDir).toBe(firstRun.iterDir);
+    expect(thirdCallInput.allowedTools).toContain('execute_command');
+    expect(thirdCallInput.allowedTools).not.toContain('list_files');
+    expect(thirdCallInput.systemPrompt).toContain('HARD CONSTRAINT: do not call list_files.');
+    expect(thirdCallInput.systemPrompt).toContain(firstRun.metricsPath);
+    expect(thirdCallInput.initialMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining(deepseekMixedFailureTranscriptFixture.expected.recoveryHint),
+      }),
+    ]));
+    expect(metricsJson).toContain('"metricName": "cv_accuracy"');
+    expect(metricsJson).toContain('"status": "FAILED"');
+    expect(metricsJson).toContain('"failReason": "list_files disabled for this AutoResearch run"');
+    expect(transcript).toContain('## Tool Call: list_files');
+    expect(transcript).toContain('## Tool Call: write_file');
+    expect(transcript).toContain('## Reflection Decision');
+    expect(run?.iterations[0]?.status).toBe('failed');
+    expect(run?.events.some((event) => event.message.includes('API request failed (1/3)'))).toBe(true);
+    expect(run?.events.some((event) => event.message.includes('Escalated disabled tool constraint: list_files'))).toBe(true);
+  });
+
+  it('keeps using metrics.json after budget exhaustion when the transcript already wrote the artifact', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-metrics-fixture-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("run")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-budget-metrics-fixture',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    mockGetDeterministicRecoveryDecision.mockImplementation((input: { lastError?: string }) => (
+      input.lastError?.includes('Exceeded maximum tool rounds')
+        ? {
+          action: 'stop_tool_exhausted',
+          summary: 'Tool budget exhausted after metrics were already written.',
+          userMessage: 'Tool budget exhausted after metrics were already written.',
+          shouldRetry: false,
+          confidence: 'high',
+        }
+        : null
+    ));
+    const { getMaterializedFixture } = installDynamicTranscriptFixture({
+      target: mockRunHeadlessAgentTurn,
+      fixture: deepseekBudgetExhaustedAfterMetricsFixture,
+      getRunDir: () => getCurrentRunDir(),
+      options: {
+        onWriteFile: async ({ path: targetPath, content }) => {
+          await fs.mkdir(path.dirname(targetPath), { recursive: true });
+          await fs.writeFile(targetPath, content, 'utf8');
+        },
+      },
+    });
+
+    const sendMessage = buildChatAdapterSendMessage(experimentDir);
+
+    await startExperimentLoop(sendMessage);
+
+    const resolvedFixture = getMaterializedFixture();
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-budget-metrics-fixture');
+    const runs = await listIterations(cfg, 'autoresearch-budget-metrics-fixture');
+    expect(runs).toHaveLength(1);
+    const [firstRun] = runs;
+    const metricsJson = await readTargetText(cfg, firstRun.metricsPath);
+    const transcript = await readTargetText(cfg, firstRun.transcriptPath);
+
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
+    expect(mockRequestReflectionDecision).not.toHaveBeenCalled();
+    expect(resolvedFixture?.runDir.metricsPath).toBe(firstRun.metricsPath);
+    expect(store.experiments[0]?.status).toBe('IMPROVED');
+    expect(store.experiments[0]?.metricValue).toBe(0.9777);
+    expect(run?.status).toBe('completed');
+    expect(run?.status).not.toBe('reflection_failed');
+    expect(metricsJson).toContain('"metricValue": 0.9777');
+    expect(transcript).toContain('## Tool Call: write_file');
+    expect(run?.events.some((event) => event.message.includes('evaluation_fallback_from_metrics'))).toBe(true);
+  });
+
+  it('marks the iteration as FAILED after three consecutive provider API request failures', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-api-failures-fixture-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("run")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-api-failures-fixture',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    installDynamicTranscriptFixture({
+      target: mockRunHeadlessAgentTurn,
+      fixture: deepseekThreeConsecutiveApiFailuresFixture,
+      getRunDir: () => getCurrentRunDir(),
+    });
+
+    const sendMessage = buildChatAdapterSendMessage(experimentDir);
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-api-failures-fixture');
+    const runs = await listIterations(cfg, 'autoresearch-api-failures-fixture');
+    expect(runs).toHaveLength(1);
+    const [firstRun] = runs;
+    const metricsJson = await readTargetText(cfg, firstRun.metricsPath);
+    const transcript = await readTargetText(cfg, firstRun.transcriptPath);
+
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(3);
+    expect(mockRequestReflectionDecision).not.toHaveBeenCalled();
+    expect(metricsJson).toBeNull();
+    expect(transcript).toContain('## User Message');
+    expect(store.experiments[0]?.status).toBe('FAILED');
+    expect(store.experiments[0]?.failReason).toContain('Provider API request failed 3 times consecutively');
+    expect(run?.status).toBe('failed');
+    expect(run?.status).not.toBe('reflection_failed');
+    expect(run?.events.some((event) => event.message.includes('API request failed (3/3)'))).toBe(true);
   });
 
   it('stores structured iteration facts from metrics.json into the run record', async () => {

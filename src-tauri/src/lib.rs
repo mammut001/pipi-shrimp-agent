@@ -224,6 +224,7 @@ pub fn run() {
             commands::typst_render::render_typst_to_pdf,
             commands::typst_render::get_font_count,
             // Project file helpers (roadmap panel, no workspace required)
+            commands::project_file::get_project_root,
             commands::project_file::read_project_file,
             commands::project_file::write_project_file,
             // Workspace / Work Dir commands

@@ -103,14 +103,33 @@ impl ApiFormat {
 
 /// Provider capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities {
     /// Model supports extended thinking/reasoning
     pub supports_thinking: bool,
+    /// Provider accepts explicit reasoning request fields or reasoning traces.
+    pub supports_reasoning: bool,
+    /// Provider may stream reasoning over a dedicated channel.
+    pub supports_reasoning_stream: bool,
     /// Model supports tool calls
     pub supports_tool_calls: bool,
+    /// Provider accepts OpenAI-style `tools` / `tool_calls` payloads.
+    pub supports_tool_openai: bool,
     /// Provider supports streaming (SSE)
     pub supports_streaming: bool,
+    /// Provider accepts `response_format` in the request body.
+    pub supports_response_format: bool,
+    /// Provider supports JSON schema style response formatting.
+    pub supports_response_format_json_schema: bool,
+    /// Provider supports JSON mode semantics.
+    pub supports_json_mode: bool,
+    /// Provider accepts `response_format` for this endpoint family.
+    pub accepts_response_format: bool,
+    /// Provider accepts explicit `reasoning` or `reasoning_effort` params.
+    pub accepts_reasoning_param: bool,
+    /// Provider supports image inputs.
+    pub supports_vision: bool,
     /// Provider uses OpenAI Responses API (instead of Chat Completions)
     pub uses_responses_api: bool,
     /// Tool results must be ordered to match tool_calls
@@ -125,8 +144,17 @@ impl Default for ProviderCapabilities {
     fn default() -> Self {
         Self {
             supports_thinking: false,
+            supports_reasoning: false,
+            supports_reasoning_stream: false,
             supports_tool_calls: true,
+            supports_tool_openai: false,
             supports_streaming: true,
+            supports_response_format: false,
+            supports_response_format_json_schema: false,
+            supports_json_mode: false,
+            accepts_response_format: false,
+            accepts_reasoning_param: false,
+            supports_vision: false,
             uses_responses_api: false,
             requires_tool_ordering: false,
             thinking_budget: None,
@@ -224,8 +252,17 @@ impl ResolvedProviderConfig {
 
                 ProviderCapabilities {
                     supports_thinking,
+                    supports_reasoning: supports_thinking,
+                    supports_reasoning_stream: supports_thinking,
                     supports_tool_calls: true,
+                    supports_tool_openai: false,
                     supports_streaming: true,
+                    supports_response_format: false,
+                    supports_response_format_json_schema: false,
+                    supports_json_mode: false,
+                    accepts_response_format: false,
+                    accepts_reasoning_param: false,
+                    supports_vision: true,
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: if supports_thinking { Some(5000) } else { None },
@@ -239,8 +276,17 @@ impl ResolvedProviderConfig {
 
                 ProviderCapabilities {
                     supports_thinking: false, // OpenAI reasoning is separate
+                    supports_reasoning: false,
+                    supports_reasoning_stream: false,
                     supports_tool_calls,
+                    supports_tool_openai: true,
                     supports_streaming: true,
+                    supports_response_format: true,
+                    supports_response_format_json_schema: true,
+                    supports_json_mode: true,
+                    accepts_response_format: true,
+                    accepts_reasoning_param: false,
+                    supports_vision: true,
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
@@ -250,9 +296,18 @@ impl ResolvedProviderConfig {
             ProviderId::MiniMax => {
                 // MiniMax: typically OpenAI-compatible
                 ProviderCapabilities {
-                    supports_thinking: model_lower.contains("reasoning"),
+                    supports_thinking: false,
+                    supports_reasoning: model_lower.contains("reasoning"),
+                    supports_reasoning_stream: model_lower.contains("reasoning"),
                     supports_tool_calls: true,
+                    supports_tool_openai: true,
                     supports_streaming: true,
+                    supports_response_format: true,
+                    supports_response_format_json_schema: false,
+                    supports_json_mode: true,
+                    accepts_response_format: true,
+                    accepts_reasoning_param: false,
+                    supports_vision: false,
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
@@ -263,8 +318,17 @@ impl ResolvedProviderConfig {
                 // Gemini: different API structure
                 ProviderCapabilities {
                     supports_thinking: false,
+                    supports_reasoning: false,
+                    supports_reasoning_stream: false,
                     supports_tool_calls: true,
+                    supports_tool_openai: true,
                     supports_streaming: true,
+                    supports_response_format: false,
+                    supports_response_format_json_schema: false,
+                    supports_json_mode: false,
+                    accepts_response_format: false,
+                    accepts_reasoning_param: false,
+                    supports_vision: true,
                     uses_responses_api: true, // Gemini uses different API
                     requires_tool_ordering: false,
                     thinking_budget: None,
@@ -272,13 +336,25 @@ impl ResolvedProviderConfig {
                 }
             }
             ProviderId::DeepSeek => {
-                // DeepSeek: OpenAI-compatible, max_tokens capped at 8192
-                let supports_thinking =
-                    model_lower.contains("reasoner") || model_lower.contains("r1");
+                // DeepSeek: OpenAI-compatible, streams reasoning_content, max_tokens capped at 8192.
+                let supports_reasoning = model_lower.contains("reasoner")
+                    || model_lower.contains("reasoning")
+                    || model_lower.contains("r1")
+                    || model_lower.contains("v4");
+
                 ProviderCapabilities {
-                    supports_thinking,
+                    supports_thinking: false,
+                    supports_reasoning,
+                    supports_reasoning_stream: supports_reasoning,
                     supports_tool_calls: true,
+                    supports_tool_openai: true,
                     supports_streaming: true,
+                    supports_response_format: false,
+                    supports_response_format_json_schema: false,
+                    supports_json_mode: true,
+                    accepts_response_format: false,
+                    accepts_reasoning_param: false,
+                    supports_vision: false,
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
@@ -288,9 +364,18 @@ impl ResolvedProviderConfig {
             ProviderId::Custom => {
                 // Custom provider: assume OpenAI-compatible, no token cap assumed
                 ProviderCapabilities {
-                    supports_thinking: model_lower.contains("reasoning"),
+                    supports_thinking: false,
+                    supports_reasoning: model_lower.contains("reasoning"),
+                    supports_reasoning_stream: false,
                     supports_tool_calls: true,
+                    supports_tool_openai: true,
                     supports_streaming: true,
+                    supports_response_format: false,
+                    supports_response_format_json_schema: false,
+                    supports_json_mode: false,
+                    accepts_response_format: false,
+                    accepts_reasoning_param: false,
+                    supports_vision: false,
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
@@ -409,8 +494,17 @@ mod tests {
             Some(ApiFormat::Anthropic),
             Some(ProviderCapabilities {
                 supports_thinking: false,
+                supports_reasoning: false,
+                supports_reasoning_stream: false,
                 supports_tool_calls: true,
+                supports_tool_openai: false,
                 supports_streaming: true,
+                supports_response_format: false,
+                supports_response_format_json_schema: false,
+                supports_json_mode: false,
+                accepts_response_format: false,
+                accepts_reasoning_param: false,
+                supports_vision: false,
                 uses_responses_api: false,
                 requires_tool_ordering: false,
                 thinking_budget: None,

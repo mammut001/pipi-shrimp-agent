@@ -726,6 +726,8 @@ export const useChatStore = create<ChatState>()(
       return selectedPath;
     },
 
+    ensureSessionWorkDir: async (sessionId: string) => ensureSessionWorkDir(sessionId, set, get),
+
     clearSessionWorkDir: async (sessionId: string) => {
       const session = get().sessions.find((candidate) => candidate.id === sessionId);
       if (!session) {

@@ -1,10 +1,32 @@
-import { createElement } from 'react';
+import { createElement, useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { WorkflowRun } from '@/types/workflow';
 import { clickElement, createDomHarness } from './domHarness';
 
 const listeners = new Set<() => void>();
-let workflowState: any;
+
+interface WorkflowRunHistoryAgent {
+  id: string;
+  name: string;
+}
+
+interface WorkflowRunHistoryInstance {
+  id: string;
+  agents: WorkflowRunHistoryAgent[];
+  workflowRuns: WorkflowRun[];
+  activeRunId?: string | null;
+}
+
+interface WorkflowRunHistoryState {
+  currentInstanceId: string | null;
+  selectedRunId: string | null;
+  instances: WorkflowRunHistoryInstance[];
+  selectRun: (id: string | null) => void;
+  renameWorkflowRun: (id: string, title: string) => void;
+  deleteWorkflowRun: (id: string) => void;
+}
+
+let workflowState: WorkflowRunHistoryState;
 
 function emitWorkflowState(): void {
   for (const listener of listeners) {
@@ -12,15 +34,14 @@ function emitWorkflowState(): void {
   }
 }
 
-function setWorkflowState(updater: (state: any) => any): void {
+function setWorkflowState(updater: (state: WorkflowRunHistoryState) => WorkflowRunHistoryState): void {
   workflowState = updater(workflowState);
   emitWorkflowState();
 }
 
 const useWorkflowStoreMock = Object.assign(
-  (selector?: (state: any) => unknown) => {
-    const React = require('react') as typeof import('react');
-    return React.useSyncExternalStore(
+  (selector?: (state: WorkflowRunHistoryState) => unknown) => {
+    return useSyncExternalStore(
       (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -98,7 +119,7 @@ function createWorkflowState(selectedRunId: string | null = 'run-2') {
     renameWorkflowRun: (id: string, title: string) => {
       setWorkflowState((state) => ({
         ...state,
-        instances: state.instances.map((instance: any) => (
+        instances: state.instances.map((instance) => (
           instance.id === state.currentInstanceId
             ? {
                 ...instance,
@@ -112,7 +133,7 @@ function createWorkflowState(selectedRunId: string | null = 'run-2') {
     },
     deleteWorkflowRun: (id: string) => {
       setWorkflowState((state) => {
-        const currentInstance = state.instances.find((instance: any) => instance.id === state.currentInstanceId);
+        const currentInstance = state.instances.find((instance) => instance.id === state.currentInstanceId);
         const workflowRuns = currentInstance?.workflowRuns ?? [];
         const remainingRuns = workflowRuns.filter((run: WorkflowRun) => run.id !== id);
         const deletedIndex = workflowRuns.findIndex((run: WorkflowRun) => run.id === id);
@@ -123,7 +144,7 @@ function createWorkflowState(selectedRunId: string | null = 'run-2') {
         return {
           ...state,
           selectedRunId: state.selectedRunId === id ? nextRunId : state.selectedRunId,
-          instances: state.instances.map((instance: any) => (
+          instances: state.instances.map((instance) => (
             instance.id === state.currentInstanceId
               ? {
                   ...instance,
@@ -166,11 +187,6 @@ describe('WorkflowRunHistory', () => {
       configurable: true,
       writable: true,
       value: jest.fn(() => true),
-    });
-    Object.defineProperty(globalThis, 'window', {
-      configurable: true,
-      writable: true,
-      value: harness.window,
     });
   });
 

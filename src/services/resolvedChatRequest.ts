@@ -24,6 +24,7 @@ export interface ResolvedChatRequestOptions {
   sessionId: string;
   allowBrowserTools?: boolean;
   noTools?: boolean;
+  allowedTools?: string[];
   contextBudget?: ContextBudgetOptions;
   responseFormat?: { type: 'json_object' };
 }
@@ -54,6 +55,7 @@ export interface ResolvedChatRequestBuildResult {
     systemPrompt: string;
     noTools?: boolean;
     allowBrowserTools?: boolean;
+    allowedTools?: string[];
     sessionId: string;
     provider?: string;
     apiFormat?: string;
@@ -171,6 +173,7 @@ export function buildResolvedChatRequest(
       systemPrompt: systemPromptBudget.text,
       noTools: options.noTools,
       allowBrowserTools: options.noTools ? false : options.allowBrowserTools,
+      allowedTools: options.allowedTools?.length ? [...options.allowedTools] : undefined,
       sessionId: options.sessionId,
       provider: resolveProviderRequestHint(config.provider, config.apiFormat),
       apiFormat: config.apiFormat || undefined,

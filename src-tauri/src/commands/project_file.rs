@@ -9,6 +9,12 @@ fn project_root() -> std::path::PathBuf {
     }
 }
 
+/// Return the resolved project root used by project-relative helpers.
+#[tauri::command]
+pub fn get_project_root() -> Result<String, String> {
+    Ok(project_root().to_string_lossy().to_string())
+}
+
 /// Read a file relative to a base directory (or project root if None).
 #[tauri::command]
 pub fn read_project_file(relative_path: String, base_dir: Option<String>) -> Result<String, String> {

@@ -227,6 +227,12 @@ export interface ChatState {
   setSessionWorkDir: (sessionId: string) => Promise<string | null>;
 
   /**
+   * Ensure the session has an app-managed work directory.
+   * Does not prompt; creates `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}`.
+   */
+  ensureSessionWorkDir: (sessionId: string) => Promise<string | null>;
+
+  /**
    * Remove the work directory binding from this session.
    */
   clearSessionWorkDir: (sessionId: string) => Promise<void>;

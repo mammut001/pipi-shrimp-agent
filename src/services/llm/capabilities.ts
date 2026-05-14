@@ -7,8 +7,17 @@ export type ProviderRequestHint = 'anthropic' | 'openai' | 'minimax' | 'deepseek
 
 export type ProviderExecutionCapabilities = {
   supportsThinking: boolean;
+  supportsReasoning: boolean;
+  supportsReasoningStream: boolean;
   supportsToolCalls: boolean;
+  supportsToolOpenAI: boolean;
   supportsStreaming: boolean;
+  supportsResponseFormat: boolean;
+  supportsResponseFormatJsonSchema: boolean;
+  supportsJsonMode: boolean;
+  acceptsResponseFormat: boolean;
+  acceptsReasoningParam: boolean;
+  supportsVision: boolean;
   usesResponsesApi: boolean;
   requiresToolOrdering: boolean;
   thinkingBudget?: number;
@@ -102,7 +111,7 @@ const PROVIDER_CAPABILITIES: Record<ProviderCapabilityId, ProviderCapability> = 
     displayName: 'OpenAI Compatible',
     streaming: true,
     toolCalls: 'openai',
-    jsonMode: true,
+    jsonMode: false,
     jsonSchema: false,
     vision: false,
     maxContextTokens: 128_000,
@@ -175,19 +184,176 @@ export function buildProviderExecutionCapabilities(input: {
   apiFormat?: string | null;
   model?: string | null;
 }): ProviderExecutionCapabilities {
-  const capability = getCapability(input.provider);
-  const providerHint = resolveProviderRequestHint(input.provider, input.apiFormat);
   const normalizedModel = input.model?.trim() ?? '';
+  const modelLower = normalizedModel.toLowerCase();
+  const providerId = input.provider ?? null;
+  const providerHint = resolveProviderRequestHint(providerId, input.apiFormat);
   const supportsThinking = providerHint === 'anthropic'
     && ANTHROPIC_THINKING_MODEL_PATTERN.test(normalizedModel);
+  const deepSeekReasoning = /reasoner|reasoning|\br1\b|v4/i.test(modelLower);
+  const genericReasoning = modelLower.includes('reasoning');
 
-  return {
-    supportsThinking,
-    supportsToolCalls: capability.toolCalls !== 'none',
-    supportsStreaming: capability.streaming,
-    usesResponsesApi: input.provider === 'gemini',
-    requiresToolOrdering: false,
-    thinkingBudget: supportsThinking ? 5000 : undefined,
-    maxOutputTokens: input.provider === 'deepseek' ? 8192 : undefined,
-  };
+  switch (providerId) {
+    case 'anthropic':
+      return {
+        supportsThinking,
+        supportsReasoning: supportsThinking,
+        supportsReasoningStream: supportsThinking,
+        supportsToolCalls: true,
+        supportsToolOpenAI: false,
+        supportsStreaming: true,
+        supportsResponseFormat: false,
+        supportsResponseFormatJsonSchema: false,
+        supportsJsonMode: false,
+        acceptsResponseFormat: false,
+        acceptsReasoningParam: false,
+        supportsVision: true,
+        usesResponsesApi: false,
+        requiresToolOrdering: false,
+        thinkingBudget: supportsThinking ? 5000 : undefined,
+      };
+    case 'anthropic-compatible':
+      return {
+        supportsThinking,
+        supportsReasoning: supportsThinking,
+        supportsReasoningStream: supportsThinking,
+        supportsToolCalls: true,
+        supportsToolOpenAI: false,
+        supportsStreaming: true,
+        supportsResponseFormat: false,
+        supportsResponseFormatJsonSchema: false,
+        supportsJsonMode: false,
+        acceptsResponseFormat: false,
+        acceptsReasoningParam: false,
+        supportsVision: false,
+        usesResponsesApi: false,
+        requiresToolOrdering: false,
+        thinkingBudget: supportsThinking ? 5000 : undefined,
+      };
+    case 'openai': {
+      const supportsToolCalls = !modelLower.includes('o1-preview') && !modelLower.includes('o1-mini');
+      return {
+        supportsThinking: false,
+        supportsReasoning: false,
+        supportsReasoningStream: false,
+        supportsToolCalls,
+        supportsToolOpenAI: true,
+        supportsStreaming: true,
+        supportsResponseFormat: true,
+        supportsResponseFormatJsonSchema: true,
+        supportsJsonMode: true,
+        acceptsResponseFormat: true,
+        acceptsReasoningParam: false,
+        supportsVision: true,
+        usesResponsesApi: false,
+        requiresToolOrdering: false,
+      };
+    }
+    case 'minimax':
+      return {
+        supportsThinking: false,
+        supportsReasoning: genericReasoning,
+        supportsReasoningStream: genericReasoning,
+        supportsToolCalls: true,
+        supportsToolOpenAI: true,
+        supportsStreaming: true,
+        supportsResponseFormat: true,
+        supportsResponseFormatJsonSchema: false,
+        supportsJsonMode: true,
+        acceptsResponseFormat: true,
+        acceptsReasoningParam: false,
+        supportsVision: false,
+        usesResponsesApi: false,
+        requiresToolOrdering: false,
+      };
+    case 'deepseek':
+      return {
+        supportsThinking: false,
+        supportsReasoning: deepSeekReasoning,
+        supportsReasoningStream: deepSeekReasoning,
+        supportsToolCalls: true,
+        supportsToolOpenAI: true,
+        supportsStreaming: true,
+        supportsResponseFormat: false,
+        supportsResponseFormatJsonSchema: false,
+        supportsJsonMode: true,
+        acceptsResponseFormat: false,
+        acceptsReasoningParam: false,
+        supportsVision: false,
+        usesResponsesApi: false,
+        requiresToolOrdering: false,
+        maxOutputTokens: 8192,
+      };
+    case 'gemini':
+      return {
+        supportsThinking: false,
+        supportsReasoning: false,
+        supportsReasoningStream: false,
+        supportsToolCalls: true,
+        supportsToolOpenAI: true,
+        supportsStreaming: true,
+        supportsResponseFormat: false,
+        supportsResponseFormatJsonSchema: false,
+        supportsJsonMode: false,
+        acceptsResponseFormat: false,
+        acceptsReasoningParam: false,
+        supportsVision: true,
+        usesResponsesApi: true,
+        requiresToolOrdering: false,
+      };
+    case 'openai-compatible':
+      return {
+        supportsThinking: false,
+        supportsReasoning: genericReasoning,
+        supportsReasoningStream: false,
+        supportsToolCalls: true,
+        supportsToolOpenAI: true,
+        supportsStreaming: true,
+        supportsResponseFormat: false,
+        supportsResponseFormatJsonSchema: false,
+        supportsJsonMode: false,
+        acceptsResponseFormat: false,
+        acceptsReasoningParam: false,
+        supportsVision: false,
+        usesResponsesApi: false,
+        requiresToolOrdering: false,
+      };
+    default:
+      if (providerHint === 'anthropic') {
+        return {
+          supportsThinking,
+          supportsReasoning: supportsThinking,
+          supportsReasoningStream: supportsThinking,
+          supportsToolCalls: true,
+          supportsToolOpenAI: false,
+          supportsStreaming: true,
+          supportsResponseFormat: false,
+          supportsResponseFormatJsonSchema: false,
+          supportsJsonMode: false,
+          acceptsResponseFormat: false,
+          acceptsReasoningParam: false,
+          supportsVision: false,
+          usesResponsesApi: false,
+          requiresToolOrdering: false,
+          thinkingBudget: supportsThinking ? 5000 : undefined,
+        };
+      }
+
+      return {
+        supportsThinking: false,
+        supportsReasoning: genericReasoning,
+        supportsReasoningStream: false,
+        supportsToolCalls: true,
+        supportsToolOpenAI: true,
+        supportsStreaming: true,
+        supportsResponseFormat: false,
+        supportsResponseFormatJsonSchema: false,
+        supportsJsonMode: false,
+        acceptsResponseFormat: false,
+        acceptsReasoningParam: false,
+        supportsVision: false,
+        usesResponsesApi: false,
+        requiresToolOrdering: false,
+      };
+  }
 }

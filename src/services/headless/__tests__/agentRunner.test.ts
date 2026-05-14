@@ -207,20 +207,49 @@ describe('runHeadlessAgentTurn', () => {
     });
 
     expect(mockExecuteBatch).not.toHaveBeenCalled();
+    expect(mockRunChatTurn).toHaveBeenCalledWith(
+      'session-2',
+      [{ role: 'user', content: 'Do a thing' }],
+      expect.stringContaining('HARD RULE: do not call list_files.'),
+      undefined,
+      false,
+      undefined,
+      expect.objectContaining({
+        allowedTools: ['ssh_exec'],
+      }),
+    );
     expect(resolveAll).toHaveBeenCalledWith([
       {
         id: 'tool-1',
-        content: 'Error: Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+        content: JSON.stringify({
+          error: true,
+          error_kind: 'tool_disabled',
+          tool: 'write_file',
+          message: 'Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+          cause: 'Allowed tools: ssh_exec',
+        }),
       },
     ]);
     expect(onToolSummary).toHaveBeenCalledWith(
       'write_file',
-      'Error: Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+      JSON.stringify({
+        error: true,
+        error_kind: 'tool_disabled',
+        tool: 'write_file',
+        message: 'Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+        cause: 'Allowed tools: ssh_exec',
+      }),
     );
     expect(onToolResult).toHaveBeenCalledWith({
       id: 'tool-1',
       name: 'write_file',
-      result: 'Error: Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+      result: JSON.stringify({
+        error: true,
+        error_kind: 'tool_disabled',
+        tool: 'write_file',
+        message: 'Tool "write_file" is disabled for this AutoResearch run. Allowed tools: ssh_exec',
+        cause: 'Allowed tools: ssh_exec',
+      }),
       durationMs: 0,
     });
   });

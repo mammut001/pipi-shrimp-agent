@@ -114,8 +114,17 @@ describe('resolvedChatRequest', () => {
     expect(request.params.baseUrl).toBe('https://api.minimaxi.com/v1');
     expect(request.params.providerCapabilities).toMatchObject({
       supportsThinking: false,
+      supportsReasoning: false,
+      supportsReasoningStream: false,
       supportsToolCalls: true,
+      supportsToolOpenAI: true,
       supportsStreaming: true,
+      supportsResponseFormat: true,
+      supportsResponseFormatJsonSchema: false,
+      supportsJsonMode: true,
+      acceptsResponseFormat: true,
+      acceptsReasoningParam: false,
+      supportsVision: false,
       usesResponsesApi: false,
     });
   });
@@ -135,10 +144,30 @@ describe('resolvedChatRequest', () => {
 
     expect(request.params.provider).toBe('deepseek');
     expect(request.params.providerCapabilities).toMatchObject({
+      supportsReasoning: true,
+      supportsReasoningStream: true,
       supportsToolCalls: true,
+      supportsToolOpenAI: true,
       supportsStreaming: true,
+      supportsResponseFormat: false,
+      supportsResponseFormatJsonSchema: false,
+      supportsJsonMode: true,
+      acceptsResponseFormat: false,
+      acceptsReasoningParam: false,
+      supportsVision: false,
       maxOutputTokens: 8192,
     });
+  });
+
+  it('forwards allowed tool names to the Rust request layer', () => {
+    const request = buildResolvedChatRequest(minimaxConfig, {
+      messages: [{ role: 'user', content: 'ping' }],
+      systemPrompt: 'test',
+      sessionId: 'allowed-tools-test',
+      allowedTools: ['execute_command', 'read_file'],
+    });
+
+    expect(request.params.allowedTools).toEqual(['execute_command', 'read_file']);
   });
 
   it('prunes oversized request context before invoking the model', () => {

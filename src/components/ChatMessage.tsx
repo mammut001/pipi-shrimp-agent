@@ -517,6 +517,7 @@ function ReasoningBlock({
   // Default to collapsed, expand when streaming
   return (
     <details
+      data-testid="reasoning-block"
       className="mt-3 cursor-pointer group"
       open={isStreaming ? true : undefined}
     >
@@ -535,7 +536,9 @@ function ReasoningBlock({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </summary>
-      <ReasoningBody content={content} isStreaming={!!isStreaming} />
+      <div data-testid="reasoning-content">
+        <ReasoningBody content={content} isStreaming={!!isStreaming} />
+      </div>
     </details>
   );
 }

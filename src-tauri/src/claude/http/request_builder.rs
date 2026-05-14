@@ -1,9 +1,9 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::error_mapping::ClaudeHttpError;
-use super::provider_adapter::{ProviderId, ResolvedProviderConfig};
+use super::provider_adapter::{ProviderCapabilities, ProviderId, ResolvedProviderConfig};
 use super::telemetry::sanitize_endpoint;
 use super::tool_catalog::{convert_tools_to_openai_format, get_tools, merge_system_prompt};
 use crate::claude::message::{Artifact, Message, ToolCall};
@@ -14,6 +14,13 @@ static ARTIFACT_HTML_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"<html[\s\S]*?</html>").unwrap());
 static ARTIFACT_MERMAID_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"```mermaid\n([\s\S]*?)\n```").unwrap());
+
+const OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM: &str = r#"## Tool Calling Protocol
+You MUST invoke tools via the OpenAI function-calling channel named tool_calls.
+Do NOT write tool calls as text.
+Do NOT emit <tool_calls>, <invoke>, <parameter>, XML, pseudo-XML, JSON snippets, or markdown code blocks to call tools.
+Tool calls written in message content will be ignored by the runtime and counted as a failed turn.
+If you need to use a tool, use the structured tool_calls channel only."#;
 
 pub fn estimate_tokens(text: &str) -> i32 {
     crate::utils::token::estimate_tokens(text)
@@ -232,6 +239,83 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<Value> {
     formatted
 }
 
+fn sanitize_openai_history_messages(messages: &mut [Value], capabilities: &ProviderCapabilities) {
+    for message in messages {
+        let Some(record) = message.as_object_mut() else {
+            continue;
+        };
+
+        let role = record.get("role").and_then(|value| value.as_str()).unwrap_or_default();
+        if role == "assistant" {
+            let sanitized = sanitize_assistant_message_for_openai_record(record, capabilities);
+            *record = sanitized;
+            continue;
+        }
+
+        if !capabilities.accepts_reasoning_param {
+            remove_hidden_reasoning_fields(record);
+        }
+    }
+}
+
+fn remove_hidden_reasoning_fields(record: &mut Map<String, Value>) {
+    record.remove("reasoning");
+    record.remove("reasoning_effort");
+    record.remove("reasoning_content");
+    record.remove("thinking");
+    record.remove("reasoning_trace");
+}
+
+fn sanitize_assistant_message_for_openai_record(
+    record: &Map<String, Value>,
+    capabilities: &ProviderCapabilities,
+) -> Map<String, Value> {
+    let mut sanitized = Map::new();
+    sanitized.insert("role".to_string(), Value::String("assistant".to_string()));
+    sanitized.insert(
+        "content".to_string(),
+        record
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| Value::String(String::new())),
+    );
+
+    if let Some(tool_calls) = record.get("tool_calls") {
+        sanitized.insert("tool_calls".to_string(), tool_calls.clone());
+    }
+    if let Some(name) = record.get("name") {
+        sanitized.insert("name".to_string(), name.clone());
+    }
+    if let Some(tool_call_id) = record.get("tool_call_id") {
+        sanitized.insert("tool_call_id".to_string(), tool_call_id.clone());
+    }
+
+    if capabilities.accepts_reasoning_param {
+        if let Some(reasoning) = record.get("reasoning") {
+            sanitized.insert("reasoning".to_string(), reasoning.clone());
+        }
+        if let Some(reasoning_effort) = record.get("reasoning_effort") {
+            sanitized.insert("reasoning_effort".to_string(), reasoning_effort.clone());
+        }
+    }
+
+    sanitized
+}
+
+fn build_openai_system_prompt(
+    config: &ResolvedProviderConfig,
+    system_prompt: Option<&str>,
+    allow_browser_tools: bool,
+    no_tools: bool,
+) -> String {
+    let mut merged = merge_system_prompt(system_prompt, allow_browser_tools);
+    if !no_tools && config.capabilities.supports_tool_openai {
+        merged.push_str("\n\n");
+        merged.push_str(OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM);
+    }
+    merged
+}
+
 fn format_openai_tool_call(tool_call: &ToolCall) -> Value {
     let arguments = if tool_call.arguments.trim().is_empty() {
         "{}".to_string()
@@ -381,14 +465,16 @@ pub fn build_openai_body(
     no_tools: bool,
     streaming: bool,
 ) -> Value {
+    let system_content = build_openai_system_prompt(config, system_prompt, allow_browser_tools, no_tools);
     let mut openai_messages = format_messages_for_openai(messages);
     openai_messages.insert(
         0,
         serde_json::json!({
             "role": "system",
-            "content": merge_system_prompt(system_prompt, allow_browser_tools),
+            "content": system_content,
         }),
     );
+    sanitize_openai_history_messages(&mut openai_messages, &config.capabilities);
 
     let mut body = serde_json::json!({
         "model": config.model,
@@ -399,6 +485,7 @@ pub fn build_openai_body(
 
     if !no_tools {
         body["tools"] = serde_json::json!(convert_tools_to_openai_format(&get_tools(allow_browser_tools)));
+        body["tool_choice"] = serde_json::json!("auto");
     }
 
     body
@@ -509,5 +596,96 @@ mod tests {
         assert!(build_openai_headers("token").is_ok());
         assert_eq!(build_anthropic_url("https://api.anthropic.com/"), "https://api.anthropic.com/v1/messages");
         assert!(build_anthropic_headers("sk-ant-test", true).is_ok());
+    }
+
+    #[test]
+    fn sanitizes_openai_history_for_reasoning_unsupported_providers() {
+        let mut messages = vec![serde_json::json!({
+            "role": "assistant",
+            "content": "visible answer",
+            "reasoning_content": "internal trace",
+            "reasoning": { "type": "chain_of_thought" },
+            "reasoning_effort": "high",
+            "thinking": "draft",
+            "reasoning_trace": ["a", "b"],
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "arguments": "{\"command\":\"ls -la\"}"
+                }
+            }]
+        })];
+
+        sanitize_openai_history_messages(&mut messages, &ProviderCapabilities {
+            supports_thinking: false,
+            supports_reasoning: false,
+            supports_reasoning_stream: false,
+            supports_tool_calls: true,
+            supports_tool_openai: true,
+            supports_streaming: true,
+            supports_response_format: false,
+            supports_response_format_json_schema: false,
+            supports_json_mode: false,
+            accepts_response_format: false,
+            accepts_reasoning_param: false,
+            supports_vision: false,
+            uses_responses_api: false,
+            requires_tool_ordering: false,
+            thinking_budget: None,
+            max_output_tokens: Some(8192),
+        });
+
+        assert_eq!(messages[0].get("reasoning_content"), None);
+        assert_eq!(messages[0].get("reasoning"), None);
+        assert_eq!(messages[0].get("reasoning_effort"), None);
+        assert_eq!(messages[0].get("thinking"), None);
+        assert_eq!(messages[0].get("reasoning_trace"), None);
+        assert_eq!(messages[0]["content"], "visible answer");
+        assert_eq!(messages[0]["tool_calls"][0]["function"]["name"], "execute_command");
+    }
+
+    #[test]
+    fn builds_deepseek_openai_body_with_tools_and_tool_choice() {
+        let config = ResolvedProviderConfig {
+            provider_id: ProviderId::DeepSeek,
+            api_format: super::super::provider_adapter::ApiFormat::OpenAI,
+            base_url: "https://api.deepseek.com".to_string(),
+            api_key: "token".to_string(),
+            model: "deepseek-v4-pro".to_string(),
+            capabilities: ProviderCapabilities {
+                supports_thinking: false,
+                supports_reasoning: true,
+                supports_reasoning_stream: true,
+                supports_tool_calls: true,
+                supports_tool_openai: true,
+                supports_streaming: true,
+                supports_response_format: false,
+                supports_response_format_json_schema: false,
+                supports_json_mode: true,
+                accepts_response_format: false,
+                accepts_reasoning_param: false,
+                supports_vision: false,
+                uses_responses_api: false,
+                requires_tool_ordering: false,
+                thinking_budget: None,
+                max_output_tokens: Some(8192),
+            },
+        };
+
+        let body = build_openai_body(
+            &config,
+            &[sample_message("user", "ping")],
+            Some("system"),
+            false,
+            false,
+            true,
+        );
+
+        assert_eq!(body["tool_choice"], "auto");
+        assert!(body["tools"].as_array().is_some_and(|tools| !tools.is_empty()));
+        let system_text = body["messages"][0]["content"].as_str().unwrap_or_default();
+        assert!(system_text.contains("OpenAI function-calling channel named tool_calls"));
     }
 }

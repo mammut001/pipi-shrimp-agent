@@ -32,6 +32,23 @@
 				"$rustc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "copilot-rust-http-slice",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"test",
+				"--manifest-path",
+				"Cargo.toml",
+				"claude::http",
+				"--lib"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test"
 		}
 	]
 }
