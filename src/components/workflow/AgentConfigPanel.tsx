@@ -80,6 +80,7 @@ export function AgentConfigPanel({
   const currentInstance = useWorkflowStore((state) =>
     state.instances.find((item) => item.id === state.currentInstanceId) ?? null,
   );
+  const isRunning = useWorkflowStore((state) => state.isRunning);
   const allAgents = currentInstance?.agents ?? [];
   const { updateAgent, addOutputRoute, removeOutputRoute, setAgentInputFrom } = useWorkflowStore();
 
@@ -397,6 +398,12 @@ export function AgentConfigPanel({
         </div>
       )}
 
+      {isRunning && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          工作流运行中，当前不能修改上下游连接与输出路由。
+        </div>
+      )}
+
       <div>
         <label className="mb-1 block text-sm font-medium text-gray-700">
           {t('workflow.inputSource')}
@@ -404,6 +411,7 @@ export function AgentConfigPanel({
         <select
           value={agent.inputFrom || ''}
           onChange={(event) => setAgentInputFrom(agentId, event.target.value || null)}
+          disabled={isRunning}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">{t('workflow.entryNode')}</option>
@@ -605,7 +613,11 @@ export function AgentConfigPanel({
                   {' → '}
                   {targetAgent?.name || '?'}
                 </span>
-                <button onClick={() => removeOutputRoute(agentId, route.id)} className="text-red-500 hover:text-red-700">
+                <button
+                  onClick={() => removeOutputRoute(agentId, route.id)}
+                  disabled={isRunning}
+                  className="text-red-500 hover:text-red-700 disabled:cursor-not-allowed disabled:text-gray-300"
+                >
                   ×
                 </button>
               </div>
@@ -618,6 +630,7 @@ export function AgentConfigPanel({
             <select
               value={newRoute.condition}
               onChange={(event) => setNewRoute((prev) => ({ ...prev, condition: event.target.value as RouteCondition }))}
+              disabled={isRunning}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="onComplete">{t('workflow.onComplete')}</option>
@@ -632,12 +645,14 @@ export function AgentConfigPanel({
                   type="text"
                   value={newRoute.keyword}
                   onChange={(event) => setNewRoute((prev) => ({ ...prev, keyword: event.target.value }))}
+                  disabled={isRunning}
                   placeholder={t('workflow.keywordPlaceholder')}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
                 <select
                   value={newRoute.keywordMode}
                   onChange={(event) => setNewRoute((prev) => ({ ...prev, keywordMode: event.target.value as 'includes' | 'regex' }))}
+                  disabled={isRunning}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 >
                   <option value="includes">{t('workflow.routeMatch.includes')}</option>
@@ -649,6 +664,7 @@ export function AgentConfigPanel({
             <select
               value={newRoute.targetAgentId}
               onChange={(event) => setNewRoute((prev) => ({ ...prev, targetAgentId: event.target.value }))}
+              disabled={isRunning}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">{t('workflow.selectTargetAgent')}</option>
@@ -661,7 +677,7 @@ export function AgentConfigPanel({
 
             <button
               onClick={handleAddRoute}
-              disabled={!newRoute.targetAgentId}
+              disabled={isRunning || !newRoute.targetAgentId}
               className="w-full rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
             >
               + {t('workflow.addRoute')}

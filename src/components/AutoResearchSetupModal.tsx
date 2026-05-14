@@ -29,6 +29,7 @@ import {
 } from '@/services/autoresearch/setupFlow';
 import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
 import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
+import { BootstrapChatView } from '@/components/autoresearch/BootstrapChatView';
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
@@ -69,6 +70,7 @@ export function AutoResearchSetupModal() {
   const [prefillSource, setPrefillSource] = useState<AutoResearchDefaultSource>('defaults');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [activeTab, setActiveTab] = useState<'conversational' | 'advanced'>('conversational');
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
 
   // Sync form when sshConfig changes (e.g. from previous session)
@@ -102,9 +104,10 @@ export function AutoResearchSetupModal() {
     }
     setSubmitError(null);
     setIsStarting(false);
+    setActiveTab('conversational');
     const resolved = resolveAutoResearchDefaultConfig(lastUsedConfig);
     applyPrefillConfig(resolved.source, resolved.config);
-  }, [applyPrefillConfig, lastUsedConfig, showSetupModal]);
+  }, [applyPrefillConfig, lastUsedConfig, setActiveTab, showSetupModal]);
 
   useEffect(() => {
     setSubmitError(null);
@@ -221,39 +224,66 @@ export function AutoResearchSetupModal() {
     void handleStart();
   }, [handleStart]);
 
+  const handleBootstrapReady = useCallback(() => {
+    setShowSetupModal(false);
+    setAgentPanelTab('autoresearch');
+  }, [setAgentPanelTab, setShowSetupModal]);
+
   if (!showSetupModal) return null;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-150">
       <div
         ref={modalRef}
-        className="w-[420px] bg-white rounded-2xl shadow-2xl border border-gray-200/60 overflow-hidden animate-in zoom-in-95 duration-200"
+        className="flex h-[640px] w-[860px] flex-col overflow-hidden rounded-2xl border border-gray-200/60 bg-white shadow-2xl animate-in zoom-in-95 duration-200"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-indigo-50 rounded-lg">
-              <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-              </svg>
-            </div>
-            <div>
+        <div className="flex-shrink-0 px-5 pt-5 pb-3">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-indigo-50 rounded-lg">
+                <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                </svg>
+              </div>
               <h3 className="text-sm font-bold text-gray-900">AutoResearch</h3>
-              <p className="text-[10px] text-gray-400">Configure experiment loop</p>
             </div>
+            <button
+              onClick={() => setShowSetupModal(false)}
+              className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-          <button
-            onClick={() => setShowSetupModal(false)}
-            className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
-          >
-            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          {/* Tab bar */}
+          <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setActiveTab('conversational')}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'conversational' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Conversational
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('advanced')}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'advanced' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Advanced
+            </button>
+          </div>
         </div>
 
         {/* Body */}
-        <form className="px-5 pb-5 space-y-3" onSubmit={handleSubmit}>
+        {activeTab === 'conversational' ? (
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            <BootstrapChatView onReady={handleBootstrapReady} />
+          </div>
+        ) : (
+        <form className="min-h-0 flex-1 overflow-y-auto px-5 pb-5" onSubmit={handleSubmit}>
+          <div className="mx-auto max-w-[560px] space-y-3">
           {/* Target Section */}
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Execution Target</label>
@@ -442,7 +472,9 @@ export function AutoResearchSetupModal() {
               {agentConfigError}
             </p>
           )}
+          </div>
         </form>
+        )}
       </div>
     </div>
   );

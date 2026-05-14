@@ -1,13 +1,7 @@
 import { addFileArtifact } from '@/services/artifactDetector';
 import { createDoc } from '@/services/docService';
+import { DOCS_CHANGED_EVENT, type DocsChangedEventDetail } from '@/services/docEvents';
 import { useArtifactsStore } from '@/store/artifactsStore';
-
-export const DOCS_CHANGED_EVENT = 'pipi:docs-changed';
-
-export interface DocsChangedEventDetail {
-  workDir: string;
-  path: string;
-}
 
 interface SaveBrowserBenchmarkArtifactOptions {
   sessionId?: string | null;

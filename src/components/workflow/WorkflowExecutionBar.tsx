@@ -7,9 +7,11 @@
  * - Clear canvas button
  */
 
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
+import { useUIStore } from '@/store/uiStore';
 import { workflowEngine } from '@/services/workflowEngine';
+import { validateWorkflowForRun } from '@/services/workflow/validation';
 import { t } from '@/i18n';
 import { GoalStatusBadge } from './GoalStatusBadge';
 
@@ -18,26 +20,27 @@ export function WorkflowExecutionBar() {
     s.instances.find(i => i.id === s.currentInstanceId) ?? null
   );
   const agents = currentInstance?.agents ?? [];
-  const hasProjectGoal = Boolean(currentInstance?.projectGoal?.trim());
   const isRunning = useWorkflowStore((s) => s.isRunning);
-  const hasAgentTaskFallback = agents.some((agent) =>
-    Boolean(agent.task?.trim() || agent.taskPrompt?.trim() || agent.taskInstruction?.trim())
-  );
-  const canRun = agents.length > 0 && (hasProjectGoal || hasAgentTaskFallback) && !isRunning;
+  const validationResult = useMemo(() => validateWorkflowForRun(currentInstance), [currentInstance]);
+  const canRun = validationResult.valid && !isRunning;
   const currentRunningAgentId = useWorkflowStore((s) => s.currentRunningAgentId);
   const clearCanvas = useWorkflowStore((s) => s.clearCanvas);
+  const addNotification = useUIStore((s) => s.addNotification);
   const startingRef = useRef(false);
 
   const currentAgent = agents.find((a) => a.id === currentRunningAgentId);
   const currentAgentName = currentAgent?.name || '';
+  const runningAgentIndex = currentAgent ? agents.findIndex((agent) => agent.id === currentAgent.id) : -1;
 
-  const runDisabledReason = agents.length === 0
-    ? t('workflow.output.noAgents')
-    : (!hasProjectGoal && !hasAgentTaskFallback)
-      ? t('workflow.goalPanel.projectGoalRequired')
-      : undefined;
+  const runDisabledReason = isRunning
+    ? '当前 Workflow 正在运行。'
+    : validationResult.firstError?.message ?? undefined;
 
   const handleRun = async () => {
+    if (!validationResult.valid) {
+      addNotification('error', validationResult.firstError?.message ?? '当前 Workflow 配置无效，无法运行。');
+      return;
+    }
     if (!canRun || startingRef.current || workflowEngine.getIsRunning()) return;
     startingRef.current = true;
     try {
@@ -52,6 +55,10 @@ export function WorkflowExecutionBar() {
   };
 
   const handleClear = () => {
+    if (isRunning) {
+      addNotification('warning', '工作流运行中，当前不能清空画布。');
+      return;
+    }
     if (window.confirm(t('workflow.clearCanvasConfirm'))) {
       clearCanvas();
     }
@@ -91,16 +98,19 @@ export function WorkflowExecutionBar() {
           />
           {isRunning ? (
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className="font-medium text-blue-600">
-                {(() => {
-                  const idx = agents.findIndex((a) => a.id === currentRunningAgentId);
-                  return idx >= 0 ? `${idx + 1}/${agents.length}` : '';
-                })()}
-              </span>
-              <span className="truncate">{currentAgentName}</span>
+              {runningAgentIndex >= 0 && (
+                <span className="font-medium text-blue-600">
+                  {`${runningAgentIndex + 1}/${agents.length}`}
+                </span>
+              )}
+              <span className="truncate">{currentAgentName || '工作流执行中'}</span>
             </span>
           ) : (
-            <span className="truncate">{t('workflow.clearCanvasWarning')}</span>
+            <span className="truncate">
+              {validationResult.valid
+                ? t('workflow.clearCanvasWarning')
+                : validationResult.firstError?.message}
+            </span>
           )}
         </div>
 
@@ -136,6 +146,12 @@ export function WorkflowExecutionBar() {
           </button>
         </div>
       </div>
+
+      {!isRunning && !validationResult.valid && (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          {validationResult.firstError?.message}
+        </div>
+      )}
     </div>
   );
 }

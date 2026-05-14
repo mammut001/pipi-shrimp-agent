@@ -170,7 +170,7 @@ export function buildResolvedChatRequest(
       baseUrl: config.baseUrl || '',
       systemPrompt: systemPromptBudget.text,
       noTools: options.noTools,
-      allowBrowserTools: options.allowBrowserTools,
+      allowBrowserTools: options.noTools ? false : options.allowBrowserTools,
       sessionId: options.sessionId,
       provider: resolveProviderRequestHint(config.provider, config.apiFormat),
       apiFormat: config.apiFormat || undefined,

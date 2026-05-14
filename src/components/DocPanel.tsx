@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { DOCS_CHANGED_EVENT, type DocsChangedEventDetail } from '@/services/browserBenchmarkArtifacts';
+import { DOCS_CHANGED_EVENT, type DocsChangedEventDetail } from '@/services/docEvents';
 import {
   listDocs,
   readDoc,

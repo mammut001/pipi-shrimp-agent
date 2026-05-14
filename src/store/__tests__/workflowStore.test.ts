@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const STORAGE_KEY = 'pipi-workflow-v2';
+const addNotification = jest.fn();
 const localStorageMock = {
   data: {} as Record<string, string>,
   getItem: jest.fn((key: string) => localStorageMock.data[key] ?? null),
@@ -17,6 +18,12 @@ Object.defineProperty(globalThis, 'localStorage', {
   writable: true,
 });
 
+jest.mock('@/store/uiStore', () => ({
+  useUIStore: {
+    getState: () => ({ addNotification }),
+  },
+}));
+
 async function loadWorkflowStoreModule() {
   jest.resetModules();
   return import('../workflowStore');
@@ -28,6 +35,7 @@ describe('workflowStore', () => {
     localStorageMock.getItem.mockClear();
     localStorageMock.setItem.mockClear();
     localStorageMock.removeItem.mockClear();
+    addNotification.mockClear();
   });
 
   it('creates instances with complete default metadata', async () => {
@@ -201,5 +209,118 @@ describe('workflowStore', () => {
     instance = useWorkflowStore.getState().getCurrentInstance();
     expect(selectAgentIncomingConnections(instance ?? null, developer.id)).toHaveLength(1);
     expect(instance?.agents.find((agent) => agent.id === developer.id)?.inputFrom).toBeNull();
+  });
+
+  it('switching inputFrom rewrites the canonical primary edge consistently', async () => {
+    const {
+      selectAgentIncomingConnections,
+      selectAgentOutgoingConnections,
+      useWorkflowStore,
+    } = await loadWorkflowStoreModule();
+
+    useWorkflowStore.getState().createInstance('Input Rewrite Workflow');
+    const writer = useWorkflowStore.getState().addAgent({ name: 'Writer', role: 'writer' });
+    const reviewer = useWorkflowStore.getState().addAgent({ name: 'Reviewer', role: 'reviewer' });
+    const developer = useWorkflowStore.getState().addAgent({ name: 'Developer', role: 'developer' });
+
+    useWorkflowStore.getState().setAgentInputFrom(developer.id, writer.id);
+    useWorkflowStore.getState().setAgentInputFrom(developer.id, reviewer.id);
+
+    const instance = useWorkflowStore.getState().getCurrentInstance();
+    expect(instance?.agents.find((agent) => agent.id === developer.id)?.inputFrom).toBe(reviewer.id);
+    expect(selectAgentIncomingConnections(instance ?? null, developer.id)).toEqual([
+      expect.objectContaining({ sourceAgentId: reviewer.id, targetAgentId: developer.id }),
+    ]);
+    expect(selectAgentOutgoingConnections(instance ?? null, writer.id)).toHaveLength(0);
+  });
+
+  it('deleting the selected latest run falls back to the nearest remaining run', async () => {
+    const { useWorkflowStore } = await loadWorkflowStoreModule();
+
+    useWorkflowStore.getState().createInstance('Run History Workflow');
+    useWorkflowStore.getState().addWorkflowRun({
+      id: 'run-1',
+      title: 'Run 1',
+      projectGoal: 'Goal 1',
+      successCriteria: '',
+      status: 'completed',
+      startTime: 1,
+      agents: [],
+      currentIteration: 1,
+      goalEvaluations: [],
+      reachedGoal: true,
+    });
+    useWorkflowStore.getState().addWorkflowRun({
+      id: 'run-2',
+      title: 'Run 2',
+      projectGoal: 'Goal 2',
+      successCriteria: '',
+      status: 'completed',
+      startTime: 2,
+      agents: [],
+      currentIteration: 1,
+      goalEvaluations: [],
+      reachedGoal: true,
+    });
+
+    expect(useWorkflowStore.getState().selectedRunId).toBe('run-2');
+
+    useWorkflowStore.getState().deleteWorkflowRun('run-2');
+
+    expect(useWorkflowStore.getState().selectedRunId).toBe('run-1');
+    expect(useWorkflowStore.getState().getCurrentInstance()?.workflowRuns.map((run) => run.id)).toEqual(['run-1']);
+  });
+
+  it('updates run history on the originating instance even after switching current instance', async () => {
+    const { useWorkflowStore } = await loadWorkflowStoreModule();
+
+    const origin = useWorkflowStore.getState().createInstance('Origin Workflow');
+    useWorkflowStore.getState().addWorkflowRun({
+      id: 'run-origin',
+      title: 'Origin Run',
+      projectGoal: 'Ship origin workflow',
+      successCriteria: '',
+      status: 'running',
+      startTime: 1,
+      agents: [],
+      currentIteration: 0,
+      goalEvaluations: [],
+      reachedGoal: false,
+    });
+
+    const other = useWorkflowStore.getState().createInstance('Other Workflow');
+    useWorkflowStore.getState().selectInstance(other.id);
+    useWorkflowStore.getState().updateWorkflowRun('run-origin', {
+      status: 'completed',
+      reachedGoal: true,
+    });
+
+    const state = useWorkflowStore.getState();
+    const originRun = state.instances.find((instance) => instance.id === origin.id)?.workflowRuns[0];
+    const otherRuns = state.instances.find((instance) => instance.id === other.id)?.workflowRuns;
+
+    expect(originRun).toMatchObject({
+      id: 'run-origin',
+      status: 'completed',
+      reachedGoal: true,
+    });
+    expect(otherRuns).toEqual([]);
+  });
+
+  it('blocks topology mutations while a workflow run is active', async () => {
+    const { useWorkflowStore } = await loadWorkflowStoreModule();
+
+    useWorkflowStore.getState().createInstance('Locked Workflow');
+    const writer = useWorkflowStore.getState().addAgent({ name: 'Writer', role: 'writer' });
+    const developer = useWorkflowStore.getState().addAgent({ name: 'Developer', role: 'developer' });
+
+    useWorkflowStore.getState().setRunning(true, writer.id);
+    useWorkflowStore.getState().addConnection(writer.id, developer.id, 'onComplete');
+    useWorkflowStore.getState().removeAgent(writer.id);
+
+    const instance = useWorkflowStore.getState().getCurrentInstance();
+    expect(instance?.agents.map((agent) => agent.id)).toEqual([writer.id, developer.id]);
+    expect(instance?.connections).toHaveLength(0);
+    expect(addNotification).toHaveBeenCalled();
   });
 });

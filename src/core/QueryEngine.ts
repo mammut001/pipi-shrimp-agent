@@ -20,6 +20,10 @@ import { prepareMessagesForVision } from '@/services/vision/visionMessagePrep';
 import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
 import { toError } from '@/utils/errorFormat';
 
+export interface RunChatTurnOptions {
+  noTools?: boolean;
+}
+
 export async function* runChatTurn(
   sessionId: string,
   initialMessages: any[],
@@ -27,6 +31,7 @@ export async function* runChatTurn(
   projectRoot?: string,
   allowBrowserTools: boolean = false,
   requestConfig?: ResolvedAgentConfig,
+  options?: RunChatTurnOptions,
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
   const maxToolBudget = settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
@@ -105,6 +110,7 @@ export async function* runChatTurn(
         allowBrowserTools,
         sessionId,
         contextBudget: { strict: strictBudgetRetry },
+        noTools: options?.noTools,
       });
       const stream = invokeRustAPIStream(request.params);
 

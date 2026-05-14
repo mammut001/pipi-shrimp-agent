@@ -24,13 +24,15 @@ import {
   persistAutoResearchLastUsedConfig,
   type AutoResearchDefaultConfig,
 } from '@/services/autoresearch/defaultConfig';
+import { withSshConfigDefaults } from '@/types/ssh';
+import type { ExecMode, SshAuthMode, SshConfig } from '@/types/ssh';
 
 export type { AutoResearchIterationRecord, AutoResearchRunRecord, AutoResearchRunStatus } from '@/services/autoresearch/history';
 
 // ============== Shared SSH Types ==============
 // Imported from centralized types to avoid duplication
-export type { SshConfig, ExecMode, SshAuthMode, withSshConfigDefaults } from '@/types/ssh';
-export { withSshConfigDefaults } from '@/types/ssh';
+export type { SshConfig, ExecMode, SshAuthMode };
+export { withSshConfigDefaults };
 
 // ============== Types ==============
 

@@ -1,14 +1,44 @@
 import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { clickElement, createDomHarness, flushEffects } from './domHarness';
 
-const mockUseWorkflowStore = jest.fn();
+const listeners = new Set<() => void>();
+let workflowState: any;
+
+function emitWorkflowState(): void {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function setWorkflowState(updater: (state: any) => any): void {
+  workflowState = updater(workflowState);
+  emitWorkflowState();
+}
+
+const useWorkflowStoreMock = Object.assign(
+  (selector?: (state: any) => unknown) => {
+    const React = require('react') as typeof import('react');
+    return React.useSyncExternalStore(
+      (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      () => (selector ? selector(workflowState) : workflowState),
+      () => (selector ? selector(workflowState) : workflowState),
+    );
+  },
+  {
+    getState: () => workflowState,
+  },
+);
 
 jest.mock('@/i18n', () => ({
   t: (key: string) => key,
 }));
 
 jest.mock('@/store/workflowStore', () => ({
-  useWorkflowStore: (selector: unknown) => mockUseWorkflowStore(selector),
+  useWorkflowStore: useWorkflowStoreMock,
 }));
 
 jest.mock('../WorkflowGoalPanel', () => ({
@@ -20,7 +50,18 @@ jest.mock('../WorkflowExecutionBar', () => ({
 }));
 
 jest.mock('../WorkflowCanvas', () => ({
-  WorkflowCanvas: () => createElement('div', { 'data-testid': 'workflow-canvas' }, 'workflow.canvas.emptyState'),
+  WorkflowCanvas: ({
+    selectedAgentId,
+    onAgentSelect,
+  }: {
+    selectedAgentId: string | null;
+    onAgentSelect: (id: string | null) => void;
+  }) => createElement(
+    'div',
+    { 'data-testid': 'workflow-canvas' },
+    createElement('span', null, `selected:${selectedAgentId ?? 'none'}`),
+    createElement('button', { onClick: () => onAgentSelect('agent-1') }, 'select-agent-1'),
+  ),
 }));
 
 jest.mock('../WorkflowOutputPanel', () => ({
@@ -32,41 +73,107 @@ jest.mock('../WorkflowRunHistory', () => ({
 }));
 
 jest.mock('../AgentConfigPanel', () => ({
-  AgentConfigPanel: () => createElement('div', { 'data-testid': 'agent-config-panel' }, 'agent-config'),
+  AgentConfigPanel: ({ agentId }: { agentId: string }) => createElement('div', { 'data-testid': 'agent-config-panel' }, `agent-config-panel:${agentId}`),
 }));
 
 import { WorkflowView } from '../WorkflowView';
 
-function createStoreState() {
+function buildWorkflowInstance() {
   return {
-    currentInstanceId: 'workflow-1',
-    instances: [
+    id: 'workflow-1',
+    agents: [
       {
-        id: 'workflow-1',
-        agents: [],
+        id: 'agent-1',
+        name: 'Agent One',
+        task: 'Ship the feature',
+        taskPrompt: 'Implement the requested workflow behavior',
+        taskInstruction: 'Keep the workflow stable.',
       },
     ],
   };
 }
 
+function createWorkflowState(hasInstance: boolean = true) {
+  return {
+    currentInstanceId: hasInstance ? 'workflow-1' : null,
+    instances: hasInstance ? [buildWorkflowInstance()] : [],
+    createInstance: () => {
+      setWorkflowState((state) => ({
+        ...state,
+        currentInstanceId: 'workflow-1',
+        instances: [buildWorkflowInstance()],
+      }));
+    },
+    updateAgent: jest.fn(),
+  };
+}
+
+function findButtonByText(container: HTMLElement, text: string): HTMLButtonElement {
+  return Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes(text)) as HTMLButtonElement;
+}
+
 describe('WorkflowView', () => {
+  let harness: ReturnType<typeof createDomHarness>;
+
   beforeEach(() => {
-    mockUseWorkflowStore.mockImplementation((selector: (state: ReturnType<typeof createStoreState>) => unknown) =>
-      selector(createStoreState())
-    );
+    workflowState = createWorkflowState(true);
+    listeners.clear();
+    harness = createDomHarness();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    listeners.clear();
+    await harness.cleanup();
     jest.clearAllMocks();
   });
 
-  it('renders the center flex stack with a visible canvas region when there are no agents', () => {
-    const markup = renderToStaticMarkup(createElement(WorkflowView));
+  it('renders the empty state and transitions into the workflow layout after creating an instance', async () => {
+    workflowState = createWorkflowState(false);
 
-    expect(markup).toContain('flex h-full min-h-0 min-w-0 overflow-hidden bg-white');
-    expect(markup).toContain('flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden');
-    expect(markup).toContain('workflow.canvas.emptyState');
-    expect(markup).toContain('min-h-[420px]');
-    expect(markup).toContain('h-12');
+    await harness.render(createElement(WorkflowView));
+    expect(harness.container.textContent).toContain('No Active Workflow');
+
+    await clickElement(findButtonByText(harness.container, 'workflow.newWorkflow'), harness.window);
+
+    expect(harness.container.textContent).not.toContain('No Active Workflow');
+    expect(harness.container.textContent).toContain('goal-panel');
+    expect(harness.container.textContent).toContain('execution-bar');
+    expect(harness.container.textContent).toContain('workflow-history');
+  });
+
+  it('clears the selected agent when that agent disappears from the current instance', async () => {
+    await harness.render(createElement(WorkflowView));
+    await clickElement(findButtonByText(harness.container, 'select-agent-1'), harness.window);
+
+    expect(harness.container.textContent).toContain('agent-config-panel:agent-1');
+    expect(harness.container.textContent).toContain('Agent One');
+
+    setWorkflowState((state) => ({
+      ...state,
+      instances: [
+        {
+          ...state.instances[0],
+          agents: [],
+        },
+      ],
+    }));
+    await flushEffects();
+
+    expect(harness.container.textContent).not.toContain('agent-config-panel:agent-1');
+    expect(harness.container.textContent).toContain('selected:none');
+  });
+
+  it('wires the main workflow regions together and expands the output panel on demand', async () => {
+    await harness.render(createElement(WorkflowView));
+
+    expect(harness.container.textContent).toContain('goal-panel');
+    expect(harness.container.textContent).toContain('execution-bar');
+    expect(harness.container.textContent).toContain('workflow-history');
+    expect(harness.container.textContent).toContain('selected:none');
+    expect(harness.container.textContent).not.toContain('workflow-output');
+
+    await clickElement(findButtonByText(harness.container, 'workflow.output.expand'), harness.window);
+
+    expect(harness.container.textContent).toContain('workflow-output');
   });
 });

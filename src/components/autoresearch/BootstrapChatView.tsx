@@ -303,6 +303,7 @@ export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
               key={draftKey}
               draftKey={draftKey}
               submitMode="callback-only"
+              density="compact"
               onSend={(message) => handleSend(message)}
             />
           </div>

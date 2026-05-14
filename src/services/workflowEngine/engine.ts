@@ -9,9 +9,12 @@ import {
 import {
   type GoalEvaluationResult,
   type WorkflowAgent,
+  type WorkflowConnection,
+  type WorkflowInstance,
   type WorkflowRun,
 } from '@/types/workflow';
 import { DEFAULT_MAX_GOAL_ITERATIONS } from '@/services/workflow/defaults';
+import { validateWorkflowForRun } from '@/services/workflow/validation';
 import {
   buildDownstreamAgentPrompt,
   buildEntryAgentPrompt,
@@ -52,6 +55,19 @@ interface WorkflowEngineDeps {
   now: () => number;
 }
 
+interface WorkflowRunSnapshot {
+  instanceId: string;
+  instanceName: string;
+  projectGoal: string;
+  successCriteria: string;
+  maxGoalIterations: number;
+  goalEvaluatorAgentId: string | null;
+  agents: WorkflowAgent[];
+  executableAgents: WorkflowAgent[];
+  connections: WorkflowConnection[];
+  dirtyAgentIds: string[];
+}
+
 function defaultDeps(): WorkflowEngineDeps {
   return {
     createRunDirectory: (runId) => invoke<string>('create_workflow_run_directory', { runId }),
@@ -65,6 +81,91 @@ function defaultDeps(): WorkflowEngineDeps {
   };
 }
 
+function cloneWorkflowAgent(agent: WorkflowAgent): WorkflowAgent {
+  return {
+    ...agent,
+    position: { ...agent.position },
+    outputRoutes: (agent.outputRoutes ?? []).map((route) => ({ ...route })),
+    execution: { ...agent.execution },
+    model: agent.model ? { ...agent.model } : undefined,
+    retryPolicy: agent.retryPolicy
+      ? {
+          ...agent.retryPolicy,
+          fallbackConfigIds: [...(agent.retryPolicy.fallbackConfigIds ?? [])],
+        }
+      : undefined,
+    notifyOnComplete: [...(agent.notifyOnComplete ?? [])],
+  };
+}
+
+function cloneWorkflowConnection(connection: WorkflowConnection): WorkflowConnection {
+  return { ...connection };
+}
+
+function freezeWorkflowRunSnapshot(snapshot: WorkflowRunSnapshot): WorkflowRunSnapshot {
+  for (const agent of snapshot.agents) {
+    Object.freeze(agent.position);
+    Object.freeze(agent.outputRoutes);
+    Object.freeze(agent.execution);
+    if (agent.model) {
+      Object.freeze(agent.model);
+    }
+    if (agent.retryPolicy) {
+      Object.freeze(agent.retryPolicy.fallbackConfigIds ?? []);
+      Object.freeze(agent.retryPolicy);
+    }
+    Object.freeze(agent.notifyOnComplete ?? []);
+    Object.freeze(agent);
+  }
+
+  for (const connection of snapshot.connections) {
+    Object.freeze(connection);
+  }
+
+  Object.freeze(snapshot.agents);
+  Object.freeze(snapshot.executableAgents);
+  Object.freeze(snapshot.connections);
+  Object.freeze(snapshot.dirtyAgentIds);
+
+  return Object.freeze(snapshot);
+}
+
+function createWorkflowRunSnapshot(instance: WorkflowInstance): WorkflowRunSnapshot {
+  const agents = instance.agents.map(cloneWorkflowAgent);
+  const connections = instance.connections.map(cloneWorkflowConnection);
+
+  return freezeWorkflowRunSnapshot({
+    instanceId: instance.id,
+    instanceName: instance.name,
+    projectGoal: instance.projectGoal?.trim() || '',
+    successCriteria: instance.successCriteria?.trim() || '',
+    maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
+    goalEvaluatorAgentId: instance.goalEvaluatorAgentId ?? null,
+    agents,
+    executableAgents: agents.filter((agent) => agent.role !== 'goal-evaluator'),
+    connections,
+    dirtyAgentIds: [...(instance.dirtyAgentIds ?? [])],
+  });
+}
+
+function buildGoalEvaluationInstance(snapshot: WorkflowRunSnapshot): WorkflowInstance {
+  return {
+    id: snapshot.instanceId,
+    name: snapshot.instanceName,
+    projectGoal: snapshot.projectGoal,
+    successCriteria: snapshot.successCriteria,
+    goalEvaluatorAgentId: snapshot.goalEvaluatorAgentId,
+    maxGoalIterations: snapshot.maxGoalIterations,
+    agents: snapshot.agents,
+    connections: snapshot.connections,
+    workflowRuns: [],
+    activeRunId: null,
+    dirtyAgentIds: [...snapshot.dirtyAgentIds],
+    createdAt: 0,
+    updatedAt: 0,
+  };
+}
+
 export class WorkflowEngine {
   private readonly deps: WorkflowEngineDeps;
   private readonly transcripts = new WorkflowTranscriptManager();
@@ -74,6 +175,7 @@ export class WorkflowEngine {
   private totalSteps = 0;
   private workingDirectory = '';
   private currentRunId = '';
+  private currentInstanceId = '';
   private onStreamChunk?: StreamChunkCallback;
 
   constructor(deps?: Partial<WorkflowEngineDeps>) {
@@ -105,13 +207,30 @@ export class WorkflowEngine {
   }
 
   reset(): void {
+    const store = useWorkflowStore.getState();
+    const instanceId = this.currentInstanceId || store.currentInstanceId || '';
+
+    if (this.currentRunId) {
+      store.updateWorkflowRun(this.currentRunId, {
+        status: 'stopped',
+        endTime: this.deps.now(),
+        reachedGoal: false,
+      });
+    }
+
+    if (instanceId) {
+      store.resetAllStatuses(instanceId);
+    }
+
+    store.setRunning(false, null);
     this.isRunning = false;
     this.stopRequested = false;
     this.totalSteps = 0;
     this.agentOutputs.clear();
     this.transcripts.clear();
     this.workingDirectory = '';
-    useWorkflowStore.getState().resetAllStatuses();
+    this.currentRunId = '';
+    this.currentInstanceId = '';
   }
 
   async stop(): Promise<void> {
@@ -209,6 +328,7 @@ ${output}
   }
 
   private async updateGoalEvaluatorStatus(
+    instanceId: string,
     evaluatorAgentId: string | null | undefined,
     status: WorkflowAgent['status'],
     runId: string,
@@ -216,7 +336,7 @@ ${output}
     if (!evaluatorAgentId) return;
     if (!this.shouldAcceptRunMutation(runId)) return;
     const store = useWorkflowStore.getState();
-    store.setAgentStatus(evaluatorAgentId, status);
+    store.setAgentStatusInInstance(instanceId, evaluatorAgentId, status);
     store.updateRunAgent(runId, evaluatorAgentId, {
       status: status === 'completed' ? 'completed' : status === 'running' ? 'running' : 'error',
       endTime: status === 'running' ? undefined : this.deps.now(),
@@ -224,29 +344,19 @@ ${output}
   }
 
   private async performGoalEvaluation(
-    instanceGoal: string,
-    successCriteria: string,
-    agents: WorkflowAgent[],
+    snapshot: WorkflowRunSnapshot,
     iteration: number,
   ): Promise<GoalEvaluationResult> {
-    const instance = useWorkflowStore.getState().getCurrentInstance();
-    if (!instance) {
-      throw new Error('工作流实例不存在，无法执行 Goal 评估。');
-    }
-
     const runId = this.currentRunId;
+    const evaluationInstance = buildGoalEvaluationInstance(snapshot);
 
-    await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'running', runId);
+    await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'running', runId);
 
     try {
       const result = await this.deps.evaluateGoal(
         {
-          instance: {
-            ...instance,
-            projectGoal: instanceGoal,
-            successCriteria,
-          },
-          agents,
+          instance: evaluationInstance,
+          agents: snapshot.agents,
           agentOutputs: this.agentOutputs,
           iteration,
         },
@@ -258,29 +368,26 @@ ${output}
         },
       );
 
-      await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'completed', runId);
+      await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'completed', runId);
       return result;
     } catch (error) {
-      await this.updateGoalEvaluatorStatus(instance.goalEvaluatorAgentId, 'error', runId);
+      await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'error', runId);
       throw error;
     }
   }
 
   private async runPlannedAgent(
     agent: WorkflowAgent,
-    agents: WorkflowAgent[],
-    connections: Parameters<typeof getPredecessorIds>[2],
-    projectGoal: string,
-    successCriteria: string,
+    snapshot: WorkflowRunSnapshot,
     iteration: number,
     previousEvaluation: GoalEvaluationResult | null,
     failedAgents: Set<string>,
   ): Promise<void> {
     const store = useWorkflowStore.getState();
     const runId = this.currentRunId;
-    const blockingFailures = getBlockingFailures(agent, agents, connections, failedAgents);
+    const blockingFailures = getBlockingFailures(agent, snapshot.executableAgents, snapshot.connections, failedAgents);
     if (blockingFailures.length > 0) {
-      store.setAgentStatus(agent.id, 'error');
+      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'error');
       store.updateRunAgent(runId, agent.id, { status: 'skipped', endTime: this.deps.now() });
       return;
     }
@@ -290,18 +397,18 @@ ${output}
       throw new Error(`已达最大步数限制（${MAX_TOTAL_STEPS}步），工作流已停止`);
     }
 
-    const predecessorIds = getPredecessorIds(agent.id, agents, connections);
+    const predecessorIds = getPredecessorIds(agent.id, snapshot.executableAgents, snapshot.connections);
     const upstreams: UpstreamOutput[] = predecessorIds
       .filter((id) => this.agentOutputs.has(id))
       .map((id) => ({
-        agent: agents.find((item) => item.id === id)!,
+        agent: snapshot.executableAgents.find((item) => item.id === id)!,
         output: this.agentOutputs.get(id)!,
       }));
-    const inboxMessages = readAgentInbox(agent.id, this.currentRunId, agents);
+    const inboxMessages = readAgentInbox(agent.id, this.currentRunId, snapshot.agents);
     const prompt = predecessorIds.length === 0 && inboxMessages.length === 0
       ? buildEntryAgentPrompt({
-          projectGoal,
-          successCriteria,
+          projectGoal: snapshot.projectGoal,
+          successCriteria: snapshot.successCriteria,
           agent,
           iteration,
           previousEvaluation,
@@ -309,8 +416,8 @@ ${output}
         })
       : buildDownstreamAgentPrompt(
           {
-            projectGoal,
-            successCriteria,
+            projectGoal: snapshot.projectGoal,
+            successCriteria: snapshot.successCriteria,
             agent,
             upstreams,
             iteration,
@@ -320,7 +427,7 @@ ${output}
         );
 
     store.setRunning(true, agent.id);
-    store.setAgentStatus(agent.id, 'running');
+      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'running');
     store.updateRunAgent(runId, agent.id, {
       status: 'running',
       startTime: this.deps.now(),
@@ -348,8 +455,8 @@ ${output}
       if (!this.shouldAcceptRunMutation(runId)) {
         return;
       }
-      store.setAgentStatus(agent.id, 'completed');
-      store.clearAgentDirty(agent.id);
+      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'completed');
+      store.clearAgentDirtyInInstance(snapshot.instanceId, agent.id);
       store.updateRunAgent(runId, agent.id, {
         status: 'completed',
         endTime: this.deps.now(),
@@ -360,7 +467,7 @@ ${output}
         artifactBaseName,
       });
       failedAgents.delete(agent.id);
-      await this.deps.notify(agent, agents, output, runId);
+      await this.deps.notify(agent, snapshot.agents, output, runId);
     } catch (error) {
       if (!this.shouldAcceptRunMutation(runId)) {
         return;
@@ -374,7 +481,7 @@ ${output}
       });
       const artifactBaseName = buildAgentArtifactBaseName(agent);
       const transcriptFilePath = await this.saveTranscriptToFile(agent, artifactBaseName, runId);
-      store.setAgentStatus(agent.id, 'error');
+      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'error');
       store.updateRunAgent(runId, agent.id, {
         status: 'error',
         endTime: this.deps.now(),
@@ -391,32 +498,48 @@ ${output}
     if (this.isRunning) return;
 
     const store = useWorkflowStore.getState();
-    const instance = store.getCurrentInstance();
-    if (!instance) {
+    let instance: WorkflowInstance;
+
+    try {
+      instance = store.getCurrentInstanceOrThrow();
+    } catch {
       useUIStore.getState().addNotification('error', '请先创建一个 Workflow');
       return;
     }
 
-    if (instance.agents.length === 0) {
-      useUIStore.getState().addNotification('error', '请先添加至少一个 Agent');
+    const configuredGoal = instance.projectGoal?.trim() || userPrompt?.trim() || '';
+    const successCriteria = instance.successCriteria?.trim() || '';
+    const validationResult = validateWorkflowForRun({
+      ...instance,
+      projectGoal: configuredGoal,
+      successCriteria,
+    });
+
+    if (!validationResult.valid) {
+      useUIStore.getState().addNotification('error', validationResult.firstError?.message ?? '当前 Workflow 配置无效，无法运行。');
       return;
     }
 
-    const projectGoal = this.deriveWorkflowGoal(instance.agents, instance.projectGoal || userPrompt);
-    const successCriteria = instance.successCriteria?.trim() || '';
+    const projectGoal = this.deriveWorkflowGoal(instance.agents, configuredGoal);
+    const snapshot = createWorkflowRunSnapshot({
+      ...instance,
+      projectGoal,
+      successCriteria,
+    });
     const localRunId = crypto.randomUUID();
 
     this.isRunning = true;
     this.stopRequested = false;
     this.totalSteps = 0;
     this.currentRunId = localRunId;
+    this.currentInstanceId = snapshot.instanceId;
     this.agentOutputs.clear();
     this.transcripts.clear();
 
     registerDiagnosticsTask({
       id: localRunId,
       kind: 'workflow',
-      source: `instance:${instance.id}`,
+      source: `instance:${snapshot.instanceId}`,
       state: 'created',
       cancelable: true,
       title: projectGoal.slice(0, 120),
@@ -425,9 +548,9 @@ ${output}
       await this.stop();
     });
 
-    store.resetAllStatuses();
+    store.resetAllStatuses(snapshot.instanceId);
     store.setRunning(true, null);
-    store.setActiveRunId(localRunId);
+    store.setActiveRunId(localRunId, snapshot.instanceId);
 
     try {
       this.workingDirectory = await this.deps.createRunDirectory(localRunId);
@@ -442,7 +565,7 @@ ${output}
       successCriteria,
       status: 'running',
       startTime: this.deps.now(),
-      agents: instance.agents.map((agent) => ({
+      agents: snapshot.agents.map((agent) => ({
         agentId: agent.id,
         agentName: agent.name,
         status: 'pending',
@@ -452,7 +575,7 @@ ${output}
       goalEvaluations: [],
       reachedGoal: false,
     };
-    store.addWorkflowRun(run);
+    store.addWorkflowRun(run, snapshot.instanceId);
 
     updateDiagnosticsTask(localRunId, {
       state: 'running',
@@ -462,30 +585,27 @@ ${output}
 
     let reachedGoal = false;
     let lastEvaluation: GoalEvaluationResult | null = null;
-    let dirtyAgentIds = [...(instance.dirtyAgentIds ?? [])];
+    let dirtyAgentIds = [...snapshot.dirtyAgentIds];
     const failedAgents = new Set<string>();
-    const executableAgents = instance.agents.filter((agent) => agent.role !== 'goal-evaluator');
+    const executableAgents = snapshot.executableAgents;
 
     try {
-      const maxIterations = instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS;
+      const maxIterations = snapshot.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS;
 
       for (let iteration = 1; iteration <= maxIterations && !this.stopRequested; iteration += 1) {
         store.updateWorkflowRun(localRunId, { currentIteration: iteration });
         for (const dirtyAgentId of dirtyAgentIds) {
-          store.clearAgentDirty(dirtyAgentId);
+          store.clearAgentDirtyInInstance(snapshot.instanceId, dirtyAgentId);
         }
 
-        const executionPlan = buildExecutionPlan(executableAgents, instance.connections, dirtyAgentIds);
+        const executionPlan = buildExecutionPlan(executableAgents, snapshot.connections, dirtyAgentIds);
         dirtyAgentIds = [];
 
         for (const agent of executionPlan) {
           if (this.stopRequested) break;
           await this.runPlannedAgent(
             agent,
-            executableAgents,
-            instance.connections,
-            projectGoal,
-            successCriteria,
+            snapshot,
             iteration,
             lastEvaluation,
             failedAgents,
@@ -496,12 +616,7 @@ ${output}
           break;
         }
 
-        lastEvaluation = await this.performGoalEvaluation(
-          projectGoal,
-          successCriteria,
-          instance.agents,
-          iteration,
-        );
+        lastEvaluation = await this.performGoalEvaluation(snapshot, iteration);
         if (!this.shouldAcceptRunMutation(localRunId)) {
           break;
         }
@@ -515,7 +630,7 @@ ${output}
         const reentryAgentIds = selectReentryAgents({
           evaluation: lastEvaluation,
           agents: executableAgents,
-          connections: instance.connections,
+          connections: snapshot.connections,
           agentOutputs: this.agentOutputs,
         });
 
@@ -525,7 +640,7 @@ ${output}
 
         dirtyAgentIds = reentryAgentIds;
         for (const agentId of reentryAgentIds) {
-          store.markAgentDirty(agentId);
+          store.markAgentDirtyInInstance(snapshot.instanceId, agentId);
         }
       }
 
@@ -565,8 +680,12 @@ ${output}
     } finally {
       if (this.currentRunId === localRunId) {
         this.isRunning = false;
+        this.stopRequested = false;
+        this.totalSteps = 0;
         store.setRunning(false, null);
         this.currentRunId = '';
+        this.currentInstanceId = '';
+        this.workingDirectory = '';
       }
     }
   }

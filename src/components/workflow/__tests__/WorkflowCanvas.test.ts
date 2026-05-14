@@ -66,6 +66,7 @@ import { WorkflowCanvas } from '../WorkflowCanvas';
 function createWorkflowState() {
   return {
     currentInstanceId: 'workflow-1',
+    isRunning: false,
     instances: [
       {
         id: 'workflow-1',
@@ -110,5 +111,25 @@ describe('WorkflowCanvas', () => {
     expect(markup).toContain('workflow.canvas.emptyState');
     expect(markup).toContain('h-full w-full bg-gray-50');
     expect(markup).toContain('pointer-events-none absolute inset-0');
+  });
+
+  it('locks topology controls while a workflow run is active', () => {
+    mockUseWorkflowStore.mockImplementation((selector?: (state: ReturnType<typeof createWorkflowState>) => unknown) => {
+      const state = {
+        ...createWorkflowState(),
+        isRunning: true,
+      };
+      return selector ? selector(state) : state;
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(WorkflowCanvas, {
+        selectedAgentId: null,
+        onAgentSelect: jest.fn(),
+      })
+    );
+
+    expect(markup).toContain('运行中，拓扑编辑已锁定');
+    expect((markup.match(/disabled=""/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 });

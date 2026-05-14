@@ -141,6 +141,7 @@ You are running one autonomous experiment iteration inside Pipi-Shrimp AutoResea
 - Recommended run command: ${environmentSummary.recommendedRunCommand}
 - Required files already confirmed: ${environmentSummary.runScriptPath}, ${environmentSummary.notesPath}
 - Workspace writable: ${environmentSummary.worktreeWritable ? 'yes' : 'no'}
+- GPU telemetry: ${environmentSummary.gpuSummary || 'not checked'}
 
 ## Session File
 ${sessionContent}
@@ -181,6 +182,8 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 11. ${toolLaneGuard}
 12. Do not repeat dead ends from the living doc unless you have a materially different reason.
 13. If you are still exploring after the first inspection pass, stop exploring and either run the experiment or emit a FAILED result with a concrete failReason.
+14. Treat GPU thermal state as a safety constraint. If telemetry shows GPU temperature >= 85C, fan speed is unavailable/0 during a GPU-heavy run, or the target appears thermally unsafe, avoid escalating workload and write a FAILED result with failReason="thermal_guard" instead of pushing another run.
+15. Do not change GPU fan speed, power limits, persistence mode, or other hardware controls unless the session file explicitly permits hardware control and the command is safe for the target.
 `;
 }
 

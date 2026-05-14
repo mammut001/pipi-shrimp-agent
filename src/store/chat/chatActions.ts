@@ -27,6 +27,7 @@ import { useUIStore } from '../uiStore';
 import { appendBrowserResultToSystemPrompt, createBrowserResultMessages, mapBrowserResponseArtifacts } from './chatBrowserHandoff';
 import { CHAT_ERROR_MESSAGES, normalizeCaughtErrorMessage } from './chatErrors';
 import { shouldPersistMessage } from './chatPersistence';
+import { PLAN_MODE_SYSTEM_PROMPT, savePlanModeDoc, shouldSavePlanDoc } from '@/services/planMode';
 import {
   createStreamingAccumulator,
   flushBuffer,
@@ -229,6 +230,9 @@ export function createChatActionMethods({
         return;
       }
 
+      const sessionSnapshot = get().sessions.find((session) => session.id === activeSessionId);
+      const isPlanMode = sessionSnapshot?.permissionMode === 'plan-only';
+
       const diagnosticsTaskId = `chat:${activeSessionId}:${Date.now()}`;
       activeChatDiagnosticsTaskId = diagnosticsTaskId;
       registerDiagnosticsTask({
@@ -255,6 +259,9 @@ export function createChatActionMethods({
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       let streamState = createStreamingAccumulator();
       let sessionWorkDir: string | undefined;
+      let turnHadError = false;
+      let sawTurnComplete = false;
+      let planDocSaved = false;
 
       try {
         const userMessage = createMessage('user', content, undefined, options?.attachments);
@@ -263,38 +270,40 @@ export function createChatActionMethods({
         }
         await addMessage(userMessage);
 
-        try {
-          const {
-            classifyIntent,
-            buildDelegationPlan,
-            describePlan,
-            runDelegationPlan: executePlan,
-            buildSynthesisPrompt,
-            resolveFollowThrough,
-          } = await import('../../services/orchestration');
+        if (!isPlanMode) {
+          try {
+            const {
+              classifyIntent,
+              buildDelegationPlan,
+              describePlan,
+              runDelegationPlan: executePlan,
+              buildSynthesisPrompt,
+              resolveFollowThrough,
+            } = await import('../../services/orchestration');
 
-          const classification = classifyIntent(content);
-          if (classification.shouldDelegate) {
-            const plan = buildDelegationPlan(classification, content);
-            if (plan.delegate && plan.agents.length > 0) {
-              await addMessage(createMessage('assistant', describePlan(plan)));
-              const currentSession = get().sessions.find((session) => session.id === activeSessionId);
-              sessionWorkDir = currentSession?.workDir;
-              const delegationResult = await executePlan(plan, activeSessionId, sessionWorkDir);
-              const followThrough = resolveFollowThrough(plan);
-              const synthesisPrompt = buildSynthesisPrompt(plan, delegationResult, followThrough);
-              const synthesisMsg = createMessage('user', synthesisPrompt);
-              synthesisMsg.metadata = {
-                orchestrationPlanId: plan.id,
-                orchestrationPhase: 'synthesis',
-                followThroughMode: followThrough.mode,
-                hidden: true,
-              };
-              await addMessage(synthesisMsg);
+            const classification = classifyIntent(content);
+            if (classification.shouldDelegate) {
+              const plan = buildDelegationPlan(classification, content);
+              if (plan.delegate && plan.agents.length > 0) {
+                await addMessage(createMessage('assistant', describePlan(plan)));
+                const currentSession = get().sessions.find((session) => session.id === activeSessionId);
+                sessionWorkDir = currentSession?.workDir;
+                const delegationResult = await executePlan(plan, activeSessionId, sessionWorkDir);
+                const followThrough = resolveFollowThrough(plan);
+                const synthesisPrompt = buildSynthesisPrompt(plan, delegationResult, followThrough);
+                const synthesisMsg = createMessage('user', synthesisPrompt);
+                synthesisMsg.metadata = {
+                  orchestrationPlanId: plan.id,
+                  orchestrationPhase: 'synthesis',
+                  followThroughMode: followThrough.mode,
+                  hidden: true,
+                };
+                await addMessage(synthesisMsg);
+              }
             }
+          } catch (orchestrationError) {
+            console.warn('[Orchestration] Classification/delegation failed, continuing normally:', orchestrationError);
           }
-        } catch (orchestrationError) {
-          console.warn('[Orchestration] Classification/delegation failed, continuing normally:', orchestrationError);
         }
 
         setStreaming(true);
@@ -330,7 +339,7 @@ export function createChatActionMethods({
         const sessionWorkingFiles = currentSession?.workingFiles ?? [];
         sessionWorkDir = currentSession?.workDir;
 
-        if (sessionWorkDir && !currentSession?.outputDir) {
+        if (!isPlanMode && sessionWorkDir && !currentSession?.outputDir) {
           try {
             const outputDir = await safeInvoke<string>('get_next_output_dir', { workDir: sessionWorkDir });
             await safeInvoke('create_directory', { path: outputDir });
@@ -389,9 +398,14 @@ export function createChatActionMethods({
           originalQuery: '',
           browserResult: '',
         });
+        const finalSystemPrompt = isPlanMode
+          ? `${systemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
+          : systemPrompt;
 
         const { runChatTurn } = await import('../../core/QueryEngine');
-        const engine = runChatTurn(activeSessionId, currentMessages(), systemPrompt, sessionWorkDir, options?.allowBrowserTools || false);
+        const engine = isPlanMode
+          ? runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, false, undefined, { noTools: true })
+          : runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, options?.allowBrowserTools || false);
         const uiStore = useUIStore.getState();
         let tokenUsageResult: TokenUsage | undefined;
 
@@ -418,6 +432,7 @@ export function createChatActionMethods({
           } else if (chunk.type === 'error') {
             throw chunk.error;
           } else if (chunk.type === 'turn_complete') {
+            sawTurnComplete = true;
             tokenUsageResult = streamState.tokenUsage;
           }
         }
@@ -473,6 +488,49 @@ export function createChatActionMethods({
         activeChatDiagnosticsTaskId = null;
         useUIStore.getState().setActiveSkill(null);
 
+        if (
+          isPlanMode
+          && sawTurnComplete
+          && !turnHadError
+          && !planDocSaved
+        ) {
+          const finalAssistantContent = parsed.content.trim();
+
+          if (finalAssistantContent && shouldSavePlanDoc(finalAssistantContent)) {
+            planDocSaved = true;
+
+            try {
+              const latestSession = get().sessions.find((session) => session.id === activeSessionId);
+              let planWorkDir = latestSession?.workDir ?? sessionWorkDir;
+
+              if (!planWorkDir) {
+                planWorkDir = await ensureSessionWorkDir(activeSessionId, set, get);
+              }
+
+              if (planWorkDir) {
+                sessionWorkDir = planWorkDir;
+                const savedDoc = await savePlanModeDoc({
+                  workDir: planWorkDir,
+                  userRequest: content,
+                  planMarkdown: finalAssistantContent,
+                  sessionId: activeSessionId,
+                });
+
+                uiStore.addNotification('success', `Plan saved to Docs: ${savedDoc.filename}`, activeSessionId);
+              } else {
+                uiStore.addNotification(
+                  'warning',
+                  'Plan generated, but no working directory was available to save it to Docs.',
+                  activeSessionId,
+                );
+              }
+            } catch (planSaveError) {
+              console.warn('[PlanMode] Failed to save plan document:', planSaveError);
+              uiStore.addNotification('warning', 'Plan generated, but failed to save it to Docs.', activeSessionId);
+            }
+          }
+        }
+
         try {
           const { triggerMemoryExtraction } = await import('../../services/memory/autoExtraction');
           const messagesForExtraction = currentMessages();
@@ -498,6 +556,7 @@ export function createChatActionMethods({
           console.debug('[ReactiveCompact] Check failed:', error);
         });
       } catch (error) {
+        turnHadError = true;
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;

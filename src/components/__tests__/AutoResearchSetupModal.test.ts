@@ -68,6 +68,19 @@ jest.mock('@/services/autoresearch/runConfig', () => ({
   resolveAutoResearchRunConfig: jest.fn(),
 }));
 
+jest.mock('@/components/autoresearch/BootstrapChatView', () => {
+  const ReactRuntime = require('react');
+  const MockBootstrapChatView = ({ onReady }: { onReady?: () => void }) =>
+    ReactRuntime.createElement('div', { 'data-testid': 'bootstrap-chat-view' },
+      ReactRuntime.createElement('button', { onClick: onReady, 'data-testid': 'trigger-on-ready' }, 'Ready'),
+    );
+  return {
+    __esModule: true,
+    default: MockBootstrapChatView,
+    BootstrapChatView: MockBootstrapChatView,
+  };
+});
+
 function findButtonByText(container: ParentNode, label: string): HTMLButtonElement | null {
   return Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes(label)) as HTMLButtonElement | null;
 }
@@ -502,5 +515,44 @@ describe('AutoResearchSetupModal', () => {
     state = useBrowserObservabilityStore.getState();
     expect(state.failurePreviewSuppressed).toBe(false);
     expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
+  });
+
+  it('defaults to Conversational tab showing BootstrapChatView', () => {
+    const view = renderModal();
+    expect(view.container.querySelector('[data-testid="bootstrap-chat-view"]')).not.toBeNull();
+    expect(view.container.querySelector('input[aria-label="AutoResearch workdir"]')).toBeNull();
+  });
+
+  it('Advanced tab shows workdir form without BootstrapChatView', () => {
+    const view = renderModal();
+    const advancedTab = findButtonByText(view.container, 'Advanced');
+    expect(advancedTab).not.toBeNull();
+    act(() => {
+      advancedTab!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('input[aria-label="AutoResearch workdir"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="bootstrap-chat-view"]')).toBeNull();
+  });
+
+  it('switching back to Conversational tab restores BootstrapChatView', () => {
+    const view = renderModal();
+    const advancedTab = findButtonByText(view.container, 'Advanced');
+    act(() => { advancedTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const conversationalTab = findButtonByText(view.container, 'Conversational');
+    act(() => { conversationalTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(view.container.querySelector('[data-testid="bootstrap-chat-view"]')).not.toBeNull();
+    expect(view.container.querySelector('input[aria-label="AutoResearch workdir"]')).toBeNull();
+  });
+
+  it('onReady from BootstrapChatView closes modal and switches to autoresearch tab', async () => {
+    const view = renderModal();
+    const readyButton = view.container.querySelector('[data-testid="trigger-on-ready"]') as HTMLButtonElement | null;
+    expect(readyButton).not.toBeNull();
+    await act(async () => {
+      readyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(useAutoResearchStore.getState().showSetupModal).toBe(false);
+    expect(mockSetAgentPanelTab).toHaveBeenCalledWith('autoresearch');
   });
 });

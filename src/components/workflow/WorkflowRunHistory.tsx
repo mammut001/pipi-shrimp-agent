@@ -16,6 +16,10 @@ export function WorkflowRunHistory() {
   );
   const workflowRuns = currentInstance?.workflowRuns ?? [];
   const agents = currentInstance?.agents ?? [];
+  const selectedRunId = useWorkflowStore((s) => s.selectedRunId);
+  const selectRun = useWorkflowStore((s) => s.selectRun);
+  const renameWorkflowRun = useWorkflowStore((s) => s.renameWorkflowRun);
+  const deleteWorkflowRun = useWorkflowStore((s) => s.deleteWorkflowRun);
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -68,6 +72,17 @@ export function WorkflowRunHistory() {
 
   if (workflowRuns.length === 0) return null;
 
+  const handleRename = (runId: string, currentTitle: string) => {
+    const nextTitle = window.prompt('重命名运行记录', currentTitle);
+    if (!nextTitle?.trim()) return;
+    renameWorkflowRun(runId, nextTitle);
+  };
+
+  const handleDelete = (runId: string, title: string) => {
+    if (!window.confirm(`删除运行记录“${title}”？`)) return;
+    deleteWorkflowRun(runId);
+  };
+
   return (
     <>
       {/* Toggle button */}
@@ -105,17 +120,52 @@ export function WorkflowRunHistory() {
             {workflowRuns.map((run) => (
               <div key={run.id} className="border-b border-gray-100 last:border-0">
                 {/* Run header */}
-                <div className="px-4 py-2 hover:bg-gray-50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => selectRun(run.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      selectRun(run.id);
+                    }
+                  }}
+                  className={`w-full px-4 py-2 text-left transition-colors hover:bg-gray-50 ${
+                    selectedRunId === run.id ? 'bg-blue-50/70' : ''
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
                       {getStatusIcon(run.status)}
-                      <span className="text-sm font-medium text-gray-900 truncate max-w-40">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900">
                         {run.title}
                       </span>
                     </div>
-                    <span className="text-xs text-gray-400">
-                      {formatDuration(run.startTime, run.endTime)}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span className="text-xs text-gray-400">
+                        {formatDuration(run.startTime, run.endTime)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleRename(run.id, run.title);
+                        }}
+                        className="rounded px-1.5 py-0.5 text-xs text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                      >
+                        重命名
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleDelete(run.id, run.title);
+                        }}
+                        className="rounded px-1.5 py-0.5 text-xs text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                      >
+                        删除
+                      </button>
+                    </div>
                   </div>
                   <div className="text-xs text-gray-400 mt-1">
                     {formatDate(run.startTime)}
@@ -128,7 +178,7 @@ export function WorkflowRunHistory() {
                     {run.agents.map((entry) => {
                       const agent = agents.find((a) => a.id === entry.agentId);
                       return (
-                        <div key={entry.agentId} className="flex items-center gap-1 text-gray-500">
+                        <div key={`${run.id}:${entry.agentId || entry.agentName}`} className="flex items-center gap-1 text-gray-500">
                           <span>{getAgentStatusIcon(entry.status)}</span>
                           <span className="truncate">
                             {agent?.name || entry.agentName || 'Unknown'}

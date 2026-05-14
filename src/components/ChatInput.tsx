@@ -89,12 +89,19 @@ interface ChatInputProps {
   draftKey?: string;
   /** Submit mode. callback-only skips the global chat store and forwards text to onSend. */
   submitMode?: 'chat-store' | 'callback-only';
+  /** Visual density. Compact is intended for embedded/modal surfaces. */
+  density?: 'default' | 'compact';
 }
 
 /**
  * Chat input component
  */
-export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-store' }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  draftKey = 'default',
+  submitMode = 'chat-store',
+  density = 'default',
+}: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const [isBindingFolder, setIsBindingFolder] = useState(false);
@@ -105,6 +112,25 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const draftStorageKey = `chat_draft_${draftKey}`;
+  const isCompact = density === 'compact';
+  const textareaMaxHeight = isCompact ? 96 : 200;
+  const textareaMinHeight = isCompact ? '36px' : '48px';
+  const rootClassName = isCompact
+    ? 'bg-white'
+    : 'border-t border-gray-200 bg-white p-4';
+  const inputShellClassName = isCompact
+    ? 'relative bg-gray-50 rounded-xl border transition-all px-3'
+    : 'relative bg-gray-50 rounded-xl border transition-all px-4';
+  const textareaClassName = isCompact
+    ? 'flex-1 bg-transparent px-0 py-2 max-h-[96px] resize-none focus:outline-none text-sm text-gray-900 placeholder-gray-400 disabled:opacity-50'
+    : 'flex-1 bg-transparent px-0 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50';
+  const actionRowClassName = isCompact
+    ? 'flex items-center gap-0.5 pr-1 pb-1.5'
+    : 'flex items-center gap-1 pr-2 pb-2';
+  const actionButtonClassName = isCompact
+    ? 'p-1.5 rounded-md'
+    : 'p-2 rounded-lg';
+  const actionIconClassName = isCompact ? 'h-4 w-4' : 'h-5 w-5';
 
   // ── macOS WKWebView arrow-key tofu fix ──────────────────────────────────────
   // WKWebView forwards unhandled NSEvents back through NSTextInputClient, which
@@ -164,9 +190,9 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, textareaMaxHeight)}px`;
     }
-  }, [input]);
+  }, [input, textareaMaxHeight]);
 
   // Auto-focus on mount
   useEffect(() => {
@@ -371,7 +397,7 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
   const isDisabled = isStreaming || isSubmitting;
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4">
+    <div className={rootClassName}>
       <div className="max-w-3xl mx-auto relative">
         {/* MCP server dropdown — positioned relative to this container */}
         <MCPDropdown
@@ -525,7 +551,7 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
         )}
 
         <div
-          className={`relative bg-gray-50 rounded-xl border transition-all px-4 ${
+          className={`${inputShellClassName} ${
           isFocused
             ? 'border-gray-400 ring-2 ring-gray-200 shadow-sm'
             : 'border-gray-200'
@@ -613,12 +639,12 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
             placeholder={t('chat.inputPlaceholder')}
             disabled={isDisabled}
             rows={1}
-            className="flex-1 bg-transparent px-0 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
-            style={{ minHeight: '48px' }}
+            className={textareaClassName}
+            style={{ minHeight: textareaMinHeight }}
           />
 
           {/* Actions */}
-          <div className="flex items-center gap-1 pr-2 pb-2">
+          <div className={actionRowClassName}>
             <input
               ref={fileInputRef}
               type="file"
@@ -634,10 +660,10 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
             <button
               onClick={() => fileInputRef.current?.click()}
               type="button"
-              className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
+              className={`${actionButtonClassName} hover:bg-gray-200 text-gray-500 transition-colors`}
               title={t('chat.addImage')}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className={actionIconClassName} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </button>
@@ -646,10 +672,10 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
             <button
               onClick={handleOpenFolder}
               type="button"
-              className="p-2 rounded-lg hover:bg-gray-200 text-gray-500 transition-colors"
+              className={`${actionButtonClassName} hover:bg-gray-200 text-gray-500 transition-colors`}
               title={t('chat.openChatFolder')}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className={actionIconClassName} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
               </svg>
             </button>
@@ -658,12 +684,12 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
             {isStreaming ? (
               <button
                 onClick={handleStop}
-                className="p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors"
+                className={`${actionButtonClassName} bg-red-600 hover:bg-red-700 text-white transition-colors`}
                 title={t('chat.stop')}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
+                  className={actionIconClassName}
                   viewBox="0 0 20 20"
                   fill="currentColor"
                 >
@@ -678,12 +704,12 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
               <button
                 onClick={() => { void handleSubmit(); }}
                 disabled={isDisabled || (!input.trim() && attachments.length === 0)}
-                className="p-2 rounded-lg bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className={`${actionButtonClassName} bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
                 title={t('chat.send')}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
+                  className={actionIconClassName}
                   viewBox="0 0 20 20"
                   fill="currentColor"
                 >
@@ -695,10 +721,11 @@ export function ChatInput({ onSend, draftKey = 'default', submitMode = 'chat-sto
           </div>
         </div>
 
-        {/* Hint */}
-        <p className="text-center text-[10px] text-gray-400 mt-2 uppercase tracking-tight font-bold">
-          {t('chat.enterHint')} <span className="text-gray-300 mx-1">/</span> {t('chat.newLineHint')}
-        </p>
+        {!isCompact && (
+          <p className="text-center text-[10px] text-gray-400 mt-2 uppercase tracking-tight font-bold">
+            {t('chat.enterHint')} <span className="text-gray-300 mx-1">/</span> {t('chat.newLineHint')}
+          </p>
+        )}
       </div>
     </div>
   );

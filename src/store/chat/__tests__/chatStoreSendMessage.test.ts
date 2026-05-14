@@ -20,6 +20,8 @@ const mockTriggerContextAnalysis = jest.fn();
 const mockRecordToolForReactiveCompact = jest.fn();
 const mockExecuteBatch = jest.fn();
 const mockDetectAndRegisterArtifacts = jest.fn();
+const mockSavePlanModeDoc = jest.fn();
+const mockShouldSavePlanDoc = jest.fn();
 
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
@@ -118,6 +120,12 @@ jest.mock('../../../services/artifactDetector', () => ({
   detectAndRegisterArtifacts: (...args: unknown[]) => mockDetectAndRegisterArtifacts(...args),
 }));
 
+jest.mock('../../../services/planMode', () => ({
+  PLAN_MODE_SYSTEM_PROMPT: '# PLAN MODE ACTIVATED\n\nPlan only.',
+  savePlanModeDoc: (...args: unknown[]) => mockSavePlanModeDoc(...args),
+  shouldSavePlanDoc: (...args: unknown[]) => mockShouldSavePlanDoc(...args),
+}));
+
 jest.mock('../../../i18n', () => ({
   t: (key: string) => key,
 }));
@@ -154,13 +162,29 @@ async function* streamWithToolBatch() {
   };
 }
 
-function resetChatState() {
+async function* streamPlanAssistantReply() {
+  yield { type: 'text_delta' as const, content: '## Execution Plan: Ship Plan Mode\n\n' };
+  yield { type: 'text_delta' as const, content: '### 1. Goal Summary\n\nClarify the feature.\n\n' };
+  yield { type: 'text_delta' as const, content: '### 3. Proposed Implementation Steps\n\nStep 1: Update the chat flow.\n\n' };
+  yield { type: 'text_delta' as const, content: '### 6. Validation Plan\n\nRun targeted checks.\n\n### 7. Execution Gate\n\nThis plan has not been executed.' };
+  yield {
+    type: 'turn_complete' as const,
+    tokenUsage: {
+      input_tokens: 20,
+      output_tokens: 9,
+      model: 'mock-model',
+    },
+  };
+}
+
+function resetChatState(overrides: Partial<Session> = {}) {
   const session: Session = {
     id: 'session-1',
     title: 'Chat',
     messages: [],
     createdAt: 1,
     updatedAt: 1,
+    ...overrides,
   };
 
   useChatStore.setState({
@@ -202,6 +226,8 @@ describe('chatStore sendMessage integration', () => {
     mockRecordToolForReactiveCompact.mockReset();
     mockExecuteBatch.mockReset();
     mockDetectAndRegisterArtifacts.mockReset();
+    mockSavePlanModeDoc.mockReset();
+    mockShouldSavePlanDoc.mockReset();
 
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -239,6 +265,12 @@ describe('chatStore sendMessage integration', () => {
     mockGetContextTokenStats.mockResolvedValue({ current: 0 });
     mockCheckReactiveCompact.mockResolvedValue(undefined);
     mockTriggerContextAnalysis.mockResolvedValue(undefined);
+    mockSavePlanModeDoc.mockResolvedValue({
+      number: '021',
+      filename: '021-plan.md',
+      path: '/tmp/pipi/session-1/.pipi-shrimp/docs/021-plan.md',
+    });
+    mockShouldSavePlanDoc.mockReturnValue(true);
     resetChatState();
   });
 
@@ -310,5 +342,54 @@ describe('chatStore sendMessage integration', () => {
     }));
     expect(mockUpdateTaskStep).toHaveBeenCalledWith('tool-1', 'running');
     expect(mockUpdateTaskStep).toHaveBeenCalledWith('tool-1', 'done');
+  });
+
+  it('uses plan-only prompt and saves the final plan as a doc without delegation', async () => {
+    resetChatState({
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+    });
+    mockRunChatTurn.mockImplementation(() => streamPlanAssistantReply());
+
+    await useChatStore.getState().sendMessage('帮我实现一个新的设置项');
+
+    expect(mockClassifyIntent).not.toHaveBeenCalled();
+    expect(mockRunChatTurn).toHaveBeenCalledWith(
+      'session-1',
+      expect.arrayContaining([expect.objectContaining({ role: 'user', content: '帮我实现一个新的设置项' })]),
+      expect.stringContaining('# PLAN MODE ACTIVATED'),
+      '/tmp/pipi/session-1',
+      false,
+      undefined,
+      { noTools: true },
+    );
+    expect(mockSavePlanModeDoc).toHaveBeenCalledWith({
+      workDir: '/tmp/pipi/session-1',
+      userRequest: '帮我实现一个新的设置项',
+      planMarkdown: expect.stringContaining('## Execution Plan: Ship Plan Mode'),
+      sessionId: 'session-1',
+    });
+    expect(mockAddNotification).toHaveBeenCalledWith('success', 'Plan saved to Docs: 021-plan.md', 'session-1');
+  });
+
+  it('does not save non-plan replies in plan-only mode', async () => {
+    resetChatState({
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+    });
+    mockShouldSavePlanDoc.mockReturnValue(false);
+
+    await useChatStore.getState().sendMessage('Explain Plan Mode');
+
+    expect(mockRunChatTurn).toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Array),
+      expect.stringContaining('# PLAN MODE ACTIVATED'),
+      '/tmp/pipi/session-1',
+      false,
+      undefined,
+      { noTools: true },
+    );
+    expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
   });
 });
