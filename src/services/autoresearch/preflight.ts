@@ -45,6 +45,13 @@ export interface AutoResearchEnvironmentSummary {
   runScriptPath: string;
   notesPath: string;
   recommendedRunCommand: string;
+  gpuTelemetryAvailable?: boolean;
+  gpuSummary?: string;
+  gpuTemperatureC?: number | null;
+  gpuFanSpeedPercent?: number | null;
+  gpuUtilizationPercent?: number | null;
+  gpuMemoryUsedMb?: number | null;
+  gpuMemoryTotalMb?: number | null;
 }
 
 async function resolveTargetHomeDirectory(cfg: SshConfig): Promise<string> {
@@ -141,6 +148,14 @@ function parseEnvironmentSummary(raw: string, experimentDir: string): AutoResear
 
   const dirtyFileCount = Number.parseInt(values.get('dirty_file_count') || '0', 10);
   const parsedDirtyFileCount = Number.isFinite(dirtyFileCount) ? dirtyFileCount : 0;
+  const gpuRaw = values.get('gpu_raw') || '';
+  const gpuValues = gpuRaw.split(',').map((value) => value.trim());
+  const gpuTemperatureC = parseOptionalTelemetryNumber(gpuValues[0]);
+  const gpuFanSpeedPercent = parseOptionalTelemetryNumber(gpuValues[1]);
+  const gpuUtilizationPercent = parseOptionalTelemetryNumber(gpuValues[2]);
+  const gpuMemoryUsedMb = parseOptionalTelemetryNumber(gpuValues[3]);
+  const gpuMemoryTotalMb = parseOptionalTelemetryNumber(gpuValues[4]);
+  const gpuTelemetryAvailable = values.get('gpu_telemetry_available') === '1';
 
   return {
     experimentDir,
@@ -152,7 +167,31 @@ function parseEnvironmentSummary(raw: string, experimentDir: string): AutoResear
     runScriptPath: buildRequiredPath(experimentDir, 'run_experiment.py'),
     notesPath: buildRequiredPath(experimentDir, 'AUTORESEARCH.md'),
     recommendedRunCommand: `${preferredPythonCommand} run_experiment.py`,
+    gpuTelemetryAvailable,
+    gpuSummary: gpuTelemetryAvailable
+      ? [
+        gpuTemperatureC === null ? 'temp=unknown' : `temp=${gpuTemperatureC}C`,
+        gpuFanSpeedPercent === null ? 'fan=unknown' : `fan=${gpuFanSpeedPercent}%`,
+        gpuUtilizationPercent === null ? 'util=unknown' : `util=${gpuUtilizationPercent}%`,
+        gpuMemoryUsedMb === null || gpuMemoryTotalMb === null
+          ? 'memory=unknown'
+          : `memory=${gpuMemoryUsedMb}/${gpuMemoryTotalMb}MB`,
+      ].join(', ')
+      : 'nvidia-smi unavailable',
+    gpuTemperatureC,
+    gpuFanSpeedPercent,
+    gpuUtilizationPercent,
+    gpuMemoryUsedMb,
+    gpuMemoryTotalMb,
   };
+}
+
+function parseOptionalTelemetryNumber(value: string | undefined): number | null {
+  if (!value || value.toLowerCase() === '[not supported]') {
+    return null;
+  }
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function inspectAutoResearchEnvironment(
@@ -177,10 +216,20 @@ export async function inspectAutoResearchEnvironment(
     'if [ -w "$repo" ]; then',
     '  worktree_writable=1',
     'fi',
+    'gpu_telemetry_available=0',
+    'gpu_raw=""',
+    'if command -v nvidia-smi >/dev/null 2>&1; then',
+    '  gpu_raw="$(nvidia-smi --query-gpu=temperature.gpu,fan.speed,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 || true)"',
+    '  if [ -n "$gpu_raw" ]; then',
+    '    gpu_telemetry_available=1',
+    '  fi',
+    'fi',
     'printf \'preferred_python\\t%s\\n\' "$preferred_python"',
     'printf \'git_repo\\t%s\\n\' "$git_repo"',
     'printf \'dirty_file_count\\t%s\\n\' "$dirty_file_count"',
     'printf \'worktree_writable\\t%s\\n\' "$worktree_writable"',
+    'printf \'gpu_telemetry_available\\t%s\\n\' "$gpu_telemetry_available"',
+    'printf \'gpu_raw\\t%s\\n\' "$gpu_raw"',
   ].join('\n');
   const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, command, 60);
   if ((result.exit_code ?? 0) !== 0) {
@@ -242,6 +291,7 @@ export async function runAutoResearchPreflight(
     preferredPythonCommand: environmentSummary.preferredPythonCommand,
     repoStatus: environmentSummary.repoStatus,
     dirtyFileCount: environmentSummary.dirtyFileCount,
+    gpu: environmentSummary.gpuSummary,
   });
 
   return {

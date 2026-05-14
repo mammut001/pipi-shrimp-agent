@@ -74,6 +74,7 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
   );
   const agents = currentInstance?.agents ?? [];
   const connections = currentInstance?.connections ?? [];
+  const isRunning = useWorkflowStore((s) => s.isRunning);
   const {
     addAgent,
     addConnection,
@@ -82,16 +83,18 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
     updateAgentPosition,
   } = useWorkflowStore();
   const currentView = useUIStore((s) => s.currentView);
+  const addNotification = useUIStore((s) => s.addNotification);
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false);
   const [templateDrawerPosition, setTemplateDrawerPosition] = useState<{ x: number; y: number } | null>(null);
-  const isWorkflowActive = currentView === 'workflow';
+  const isWorkflowPage = currentView === 'workflow';
+  const isTopologyLocked = !isWorkflowPage || isRunning;
 
   const notifyWorkflowLocked = useCallback(() => {
-    useUIStore.getState().addNotification('warning', t('workflow.notInWorkflowPage'));
-  }, []);
+    addNotification('warning', isRunning ? '工作流运行中，当前不能修改拓扑结构。' : t('workflow.notInWorkflowPage'));
+  }, [addNotification, isRunning]);
 
   // Convert store agents to React Flow nodes
   const initialNodes: Node[] = useMemo(() => {
@@ -173,7 +176,7 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
 
   const onConnect = useCallback(
     (params: Connection) => {
-      if (!isWorkflowActive) {
+      if (isTopologyLocked) {
         notifyWorkflowLocked();
         return;
       }
@@ -181,12 +184,12 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
 
       addConnection(params.source, params.target, 'onComplete');
     },
-    [addConnection, isWorkflowActive, notifyWorkflowLocked]
+    [addConnection, isTopologyLocked, notifyWorkflowLocked]
   );
 
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
-      if (!isWorkflowActive) {
+      if (isTopologyLocked) {
         notifyWorkflowLocked();
         return;
       }
@@ -195,34 +198,34 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
         removeConnection(deletedEdge.id);
       }
     },
-    [isWorkflowActive, notifyWorkflowLocked, removeConnection]
+    [isTopologyLocked, notifyWorkflowLocked, removeConnection]
   );
 
   // Handle node selection
   const onNodeClick = useCallback(
     (_: MouseEvent, node: Node) => {
-      if (!isWorkflowActive) {
+      if (!isWorkflowPage) {
         notifyWorkflowLocked();
         return;
       }
       onAgentSelect(node.id);
     },
-    [isWorkflowActive, notifyWorkflowLocked, onAgentSelect]
+    [isWorkflowPage, notifyWorkflowLocked, onAgentSelect]
   );
 
   // Handle canvas click (deselect)
   const onPaneClick = useCallback(() => {
-    if (!isWorkflowActive) {
+    if (!isWorkflowPage) {
       setContextMenu(null);
       return;
     }
     onAgentSelect(null);
     setContextMenu(null);
-  }, [isWorkflowActive, onAgentSelect]);
+  }, [isWorkflowPage, onAgentSelect]);
 
   // Handle right-click context menu
   const onContextMenu = useCallback((event: MouseEvent) => {
-    if (!isWorkflowActive) {
+    if (isTopologyLocked) {
       event.preventDefault();
       notifyWorkflowLocked();
       return;
@@ -235,12 +238,12 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
         y: event.clientY - bounds.top,
       });
     }
-  }, [isWorkflowActive, notifyWorkflowLocked]);
+  }, [isTopologyLocked, notifyWorkflowLocked]);
 
   // Add agent at context menu position (opens template drawer)
   const handleAddAgent = useCallback(
     (e: MouseEvent) => {
-      if (!isWorkflowActive) {
+      if (isTopologyLocked) {
         e.preventDefault();
         e.stopPropagation();
         notifyWorkflowLocked();
@@ -259,13 +262,13 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
       setTemplateDrawerOpen(true);
       setContextMenu(null);
     },
-    [isWorkflowActive, notifyWorkflowLocked]
+    [isTopologyLocked, notifyWorkflowLocked]
   );
 
   // Add agent from template
   const handleAddFromTemplate = useCallback(
     (template: AgentTemplate, position?: { x: number; y: number }) => {
-      if (!isWorkflowActive) {
+      if (isTopologyLocked) {
         notifyWorkflowLocked();
         return;
       }
@@ -287,18 +290,18 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
       setTemplateDrawerOpen(false);
       setTemplateDrawerPosition(null);
     },
-    [addAgent, isWorkflowActive, notifyWorkflowLocked]
+    [addAgent, isTopologyLocked, notifyWorkflowLocked]
   );
 
   // Add agent via button (center of viewport)
   const handleAddAgentButton = useCallback(() => {
-    if (!isWorkflowActive) {
+    if (isTopologyLocked) {
       notifyWorkflowLocked();
       return;
     }
     setTemplateDrawerOpen(true);
     setTemplateDrawerPosition(null);
-  }, [isWorkflowActive, notifyWorkflowLocked]);
+  }, [isTopologyLocked, notifyWorkflowLocked]);
 
   // Open working directory in Finder
   const handleOpenWorkingDirectory = useCallback(async () => {
@@ -318,7 +321,7 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
   // Handle keyboard delete
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isWorkflowActive) return;
+      if (isTopologyLocked) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAgentId) {
         // Don't delete if typing in an input
         if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
@@ -330,7 +333,7 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isWorkflowActive, selectedAgentId, removeAgent, onAgentSelect]);
+  }, [isTopologyLocked, selectedAgentId, removeAgent, onAgentSelect]);
 
   return (
     <div className="relative h-full w-full min-h-0 min-w-0 overflow-hidden">
@@ -357,10 +360,10 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
         deleteKeyCode={null}
         selectionKeyCode={null}
         multiSelectionKeyCode={null}
-        nodesDraggable={isWorkflowActive}
-        nodesConnectable={isWorkflowActive}
-        elementsSelectable={isWorkflowActive}
-        panOnDrag={isWorkflowActive}
+        nodesDraggable={isWorkflowPage}
+        nodesConnectable={!isTopologyLocked}
+        elementsSelectable={isWorkflowPage}
+        panOnDrag={isWorkflowPage}
         className="h-full w-full bg-gray-50"
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d1d5db" />
@@ -369,10 +372,15 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
 
         {/* Add Agent Panel */}
         <Panel position="bottom-right" className="flex flex-col gap-2">
+          {isRunning && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700 shadow-sm">
+              运行中，拓扑编辑已锁定
+            </div>
+          )}
           <button
             onClick={handleAddAgentButton}
-            disabled={!isWorkflowActive}
-            className="px-4 py-2 bg-gray-900 text-white rounded-lg shadow-lg hover:bg-gray-800 transition-colors flex items-center gap-2 text-sm"
+            disabled={isTopologyLocked}
+            className="px-4 py-2 bg-gray-900 text-white rounded-lg shadow-lg hover:bg-gray-800 transition-colors flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -381,13 +389,13 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
           </button>
           <button
             onClick={() => {
-              if (!isWorkflowActive) {
+              if (isTopologyLocked) {
                 notifyWorkflowLocked();
                 return;
               }
               setShowClearConfirm(true);
             }}
-            disabled={!isWorkflowActive}
+            disabled={isTopologyLocked}
             className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg shadow hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -397,13 +405,13 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
           </button>
           <button
             onClick={() => {
-              if (!isWorkflowActive) {
+              if (isTopologyLocked) {
                 notifyWorkflowLocked();
                 return;
               }
               useWorkflowStore.getState().createA_B_C_Workflow();
             }}
-            disabled={!isWorkflowActive}
+            disabled={isTopologyLocked}
             className="px-4 py-2 bg-purple-600 text-white rounded-lg shadow-lg hover:bg-purple-700 transition-colors flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -450,7 +458,7 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
         </div>
       )}
 
-      {!isWorkflowActive && (
+      {!isWorkflowPage && (
         <div className="absolute inset-0 z-40 cursor-not-allowed bg-white/45 backdrop-blur-[1px] flex items-center justify-center">
           <div className="px-4 py-2 rounded-xl bg-white/95 border border-gray-200 shadow-sm text-sm text-gray-700">
             {t('workflow.notInWorkflowPage')}

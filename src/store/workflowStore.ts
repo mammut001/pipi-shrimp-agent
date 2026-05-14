@@ -22,6 +22,7 @@ import {
 } from '@/services/workflow/defaults';
 import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
 import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
+import { useUIStore } from '@/store/uiStore';
 
 const STORAGE_KEY_V2 = 'pipi-workflow-v2';
 const STORAGE_KEY_V1 = 'pipi-workflow-v1';
@@ -151,23 +152,86 @@ function derivePrimaryInputFrom(connections: WorkflowConnection[], agentId: stri
   return incoming.length === 1 ? incoming[0].sourceAgentId : null;
 }
 
+export function dedupeConnections(instance: WorkflowInstance): WorkflowInstance {
+  const deduped = new Map<string, WorkflowConnection>();
+
+  for (const connection of instance.connections ?? []) {
+    const normalized = normalizeConnection(connection);
+    const signature = buildConnectionSignature(normalized);
+    if (!deduped.has(signature)) {
+      deduped.set(signature, normalized);
+    }
+  }
+
+  return {
+    ...instance,
+    connections: Array.from(deduped.values()),
+  };
+}
+
+export function removeDanglingConnections(instance: WorkflowInstance): WorkflowInstance {
+  const validAgentIds = new Set((instance.agents ?? []).map((agent) => agent.id));
+
+  return {
+    ...instance,
+    connections: (instance.connections ?? []).filter((connection) => (
+      validAgentIds.has(connection.sourceAgentId) && validAgentIds.has(connection.targetAgentId)
+    )),
+  };
+}
+
+export function rebuildInputFromFromConnections(instance: WorkflowInstance): WorkflowInstance {
+  const validAgentIds = new Set((instance.agents ?? []).map((agent) => agent.id));
+
+  return {
+    ...instance,
+    agents: (instance.agents ?? []).map((agent) => normalizeAgent({
+      ...agent,
+      outputRoutes: deriveOutputRoutes(instance.connections ?? [], agent.id).filter((route) => validAgentIds.has(route.targetAgentId)),
+      // Keep the single-source projection only when there is exactly one primary inbound edge.
+      // With fan-in or zero inbound edges we intentionally collapse back to null.
+      inputFrom: derivePrimaryInputFrom(instance.connections ?? [], agent.id),
+    })),
+  };
+}
+
+export function normalizeWorkflowGraph(instance: WorkflowInstance): WorkflowInstance {
+  // `connections` are the canonical graph source of truth. `outputRoutes` and `inputFrom`
+  // are synchronized UI projections derived from the normalized connection set.
+  const baseAgents = (instance.agents ?? []).map(normalizeAgentBase);
+  let normalized: WorkflowInstance = {
+    ...instance,
+    agents: baseAgents,
+    connections: mergeConnections(baseAgents, instance.connections ?? []),
+  };
+
+  normalized = dedupeConnections(normalized);
+  normalized = removeDanglingConnections(normalized);
+  normalized = rebuildInputFromFromConnections(normalized);
+
+  const validAgentIds = new Set(normalized.agents.map((agent) => agent.id));
+
+  return {
+    ...normalized,
+    dirtyAgentIds: (instance.dirtyAgentIds ?? []).filter((agentId) => validAgentIds.has(agentId)),
+  };
+}
+
 function reconcileGraphState(
   instance: WorkflowInstance,
   overrides: Partial<Pick<WorkflowInstance, 'agents' | 'connections' | 'dirtyAgentIds'>> = {},
 ): Pick<WorkflowInstance, 'agents' | 'connections' | 'dirtyAgentIds'> {
-  const baseAgents = (overrides.agents ?? instance.agents).map(normalizeAgentBase);
-  const baseConnections = mergeConnections(baseAgents, overrides.connections ?? instance.connections ?? []);
-  const projectedAgents = baseAgents.map((agent) => normalizeAgent({
-    ...agent,
-    outputRoutes: deriveOutputRoutes(baseConnections, agent.id),
-    inputFrom: derivePrimaryInputFrom(baseConnections, agent.id),
-  }));
-  const validAgentIds = new Set(projectedAgents.map((agent) => agent.id));
+  const normalized = normalizeWorkflowGraph({
+    ...instance,
+    agents: overrides.agents ?? instance.agents,
+    connections: overrides.connections ?? instance.connections,
+    dirtyAgentIds: overrides.dirtyAgentIds ?? instance.dirtyAgentIds,
+  });
 
   return {
-    agents: projectedAgents,
-    connections: baseConnections,
-    dirtyAgentIds: (overrides.dirtyAgentIds ?? instance.dirtyAgentIds ?? []).filter((agentId) => validAgentIds.has(agentId)),
+    agents: normalized.agents,
+    connections: normalized.connections,
+    dirtyAgentIds: normalized.dirtyAgentIds,
   };
 }
 
@@ -209,10 +273,7 @@ function normalizeInstance(instance: WorkflowInstance): WorkflowInstance {
     updatedAt: instance.updatedAt,
   };
 
-  return {
-    ...normalizedBase,
-    ...reconcileGraphState(normalizedBase),
-  };
+  return normalizeWorkflowGraph(normalizedBase);
 }
 
 function loadFromStorage(): Partial<WorkflowState> {
@@ -272,6 +333,28 @@ function saveToStorage(state: WorkflowState): void {
   }
 }
 
+function shouldBlockTopologyMutation(state: WorkflowState): boolean {
+  return state.isRunning;
+}
+
+function notifyTopologyMutationBlocked(): void {
+  useUIStore.getState().addNotification('warning', '工作流运行中，当前不能修改拓扑结构。');
+}
+
+function findInstanceContainingRun(state: WorkflowState, runId: string): WorkflowInstance | null {
+  return state.instances.find((instance) => instance.workflowRuns.some((run) => run.id === runId)) ?? null;
+}
+
+function updateInstanceContainingRun(
+  state: WorkflowState,
+  runId: string,
+  updater: (instance: WorkflowInstance) => Partial<WorkflowInstance>,
+): Partial<WorkflowState> {
+  const owningInstance = findInstanceContainingRun(state, runId);
+  if (!owningInstance) return {};
+  return updateInstanceById(state, owningInstance.id, updater);
+}
+
 // ============ Helper: mutate instance ============
 
 function updateCurrentInstance(
@@ -325,6 +408,7 @@ export interface WorkflowStore extends WorkflowState {
   renameInstance: (id: string, name: string) => void;
   selectInstance: (id: string) => void;
   getCurrentInstance: () => WorkflowInstance | null;
+  getCurrentInstanceOrThrow: () => WorkflowInstance;
   updateInstanceMeta: (
     id: string,
     updates: Pick<WorkflowInstance, 'projectGoal' | 'successCriteria' | 'goalEvaluatorAgentId' | 'maxGoalIterations'>,
@@ -365,18 +449,21 @@ export interface WorkflowStore extends WorkflowState {
   removeOutputRoute: (agentId: string, routeId: string) => void;
 
   // Workflow Run (history) — operates on current instance
-  addWorkflowRun: (run: WorkflowRun) => void;
+  addWorkflowRun: (run: WorkflowRun, instanceId?: string) => void;
   updateWorkflowRun: (id: string, updates: Partial<WorkflowRun>) => void;
   renameWorkflowRun: (id: string, title: string) => void;
   deleteWorkflowRun: (id: string) => void;
   updateRunAgent: (runId: string, agentId: string, updates: Partial<WorkflowRunAgentEntry>) => void;
   appendGoalEvaluation: (runId: string, evaluation: GoalEvaluationResult) => void;
   selectRun: (id: string | null) => void;
-  setActiveRunId: (id: string | null) => void;
+  setActiveRunId: (id: string | null, instanceId?: string) => void;
 
   // Execution state
   setRunning: (running: boolean, agentId?: string | null) => void;
-  resetAllStatuses: () => void;
+  resetAllStatuses: (instanceId?: string) => void;
+  setAgentStatusInInstance: (instanceId: string, id: string, status: WorkflowAgent['status']) => void;
+  markAgentDirtyInInstance: (instanceId: string, agentId: string) => void;
+  clearAgentDirtyInInstance: (instanceId: string, agentId: string) => void;
 
   // File preview
   setSelectedPreviewFile: (path: string | null) => void;
@@ -385,7 +472,7 @@ export interface WorkflowStore extends WorkflowState {
   clearCanvas: () => void;
 
   // Preset workflows
-  createA_B_C_Workflow: () => { agentA: WorkflowAgent; agentB: WorkflowAgent; agentC: WorkflowAgent };
+  createA_B_C_Workflow: () => { agentA: WorkflowAgent; agentB: WorkflowAgent; agentC: WorkflowAgent } | null;
 }
 
 export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
@@ -496,6 +583,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     return state.instances.find(i => i.id === state.currentInstanceId) ?? null;
   },
 
+  getCurrentInstanceOrThrow: () => {
+    const instance = get().getCurrentInstance();
+    if (!instance) {
+      throw new Error('当前没有可用的 Workflow 实例。');
+    }
+    return instance;
+  },
+
   updateInstanceMeta: (id, updates) => {
     set((state) => {
       const newState = {
@@ -533,6 +628,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       notifyOnComplete: [],
     };
 
+    if (shouldBlockTopologyMutation(state)) {
+      notifyTopologyMutationBlocked();
+      return newAgent;
+    }
+
     set((state) => {
       const newState = {
         ...state,
@@ -564,6 +664,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   removeAgent: (id) => {
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return;
+    }
     set((state) => {
       const newState = {
         ...state,
@@ -627,7 +731,22 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }));
   },
 
+  setAgentStatusInInstance: (instanceId, id, status) => {
+    set((state) => ({
+      ...state,
+      ...updateInstanceById(state, instanceId, (inst) => ({
+        agents: inst.agents.map((agent) => (
+          agent.id === id ? { ...agent, status } : agent
+        )),
+      })),
+    }));
+  },
+
   setAgentInputFrom: (agentId, fromId) => {
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return;
+    }
     set((state) => {
       const inst = state.instances.find(i => i.id === state.currentInstanceId);
       if (!inst) return state;
@@ -674,11 +793,37 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     });
   },
 
+  markAgentDirtyInInstance: (instanceId, agentId) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        ...updateInstanceById(state, instanceId, (inst) => ({
+          dirtyAgentIds: Array.from(new Set([...(inst.dirtyAgentIds ?? []), agentId])),
+        })),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
   clearAgentDirty: (agentId) => {
     set((state) => {
       const newState = {
         ...state,
         ...updateCurrentInstance(state, (inst) => ({
+          dirtyAgentIds: (inst.dirtyAgentIds ?? []).filter((id) => id !== agentId),
+        })),
+      };
+      saveToStorage(newState);
+      return newState;
+    });
+  },
+
+  clearAgentDirtyInInstance: (instanceId, agentId) => {
+    set((state) => {
+      const newState = {
+        ...state,
+        ...updateInstanceById(state, instanceId, (inst) => ({
           dirtyAgentIds: (inst.dirtyAgentIds ?? []).filter((id) => id !== agentId),
         })),
       };
@@ -700,6 +845,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       type: options?.type ?? 'sequential',
     });
     let createdConnection = newConnection;
+
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return createdConnection;
+    }
 
     set((state) => {
       const inst = state.instances.find((item) => item.id === state.currentInstanceId);
@@ -729,6 +879,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   removeConnection: (id) => {
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return;
+    }
     set((state) => {
       const inst = state.instances.find((item) => item.id === state.currentInstanceId);
       if (!inst) return state;
@@ -757,6 +911,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   updateOutputRoute: (agentId, routeId, updates) => {
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return;
+    }
     set((state) => {
       const inst = state.instances.find((item) => item.id === state.currentInstanceId);
       if (!inst) return state;
@@ -785,6 +943,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   },
 
   removeOutputRoute: (agentId, routeId) => {
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return;
+    }
     const instance = get().getCurrentInstance();
     const route = selectAgentOutputRoutes(instance, agentId).find((item) => item.id === routeId);
     if (!route) return;
@@ -793,12 +955,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   // ============ Workflow Run (History) ============
 
-  addWorkflowRun: (run) => {
+  addWorkflowRun: (run, instanceId) => {
     set((state) => {
       const normalizedRun = normalizeRun(run);
+      const targetInstanceId = instanceId ?? state.currentInstanceId;
+      if (!targetInstanceId) return state;
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
+        ...updateInstanceById(state, targetInstanceId, (inst) => ({
           workflowRuns: [normalizedRun, ...inst.workflowRuns].slice(0, 50),
           activeRunId: normalizedRun.id,
         })),
@@ -811,10 +975,12 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   updateWorkflowRun: (id, updates) => {
     set((state) => {
+      const owningInstance = findInstanceContainingRun(state, id);
+      if (!owningInstance) return state;
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
-          workflowRuns: inst.workflowRuns.map(run =>
+        ...updateInstanceContainingRun(state, id, (inst) => ({
+          workflowRuns: inst.workflowRuns.map((run) =>
             run.id === id ? normalizeRun({ ...run, ...updates }) : run
           ),
           activeRunId: inst.activeRunId === id || updates.status === 'running' ? id : inst.activeRunId,
@@ -829,9 +995,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     const trimmed = title.trim();
     if (!trimmed) return;
     set((state) => {
+      const owningInstance = findInstanceContainingRun(state, id);
+      if (!owningInstance) return state;
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
+        ...updateInstanceContainingRun(state, id, (inst) => ({
           workflowRuns: inst.workflowRuns.map(run =>
             run.id === id ? { ...run, title: trimmed } : run
           ),
@@ -844,9 +1012,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   deleteWorkflowRun: (id) => {
     set((state) => {
+      const owningInstance = findInstanceContainingRun(state, id);
+      if (!owningInstance) return state;
       const wasSelected = state.selectedRunId === id;
-      const inst = state.instances.find(i => i.id === state.currentInstanceId);
-      const runs = inst?.workflowRuns ?? [];
+      const runs = owningInstance.workflowRuns ?? [];
       const runsAfterDelete = runs.filter(run => run.id !== id);
 
       let nextRunId: string | null = null;
@@ -855,14 +1024,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         nextRunId = runsAfterDelete[deletedIndex]?.id ?? runsAfterDelete[runsAfterDelete.length - 1]?.id ?? null;
       }
 
-        const newState = {
-          ...state,
-          ...updateCurrentInstance(state, (inst) => ({
-            workflowRuns: runsAfterDelete,
-            activeRunId: inst.activeRunId === id ? (runsAfterDelete[0]?.id ?? null) : inst.activeRunId,
-          })),
-          selectedRunId: wasSelected ? nextRunId : state.selectedRunId,
-        };
+      const newState = {
+        ...state,
+        ...updateInstanceById(state, owningInstance.id, (inst) => ({
+          workflowRuns: runsAfterDelete,
+          activeRunId: inst.activeRunId === id ? (runsAfterDelete[0]?.id ?? null) : inst.activeRunId,
+        })),
+        selectedRunId: wasSelected ? nextRunId : state.selectedRunId,
+      };
       saveToStorage(newState);
       return newState;
     });
@@ -870,9 +1039,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   updateRunAgent: (runId, agentId, updates) => {
     set((state) => {
+      const owningInstance = findInstanceContainingRun(state, runId);
+      if (!owningInstance) return state;
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
+        ...updateInstanceContainingRun(state, runId, (inst) => ({
           workflowRuns: inst.workflowRuns.map(run =>
             run.id === runId
               ? {
@@ -892,9 +1063,11 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   appendGoalEvaluation: (runId, evaluation) => {
     set((state) => {
+      const owningInstance = findInstanceContainingRun(state, runId);
+      if (!owningInstance) return state;
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, (inst) => ({
+        ...updateInstanceContainingRun(state, runId, (inst) => ({
           workflowRuns: inst.workflowRuns.map((run) => (
             run.id === runId
               ? normalizeRun({
@@ -916,11 +1089,13 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ selectedRunId: id });
   },
 
-  setActiveRunId: (id) => {
+  setActiveRunId: (id, instanceId) => {
     set((state) => {
+      const targetInstanceId = instanceId ?? state.currentInstanceId;
+      if (!targetInstanceId) return state;
       const newState = {
         ...state,
-        ...updateCurrentInstance(state, () => ({ activeRunId: id })),
+        ...updateInstanceById(state, targetInstanceId, () => ({ activeRunId: id })),
       };
       saveToStorage(newState);
       return newState;
@@ -937,14 +1112,18 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     }));
   },
 
-  resetAllStatuses: () => {
-    set((state) => ({
-      ...state,
-      ...updateCurrentInstance(state, (inst) => ({
-        agents: inst.agents.map(agent => ({ ...agent, status: 'idle' as const })),
-        dirtyAgentIds: [],
-      })),
-    }));
+  resetAllStatuses: (instanceId) => {
+    set((state) => {
+      const targetInstanceId = instanceId ?? state.currentInstanceId;
+      if (!targetInstanceId) return state;
+      return {
+        ...state,
+        ...updateInstanceById(state, targetInstanceId, (inst) => ({
+          agents: inst.agents.map((agent) => ({ ...agent, status: 'idle' as const })),
+          dirtyAgentIds: [],
+        })),
+      };
+    });
   },
 
   setSelectedPreviewFile: (path) => {
@@ -954,19 +1133,23 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   // ============ Canvas Operations ============
 
   clearCanvas: () => {
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return;
+    }
     set((state) => {
-        const inst = state.instances.find((item) => item.id === state.currentInstanceId);
-        if (!inst) return state;
-        const newState = {
-          ...state,
-          ...updateCurrentInstance(state, () => ({
-            ...reconcileGraphState(inst, {
-              agents: [],
-              connections: [],
-              dirtyAgentIds: [],
-            }),
-          })),
-        };
+      const inst = state.instances.find((item) => item.id === state.currentInstanceId);
+      if (!inst) return state;
+      const newState = {
+        ...state,
+        ...updateCurrentInstance(state, () => ({
+          ...reconcileGraphState(inst, {
+            agents: [],
+            connections: [],
+            dirtyAgentIds: [],
+          }),
+        })),
+      };
       saveToStorage(newState);
       return newState;
     });
@@ -975,6 +1158,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   // ============ Preset Workflow ============
 
   createA_B_C_Workflow: () => {
+    if (shouldBlockTopologyMutation(get())) {
+      notifyTopologyMutationBlocked();
+      return null;
+    }
     const { addAgent, addConnection } = get();
 
     const writerTemplate = AGENT_TEMPLATES.find(t => t.id === 'tech-writer');

@@ -18,8 +18,24 @@ import { t } from '@/i18n';
 
 type Tab = 'output' | 'files';
 
+type DisplayAgentStatus = 'idle' | 'pending' | 'running' | 'completed' | 'error' | 'skipped';
+
 function extractOutputBody(content: string): string {
   return content.replace(/^<!--[\s\S]*?-->\s*/u, '');
+}
+
+function normalizeDisplayAgentStatus(status: string | undefined): DisplayAgentStatus {
+  switch (status) {
+    case 'pending':
+    case 'running':
+    case 'completed':
+    case 'error':
+    case 'skipped':
+    case 'idle':
+      return status;
+    default:
+      return 'idle';
+  }
 }
 
 export function WorkflowOutputPanel() {
@@ -57,15 +73,15 @@ export function WorkflowOutputPanel() {
         const currentAgent = agents.find((agent) => agent.id === entry.agentId);
         return {
           id: entry.agentId,
-          name: entry.agentName,
-          status: entry.status,
+          name: entry.agentName || currentAgent?.name || 'Unknown',
+          status: normalizeDisplayAgentStatus(entry.status),
           task: currentAgent?.task,
         };
       })
     : agents.map((agent) => ({
         id: agent.id,
         name: agent.name,
-        status: agent.status,
+        status: normalizeDisplayAgentStatus(agent.status),
         task: agent.task,
       }));
 

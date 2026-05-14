@@ -91,8 +91,11 @@ function createInstance(agents: WorkflowAgent[], connections: WorkflowConnection
 
 function installWorkflowStore(instance: WorkflowInstance) {
   const state = {
+    currentInstanceId: instance.id,
+    instances: [instance],
     instance,
     getCurrentInstance: () => state.instance,
+    getCurrentInstanceOrThrow: () => state.instance,
     resetAllStatuses: () => {
       state.instance.agents = state.instance.agents.map((agent: WorkflowAgent) => ({ ...agent, status: 'idle' }));
       state.instance.dirtyAgentIds = [];
@@ -138,13 +141,28 @@ function installWorkflowStore(instance: WorkflowInstance) {
         agent.id === agentId ? { ...agent, status } : agent
       ));
     },
-    setActiveRunId: jest.fn((runId: string | null) => {
+    setAgentStatusInInstance: (instanceId: string, agentId: string, status: WorkflowAgent['status']) => {
+      if (instanceId !== state.instance.id) return;
+      state.instance.agents = state.instance.agents.map((agent: WorkflowAgent) => (
+        agent.id === agentId ? { ...agent, status } : agent
+      ));
+    },
+    setActiveRunId: jest.fn((runId: string | null, instanceId?: string) => {
+      if (instanceId && instanceId !== state.instance.id) return;
       state.instance.activeRunId = runId;
     }),
     markAgentDirty: jest.fn((agentId: string) => {
       state.instance.dirtyAgentIds = Array.from(new Set([...(state.instance.dirtyAgentIds || []), agentId]));
     }),
+    markAgentDirtyInInstance: jest.fn((instanceId: string, agentId: string) => {
+      if (instanceId !== state.instance.id) return;
+      state.instance.dirtyAgentIds = Array.from(new Set([...(state.instance.dirtyAgentIds || []), agentId]));
+    }),
     clearAgentDirty: jest.fn((agentId: string) => {
+      state.instance.dirtyAgentIds = (state.instance.dirtyAgentIds || []).filter((id: string) => id !== agentId);
+    }),
+    clearAgentDirtyInInstance: jest.fn((instanceId: string, agentId: string) => {
+      if (instanceId !== state.instance.id) return;
       state.instance.dirtyAgentIds = (state.instance.dirtyAgentIds || []).filter((id: string) => id !== agentId);
     }),
   };

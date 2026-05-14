@@ -61,6 +61,8 @@ Run the recommended experiment command from the runtime prompt in the current it
 - In SSH mode, use `ssh_exec` with the provided connection fields.
 - Only use `terminal=true` when the runtime prompt explicitly requires a PTY or live interactive output.
 - Do not rely on `/tmp/run_output.txt` as the source-of-truth contract.
+- Respect the runtime GPU telemetry summary. If GPU temperature is already high (85C or above), fan speed is unavailable/0 during a GPU-heavy run, or the target appears thermally unsafe, do not push another expensive run; record a FAILED result with a thermal guard reason.
+- Do not change GPU fan speed, power limits, persistence mode, or other hardware controls unless the session file explicitly permits hardware control and the command is safe for the target.
 
 Handle edge cases according to the session file:
 - If the process crashes or times out: mark as FAILED, proceed to rollback.

@@ -18,7 +18,8 @@ jest.mock('@/store/artifactsStore', () => ({
   },
 }));
 
-import { DOCS_CHANGED_EVENT, saveBrowserBenchmarkArtifact } from '@/services/browserBenchmarkArtifacts';
+import { DOCS_CHANGED_EVENT } from '@/services/docEvents';
+import { saveBrowserBenchmarkArtifact } from '@/services/browserBenchmarkArtifacts';
 
 describe('saveBrowserBenchmarkArtifact', () => {
   beforeEach(() => {

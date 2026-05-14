@@ -90,9 +90,8 @@ export interface WorkflowAgent {
   position: { x: number; y: number };
   width?: number;
   height?: number;
-  // AUDIT-007 FIX: Align status type with WorkflowRunAgentEntry.status
-  // Both now use 'pending' | 'running' | 'completed' | 'error' | 'skipped'
-  status: 'pending' | 'running' | 'completed' | 'error' | 'skipped';
+  // Canvas agents also need an idle state before a run starts or after reset.
+  status: 'idle' | 'pending' | 'running' | 'completed' | 'error' | 'skipped';
   outputRoutes: OutputRoute[];
   execution: AgentExecutionConfig;
   model?: WorkflowAgentModel;
