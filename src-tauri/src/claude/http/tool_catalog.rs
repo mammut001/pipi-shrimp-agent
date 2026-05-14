@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 const GLOBAL_SECURITY_CONSTRAINT: &str = r#"You are a helpful AI assistant operating within a sandboxed development environment.
@@ -544,6 +546,33 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
     tools
 }
 
+pub fn filter_tools_by_allowed_names(tools: &[Value], allowed_tools: Option<&[String]>) -> Vec<Value> {
+    let Some(allowed_tools) = allowed_tools else {
+        return tools.to_vec();
+    };
+
+    let allowed: HashSet<&str> = allowed_tools.iter().map(String::as_str).collect();
+    tools
+        .iter()
+        .filter(|tool| {
+            tool.get("name")
+                .and_then(|value| value.as_str())
+                .or_else(|| tool.get("function").and_then(|value| value.get("name")).and_then(|value| value.as_str()))
+                .map(|name| allowed.contains(name))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn apply_allowed_tools_to_body(body: &mut Value, allowed_tools: Option<&[String]>) {
+    let Some(existing_tools) = body.get("tools").and_then(|value| value.as_array()) else {
+        return;
+    };
+
+    body["tools"] = Value::Array(filter_tools_by_allowed_names(existing_tools, allowed_tools));
+}
+
 pub fn convert_tools_to_openai_format(tools: &[Value]) -> Vec<Value> {
     tools
         .iter()
@@ -576,6 +605,35 @@ mod tests {
     fn exposes_browser_tools_only_when_enabled() {
         assert_eq!(get_tools(false).len(), 15);
         assert_eq!(get_tools(true).len(), 25);
+    }
+
+    #[test]
+    fn filters_tools_by_allowed_names() {
+        let filtered = filter_tools_by_allowed_names(
+            &get_tools(false),
+            Some(&["execute_command".to_string(), "read_file".to_string()]),
+        );
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0]["name"], "read_file");
+        assert_eq!(filtered[1]["name"], "execute_command");
+    }
+
+    #[test]
+    fn applies_allowed_tool_filter_to_openai_body() {
+        let mut body = serde_json::json!({
+            "tools": convert_tools_to_openai_format(&get_tools(false)),
+        });
+
+        apply_allowed_tools_to_body(
+            &mut body,
+            Some(&["execute_command".to_string(), "read_file".to_string()]),
+        );
+
+        let tools = body["tools"].as_array().expect("filtered tools array");
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["function"]["name"], "read_file");
+        assert_eq!(tools[1]["function"]["name"], "execute_command");
     }
 
     #[test]

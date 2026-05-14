@@ -69,7 +69,7 @@ describe('validateWorkflowForRun', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'dangling-connection', connectionId: 'c1' }),
+        expect.objectContaining({ code: 'missing-target-agent', connectionId: 'c1' }),
     ]));
   });
 
@@ -86,9 +86,27 @@ describe('validateWorkflowForRun', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'cycle-detected' }),
+        expect.objectContaining({ code: 'cycle' }),
     ]));
   });
+  
+    it('rejects workflows with ambiguous multi-predecessor inputs', () => {
+      const agentA = createAgent({ id: 'a', role: 'writer' });
+      const agentB = createAgent({ id: 'b', role: 'developer' });
+      const agentC = createAgent({ id: 'c', role: 'reviewer' });
+      const result = validateWorkflowForRun(createInstance({
+        agents: [agentA, agentB, agentC],
+        connections: [
+          { id: 'c1', sourceAgentId: 'a', targetAgentId: 'c', condition: 'onComplete', type: 'sequential' },
+          { id: 'c2', sourceAgentId: 'b', targetAgentId: 'c', condition: 'onComplete', type: 'sequential' },
+        ],
+      }));
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'ambiguous-input', agentId: 'c' }),
+      ]));
+    });
 
   it('requires either a project goal or agent-level task fallback', () => {
     const result = validateWorkflowForRun(createInstance({

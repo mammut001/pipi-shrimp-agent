@@ -36,6 +36,8 @@ pub use executor::{
 };
 #[allow(unused_imports)]
 pub use tool_catalog::{convert_tools_to_openai_format, get_tools, merge_system_prompt};
+#[allow(unused_imports)]
+pub use tool_catalog::{apply_allowed_tools_to_body, filter_tools_by_allowed_names};
 
 #[cfg(test)]
 #[path = "__tests__/integration_test.rs"]

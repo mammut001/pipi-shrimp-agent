@@ -44,11 +44,14 @@ import {
   getToolBudgetSummaryFromUnknown,
   type ToolBudgetSummary,
 } from '@/services/tools/toolBudget';
+import { extractErrorDetails } from '@/utils/errorFormat';
+import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEvents';
 
 let adapterSessionCounter = 0;
 const MAX_HISTORY = 20;
 const MAX_RECOVERY_RETRIES = 1;
 const MAX_REFLECTION_PASSES = 2;
+const MAX_CONSECUTIVE_API_REQUEST_FAILURES = 3;
 const TOOL_BUDGET_RESERVE = 4;
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
 const TOOL_BUDGET_EXHAUSTION_FAIL_REASON = 'tool budget exhausted before evaluation completed';
@@ -61,11 +64,48 @@ export interface AutoResearchSendMessageOptions {
   reflectionConfig?: ResolvedAgentConfig | null;
 }
 
+export interface AutoResearchRetryConstraintState {
+  allowedTools: string[];
+  retryMessages: Array<{ role: 'user'; content: string }>;
+  hardConstraintLines: string[];
+}
+
 function truncateTranscriptResult(result: string, limit = 4000): string {
   if (result.length <= limit) {
     return result;
   }
   return `${result.slice(0, limit)}\n...[truncated ${result.length - limit} chars]`;
+}
+
+function previewFirstLines(text: string, maxLines = 10): string {
+  return text
+    .split('\n')
+    .slice(0, maxLines)
+    .join('\n')
+    .trim();
+}
+
+function summarizeToolInput(argumentsText: string): string {
+  try {
+    const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
+    const command = typeof parsed.command === 'string' ? parsed.command : null;
+    const path = typeof parsed.path === 'string' ? parsed.path : null;
+    const filePath = typeof parsed.filePath === 'string' ? parsed.filePath : null;
+    return command || filePath || path || truncateTranscriptResult(JSON.stringify(parsed), 240);
+  } catch {
+    return truncateTranscriptResult(argumentsText || '{}', 240);
+  }
+}
+
+function readToolPath(argumentsText: string): string | undefined {
+  try {
+    const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
+    const path = typeof parsed.path === 'string' ? parsed.path : null;
+    const filePath = typeof parsed.filePath === 'string' ? parsed.filePath : null;
+    return filePath || path || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isNearToolBudgetLimit(summary: ToolBudgetSummary | undefined): boolean {
@@ -133,6 +173,81 @@ function isReflectionParserFailure(result: AutoResearchReflectionDecisionResult 
   return Boolean(result && result.parserPath === null && result.parseFailedAttempts.length > 0);
 }
 
+function isDisabledToolFailure(result: AutoResearchObservedToolResult): boolean {
+  return (result.stderr ?? '').includes('disabled for this AutoResearch run');
+}
+
+function recordDisabledToolAttempts(
+  toolResults: AutoResearchObservedToolResult[],
+  counts: Map<string, number>,
+): string[] {
+  const newlyBlocked: string[] = [];
+
+  for (const result of toolResults) {
+    if (!isDisabledToolFailure(result)) {
+      continue;
+    }
+
+    const nextCount = (counts.get(result.tool) ?? 0) + 1;
+    counts.set(result.tool, nextCount);
+    if (nextCount === 2) {
+      newlyBlocked.push(result.tool);
+    }
+  }
+
+  return newlyBlocked;
+}
+
+function isApiRequestFailure(error: unknown): boolean {
+  const envelope = extractErrorDetails(error);
+  const message = envelope.message.toLowerCase();
+
+  return Boolean(envelope.httpCode)
+    || message.includes('chat request failed')
+    || message.includes('streaming request failed')
+    || message.includes('invalid request')
+    || message.includes('reasoning_content')
+    || message.includes('response_format');
+}
+
+export function buildAutoResearchRetryConstraintState(input: {
+  allowedTools: string[];
+  blockedTools: Iterable<string>;
+  decision?: Pick<AutoResearchReflectionDecision, 'nextCommand' | 'nextPlan'> | null;
+  environmentSummary?: AutoResearchEnvironmentSummary;
+}): AutoResearchRetryConstraintState {
+  const blockedTools = Array.from(new Set([...input.blockedTools].filter(Boolean)));
+  const blockedToolSet = new Set(blockedTools);
+  const allowedTools = input.allowedTools.filter((tool) => !blockedToolSet.has(tool));
+  const hardConstraintLines = blockedTools.map((tool) => `HARD CONSTRAINT: do not call ${tool}.`);
+
+  if (blockedToolSet.has('list_files')) {
+    if (allowedTools.includes('execute_command')) {
+      hardConstraintLines.push('Use execute_command with `ls -la` or `ls -la <path>` instead.');
+    } else if (allowedTools.includes('ssh_exec')) {
+      hardConstraintLines.push('Use ssh_exec with `ls -la` or `ls -la <path>` instead.');
+    }
+  }
+
+  if (hardConstraintLines.length > 0) {
+    if (input.decision?.nextCommand) {
+      hardConstraintLines.push(`Use this exact recovery command instead: ${input.decision.nextCommand}`);
+    } else if (input.decision?.nextPlan) {
+      hardConstraintLines.push(`Follow this recovery plan instead: ${input.decision.nextPlan}`);
+    } else if (input.environmentSummary?.recommendedRunCommand) {
+      hardConstraintLines.push(`Use this exact recovery command instead: ${input.environmentSummary.recommendedRunCommand}`);
+    }
+  }
+
+  return {
+    allowedTools,
+    retryMessages: hardConstraintLines.length > 0
+      ? [{ role: 'user', content: hardConstraintLines.join(' ') }]
+      : [],
+    hardConstraintLines,
+  };
+}
+
 function buildIterationFailureOutput(input: {
   metricName: string;
   failReason: string;
@@ -180,15 +295,23 @@ async function appendIterationTranscript(section: string): Promise<void> {
   await appendTargetText(state.sshConfig, runDir.transcriptPath, section);
 }
 
-function buildConvergenceRetryPrompt(systemPrompt: string, maxRounds: number | null): string {
+function buildConvergenceRetryPrompt(
+  systemPrompt: string,
+  maxRounds: number | null,
+  allowedToolsOverride?: string[],
+  hardConstraintLines: string[] = [],
+): string {
   const store = useAutoResearchStore.getState();
-  const allowedTools = buildAutoResearchToolCatalog(store.sshConfig);
+  const allowedTools = allowedToolsOverride ?? buildAutoResearchToolCatalog(store.sshConfig);
   const limitLine = maxRounds
     ? `The previous attempt failed because it exceeded the tool-round budget (${maxRounds}).`
     : 'The previous attempt failed because it exceeded the tool-round budget.';
   const toolDetourGuard = store.sshConfig?.mode === 'local'
     ? 'Do not switch to SSH-only tools.'
     : 'Do not switch to local file tools.';
+  const hardConstraintBlock = hardConstraintLines.length > 0
+    ? `\n- ${hardConstraintLines.join('\n- ')}`
+    : '';
 
   return `${systemPrompt}
 
@@ -200,22 +323,27 @@ function buildConvergenceRetryPrompt(systemPrompt: string, maxRounds: number | n
 - Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for reading metrics/logs, writing the final result, and cleanup.
 - Run the expensive experiment command at most once in this iteration. If it fails, read logs/metrics and emit FAILED instead of retrying.
 - If the environment is still unclear after that inspection step, immediately write ${getCurrentRunDir()?.metricsPath ?? 'metrics.json'} with status FAILED and failReason "Exceeded tool-round budget while inspecting environment", then emit EXPERIMENT_RESULT and stop.
-- Do not keep exploring, do not ask for help, and ${toolDetourGuard}`;
+- Do not keep exploring, do not ask for help, and ${toolDetourGuard}${hardConstraintBlock}`;
 }
 
 function buildRecoveryPrompt(
   systemPrompt: string,
   decision: AutoResearchReflectionDecision,
   failureKind: AutoResearchFailureKind,
+  allowedToolsOverride?: string[],
+  hardConstraintLines: string[] = [],
 ): string {
   const store = useAutoResearchStore.getState();
-  const allowedTools = buildAutoResearchToolCatalog(store.sshConfig);
+  const allowedTools = allowedToolsOverride ?? buildAutoResearchToolCatalog(store.sshConfig);
   const metricsPath = getCurrentRunDir()?.metricsPath ?? 'metrics.json';
   const nextCommand = decision.nextCommand ? `- If you run the experiment again, use this exact command: ${decision.nextCommand}` : '';
   const nextPlan = decision.nextPlan ? `- Recovery plan: ${decision.nextPlan}` : '';
   const toolLaneGuard = store.sshConfig?.mode === 'local'
-    ? 'Stay on the local tool lane only: execute_command, read_file, write_file, create_directory. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'
+    ? 'Stay on the local tool lane only: execute_command, read_file, write_file, get_current_workspace. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'
     : 'Stay on the SSH tool lane only: ssh_exec, ssh_read_file, ssh_upload_file. Do not call execute_command, read_file, write_file, or create_directory.';
+  const hardConstraintBlock = hardConstraintLines.length > 0
+    ? `\n- ${hardConstraintLines.join('\n- ')}`
+    : '';
 
   return `${systemPrompt}
 
@@ -231,7 +359,7 @@ ${nextPlan}
 - Do not repeat the failed command/tool choice if a better recovery path is already specified above.
 - Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for metrics/log reads, final result writing, and rollback/cleanup.
 - If the expensive experiment command already failed once in this iteration, do not patch and rerun it. Read logs/metrics and finalize FAILED.
-- ${toolLaneGuard}
+- ${toolLaneGuard}${hardConstraintBlock}
 - Keep the retry bounded: one focused recovery attempt only.`;
 }
 
@@ -315,10 +443,15 @@ async function persistReflectionDecision(
   decision: AutoResearchReflectionDecision,
   toolBudgetSummary?: ToolBudgetSummary,
 ): Promise<void> {
-  useAutoResearchStore.getState().addRunEvent?.({
+  setAutoResearchPhase('REFLECT', {
+    summary: `Reflection generated a ${decision.action} decision.`,
+  });
+  emitAutoResearchRuntimeEvent({
     level: decision.shouldRetry ? 'info' : 'warn',
-    phase: 'agent_execution',
+    phase: 'REFLECT',
+    type: 'reflection_generated',
     message: `Reflection decision: ${decision.action} — ${decision.summary}`,
+    summary: decision.summary,
     metadata: {
       action: decision.action,
       rootCause: decision.rootCause,
@@ -330,6 +463,10 @@ async function persistReflectionDecision(
         successful_calls: toolBudgetSummary.successfulCalls,
       } : {}),
     },
+  });
+  useAutoResearchStore.getState().patchIterationRecord({
+    iteration: useAutoResearchStore.getState().currentIteration,
+    reflectionSummary: decision.summary,
   });
   useAutoResearchStore.getState().appendLiveOutput(
     `[status] Reflection decision: ${decision.action} — ${decision.summary}\n`,
@@ -382,10 +519,12 @@ async function persistReflectionArtifacts(result: AutoResearchReflectionDecision
 
 function emitReflectionParseFailureEvents(result: AutoResearchReflectionDecisionResult): void {
   result.parseFailedAttempts.forEach((attempt) => {
-    useAutoResearchStore.getState().addRunEvent?.({
+    emitAutoResearchRuntimeEvent({
       level: 'warn',
-      phase: 'reflection_parse_failed',
+      phase: 'REFLECT',
+      type: 'raw',
       message: `Reflection parse failed (${attempt.retryCount + 1}/${result.retryCount + 1}): ${attempt.preview}`,
+      summary: `Reflection parse failed on retry ${attempt.retryCount + 1}.`,
       metadata: {
         retryCount: attempt.retryCount,
         preview: attempt.preview,
@@ -432,32 +571,72 @@ export function createAutoResearchSendMessage(
     let recoveryRetries = 0;
     let reflectionPasses = 0;
     let attemptPrompt = systemPrompt;
-    const allowedTools = buildAutoResearchToolCatalog(store.sshConfig);
+    const baseAllowedTools = buildAutoResearchToolCatalog(store.sshConfig);
     const currentRunDir = getCurrentRunDir();
     const effectiveWorkDir = store.sshConfig?.mode === 'local'
       ? (currentRunDir?.iterDir || workDir)
       : workDir;
+    const disabledToolAttemptCounts = new Map<string, number>();
+    const blockedTools = new Set<string>();
+    let retryConstraintState = buildAutoResearchRetryConstraintState({
+      allowedTools: baseAllowedTools,
+      blockedTools,
+      environmentSummary: options.environmentSummary,
+    });
+    let consecutiveApiRequestFailures = 0;
 
     while (true) {
-      const toolCallsById = new Map<string, { name: string; command?: string }>();
+      const toolCallsById = new Map<string, { name: string; command?: string; argumentsText: string; path?: string }>();
       const toolResults: AutoResearchObservedToolResult[] = [];
       const failedCommands: string[] = [];
+      let reasoningBuffer = '';
+      let reasoningFlushed = false;
+
+      const flushBufferedReasoning = (fallbackReasoning?: string) => {
+        if (!reasoningBuffer && fallbackReasoning) {
+          reasoningBuffer = fallbackReasoning;
+        }
+
+        const reasoningText = reasoningBuffer.trim();
+        if (!reasoningText || reasoningFlushed) {
+          return;
+        }
+
+        useAutoResearchStore.getState().appendLiveOutput(`[thinking]\n${reasoningText}\n`);
+        emitAutoResearchRuntimeEvent({
+          level: 'debug',
+          phase: 'PLAN_HYPOTHESIS',
+          type: 'thinking',
+          message: reasoningText,
+          summary: previewFirstLines(reasoningText, 2) || 'Thinking',
+          detail: reasoningText,
+        });
+        emitAutoResearchRuntimeEvent({
+          level: 'info',
+          phase: 'PLAN_HYPOTHESIS',
+          type: 'agent_plan',
+          message: previewFirstLines(reasoningText, 6) || 'Agent plan recorded.',
+          summary: previewFirstLines(reasoningText, 2) || 'Agent plan recorded.',
+          detail: reasoningText,
+        });
+        reasoningFlushed = true;
+      };
 
       try {
         adapterSessionCounter++;
         const attemptSessionId = `autoresearch-${adapterSessionCounter}-${Date.now()}`;
         const result = await runHeadlessAgentTurn({
           sessionId: attemptSessionId,
-          initialMessages: turnMessages,
+          initialMessages: [...turnMessages, ...retryConstraintState.retryMessages],
           systemPrompt: attemptPrompt,
           workDir: effectiveWorkDir,
           agentConfig: agentConfig!,
-          allowedTools,
+          allowedTools: retryConstraintState.allowedTools,
           onTextDelta: (chunk) => {
             useAutoResearchStore.getState().appendLiveOutput(chunk);
           },
           onReasoningDelta: (chunk) => {
-            useAutoResearchStore.getState().appendLiveOutput(`💭 ${chunk}`);
+            reasoningBuffer += chunk;
           },
           onStatus: (message) => {
             useAutoResearchStore.getState().appendLiveOutput(`[status] ${message}\n`);
@@ -472,19 +651,130 @@ export function createAutoResearchSendMessage(
             await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
           },
           onToolCall: async (call) => {
+            const command = parseToolCommand(call);
+            const path = readToolPath(call.arguments);
+            const parameterSummary = summarizeToolInput(call.arguments);
             toolCallsById.set(call.id, {
               name: call.name,
-              command: parseToolCommand(call),
+              command,
+              argumentsText: call.arguments,
+              path,
+            });
+            if (command && isExperimentRunCommand(command, options.environmentSummary)) {
+              setAutoResearchPhase('RUN_EXPERIMENT', {
+                summary: `Running experiment command for iteration ${useAutoResearchStore.getState().currentIteration}.`,
+              });
+              useAutoResearchStore.getState().patchIterationRecord({
+                iteration: useAutoResearchStore.getState().currentIteration,
+                executionCommand: command,
+              });
+              emitAutoResearchRuntimeEvent({
+                level: 'info',
+                phase: 'RUN_EXPERIMENT',
+                type: 'experiment_command_started',
+                message: command,
+                summary: parameterSummary,
+                metadata: {
+                  toolName: call.name,
+                  command,
+                },
+              });
+            } else {
+              setAutoResearchPhase('EDIT_CODE', {
+                summary: `Tool ${call.name} is running.`,
+              });
+            }
+            emitAutoResearchRuntimeEvent({
+              level: 'info',
+              phase: command && isExperimentRunCommand(command, options.environmentSummary) ? 'RUN_EXPERIMENT' : 'EDIT_CODE',
+              type: 'tool_call_started',
+              message: `${call.name} started.`,
+              summary: parameterSummary,
+              metadata: {
+                toolName: call.name,
+                arguments: call.arguments,
+                command,
+                path,
+                parameterSummary,
+              },
             });
             await appendIterationTranscript(
               `\n## Tool Call: ${call.name}\n\`\`\`json\n${call.arguments || '{}'}\n\`\`\`\n`,
             );
           },
           onToolResult: async (call) => {
-            const observed = parseToolResult(call, toolCallsById.get(call.id)?.command);
+            const toolCall = toolCallsById.get(call.id);
+            const observed = parseToolResult(call, toolCall?.command);
             toolResults.push(observed);
             if (observed.command && ((typeof observed.exitCode === 'number' && observed.exitCode !== 0) || observed.stderr)) {
               failedCommands.push(observed.command);
+            }
+            const toolFailed = (typeof observed.exitCode === 'number' && observed.exitCode !== 0) || Boolean(observed.stderr);
+            emitAutoResearchRuntimeEvent({
+              level: toolFailed ? 'warn' : 'info',
+              phase: observed.command && isExperimentRunCommand(observed.command, options.environmentSummary) ? 'RUN_EXPERIMENT' : 'EDIT_CODE',
+              type: toolFailed ? 'tool_call_failed' : 'tool_call_completed',
+              message: `${call.name} ${toolFailed ? 'failed' : 'completed'}.`,
+              summary: toolFailed
+                ? (observed.stderr || `Exit code ${observed.exitCode ?? 'unknown'}`)
+                : `${call.name} completed in ${call.durationMs} ms.`,
+              metadata: {
+                toolName: call.name,
+                command: observed.command,
+                durationMs: call.durationMs,
+                exitCode: observed.exitCode,
+                path: toolCall?.path,
+              },
+            });
+            emitAutoResearchRuntimeEvent({
+              level: toolFailed ? 'warn' : 'debug',
+              phase: observed.command && isExperimentRunCommand(observed.command, options.environmentSummary) ? 'RUN_EXPERIMENT' : 'EDIT_CODE',
+              type: 'tool_result',
+              message: previewFirstLines(call.result, 10) || '(empty tool result)',
+              summary: `${call.name} output`,
+              detail: call.result,
+              metadata: {
+                toolName: call.name,
+                durationMs: call.durationMs,
+                exitCode: observed.exitCode,
+              },
+            });
+            if (toolCall?.path && !toolFailed && ['write_file', 'ssh_upload_file'].includes(call.name)) {
+              emitAutoResearchRuntimeEvent({
+                level: 'info',
+                phase: 'EDIT_CODE',
+                type: 'file_changed',
+                message: toolCall.path,
+                summary: `Updated ${toolCall.path}`,
+                metadata: {
+                  toolName: call.name,
+                  path: toolCall.path,
+                },
+              });
+            }
+            if (observed.command && isExperimentRunCommand(observed.command, options.environmentSummary)) {
+              useAutoResearchStore.getState().patchIterationRecord({
+                iteration: useAutoResearchStore.getState().currentIteration,
+                executionCommand: observed.command,
+                exitCode: observed.exitCode,
+                durationMs: call.durationMs,
+              });
+              emitAutoResearchRuntimeEvent({
+                level: toolFailed ? 'warn' : 'info',
+                phase: 'RUN_EXPERIMENT',
+                type: 'experiment_command_completed',
+                message: observed.command,
+                summary: toolFailed
+                  ? `Experiment command failed${typeof observed.exitCode === 'number' ? ` with exit code ${observed.exitCode}` : ''}.`
+                  : 'Experiment command completed.',
+                metadata: {
+                  toolName: call.name,
+                  command: observed.command,
+                  durationMs: call.durationMs,
+                  exitCode: observed.exitCode,
+                  stderrPreview: observed.stderr ? previewFirstLines(observed.stderr, 10) : undefined,
+                },
+              });
             }
             await appendIterationTranscript(
               `\n## Tool Result: ${call.name} (${call.durationMs}ms)\n\`\`\`text\n${truncateTranscriptResult(call.result)}\n\`\`\`\n`,
@@ -492,17 +782,65 @@ export function createAutoResearchSendMessage(
           },
         });
 
+        flushBufferedReasoning(result.finalReasoning);
         emitToolBudgetEvent(result.toolBudgetSummary);
         emitBudgetNearLimitEvent(result.toolBudgetSummary);
+        consecutiveApiRequestFailures = 0;
         assistantText = result.finalText;
         lastError = undefined;
         break;
       } catch (error) {
+        flushBufferedReasoning();
         lastError = error;
+        const apiRequestFailure = isApiRequestFailure(error);
+        if (apiRequestFailure) {
+          consecutiveApiRequestFailures += 1;
+          setAutoResearchPhase('FAILED', {
+            level: 'warn',
+            summary: `Provider request failed (${consecutiveApiRequestFailures}/${MAX_CONSECUTIVE_API_REQUEST_FAILURES}).`,
+          });
+          emitAutoResearchRuntimeEvent({
+            level: 'warn',
+            phase: 'FAILED',
+            type: 'provider_error',
+            message: `API request failed (${consecutiveApiRequestFailures}/${MAX_CONSECUTIVE_API_REQUEST_FAILURES}): ${formatError(error)}`,
+            summary: `Provider request failed (${consecutiveApiRequestFailures}/${MAX_CONSECUTIVE_API_REQUEST_FAILURES}).`,
+            metadata: {
+              provider: agentConfig?.provider,
+              model: agentConfig?.model,
+              configName: agentConfig?.name,
+            },
+          });
+          if (consecutiveApiRequestFailures >= MAX_CONSECUTIVE_API_REQUEST_FAILURES) {
+            const failReason = `Provider API request failed ${MAX_CONSECUTIVE_API_REQUEST_FAILURES} times consecutively: ${formatError(error)}`;
+            assistantText = buildIterationFailureOutput({
+              metricName: options.metricName ?? store.metricName,
+              failReason,
+              hypothesis: 'provider request repeatedly failed before execution completed',
+              reasoning: failReason,
+            });
+            lastError = undefined;
+            break;
+          }
+          continue;
+        }
+        consecutiveApiRequestFailures = 0;
         const storeState = useAutoResearchStore.getState();
         const toolBudgetSummary = getToolBudgetSummaryFromUnknown(error);
         emitToolBudgetEvent(toolBudgetSummary);
         emitBudgetNearLimitEvent(toolBudgetSummary);
+        const newlyBlockedTools = recordDisabledToolAttempts(toolResults, disabledToolAttemptCounts);
+        newlyBlockedTools.forEach((tool) => blockedTools.add(tool));
+        if (newlyBlockedTools.length > 0) {
+          emitAutoResearchRuntimeEvent({
+            level: 'warn',
+            phase: 'EDIT_CODE',
+            type: 'raw',
+            message: `Escalated disabled tool constraint: ${newlyBlockedTools.join(', ')}`,
+            summary: `Disabled tools escalated: ${newlyBlockedTools.join(', ')}`,
+            metadata: { tools: newlyBlockedTools },
+          });
+        }
         const reflectionInput = buildReflectionInputFromState({
           systemPrompt,
           metric: options.metricName ?? storeState.metricName,
@@ -582,11 +920,40 @@ export function createAutoResearchSendMessage(
 
           if (decision.shouldRetry && recoveryRetries < MAX_RECOVERY_RETRIES) {
             recoveryRetries += 1;
+            retryConstraintState = buildAutoResearchRetryConstraintState({
+              allowedTools: baseAllowedTools,
+              blockedTools,
+              decision,
+              environmentSummary: options.environmentSummary,
+            });
             attemptPrompt = decision.action === 'switch_command'
-              ? buildRecoveryPrompt(systemPrompt, decision, failureKind)
+              ? buildRecoveryPrompt(
+                systemPrompt,
+                decision,
+                failureKind,
+                retryConstraintState.allowedTools,
+                retryConstraintState.hardConstraintLines,
+              )
               : (isToolRoundLimitError(error)
-                ? buildRecoveryPrompt(buildConvergenceRetryPrompt(systemPrompt, getToolRoundLimit(error)), decision, failureKind)
-                : buildRecoveryPrompt(systemPrompt, decision, failureKind));
+                ? buildRecoveryPrompt(
+                  buildConvergenceRetryPrompt(
+                    systemPrompt,
+                    getToolRoundLimit(error),
+                    retryConstraintState.allowedTools,
+                    retryConstraintState.hardConstraintLines,
+                  ),
+                  decision,
+                  failureKind,
+                  retryConstraintState.allowedTools,
+                  retryConstraintState.hardConstraintLines,
+                )
+                : buildRecoveryPrompt(
+                  systemPrompt,
+                  decision,
+                  failureKind,
+                  retryConstraintState.allowedTools,
+                  retryConstraintState.hardConstraintLines,
+                ));
             continue;
           }
 

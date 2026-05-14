@@ -18,6 +18,7 @@ import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, processMessagesForDisplay } from '@/utils/chat';
 import { getHiddenMessageCount, getVisibleMessageWindow } from '@/components/chat/messageWindowing';
+import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
 
 /**
  * Chat page component
@@ -27,16 +28,19 @@ export function Chat() {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [showFullHistory, setShowFullHistory] = useState(false);
+  const [fallbackTerminalCwd, setFallbackTerminalCwd] = useState<string | undefined>();
   // Debounce timer for scroll events to prevent rapid state updates during fast scrolling
   const scrollDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     currentMessages,
     currentSession,
+    currentSessionId,
     isStreaming,
     error,
     clearError,
     retryLastMessage,
+    ensureSessionWorkDir,
   } = useChatStore();
 
   // Memoized token usage (recalculates only when messages change)
@@ -83,7 +87,28 @@ export function Chat() {
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
 
   // Get current session work dir for terminal cwd
-  const terminalCwd = currentSessionData?.workDir;
+  const terminalCwd = currentSessionData?.workDir || fallbackTerminalCwd;
+
+  useEffect(() => {
+    if (!terminalPanelVisible || currentSessionData?.workDir || fallbackTerminalCwd) {
+      return;
+    }
+
+    let cancelled = false;
+    const cwdPromise = currentSessionId
+      ? ensureSessionWorkDir(currentSessionId).then((cwd) => cwd ?? undefined)
+      : resolveFallbackTerminalCwd();
+
+    void cwdPromise.then((cwd) => {
+      if (!cancelled) {
+        setFallbackTerminalCwd(cwd);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSessionData?.workDir, currentSessionId, ensureSessionWorkDir, fallbackTerminalCwd, terminalPanelVisible]);
 
   // Memoized: filter out internal tool-result messages
   const rawMessages = currentMessages();

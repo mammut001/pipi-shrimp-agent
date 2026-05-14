@@ -14,12 +14,12 @@ jest.mock('@/store/settingsStore', () => ({
 
 jest.mock('@/store/workflowStore', () => ({
   useWorkflowStore: (selector: unknown) => mockUseWorkflowStore(selector),
-  selectAgentIncomingConnections: (instance: any, agentId: string) =>
-    (instance?.connections ?? []).filter((connection: any) => connection.targetAgentId === agentId),
-  selectAgentOutputRoutes: (instance: any, agentId: string) =>
+  selectAgentIncomingConnections: (instance: { connections?: Array<{ targetAgentId: string }> } | null, agentId: string) =>
+    (instance?.connections ?? []).filter((connection) => connection.targetAgentId === agentId),
+  selectAgentOutputRoutes: (instance: { connections?: Array<{ id: string; sourceAgentId: string; condition: string; keyword?: string; keywordMode?: string; targetAgentId: string }> } | null, agentId: string) =>
     (instance?.connections ?? [])
-      .filter((connection: any) => connection.sourceAgentId === agentId)
-      .map((connection: any) => ({
+      .filter((connection) => connection.sourceAgentId === agentId)
+      .map((connection) => ({
         id: connection.id,
         condition: connection.condition,
         keyword: connection.keyword,
@@ -96,7 +96,7 @@ describe('AgentConfigPanel', () => {
     mockUseWorkflowStore.mockImplementation((selector: (state: ReturnType<typeof createWorkflowState>) => unknown) =>
       selector(createWorkflowState())
     );
-    mockUseSettingsStore.mockImplementation((selector: (state: { apiConfigs: any[]; availableModels: Record<string, string[]> }) => unknown) =>
+    mockUseSettingsStore.mockImplementation((selector: (state: { apiConfigs: Array<{ id: string; name: string; provider: string; model: string }>; availableModels: Record<string, string[]> }) => unknown) =>
       selector({ apiConfigs: [], availableModels: {} })
     );
   });

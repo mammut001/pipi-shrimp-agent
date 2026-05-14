@@ -1,9 +1,31 @@
-import { createElement } from 'react';
+import { createElement, useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { clickElement, createDomHarness, flushEffects } from './domHarness';
 
 const listeners = new Set<() => void>();
-let workflowState: any;
+
+interface WorkflowViewAgent {
+  id: string;
+  name: string;
+  task?: string;
+  taskPrompt?: string;
+  taskInstruction?: string;
+  inputFrom?: string | null;
+}
+
+interface WorkflowViewInstance {
+  id: string;
+  agents: WorkflowViewAgent[];
+}
+
+interface WorkflowViewState {
+  currentInstanceId: string | null;
+  instances: WorkflowViewInstance[];
+  createInstance: () => void;
+  updateAgent: jest.Mock;
+}
+
+let workflowState: WorkflowViewState;
 
 function emitWorkflowState(): void {
   for (const listener of listeners) {
@@ -11,15 +33,14 @@ function emitWorkflowState(): void {
   }
 }
 
-function setWorkflowState(updater: (state: any) => any): void {
+function setWorkflowState(updater: (state: WorkflowViewState) => WorkflowViewState): void {
   workflowState = updater(workflowState);
   emitWorkflowState();
 }
 
 const useWorkflowStoreMock = Object.assign(
-  (selector?: (state: any) => unknown) => {
-    const React = require('react') as typeof import('react');
-    return React.useSyncExternalStore(
+  (selector?: (state: WorkflowViewState) => unknown) => {
+    return useSyncExternalStore(
       (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);

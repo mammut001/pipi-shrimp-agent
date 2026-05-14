@@ -14,7 +14,10 @@ import {
   type WorkflowRun,
 } from '@/types/workflow';
 import { DEFAULT_MAX_GOAL_ITERATIONS } from '@/services/workflow/defaults';
-import { validateWorkflowForRun } from '@/services/workflow/validation';
+import {
+  formatWorkflowValidationErrors,
+  validateWorkflowForRun,
+} from '@/services/workflow/validation';
 import {
   buildDownstreamAgentPrompt,
   buildEntryAgentPrompt,
@@ -516,6 +519,7 @@ ${output}
     });
 
     if (!validationResult.valid) {
+      console.error('[workflow] validation failed\n' + formatWorkflowValidationErrors(validationResult), validationResult.errors);
       useUIStore.getState().addNotification('error', validationResult.firstError?.message ?? '当前 Workflow 配置无效，无法运行。');
       return;
     }

@@ -35,6 +35,23 @@ impl OpenAIAdapter {
     }
 }
 
+fn contains_xml_tool_call_text(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    lower.contains("<tool_calls>")
+        || lower.contains("<invoke name=")
+        || lower.contains("<parameter name=")
+}
+
+fn validate_structured_tool_call_content(content: &str, tool_calls: &[ToolCall]) -> AppResult<()> {
+    if tool_calls.is_empty() && contains_xml_tool_call_text(content) {
+        return Err(AppError::ProcessError(
+            "malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 impl ProviderAdapter for OpenAIAdapter {
     fn provider_id(&self) -> ProviderId {
         self.provider
@@ -154,6 +171,7 @@ impl ProviderAdapter for OpenAIAdapter {
         }
 
         let artifacts = detect_artifacts(&content);
+        validate_structured_tool_call_content(&content, &tool_calls)?;
 
         Ok(ChatResponse {
             content,
@@ -280,5 +298,210 @@ impl ProviderAdapter for OpenAIAdapter {
         }
 
         Ok(events)
+    }
+
+    fn finalize_stream(
+        &self,
+        mut ctx: StreamContext,
+        _config: &ResolvedProviderConfig,
+    ) -> AppResult<ChatResponse> {
+        let artifacts = detect_artifacts(&ctx.content);
+
+        if ctx.usage.input_tokens == 0 {
+            ctx.usage.input_tokens = ctx.estimated_input;
+        }
+
+        validate_structured_tool_call_content(&ctx.content, &ctx.tool_calls)?;
+
+        Ok(ChatResponse {
+            content: ctx.content,
+            artifacts,
+            model: ctx.model,
+            usage: ctx.usage,
+            tool_calls: ctx.tool_calls,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::claude::provider::ProviderCapabilities;
+
+    fn deepseek_config() -> ResolvedProviderConfig {
+        ResolvedProviderConfig {
+            provider_id: ProviderId::DeepSeek,
+            api_format: ApiFormat::OpenAI,
+            base_url: "https://api.deepseek.com".to_string(),
+            api_key: "test-token".to_string(),
+            model: "deepseek-chat".to_string(),
+            capabilities: ProviderCapabilities {
+                supports_thinking: false,
+                supports_reasoning: true,
+                supports_reasoning_stream: true,
+                supports_tool_calls: true,
+                supports_tool_openai: true,
+                supports_streaming: true,
+                supports_response_format: false,
+                supports_response_format_json_schema: false,
+                supports_json_mode: true,
+                accepts_response_format: false,
+                accepts_reasoning_param: false,
+                supports_vision: false,
+                uses_responses_api: false,
+                requires_tool_ordering: false,
+                thinking_budget: None,
+                max_output_tokens: Some(8192),
+            },
+        }
+    }
+
+    #[test]
+    fn parses_deepseek_reasoning_stream_without_leaking_reasoning_into_final_content() {
+        let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
+        let mut ctx = StreamContext::new(12, None, Some("session-1".to_string()));
+
+        let first_chunk = serde_json::json!({
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "reasoning_content": "internal reasoning ",
+                    "content": "visible "
+                }
+            }]
+        });
+        let second_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {
+                            "name": "execute_command",
+                            "arguments": "{\"command\":\"ls -la\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let third_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "content": "answer"
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 3
+            }
+        });
+
+        let first_events = adapter
+            .parse_stream_chunk(&first_chunk.to_string(), &mut ctx)
+            .expect("first chunk should parse");
+        assert!(matches!(first_events[0], StreamEvent::Reasoning(ref chunk) if chunk == "internal reasoning "));
+        assert!(matches!(first_events[1], StreamEvent::Token(ref chunk) if chunk == "visible "));
+
+        let second_events = adapter
+            .parse_stream_chunk(&second_chunk.to_string(), &mut ctx)
+            .expect("second chunk should parse");
+        assert!(second_events.is_empty());
+
+        let third_events = adapter
+            .parse_stream_chunk(&third_chunk.to_string(), &mut ctx)
+            .expect("third chunk should parse");
+        assert!(third_events.iter().any(|event| matches!(event, StreamEvent::Token(chunk) if chunk == "answer")));
+        assert!(third_events.iter().any(|event| matches!(event, StreamEvent::ToolCall { id, name, arguments } if id == "call_1" && name == "execute_command" && arguments == "{\"command\":\"ls -la\"}")));
+
+        let response = adapter
+            .finalize_stream(ctx, &deepseek_config())
+            .expect("stream should finalize");
+
+        assert_eq!(response.content, "visible answer");
+        assert!(!response.content.contains("internal reasoning"));
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.tool_calls[0].tool_call_id, "call_1");
+        assert_eq!(response.tool_calls[0].name, "execute_command");
+        assert_eq!(response.tool_calls[0].arguments, "{\"command\":\"ls -la\"}");
+        assert_eq!(response.usage.input_tokens, 10);
+        assert_eq!(response.usage.output_tokens, 3);
+    }
+
+    #[test]
+    fn rejects_xml_tool_calls_without_structured_tool_call_channel() {
+        let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
+        let mut ctx = StreamContext::new(8, None, Some("session-xml".to_string()));
+
+        let chunk = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "content": "<tool_calls><invoke name=\"execute_command\"><parameter name=\"command\" string=\"ls -la\"/></invoke></tool_calls>"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        adapter
+            .parse_stream_chunk(&chunk.to_string(), &mut ctx)
+            .expect("chunk should parse before final validation");
+
+        let error = adapter
+            .finalize_stream(ctx, &deepseek_config())
+            .expect_err("xml tool calls should be rejected");
+
+        assert!(error.to_string().contains("malformed_tool_call"));
+    }
+
+    #[test]
+    fn merges_streaming_tool_calls_by_index() {
+        let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
+        let mut ctx = StreamContext::new(6, None, Some("session-tools".to_string()));
+
+        let first_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_indexed",
+                        "type": "function",
+                        "function": {
+                            "name": "execute_command",
+                            "arguments": "{\"command\":\"ls"
+                        }
+                    }]
+                }
+            }]
+        });
+        let second_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "type": "function",
+                        "function": {
+                            "arguments": " -la\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        adapter
+            .parse_stream_chunk(&first_chunk.to_string(), &mut ctx)
+            .expect("first chunk should parse");
+        let events = adapter
+            .parse_stream_chunk(&second_chunk.to_string(), &mut ctx)
+            .expect("second chunk should parse");
+
+        assert!(events.iter().any(|event| matches!(event, StreamEvent::ToolCall { id, name, arguments } if id == "call_indexed" && name == "execute_command" && arguments == "{\"command\":\"ls -la\"}")));
     }
 }

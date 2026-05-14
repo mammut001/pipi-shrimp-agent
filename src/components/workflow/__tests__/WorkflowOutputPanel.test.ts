@@ -1,13 +1,58 @@
-import { createElement } from 'react';
+import { createElement, useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { clickElement, createDomHarness, flushEffects } from './domHarness';
 
 const listeners = new Set<() => void>();
-let workflowState: any;
 const addNotification = jest.fn();
 const mockSetStreamChunkCallback = jest.fn();
 const mockReadFile = jest.fn();
 const mockListDirectory = jest.fn();
+
+interface OutputPanelAgent {
+  id: string;
+  name: string;
+  status: string;
+  task?: string;
+}
+
+interface OutputPanelRunAgent {
+  agentId: string;
+  agentName: string;
+  status: string;
+  outputFilePath?: string;
+  output?: string;
+}
+
+interface OutputPanelRun {
+  id: string;
+  title: string;
+  projectGoal: string;
+  successCriteria: string;
+  status: string;
+  startTime: number;
+  agents: OutputPanelRunAgent[];
+  currentIteration: number;
+  goalEvaluations: unknown[];
+  reachedGoal: boolean;
+}
+
+interface OutputPanelInstance {
+  id: string;
+  activeRunId: string | null;
+  agents: OutputPanelAgent[];
+  workflowRuns: OutputPanelRun[];
+}
+
+interface OutputPanelState {
+  currentInstanceId: string | null;
+  isRunning: boolean;
+  selectedRunId: string | null;
+  selectedPreviewFile: string | null;
+  setSelectedPreviewFile: (path: string | null) => void;
+  instances: OutputPanelInstance[];
+}
+
+let workflowState: OutputPanelState;
 
 function emitWorkflowState(): void {
   for (const listener of listeners) {
@@ -15,15 +60,14 @@ function emitWorkflowState(): void {
   }
 }
 
-function setWorkflowState(updater: (state: any) => any): void {
+function setWorkflowState(updater: (state: OutputPanelState) => OutputPanelState): void {
   workflowState = updater(workflowState);
   emitWorkflowState();
 }
 
 const useWorkflowStoreMock = Object.assign(
-  (selector?: (state: any) => unknown) => {
-    const React = require('react') as typeof import('react');
-    return React.useSyncExternalStore(
+  (selector?: (state: OutputPanelState) => unknown) => {
+    return useSyncExternalStore(
       (listener: () => void) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -93,7 +137,7 @@ function createWorkflowState(selectedRunId: string) {
           {
             id: 'agent-current',
             name: 'Current Agent',
-            status: 'legacy-status' as any,
+            status: 'legacy-status',
             task: 'Current task',
           },
         ],
@@ -141,7 +185,7 @@ function createWorkflowState(selectedRunId: string) {
               {
                 agentId: 'agent-fallback',
                 agentName: 'Fallback Agent',
-                status: 'weird-status' as any,
+                status: 'weird-status',
                 outputFilePath: '/tmp/missing-agent.md',
                 output: 'fallback summary output',
               },

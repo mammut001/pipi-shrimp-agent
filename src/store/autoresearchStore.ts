@@ -14,7 +14,9 @@ import {
   redactAutoResearchSensitiveText,
   toHistoryConfigSnapshot,
   type AutoResearchIterationRecord,
+  type AutoResearchRecoveryAction,
   type AutoResearchRunEvent,
+  type AutoResearchRunPhase,
   type AutoResearchRunRecord,
   type AutoResearchRunStatus,
 } from '@/services/autoresearch/history';
@@ -173,10 +175,14 @@ function createRunEvent(
   return {
     id: `${runId}-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     runId,
+    iterationId: input.iterationId,
     timestamp,
     level: input.level,
     phase: input.phase,
+    type: input.type,
     message: redactAutoResearchSensitiveText(input.message),
+    summary: sanitizeOptionalText(input.summary),
+    detail: input.detail,
     metadata: input.metadata,
   };
 }
@@ -241,6 +247,7 @@ function buildRunRecordFromInit(opts: {
     createdAt: opts.createdAt,
     updatedAt: opts.createdAt,
     startedAt: opts.createdAt,
+    currentPhase: 'INIT',
     config: {
       experimentDir: opts.experimentDir || opts.sshConfig.remoteWorkDir || '',
       workdir: opts.sshConfig.remoteWorkDir || '',
@@ -367,6 +374,7 @@ interface AutoResearchStore extends ExperimentSession {
   resetSession: () => void;
   selectRun: (runId: string) => void;
   setLoopState: (state: LoopState) => void;
+  setCurrentPhase: (phase?: AutoResearchRunPhase) => void;
   setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string; reason?: string }) => void;
   setReflectionFailed: (reason: string, options?: { summary?: string; endedAt?: string }) => void;
   setError: (msg: string) => void;
@@ -378,15 +386,46 @@ interface AutoResearchStore extends ExperimentSession {
   completeIterationRecord: (input: {
     iteration: number;
     status: AutoResearchIterationRecord['status'];
+    phase?: AutoResearchIterationRecord['phase'];
     hypothesis?: string;
     change?: string;
     reasoning?: string;
+    narrative?: string;
+    codeChangesSummary?: string;
+    executionCommand?: string;
+    exitCode?: number | null;
+    durationMs?: number | null;
+    parsedMetrics?: Record<string, number | string | boolean | null>;
+    reflectionSummary?: string;
     metricValue?: number | null;
     improvement?: number | null;
     commitHash?: string;
     error?: string | null;
     endedAt?: string;
     artifactPaths?: string[];
+    recoveryActions?: AutoResearchRecoveryAction[];
+  }) => void;
+  patchIterationRecord: (input: {
+    iteration: number;
+    status?: AutoResearchIterationRecord['status'];
+    phase?: AutoResearchIterationRecord['phase'];
+    hypothesis?: string;
+    change?: string;
+    reasoning?: string;
+    narrative?: string;
+    codeChangesSummary?: string;
+    executionCommand?: string;
+    exitCode?: number | null;
+    durationMs?: number | null;
+    parsedMetrics?: Record<string, number | string | boolean | null>;
+    reflectionSummary?: string;
+    metricValue?: number | null;
+    improvement?: number | null;
+    commitHash?: string;
+    error?: string | null;
+    endedAt?: string;
+    artifactPaths?: string[];
+    recoveryActions?: AutoResearchRecoveryAction[];
   }) => void;
   addRunEvent: (input: Omit<AutoResearchRunEvent, 'id' | 'runId' | 'timestamp'> & { timestamp?: string }) => void;
   updateBestMetric: (value: number) => void;
@@ -451,7 +490,9 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       createRunEvent(opts.id, {
         level: 'info',
         phase: 'system',
+        type: 'run_started',
         message: 'Run initialized.',
+        summary: 'Run initialized.',
         metadata: {
           experimentDir: nextRun.config.experimentDir,
           workdir: nextRun.config.workdir,
@@ -509,6 +550,14 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
 
   setLoopState: (loopState) => set({ loopState }),
 
+  setCurrentPhase: (currentPhase) => set((state) => ({
+    ...withActiveRunUpdate(state, (run) => ({
+      ...run,
+      updatedAt: new Date().toISOString(),
+      currentPhase,
+    })),
+  })),
+
   setRunStatus: (status, options) => set((state) => {
     const updatedAt = options?.endedAt ?? new Date().toISOString();
     const clearReason = ['running', 'waiting_rate_limit', 'completed', 'stopped'].includes(status);
@@ -518,6 +567,11 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         ? undefined
         : state.reason;
     const nextSummary = sanitizeOptionalText(options?.summary);
+    const nextPhase = status === 'completed' || status === 'stopped' || status === 'interrupted'
+      ? 'DONE'
+      : status === 'failed' || status === 'reflection_failed'
+        ? 'FAILED'
+        : undefined;
 
     return {
       reason: nextReason,
@@ -526,6 +580,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         status,
         updatedAt,
         endedAt: options?.endedAt ?? (clearReason ? undefined : run.endedAt ?? updatedAt),
+        currentPhase: nextPhase ?? run.currentPhase,
         summary: nextSummary ?? run.summary,
         reason: options?.reason !== undefined
           ? sanitizeOptionalText(options.reason)
@@ -551,13 +606,16 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         status: 'reflection_failed',
         updatedAt: endedAt,
         endedAt,
+        currentPhase: 'FAILED',
         summary: sanitizedSummary ?? sanitizedReason,
         reason: sanitizedReason,
         events: [...run.events, createRunEvent(run.id, {
           timestamp: endedAt,
           level: 'error',
           phase: 'system',
+          type: 'provider_error',
           message: 'Run state changed: running → reflection_failed',
+          summary: sanitizedReason,
           metadata: {
             reason: sanitizedReason,
           },
@@ -579,13 +637,16 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         status: 'failed',
         updatedAt: endedAt,
         endedAt,
+        currentPhase: 'FAILED',
         summary: sanitizedMessage,
         reason: sanitizedMessage,
         events: [...run.events, createRunEvent(run.id, {
           timestamp: endedAt,
           level: 'error',
           phase: 'system',
+          type: 'provider_error',
           message: sanitizedMessage,
+          summary: sanitizedMessage,
         })],
       })),
     };
@@ -658,6 +719,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         id: `${run.id}-iter-${input.iteration}`,
         index: input.iteration,
         status: 'running',
+        phase: 'INIT',
         startedAt: input.startedAt,
         artifactPaths: input.artifactPaths,
       };
@@ -680,9 +742,17 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         id: existing?.id ?? `${run.id}-iter-${input.iteration}`,
         index: input.iteration,
         status: input.status,
+        phase: input.phase ?? existing?.phase,
         hypothesis: input.hypothesis ? redactAutoResearchSensitiveText(input.hypothesis) : existing?.hypothesis,
         change: input.change ? redactAutoResearchSensitiveText(input.change) : existing?.change,
         reasoning: input.reasoning ? redactAutoResearchSensitiveText(input.reasoning) : existing?.reasoning,
+        narrative: input.narrative ? redactAutoResearchSensitiveText(input.narrative) : existing?.narrative,
+        codeChangesSummary: input.codeChangesSummary ? redactAutoResearchSensitiveText(input.codeChangesSummary) : existing?.codeChangesSummary,
+        executionCommand: input.executionCommand ? redactAutoResearchSensitiveText(input.executionCommand) : existing?.executionCommand,
+        exitCode: input.exitCode ?? existing?.exitCode,
+        durationMs: input.durationMs ?? existing?.durationMs,
+        parsedMetrics: input.parsedMetrics ?? existing?.parsedMetrics,
+        reflectionSummary: input.reflectionSummary ? redactAutoResearchSensitiveText(input.reflectionSummary) : existing?.reflectionSummary,
         metricValue: input.metricValue ?? existing?.metricValue,
         improvement: input.improvement ?? existing?.improvement,
         commitHash: input.commitHash ?? existing?.commitHash,
@@ -690,6 +760,45 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         startedAt: existing?.startedAt,
         endedAt: input.endedAt ?? existing?.endedAt,
         artifactPaths: input.artifactPaths ?? existing?.artifactPaths,
+        recoveryActions: input.recoveryActions ?? existing?.recoveryActions,
+      };
+      const nextIterations = run.iterations.some((item) => item.index === input.iteration)
+        ? run.iterations.map((item) => (item.index === input.iteration ? nextRecord : item))
+        : [...run.iterations, nextRecord].sort((a, b) => a.index - b.index);
+      return {
+        ...run,
+        updatedAt: input.endedAt ?? new Date().toISOString(),
+        iterations: nextIterations,
+      };
+    }),
+  })),
+
+  patchIterationRecord: (input) => set((state) => ({
+    runHistory: updateRunRecord(state.runHistory, state.id, (run) => {
+      const existing = run.iterations.find((item) => item.index === input.iteration);
+      const nextRecord: AutoResearchIterationRecord = {
+        id: existing?.id ?? `${run.id}-iter-${input.iteration}`,
+        index: input.iteration,
+        status: input.status ?? existing?.status ?? 'running',
+        phase: input.phase ?? existing?.phase,
+        hypothesis: input.hypothesis ? redactAutoResearchSensitiveText(input.hypothesis) : existing?.hypothesis,
+        change: input.change ? redactAutoResearchSensitiveText(input.change) : existing?.change,
+        reasoning: input.reasoning ? redactAutoResearchSensitiveText(input.reasoning) : existing?.reasoning,
+        narrative: input.narrative ? redactAutoResearchSensitiveText(input.narrative) : existing?.narrative,
+        codeChangesSummary: input.codeChangesSummary ? redactAutoResearchSensitiveText(input.codeChangesSummary) : existing?.codeChangesSummary,
+        executionCommand: input.executionCommand ? redactAutoResearchSensitiveText(input.executionCommand) : existing?.executionCommand,
+        exitCode: input.exitCode ?? existing?.exitCode,
+        durationMs: input.durationMs ?? existing?.durationMs,
+        parsedMetrics: input.parsedMetrics ?? existing?.parsedMetrics,
+        reflectionSummary: input.reflectionSummary ? redactAutoResearchSensitiveText(input.reflectionSummary) : existing?.reflectionSummary,
+        metricValue: input.metricValue ?? existing?.metricValue,
+        improvement: input.improvement ?? existing?.improvement,
+        commitHash: input.commitHash ?? existing?.commitHash,
+        error: input.error ? redactAutoResearchSensitiveText(input.error) : existing?.error ?? null,
+        startedAt: existing?.startedAt,
+        endedAt: input.endedAt ?? existing?.endedAt,
+        artifactPaths: input.artifactPaths ?? existing?.artifactPaths,
+        recoveryActions: input.recoveryActions ?? existing?.recoveryActions,
       };
       const nextIterations = run.iterations.some((item) => item.index === input.iteration)
         ? run.iterations.map((item) => (item.index === input.iteration ? nextRecord : item))

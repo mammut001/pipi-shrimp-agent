@@ -185,4 +185,61 @@ describe('QueryEngine context overflow fallback', () => {
     expect((errorEvent.value.error as Error).message).toContain('Exceeded maximum tool rounds (4)');
     expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(2);
   });
+
+  it('retries once when the model emits text-form tool calls instead of structured tool_calls', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* malformed() {
+        throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');
+      })
+      .mockImplementationOnce(async function* recovered() {
+        yield { type: 'text_delta', content: 'Recovered' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 2, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const events = [];
+    for await (const event of runChatTurn(
+      'session-3',
+      [{ role: 'user', content: 'use a tool if needed' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'status_update',
+        message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+      },
+      { type: 'text_delta', content: 'Recovered' },
+      {
+        type: 'turn_complete',
+        tokenUsage: { input_tokens: 2, output_tokens: 1, model: 'MiniMax-M2.7' },
+      },
+    ]);
+    expect(mockBuildResolvedChatRequest).toHaveBeenNthCalledWith(
+      1,
+      resolvedConfig,
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('structured OpenAI function-calling channel named tool_calls'),
+      }),
+    );
+    expect(mockBuildResolvedChatRequest).toHaveBeenNthCalledWith(
+      2,
+      resolvedConfig,
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: 'Your previous response used text-form tool calls, which were ignored. Use the structured tool_calls channel only.',
+          }),
+        ]),
+      }),
+    );
+  });
 });

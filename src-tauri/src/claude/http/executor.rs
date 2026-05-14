@@ -11,7 +11,7 @@ use crate::utils::{AppError, AppResult};
 
 use super::{
     estimate_request_input_tokens, get_adapter_for_config, map_http_status, parse_plain_response,
-    resolve_provider_config, run_with_retry, stream_response, ClaudeHttpError,
+    resolve_provider_config, run_with_retry, stream_response, apply_allowed_tools_to_body, ClaudeHttpError,
     ClaudeHttpTelemetry, ProviderId, DEFAULT_RETRY_POLICY,
 };
 
@@ -42,6 +42,7 @@ pub async fn send_request_impl(
     api_format_hint: Option<&str>,
     provider_capabilities: Option<super::ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
+    allowed_tools: Option<&[String]>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     let config = resolve_provider_config(
         api_key,
@@ -95,10 +96,73 @@ pub async fn send_request_impl(
             allow_browser_tools,
         )
     };
-    if config.api_format == super::ApiFormat::OpenAI {
+    if let Some(record) = body.as_object_mut() {
+        if !config.capabilities.accepts_reasoning_param {
+            record.remove("reasoning");
+            record.remove("reasoning_effort");
+        }
+    }
+    if body.get("tools").is_some() {
+        if !config.capabilities.supports_tool_calls
+            || (config.api_format == super::ApiFormat::OpenAI && !config.capabilities.supports_tool_openai)
+        {
+            if let Some(record) = body.as_object_mut() {
+                record.remove("tools");
+                record.remove("tool_choice");
+            }
+        } else {
+            apply_allowed_tools_to_body(&mut body, allowed_tools);
+            let has_tools = body
+                .get("tools")
+                .and_then(|value| value.as_array())
+                .map(|tools| !tools.is_empty())
+                .unwrap_or(false);
+
+            if !has_tools {
+                if let Some(record) = body.as_object_mut() {
+                    record.remove("tools");
+                    record.remove("tool_choice");
+                }
+            }
+        }
+    }
+    if config.api_format == super::ApiFormat::OpenAI && config.capabilities.accepts_response_format {
         if let Some(response_format) = response_format {
             body["response_format"] = response_format;
         }
+    }
+    #[cfg(debug_assertions)]
+    {
+        let tool_names = body
+            .get("tools")
+            .and_then(|value| value.as_array())
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(|tool| {
+                        tool.get("function")
+                            .and_then(|value| value.get("name"))
+                            .or_else(|| tool.get("name"))
+                            .and_then(|value| value.as_str())
+                            .map(|value| value.to_string())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        eprintln!(
+            "[claude-http] request_summary={}",
+            serde_json::json!({
+                "provider": provider_label(config.provider_id),
+                "model": config.model,
+                "hasTools": !tool_names.is_empty(),
+                "toolNames": tool_names,
+                "tool_choice": body.get("tool_choice").cloned().unwrap_or(serde_json::Value::Null),
+                "hasResponseFormat": body.get("response_format").is_some(),
+                "hasReasoningParam": body.get("reasoning").is_some() || body.get("reasoning_effort").is_some(),
+                "messageCount": body.get("messages").and_then(|value| value.as_array()).map(|messages| messages.len()).unwrap_or(0),
+            })
+        );
     }
     let estimated_input = estimate_request_input_tokens(
         config.provider_id,
@@ -185,6 +249,7 @@ pub async fn send_streaming_request(
     api_format_hint: Option<&str>,
     provider_capabilities: Option<super::ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
+    allowed_tools: Option<&[String]>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     let cancel_token = CancellationToken::new();
     {
@@ -210,6 +275,7 @@ pub async fn send_streaming_request(
             api_format_hint,
             provider_capabilities,
             response_format,
+            allowed_tools,
         ) => response,
     };
 

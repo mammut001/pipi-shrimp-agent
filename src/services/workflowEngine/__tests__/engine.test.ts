@@ -10,7 +10,29 @@ const settingsState = {
     apiFormat: 'anthropic',
   })),
 };
-const workflowStoreState: { current: any } = { current: null };
+interface MockWorkflowStoreState {
+  currentInstanceId: string;
+  instances: WorkflowInstance[];
+  getCurrentInstance: () => WorkflowInstance | null;
+  getCurrentInstanceOrThrow: () => WorkflowInstance;
+  resetAllStatuses: (instanceId?: string) => void;
+  setRunning: jest.Mock;
+  addWorkflowRun: (run: WorkflowRun, instanceId?: string) => void;
+  updateWorkflowRun: (runId: string, updates: Partial<WorkflowRun>) => void;
+  renameWorkflowRun: jest.Mock;
+  deleteWorkflowRun: jest.Mock;
+  updateRunAgent: (runId: string, agentId: string, updates: Record<string, unknown>) => void;
+  appendGoalEvaluation: (runId: string, evaluation: { iteration: number; reached: boolean }) => void;
+  setAgentStatus: jest.Mock;
+  setAgentStatusInInstance: (instanceId: string, agentId: string, status: WorkflowAgent['status']) => void;
+  setActiveRunId: jest.Mock;
+  markAgentDirty: jest.Mock;
+  markAgentDirtyInInstance: jest.Mock;
+  clearAgentDirty: jest.Mock;
+  clearAgentDirtyInInstance: jest.Mock;
+}
+
+const workflowStoreState: { current: MockWorkflowStoreState | null } = { current: null };
 const addNotification = jest.fn();
 
 jest.mock('@tauri-apps/api/core', () => ({
@@ -89,7 +111,7 @@ function createInstance(
 }
 
 function installWorkflowStore(instances: WorkflowInstance[], initialCurrentInstanceId: string) {
-  const state = {
+  const state: MockWorkflowStoreState = {
     currentInstanceId: initialCurrentInstanceId,
     instances,
     getCurrentInstance: () => state.instances.find((instance) => instance.id === state.currentInstanceId) ?? null,
@@ -113,9 +135,10 @@ function installWorkflowStore(instances: WorkflowInstance[], initialCurrentInsta
       ));
     },
     setRunning: jest.fn(),
-    addWorkflowRun: (run: WorkflowRun) => {
+    addWorkflowRun: (run: WorkflowRun, instanceId?: string) => {
+      const targetId = instanceId ?? state.currentInstanceId;
       state.instances = state.instances.map((instance) => (
-        instance.id === state.currentInstanceId
+        instance.id === targetId
           ? {
               ...instance,
               workflowRuns: [run, ...instance.workflowRuns],
@@ -157,7 +180,7 @@ function installWorkflowStore(instances: WorkflowInstance[], initialCurrentInsta
           : instance
       ));
     },
-    appendGoalEvaluation: (runId: string, evaluation: any) => {
+    appendGoalEvaluation: (runId: string, evaluation: { iteration: number; reached: boolean }) => {
       state.instances = state.instances.map((instance) => (
         instance.workflowRuns.some((run) => run.id === runId)
           ? {
@@ -310,6 +333,61 @@ describe('WorkflowEngine snapshot behavior', () => {
     expect(runAgent.mock.calls.map((call: [WorkflowAgent]) => call[0].id)).toEqual(['writer']);
   });
 
+  it('keeps executing the frozen snapshot even if store topology mutates during the run', async () => {
+    const writer = createAgent({ id: 'writer', role: 'writer' });
+    const developer = createAgent({ id: 'developer', role: 'developer', inputFrom: 'writer' });
+    const origin = createInstance(
+      'origin',
+      [writer, developer],
+      [{ id: 'c1', sourceAgentId: 'writer', targetAgentId: 'developer', condition: 'onComplete', type: 'sequential' }],
+    );
+    const store = installWorkflowStore([origin], origin.id);
+
+    const runAgent = jest.fn(async (agent: WorkflowAgent) => {
+      if (agent.id === 'writer') {
+        store.instances = store.instances.map((instance) => (
+          instance.id === origin.id
+            ? {
+                ...instance,
+                agents: [writer],
+                connections: [],
+              }
+            : instance
+        ));
+      }
+      return `${agent.id}-output`;
+    });
+
+    const engine = new WorkflowEngine({
+      createRunDirectory: async () => '/tmp/workflow-run',
+      writeFile: async () => undefined,
+      runAgent,
+      evaluateGoal: async ({ iteration }: { iteration: number }) => ({
+        iteration,
+        reached: true,
+        confidence: 0.9,
+        missingItems: [],
+        reasoning: 'done',
+        timestamp: iteration,
+      }),
+      notify: async () => undefined,
+      now: (() => {
+        let current = 1;
+        return () => current++;
+      })(),
+    });
+
+    await engine.start();
+
+    expect(runAgent.mock.calls.map((call: [WorkflowAgent]) => call[0].id)).toEqual(['writer', 'developer']);
+    expect(store.instances[0].agents).toHaveLength(1);
+    expect(store.instances[0].connections).toEqual([]);
+    expect(store.instances[0].workflowRuns[0]).toMatchObject({
+      status: 'completed',
+      reachedGoal: true,
+    });
+  });
+
   it('fails the run after exceeding the total step guard', async () => {
     const developer = createAgent({ id: 'developer', role: 'developer', task: 'Implement the feature' });
     const instance = createInstance('origin', [developer], [], { maxGoalIterations: 60, projectGoal: '' });
@@ -344,5 +422,44 @@ describe('WorkflowEngine snapshot behavior', () => {
       reachedGoal: false,
     });
     expect(addNotification).toHaveBeenCalledWith('error', expect.stringContaining('最大步数限制'));
+  });
+
+  it('blocks start before creating a run when the workflow graph is invalid', async () => {
+    const writer = createAgent({ id: 'writer', role: 'writer' });
+    const instance = createInstance(
+      'invalid',
+      [writer],
+      [{ id: 'self-loop', sourceAgentId: 'writer', targetAgentId: 'writer', condition: 'onComplete', type: 'sequential' }],
+    );
+    const store = installWorkflowStore([instance], instance.id);
+
+    const createRunDirectory = jest.fn(async () => '/tmp/workflow-run');
+    const runAgent = jest.fn(async () => 'writer-output');
+    const engine = new WorkflowEngine({
+      createRunDirectory,
+      writeFile: async () => undefined,
+      runAgent,
+      evaluateGoal: async ({ iteration }: { iteration: number }) => ({
+        iteration,
+        reached: true,
+        confidence: 1,
+        missingItems: [],
+        reasoning: 'done',
+        timestamp: iteration,
+      }),
+      notify: async () => undefined,
+      now: (() => {
+        let current = 1;
+        return () => current++;
+      })(),
+    });
+
+    await engine.start();
+
+    expect(createRunDirectory).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(store.instances[0].workflowRuns).toEqual([]);
+    expect(store.setRunning).not.toHaveBeenCalled();
+    expect(addNotification).toHaveBeenCalledWith('error', expect.stringContaining('不能连接到自己'));
   });
 });

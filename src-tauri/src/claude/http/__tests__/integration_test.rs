@@ -26,6 +26,48 @@ impl Match for ResponseFormatMatcher {
     }
 }
 
+struct ResponseFormatAbsentMatcher;
+
+impl Match for ResponseFormatAbsentMatcher {
+    fn matches(&self, request: &Request) -> bool {
+        serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .map(|body| body.get("response_format").is_none())
+            .unwrap_or(false)
+    }
+}
+
+struct DeepSeekFilteredToolsMatcher {
+    expected_names: Vec<&'static str>,
+}
+
+impl Match for DeepSeekFilteredToolsMatcher {
+    fn matches(&self, request: &Request) -> bool {
+        let Ok(body) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
+            return false;
+        };
+
+        let Some(tools) = body.get("tools").and_then(|value| value.as_array()) else {
+            return false;
+        };
+
+        let tool_names = tools
+            .iter()
+            .filter_map(|tool| {
+                tool.get("function")
+                    .and_then(|value| value.get("name"))
+                    .and_then(|value| value.as_str())
+            })
+            .collect::<Vec<_>>();
+
+        body.get("response_format").is_none()
+            && body.get("reasoning").is_none()
+            && body.get("reasoning_effort").is_none()
+            && body.get("tool_choice") == Some(&json!("auto"))
+            && tool_names == self.expected_names
+    }
+}
+
 fn sample_messages() -> Vec<Message> {
     vec![Message {
         role: "user".to_string(),
@@ -111,6 +153,7 @@ async fn send_request_parses_openai_response_from_mock_server() {
         Some("openai"),
         None,
         None,
+        None,
     )
     .await
     .expect("mocked request should succeed");
@@ -151,6 +194,7 @@ async fn send_request_retries_retryable_http_failures() {
         None,
         Some("openai"),
         Some("openai"),
+        None,
         None,
         None,
     )
@@ -208,6 +252,7 @@ async fn send_request_forwards_openai_response_format() {
         Some(json!({
             "type": "json_object"
         })),
+        None,
     )
     .await
     .expect("request should include response_format");
@@ -252,18 +297,110 @@ async fn send_request_uses_explicit_capability_hints_for_anthropic() {
         Some("anthropic"),
         Some(super::super::super::provider::ProviderCapabilities {
             supports_thinking: false,
+            supports_reasoning: false,
+            supports_reasoning_stream: false,
             supports_tool_calls: true,
+            supports_tool_openai: false,
             supports_streaming: true,
+            supports_response_format: false,
+            supports_response_format_json_schema: false,
+            supports_json_mode: false,
+            accepts_response_format: false,
+            accepts_reasoning_param: false,
+            supports_vision: true,
             uses_responses_api: false,
             requires_tool_ordering: false,
             thinking_budget: None,
             max_output_tokens: None,
         }),
         None,
+        None,
     )
     .await
     .expect("request should honor explicit provider capabilities");
 
+
+    #[tokio::test]
+    async fn send_request_filters_deepseek_tools_and_omits_unsupported_fields() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(DeepSeekFilteredToolsMatcher {
+                expected_names: vec![
+                    "read_file",
+                    "write_file",
+                    "execute_command",
+                    "get_current_workspace",
+                ],
+            })
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "chatcmpl-deepseek-1",
+                "model": "deepseek-v4-pro",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "structured tools preserved"
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 7,
+                    "completion_tokens": 3,
+                    "total_tokens": 10
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let allowed_tools = vec![
+            "get_current_workspace".to_string(),
+            "execute_command".to_string(),
+            "read_file".to_string(),
+            "write_file".to_string(),
+        ];
+
+        let response = send_request(
+            &client,
+            &sample_messages(),
+            "test-token",
+            "deepseek-v4-pro",
+            Some(&server.uri()),
+            Some("system"),
+            false,
+            false,
+            None,
+            false,
+            None,
+            Some("deepseek"),
+            Some("openai"),
+            Some(super::super::super::provider::ProviderCapabilities {
+                supports_thinking: false,
+                supports_reasoning: true,
+                supports_reasoning_stream: true,
+                supports_tool_calls: true,
+                supports_tool_openai: true,
+                supports_streaming: true,
+                supports_response_format: false,
+                supports_response_format_json_schema: false,
+                supports_json_mode: true,
+                accepts_response_format: false,
+                accepts_reasoning_param: false,
+                supports_vision: false,
+                uses_responses_api: false,
+                requires_tool_ordering: false,
+                thinking_budget: None,
+                max_output_tokens: Some(8192),
+            }),
+            Some(json!({ "type": "json_object" })),
+            Some(&allowed_tools),
+        )
+        .await
+        .expect("deepseek request should preserve filtered tools");
+
+        assert_eq!(response.content, "structured tools preserved");
+    }
     assert_eq!(response.content, "thinking disabled");
 }
 
@@ -319,6 +456,7 @@ async fn send_request_parses_openai_tool_calls_from_mock_server() {
         Some("openai"),
         None,
         None,
+        None,
     )
     .await
     .expect("tool call response should parse");
@@ -354,6 +492,7 @@ async fn send_request_maps_openai_4xx_into_validation_error() {
         None,
         Some("openai"),
         Some("openai"),
+        None,
         None,
         None,
     )
@@ -398,6 +537,7 @@ async fn send_request_finalizes_truncated_openai_stream() {
         Some("openai"),
         None,
         None,
+        None,
     )
     .await
     .expect("truncated stream should still finalize");
@@ -405,4 +545,69 @@ async fn send_request_finalizes_truncated_openai_stream() {
     assert_eq!(response.content, "hello world");
     assert_eq!(response.usage.input_tokens, 5);
     assert_eq!(response.usage.output_tokens, 2);
+}
+
+#[tokio::test]
+async fn send_request_skips_response_format_when_capability_disables_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(ResponseFormatAbsentMatcher)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-4",
+            "model": "deepseek-chat",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "ok"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 1,
+                "total_tokens": 6
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::new();
+    let base_url = format!("{}/v1", server.uri());
+
+    let response = send_request(
+        &client,
+        &sample_messages(),
+        "test-token",
+        "deepseek-chat",
+        Some(&base_url),
+        Some("system"),
+        false,
+        false,
+        None,
+        false,
+        None,
+        Some("deepseek"),
+        Some("openai"),
+        Some(super::super::super::provider::ProviderCapabilities {
+            supports_thinking: false,
+            supports_reasoning: false,
+            supports_tool_calls: true,
+            supports_tool_openai: true,
+            supports_streaming: true,
+            supports_response_format: false,
+            supports_json_mode: false,
+            uses_responses_api: false,
+            requires_tool_ordering: false,
+            thinking_budget: None,
+            max_output_tokens: Some(8192),
+        }),
+        Some(json!({ "type": "json_object" })),
+        None,
+    )
+    .await
+    .expect("request should succeed without response_format");
+
+    assert_eq!(response.content, "ok");
 }

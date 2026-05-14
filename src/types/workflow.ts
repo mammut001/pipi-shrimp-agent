@@ -96,7 +96,7 @@ export interface WorkflowAgent {
   execution: AgentExecutionConfig;
   model?: WorkflowAgentModel;
   inputFrom?: string | null;
-  role?: WorkflowAgentRole;
+  role?: AgentRole;
   retryPolicy?: RetryPolicy;
   notifyOnComplete?: string[];
   visionPolicy?: WorkflowVisionPolicy;

@@ -60,10 +60,8 @@ export function topoSort(
     }
   }
 
-  for (const agent of agents) {
-    if (!result.includes(agent)) {
-      result.push(agent);
-    }
+  if (result.length !== agents.length) {
+    throw new Error('topoSort requires a validated acyclic workflow graph. Run validateWorkflowGraph() before building an execution plan.');
   }
 
   return result;

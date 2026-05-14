@@ -1,10 +1,17 @@
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { buildAutoResearchToolCatalog, getAutoResearchToolProfile } from '../toolCatalog';
+import {
+  deepseekMixedFailureTranscriptFixture,
+  type AutoResearchTranscriptAttempt,
+} from './fixtures/deepseekMixedFailureTranscript.fixture';
+import { installTranscriptFixture as installTranscriptFixtureMock } from './transcriptHarness';
 
 const localToolCatalog = buildAutoResearchToolCatalog({ mode: 'local' });
 const localCommandTool = getAutoResearchToolProfile({ mode: 'local' }).commandTool;
 
 const mockAppendLiveOutput = jest.fn();
+const mockWriteTargetText = jest.fn();
+const mockAppendTargetText = jest.fn();
 const mockRunHeadlessAgentTurn = jest.fn();
 const mockResolveActiveAgentConfig = jest.fn();
 const mockValidateResolvedAgentConfig = jest.fn();
@@ -70,8 +77,8 @@ jest.mock('@/services/headless/agentRunner', () => ({
 }));
 
 jest.mock('../runDir', () => ({
-  writeTargetText: jest.fn(),
-  appendTargetText: jest.fn(),
+  writeTargetText: (...args: unknown[]) => mockWriteTargetText(...args),
+  appendTargetText: (...args: unknown[]) => mockAppendTargetText(...args),
 }));
 
 jest.mock('../terminalRunner', () => ({
@@ -130,6 +137,10 @@ function createToolBudgetSummary(overrides: Partial<Record<string, unknown>> = {
   };
 }
 
+function installChatAdapterTranscriptFixture(attempts: AutoResearchTranscriptAttempt[]): void {
+  installTranscriptFixtureMock(mockRunHeadlessAgentTurn, attempts);
+}
+
 describe('createAutoResearchSendMessage', () => {
   const activeConfig: ResolvedAgentConfig = {
     configId: 'cfg-1',
@@ -146,6 +157,8 @@ describe('createAutoResearchSendMessage', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    mockWriteTargetText.mockReset();
+    mockAppendTargetText.mockReset();
     mockResolveActiveAgentConfig.mockReturnValue(activeConfig);
     mockValidateResolvedAgentConfig.mockReturnValue([]);
     mockFormatAgentConfigValidationError.mockReturnValue('invalid config');
@@ -183,6 +196,15 @@ describe('createAutoResearchSendMessage', () => {
     mockGetCurrentRunDir.mockReturnValue(null);
   });
 
+  it('keeps the local AutoResearch lane on the four-tool allowlist', () => {
+    expect(localToolCatalog).toEqual([
+      'get_current_workspace',
+      'execute_command',
+      'read_file',
+      'write_file',
+    ]);
+  });
+
   it('uses the resolved active config for headless agent execution', async () => {
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
 
@@ -204,9 +226,10 @@ describe('createAutoResearchSendMessage', () => {
     }));
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('\n--- Iteration 3 ---\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('partial output');
-    expect(mockAppendLiveOutput).toHaveBeenCalledWith('💭 reasoning trace');
+    expect(mockAppendLiveOutput).toHaveBeenCalledWith('[thinking]\nreasoning trace\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('[status] working\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('  → read_file: README excerpt\n');
+    expect(mockAppendLiveOutput).not.toHaveBeenCalledWith('💭 reasoning trace');
   });
 
   it('does not reuse freeform transcripts from previous iterations', async () => {
@@ -552,5 +575,181 @@ describe('createAutoResearchSendMessage', () => {
         systemPrompt: expect.stringContaining('Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'),
       }),
     );
+  });
+
+  it('builds a retry constraint state that removes escalated tools from the next call', () => {
+    const { buildAutoResearchRetryConstraintState } = require('../chatAdapter') as typeof import('../chatAdapter');
+    const state = buildAutoResearchRetryConstraintState({
+      allowedTools: ['get_current_workspace', 'list_files', 'execute_command', 'read_file'],
+      blockedTools: ['list_files'],
+      decision: {
+        nextCommand: 'ls -la',
+        nextPlan: 'Use execute_command instead.',
+      },
+      environmentSummary: {
+        experimentDir: '/tmp/research',
+        gitRepo: true,
+        repoStatus: 'clean',
+        dirtyFileCount: 0,
+        preferredPythonCommand: 'python3',
+        worktreeWritable: true,
+        runScriptPath: '/tmp/research/run_experiment.py',
+        notesPath: '/tmp/research/AUTORESEARCH.md',
+        recommendedRunCommand: 'python3 run_experiment.py',
+      },
+    });
+
+    expect(state.allowedTools).toEqual(['get_current_workspace', 'execute_command', 'read_file']);
+    expect(state.retryMessages[0]?.content).toContain('HARD CONSTRAINT: do not call list_files.');
+    expect(state.retryMessages[0]?.content).toContain('Use execute_command with `ls -la`');
+  });
+
+  it('injects a hard disabled-tool constraint into the next retry after repeated list_files attempts', async () => {
+    mockRunHeadlessAgentTurn
+      .mockImplementationOnce(async (input) => {
+        await input.onToolCall?.({
+          id: 'tool-1',
+          name: 'list_files',
+          arguments: '{"path":"."}',
+        });
+        await input.onToolResult?.({
+          id: 'tool-1',
+          name: 'list_files',
+          result: JSON.stringify({
+            error: true,
+            error_kind: 'tool_disabled',
+            message: 'Tool "list_files" is disabled for this AutoResearch run. Allowed tools: get_current_workspace, execute_command, read_file, write_file, create_directory',
+            cause: 'Allowed tools: get_current_workspace, execute_command, read_file, write_file, create_directory',
+          }),
+          durationMs: 5,
+        });
+        await input.onToolCall?.({
+          id: 'tool-2',
+          name: 'list_files',
+          arguments: '{"path":"src"}',
+        });
+        await input.onToolResult?.({
+          id: 'tool-2',
+          name: 'list_files',
+          result: JSON.stringify({
+            error: true,
+            error_kind: 'tool_disabled',
+            message: 'Tool "list_files" is disabled for this AutoResearch run. Allowed tools: get_current_workspace, execute_command, read_file, write_file, create_directory',
+            cause: 'Allowed tools: get_current_workspace, execute_command, read_file, write_file, create_directory',
+          }),
+          durationMs: 5,
+        });
+        throw new Error('phase=agent_execution; message=tool disabled');
+      })
+      .mockResolvedValueOnce({
+        finalText: 'recovered answer',
+        finalReasoning: '',
+      });
+    mockGetDeterministicRecoveryDecision.mockReturnValue({
+      action: 'retry_with_plan',
+      summary: 'Use execute_command for directory inspection.',
+      nextPlan: 'Use execute_command with ls -la instead of list_files.',
+      shouldRetry: true,
+      confidence: 'high',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
+
+    await expect(sendMessage('system prompt', 'recover after disabled list_files')).resolves.toBe('recovered answer');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(2);
+    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        systemPrompt: expect.stringContaining('HARD CONSTRAINT: do not call list_files.'),
+        initialMessages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('Use execute_command with `ls -la`'),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('aborts the iteration after three consecutive API request failures', async () => {
+    mockRunHeadlessAgentTurn
+      .mockRejectedValueOnce(new Error('Streaming request failed: reasoning_content parameter error'))
+      .mockRejectedValueOnce(new Error('Streaming request failed: reasoning_content parameter error'))
+      .mockRejectedValueOnce(new Error('Streaming request failed: reasoning_content parameter error'));
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
+
+    await expect(sendMessage('system prompt', 'retry api failure')).resolves.toContain('Provider API request failed 3 times consecutively');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(3);
+    expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('API request failed (3/3)'),
+    }));
+  });
+
+  it('replays a transcript fixture for the mixed DeepSeek API and disabled-tool recovery path', async () => {
+    installChatAdapterTranscriptFixture(deepseekMixedFailureTranscriptFixture.attempts);
+    mockGetDeterministicRecoveryDecision.mockReturnValue({
+      action: 'retry_with_plan',
+      summary: 'Use execute_command for directory inspection.',
+      nextPlan: 'Use execute_command with ls -la instead of list_files.',
+      shouldRetry: true,
+      confidence: 'high',
+    });
+    mockGetCurrentRunDir.mockReturnValue(deepseekMixedFailureTranscriptFixture.runDir);
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
+
+    await expect(sendMessage('system prompt', deepseekMixedFailureTranscriptFixture.userMessage)).resolves.toContain('"metricName": "cv_accuracy"');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(3);
+    expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('API request failed (1/3): Streaming request failed: reasoning_content parameter error'),
+    }));
+    expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
+      message: `Escalated disabled tool constraint: ${deepseekMixedFailureTranscriptFixture.expected.blockedTool}`,
+    }));
+    expect(mockGetDeterministicRecoveryDecision).toHaveBeenCalledWith(expect.objectContaining({
+      recentToolResults: [
+        expect.objectContaining({ tool: 'list_files' }),
+        expect.objectContaining({ tool: 'list_files' }),
+      ],
+      lastError: 'phase=agent_execution; message=tool disabled',
+    }));
+    const thirdCallInput = mockRunHeadlessAgentTurn.mock.calls[2]?.[0] as {
+      workDir: string;
+      allowedTools: string[];
+      systemPrompt: string;
+      initialMessages: Array<{ role: string; content: string }>;
+    };
+    expect(thirdCallInput.workDir).toBe(deepseekMixedFailureTranscriptFixture.runDir.iterDir);
+    expect(thirdCallInput.allowedTools).toEqual(localToolCatalog);
+    expect(thirdCallInput.systemPrompt).toContain(`HARD CONSTRAINT: do not call ${deepseekMixedFailureTranscriptFixture.expected.blockedTool}.`);
+    expect(thirdCallInput.systemPrompt).toContain(deepseekMixedFailureTranscriptFixture.runDir.metricsPath);
+    expect(thirdCallInput.initialMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining(deepseekMixedFailureTranscriptFixture.expected.recoveryHint),
+      }),
+    ]));
+    expect(mockRequestReflectionDecision).not.toHaveBeenCalled();
+    expect(mockWriteTargetText).toHaveBeenCalledWith(
+      expect.anything(),
+      deepseekMixedFailureTranscriptFixture.runDir.transcriptPath,
+      expect.stringContaining('## User Message'),
+    );
+    expect(mockAppendTargetText).toHaveBeenCalledWith(
+      expect.anything(),
+      deepseekMixedFailureTranscriptFixture.runDir.transcriptPath,
+      expect.stringContaining('## Tool Call: list_files'),
+    );
+    expect(mockAppendTargetText).toHaveBeenCalledWith(
+      expect.anything(),
+      deepseekMixedFailureTranscriptFixture.runDir.transcriptPath,
+      expect.stringContaining(deepseekMixedFailureTranscriptFixture.expected.metricsFileName),
+    );
+    expect(mockAppendLiveOutput).toHaveBeenCalledWith('[status] calling provider\n');
+    expect(mockAppendLiveOutput).toHaveBeenCalledWith('💭 checking provider compatibility');
   });
 });

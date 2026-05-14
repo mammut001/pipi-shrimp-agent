@@ -1,17 +1,18 @@
 import type {
   WorkflowAgent,
-  WorkflowConnection,
   WorkflowInstance,
 } from '@/types/workflow';
+import {
+  type WorkflowGraphValidationError,
+  type WorkflowGraphValidationErrorCode,
+  validateWorkflowGraph,
+} from '@/services/workflowGraphValidation';
 
 export type WorkflowValidationErrorCode =
+  | WorkflowGraphValidationErrorCode
   | 'missing-instance'
   | 'duplicate-agent-id'
   | 'no-executable-agents'
-  | 'dangling-connection'
-  | 'missing-route-target'
-  | 'invalid-input-from'
-  | 'cycle-detected'
   | 'missing-entry-agent'
   | 'missing-agent-name'
   | 'missing-task-fallback'
@@ -23,6 +24,8 @@ export interface WorkflowValidationError {
   message: string;
   agentId?: string;
   connectionId?: string;
+  agentIds?: string[];
+  connectionIds?: string[];
 }
 
 export interface WorkflowValidationResult {
@@ -45,57 +48,29 @@ function hasAgentTaskFallback(agent: WorkflowAgent): boolean {
   );
 }
 
-function hasSequentialCycle(
-  agentIds: string[],
-  connections: WorkflowConnection[],
-): boolean {
-  const idSet = new Set(agentIds);
-  const indegree = new Map<string, number>();
-  const adjacency = new Map<string, Set<string>>();
+function toWorkflowValidationError(
+  error: WorkflowGraphValidationError,
+): WorkflowValidationError {
+  return {
+    code: error.code,
+    message: error.message,
+    agentId: error.agentIds?.[0],
+    connectionId: error.connectionIds?.[0],
+    agentIds: error.agentIds,
+    connectionIds: error.connectionIds,
+  };
+}
 
-  for (const agentId of idSet) {
-    indegree.set(agentId, 0);
-    adjacency.set(agentId, new Set());
+export function formatWorkflowValidationErrors(
+  result: WorkflowValidationResult,
+): string {
+  if (result.errors.length === 0) {
+    return 'Workflow validation passed.';
   }
 
-  for (const connection of connections) {
-    if (!idSet.has(connection.sourceAgentId) || !idSet.has(connection.targetAgentId)) {
-      continue;
-    }
-
-    if (connection.sourceAgentId === connection.targetAgentId) {
-      return true;
-    }
-
-    const targets = adjacency.get(connection.sourceAgentId);
-    if (!targets || targets.has(connection.targetAgentId)) {
-      continue;
-    }
-
-    targets.add(connection.targetAgentId);
-    indegree.set(connection.targetAgentId, (indegree.get(connection.targetAgentId) ?? 0) + 1);
-  }
-
-  const queue = Array.from(indegree.entries())
-    .filter(([, degree]) => degree === 0)
-    .map(([agentId]) => agentId);
-  let visited = 0;
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) continue;
-    visited += 1;
-
-    for (const target of adjacency.get(current) ?? []) {
-      const nextDegree = (indegree.get(target) ?? 0) - 1;
-      indegree.set(target, nextDegree);
-      if (nextDegree === 0) {
-        queue.push(target);
-      }
-    }
-  }
-
-  return visited !== idSet.size;
+  return result.errors
+    .map((error, index) => `${index + 1}. [${error.code}] ${error.message}`)
+    .join('\n');
 }
 
 export function validateWorkflowForRun(
@@ -122,7 +97,6 @@ export function validateWorkflowForRun(
   const connections = instance.connections ?? [];
   const executableAgents = agents.filter(isExecutableAgent);
   const executableAgentIds = executableAgents.map((agent) => agent.id);
-  const validAgentIds = new Set(agents.map((agent) => agent.id));
   const seenAgentIds = new Set<string>();
   const hasProjectGoal = Boolean(instance.projectGoal?.trim());
 
@@ -138,15 +112,8 @@ export function validateWorkflowForRun(
     seenAgentIds.add(agent.id);
   }
 
-  for (const connection of connections) {
-    if (!validAgentIds.has(connection.sourceAgentId) || !validAgentIds.has(connection.targetAgentId)) {
-      errors.push({
-        code: 'dangling-connection',
-        message: '存在指向缺失 Agent 的连接，请先清理图结构。',
-        connectionId: connection.id,
-      });
-    }
-  }
+  const graphValidation = validateWorkflowGraph(agents, connections);
+  errors.push(...graphValidation.errors.map(toWorkflowValidationError));
 
   for (const agent of agents) {
     if (!agent.name?.trim()) {
@@ -155,24 +122,6 @@ export function validateWorkflowForRun(
         message: '存在未命名的 Agent，请先补全名称。',
         agentId: agent.id,
       });
-    }
-
-    if (agent.inputFrom && !validAgentIds.has(agent.inputFrom)) {
-      errors.push({
-        code: 'invalid-input-from',
-        message: `Agent “${agent.name || agent.id}” 的上游引用已失效。`,
-        agentId: agent.id,
-      });
-    }
-
-    for (const route of agent.outputRoutes ?? []) {
-      if (!validAgentIds.has(route.targetAgentId)) {
-        errors.push({
-          code: 'missing-route-target',
-          message: `Agent “${agent.name || agent.id}” 存在缺失目标的输出路由。`,
-          agentId: agent.id,
-        });
-      }
     }
 
     if (!isExecutableAgent(agent)) {
@@ -234,13 +183,6 @@ export function validateWorkflowForRun(
     errors.push({
       code: 'missing-entry-agent',
       message: '当前 Workflow 没有可作为入口的 Agent，通常意味着存在循环依赖。',
-    });
-  }
-
-  if (hasSequentialCycle(executableAgentIds, executableConnections)) {
-    errors.push({
-      code: 'cycle-detected',
-      message: '当前 Workflow 存在循环依赖，运行前请先打断环路。',
     });
   }
 

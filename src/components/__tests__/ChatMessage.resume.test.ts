@@ -59,14 +59,14 @@ import { ChatMessage } from '../ChatMessage';
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
-async function renderMessage(message: Message) {
+async function renderMessage(message: Message, props: Partial<{ isStreaming: boolean }> = {}) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
   mountedRoots.push({ root, container });
 
   await act(async () => {
-    root.render(React.createElement(ChatMessage, { message }));
+    root.render(React.createElement(ChatMessage, { message, ...props }));
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -117,5 +117,25 @@ describe('ChatMessage resume rendering', () => {
     expect(container.querySelector('[data-testid="chat-image"]')?.textContent).toBe('SVG Preview');
     expect(container.textContent).not.toContain('<svg');
     expect(container.textContent).not.toContain('<?xml');
+  });
+
+  it('renders a single reasoning block without emoji noise and stays collapsed after streaming ends', async () => {
+    const message: Message = {
+      id: 'msg-3',
+      role: 'assistant',
+      content: Array.from({ length: 10 }, (_, index) => `Answer chunk ${index + 1}`).join(' '),
+      reasoning: Array.from({ length: 50 }, (_, index) => `Reasoning chunk ${index + 1}`).join('\n'),
+      timestamp: Date.now(),
+    };
+
+    const container = await renderMessage(message, { isStreaming: false });
+    const reasoningBlocks = container.querySelectorAll('[data-testid="reasoning-block"]');
+    const reasoningContent = container.querySelector('[data-testid="reasoning-content"]');
+
+    expect(reasoningBlocks).toHaveLength(1);
+    expect(reasoningBlocks[0]?.hasAttribute('open')).toBe(false);
+    expect(reasoningContent?.textContent).toContain('Reasoning chunk 1');
+    expect(container.textContent).not.toContain('💭');
+    expect(container.textContent).not.toContain('☁️');
   });
 });

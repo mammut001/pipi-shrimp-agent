@@ -60,6 +60,26 @@ export interface HeadlessAgentRunnerResult {
   toolBudgetSummary: ToolBudgetSummary;
 }
 
+function buildAllowedToolsSystemPrompt(basePrompt: string, allowedTools: string[]): string {
+  const allowedSet = new Set(allowedTools);
+  const hardRules = [
+    '## Tool Lane Constraints',
+    `- HARD RULE: you may call only these tools in this run: ${allowedTools.join(', ')}.`,
+  ];
+
+  if (!allowedSet.has('list_files')) {
+    if (allowedSet.has('execute_command')) {
+      hardRules.push('- HARD RULE: do not call list_files. It is disabled in this lane. Use execute_command with `ls -la` or `ls -la <path>` instead.');
+    } else if (allowedSet.has('ssh_exec')) {
+      hardRules.push('- HARD RULE: do not call list_files. It is disabled in this lane. Use ssh_exec with `ls -la` or `ls -la <path>` instead.');
+    } else {
+      hardRules.push('- HARD RULE: do not call list_files. It is disabled in this lane.');
+    }
+  }
+
+  return `${basePrompt}\n\n${hardRules.join('\n')}`;
+}
+
 function previewToolResult(content: string): string {
   const normalized = content.trim();
   if (!normalized) {
@@ -216,13 +236,19 @@ export async function runHeadlessAgentTurn(
   const allowedTools = input.allowedTools?.length
     ? new Set(input.allowedTools)
     : undefined;
+  const constrainedSystemPrompt = input.allowedTools?.length
+    ? buildAllowedToolsSystemPrompt(input.systemPrompt, input.allowedTools)
+    : input.systemPrompt;
   const engine = runChatTurn(
     input.sessionId,
     input.initialMessages,
-    input.systemPrompt,
+    constrainedSystemPrompt,
     input.workDir,
     false,
     input.agentConfig,
+    {
+      allowedTools: input.allowedTools,
+    },
   );
 
   let currentWorkDir = input.workDir;

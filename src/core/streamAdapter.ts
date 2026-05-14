@@ -19,6 +19,7 @@ interface InvokeParams {
   systemPrompt: string;
   noTools?: boolean;
   allowBrowserTools?: boolean;
+  allowedTools?: string[];
   sessionId: string;
   provider?: string;
   /** Optional explicit API format override: "anthropic" | "openai" */
