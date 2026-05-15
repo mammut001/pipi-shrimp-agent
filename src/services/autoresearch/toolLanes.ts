@@ -27,6 +27,7 @@ export function getAutoResearchAllowedToolsForPhase(
   phase: AutoResearchRunPhase,
 ): string[] {
   const profile = getAutoResearchToolProfile(config);
+  const createDirectoryTool = profile.mode === 'local' ? profile.createDirectoryTool : undefined;
   const writeTool = profile.mode === 'local' ? profile.writeTool : profile.uploadTool;
 
   switch (phase) {
@@ -41,6 +42,7 @@ export function getAutoResearchAllowedToolsForPhase(
         'get_current_workspace',
         profile.commandTool,
         profile.readTool,
+        createDirectoryTool,
         writeTool,
       ]);
     case 'RUN_EXPERIMENT':
@@ -95,6 +97,7 @@ export function classifyAutoResearchToolPhase(input: {
   config: Pick<SshConfig, 'mode'> | null | undefined;
 }): AutoResearchRunPhase {
   const profile = getAutoResearchToolProfile(input.config);
+  const createDirectoryTool = profile.mode === 'local' ? profile.createDirectoryTool : undefined;
   const writeTool = profile.mode === 'local' ? profile.writeTool : profile.uploadTool;
 
   if (input.toolName === 'get_current_workspace' || input.toolName === profile.readTool) {
@@ -108,6 +111,10 @@ export function classifyAutoResearchToolPhase(input: {
       return 'EDIT_CODE';
     }
     return 'READ_CONTEXT';
+  }
+
+  if (createDirectoryTool && input.toolName === createDirectoryTool) {
+    return 'EDIT_CODE';
   }
 
   if (writeTool && input.toolName === writeTool) {

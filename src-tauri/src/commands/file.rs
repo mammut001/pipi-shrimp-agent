@@ -549,6 +549,27 @@ mod tests {
         fs::set_permissions(&read_only_dir, cleanup_permissions).expect("permissions should be restorable");
         fs::remove_dir_all(root).expect("temp root should be removed");
     }
+
+    #[test]
+    fn write_file_rejects_paths_outside_bound_work_dir() {
+        let root = create_temp_root("workdir-scope");
+        let outside = create_temp_root("outside-scope");
+        let root_string = root.to_string_lossy().to_string();
+        let outside_target = outside.join("stolen.txt");
+
+        let error = write_file_for_tool(
+            outside_target.to_string_lossy().as_ref(),
+            "blocked",
+            Some(root_string.as_str()),
+        )
+        .expect_err("write_file_for_tool should reject writes outside work_dir");
+
+        assert_eq!(error.error_kind, "access_denied");
+        assert!(error.cause.contains("outside the bound work directory"));
+
+        fs::remove_dir_all(root).expect("temp root should be removed");
+        fs::remove_dir_all(outside).expect("outside temp root should be removed");
+    }
 }
 
 /// Analyze a project folder and generate a fingerprint for AI auto-onboarding

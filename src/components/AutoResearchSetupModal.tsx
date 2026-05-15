@@ -6,7 +6,7 @@
  * - User clicks "Setup" button from the AutoResearch panel tab
  */
 
-import { useState, useCallback, useEffect, useRef, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { t } from '@/i18n';
 import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
@@ -33,7 +33,10 @@ import {
   buildAutoResearchRunLockMessage,
   getAutoResearchLifecycleLock,
 } from '@/services/autoresearch/runLock';
-import { BootstrapChatView } from '@/components/autoresearch/BootstrapChatView';
+
+const BootstrapChatView = lazy(() => import('@/components/autoresearch/BootstrapChatView').then((module) => ({
+  default: module.BootstrapChatView,
+})));
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
@@ -49,10 +52,12 @@ export function AutoResearchSetupModal() {
   const toggleSettings = useUIStore(s => s.toggleSettings);
   const suppressFailurePreview = useBrowserObservabilityStore((state) => state.suppressFailurePreview);
   let agentConfigError = '';
-  try {
-    resolveAutoResearchRunConfig();
-  } catch (error) {
-    agentConfigError = error instanceof Error ? error.message : String(error);
+  if (showSetupModal) {
+    try {
+      resolveAutoResearchRunConfig();
+    } catch (error) {
+      agentConfigError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   const modalRef = useRef<HTMLDivElement>(null);
@@ -326,7 +331,13 @@ export function AutoResearchSetupModal() {
                 {buildAutoResearchRunLockMessage('start a new run', lifecycleLock)}
               </div>
             ) : (
-              <BootstrapChatView onReady={handleBootstrapReady} />
+              <Suspense fallback={
+                <div className="flex h-full items-center justify-center px-6 text-center text-sm text-gray-500">
+                  Loading AutoResearch bootstrap...
+                </div>
+              }>
+                <BootstrapChatView onReady={handleBootstrapReady} />
+              </Suspense>
             )}
           </div>
         ) : (

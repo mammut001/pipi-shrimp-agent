@@ -21,6 +21,11 @@ export interface PermissionRequest {
   toolName: string;        // Tool name (e.g., "execute_code")
   toolInput: string;       // Tool input (JSON string)
   description?: string;    // User-friendly description
+  source?: string;
+  workingDirectory?: string | null;
+  commandPreview?: string | null;
+  riskReason?: string | null;
+  approvalToken?: string | null;
   requestedAt?: number;
   _resolve?: (approved: boolean) => void; // Used by QueryEngine to wait for user decision
 }
@@ -50,7 +55,8 @@ export interface Notification {
 export interface TaskStep {
   id: string;
   label: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
+  status: 'pending' | 'validating' | 'awaiting_confirmation' | 'approved' | 'running' | 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected';
+  executionId?: string | null;
 }
 
 /** Questionnaire field definition */
@@ -201,7 +207,17 @@ export interface UIState {
   /**
    * Wait for user permission for a specific tool call. Resolves with true if approved.
    */
-  waitForPermission: (tool: { id: string; name: string; arguments: string }) => Promise<boolean>;
+  waitForPermission: (tool: {
+    id: string;
+    name: string;
+    arguments: string;
+    description?: string;
+    source?: string;
+    workingDirectory?: string | null;
+    commandPreview?: string | null;
+    riskReason?: string | null;
+    approvalToken?: string | null;
+  }) => Promise<boolean>;
 
   /**
    * Add notification

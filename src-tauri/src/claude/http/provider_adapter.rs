@@ -1,5 +1,5 @@
 pub use super::adapters::{
-    get_adapter, get_adapter_for_config, AnthropicAdapter, OpenAIAdapter, ProviderAdapter,
+    get_adapter, get_adapter_for_config, ProviderAdapter,
     StreamContext, StreamEvent,
 };
 pub use super::super::provider::{ApiFormat, ProviderCapabilities, ProviderId, ResolvedProviderConfig};

@@ -39,6 +39,7 @@ export const AgentPanel: React.FC = () => {
     setAgentInstructions,
     taskProgress,
     addNotification,
+    updateTaskStep,
     agentPanelTab: activeTab,
     setAgentPanelTab: setActiveTab,
     currentArtifactId,
@@ -240,6 +241,40 @@ export const AgentPanel: React.FC = () => {
     }
   };
 
+  const handleCancelToolExecution = useCallback(async (stepId: string, executionId: string) => {
+    updateTaskStep(stepId, 'cancelled');
+    try {
+      const result = await invoke<{
+        executionId: string;
+        cancelled: boolean;
+        status: string;
+        message: string;
+      }>('cancel_tool_execution', {
+        executionId,
+      });
+
+      if (result.cancelled) {
+        addNotification('success', 'Command cancellation requested.', currentSessionId ?? undefined);
+        return;
+      }
+
+      if (result.status === 'not_found' || result.status === 'already_finished') {
+        addNotification('info', result.message, currentSessionId ?? undefined);
+        return;
+      }
+
+      updateTaskStep(stepId, 'running');
+      addNotification('warning', result.message, currentSessionId ?? undefined);
+    } catch (error) {
+      updateTaskStep(stepId, 'running');
+      addNotification(
+        'error',
+        `Failed to cancel command: ${error instanceof Error ? error.message : String(error)}`,
+        currentSessionId ?? undefined,
+      );
+    }
+  }, [addNotification, currentSessionId, updateTaskStep]);
+
   // Calculate completed steps
   const completedSteps = taskProgress.filter(s => s.status === 'done').length;
   const totalSteps = taskProgress.length;
@@ -424,8 +459,14 @@ export const AgentPanel: React.FC = () => {
                   )}
                   <div className={`mt-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center flex-shrink-0 z-10 transition-all ${step.status === 'done' ? 'bg-green-500 text-white' :
                     step.status === 'running' ? 'bg-blue-600 text-white shadow-[0_0_8px_rgba(37,99,235,0.3)]' :
-                      step.status === 'failed' ? 'bg-red-500 text-white' :
-                        'bg-white border-2 border-gray-100 text-gray-300'
+                      step.status === 'validating' ? 'bg-slate-500 text-white' :
+                        step.status === 'awaiting_confirmation' ? 'bg-amber-500 text-white' :
+                          step.status === 'approved' ? 'bg-emerald-500 text-white' :
+                            step.status === 'cancelled' ? 'bg-slate-400 text-white' :
+                              step.status === 'timed_out' ? 'bg-orange-500 text-white' :
+                                step.status === 'rejected' ? 'bg-rose-500 text-white' :
+                                  step.status === 'failed' ? 'bg-red-500 text-white' :
+                                    'bg-white border-2 border-gray-100 text-gray-300'
                     }`}>
                     {step.status === 'done' ? (
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
@@ -436,11 +477,25 @@ export const AgentPanel: React.FC = () => {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className={`text-[11px] font-medium leading-[1.4] transition-colors ${step.status === 'running' ? 'text-gray-900 font-bold' :
-                      step.status === 'done' ? 'text-gray-500' : 'text-gray-400'
-                      }`}>
-                      {step.label}
-                    </p>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className={`min-w-0 flex-1 text-[11px] font-medium leading-[1.4] transition-colors ${step.status === 'running' ? 'text-gray-900 font-bold' :
+                        step.status === 'awaiting_confirmation' ? 'text-amber-700 font-bold' :
+                          step.status === 'approved' ? 'text-emerald-700 font-bold' :
+                            step.status === 'validating' ? 'text-slate-700 font-bold' :
+                              step.status === 'cancelled' || step.status === 'timed_out' || step.status === 'rejected' || step.status === 'failed' ? 'text-red-600' :
+                                step.status === 'done' ? 'text-gray-500' : 'text-gray-400'
+                        }`}>
+                        {step.label}
+                      </p>
+                      {step.status === 'running' && step.executionId && (
+                        <button
+                          onClick={() => handleCancelToolExecution(step.id, step.executionId!)}
+                          className="rounded-md border border-slate-200 px-2 py-0.5 text-[9px] font-bold uppercase tracking-tight text-slate-600 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                     {step.status === 'running' && (
                       <div className="flex items-center gap-1.5 mt-1">
                         <div className="flex gap-0.5">
@@ -450,6 +505,24 @@ export const AgentPanel: React.FC = () => {
                         </div>
                         <span className="text-[9px] text-blue-600 font-bold uppercase tracking-tight">Thinking</span>
                       </div>
+                    )}
+                    {step.status === 'awaiting_confirmation' && (
+                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-amber-600">Awaiting confirmation</p>
+                    )}
+                    {step.status === 'validating' && (
+                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-slate-600">Validating</p>
+                    )}
+                    {step.status === 'approved' && (
+                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-emerald-600">Approved</p>
+                    )}
+                    {step.status === 'cancelled' && (
+                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-slate-500">Cancelled</p>
+                    )}
+                    {step.status === 'timed_out' && (
+                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-orange-600">Timed out</p>
+                    )}
+                    {step.status === 'rejected' && (
+                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-rose-600">Rejected</p>
                     )}
                   </div>
                 </div>

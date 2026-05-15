@@ -13,8 +13,10 @@
 pub mod autoresearch_bootstrap;
 pub mod execution_policy;
 pub mod output_sanitizer;
+pub mod process_manager;
 pub mod registry;
 pub mod scheduler;
+pub mod ssh_bridge;
 
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +70,9 @@ pub struct ToolCallRequest {
     /// Optional execution capability hints.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_capabilities: Option<crate::claude::provider::ProviderCapabilities>,
+    /// Optional backend-issued approval token bound to this exact request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_token: Option<String>,
 }
 
 /// Tool execution result

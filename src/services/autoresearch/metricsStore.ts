@@ -156,7 +156,7 @@ export async function initFromBootstrap(
     .filter((metric) => metric.name.trim().toLowerCase() === targetMetric)
     .map((metric) => ({ baselineName: baseline.name, value: metric.value })));
 
-  await writeTargetText(path === '' ? cfg : cfg, path, `${JSON.stringify({
+  await writeTargetText(cfg, path, `${JSON.stringify({
     createdAt: seedId,
     primaryMetric: plan.primaryMetric,
     references,

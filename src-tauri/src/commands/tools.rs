@@ -3,6 +3,9 @@
  *
  * Exposes the tool pipeline to the frontend via Tauri invoke.
  */
+use crate::models::CancelToolExecutionResponse;
+use crate::tools::execution_policy::{self, ToolPolicyPreview};
+use crate::tools::process_manager;
 use crate::tools::{classify_tool_error_code, ToolCallRequest, ToolCallResult};
 use std::sync::Arc;
 use tauri::State;
@@ -38,6 +41,17 @@ pub async fn execute_tool_batch(
     Ok(results)
 }
 
+#[tauri::command]
+pub async fn preview_tool_policy(
+    tool_call: ToolCallRequest,
+    #[allow(non_snake_case)] sessionId: String,
+) -> Result<ToolPolicyPreview, String> {
+    let args: serde_json::Value = serde_json::from_str(&tool_call.arguments)
+        .map_err(|e| format!("Invalid tool arguments: {}", e))?;
+    execution_policy::preview_request_policy(&tool_call, &args, Some(&sessionId))
+        .map_err(|e| e.to_string())
+}
+
 /**
  * Execute a single tool call.
  *
@@ -57,6 +71,7 @@ pub async fn execute_single_tool(
     provider: Option<String>,
     #[allow(non_snake_case)] apiFormat: Option<String>,
     #[allow(non_snake_case)] providerCapabilities: Option<crate::claude::provider::ProviderCapabilities>,
+    #[allow(non_snake_case)] approvalToken: Option<String>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<ToolCallResult, String> {
     let req = ToolCallRequest {
@@ -72,10 +87,11 @@ pub async fn execute_single_tool(
         provider,
         api_format: apiFormat,
         provider_capabilities: providerCapabilities,
+        approval_token: approvalToken,
     };
 
     let registry = state.0.lock().await;
-    match registry.execute_with_context(&req).await {
+    match registry.execute_with_context(&req, None).await {
         Ok(result) => Ok(result),
         Err(error) => Ok(ToolCallResult {
             id: req.id,
@@ -98,4 +114,16 @@ pub async fn get_available_tools(
 ) -> Result<Vec<serde_json::Value>, String> {
     let registry = state.0.lock().await;
     Ok(registry.get_anthropic_tools_schema())
+}
+
+#[tauri::command]
+pub async fn cancel_tool_execution(
+    #[allow(non_snake_case)] executionId: String,
+) -> Result<CancelToolExecutionResponse, String> {
+    process_manager::cancel_execution(&executionId).map_err(|e| e.to_string()).map(|result| CancelToolExecutionResponse {
+        execution_id: result.execution_id,
+        cancelled: result.cancelled,
+        status: result.status,
+        message: result.message,
+    })
 }

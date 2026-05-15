@@ -354,7 +354,7 @@ function buildRecoveryPrompt(
   const nextCommand = decision.nextCommand ? `- If you run the experiment again, use this exact command: ${decision.nextCommand}` : '';
   const nextPlan = decision.nextPlan ? `- Recovery plan: ${decision.nextPlan}` : '';
   const toolLaneGuard = store.sshConfig?.mode === 'local'
-    ? 'Stay on the local tool lane only: execute_command, read_file, write_file, get_current_workspace. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'
+    ? 'Stay on the local tool lane only: execute_command, read_file, write_file, create_directory, get_current_workspace. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'
     : 'Stay on the SSH tool lane only: ssh_exec, ssh_read_file, ssh_upload_file. Do not call execute_command, read_file, write_file, or create_directory.';
   const hardConstraintBlock = hardConstraintLines.length > 0
     ? `\n- ${hardConstraintLines.join('\n- ')}`

@@ -17,6 +17,7 @@ use crate::commands::file::{
     create_directory_for_tool, read_file_for_tool, resolve_path as resolve_tool_path,
     write_file_for_tool,
 };
+use crate::tools::ssh_bridge::{execute_ssh_exec, execute_ssh_read_file, execute_ssh_upload};
 use jsonschema::{JSONSchema, ValidationError};
 
 /// Tool handler: receives parsed JSON arguments, returns result string
@@ -63,7 +64,11 @@ impl ToolRegistry {
         );
     }
 
-    fn validate_request(&self, req: &ToolCallRequest) -> anyhow::Result<(&ToolEntry, serde_json::Value)> {
+    fn validate_request(
+        &self,
+        req: &ToolCallRequest,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<(&ToolEntry, serde_json::Value)> {
         let entry = self
             .tools
             .get(&req.name)
@@ -95,7 +100,7 @@ impl ToolRegistry {
             }
         }
 
-        crate::tools::execution_policy::enforce_request_policy(req, &args)
+        crate::tools::execution_policy::enforce_request_policy(req, &args, session_id)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         Ok((entry, args))
@@ -103,7 +108,7 @@ impl ToolRegistry {
 
     /// Execute a single tool call request
     pub fn execute(&self, req: &ToolCallRequest) -> anyhow::Result<ToolCallResult> {
-        let (entry, args) = self.validate_request(req)?;
+        let (entry, args) = self.validate_request(req, None)?;
 
         if args
             .get("__schema_validation_error")
@@ -164,8 +169,9 @@ impl ToolRegistry {
     pub async fn execute_with_context(
         &self,
         req: &ToolCallRequest,
+        session_id: Option<&str>,
     ) -> anyhow::Result<ToolCallResult> {
-        let (_entry, args) = self.validate_request(req)?;
+        let (_entry, args) = self.validate_request(req, session_id)?;
 
         if args
             .get("__schema_validation_error")
@@ -601,7 +607,11 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .get("timeoutSecs")
                 .and_then(|v| v.as_u64())
                 .or_else(|| args.get("timeout").and_then(|v| v.as_u64()));
-            let result = execute_bash_for_tool(command, cwd, work_dir, timeout_secs)
+            let execution_id = args
+                .get("executionId")
+                .and_then(|v| v.as_str())
+                .or_else(|| args.get("execution_id").and_then(|v| v.as_str()));
+            let result = execute_bash_for_tool(command, cwd, work_dir, timeout_secs, execution_id)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
             serde_json::to_string(&result)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize command result: {}", e))
@@ -629,6 +639,92 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 },
                 "required": ["command"],
                 "additionalProperties": false,
+            }),
+        },
+    );
+
+    registry.register(
+        "ssh_exec",
+        Arc::new(|args| execute_ssh_exec(&args)),
+        ToolMetadata {
+            name: "ssh_exec".to_string(),
+            description: "Execute a command on a local or remote SSH target inside the bound remote work directory. Returns structured JSON with stdout, stderr, exit code, execution ID, and lifecycle status.".to_string(),
+            is_read_only: false,
+            is_concurrency_safe: false,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["local", "ssh"] },
+                    "host": { "type": "string" },
+                    "user": { "type": "string" },
+                    "port": { "type": "number" },
+                    "authMode": { "type": "string", "enum": ["agent", "password", "key"] },
+                    "keyPath": { "type": "string" },
+                    "password": { "type": "string" },
+                    "remoteWorkDir": { "type": "string" },
+                    "timeout": { "type": "number" },
+                    "executionId": { "type": "string" }
+                },
+                "required": ["command"],
+                "additionalProperties": false
+            }),
+        },
+    );
+
+    registry.register(
+        "ssh_upload_file",
+        Arc::new(|args| execute_ssh_upload(&args)),
+        ToolMetadata {
+            name: "ssh_upload_file".to_string(),
+            description: "Upload a local file or inline content to a local or remote SSH target within the bound remote work directory.".to_string(),
+            is_read_only: false,
+            is_concurrency_safe: false,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "localPath": { "type": "string" },
+                    "content": { "type": "string" },
+                    "remotePath": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["local", "ssh"] },
+                    "host": { "type": "string" },
+                    "user": { "type": "string" },
+                    "port": { "type": "number" },
+                    "authMode": { "type": "string", "enum": ["agent", "password", "key"] },
+                    "keyPath": { "type": "string" },
+                    "password": { "type": "string" },
+                    "remoteWorkDir": { "type": "string" }
+                },
+                "required": ["remotePath"],
+                "additionalProperties": false
+            }),
+        },
+    );
+
+    registry.register(
+        "ssh_read_file",
+        Arc::new(|args| execute_ssh_read_file(&args)),
+        ToolMetadata {
+            name: "ssh_read_file".to_string(),
+            description: "Read a file from a local or remote SSH target within the bound remote work directory.".to_string(),
+            is_read_only: true,
+            is_concurrency_safe: true,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "remotePath": { "type": "string" },
+                    "mode": { "type": "string", "enum": ["local", "ssh"] },
+                    "host": { "type": "string" },
+                    "user": { "type": "string" },
+                    "port": { "type": "number" },
+                    "authMode": { "type": "string", "enum": ["agent", "password", "key"] },
+                    "keyPath": { "type": "string" },
+                    "password": { "type": "string" },
+                    "remoteWorkDir": { "type": "string" },
+                    "maxLines": { "type": "number" }
+                },
+                "required": ["remotePath"],
+                "additionalProperties": false
             }),
         },
     );

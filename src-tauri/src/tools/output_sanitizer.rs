@@ -1,4 +1,4 @@
-use crate::models::ExecuteCodeResponse;
+use crate::models::{ExecuteCodeResponse, ToolExecutionStatus};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -37,6 +37,8 @@ pub fn sanitize_execute_code_output(
     exit_code: i32,
     cwd: Option<&str>,
     timed_out: bool,
+    execution_id: &str,
+    status: ToolExecutionStatus,
 ) -> ExecuteCodeResponse {
     let stdout_bytes = stdout.len();
     let stderr_bytes = stderr.len();
@@ -47,6 +49,8 @@ pub fn sanitize_execute_code_output(
     let (stderr, stderr_truncated) = truncate_text(sanitized_stderr);
 
     ExecuteCodeResponse {
+        execution_id: execution_id.to_string(),
+        status,
         stdout,
         stderr,
         exit_code,
@@ -110,6 +114,8 @@ mod tests {
             0,
             Some("/tmp/project"),
             false,
+            "exec-1",
+            ToolExecutionStatus::Succeeded,
         );
 
         assert!(result.stdout.contains("Authorization: [redacted]"));
@@ -125,6 +131,8 @@ mod tests {
             0,
             Some("/tmp/project"),
             false,
+            "exec-1",
+            ToolExecutionStatus::Succeeded,
         );
 
         assert!(result.stdout.contains("https://[redacted]@example.com/path?token=[redacted]"));

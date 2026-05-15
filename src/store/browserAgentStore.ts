@@ -59,6 +59,14 @@ const formatTimestamp = (): string => {
   return new Date().toLocaleTimeString('zh-CN', { hour12: false });
 };
 
+let _listenerRefCount = 0;
+let _listenerCleanup: (() => void) | null = null;
+let _listenerSetupPromise: Promise<(() => void) | null> | null = null;
+let _completionTimerId: ReturnType<typeof setTimeout> | null = null;
+let _completionTimerTaskId: string | null = null;
+let _errorTimerId: ReturnType<typeof setTimeout> | null = null;
+let _errorTimerTaskId: string | null = null;
+
 /**
  * Extended browser agent state interface
  */

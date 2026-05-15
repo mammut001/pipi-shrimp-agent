@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { SshConfig } from '@/store/autoresearchStore';
-import { buildRemoteBashCommand, shellEscapePath } from '@/utils/remoteExec';
+import { buildRemoteBashCommand, shellEscape, shellEscapePath } from '@/utils/remoteExec';
 
 interface RawBashResult {
   stdout?: string;
@@ -33,8 +33,28 @@ export interface SessionRunPaths {
   runConfigPath: string;
 }
 
+const SNAPSHOT_EXCLUDES = ['.git', 'node_modules', 'target', 'runs'] as const;
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/[\\/]+$/, '');
+}
+
+function assertSafeSessionId(sessionId: string): string {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    throw new Error('Invalid AutoResearch sessionId: expected a non-empty identifier.');
+  }
+  if (normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
+    throw new Error(`Invalid AutoResearch sessionId "${sessionId}": path separators and ".." are not allowed.`);
+  }
+  return normalized;
+}
+
+function assertPositiveIteration(iter: number): number {
+  if (!Number.isInteger(iter) || iter < 1) {
+    throw new Error(`Invalid AutoResearch iteration "${iter}": expected a positive integer.`);
+  }
+  return iter;
 }
 
 function padIteration(iter: number): string {
@@ -51,11 +71,13 @@ function getParentDirectory(path: string): string {
 }
 
 function buildRunDir(sessionDir: string, sessionId: string, iter: number, directoryName: string): RunDir {
+  const safeSessionId = assertSafeSessionId(sessionId);
+  const safeIteration = assertPositiveIteration(iter);
   const iterDir = `${sessionDir}/${directoryName}`;
   const codeDir = `${iterDir}/code`;
   return {
-    sessionId,
-    iter,
+    sessionId: safeSessionId,
+    iter: safeIteration,
     iterDir,
     codeDir,
     logsDir: `${iterDir}/logs`,
@@ -85,6 +107,26 @@ function buildWriteCommand(path: string, content: string, append = false): strin
   ].join('\n');
 }
 
+function buildSnapshotCopyCommand(sourceDir: string, targetDir: string): string {
+  const excludes = SNAPSHOT_EXCLUDES.map((entry) => `--exclude=${entry}`).join(' ');
+  return [
+    `mkdir -p ${shellEscapePath(targetDir)}`,
+    `tar -C ${shellEscapePath(sourceDir)} ${excludes} -cf - . | tar -xf - -C ${shellEscapePath(targetDir)}`,
+  ].join('\n');
+}
+
+function buildWorktreeCleanupCommand(worktreeDir: string): string {
+  return [
+    `if [ -d ${shellEscapePath(worktreeDir)} ] && git -C ${shellEscapePath(worktreeDir)} rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
+    `  __git_common_dir="$(git -C ${shellEscapePath(worktreeDir)} rev-parse --git-common-dir 2>/dev/null || true)"`,
+    `  git -C ${shellEscapePath(worktreeDir)} worktree remove --force ${shellEscapePath(worktreeDir)} >/dev/null 2>&1 || true`,
+    '  if [ -n "$__git_common_dir" ]; then',
+    '    git --git-dir="$__git_common_dir" worktree prune >/dev/null 2>&1 || true',
+    '  fi',
+    'fi',
+  ].join('\n');
+}
+
 function isSessionChildRunDir(sessionDir: string, iterDir: string): boolean {
   const normalizedSessionDir = trimTrailingSlash(sessionDir);
   const normalizedIterDir = trimTrailingSlash(iterDir);
@@ -97,7 +139,8 @@ function isSessionChildRunDir(sessionDir: string, iterDir: string): boolean {
 }
 
 export function getSessionRunPaths(cfg: SshConfig, sessionId: string): SessionRunPaths {
-  const sessionDir = `${trimTrailingSlash(cfg.remoteWorkDir)}/runs/${sessionId}`;
+  const safeSessionId = assertSafeSessionId(sessionId);
+  const sessionDir = `${trimTrailingSlash(cfg.remoteWorkDir)}/runs/${safeSessionId}`;
   return {
     sessionDir,
     sessionFilePath: `${sessionDir}/session.md`,
@@ -105,6 +148,10 @@ export function getSessionRunPaths(cfg: SshConfig, sessionId: string): SessionRu
     metricsJsonlPath: `${sessionDir}/metrics.jsonl`,
     runConfigPath: `${sessionDir}/run_config.json`,
   };
+}
+
+export function getSessionBaselineDir(cfg: SshConfig, sessionId: string): string {
+  return `${getSessionRunPaths(cfg, sessionId).sessionDir}/best-baseline`;
 }
 
 export async function executeTargetCommand(
@@ -178,21 +225,20 @@ export async function createRunDir(
   iter: number,
   options: { snapshotSourceDir?: string } = {},
 ): Promise<RunDir> {
+  const safeIteration = assertPositiveIteration(iter);
   const sessionDir = await ensureSessionDir(cfg, sessionId);
-  const directoryName = `iter-${padIteration(iter)}-${formatTimestamp()}`;
-  const runDir = buildRunDir(sessionDir, sessionId, iter, directoryName);
+  const directoryName = `iter-${padIteration(safeIteration)}-${formatTimestamp()}`;
+  const runDir = buildRunDir(sessionDir, sessionId, safeIteration, directoryName);
   const snapshotSourceDir = options.snapshotSourceDir || cfg.remoteWorkDir;
 
   const script = [
     `mkdir -p ${shellEscapePath(runDir.iterDir)} ${shellEscapePath(runDir.logsDir)}`,
     `if [ -d ${shellEscapePath(snapshotSourceDir)} ] && git -C ${shellEscapePath(snapshotSourceDir)} rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
     `  if ! git -C ${shellEscapePath(snapshotSourceDir)} worktree add --detach ${shellEscapePath(runDir.codeDir)} HEAD >/dev/null 2>&1; then`,
-    `    mkdir -p ${shellEscapePath(runDir.codeDir)}`,
-    `    tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(runDir.codeDir)}`,
+    `    ${buildSnapshotCopyCommand(snapshotSourceDir, runDir.codeDir).replace(/\n/g, '\n    ')}`,
     `  fi`,
     `else`,
-    `  mkdir -p ${shellEscapePath(runDir.codeDir)}`,
-    `  tar -C ${shellEscapePath(snapshotSourceDir)} --exclude=.git --exclude=node_modules --exclude=target --exclude=runs -cf - . | tar -xf - -C ${shellEscapePath(runDir.codeDir)}`,
+    `  ${buildSnapshotCopyCommand(snapshotSourceDir, runDir.codeDir).replace(/\n/g, '\n  ')}`,
     `fi`,
     `: > ${shellEscapePath(runDir.systemPromptPath)}`,
     `: > ${shellEscapePath(runDir.hypothesisPath)}`,
@@ -205,6 +251,34 @@ export async function createRunDir(
     throw new Error(result.stderr || `Failed to create iteration dir ${runDir.iterDir}`);
   }
   return runDir;
+}
+
+export async function promoteRunDirToBestBaseline(
+  cfg: SshConfig,
+  sessionId: string,
+  sourceDir: string,
+): Promise<string> {
+  await ensureSessionDir(cfg, sessionId);
+  const baselineDir = getSessionBaselineDir(cfg, sessionId);
+  const script = [
+    `if [ -e ${shellEscapePath(baselineDir)} ]; then`,
+    `  rm -rf ${shellEscapePath(baselineDir)}`,
+    'fi',
+    buildSnapshotCopyCommand(sourceDir, baselineDir),
+    `git -C ${shellEscapePath(baselineDir)} init >/dev/null 2>&1`,
+    `git -C ${shellEscapePath(baselineDir)} config user.email ${shellEscape('autoresearch@local.invalid')}`,
+    `git -C ${shellEscapePath(baselineDir)} config user.name ${shellEscape('AutoResearch Baseline')}`,
+    `git -C ${shellEscapePath(baselineDir)} add -A`,
+    `git -C ${shellEscapePath(baselineDir)} commit --allow-empty -m ${shellEscape(`AutoResearch baseline ${assertSafeSessionId(sessionId)}`)} >/dev/null 2>&1`,
+    `git -C ${shellEscapePath(baselineDir)} worktree prune >/dev/null 2>&1 || true`,
+  ].join('\n');
+
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, script, 300);
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to promote ${sourceDir} as the best baseline`);
+  }
+
+  return baselineDir;
 }
 
 export async function listIterations(cfg: SshConfig, sessionId: string): Promise<RunDir[]> {
@@ -240,7 +314,14 @@ export async function pruneOldRuns(cfg: SshConfig, sessionId: string, keepLast: 
       throw new Error(`Refusing to prune non-session run directory: ${run.iterDir}`);
     }
 
-    const result = await executeTargetCommand(cfg, `rm -rf ${shellEscapePath(run.iterDir)}`, 120);
+    const result = await executeTargetCommand(
+      cfg,
+      [
+        buildWorktreeCleanupCommand(run.codeDir),
+        `rm -rf ${shellEscapePath(run.iterDir)}`,
+      ].join('\n'),
+      120,
+    );
     if ((result.exit_code ?? 0) !== 0) {
       throw new Error(result.stderr || `Failed to prune ${run.iterDir}`);
     }

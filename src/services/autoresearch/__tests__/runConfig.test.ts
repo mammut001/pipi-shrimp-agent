@@ -4,6 +4,7 @@ const mockResolveAgentConfig = jest.fn();
 const mockValidateResolvedAgentConfig = jest.fn();
 const mockFormatAgentConfigValidationError = jest.fn();
 const mockGetCapability = jest.fn();
+const mockBuildProviderExecutionCapabilities = jest.fn();
 
 const storeState = {
   apiConfigs: [] as Array<Record<string, unknown>>,
@@ -29,6 +30,7 @@ jest.mock('@/services/agentConfig', () => ({
 
 jest.mock('@/services/llm/capabilities', () => ({
   getCapability: (...args: unknown[]) => mockGetCapability(...args),
+  buildProviderExecutionCapabilities: (...args: unknown[]) => mockBuildProviderExecutionCapabilities(...args),
 }));
 
 function createResolvedConfig(overrides: Record<string, unknown> = {}) {
@@ -84,6 +86,10 @@ describe('resolveAutoResearchRunConfig', () => {
       vision: false,
       maxContextTokens: 1_000_000,
       recommendedFor: ['agent'],
+    });
+    mockBuildProviderExecutionCapabilities.mockReturnValue({
+      supportsToolCalls: true,
+      supportsToolOpenAI: true,
     });
   });
 
@@ -299,20 +305,37 @@ describe('resolveAutoResearchRunConfig', () => {
       },
     ];
     storeState.activeConfigId = 'cfg-1';
-    mockGetCapability.mockReturnValue({
-      id: 'openai',
-      displayName: 'OpenAI',
-      streaming: true,
-      toolCalls: 'none',
-      jsonMode: true,
-      jsonSchema: true,
-      vision: true,
-      maxContextTokens: 1_000_000,
-      recommendedFor: ['chat'],
+    mockBuildProviderExecutionCapabilities.mockReturnValue({
+      supportsToolCalls: false,
+      supportsToolOpenAI: false,
     });
 
     const { resolveAutoResearchRunConfig } = await import('../runConfig');
 
-    expect(() => resolveAutoResearchRunConfig()).toThrow('Provider does not support tool calls. Choose another.');
+    expect(() => resolveAutoResearchRunConfig()).toThrow('Provider/model does not support tool calls for AutoResearch Advanced. Choose a tool-calling model.');
+  });
+
+  it('refuses deepseek reasoning models for AutoResearch agent execution', async () => {
+    storeState.apiConfigs = [
+      {
+        id: 'cfg-1',
+        name: 'DeepSeek V4 Pro',
+        provider: 'deepseek',
+        apiKey: 'key-deepseek',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-pro',
+      },
+    ];
+    storeState.activeConfigId = 'cfg-1';
+    mockBuildProviderExecutionCapabilities.mockReturnValue({
+      supportsToolCalls: false,
+      supportsToolOpenAI: false,
+    });
+
+    const { resolveAutoResearchRunConfig } = await import('../runConfig');
+
+    expect(() => resolveAutoResearchRunConfig()).toThrow(
+      "DeepSeek model 'deepseek-v4-pro' is not a tool-calling agent model. Use deepseek-chat for the agent config",
+    );
   });
 });

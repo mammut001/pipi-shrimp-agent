@@ -14,12 +14,12 @@ import {
   buildProviderExecutionCapabilities,
   resolveProviderRequestHint,
 } from '@/services/llm/capabilities';
-import { runSshExec, runSshReadFile, runSshUpload } from '@/tools/impl/SshTool';
 import {
   AUTORESEARCH_BOOTSTRAP_TOOL_NAMES,
 } from '@/services/tools/autoresearchBootstrap';
 import {
   DEFAULT_TOOL_EXECUTION_SOURCE,
+  type ToolPolicyPreviewResult,
   type PermissionMode,
   type ToolExecutionSource,
 } from '@/services/tools/toolExecutionPolicy';
@@ -46,6 +46,7 @@ export interface ToolRequest {
   id: string;
   name: string;
   arguments: Record<string, any>;
+  approvalToken?: string;
 }
 
 export interface ToolResult {
@@ -65,6 +66,15 @@ export interface ToolExecutionOptions {
   source?: ToolExecutionSource;
   permissionMode?: PermissionMode;
   allowedTools?: string[];
+  requestPermission?: (request: {
+    id: string;
+    name: string;
+    arguments: string;
+    reason?: string;
+    approvalToken?: string;
+    source: ToolExecutionSource;
+    workDir?: string;
+  }) => Promise<boolean>;
   onProgress?: (completed: number, total: number, currentTool?: string) => void;
   concurrencyLimit?: number;
   timeoutMs?: number;
@@ -183,11 +193,7 @@ const READ_ONLY_TOOLS = new Set([
 ]);
 
 const AUTORESEARCH_BOOTSTRAP_TOOL_SET = new Set<string>(AUTORESEARCH_BOOTSTRAP_TOOL_NAMES);
-const FRONTEND_ONLY_TOOLS = new Set([
-  'ssh_exec',
-  'ssh_upload_file',
-  'ssh_read_file',
-]);
+const FRONTEND_ONLY_TOOLS = new Set<string>();
 
 /**
  * Tools that should never be executed concurrently (explicit deny-list).
@@ -288,6 +294,7 @@ export class StreamingToolExecutor {
       source = DEFAULT_TOOL_EXECUTION_SOURCE,
       permissionMode = 'standard',
       allowedTools,
+      requestPermission,
     } = options;
 
     if (toolRequests.length === 0) {
@@ -307,7 +314,7 @@ export class StreamingToolExecutor {
     const executableRequests: ToolRequest[] = [];
     const allowedToolSet = allowedTools ? new Set(allowedTools) : null;
 
-    for (const request of toolRequests) {
+    for (let request of toolRequests) {
       if (allowedToolSet && !allowedToolSet.has(request.name)) {
         prevalidatedResults.push(buildPolicyErrorResult(
           request,
@@ -338,22 +345,23 @@ export class StreamingToolExecutor {
       }
 
       if (hookResult.requiresConfirmation) {
-        prevalidatedResults.push(buildPolicyErrorResult(
-          request,
-          `Tool "${request.name}" requires confirmation before execution.`,
-          'confirmation_required',
-        ));
-        reportProgress(request.name);
-        continue;
+        if (!requestPermission) {
+          prevalidatedResults.push(buildPolicyErrorResult(
+            request,
+            `Tool "${request.name}" requires confirmation before execution.`,
+            'confirmation_required',
+          ));
+          reportProgress(request.name);
+          continue;
+        }
       }
 
       if (hookResult.modifiedArgs) {
         try {
-          executableRequests.push({
+          request = {
             ...request,
             arguments: JSON.parse(hookResult.modifiedArgs) as Record<string, any>,
-          });
-          continue;
+          };
         } catch {
           prevalidatedResults.push(buildPolicyErrorResult(
             request,
@@ -363,6 +371,67 @@ export class StreamingToolExecutor {
           reportProgress(request.name);
           continue;
         }
+      }
+
+      const preview = await invoke<ToolPolicyPreviewResult>('preview_tool_policy', {
+        toolCall: {
+          id: request.id,
+          name: request.name,
+          arguments: JSON.stringify(request.arguments),
+          workDir: workDir ?? null,
+          source,
+          allowedTools: allowedTools?.length ? allowedTools : null,
+          approvalToken: null,
+        },
+        sessionId,
+      });
+
+      if (preview.decision === 'rejected') {
+        prevalidatedResults.push(buildPolicyErrorResult(
+          request,
+          preview.reason || `Tool "${request.name}" was rejected by backend policy.`,
+          'permission_denied',
+        ));
+        reportProgress(request.name);
+        continue;
+      }
+
+      if (preview.decision === 'awaiting_confirmation') {
+        if (!requestPermission) {
+          prevalidatedResults.push(buildPolicyErrorResult(
+            request,
+            preview.reason || `Tool "${request.name}" requires confirmation before execution.`,
+            'confirmation_required',
+          ));
+          reportProgress(request.name);
+          continue;
+        }
+
+        const approved = await requestPermission({
+          id: request.id,
+          name: request.name,
+          arguments: JSON.stringify(request.arguments),
+          reason: preview.reason,
+          approvalToken: preview.approvalToken,
+          source,
+          workDir,
+        });
+
+        if (!approved) {
+          prevalidatedResults.push(buildPolicyErrorResult(
+            request,
+            preview.reason || `Tool "${request.name}" was denied by the user.`,
+            'permission_denied',
+          ));
+          reportProgress(request.name);
+          continue;
+        }
+
+        executableRequests.push({
+          ...request,
+          approvalToken: preview.approvalToken,
+        });
+        continue;
       }
 
       executableRequests.push(request);
@@ -463,6 +532,7 @@ export class StreamingToolExecutor {
             workDir: workDir ?? null,
             source,
             allowedTools: allowedTools?.length ? allowedTools : null,
+            approvalToken: tool.approvalToken ?? null,
             apiKey: activeConfig?.apiKey ?? null,
             model: activeConfig?.model ?? null,
             baseUrl: activeConfig?.baseUrl || null,
@@ -533,36 +603,6 @@ export class StreamingToolExecutor {
     }
 
     try {
-      if (request.name === 'ssh_exec') {
-        const data = await runSshExec(request.arguments as any);
-        return {
-          id: request.id,
-          content: JSON.stringify(data),
-          is_error: false,
-          execution_time_ms: Date.now() - startTime,
-        };
-      }
-
-      if (request.name === 'ssh_upload_file') {
-        const data = await runSshUpload(request.arguments as any);
-        return {
-          id: request.id,
-          content: JSON.stringify(data),
-          is_error: false,
-          execution_time_ms: Date.now() - startTime,
-        };
-      }
-
-      if (request.name === 'ssh_read_file') {
-        const data = await runSshReadFile(request.arguments as any);
-        return {
-          id: request.id,
-          content: JSON.stringify(data),
-          is_error: false,
-          execution_time_ms: Date.now() - startTime,
-        };
-      }
-
       throw new Error(`Frontend-only executor received unsupported tool: ${request.name}`);
     } catch (error) {
       const executionTime = Date.now() - startTime;

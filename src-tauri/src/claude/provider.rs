@@ -180,6 +180,15 @@ pub struct ResolvedProviderConfig {
     pub capabilities: ProviderCapabilities,
 }
 
+fn deepseek_model_is_reasoning(model_lower: &str) -> bool {
+    model_lower.contains("reasoner")
+        || model_lower.contains("reasoning")
+        || model_lower.contains("v4")
+        || model_lower
+            .split(|value: char| !value.is_ascii_alphanumeric())
+            .any(|part| part == "r1")
+}
+
 impl ResolvedProviderConfig {
     /// Resolve provider configuration from raw parameters
     pub fn resolve(
@@ -337,17 +346,15 @@ impl ResolvedProviderConfig {
             }
             ProviderId::DeepSeek => {
                 // DeepSeek: OpenAI-compatible, streams reasoning_content, max_tokens capped at 8192.
-                let supports_reasoning = model_lower.contains("reasoner")
-                    || model_lower.contains("reasoning")
-                    || model_lower.contains("r1")
-                    || model_lower.contains("v4");
+                let supports_reasoning = deepseek_model_is_reasoning(&model_lower);
+                let supports_tool_calls = !model_lower.is_empty() && !supports_reasoning;
 
                 ProviderCapabilities {
                     supports_thinking: false,
                     supports_reasoning,
                     supports_reasoning_stream: supports_reasoning,
-                    supports_tool_calls: true,
-                    supports_tool_openai: true,
+                    supports_tool_calls,
+                    supports_tool_openai: supports_tool_calls,
                     supports_streaming: true,
                     supports_response_format: false,
                     supports_response_format_json_schema: false,
@@ -482,6 +489,39 @@ mod tests {
         assert_eq!(config.provider_id, ProviderId::Custom);
         assert_eq!(config.api_format, ApiFormat::OpenAI);
         assert_eq!(config.base_url, "https://custom.ai/v1");
+    }
+
+    #[test]
+    fn test_resolve_deepseek_tool_capabilities_by_model() {
+        let chat = ResolvedProviderConfig::resolve(
+            "deepseek-chat",
+            "sk-...",
+            Some("https://api.deepseek.com"),
+            Some(ProviderId::DeepSeek),
+        );
+        assert!(chat.capabilities.supports_tool_calls);
+        assert!(chat.capabilities.supports_tool_openai);
+        assert!(!chat.capabilities.supports_reasoning);
+
+        let reasoner = ResolvedProviderConfig::resolve(
+            "deepseek-reasoner",
+            "sk-...",
+            Some("https://api.deepseek.com"),
+            Some(ProviderId::DeepSeek),
+        );
+        assert!(!reasoner.capabilities.supports_tool_calls);
+        assert!(!reasoner.capabilities.supports_tool_openai);
+        assert!(reasoner.capabilities.supports_reasoning);
+
+        let v4_pro = ResolvedProviderConfig::resolve(
+            "deepseek-v4-pro",
+            "sk-...",
+            Some("https://api.deepseek.com"),
+            Some(ProviderId::DeepSeek),
+        );
+        assert!(!v4_pro.capabilities.supports_tool_calls);
+        assert!(!v4_pro.capabilities.supports_tool_openai);
+        assert!(v4_pro.capabilities.supports_reasoning);
     }
 
     #[test]

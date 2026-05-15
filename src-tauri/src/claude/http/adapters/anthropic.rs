@@ -172,7 +172,7 @@ impl ProviderAdapter for AnthropicAdapter {
                 }
             }
             "content_block_stop" => {
-                events.extend(ctx.emit_pending_tool_calls());
+                events.extend(ctx.emit_pending_tool_calls()?);
             }
             "message_delta" => {
                 if let Some(usage) = json.get("usage") {

@@ -196,12 +196,13 @@ describe('createAutoResearchSendMessage', () => {
     mockGetCurrentRunDir.mockReturnValue(null);
   });
 
-  it('keeps the local AutoResearch lane on the four-tool allowlist', () => {
+  it('keeps the local AutoResearch lane on the five-tool allowlist', () => {
     expect(localToolCatalog).toEqual([
       'get_current_workspace',
       'execute_command',
       'read_file',
       'write_file',
+      'create_directory',
     ]);
   });
 

@@ -1,15 +1,55 @@
 use super::{ToolCallRequest, ToolExecutionSource};
 use crate::utils::{AppError, AppResult};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 const WRITE_TOOLS: &[&str] = &["write_file", "create_directory"];
 const WORKSPACE_BOUND_TOOLS: &[&str] = &["write_file", "create_directory", "execute_command"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PolicyAction {
+    Allow,
+    RequireConfirmation,
+    Reject,
+}
+
+#[derive(Debug, Clone)]
+struct PolicyDecision {
+    action: PolicyAction,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ApprovalRecord {
+    session_id: String,
+    tool_call_id: String,
+    tool_name: String,
+    arguments: String,
+    work_dir: Option<String>,
+    source: ToolExecutionSource,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPolicyPreview {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub decision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_token: Option<String>,
+}
+
+static APPROVALS: Lazy<Mutex<HashMap<String, ApprovalRecord>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Copy)]
 struct ToolExecutionPolicy {
     require_bound_workspace: bool,
     allow_write_tools: bool,
-    allow_network_commands: bool,
-    allow_long_running_commands: bool,
+    allow_read_tools: bool,
 }
 
 impl ToolExecutionSource {
@@ -31,47 +71,151 @@ fn policy_for_source(source: ToolExecutionSource) -> ToolExecutionPolicy {
         ToolExecutionSource::AssistantToolCall => ToolExecutionPolicy {
             require_bound_workspace: true,
             allow_write_tools: true,
-            allow_network_commands: true,
-            allow_long_running_commands: true,
+            allow_read_tools: true,
         },
         ToolExecutionSource::UserRequestedCommand | ToolExecutionSource::ManualTerminal => {
             ToolExecutionPolicy {
                 require_bound_workspace: true,
                 allow_write_tools: true,
-                allow_network_commands: true,
-                allow_long_running_commands: true,
+                allow_read_tools: true,
             }
         }
         ToolExecutionSource::AutoresearchPhase => ToolExecutionPolicy {
             require_bound_workspace: true,
             allow_write_tools: true,
-            allow_network_commands: false,
-            allow_long_running_commands: true,
+            allow_read_tools: true,
         },
         ToolExecutionSource::HeadlessAgent | ToolExecutionSource::WorkflowAgent => {
             ToolExecutionPolicy {
                 require_bound_workspace: true,
                 allow_write_tools: true,
-                allow_network_commands: false,
-                allow_long_running_commands: false,
+                allow_read_tools: true,
             }
         }
         ToolExecutionSource::Unknown => ToolExecutionPolicy {
             require_bound_workspace: true,
             allow_write_tools: false,
-            allow_network_commands: false,
-            allow_long_running_commands: false,
+            allow_read_tools: true,
         },
     }
 }
 
-pub fn enforce_request_policy(
+fn is_mcp_tool(name: &str) -> bool {
+    name.starts_with("mcp__")
+}
+
+fn is_ssh_tool(name: &str) -> bool {
+    matches!(name, "ssh_exec" | "ssh_read_file" | "ssh_upload_file")
+}
+
+fn is_browser_mutation_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "browser_navigate"
+            | "browser_click"
+            | "browser_type"
+            | "browser_scroll"
+            | "browser_press_key"
+            | "browser_wait"
+    )
+}
+
+fn is_read_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "read_file"
+            | "list_files"
+            | "path_exists"
+            | "search_files"
+            | "glob_search"
+            | "grep_files"
+            | "pdf_read"
+            | "paper_extract_meta"
+            | "baseline_extract"
+            | "arxiv_search"
+            | "ssh_read_file"
+    )
+}
+
+fn is_write_tool(name: &str) -> bool {
+    WRITE_TOOLS.contains(&name) || matches!(name, "ssh_upload_file") || is_browser_mutation_tool(name)
+}
+
+fn is_command_tool(name: &str) -> bool {
+    matches!(name, "execute_command" | "ssh_exec" | "run_in_terminal" | "agent_tool")
+}
+
+fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
+    let token = uuid::Uuid::new_v4().to_string();
+    APPROVALS.lock().expect("approvals lock poisoned").insert(
+        token.clone(),
+        ApprovalRecord {
+            session_id: session_id.to_string(),
+            tool_call_id: req.id.clone(),
+            tool_name: req.name.clone(),
+            arguments: req.arguments.clone(),
+            work_dir: req.work_dir.clone(),
+            source: req.source,
+        },
+    );
+    token
+}
+
+fn consume_matching_approval(req: &ToolCallRequest, session_id: Option<&str>) -> bool {
+    let Some(token) = req.approval_token.as_deref() else {
+        return false;
+    };
+    let Some(expected_session_id) = session_id else {
+        return false;
+    };
+
+    let mut approvals = APPROVALS.lock().expect("approvals lock poisoned");
+    let Some(record) = approvals.get(token) else {
+        return false;
+    };
+
+    if record.session_id != expected_session_id
+        || record.tool_call_id != req.id
+        || record.tool_name != req.name
+        || record.arguments != req.arguments
+        || record.work_dir != req.work_dir
+        || record.source != req.source
+    {
+        return false;
+    }
+
+    approvals.remove(token);
+    true
+}
+
+fn allow(reason: Option<String>) -> PolicyDecision {
+    PolicyDecision {
+        action: PolicyAction::Allow,
+        reason,
+    }
+}
+
+fn require_confirmation(reason: impl Into<String>) -> PolicyDecision {
+    PolicyDecision {
+        action: PolicyAction::RequireConfirmation,
+        reason: Some(reason.into()),
+    }
+}
+
+fn reject(reason: impl Into<String>) -> PolicyDecision {
+    PolicyDecision {
+        action: PolicyAction::Reject,
+        reason: Some(reason.into()),
+    }
+}
+
+fn evaluate_request_policy(
     req: &ToolCallRequest,
     args: &serde_json::Value,
-) -> AppResult<()> {
+) -> AppResult<PolicyDecision> {
     if let Some(allowed_tools) = &req.allowed_tools {
         if !allowed_tools.iter().any(|tool_name| tool_name == &req.name) {
-            return Err(AppError::SecurityError(format!(
+            return Ok(reject(format!(
                 "Tool '{}' is not allowed for execution source '{}'.",
                 req.name,
                 req.source.as_str()
@@ -81,9 +225,17 @@ pub fn enforce_request_policy(
 
     let policy = policy_for_source(req.source);
 
-    if WRITE_TOOLS.contains(&req.name.as_str()) && !policy.allow_write_tools {
-        return Err(AppError::SecurityError(format!(
+    if is_write_tool(&req.name) && !policy.allow_write_tools {
+        return Ok(reject(format!(
             "Execution source '{}' is not allowed to run write tool '{}'.",
+            req.source.as_str(),
+            req.name
+        )));
+    }
+
+    if is_read_tool(&req.name) && !policy.allow_read_tools {
+        return Ok(reject(format!(
+            "Execution source '{}' is not allowed to run read tool '{}'.",
             req.source.as_str(),
             req.name
         )));
@@ -97,7 +249,7 @@ pub fn enforce_request_policy(
             .map(|value| value.trim().is_empty())
             .unwrap_or(true)
     {
-        return Err(AppError::SecurityError(format!(
+        return Ok(reject(format!(
             "Tool '{}' requires a bound work_dir for execution source '{}'.",
             req.name,
             req.source.as_str()
@@ -105,17 +257,73 @@ pub fn enforce_request_policy(
     }
 
     if req.name == "execute_command" {
-        enforce_command_policy(req, args, policy)?;
+        return evaluate_command_policy(req, args, policy);
     }
 
-    Ok(())
+    if req.name == "ssh_exec" {
+        return evaluate_ssh_exec_policy(req, args);
+    }
+
+    if req.name == "ssh_upload_file" {
+        return evaluate_ssh_upload_policy(req, args);
+    }
+
+    if req.name == "ssh_read_file" {
+        return evaluate_ssh_read_policy(req, args);
+    }
+
+    if is_mcp_tool(&req.name) {
+        return Ok(match req.source {
+            ToolExecutionSource::Unknown => reject("Unknown execution source cannot run MCP tools."),
+            _ => require_confirmation("MCP tool execution requires explicit approval."),
+        });
+    }
+
+    if is_browser_mutation_tool(&req.name) {
+        return Ok(match req.source {
+            ToolExecutionSource::AssistantToolCall
+            | ToolExecutionSource::UserRequestedCommand
+            | ToolExecutionSource::ManualTerminal => {
+                require_confirmation("Browser mutation tools require explicit approval.")
+            }
+            _ => reject(format!(
+                "Execution source '{}' is not allowed to mutate the browser.",
+                req.source.as_str()
+            )),
+        });
+    }
+
+    if req.name == "agent_tool" {
+        return Ok(match req.source {
+            ToolExecutionSource::AssistantToolCall
+            | ToolExecutionSource::UserRequestedCommand
+            | ToolExecutionSource::ManualTerminal => {
+                require_confirmation("Agent tool execution requires explicit approval.")
+            }
+            _ => reject(format!(
+                "Execution source '{}' is not allowed to launch agent tools.",
+                req.source.as_str()
+            )),
+        });
+    }
+
+    if matches!(req.source, ToolExecutionSource::Unknown)
+        && (is_command_tool(&req.name) || is_write_tool(&req.name) || is_ssh_tool(&req.name))
+    {
+        return Ok(reject(format!(
+            "Unknown execution source is restricted to read-only tools; '{}' was rejected.",
+            req.name,
+        )));
+    }
+
+    Ok(allow(None))
 }
 
-fn enforce_command_policy(
+fn evaluate_command_policy(
     req: &ToolCallRequest,
     args: &serde_json::Value,
     policy: ToolExecutionPolicy,
-) -> AppResult<()> {
+) -> AppResult<PolicyDecision> {
     let command = args
         .get("command")
         .and_then(serde_json::Value::as_str)
@@ -137,27 +345,212 @@ fn enforce_command_policy(
             .map(|value| value.trim().is_empty())
             .unwrap_or(true)
     {
-        return Err(AppError::SecurityError(format!(
+        return Ok(reject(format!(
             "Tool 'execute_command' requires an explicit cwd/work_dir for execution source '{}'.",
             req.source.as_str()
         )));
     }
 
-    if command_uses_network(command) && !policy.allow_network_commands {
-        return Err(AppError::SecurityError(format!(
-            "Execution source '{}' is not allowed to run network or package-install commands.",
-            req.source.as_str()
-        )));
+    let uses_network = command_uses_network(command);
+    let long_running = command_is_long_running(command);
+
+    let decision = match req.source {
+        ToolExecutionSource::AssistantToolCall => {
+            if uses_network {
+                require_confirmation("Assistant tool calls need approval for network or package-install commands.")
+            } else if long_running {
+                require_confirmation("Assistant tool calls need approval for long-running commands.")
+            } else {
+                allow(None)
+            }
+        }
+        ToolExecutionSource::UserRequestedCommand | ToolExecutionSource::ManualTerminal => {
+            if uses_network {
+                require_confirmation("Network or package-install commands need approval.")
+            } else if long_running {
+                require_confirmation("Long-running commands need approval.")
+            } else {
+                allow(None)
+            }
+        }
+        ToolExecutionSource::AutoresearchPhase => {
+            if uses_network {
+                reject("AutoResearch phases cannot run network or package-install commands by default.")
+            } else {
+                allow(None)
+            }
+        }
+        ToolExecutionSource::HeadlessAgent | ToolExecutionSource::WorkflowAgent => {
+            if uses_network {
+                reject(format!(
+                    "Execution source '{}' is not allowed to run network or package-install commands.",
+                    req.source.as_str()
+                ))
+            } else if long_running {
+                reject(format!(
+                    "Execution source '{}' is not allowed to run long-lived commands.",
+                    req.source.as_str()
+                ))
+            } else {
+                require_confirmation("Agent-managed command execution needs explicit approval.")
+            }
+        }
+        ToolExecutionSource::Unknown => reject("Unknown execution source cannot execute commands."),
+    };
+
+    Ok(decision)
+}
+
+fn require_remote_work_dir(args: &serde_json::Value, tool_name: &str) -> AppResult<String> {
+    let remote_work_dir = args
+        .get("remoteWorkDir")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::SecurityError(format!(
+                "Tool '{}' requires a remoteWorkDir/root for safe execution.",
+                tool_name
+            ))
+        })?;
+    Ok(remote_work_dir.to_string())
+}
+
+fn normalize_remote_path(path: &str, remote_work_dir: &str) -> Option<String> {
+    let base = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("{}/{}", remote_work_dir.trim_end_matches('/'), path)
+    };
+
+    let mut parts = Vec::new();
+    for component in base.split('/') {
+        match component {
+            "" | "." => continue,
+            ".." => {
+                parts.pop()?;
+            }
+            value => parts.push(value),
+        }
     }
 
-    if command_is_long_running(command) && !policy.allow_long_running_commands {
+    Some(format!("/{}", parts.join("/")))
+}
+
+fn validate_remote_path(args: &serde_json::Value, path_key: &str, tool_name: &str) -> AppResult<()> {
+    let remote_work_dir = require_remote_work_dir(args, tool_name)?;
+    let remote_path = args
+        .get(path_key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| AppError::InvalidInput(format!("Missing '{}' argument", path_key)))?;
+
+    let normalized_root = normalize_remote_path(&remote_work_dir, "/")
+        .ok_or_else(|| AppError::SecurityError("Invalid remoteWorkDir/root".to_string()))?;
+    let normalized_path = normalize_remote_path(remote_path, &normalized_root)
+        .ok_or_else(|| AppError::SecurityError(format!("Invalid remote path for {}", tool_name)))?;
+
+    if !normalized_path.starts_with(normalized_root.trim_end_matches('/')) {
         return Err(AppError::SecurityError(format!(
-            "Execution source '{}' is not allowed to run long-lived commands.",
-            req.source.as_str()
+            "Tool '{}' cannot access '{}' outside remote root '{}'.",
+            tool_name, normalized_path, normalized_root
         )));
     }
 
     Ok(())
+}
+
+fn evaluate_ssh_exec_policy(req: &ToolCallRequest, args: &serde_json::Value) -> AppResult<PolicyDecision> {
+    require_remote_work_dir(args, &req.name)?;
+    let command = args
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| AppError::InvalidInput("Missing 'command' argument".to_string()))?;
+    crate::commands::path_security::validate_command(command)
+        .map_err(|e| AppError::SecurityError(e.message))?;
+
+    Ok(match req.source {
+        ToolExecutionSource::AssistantToolCall
+        | ToolExecutionSource::UserRequestedCommand
+        | ToolExecutionSource::ManualTerminal => {
+            require_confirmation("SSH command execution requires explicit approval.")
+        }
+        _ => reject(format!(
+            "Execution source '{}' is not allowed to run ssh_exec.",
+            req.source.as_str()
+        )),
+    })
+}
+
+fn evaluate_ssh_upload_policy(req: &ToolCallRequest, args: &serde_json::Value) -> AppResult<PolicyDecision> {
+    validate_remote_path(args, "remotePath", &req.name)?;
+    Ok(match req.source {
+        ToolExecutionSource::AssistantToolCall
+        | ToolExecutionSource::UserRequestedCommand
+        | ToolExecutionSource::ManualTerminal => {
+            require_confirmation("SSH uploads require explicit approval.")
+        }
+        _ => reject(format!(
+            "Execution source '{}' is not allowed to run ssh_upload_file.",
+            req.source.as_str()
+        )),
+    })
+}
+
+fn evaluate_ssh_read_policy(req: &ToolCallRequest, args: &serde_json::Value) -> AppResult<PolicyDecision> {
+    validate_remote_path(args, "remotePath", &req.name)?;
+    Ok(match req.source {
+        ToolExecutionSource::Unknown => reject("Unknown execution source cannot read over SSH."),
+        _ => allow(None),
+    })
+}
+
+pub fn preview_request_policy(
+    req: &ToolCallRequest,
+    args: &serde_json::Value,
+    session_id: Option<&str>,
+) -> AppResult<ToolPolicyPreview> {
+    let decision = evaluate_request_policy(req, args)?;
+    let approval_token = if decision.action == PolicyAction::RequireConfirmation {
+        session_id.map(|value| store_approval(req, value))
+    } else {
+        None
+    };
+
+    Ok(ToolPolicyPreview {
+        tool_call_id: req.id.clone(),
+        tool_name: req.name.clone(),
+        decision: match decision.action {
+            PolicyAction::Allow => "allowed",
+            PolicyAction::RequireConfirmation => "awaiting_confirmation",
+            PolicyAction::Reject => "rejected",
+        }
+        .to_string(),
+        reason: decision.reason,
+        approval_token,
+    })
+}
+
+pub fn enforce_request_policy(
+    req: &ToolCallRequest,
+    args: &serde_json::Value,
+    session_id: Option<&str>,
+) -> AppResult<()> {
+    let decision = evaluate_request_policy(req, args)?;
+    match decision.action {
+        PolicyAction::Allow => Ok(()),
+        PolicyAction::Reject => Err(AppError::SecurityError(
+            decision.reason.unwrap_or_else(|| "Tool execution rejected by policy.".to_string()),
+        )),
+        PolicyAction::RequireConfirmation => {
+            if consume_matching_approval(req, session_id) {
+                Ok(())
+            } else {
+                Err(AppError::SecurityError(decision.reason.unwrap_or_else(|| {
+                    format!("Tool '{}' requires explicit confirmation before execution.", req.name)
+                })))
+            }
+        }
+    }
 }
 
 fn command_uses_network(command: &str) -> bool {
@@ -220,6 +613,7 @@ mod tests {
             provider: None,
             api_format: None,
             provider_capabilities: None,
+            approval_token: None,
         }
     }
 
@@ -228,7 +622,7 @@ mod tests {
         let mut request = make_request("read_file");
         request.allowed_tools = Some(vec!["write_file".to_string()]);
 
-        let error = enforce_request_policy(&request, &serde_json::json!({ "path": "README.md" }))
+        let error = enforce_request_policy(&request, &serde_json::json!({ "path": "README.md" }), Some("session-1"))
             .expect_err("expected allowlist rejection");
 
         assert!(error.to_string().contains("not allowed"));
@@ -241,9 +635,88 @@ mod tests {
         let error = enforce_request_policy(
             &request,
             &serde_json::json!({ "command": "curl https://example.com", "cwd": "/tmp/project" }),
+            Some("session-1"),
         )
         .expect_err("expected network command rejection");
 
-        assert!(error.to_string().contains("network or package-install commands"));
+        assert!(error.to_string().contains("not allowed"));
+    }
+
+    #[test]
+    fn ssh_exec_preview_requires_confirmation() {
+        let mut request = make_request("ssh_exec");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.arguments = serde_json::json!({
+            "command": "pytest -q",
+            "remoteWorkDir": "/srv/project"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({ "command": "pytest -q", "remoteWorkDir": "/srv/project" }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(preview.decision, "awaiting_confirmation");
+        assert!(preview.approval_token.is_some());
+    }
+
+    #[test]
+    fn approval_token_allows_exact_resume_once() {
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.arguments = serde_json::json!({
+            "command": "curl https://example.com",
+            "cwd": "/tmp/project"
+        })
+        .to_string();
+
+        let args = serde_json::json!({
+            "command": "curl https://example.com",
+            "cwd": "/tmp/project"
+        });
+
+        let preview = preview_request_policy(&request, &args, Some("session-1"))
+            .expect("preview should succeed");
+        assert_eq!(preview.decision, "awaiting_confirmation");
+
+        let error = enforce_request_policy(&request, &args, Some("session-1"))
+            .expect_err("missing approval token should be rejected");
+        assert!(error.to_string().contains("approval"));
+
+        request.approval_token = preview.approval_token.clone();
+        enforce_request_policy(&request, &args, Some("session-1"))
+            .expect("matching approval token should allow execution");
+
+        let replay_error = enforce_request_policy(&request, &args, Some("session-1"))
+            .expect_err("approval token should be single-use");
+        assert!(replay_error.to_string().contains("approval"));
+    }
+
+    #[test]
+    fn ssh_upload_rejects_remote_path_escape() {
+        let mut request = make_request("ssh_upload_file");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.arguments = serde_json::json!({
+            "remoteWorkDir": "/srv/project",
+            "remotePath": "../etc/passwd",
+            "content": "owned"
+        })
+        .to_string();
+
+        let error = preview_request_policy(
+            &request,
+            &serde_json::json!({
+                "remoteWorkDir": "/srv/project",
+                "remotePath": "../etc/passwd",
+                "content": "owned"
+            }),
+            Some("session-1"),
+        )
+        .expect_err("remote path escape should be rejected");
+
+        assert!(error.to_string().contains("outside remote root"));
     }
 }

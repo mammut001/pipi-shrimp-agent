@@ -5,7 +5,11 @@ import {
   type ResolvedAgentConfig,
 } from '@/services/agentConfig';
 import { useSettingsStore } from '@/store';
-import { getCapability, type ProviderCapability } from '@/services/llm/capabilities';
+import {
+  buildProviderExecutionCapabilities,
+  getCapability,
+  type ProviderCapability,
+} from '@/services/llm/capabilities';
 import {
   buildAutoResearchAgentConfigSnapshot,
   type AutoResearchConfigSource,
@@ -128,6 +132,27 @@ function buildFeatureSnapshot(entry: ResolvedConfigEntry): AutoResearchAgentConf
   return buildAutoResearchAgentConfigSnapshot(entry.config, entry.source);
 }
 
+function buildUnsupportedToolCallMessage(config: ResolvedAgentConfig, saved = false): string {
+  const prefix = saved ? 'Saved provider/model no longer supports' : 'Provider/model does not support';
+  if (config.provider === 'deepseek') {
+    return `${prefix} reliable structured tool calls for AutoResearch Advanced: DeepSeek model '${config.model}' is not a tool-calling agent model. Use deepseek-chat for the agent config, or choose another tool-calling provider.`;
+  }
+
+  return `${prefix} tool calls for AutoResearch Advanced. Choose a tool-calling model.`;
+}
+
+function assertAgentSupportsToolCalls(entry: ResolvedConfigEntry, saved = false): void {
+  const executionCapabilities = buildProviderExecutionCapabilities({
+    provider: entry.config.provider,
+    apiFormat: entry.config.apiFormat,
+    model: entry.config.model,
+  });
+
+  if (!executionCapabilities.supportsToolCalls) {
+    throw new Error(buildUnsupportedToolCallMessage(entry.config, saved));
+  }
+}
+
 function resolveSavedConfigEntry(configId: string | null | undefined, label: string): ResolvedConfigEntry | null {
   if (!configId) {
     return null;
@@ -154,9 +179,7 @@ export function resolveAutoResearchRunConfig(): AutoResearchRunConfigResolution 
   );
 
   const agentCapability = getCapability(agentEntry.config.provider);
-  if (agentCapability.toolCalls === 'none') {
-    throw new Error('Provider does not support tool calls. Choose another.');
-  }
+  assertAgentSupportsToolCalls(agentEntry);
 
   const featureSnapshots = {
     default: buildFeatureSnapshot(defaultEntry),
@@ -217,9 +240,7 @@ export function resolveAutoResearchRunConfigFromSnapshotFile(
   ) ?? defaultEntry;
 
   const agentCapability = getCapability(agentEntry.config.provider);
-  if (agentCapability.toolCalls === 'none') {
-    throw new Error('Saved provider no longer supports tool calls. Choose another before resuming.');
-  }
+  assertAgentSupportsToolCalls(agentEntry, true);
 
   const featureSnapshots = {
     default: buildFeatureSnapshot(defaultEntry),

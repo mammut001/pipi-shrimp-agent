@@ -5,6 +5,20 @@
  */
 use serde::Serialize;
 
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolExecutionStatus {
+    Validating,
+    AwaitingConfirmation,
+    Approved,
+    Rejected,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
 /**
  * Response for send_message command
  */
@@ -31,6 +45,8 @@ pub struct ArtifactResponse {
  */
 #[derive(Debug, Serialize)]
 pub struct ExecuteCodeResponse {
+    pub execution_id: String,
+    pub status: ToolExecutionStatus,
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
@@ -41,6 +57,15 @@ pub struct ExecuteCodeResponse {
     pub output_truncated: bool,
     pub sanitized: bool,
     pub timed_out: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelToolExecutionResponse {
+    pub execution_id: String,
+    pub cancelled: bool,
+    pub status: String,
+    pub message: String,
 }
 
 /**

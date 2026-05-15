@@ -96,6 +96,51 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
             </div>
           )}
 
+          {(permission.commandPreview || permission.workingDirectory || permission.source || permission.riskReason) && (
+            <div className="mb-4 grid gap-3 sm:grid-cols-2">
+              {permission.commandPreview && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Command
+                  </label>
+                  <div className="px-3 py-2 bg-gray-100 rounded-lg font-mono text-xs text-gray-900 break-all">
+                    {permission.commandPreview}
+                  </div>
+                </div>
+              )}
+              {permission.workingDirectory && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Work Dir
+                  </label>
+                  <div className="px-3 py-2 bg-gray-100 rounded-lg font-mono text-xs text-gray-900 break-all">
+                    {permission.workingDirectory}
+                  </div>
+                </div>
+              )}
+              {permission.source && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Source
+                  </label>
+                  <div className="px-3 py-2 bg-gray-100 rounded-lg text-xs text-gray-900">
+                    {permission.source}
+                  </div>
+                </div>
+              )}
+              {permission.riskReason && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Risk Reason
+                  </label>
+                  <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                    {permission.riskReason}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <button
               type="button"

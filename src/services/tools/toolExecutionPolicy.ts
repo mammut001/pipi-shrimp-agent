@@ -9,6 +9,16 @@ export type ToolExecutionSource =
 
 export type PermissionMode = 'standard' | 'auto-edits' | 'bypass' | 'plan-only';
 
+export type ToolPolicyPreviewDecision = 'allowed' | 'awaiting_confirmation' | 'rejected';
+
+export interface ToolPolicyPreviewResult {
+  toolCallId: string;
+  toolName: string;
+  decision: ToolPolicyPreviewDecision;
+  reason?: string;
+  approvalToken?: string;
+}
+
 export const DEFAULT_TOOL_EXECUTION_SOURCE: ToolExecutionSource = 'unknown';
 
 const PIPELINE_SINGLE_INVOKE_TOOL_NAMES = new Set([
@@ -83,7 +93,11 @@ export function canAutoApproveTool(
   toolName: string,
 ): boolean {
   if (permissionMode === 'bypass') {
-    return true;
+    return !isHighRiskToolName(toolName)
+      && !isSshTool(toolName)
+      && !isMcpTool(toolName)
+      && !isBrowserMutationTool(toolName)
+      && toolName !== 'agent_tool';
   }
 
   if (permissionMode !== 'auto-edits') {

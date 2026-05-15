@@ -315,6 +315,8 @@ pub fn run() {
             // Tool pipeline commands
             commands::execute_tool_batch,
             commands::execute_single_tool,
+            commands::preview_tool_policy,
+            commands::cancel_tool_execution,
             commands::get_available_tools,
             // Multi-agent commands
             commands::run_agent,

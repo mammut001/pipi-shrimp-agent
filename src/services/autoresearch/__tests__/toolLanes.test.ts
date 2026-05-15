@@ -17,6 +17,7 @@ describe('toolLanes', () => {
       'get_current_workspace',
       'execute_command',
       'read_file',
+      'create_directory',
       'write_file',
     ]);
     expect(getAutoResearchAllowedToolsForPhase({ mode: 'ssh' }, 'RUN_EXPERIMENT')).toEqual([
@@ -27,6 +28,13 @@ describe('toolLanes', () => {
   });
 
   it('blocks backward transitions once the iteration reaches parsing', () => {
+    expect(classifyAutoResearchToolPhase({
+      currentPhase: 'READ_CONTEXT',
+      toolName: 'create_directory',
+      isExperimentRun: false,
+      config: { mode: 'local' },
+    })).toBe('EDIT_CODE');
+
     expect(classifyAutoResearchToolPhase({
       currentPhase: 'READ_CONTEXT',
       toolName: 'write_file',
