@@ -29,11 +29,16 @@ import {
 } from '@/services/autoresearch/setupFlow';
 import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
 import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
+import {
+  buildAutoResearchRunLockMessage,
+  getAutoResearchLifecycleLock,
+} from '@/services/autoresearch/runLock';
 import { BootstrapChatView } from '@/components/autoresearch/BootstrapChatView';
 
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
   const setShowSetupModal = useAutoResearchStore(s => s.setShowSetupModal);
+  const lifecycleLock = useAutoResearchStore((state) => getAutoResearchLifecycleLock(state));
   const sshConfig = useAutoResearchStore(s => s.sshConfig);
   const lastUsedConfig = useAutoResearchStore(s => s.lastUsedConfig);
   const setSshConfig = useAutoResearchStore(s => s.setSshConfig);
@@ -72,6 +77,10 @@ export function AutoResearchSetupModal() {
   const [isStarting, setIsStarting] = useState(false);
   const [activeTab, setActiveTab] = useState<'conversational' | 'advanced'>('conversational');
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
+  const setupLocked = lifecycleLock.locked;
+  const lockMessage = setupLocked
+    ? buildAutoResearchRunLockMessage('change the setup', lifecycleLock)
+    : null;
 
   // Sync form when sshConfig changes (e.g. from previous session)
   useEffect(() => {
@@ -114,6 +123,12 @@ export function AutoResearchSetupModal() {
   }, [agentConfigError, baselineInput, direction, experimentDir, form, maxIter, metric]);
 
   useEffect(() => {
+    if (lockMessage) {
+      setSubmitError(lockMessage);
+    }
+  }, [lockMessage]);
+
+  useEffect(() => {
     suppressFailurePreview(showSetupModal);
 
     return () => {
@@ -150,22 +165,42 @@ export function AutoResearchSetupModal() {
   }, []);
 
   const handleWorkDirChange = useCallback((value: string) => {
+    if (setupLocked) {
+      setSubmitError(lockMessage);
+      return;
+    }
+
     setForm((current) => ({
       ...current,
       remoteWorkDir: sanitizePathInput(value),
     }));
-  }, []);
+  }, [lockMessage, setupLocked]);
 
   const handleExperimentDirChange = useCallback((value: string) => {
+    if (setupLocked) {
+      setSubmitError(lockMessage);
+      return;
+    }
+
     setExperimentDir(sanitizePathInput(value));
-  }, []);
+  }, [lockMessage, setupLocked]);
 
   const handleResetToDefaults = useCallback(() => {
+    if (setupLocked) {
+      setSubmitError(lockMessage);
+      return;
+    }
+
     clearLastUsedConfig();
     applyPrefillConfig('defaults', getAutoResearchDefaultConfig());
-  }, [applyPrefillConfig, clearLastUsedConfig]);
+  }, [applyPrefillConfig, clearLastUsedConfig, lockMessage, setupLocked]);
 
   const handleStart = useCallback(async () => {
+    if (setupLocked) {
+      setSubmitError(buildAutoResearchRunLockMessage('start a new run', lifecycleLock));
+      return;
+    }
+
     if (import.meta.env.DEV) {
       console.debug('[AutoResearch] Modal handleStart called', {
         mode: form.mode,
@@ -217,7 +252,7 @@ export function AutoResearchSetupModal() {
     } finally {
       setIsStarting(false);
     }
-  }, [agentConfigError, baselineInput, direction, experimentDir, form, initSession, maxIter, metric, setAgentPanelTab, setLastUsedConfig, setShowSetupModal, setSshConfig]);
+  }, [agentConfigError, baselineInput, direction, experimentDir, form, initSession, lifecycleLock, maxIter, metric, setAgentPanelTab, setLastUsedConfig, setShowSetupModal, setSshConfig, setupLocked]);
 
   const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -257,19 +292,26 @@ export function AutoResearchSetupModal() {
               </svg>
             </button>
           </div>
+          {lockMessage && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {lockMessage}
+            </div>
+          )}
           {/* Tab bar */}
           <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
             <button
               type="button"
               onClick={() => setActiveTab('conversational')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'conversational' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+              disabled={setupLocked}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'conversational' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
             >
               Conversational
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('advanced')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'advanced' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+              disabled={setupLocked}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'advanced' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
             >
               Advanced
             </button>
@@ -279,11 +321,17 @@ export function AutoResearchSetupModal() {
         {/* Body */}
         {activeTab === 'conversational' ? (
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <BootstrapChatView onReady={handleBootstrapReady} />
+            {setupLocked ? (
+              <div className="flex h-full items-center justify-center px-6 text-center text-sm text-amber-800">
+                {buildAutoResearchRunLockMessage('start a new run', lifecycleLock)}
+              </div>
+            ) : (
+              <BootstrapChatView onReady={handleBootstrapReady} />
+            )}
           </div>
         ) : (
         <form className="min-h-0 flex-1 overflow-y-auto px-5 pb-5" onSubmit={handleSubmit}>
-          <div className="mx-auto max-w-[560px] space-y-3">
+          <fieldset className="mx-auto max-w-[560px] space-y-3" disabled={setupLocked || isStarting}>
           {/* Target Section */}
           <div className="space-y-2">
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Execution Target</label>
@@ -293,12 +341,12 @@ export function AutoResearchSetupModal() {
               <button
                 type="button"
                 onClick={() => setForm(f => ({ ...f, mode: 'ssh' }))}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${form.mode === 'ssh' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'ssh' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
               >SSH</button>
               <button
                 type="button"
                 onClick={() => setForm(f => ({ ...f, mode: 'local' }))}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${form.mode === 'local' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'local' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
               >Local</button>
             </div>
 
@@ -306,13 +354,13 @@ export function AutoResearchSetupModal() {
               <>
                 <div className="flex gap-2">
                   <input
-                    className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                     placeholder="host (e.g. 192.168.1.10 or connect.westd.seetacloud.com)"
                     value={form.host}
                     onChange={e => setForm(f => ({ ...f, host: e.target.value }))}
                   />
                   <input
-                    className="w-16 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    className="w-16 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                     placeholder="port"
                     type="number"
                     value={form.port}
@@ -321,13 +369,13 @@ export function AutoResearchSetupModal() {
                 </div>
                 <div className="flex gap-2">
                   <input
-                    className="w-24 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    className="w-24 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                     placeholder="user"
                     value={form.user}
                     onChange={e => setForm(f => ({ ...f, user: e.target.value }))}
                   />
                   <select
-                    className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white"
+                    className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white disabled:bg-gray-50 disabled:text-gray-400"
                     value={form.authMode}
                     onChange={e => setForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
                   >
@@ -339,7 +387,7 @@ export function AutoResearchSetupModal() {
                 {form.authMode === 'password' && (
                   <>
                     <input
-                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                      className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                       placeholder="password"
                       type="password"
                       autoComplete="off"
@@ -354,7 +402,7 @@ export function AutoResearchSetupModal() {
                 )}
                 {form.authMode === 'key' && (
                   <input
-                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                     placeholder="key path (e.g. ~/.ssh/id_rsa)"
                     value={form.keyPath}
                     onChange={e => setForm(f => ({ ...f, keyPath: e.target.value }))}
@@ -364,7 +412,7 @@ export function AutoResearchSetupModal() {
             )}
 
             <input
-              className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+              className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
               placeholder={form.mode === 'local'
                 ? t('autoresearch.localWorkDirPlaceholder')
                 : t('autoresearch.remoteWorkDirPlaceholder')}
@@ -387,13 +435,13 @@ export function AutoResearchSetupModal() {
               <button
                 type="button"
                 onClick={handleResetToDefaults}
-                className="font-semibold text-indigo-700 transition-colors hover:text-indigo-800"
+                className="font-semibold text-indigo-700 transition-colors hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-400"
               >
                 {t('autoresearch.resetToDefaults')}
               </button>
             </div>
             <input
-              className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors font-mono"
+              className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors font-mono disabled:bg-gray-50 disabled:text-gray-400"
               placeholder={t('autoresearch.experimentDirPlaceholder')}
               aria-label="Experiment path"
               value={experimentDir}
@@ -405,13 +453,13 @@ export function AutoResearchSetupModal() {
             </p>
             <div className="flex gap-2">
               <input
-                className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                 placeholder={t('autoresearch.metricNamePlaceholder')}
                 value={metric}
                 onChange={e => setMetric(e.target.value)}
               />
               <select
-                className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white"
+                className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white disabled:bg-gray-50 disabled:text-gray-400"
                 value={direction}
                 onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
               >
@@ -472,7 +520,7 @@ export function AutoResearchSetupModal() {
               {agentConfigError}
             </p>
           )}
-          </div>
+          </fieldset>
         </form>
         )}
       </div>

@@ -3,7 +3,7 @@
  *
  * Exposes the tool pipeline to the frontend via Tauri invoke.
  */
-use crate::tools::{ToolCallRequest, ToolCallResult};
+use crate::tools::{classify_tool_error_code, ToolCallRequest, ToolCallResult};
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
@@ -49,6 +49,8 @@ pub async fn execute_single_tool(
     name: String,
     arguments: String,
     #[allow(non_snake_case)] workDir: Option<String>,
+    source: Option<crate::tools::ToolExecutionSource>,
+    #[allow(non_snake_case)] allowedTools: Option<Vec<String>>,
     #[allow(non_snake_case)] apiKey: Option<String>,
     model: Option<String>,
     #[allow(non_snake_case)] baseUrl: Option<String>,
@@ -62,6 +64,8 @@ pub async fn execute_single_tool(
         name,
         arguments,
         work_dir: workDir,
+        source: source.unwrap_or_default(),
+        allowed_tools: allowedTools,
         api_key: apiKey,
         model,
         base_url: baseUrl,
@@ -71,7 +75,16 @@ pub async fn execute_single_tool(
     };
 
     let registry = state.0.lock().await;
-    registry.execute_with_context(&req).await.map_err(|e| e.to_string())
+    match registry.execute_with_context(&req).await {
+        Ok(result) => Ok(result),
+        Err(error) => Ok(ToolCallResult {
+            id: req.id,
+            name: req.name,
+            content: format!("Error: {}", error),
+            is_error: true,
+            error_code: Some(classify_tool_error_code(&error.to_string()).to_string()),
+        }),
+    }
 }
 
 /**

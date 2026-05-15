@@ -145,4 +145,26 @@ describe('AutoResearchPanel', () => {
     expect(view.container.textContent).toContain('Primary Config · OpenAI · gpt-4.1');
     expect(view.container.textContent).not.toContain('[object Object]');
   });
+
+  it('shows inspect-only recovery guidance for interrupted runs', () => {
+    useAutoResearchStore.setState((state) => ({
+      ...state,
+      id: '',
+      loopState: 'idle',
+      runHistory: state.runHistory.map((run) => (
+        run.id === 'run-1'
+          ? {
+            ...run,
+            status: 'interrupted',
+            summary: 'Interrupted after app restart.',
+          }
+          : run
+      )),
+    }));
+
+    const view = renderPanel();
+
+    expect(view.container.textContent).toContain('Inspect-only recovery snapshot');
+    expect(view.container.textContent).toContain('Execution will not auto-resume; start a new run to continue from the saved workspace.');
+  });
 });

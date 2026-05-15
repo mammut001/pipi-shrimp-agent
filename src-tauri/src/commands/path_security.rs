@@ -188,7 +188,10 @@ pub fn validate_command(command: &str) -> Result<(), PathSecurityError> {
             r"\brm\s+(-rf?|--force)\s+~\s*$",
             "Attempting to delete home directory",
         ),
+        (r"\bsudo\s+rm\b", "Running sudo rm"),
         (r"\bmkfs\b", "Filesystem creation command"),
+        (r"\b(fdisk|parted)\b", "Disk partition command"),
+        (r"\bdiskutil\s+erase", "Disk erase command"),
         (r"\bdd\s+if=\S+\s+of=/dev", "Writing to block device"),
         (r"\bshred\b", "Secure file deletion"),
         (
@@ -214,11 +217,31 @@ pub fn validate_command(command: &str) -> Result<(), PathSecurityError> {
             "Piping remote script to shell",
         ),
         (
+            r"(bash|sh|zsh)\s+.*base64\s+-d",
+            "Executing base64-obfuscated shell content",
+        ),
+        (
+            r"/dev/tcp/|nc\s+.*\|\s*(bash|sh|zsh)|bash\s+-i\s+>&\s*/dev/tcp",
+            "Reverse shell pattern",
+        ),
+        (
             r"\bcat\s+/etc/(shadow|passwd|sudoers)\b",
             "Reading sensitive system files",
         ),
+        (
+            r"\b(cat|less|grep|sed)\b.*(^|[\/\s])\.env(\.|$|\s)",
+            "Reading .env file contents",
+        ),
+        (
+            r"\b(cat|grep|find)\b.*(~/.ssh|~/.aws|~/.kube|~/.config/gcloud)",
+            "Reading credential material from home directories",
+        ),
         (r"\bkill\s+-9\s+1\b", "Killing init process"),
         (r"\bpkill\s+-9\s+-u\s+root\b", "Killing root processes"),
+        (
+            r"powershell(?:\.exe)?\b.*\b(iex|invoke-expression)\b",
+            "PowerShell Invoke-Expression execution",
+        ),
     ];
 
     for (pattern, description) in dangerous_patterns {

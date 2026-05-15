@@ -20,7 +20,7 @@
 use tauri::Emitter;
 
 use super::registry::ToolRegistry;
-use super::{ToolCallRequest, ToolCallResult};
+use super::{classify_tool_error_code, ToolCallRequest, ToolCallResult};
 
 /// A batch of tool calls that share the same concurrency safety property
 struct Batch {
@@ -99,7 +99,7 @@ async fn execute_single(
                 name: req.name.clone(),
                 content: format!("Error: {}", e),
                 is_error: true,
-                error_code: Some("internal_error".to_string()),
+                error_code: Some(classify_tool_error_code(&e.to_string()).to_string()),
             };
             if let Some(w) = window {
                 let _ = w.emit(
@@ -222,6 +222,8 @@ mod tests {
                 name: "read_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -234,6 +236,8 @@ mod tests {
                 name: "read_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -246,6 +250,8 @@ mod tests {
                 name: "list_files".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -273,6 +279,8 @@ mod tests {
                 name: "read_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -285,6 +293,8 @@ mod tests {
                 name: "read_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -297,6 +307,8 @@ mod tests {
                 name: "write_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -309,6 +321,8 @@ mod tests {
                 name: "read_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -336,6 +350,8 @@ mod tests {
                 name: "write_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,
@@ -348,6 +364,8 @@ mod tests {
                 name: "write_file".into(),
                 arguments: "{}".into(),
                 work_dir: None,
+                source: super::super::ToolExecutionSource::Unknown,
+                allowed_tools: None,
                 api_key: None,
                 model: None,
                 base_url: None,

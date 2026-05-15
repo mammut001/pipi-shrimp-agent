@@ -30,6 +30,23 @@ import {
   removeSettingsItem,
   SETTINGS_STORAGE_KEYS,
 } from './settings/settingsStorage';
+import { useAutoResearchStore } from './autoresearchStore';
+import {
+  buildAutoResearchRunLockMessage,
+  getAutoResearchLifecycleLock,
+} from '@/services/autoresearch/runLock';
+
+function blockAutoResearchSettingsMutation(action: string): boolean {
+  const lock = getAutoResearchLifecycleLock(useAutoResearchStore.getState());
+  if (!lock.locked) {
+    return false;
+  }
+
+  useAutoResearchStore.setState({
+    statusMessage: buildAutoResearchRunLockMessage(action, lock),
+  });
+  return true;
+}
 
 function hasConfiguredApiKey(config: Pick<ApiConfig, 'apiKey'>): boolean {
   return typeof config.apiKey === 'string' && config.apiKey.trim().length > 0;
@@ -130,6 +147,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
    * Update an existing API configuration
    */
   updateApiConfig: async (id, updates) => {
+    if (blockAutoResearchSettingsMutation('change the AutoResearch provider configuration')) {
+      return;
+    }
+
     const { apiConfigs, activeConfigId } = get();
     const updatedConfigs = apiConfigs.map((c) =>
       c.id === id ? { ...c, ...updates } : c
@@ -201,6 +222,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
    * Set the active API configuration by ID
    */
   setActiveConfig: (id) => {
+    if (blockAutoResearchSettingsMutation('change the AutoResearch provider selection')) {
+      return;
+    }
+
     const { apiConfigs } = get();
     const config = apiConfigs.find((c) => c.id === id);
     if (config) {
@@ -426,6 +451,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   updateAutoResearchLlmSettings: (settings) => {
+    if (blockAutoResearchSettingsMutation('change the AutoResearch provider selection')) {
+      return;
+    }
+
     const nextSettings = sanitizeAutoResearchLlmSettings(
       {
         ...get().autoResearchLlmSettings,

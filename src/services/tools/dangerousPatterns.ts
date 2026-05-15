@@ -36,6 +36,16 @@ export const DANGEROUS_PATTERNS: DangerousPattern[] = [
     description: 'Writing to block device',
   },
   {
+    pattern: /\bsudo\s+rm\b/i,
+    severity: 'critical',
+    description: 'Running sudo rm',
+  },
+  {
+    pattern: /\b(fdisk|parted|diskutil\s+erase)\b/i,
+    severity: 'critical',
+    description: 'Disk partition or erase command',
+  },
+  {
     pattern: /\bshred\b/,
     severity: 'high',
     description: 'Secure file deletion',
@@ -79,12 +89,32 @@ export const DANGEROUS_PATTERNS: DangerousPattern[] = [
     severity: 'high',
     description: 'Piping remote script to shell',
   },
+  {
+    pattern: /(?:bash|sh|zsh)\s+.*base64\s+-d/i,
+    severity: 'high',
+    description: 'Executing base64-obfuscated shell content',
+  },
+  {
+    pattern: /\/dev\/tcp\/|nc\s+.*\|\s*(bash|sh|zsh)|bash\s+-i\s+>&\s*\/dev\/tcp/i,
+    severity: 'critical',
+    description: 'Reverse shell pattern',
+  },
 
   // === Information disclosure ===
   {
     pattern: /\bcat\s+\/etc\/(shadow|passwd|sudoers)\b/,
     severity: 'high',
     description: 'Reading sensitive system files',
+  },
+  {
+    pattern: /\b(cat|less|grep|sed)\b.*(^|[\/\s])\.env(\.|$|\s)/i,
+    severity: 'high',
+    description: 'Reading .env contents',
+  },
+  {
+    pattern: /\b(cat|grep|find)\b.*(~\/\.ssh|~\/\.aws|~\/\.kube|~\/\.config\/gcloud)/i,
+    severity: 'high',
+    description: 'Reading credential material from home directories',
   },
   {
     pattern: /\bexport\s+.*=\s*['"]?\$?\{?\s*(AWS_SECRET|PRIVATE_KEY|TOKEN)/i,
@@ -102,6 +132,11 @@ export const DANGEROUS_PATTERNS: DangerousPattern[] = [
     pattern: /\bpkill\s+-9\s+-u\s+root\b/,
     severity: 'critical',
     description: 'Killing all root processes',
+  },
+  {
+    pattern: /powershell(?:\.exe)?\b.*\b(iex|invoke-expression)\b/i,
+    severity: 'high',
+    description: 'PowerShell Invoke-Expression execution',
   },
 ];
 
@@ -126,8 +161,16 @@ export function checkToolCallForDangerPatterns(
   toolName: string,
   args: string,
 ): DangerousPattern | null {
-  const shellTools = ['bash', 'execute_command', 'run_command', 'shell', 'exec'];
-  if (!shellTools.includes(toolName)) {
+  const shellTools = new Set([
+    'bash',
+    'execute_command',
+    'run_command',
+    'run_in_terminal',
+    'shell',
+    'exec',
+    'ssh_exec',
+  ]);
+  if (!shellTools.has(toolName)) {
     return null;
   }
 

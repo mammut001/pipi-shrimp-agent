@@ -11,4 +11,5 @@ export { assertSupportedPlatform } from './platformGuard';
 export { ensureSessionDir, createRunDir, listIterations, getSessionRunPaths } from './runDir';
 export { appendIterationMetrics, readAllMetrics, summarize } from './metricsStore';
 export { rebuildLivingDoc, readLivingDoc, renderLivingDoc } from './livingDoc';
+export { resumeInterruptedAutoResearchRun } from './setupFlow';
 export type { AutoResearchNotifier } from './notifier';

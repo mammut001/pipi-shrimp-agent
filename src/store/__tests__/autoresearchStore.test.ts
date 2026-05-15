@@ -276,4 +276,109 @@ describe('autoresearchStore history behavior', () => {
     expect(historicalContext.statusMessage).toBeUndefined();
     expect(historicalContext.loopState).toBe('stopped');
   });
+
+  it('creates and reapplies a resume token when an interrupted run is reactivated', () => {
+    const store = useAutoResearchStore.getState();
+
+    store.initSession({
+      id: 'run-resume',
+      maxIterations: 4,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/resume-work',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/resume-exp',
+      sessionFilePath: '/tmp/resume-work/session.md',
+      livingDocPath: '/tmp/resume-work/runs/run-resume/autoresearch.md',
+      baseline: 0.91,
+      agentConfigSnapshot: {
+        configId: 'cfg-1',
+        configName: 'Config One',
+        provider: 'openai',
+        providerLabel: 'OpenAI',
+        apiFormat: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4.1',
+        keyPreview: 'sk-one',
+        keyPresent: true,
+        source: 'settings.activeConfig',
+      },
+    });
+
+    const initialRun = useAutoResearchStore.getState().runHistory.find((run) => run.id === 'run-resume');
+    expect(initialRun?.resumeToken?.pendingIteration).toBe(1);
+    expect(initialRun?.resumeToken?.resumable).toBe(true);
+
+    useAutoResearchStore.setState((state) => ({
+      id: '',
+      loopState: 'idle',
+      runHistory: state.runHistory.map((run) => (
+        run.id === 'run-resume'
+          ? {
+            ...run,
+            status: 'interrupted',
+            resumeToken: run.resumeToken
+              ? {
+                ...run.resumeToken,
+                status: 'interrupted',
+                currentIteration: 1,
+                pendingIteration: 2,
+                replayIteration: true,
+              }
+              : run.resumeToken,
+          }
+          : run
+      )),
+    }));
+
+    useAutoResearchStore.getState().activateHistoricalRun({
+      runId: 'run-resume',
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/resume-work',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/resume-exp',
+      sessionFilePath: '/tmp/resume-work/session.md',
+      livingDocPath: '/tmp/resume-work/runs/run-resume/autoresearch.md',
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      maxIterations: 4,
+      baseline: 0.91,
+      pendingIteration: 2,
+      resumeToken: initialRun?.resumeToken
+        ? {
+          ...initialRun.resumeToken,
+          status: 'interrupted',
+          currentIteration: 1,
+          pendingIteration: 2,
+          replayIteration: true,
+        }
+        : undefined,
+      experiments: [],
+      liveOutput: 'restored live output',
+    });
+
+    const resumedState = useAutoResearchStore.getState();
+    const resumedRun = resumedState.runHistory.find((run) => run.id === 'run-resume');
+    expect(resumedState.id).toBe('run-resume');
+    expect(resumedState.currentIteration).toBe(1);
+    expect(resumedState.loopState).toBe('running');
+    expect(resumedRun?.status).toBe('running');
+    expect(resumedRun?.resumeToken?.pendingIteration).toBe(2);
+    expect(resumedRun?.events.at(-1)?.message).toContain('resumed from recovery token');
+  });
 });

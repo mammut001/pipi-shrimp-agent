@@ -29,6 +29,11 @@ import { CHAT_ERROR_MESSAGES, normalizeCaughtErrorMessage } from './chatErrors';
 import { shouldPersistMessage } from './chatPersistence';
 import { PLAN_MODE_SYSTEM_PROMPT, savePlanModeDoc, shouldSavePlanDoc } from '@/services/planMode';
 import {
+  clearSessionToolRuntime,
+  failUnresolvedSessionTools,
+  syncSessionToolRuntimeToCurrentSession,
+} from './toolRuntimeState';
+import {
   createStreamingAccumulator,
   flushBuffer,
   handleStreamChunk,
@@ -73,6 +78,44 @@ export interface ChatActionFactoryDeps {
 }
 
 let activeChatDiagnosticsTaskId: string | null = null;
+const cancellationRequestedSessions = new Set<string>();
+
+class ChatGenerationCancelledError extends Error {
+  sessionId: string;
+
+  constructor(sessionId: string) {
+    super(`Chat generation cancelled for session ${sessionId}`);
+    this.name = 'ChatGenerationCancelledError';
+    this.sessionId = sessionId;
+  }
+}
+
+function requestChatGenerationCancel(sessionId: string | null | undefined): void {
+  if (sessionId) {
+    cancellationRequestedSessions.add(sessionId);
+  }
+}
+
+function clearChatGenerationCancel(sessionId: string | null | undefined): void {
+  if (sessionId) {
+    cancellationRequestedSessions.delete(sessionId);
+  }
+}
+
+function consumeChatGenerationCancel(sessionId: string | null | undefined): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  const requested = cancellationRequestedSessions.has(sessionId);
+  if (requested) {
+    cancellationRequestedSessions.delete(sessionId);
+  }
+  return requested;
+}
+
+function isChatGenerationCancelledError(error: unknown): error is ChatGenerationCancelledError {
+  return error instanceof ChatGenerationCancelledError;
+}
 
 export function createChatActionMethods({
   set,
@@ -248,6 +291,8 @@ export function createChatActionMethods({
       });
 
       useUIStore.getState().clearTaskProgress();
+      clearChatGenerationCancel(activeSessionId);
+      clearSessionToolRuntime(activeSessionId, set, get);
 
       const resolvedConfig = resolveActiveAgentConfig();
       const configIssues = validateResolvedAgentConfig(resolvedConfig);
@@ -410,6 +455,9 @@ export function createChatActionMethods({
         let tokenUsageResult: TokenUsage | undefined;
 
         for await (const chunk of engine) {
+          if (consumeChatGenerationCancel(activeSessionId)) {
+            throw new ChatGenerationCancelledError(activeSessionId);
+          }
           streamState = handleStreamChunk(streamState, chunk);
 
           if (chunk.type === 'text_delta') {
@@ -429,12 +477,19 @@ export function createChatActionMethods({
                 ensureSessionWorkDir: () => ensureSessionWorkDir(activeSessionId, set, get),
               },
             );
+            if (consumeChatGenerationCancel(activeSessionId)) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
           } else if (chunk.type === 'error') {
             throw chunk.error;
           } else if (chunk.type === 'turn_complete') {
             sawTurnComplete = true;
             tokenUsageResult = streamState.tokenUsage;
           }
+        }
+
+        if (consumeChatGenerationCancel(activeSessionId)) {
+          throw new ChatGenerationCancelledError(activeSessionId);
         }
 
         if (timeoutId) {
@@ -556,6 +611,44 @@ export function createChatActionMethods({
           console.debug('[ReactiveCompact] Check failed:', error);
         });
       } catch (error) {
+        if (isChatGenerationCancelledError(error)) {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+
+          clearChatGenerationCancel(activeSessionId);
+          setStreaming(false);
+          set({
+            streamingContent: '',
+            streamingReasoning: '',
+            streamingSessionId: null,
+            pendingToolCalls: 0,
+            pendingToolResults: [],
+          });
+          updateDiagnosticsTask(diagnosticsTaskId, {
+            state: 'cancelled',
+            cancelable: false,
+          });
+          activeChatDiagnosticsTaskId = null;
+          useUIStore.getState().setActiveSkill(null);
+
+          set((state) => ({
+            sessions: state.sessions.map((session) => {
+              if (session.id !== activeSessionId || session.messages.length === 0) {
+                return session;
+              }
+              const last = session.messages[session.messages.length - 1];
+              if (shouldRemoveEmptyAssistantPlaceholder(last)) {
+                return { ...session, messages: session.messages.slice(0, -1) };
+              }
+              return session;
+            }),
+          }));
+          syncSessionToolRuntimeToCurrentSession(set, get);
+          return;
+        }
+
         turnHadError = true;
         if (timeoutId) {
           clearTimeout(timeoutId);
@@ -596,13 +689,34 @@ export function createChatActionMethods({
             return session;
           }),
         }));
+      } finally {
+        clearChatGenerationCancel(activeSessionId);
       }
     },
 
     stopGeneration: async () => {
-      const { isStreaming, streamingContent, streamingReasoning, setStreaming, currentSessionId, setError } = get();
-      if (!isStreaming) {
+      const {
+        isStreaming,
+        streamingContent,
+        streamingReasoning,
+        setStreaming,
+        currentSessionId,
+        setError,
+        pendingToolCalls,
+        pendingToolResults,
+      } = get();
+      if (!isStreaming && pendingToolCalls === 0 && pendingToolResults.length === 0) {
         return;
+      }
+
+      requestChatGenerationCancel(currentSessionId);
+      if (currentSessionId) {
+        failUnresolvedSessionTools(
+          currentSessionId,
+          set,
+          get,
+          (_toolCallId, label) => `Error: ${label} cancelled by user`,
+        );
       }
 
       try {
@@ -624,6 +738,7 @@ export function createChatActionMethods({
       }
 
       setStreaming(false);
+      set({ pendingToolCalls: 0, pendingToolResults: [] });
       if (activeChatDiagnosticsTaskId) {
         updateDiagnosticsTask(activeChatDiagnosticsTaskId, {
           state: 'cancelled',

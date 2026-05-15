@@ -1,6 +1,6 @@
 use crate::claude::message::{Artifact, ChatResponse, Message, ToolCall, UsageInfo};
 use crate::claude::provider::{ApiFormat, ProviderId, ResolvedProviderConfig};
-use crate::utils::AppResult;
+use crate::utils::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Window};
 
@@ -111,26 +111,75 @@ impl StreamContext {
         }
     }
 
-    pub fn emit_pending_tool_calls(&mut self) -> Vec<StreamEvent> {
-        let mut events = Vec::new();
-        let pending_calls: Vec<ToolCall> = self.tool_calls[self.emitted_tool_calls..].to_vec();
+    pub fn has_unfinalized_tool_calls(&self) -> bool {
+        self.emitted_tool_calls < self.tool_calls.len()
+    }
 
-        for tool_call in &pending_calls {
-            self.emit_tool_use(&tool_call.tool_call_id, &tool_call.name, &tool_call.arguments);
+    pub fn emit_pending_tool_calls(&mut self) -> AppResult<Vec<StreamEvent>> {
+        let mut events = Vec::new();
+        let start_index = self.emitted_tool_calls;
+
+        for pending_offset in 0..(self.tool_calls.len().saturating_sub(start_index)) {
+            let tool_index = start_index + pending_offset;
+            let tool_call = &mut self.tool_calls[tool_index];
+            finalize_pending_tool_call(tool_call, tool_index)?;
+
+            let tool_call_id = tool_call.tool_call_id.clone();
+            let name = tool_call.name.clone();
+            let arguments = tool_call.arguments.clone();
+
+            self.emit_tool_use(&tool_call_id, &name, &arguments);
             events.push(StreamEvent::ToolCall {
-                id: tool_call.tool_call_id.clone(),
-                name: tool_call.name.clone(),
-                arguments: tool_call.arguments.clone(),
+                id: tool_call_id.clone(),
+                name: name.clone(),
+                arguments: arguments.clone(),
             });
             events.push(StreamEvent::ToolCallComplete {
-                id: tool_call.tool_call_id.clone(),
-                name: tool_call.name.clone(),
+                id: tool_call_id,
+                name,
             });
         }
 
         self.emitted_tool_calls = self.tool_calls.len();
-        events
+        Ok(events)
     }
+}
+
+fn finalize_pending_tool_call(tool_call: &mut ToolCall, fallback_index: usize) -> AppResult<()> {
+    let name = tool_call.name.trim();
+    if name.is_empty() {
+        return Err(AppError::ProcessError(
+            "malformed_tool_call: Missing function name in streamed tool call.".to_string(),
+        ));
+    }
+
+    let arguments = tool_call.arguments.trim();
+    if arguments.is_empty() {
+        return Err(AppError::ProcessError(format!(
+            "malformed_tool_call: Missing JSON arguments for streamed tool call '{}'.",
+            name
+        )));
+    }
+
+    let parsed_arguments = serde_json::from_str::<serde_json::Value>(arguments).map_err(|error| {
+        AppError::ProcessError(format!(
+            "malformed_tool_call: Incomplete or invalid JSON arguments for streamed tool call '{}': {}",
+            name, error
+        ))
+    })?;
+
+    if !parsed_arguments.is_object() {
+        return Err(AppError::ProcessError(format!(
+            "malformed_tool_call: Streamed tool call '{}' arguments must decode to a JSON object.",
+            name
+        )));
+    }
+
+    if tool_call.tool_call_id.trim().is_empty() {
+        tool_call.tool_call_id = format!("generated_tool_call_{}", fallback_index);
+    }
+
+    Ok(())
 }
 
 /// Provider adapter trait implemented by each protocol family.

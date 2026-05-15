@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
 const mockInvoke = jest.fn();
 
@@ -9,7 +10,7 @@ jest.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
-import { createRunDir, listIterations } from '../runDir';
+import { createRunDir, listIterations, pruneOldRuns } from '../runDir';
 
 describe('runDir', () => {
   let workDir: string;
@@ -51,5 +52,30 @@ describe('runDir', () => {
     expect(path.basename(first.reflectionInputPath)).toBe('reflection.input.json');
     expect(path.basename(first.reflectionRawPath)).toBe('reflection.raw.txt');
     expect(path.basename(first.reflectionParsedPath)).toBe('reflection.parsed.json');
+  });
+
+  it('prunes only stale iteration directories inside the session run dir', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const first = await createRunDir(cfg, 'session-1', 1);
+    const second = await createRunDir(cfg, 'session-1', 2);
+    const third = await createRunDir(cfg, 'session-1', 3);
+
+    await pruneOldRuns(cfg, 'session-1', 1);
+
+    await expect(fs.access(first.iterDir)).rejects.toThrow();
+    await expect(fs.access(second.iterDir)).rejects.toThrow();
+    await expect(fs.access(third.iterDir)).resolves.toBeUndefined();
+  });
+
+  it('refuses to prune directories that do not match the iter-NNN naming contract', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const invalidDir = path.join(workDir, 'runs', 'session-unsafe', 'iter-oops');
+
+    await fs.mkdir(invalidDir, { recursive: true });
+
+    await expect(pruneOldRuns(cfg, 'session-unsafe', 0)).rejects.toThrow(
+      `Refusing to prune non-session run directory: ${invalidDir}`,
+    );
+    await expect(fs.access(invalidDir)).resolves.toBeUndefined();
   });
 });

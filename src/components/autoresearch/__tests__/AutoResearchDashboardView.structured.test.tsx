@@ -302,6 +302,23 @@ describe('AutoResearchDashboardView structured UX', () => {
     expect(text).not.toContain('RAW LIVE OUTPUT');
   });
 
+  it('surfaces an inspect-only recovery card for interrupted runs', () => {
+    const interruptedRun = {
+      ...buildRun(),
+      status: 'interrupted' as const,
+      summary: 'Interrupted after app restart.',
+      reason: undefined,
+    };
+
+    renderDashboard(interruptedRun);
+
+    const text = container.textContent || '';
+    expect(container.querySelector('[data-recovery-card="run"]')).not.toBeNull();
+    expect(text).toContain('Inspect-only recovery snapshot');
+    expect(text).toContain('Interrupted after app restart.');
+    expect(text).toContain('Execution will not auto-resume; start a new run to continue from the saved workspace.');
+  });
+
   it('filters timeline events and keeps thinking/tool output collapsed by default', () => {
     renderDashboard();
 

@@ -1,12 +1,52 @@
 import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
 import { AutoResearchBootstrapResultSchema } from './schema';
 import type { BootstrapPlan } from './types';
-import { getSessionRunPaths, pathExistsOnTarget, readTargetText } from '@/services/autoresearch/runDir';
+import {
+  getSessionRunPaths,
+  pathExistsOnTarget,
+  readTargetText,
+  writeTargetText,
+} from '@/services/autoresearch/runDir';
 import { seedFromBootstrap } from '@/services/autoresearch/livingDoc';
 import { initFromBootstrap } from '@/services/autoresearch/metricsStore';
 
+interface BootstrapApplyReceipt {
+  schemaVersion: 1;
+  sessionId: string;
+  bootstrapCreatedAt: string;
+  bootstrapPath: string;
+  appliedAt: string;
+}
+
 export function getAutoResearchBootstrapResultPath(workDir: string): string {
   return `${workDir.replace(/[\\/]+$/, '')}/.pipi-shrimp/autoresearch.bootstrap.json`;
+}
+
+function getAutoResearchBootstrapReceiptPath(cfg: SshConfig, sessionId: string): string {
+  return `${getSessionRunPaths(cfg, sessionId).sessionDir}/bootstrap.applied.json`;
+}
+
+function parseBootstrapApplyReceipt(raw: string | null): BootstrapApplyReceipt | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<BootstrapApplyReceipt>;
+    if (
+      parsed.schemaVersion === 1
+      && typeof parsed.sessionId === 'string'
+      && typeof parsed.bootstrapCreatedAt === 'string'
+      && typeof parsed.bootstrapPath === 'string'
+      && typeof parsed.appliedAt === 'string'
+    ) {
+      return parsed as BootstrapApplyReceipt;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function guessPrimaryBaseline(plan: BootstrapPlan): number | null {
@@ -28,6 +68,7 @@ export async function applyBootstrapIfPresent(cfg: SshConfig, sessionId: string)
   }
 
   const bootstrapPath = getAutoResearchBootstrapResultPath(workDir);
+  const receiptPath = getAutoResearchBootstrapReceiptPath(cfg, sessionId);
   const exists = await pathExistsOnTarget({ ...cfg, remoteWorkDir: '' }, bootstrapPath);
   if (!exists) {
     return false;
@@ -50,6 +91,13 @@ export async function applyBootstrapIfPresent(cfg: SshConfig, sessionId: string)
     return false;
   }
 
+  const existingReceipt = parseBootstrapApplyReceipt(
+    await readTargetText({ ...cfg, remoteWorkDir: '' }, receiptPath),
+  );
+  if (existingReceipt?.bootstrapCreatedAt === parsed.data.createdAt) {
+    return false;
+  }
+
   const store = useAutoResearchStore.getState();
   store.setSuccessCriteria(parsed.data.plan.successCriteria);
   store.setPrimaryMetric(parsed.data.plan.primaryMetric);
@@ -68,6 +116,14 @@ export async function applyBootstrapIfPresent(cfg: SshConfig, sessionId: string)
     sessionFilePath: sessionPaths.sessionFilePath,
     livingDocPath: sessionPaths.livingDocPath,
   });
+
+  await writeTargetText({ ...cfg, remoteWorkDir: '' }, receiptPath, `${JSON.stringify({
+    schemaVersion: 1,
+    sessionId,
+    bootstrapCreatedAt: parsed.data.createdAt,
+    bootstrapPath,
+    appliedAt: new Date().toISOString(),
+  } satisfies BootstrapApplyReceipt, null, 2)}\n`);
 
   return true;
 }

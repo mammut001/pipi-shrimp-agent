@@ -16,12 +16,15 @@
 
 import { checkToolCallForDangerPatterns } from './dangerousPatterns';
 import { validateToolCallPaths } from './pathValidation';
+import {
+  canAutoApproveTool,
+  isHighRiskToolName,
+  type PermissionMode,
+} from './toolExecutionPolicy';
 import { defaultClassifier, type PermissionRequest } from '../../utils/permissions/classifierDecision';
 import { classifyBashCommand } from '../../utils/permissions/bashClassifier';
 import { defaultTelemetry } from '../../utils/permissions/permissionLogging';
 import { defaultDenialTracker } from '../../utils/permissions/denialTracking';
-
-export type PermissionMode = 'standard' | 'auto-edits' | 'bypass' | 'plan-only';
 
 export interface HookContext {
   toolName: string;
@@ -37,6 +40,7 @@ export interface HookResult {
   approved: boolean;
   modifiedArgs?: string;
   error?: string;
+  requiresConfirmation?: boolean;
   blockedBy?: 'dangerous-command' | 'path-validation' | 'hook' | 'permission-mode';
   severity?: 'critical' | 'high' | 'medium';
 }
@@ -127,34 +131,21 @@ export async function autoEditsRestriction(ctx: HookContext): Promise<HookResult
     return { approved: true };
   }
 
-  const autoApprovedTools = [
-    'read_file', 'list_files', 'path_exists', 'search_files',
-    'write_file', 'create_directory',
-  ];
-
-  if (!autoApprovedTools.includes(ctx.toolName)) {
-    return {
-      approved: false,
-      error: `Tool "${ctx.toolName}" requires user confirmation in auto-edits mode`,
-      blockedBy: 'permission-mode',
+  return canAutoApproveTool('auto-edits', ctx.toolName)
+    ? { approved: true }
+    : {
+      approved: true,
+      requiresConfirmation: true,
     };
-  }
-
-  return { approved: true };
 }
 
 /**
  * Hook 5: ML-based permission classifier.
  * Uses machine learning model to assess risk and make intelligent decisions.
  * 
- * Skipped entirely in bypass mode — bypass means full trust, no checks.
+ * Classifier denials on non-critical tools downgrade to a confirmation requirement.
  */
 export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
-  // Bypass mode: skip all ML/denial checks
-  if (ctx.permissionMode === 'bypass') {
-    return { approved: true };
-  }
-
   try {
     // Parse arguments
     let parsedArgs: Record<string, any> = {};
@@ -192,7 +183,7 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
     const denialCheck = defaultDenialTracker.shouldDenyBasedOnHistory(request);
     if (denialCheck.shouldDeny) {
       // In standard (ASK) mode, let the permission UI handle it
-      if (ctx.permissionMode === 'standard') {
+      if (ctx.permissionMode === 'standard' || ctx.permissionMode === 'bypass') {
         return { approved: true };
       }
       defaultDenialTracker.recordDenial(
@@ -211,11 +202,11 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
 
     // Handle decision
     if (!decision.approved) {
-      // In standard (ASK) mode, only hard-block critical risk.
-      // Medium/high risk should pass through to the permission UI.
-      if (ctx.permissionMode === 'standard' && decision.riskLevel !== 'critical') {
-        // Let the permission UI handle user approval
-        return { approved: true };
+      if (decision.riskLevel !== 'critical') {
+        return {
+          approved: true,
+          requiresConfirmation: true,
+        };
       }
       defaultDenialTracker.recordDenial(
         ctx.sessionId,
@@ -234,8 +225,13 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
     return { approved: true };
   } catch (error) {
     console.warn('ML classifier check failed:', error);
-    // Fail open - allow if classifier fails
-    return { approved: true };
+    if (!isHighRiskToolName(ctx.toolName)) {
+      return { approved: true };
+    }
+    return {
+      approved: true,
+      requiresConfirmation: true,
+    };
   }
 }
 
@@ -281,10 +277,11 @@ export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult>
     );
 
     if (classification.requiresApproval) {
-      // In standard (ASK) mode, only hard-block critical risk.
-      // Other risky commands should pass through to the permission UI.
-      if (ctx.permissionMode === 'standard' && classification.riskLevel !== 'critical') {
-        return { approved: true };
+      if (classification.riskLevel !== 'critical') {
+        return {
+          approved: true,
+          requiresConfirmation: true,
+        };
       }
       return {
         approved: false,
@@ -298,7 +295,13 @@ export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult>
     return { approved: true };
   } catch (error) {
     console.warn('Bash classifier check failed:', error);
-    return { approved: true };
+    if (!isHighRiskToolName(ctx.toolName)) {
+      return { approved: true };
+    }
+    return {
+      approved: true,
+      requiresConfirmation: true,
+    };
   }
 }
 
@@ -317,12 +320,20 @@ export async function runPreToolUseHooks(ctx: HookContext): Promise<HookResult> 
     bashClassifierCheck,
   ];
 
+  const aggregate: HookResult = { approved: true };
+
   for (const hook of hooks) {
     const result = await hook(ctx);
     if (!result.approved) {
       return result;
     }
+    if (result.modifiedArgs) {
+      aggregate.modifiedArgs = result.modifiedArgs;
+    }
+    if (result.requiresConfirmation) {
+      aggregate.requiresConfirmation = true;
+    }
   }
 
-  return { approved: true };
+  return aggregate;
 }

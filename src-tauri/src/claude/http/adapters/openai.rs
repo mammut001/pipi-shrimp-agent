@@ -279,7 +279,7 @@ impl ProviderAdapter for OpenAIAdapter {
 
                 if let Some(finish_reason) = choice.get("finish_reason").and_then(|value| value.as_str()) {
                     if finish_reason == "tool_calls" {
-                        events.extend(ctx.emit_pending_tool_calls());
+                        events.extend(ctx.emit_pending_tool_calls()?);
                     }
                 }
             }
@@ -306,6 +306,12 @@ impl ProviderAdapter for OpenAIAdapter {
         _config: &ResolvedProviderConfig,
     ) -> AppResult<ChatResponse> {
         let artifacts = detect_artifacts(&ctx.content);
+
+        if ctx.has_unfinalized_tool_calls() {
+            return Err(AppError::ProcessError(
+                "malformed_tool_call: Stream ended before tool_calls were finalized by finish_reason.".to_string(),
+            ));
+        }
 
         if ctx.usage.input_tokens == 0 {
             ctx.usage.input_tokens = ctx.estimated_input;
@@ -503,5 +509,150 @@ mod tests {
             .expect("second chunk should parse");
 
         assert!(events.iter().any(|event| matches!(event, StreamEvent::ToolCall { id, name, arguments } if id == "call_indexed" && name == "execute_command" && arguments == "{\"command\":\"ls -la\"}")));
+    }
+
+    #[test]
+    fn generates_fallback_id_only_after_streamed_tool_call_finalizes() {
+        let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
+        let mut ctx = StreamContext::new(4, None, Some("session-generated-id".to_string()));
+
+        let partial_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"src"
+                        }
+                    }]
+                }
+            }]
+        });
+        let final_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "type": "function",
+                        "function": {
+                            "arguments": "/main.ts\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let partial_events = adapter
+            .parse_stream_chunk(&partial_chunk.to_string(), &mut ctx)
+            .expect("partial chunk should parse without emitting tool execution");
+        assert!(partial_events.is_empty());
+        assert!(ctx.tool_calls[0].tool_call_id.is_empty());
+
+        let final_events = adapter
+            .parse_stream_chunk(&final_chunk.to_string(), &mut ctx)
+            .expect("final chunk should finalize the tool call");
+
+        assert!(final_events.iter().any(|event| matches!(event, StreamEvent::ToolCall { id, name, arguments } if id == "generated_tool_call_0" && name == "read_file" && arguments == "{\"path\":\"src/main.ts\"}")));
+    }
+
+    #[test]
+    fn rejects_streamed_tool_call_without_function_name() {
+        let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
+        let mut ctx = StreamContext::new(4, None, Some("session-missing-name".to_string()));
+
+        let chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_missing_name",
+                        "type": "function",
+                        "function": {
+                            "arguments": "{\"command\":\"pwd\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let error = adapter
+            .parse_stream_chunk(&chunk.to_string(), &mut ctx)
+            .expect_err("missing function name should fail before execution");
+
+        assert!(error.to_string().contains("malformed_tool_call"));
+        assert!(error.to_string().contains("Missing function name"));
+    }
+
+    #[test]
+    fn rejects_streamed_tool_call_with_malformed_json_arguments() {
+        let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
+        let mut ctx = StreamContext::new(4, None, Some("session-bad-json".to_string()));
+
+        let chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_bad_json",
+                        "type": "function",
+                        "function": {
+                            "name": "execute_command",
+                            "arguments": "{\"command\":"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let error = adapter
+            .parse_stream_chunk(&chunk.to_string(), &mut ctx)
+            .expect_err("malformed JSON arguments should fail before execution");
+
+        assert!(error.to_string().contains("malformed_tool_call"));
+        assert!(error.to_string().contains("Incomplete or invalid JSON arguments"));
+    }
+
+    #[test]
+    fn rejects_stream_end_when_tool_calls_never_reach_finish_reason() {
+        let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
+        let mut ctx = StreamContext::new(4, None, Some("session-no-finish".to_string()));
+
+        let chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_no_finish",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"README.md\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        adapter
+            .parse_stream_chunk(&chunk.to_string(), &mut ctx)
+            .expect("chunk should parse before finalization");
+
+        let error = adapter
+            .finalize_stream(ctx, &deepseek_config())
+            .expect_err("unfinished tool call stream should fail");
+
+        assert!(error.to_string().contains("malformed_tool_call"));
+        assert!(error.to_string().contains("finish_reason"));
     }
 }

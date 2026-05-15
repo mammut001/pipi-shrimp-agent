@@ -34,6 +34,13 @@ pub struct ExecuteCodeResponse {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    pub stdout_bytes: usize,
+    pub stderr_bytes: usize,
+    pub output_truncated: bool,
+    pub sanitized: bool,
+    pub timed_out: bool,
 }
 
 /**

@@ -3,15 +3,23 @@ import {
   getActiveAutoResearchRun,
   isAutoResearchTerminalState,
   useAutoResearchStore,
+  type ExperimentEntry,
   type SshConfig,
 } from '@/store/autoresearchStore';
 import type { AutoResearchAgentConfigSnapshot } from './errors';
 import { formatError } from './errors';
-import { createAutoResearchRunId } from './history';
+import {
+  createAutoResearchRunId,
+  type AutoResearchIterationRecord,
+  type AutoResearchResumeToken,
+  type AutoResearchRunRecord,
+} from './history';
 import { assertSupportedPlatform } from './platformGuard';
 import { buildAutoResearchDefaultConfig, normalizeDirection, type AutoResearchDefaultConfig } from './defaultConfig';
 import { sanitizePathInput } from './pathInput';
+import { assertAutoResearchLifecycleUnlocked } from './runLock';
 import type { AutoResearchPreflightResult } from './preflight';
+import { sanitizeAutoResearchResumeSshConfig } from './resumeToken';
 
 export type AutoResearchConnectionTestStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -57,6 +65,13 @@ export interface StartAutoResearchRunResult {
   sessionId: string;
   resolvedConfig: SshConfig;
   preflight: AutoResearchPreflightResult;
+}
+
+export interface ResumeAutoResearchRunResult {
+  sessionId: string;
+  resolvedConfig: SshConfig;
+  preflight: AutoResearchPreflightResult;
+  pendingIteration: number;
 }
 
 export function parseOptionalBaseline(value: string): number | null {
@@ -149,16 +164,63 @@ export function logAutoResearchSetupFailure(phase: string, error: unknown, conte
 }
 
 function assertNoConcurrentAutoResearchRun(): void {
-  const state = useAutoResearchStore.getState();
-  const activeRun = getActiveAutoResearchRun(state);
-  const activeRunInProgress = Boolean(activeRun && !isAutoResearchTerminalState(activeRun.status));
-  const loopBusy = Boolean(state.id) && (state.loopState === 'running' || state.loopState === 'paused');
+  assertAutoResearchLifecycleUnlocked(
+    useAutoResearchStore.getState(),
+    'start a new run',
+  );
+}
 
-  if (!activeRunInProgress && !loopBusy) {
-    return;
+function toRecoveredExperimentStatus(
+  run: AutoResearchRunRecord,
+  iteration: AutoResearchIterationRecord,
+): ExperimentEntry['status'] {
+  if (iteration.status === 'failed') {
+    return 'FAILED';
   }
+  if (typeof iteration.metricValue === 'number' && run.bestIteration === iteration.index) {
+    return 'IMPROVED';
+  }
+  return 'NOT_IMPROVED';
+}
 
-  throw new Error('Another AutoResearch run is already in progress. Stop it or wait for it to finish before starting a new run.');
+function buildRecoveredExperiments(run: AutoResearchRunRecord): ExperimentEntry[] {
+  return run.iterations
+    .filter((iteration) => iteration.status === 'completed' || iteration.status === 'failed')
+    .map((iteration) => ({
+      iteration: iteration.index,
+      hypothesis: iteration.hypothesis || 'Recovered iteration',
+      change: iteration.change || iteration.codeChangesSummary || 'N/A',
+      metricValue: typeof iteration.metricValue === 'number' ? iteration.metricValue : null,
+      status: toRecoveredExperimentStatus(run, iteration),
+      failReason: iteration.error ?? undefined,
+      reasoning: iteration.reasoning || iteration.reflectionSummary || iteration.narrative || '',
+      timestamp: iteration.endedAt || iteration.startedAt || run.updatedAt,
+      durationMs: iteration.durationMs ?? 0,
+    }));
+}
+
+function getInterruptedRunForResume(runId: string): {
+  run: AutoResearchRunRecord;
+  token: AutoResearchResumeToken;
+} {
+  const state = useAutoResearchStore.getState();
+  const run = state.runHistory.find((entry) => entry.id === runId);
+  if (!run) {
+    throw new Error('Interrupted AutoResearch run not found.');
+  }
+  if (run.status !== 'interrupted') {
+    throw new Error('Only interrupted AutoResearch runs can be resumed.');
+  }
+  if (!run.resumeToken) {
+    throw new Error('This interrupted run does not have a recovery token. Start a new run instead.');
+  }
+  if (!run.resumeToken.resumable) {
+    throw new Error('This interrupted run cannot be resumed automatically. Start a new run instead.');
+  }
+  return {
+    run,
+    token: run.resumeToken,
+  };
 }
 
 export async function startAutoResearchRun(
@@ -250,5 +312,127 @@ export async function startAutoResearchRun(
     sessionId,
     resolvedConfig,
     preflight,
+  };
+}
+
+export async function resumeInterruptedAutoResearchRun(
+  runId: string,
+): Promise<ResumeAutoResearchRunResult> {
+  await assertSupportedPlatform();
+  assertAutoResearchLifecycleUnlocked(
+    useAutoResearchStore.getState(),
+    'resume the interrupted run',
+  );
+
+  const { run, token } = getInterruptedRunForResume(runId);
+  const resumeSshConfig: SshConfig = {
+    ...sanitizeAutoResearchResumeSshConfig(token.sshConfig),
+    remoteWorkDir: token.sshConfig.remoteWorkDir || run.config.workdir,
+  };
+
+  const [
+    { runAutoResearchPreflight },
+    { resolveAutoResearchRunConfigFromSnapshotFile },
+    { createAutoResearchSendMessage },
+    { startExperimentLoop },
+    { getSessionRunPaths, readTargetText },
+  ] = await Promise.all([
+    import('./preflight'),
+    import('./runConfig'),
+    import('./chatAdapter'),
+    import('./loopEngine'),
+    import('./runDir'),
+  ]);
+
+  const sessionPaths = getSessionRunPaths(resumeSshConfig, runId);
+  const rawRunConfig = await readTargetText(resumeSshConfig, sessionPaths.runConfigPath);
+  if (!rawRunConfig) {
+    throw new Error('Saved AutoResearch run config snapshot is missing. Start a new run instead.');
+  }
+
+  let parsedRunConfig: Awaited<ReturnType<typeof resolveAutoResearchRunConfigFromSnapshotFile>>['runConfigSnapshot'];
+  try {
+    parsedRunConfig = JSON.parse(rawRunConfig) as Awaited<ReturnType<typeof resolveAutoResearchRunConfigFromSnapshotFile>>['runConfigSnapshot'];
+  } catch (error) {
+    throw new Error(`Saved AutoResearch run config snapshot is invalid: ${formatError(error)}`);
+  }
+
+  const runConfig = resolveAutoResearchRunConfigFromSnapshotFile(parsedRunConfig);
+  const preflight = await runAutoResearchPreflight({
+    sshConfig: resumeSshConfig,
+    experimentDir: token.experimentDir || run.config.experimentDir,
+    workDir: resumeSshConfig.remoteWorkDir,
+    sessionId: runId,
+    agentConfig: runConfig.agentConfig,
+  });
+
+  const resolvedConfig = {
+    ...resumeSshConfig,
+    remoteWorkDir: preflight.resolvedWorkDir,
+  };
+  const pendingIteration = Math.max(1, token.pendingIteration || run.currentIteration || 1);
+  const nextToken: AutoResearchResumeToken = {
+    ...token,
+    status: 'running',
+    sshConfig: sanitizeAutoResearchResumeSshConfig(resolvedConfig),
+    experimentDir: preflight.resolvedExperimentDir,
+    sessionFilePath: preflight.sessionFilePath,
+    livingDocPath: preflight.livingDocPath,
+    currentIteration: Math.max(0, pendingIteration - 1),
+    pendingIteration,
+    replayIteration: true,
+    lastUpdatedAt: new Date().toISOString(),
+  };
+
+  useAutoResearchStore.getState().setLastUsedConfig({
+    workdir: preflight.resolvedWorkDir,
+    experimentDir: preflight.resolvedExperimentDir,
+    metric: token.metricName || run.config.metric,
+    direction: token.metricDirection || run.config.direction,
+    iterations: token.maxIterations || run.config.iterations,
+  });
+  useAutoResearchStore.getState().activateHistoricalRun({
+    runId,
+    sshConfig: resolvedConfig,
+    experimentDir: preflight.resolvedExperimentDir,
+    sessionFilePath: preflight.sessionFilePath,
+    livingDocPath: preflight.livingDocPath,
+    metricName: token.metricName || run.config.metric,
+    metricDirection: token.metricDirection || run.config.direction,
+    maxIterations: token.maxIterations || run.config.iterations,
+    baseline: token.baseline ?? run.config.baseline ?? null,
+    pendingIteration,
+    agentConfigSnapshot: runConfig.snapshot,
+    resumeToken: nextToken,
+    experiments: buildRecoveredExperiments(run),
+    liveOutput: run.liveOutputExcerpt || '',
+  });
+
+  const sendMessage = createAutoResearchSendMessage(
+    preflight.resolvedExperimentDir,
+    runConfig.agentConfig,
+    {
+      environmentSummary: preflight.environmentSummary,
+      metricName: token.metricName || run.config.metric,
+      direction: token.metricDirection || run.config.direction,
+      maxIterations: token.maxIterations || run.config.iterations,
+      reflectionConfig: runConfig.reflectionConfig,
+    },
+  );
+
+  void startExperimentLoop(sendMessage).catch((error) => {
+    const message = logAutoResearchSetupFailure('resume-loop-start', error, {
+      sessionId: runId,
+      experimentDir: preflight.resolvedExperimentDir,
+      pendingIteration,
+    });
+    useAutoResearchStore.getState().setError(message);
+  });
+
+  return {
+    sessionId: runId,
+    resolvedConfig,
+    preflight,
+    pendingIteration,
   };
 }

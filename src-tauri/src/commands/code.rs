@@ -6,13 +6,16 @@ use crate::commands::file::resolve_path;
  * Includes persistent REPL session support
  */
 use crate::models::ExecuteCodeResponse;
+use crate::tools::output_sanitizer::sanitize_execute_code_output;
 use crate::utils::{AppError, AppResult};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::io::Write;
+use std::process::Output;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 // Global session manager for persistent REPL sessions
 // Maps session_id -> Python REPL process
@@ -57,6 +60,47 @@ fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult
     Ok(resolved.to_string_lossy().to_string())
 }
 
+fn build_execute_code_response(
+    stdout: &[u8],
+    stderr: &[u8],
+    exit_code: i32,
+    cwd: Option<&str>,
+    timed_out: bool,
+) -> ExecuteCodeResponse {
+    sanitize_execute_code_output(stdout, stderr, exit_code, cwd, timed_out)
+}
+
+fn wait_with_timeout(
+    mut child: std::process::Child,
+    timeout_secs: u64,
+) -> AppResult<(Output, bool)> {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|e| AppError::ProcessError(e.to_string()))?;
+                return Ok((output, false));
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let output = child
+                        .wait_with_output()
+                        .map_err(|e| AppError::ProcessError(e.to_string()))?;
+                    return Ok((output, true));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                return Err(AppError::ProcessError(error.to_string()));
+            }
+        }
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecuteBashArgs {
@@ -70,6 +114,9 @@ pub struct ExecuteBashArgs {
 /// This is a defence-in-depth measure — the AI system prompt also restricts these,
 /// but we enforce it at the code level too.
 fn check_command_safety(command: &str) -> AppResult<()> {
+    crate::commands::path_security::validate_command(command)
+        .map_err(|e| AppError::ProcessError(e.message.clone()))?;
+
     // Normalize whitespace for pattern matching (collapse runs of spaces/tabs)
     let normalized: String = command.split_whitespace().collect::<Vec<_>>().join(" ");
 
@@ -105,6 +152,49 @@ fn check_command_safety(command: &str) -> AppResult<()> {
     Ok(())
 }
 
+pub fn execute_bash_for_tool(
+    command: &str,
+    cwd: Option<&str>,
+    work_dir: Option<&str>,
+    timeout_secs: Option<u64>,
+) -> AppResult<ExecuteCodeResponse> {
+    let resolved_cwd = resolve_command_cwd(cwd.map(str::to_string), work_dir)?;
+
+    check_command_safety(command)?;
+
+    if !command_exists("bash") {
+        return Err(AppError::ProcessError(
+            "Bash is not installed on your system".to_string(),
+        ));
+    }
+
+    let child = Command::new("bash")
+        .arg("-lc")
+        .arg(command)
+        .current_dir(&resolved_cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::ProcessError(e.to_string()))?;
+    let (output, timed_out) = wait_with_timeout(child, timeout_secs.unwrap_or(300))?;
+
+    let mut stderr = output.stderr;
+    if timed_out {
+        if !stderr.is_empty() && !stderr.ends_with(b"\n") {
+            stderr.push(b'\n');
+        }
+        stderr.extend_from_slice(format!("Command timed out after {} seconds", timeout_secs.unwrap_or(300)).as_bytes());
+    }
+
+    Ok(build_execute_code_response(
+        &output.stdout,
+        &stderr,
+        if timed_out { -1 } else { output.status.code().unwrap_or(-1) },
+        Some(resolved_cwd.as_str()),
+        timed_out,
+    ))
+}
+
 /**
  * Execute a bash command
  *
@@ -112,29 +202,7 @@ fn check_command_safety(command: &str) -> AppResult<()> {
  */
 #[tauri::command]
 pub async fn execute_bash(args: ExecuteBashArgs) -> AppResult<ExecuteCodeResponse> {
-    let work_dir = resolve_command_cwd(None, args.work_dir.as_deref())?;
-
-    check_command_safety(&args.command)?;
-
-    // Check if bash exists
-    if !command_exists("bash") {
-        return Err(AppError::ProcessError(
-            "Bash is not installed on your system".to_string(),
-        ));
-    }
-
-    let output = Command::new("bash")
-        .arg("-c")
-        .arg(&args.command)
-        .current_dir(work_dir)
-        .output()
-        .map_err(|e| AppError::ProcessError(e.to_string()))?;
-
-    Ok(ExecuteCodeResponse {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        exit_code: output.status.code().unwrap_or(-1),
-    })
+    execute_bash_for_tool(&args.command, None, args.work_dir.as_deref(), args.timeout_secs)
 }
 
 /**
@@ -161,15 +229,17 @@ pub async fn execute_python(
     let output = Command::new("python3")
         .arg("-c")
         .arg(&code)
-        .current_dir(work_dir)
+        .current_dir(&work_dir)
         .output()
         .map_err(|e| AppError::ProcessError(e.to_string()))?;
 
-    Ok(ExecuteCodeResponse {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        exit_code: output.status.code().unwrap_or(-1),
-    })
+    Ok(build_execute_code_response(
+        &output.stdout,
+        &output.stderr,
+        output.status.code().unwrap_or(-1),
+        Some(work_dir.as_str()),
+        false,
+    ))
 }
 
 /**
@@ -304,11 +374,13 @@ for raw_line in sys.stdin:
         }
     }
 
-    Ok(ExecuteCodeResponse {
-        stdout: output_lines.join("\n"),
-        stderr: String::new(),
-        exit_code: 0,
-    })
+    Ok(build_execute_code_response(
+        output_lines.join("\n").as_bytes(),
+        b"",
+        0,
+        Some(work_dir.as_str()),
+        false,
+    ))
 }
 
 /**
@@ -351,15 +423,43 @@ pub async fn execute_node(
     let output = Command::new("node")
         .arg("-e")
         .arg(&code)
-        .current_dir(work_dir)
+        .current_dir(&work_dir)
         .output()
         .map_err(|e| AppError::ProcessError(e.to_string()))?;
 
-    Ok(ExecuteCodeResponse {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        exit_code: output.status.code().unwrap_or(-1),
-    })
+    Ok(build_execute_code_response(
+        &output.stdout,
+        &output.stderr,
+        output.status.code().unwrap_or(-1),
+        Some(work_dir.as_str()),
+        false,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn execute_bash_for_tool_returns_structured_timeout_result() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-timeout-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let result = execute_bash_for_tool(
+            "sleep 1",
+            None,
+            Some(work_dir.to_string_lossy().as_ref()),
+            Some(0),
+        )
+        .expect("timeout should still return a structured response");
+
+        assert!(result.timed_out);
+        assert_eq!(result.exit_code, -1);
+        assert!(result.stderr.contains("timed out"));
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
 }
 
 // ============= LSP (Language Server Protocol) Commands =============

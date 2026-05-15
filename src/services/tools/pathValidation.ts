@@ -45,6 +45,16 @@ function normalizePath(p: string): string {
   return (p.startsWith('/') ? '/' : '') + resolved.join('/');
 }
 
+function validatePathField(
+  value: unknown,
+  baseDir?: string,
+): PathValidationResult {
+  if (typeof value !== 'string') {
+    return { isValid: true };
+  }
+  return validatePath(value, baseDir);
+}
+
 /**
  * Validate a single path against security rules.
  */
@@ -117,15 +127,43 @@ export function validateToolCallPaths(
     'read_file', 'write_file', 'list_files',
     'create_directory', 'path_exists', 'search_files',
   ];
-  if (!pathTools.includes(toolName)) {
-    return { isValid: true };
-  }
-
   try {
     const parsed = JSON.parse(args);
-    const targetPath = parsed.path;
-    if (targetPath && typeof targetPath === 'string') {
-      return validatePath(targetPath, workDir);
+    if (toolName === 'execute_command') {
+      if (typeof parsed.cwd === 'string') {
+        return validatePath(parsed.cwd, workDir);
+      }
+      if (!workDir) {
+        return {
+          isValid: false,
+          error: 'execute_command requires an explicit cwd or bound workDir',
+        };
+      }
+      return { isValid: true, resolvedPath: normalizePath(workDir) };
+    }
+
+    if (pathTools.includes(toolName)) {
+      return validatePathField(parsed.path, workDir);
+    }
+
+    if (toolName === 'ssh_exec') {
+      return validatePathField(parsed.remoteWorkDir, undefined);
+    }
+
+    if (toolName === 'ssh_read_file') {
+      const remoteBase = typeof parsed.remoteWorkDir === 'string' ? parsed.remoteWorkDir : undefined;
+      return validatePathField(parsed.remotePath, remoteBase);
+    }
+
+    if (toolName === 'ssh_upload_file') {
+      if (typeof parsed.localPath === 'string') {
+        const localPathResult = validatePath(parsed.localPath, workDir);
+        if (!localPathResult.isValid) {
+          return localPathResult;
+        }
+      }
+      const remoteBase = typeof parsed.remoteWorkDir === 'string' ? parsed.remoteWorkDir : undefined;
+      return validatePathField(parsed.remotePath, remoteBase);
     }
   } catch {
     // If args can't be parsed as JSON, let the tool handler deal with it

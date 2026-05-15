@@ -24,6 +24,14 @@ import { useArtifactsStore } from './artifactsStore';
 import { createChatActionMethods } from './chat/chatActions';
 import { resetTransientSessionStateForNewChat } from './chat/sessionIsolation';
 import { filterSessionsByProject, selectCurrentMessages, selectCurrentSession } from './chat/chatSelectors';
+import {
+  clearSessionToolRuntime,
+  failUnresolvedSessionTools,
+  markSessionToolRunning,
+  resetAllSessionToolRuntime,
+  resolveSessionTool,
+  syncSessionToolRuntimeToCurrentSession,
+} from './chat/toolRuntimeState';
 import { useUIStore } from './uiStore';
 
 const CURRENT_SESSION_ID_STORAGE_KEY = 'ai-agent-current-session-id';
@@ -332,6 +340,7 @@ export const useChatStore = create<ChatState>()(
 
         set({ isInitialized: true, error: null });
         clearRuntimeListeners();
+        resetAllSessionToolRuntime();
         const { listen } = await import('@tauri-apps/api/event');
         const unlistenSubagentComplete = await listen<{ agentId: string; sessionId: string; success: boolean }>('subagent-complete', (event) => {
           useUIStore.getState().addNotification(
@@ -350,6 +359,52 @@ export const useChatStore = create<ChatState>()(
           );
         });
         runtimeListenerCleanups.push(unlistenSubagentError);
+
+        const unlistenToolStart = await listen<{ session_id: string; tool_call_id: string; name: string }>('tool-start', (event) => {
+          if (!get().sessions.some((session) => session.id === event.payload.session_id)) {
+            return;
+          }
+          markSessionToolRunning(
+            event.payload.session_id,
+            event.payload.tool_call_id,
+            event.payload.name,
+            set,
+            get,
+          );
+        });
+        runtimeListenerCleanups.push(unlistenToolStart);
+
+        const unlistenToolComplete = await listen<{ session_id: string; tool_call_id: string; name: string; is_error: boolean }>('tool-complete', (event) => {
+          if (!get().sessions.some((session) => session.id === event.payload.session_id)) {
+            return;
+          }
+          resolveSessionTool(
+            event.payload.session_id,
+            event.payload.tool_call_id,
+            event.payload.name,
+            event.payload.is_error ? 'failed' : 'done',
+            event.payload.is_error ? `Error: ${event.payload.name} failed` : '',
+            set,
+            get,
+          );
+        });
+        runtimeListenerCleanups.push(unlistenToolComplete);
+
+        const unlistenToolError = await listen<{ session_id: string; tool_call_id: string; name: string; error: string }>('tool-error', (event) => {
+          if (!get().sessions.some((session) => session.id === event.payload.session_id)) {
+            return;
+          }
+          resolveSessionTool(
+            event.payload.session_id,
+            event.payload.tool_call_id,
+            event.payload.name,
+            'failed',
+            `Error: ${event.payload.error}`,
+            set,
+            get,
+          );
+        });
+        runtimeListenerCleanups.push(unlistenToolError);
 
         const swarmModule = await import('../services/swarm');
         const unsubscribeSwarmTaskResults = swarmModule.swarmEvents.on('task_result_received', async (detail) => {
@@ -410,6 +465,17 @@ export const useChatStore = create<ChatState>()(
       if (get().streamingTimeoutId) {
         clearTimeout(get().streamingTimeoutId!);
       }
+      if (
+        previousSessionId
+        && (get().pendingToolCalls > 0 || get().pendingToolResults.length > 0 || uiStore.permissionQueue.length > 0)
+      ) {
+        failUnresolvedSessionTools(
+          previousSessionId,
+          set,
+          get,
+          (_toolCallId, label) => `Error: ${label} cancelled due to session change`,
+        );
+      }
       resetTransientSessionStateForNewChat(previousSessionId, {
         isStreaming: get().isStreaming,
         pendingToolCalls: get().pendingToolCalls,
@@ -445,6 +511,7 @@ export const useChatStore = create<ChatState>()(
         pendingToolResults: [],
         streamingSessionId: null,
       }));
+      clearSessionToolRuntime(newSession.id, set, get);
       return newSession.id;
     },
 
@@ -539,6 +606,12 @@ export const useChatStore = create<ChatState>()(
         previousSessionId !== sessionId &&
         (get().pendingToolCalls > 0 || get().pendingToolResults.length > 0 || useUIStore.getState().permissionQueue.length > 0)
       ) {
+        failUnresolvedSessionTools(
+          previousSessionId,
+          set,
+          get,
+          (_toolCallId, label) => `Error: ${label} cancelled due to session change`,
+        );
         void scrubDanglingToolCalls(previousSessionId, set, get);
       }
       localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, sessionId);
@@ -553,6 +626,7 @@ export const useChatStore = create<ChatState>()(
         pendingToolResults: [],
         streamingSessionId: null,
       });
+      syncSessionToolRuntimeToCurrentSession(set, get);
     },
 
     deleteSession: async (sessionId: string) => {
@@ -570,6 +644,8 @@ export const useChatStore = create<ChatState>()(
         nextSessionId = state.currentSessionId === sessionId ? newSessions[0]?.id ?? null : state.currentSessionId;
         return { sessions: newSessions, currentSessionId: nextSessionId };
       });
+      clearSessionToolRuntime(sessionId, set, get);
+      syncSessionToolRuntimeToCurrentSession(set, get);
       resetRightPanelStateAfterSessionRemoval([sessionId], nextSessionId, previousCurrentSessionId);
       uiStore.addNotification('success', 'Conversation deleted', sessionId);
     },
@@ -599,6 +675,10 @@ export const useChatStore = create<ChatState>()(
           : state.currentSessionId;
         return { sessions: newSessions, currentSessionId: nextSessionId };
       });
+      for (const deletedSessionId of deletedSessionIds) {
+        clearSessionToolRuntime(deletedSessionId, set, get);
+      }
+      syncSessionToolRuntimeToCurrentSession(set, get);
       resetRightPanelStateAfterSessionRemoval(deletedSessionIds, nextSessionId, previousCurrentSessionId);
     },
 

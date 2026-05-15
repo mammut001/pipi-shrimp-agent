@@ -2,6 +2,7 @@ import { runChatTurn } from '@/core/QueryEngine';
 import type { ToolCallParams, TokenUsage } from '@/core/types';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { StreamingToolExecutor, partitionTools } from '@/services/StreamingToolExecutor';
+import type { ToolExecutionSource } from '@/services/tools/toolExecutionPolicy';
 import { useSettingsStore } from '@/store';
 import {
   appendToolBudgetEntries,
@@ -41,6 +42,7 @@ export interface HeadlessAgentRunnerInput {
   workDir?: string;
   agentConfig?: ResolvedAgentConfig;
   allowedTools?: string[];
+  toolExecutionSource?: ToolExecutionSource;
   resolveWorkDir?: () => Promise<string | null>;
   onWorkDirResolved?: (workDir: string) => Promise<void> | void;
   onTextDelta?: (chunk: string) => void;
@@ -50,6 +52,7 @@ export interface HeadlessAgentRunnerInput {
   onAssistantMessage?: (text: string) => Promise<void> | void;
   onToolCall?: (call: { id: string; name: string; arguments: string }) => Promise<void> | void;
   onToolResult?: (call: { id: string; name: string; result: string; durationMs: number }) => Promise<void> | void;
+  allowToolExecution?: (call: { id: string; name: string; arguments: string }) => { allowed: boolean; reason?: string };
   timeoutMs?: number;
 }
 
@@ -118,6 +121,16 @@ function buildDisallowedToolResult(toolName: string, allowedTools: Set<string>):
   });
 }
 
+function buildBlockedToolResult(toolName: string, reason: string): string {
+  return JSON.stringify({
+    error: true,
+    error_kind: 'tool_disabled',
+    tool: toolName,
+    message: reason,
+    cause: reason,
+  });
+}
+
 async function ensureHeadlessWorkDir(
   currentWorkDir: string | undefined,
   tools: ToolCallParams[],
@@ -147,12 +160,29 @@ async function executeToolBatch(
   executor: StreamingToolExecutor,
   sessionId: string,
   workDir: string | undefined,
+  source: ToolExecutionSource,
   allowedTools?: Set<string>,
+  allowToolExecution?: HeadlessAgentRunnerInput['allowToolExecution'],
 ): Promise<Array<{ id: string; name: string; content: string; durationMs: number }>> {
   const manualResults: Array<{ id: string; name: string; content: string; durationMs: number }> = [];
   const executableTools: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
 
   for (const tool of tools) {
+    const toolGate = allowToolExecution?.({
+      id: tool.id,
+      name: tool.name,
+      arguments: tool.arguments,
+    });
+    if (toolGate && !toolGate.allowed) {
+      manualResults.push({
+        id: tool.id,
+        name: tool.name,
+        content: buildBlockedToolResult(tool.name, toolGate.reason || `Tool "${tool.name}" is blocked.`),
+        durationMs: 0,
+      });
+      continue;
+    }
+
     if (allowedTools && !allowedTools.has(tool.name)) {
       manualResults.push({
         id: tool.id,
@@ -196,6 +226,8 @@ async function executeToolBatch(
     const batchResult = await executor.executeBatch(concurrent, {
       sessionId,
       workDir,
+      source,
+      allowedTools: allowedTools ? [...allowedTools] : undefined,
     });
 
     for (const result of batchResult.results) {
@@ -215,6 +247,8 @@ async function executeToolBatch(
     const batchResult = await executor.executeBatch([request], {
       sessionId,
       workDir,
+      source,
+      allowedTools: allowedTools ? [...allowedTools] : undefined,
     });
     const result = batchResult.results[0];
     const content = toolResultContent(request.name, result?.content ?? '', result?.error_message);
@@ -236,6 +270,7 @@ export async function runHeadlessAgentTurn(
   const allowedTools = input.allowedTools?.length
     ? new Set(input.allowedTools)
     : undefined;
+  const toolExecutionSource = input.toolExecutionSource ?? 'headless_agent';
   const constrainedSystemPrompt = input.allowedTools?.length
     ? buildAllowedToolsSystemPrompt(input.systemPrompt, input.allowedTools)
     : input.systemPrompt;
@@ -298,7 +333,9 @@ export async function runHeadlessAgentTurn(
           executor,
           input.sessionId,
           currentWorkDir,
+          toolExecutionSource,
           allowedTools,
+          input.allowToolExecution,
         );
         toolBudgetSummary = appendToolBudgetEntries(
           toolBudgetSummary,
@@ -336,7 +373,9 @@ export async function runHeadlessAgentTurn(
           executor,
           input.sessionId,
           currentWorkDir,
+          toolExecutionSource,
           allowedTools,
+          input.allowToolExecution,
         );
         if (result) {
           toolBudgetSummary = appendToolBudgetEntries(

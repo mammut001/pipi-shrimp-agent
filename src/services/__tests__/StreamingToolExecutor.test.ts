@@ -1,19 +1,16 @@
 const mockInvoke = jest.fn();
-const mockGetActiveConfig = jest.fn();
 const mockRunSshExec = jest.fn();
 const mockRunSshReadFile = jest.fn();
 const mockRunSshUpload = jest.fn();
+const mockRunPreToolUseHooks = jest.fn();
+const mockResolveActiveAgentConfig = jest.fn();
 
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
-jest.mock('@/store', () => ({
-  useSettingsStore: {
-    getState: () => ({
-      getActiveConfig: mockGetActiveConfig,
-    }),
-  },
+jest.mock('@/services/agentConfig', () => ({
+  resolveActiveAgentConfig: () => mockResolveActiveAgentConfig(),
 }));
 
 jest.mock('@/store/mcpStore', () => ({
@@ -28,12 +25,21 @@ jest.mock('@/tools/impl/SshTool', () => ({
   runSshUpload: (...args: unknown[]) => mockRunSshUpload(...args),
 }));
 
+jest.mock('@/services/tools/preToolUseHooks', () => ({
+  runPreToolUseHooks: (...args: unknown[]) => mockRunPreToolUseHooks(...args),
+}));
+
+jest.mock('@/services/tools/autoresearchBootstrap', () => ({
+  AUTORESEARCH_BOOTSTRAP_TOOL_NAMES: ['pdf_read', 'paper_extract_meta', 'baseline_extract', 'arxiv_search'],
+}));
+
 import { StreamingToolExecutor } from '@/services/StreamingToolExecutor';
 
 describe('StreamingToolExecutor.executeBatch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetActiveConfig.mockReturnValue({
+    mockRunPreToolUseHooks.mockResolvedValue({ approved: true });
+    mockResolveActiveAgentConfig.mockReturnValue({
       id: 'cfg-minimax',
       name: 'MiniMax Global',
       provider: 'minimax',
@@ -89,5 +95,41 @@ describe('StreamingToolExecutor.executeBatch', () => {
     });
     expect(result.results[1]).toMatchObject({ content: 'native-ok', is_error: false });
     expect(result.results[2]).toMatchObject({ content: '{"paper":"ok"}', is_error: false });
+  });
+
+  it('blocks disallowed frontend-only tools before execution and sanitizes native output', async () => {
+    mockInvoke.mockResolvedValue([
+      {
+        id: 'native-1',
+        name: 'read_file',
+        content: 'Authorization: Bearer sk-secret-token',
+        is_error: false,
+      },
+    ]);
+
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      { id: 'ssh-1', name: 'ssh_read_file', arguments: { remotePath: '/tmp/x' } },
+      { id: 'native-1', name: 'read_file', arguments: { path: '/tmp/a' } },
+    ], {
+      sessionId: 'session-2',
+      workDir: '/tmp/workdir',
+      allowedTools: ['read_file'],
+    });
+
+    expect(mockRunSshReadFile).not.toHaveBeenCalled();
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        id: 'ssh-1',
+        is_error: true,
+        content: expect.stringContaining('"error_kind":"tool_disabled"'),
+      }),
+      expect.objectContaining({
+        id: 'native-1',
+        is_error: false,
+        content: 'Authorization: [redacted]',
+        sanitized: true,
+      }),
+    ]);
   });
 });

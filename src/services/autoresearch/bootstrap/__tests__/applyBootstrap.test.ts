@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockPathExistsOnTarget = jest.fn();
 const mockReadTargetText = jest.fn();
+const mockWriteTargetText = jest.fn();
 const mockGetSessionRunPaths = jest.fn(() => ({
   sessionDir: '/tmp/workdir/runs/run-1',
   sessionFilePath: '/tmp/workdir/runs/run-1/session.md',
@@ -29,6 +30,7 @@ jest.mock('@/store/autoresearchStore', () => ({
 jest.mock('@/services/autoresearch/runDir', () => ({
   pathExistsOnTarget: (...args: unknown[]) => mockPathExistsOnTarget(...args),
   readTargetText: (...args: unknown[]) => mockReadTargetText(...args),
+  writeTargetText: (...args: unknown[]) => mockWriteTargetText(...args),
   getSessionRunPaths: (...args: unknown[]) => mockGetSessionRunPaths(...args),
 }));
 
@@ -80,6 +82,7 @@ function createResultJson() {
 describe('applyBootstrapIfPresent', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockReadTargetText.mockResolvedValue(null);
   });
 
   it('applies a ready bootstrap file exactly once to session artifacts', async () => {
@@ -104,6 +107,40 @@ describe('applyBootstrapIfPresent', () => {
     expect(storeState.setPrimaryMetric).toHaveBeenCalledTimes(1);
     expect(mockSeedFromBootstrap).toHaveBeenCalledTimes(1);
     expect(mockInitFromBootstrap).toHaveBeenCalledTimes(1);
+    expect(mockWriteTargetText).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips reapplying the same bootstrap result once the session receipt exists', async () => {
+    mockPathExistsOnTarget.mockResolvedValue(true);
+    mockReadTargetText.mockImplementation(async (_cfg: unknown, targetPath: string) => {
+      if (String(targetPath).endsWith('bootstrap.applied.json')) {
+        return JSON.stringify({
+          schemaVersion: 1,
+          sessionId: 'run-1',
+          bootstrapCreatedAt: '2026-01-01T00:00:00.000Z',
+          bootstrapPath: '/tmp/workdir/.pipi-shrimp/autoresearch.bootstrap.json',
+          appliedAt: '2026-01-01T00:05:00.000Z',
+        });
+      }
+
+      return createResultJson();
+    });
+
+    const applied = await applyBootstrapIfPresent({
+      mode: 'local',
+      host: '',
+      user: 'root',
+      keyPath: '',
+      port: 22,
+      remoteWorkDir: '/tmp/workdir',
+      authMode: 'agent',
+      password: '',
+    }, 'run-1');
+
+    expect(applied).toBe(false);
+    expect(mockSeedFromBootstrap).not.toHaveBeenCalled();
+    expect(mockInitFromBootstrap).not.toHaveBeenCalled();
+    expect(mockWriteTargetText).not.toHaveBeenCalled();
   });
 
   it('returns false when the bootstrap file is absent', async () => {

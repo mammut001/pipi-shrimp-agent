@@ -11,6 +11,7 @@ import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresear
 import { AutoResearchRunChips } from './AutoResearchRunChips';
 import { AutoResearchDashboardMetricCard } from './AutoResearchDashboardMetricCard';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
+import { buildAutoResearchRecoverySummary } from '@/services/autoresearch/recoverySummary';
 import {
   DocumentContentCard,
   DocumentDetailShell,
@@ -135,6 +136,16 @@ function getStatusToneClasses(status: string): string {
     return 'border-blue-200 bg-blue-50 text-blue-700';
   }
   return 'border-[#ded3c5] bg-[#f5efe6] text-[#6f665c]';
+}
+
+function getRecoveryToneClasses(tone: 'info' | 'warn' | 'error'): string {
+  if (tone === 'error') {
+    return 'border-red-200 bg-red-50 text-red-800';
+  }
+  if (tone === 'warn') {
+    return 'border-amber-200 bg-amber-50 text-amber-900';
+  }
+  return 'border-blue-200 bg-blue-50 text-blue-900';
 }
 
 function SectionHeading({ children, subtitle }: { children: ReactNode; subtitle?: ReactNode }) {
@@ -411,9 +422,7 @@ export function AutoResearchDashboardView({
   );
   const iterationCards = useMemo(() => buildAutoResearchIterationViewModels(run), [run]);
   const currentIterationCard = iterationCards.find((item) => item.iteration === run.currentIteration) || iterationCards[iterationCards.length - 1] || null;
-  const reflectionReason = run.status === 'reflection_failed'
-    ? safeString(run.reason) ?? safeString(run.summary)
-    : null;
+  const recoverySummary = useMemo(() => buildAutoResearchRecoverySummary(run), [run]);
   const currentPhaseLabel = formatPhaseLabel(run.currentPhase || currentIterationCard?.phase);
   const subtitle = [
     shortenRunId(run.id),
@@ -509,13 +518,45 @@ export function AutoResearchDashboardView({
             </div>
           )}
 
-          {reflectionReason && (
-            <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">
-                {t('autoresearch.reflectionReason')}
-              </p>
-              <p className="mt-1">{redactSensitiveText(reflectionReason)}</p>
-            </div>
+          {recoverySummary && (
+            <section data-recovery-card="run" className={`rounded-2xl border px-4 py-4 ${getRecoveryToneClasses(recoverySummary.tone)}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-80">{recoverySummary.title}</p>
+                  <p className="mt-2 text-sm leading-6">{redactSensitiveText(recoverySummary.message)}</p>
+                  {recoverySummary.hint && (
+                    <p className="mt-2 text-sm leading-6 opacity-90">{redactSensitiveText(recoverySummary.hint)}</p>
+                  )}
+                  {typeof recoverySummary.iteration === 'number' && recoverySummary.iteration > 0 && (
+                    <p className="mt-2 text-[11px] uppercase tracking-[0.16em] opacity-70">Iteration {recoverySummary.iteration}</p>
+                  )}
+                </div>
+                <span className="rounded-full border border-current/20 bg-white/50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
+                  {recoverySummary.mode === 'inspect_only'
+                    ? 'Inspect only'
+                    : recoverySummary.mode === 'cooldown'
+                      ? 'Auto retry'
+                      : recoverySummary.mode === 'manual_ack'
+                        ? 'Manual ack'
+                        : 'Recovery'}
+                </span>
+              </div>
+              {recoverySummary.actions.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {recoverySummary.actions.map((action) => (
+                    <button
+                      key={`run-recovery-${action.type}-${action.label || 'label'}`}
+                      type="button"
+                      disabled={action.supported === false}
+                      onClick={() => setActiveTab('debug')}
+                      className="rounded-full border border-current/20 bg-white/70 px-3 py-1 text-[11px] font-medium transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {action.label || action.type}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
           )}
 
           <section className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
@@ -555,7 +596,7 @@ export function AutoResearchDashboardView({
                 <AutoResearchRunChips run={run} className="mt-3" />
               </div>
 
-              {run.summary && !reflectionReason && (
+              {run.summary && !recoverySummary && (
                 <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm leading-6 text-amber-900">
                   {redactSensitiveText(run.summary)}
                 </div>

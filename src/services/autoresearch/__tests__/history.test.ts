@@ -3,6 +3,7 @@ import {
   AUTORESEARCH_HISTORY_STORAGE_KEY,
   loadPersistedAutoResearchHistory,
   persistAutoResearchHistory,
+  redactAutoResearchSensitiveText,
   toHistoryConfigSnapshot,
   type AutoResearchRunRecord,
 } from '../history';
@@ -68,7 +69,34 @@ describe('autoresearch history storage', () => {
     storage.data[AUTORESEARCH_HISTORY_STORAGE_KEY] = JSON.stringify({
       version: 1,
       selectedRunId: 'run-1',
-      runs: [createRun()],
+      runs: [createRun({
+        resumeToken: {
+          schemaVersion: 1,
+          sessionId: 'run-1',
+          status: 'running',
+          sshConfig: {
+            mode: 'local',
+            host: '',
+            user: 'root',
+            keyPath: '',
+            port: 22,
+            remoteWorkDir: '/tmp/work',
+            authMode: 'agent',
+            password: '',
+          },
+          experimentDir: '/tmp/exp',
+          metricName: 'val_loss',
+          metricDirection: 'lower',
+          maxIterations: 5,
+          baseline: null,
+          currentIteration: 1,
+          pendingIteration: 2,
+          replayIteration: true,
+          resumable: true,
+          createdAt: '2026-05-05T00:00:00.000Z',
+          lastUpdatedAt: '2026-05-05T00:00:01.000Z',
+        },
+      })],
     });
 
     const history = loadPersistedAutoResearchHistory('2026-05-05T01:00:00.000Z');
@@ -76,10 +104,28 @@ describe('autoresearch history storage', () => {
     expect(history.runs[0]?.status).toBe('interrupted');
     expect(history.runs[0]?.endedAt).toBe('2026-05-05T01:00:00.000Z');
     expect(history.runs[0]?.events.at(-1)?.message).toContain('interrupted');
+    expect(history.runs[0]?.resumeToken?.status).toBe('interrupted');
     expect(storage.data[AUTORESEARCH_HISTORY_STORAGE_KEY]).toContain('"status":"interrupted"');
 
     const reloaded = loadPersistedAutoResearchHistory('2026-05-05T02:00:00.000Z');
     expect(reloaded.runs[0]?.events.filter((event) => event.message.includes('interrupted'))).toHaveLength(1);
+  });
+
+  it('converts persisted cooldown runs into inspect-only interrupted snapshots', () => {
+    storage.data[AUTORESEARCH_HISTORY_STORAGE_KEY] = JSON.stringify({
+      version: 1,
+      selectedRunId: 'run-1',
+      runs: [createRun({
+        status: 'waiting_rate_limit',
+        summary: 'Provider rate limited the run. Cooling down 15s.',
+      })],
+    });
+
+    const history = loadPersistedAutoResearchHistory('2026-05-05T01:00:00.000Z');
+
+    expect(history.runs[0]?.status).toBe('interrupted');
+    expect(history.runs[0]?.summary).toBe('Provider rate limited the run. Cooling down 15s.');
+    expect(history.runs[0]?.events.at(-1)?.message).toContain('Inspect-only mode restored');
   });
 
   it('persists run history and selected run id', () => {
@@ -164,6 +210,19 @@ describe('autoresearch history storage', () => {
     expect(snapshot.keyPresent).toBe(true);
     expect(snapshot.keyPreview).toBe('secret...');
     expect((snapshot as unknown as Record<string, unknown>).apiKey).toBeUndefined();
+  });
+
+  it('redacts database uris and credential-like environment variables', () => {
+    const raw = 'DATABASE_URL=postgres://demo:secret@db.internal:5432/app REDIS_URL=redis://cache.internal:6379 AUTH_TOKEN=secret-token';
+
+    const sanitized = redactAutoResearchSensitiveText(raw);
+
+    expect(sanitized).not.toContain('secret@db.internal');
+    expect(sanitized).not.toContain('cache.internal:6379');
+    expect(sanitized).not.toContain('secret-token');
+    expect(sanitized).toContain('DATABASE_URL=[redacted]');
+    expect(sanitized).toContain('REDIS_URL=[redacted]');
+    expect(sanitized).toContain('AUTH_TOKEN=[redacted]');
   });
 
   it('defaults to the latest run when selectedRunId is missing or stale', () => {
