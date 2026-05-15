@@ -17,16 +17,6 @@ function fallbackPlatform(): string {
 }
 
 export async function resolvePlatform(): Promise<string> {
-  try {
-    const moduleName = '@tauri-apps/api/os';
-    const api = await import(moduleName);
-    if (typeof api.platform === 'function') {
-      return String(await api.platform());
-    }
-  } catch {
-    // Fall through to browser platform detection. Tauri v2 no longer ships
-    // this module in every app setup, but AutoResearch still needs a guard.
-  }
   return fallbackPlatform();
 }
 

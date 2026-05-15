@@ -13,6 +13,8 @@ const mockGetAgentConfigDiagnostics = jest.fn();
 const mockRequestReflectionDecision = jest.fn();
 const mockGetDeterministicRecoveryDecision = jest.fn();
 const mockBuildFallbackReflectionDecision = jest.fn();
+const mockResolveTargetPath = jest.fn();
+const mockInspectAutoResearchEnvironment = jest.fn();
 const mockNotifier = {
   onExperimentComplete: jest.fn().mockResolvedValue(undefined),
   onLoopStopped: jest.fn().mockResolvedValue(undefined),
@@ -57,29 +59,8 @@ jest.mock('../reflection', () => {
 });
 
 jest.mock('../preflight', () => ({
-  resolveTargetPath: jest.fn(async (_cfg: unknown, _fieldName: string, value: string) => {
-    const os = require('node:os');
-    const path = require('node:path');
-    const trimmed = value.trim();
-    if (trimmed === '~') {
-      return os.homedir();
-    }
-    if (trimmed.startsWith('~/')) {
-      return path.join(os.homedir(), trimmed.slice(2));
-    }
-    return trimmed;
-  }),
-  inspectAutoResearchEnvironment: jest.fn(async (_cfg: unknown, experimentDir: string) => ({
-    experimentDir,
-    gitRepo: true,
-    repoStatus: 'clean',
-    dirtyFileCount: 0,
-    preferredPythonCommand: 'python3',
-    worktreeWritable: true,
-    runScriptPath: `${experimentDir}/run_experiment.py`,
-    notesPath: `${experimentDir}/AUTORESEARCH.md`,
-    recommendedRunCommand: 'python3 run_experiment.py',
-  })),
+  resolveTargetPath: (...args: unknown[]) => mockResolveTargetPath(...args),
+  inspectAutoResearchEnvironment: (...args: unknown[]) => mockInspectAutoResearchEnvironment(...args),
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
@@ -147,6 +128,8 @@ describe('loopEngine integration', () => {
     mockRequestReflectionDecision.mockReset();
     mockGetDeterministicRecoveryDecision.mockReset();
     mockBuildFallbackReflectionDecision.mockReset();
+    mockResolveTargetPath.mockReset();
+    mockInspectAutoResearchEnvironment.mockReset();
     mockResolveActiveAgentConfig.mockReturnValue(activeConfig);
     mockValidateResolvedAgentConfig.mockReturnValue([]);
     mockFormatAgentConfigValidationError.mockReturnValue('invalid config');
@@ -166,6 +149,29 @@ describe('loopEngine integration', () => {
       userMessage: error instanceof Error ? error.message : 'fallback stop',
       shouldRetry: false,
       confidence: 'medium',
+    }));
+    mockResolveTargetPath.mockImplementation(async (_cfg: unknown, _fieldName: string, value: string) => {
+      const os = require('node:os');
+      const path = require('node:path');
+      const trimmed = String(value).trim();
+      if (trimmed === '~') {
+        return os.homedir();
+      }
+      if (trimmed.startsWith('~/')) {
+        return path.join(os.homedir(), trimmed.slice(2));
+      }
+      return trimmed;
+    });
+    mockInspectAutoResearchEnvironment.mockImplementation(async (_cfg: unknown, experimentDir: string) => ({
+      experimentDir,
+      gitRepo: true,
+      repoStatus: 'clean',
+      dirtyFileCount: 0,
+      preferredPythonCommand: 'python3',
+      worktreeWritable: true,
+      runScriptPath: `${experimentDir}/run_experiment.py`,
+      notesPath: `${experimentDir}/AUTORESEARCH.md`,
+      recommendedRunCommand: 'python3 run_experiment.py',
     }));
     await initGitRepo(workDir, {
       'train.py': 'print("train")\n',
@@ -377,12 +383,92 @@ describe('loopEngine integration', () => {
     await loopPromise;
 
     const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-rate-limit');
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(store.experiments).toHaveLength(1);
     expect(store.currentIteration).toBe(1);
     expect(store.consecutiveFailures).toBe(0);
     expect(store.statusMessage).toBeUndefined();
     expect(store.experiments[0]?.iteration).toBe(1);
+    expect(run?.iterations).toHaveLength(1);
+    expect(run?.iterations[0]).toEqual(expect.objectContaining({
+      index: 1,
+      status: 'completed',
+    }));
+    expect(run?.iterations.some((record) => record.status === 'running')).toBe(false);
+  });
+
+  it('carries forward improved code into the next iteration and rolls back not-improved workspaces', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-carry-forward-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("run")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+      'model.py': 'BASELINE = "base"\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-carry-forward',
+      maxIterations: 2,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    const iterationDirs: string[] = [];
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      iterationDirs[runDir.iter - 1] = runDir.codeDir;
+      const modelPath = path.join(runDir.codeDir, 'model.py');
+      const currentModel = await fs.readFile(modelPath, 'utf8');
+
+      if (runDir.iter === 1) {
+        expect(currentModel).toBe('BASELINE = "base"\n');
+        await fs.writeFile(modelPath, 'BASELINE = "iter-001-best"\n', 'utf8');
+        await fs.writeFile(runDir.hypothesisPath, 'keep the first change\n', 'utf8');
+        await fs.writeFile(
+          runDir.metricsPath,
+          JSON.stringify({
+            metricName: 'cv_accuracy',
+            metricValue: 0.81,
+            status: 'IMPROVED',
+            hypothesis: 'keep the first change',
+            change: 'set baseline to iter-001-best',
+          }, null, 2),
+          'utf8',
+        );
+        return 'EXPERIMENT_RESULT: metric_value=0.81 status=IMPROVED hypothesis="keep the first change"';
+      }
+
+      expect(currentModel).toBe('BASELINE = "iter-001-best"\n');
+      await fs.writeFile(modelPath, 'BASELINE = "iter-002-temp"\n', 'utf8');
+      await fs.writeFile(runDir.hypothesisPath, 'temporary second change\n', 'utf8');
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: 0.79,
+          status: 'NOT_IMPROVED',
+          hypothesis: 'temporary second change',
+          change: 'set baseline to iter-002-temp',
+        }, null, 2),
+        'utf8',
+      );
+      return 'EXPERIMENT_RESULT: metric_value=0.79 status=NOT_IMPROVED hypothesis="temporary second change"';
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    await expect(fs.readFile(path.join(experimentDir, 'model.py'), 'utf8')).resolves.toBe('BASELINE = "base"\n');
+    await expect(fs.readFile(path.join(iterationDirs[1]!, 'model.py'), 'utf8')).resolves.toBe('BASELINE = "iter-001-best"\n');
+    expect(useAutoResearchStore.getState().experiments.map((entry) => entry.status)).toEqual(['IMPROVED', 'NOT_IMPROVED']);
   });
 
   it('stops after three consecutive provider rate limits and preserves recovery context', async () => {
@@ -1090,11 +1176,163 @@ describe('loopEngine integration', () => {
     await startExperimentLoop(sendMessage);
 
     const store = useAutoResearchStore.getState();
+    const failedRun = store.runHistory.find((run) => run.id === 'autoresearch-dirty-source');
     const dirtySource = await fs.readFile(path.join(experimentDir, 'run_experiment.py'), 'utf8');
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(store.errorMessage).toContain('AutoResearch will not reset a dirty repository automatically');
+    expect(failedRun?.status).toBe('failed');
+    expect(failedRun?.status).not.toBe('running');
     expect(dirtySource).toBe('print("dirty local edit")\n');
+  });
+
+  it('marks the run failed when startup path resolution fails after run_started', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-startup-path-failure',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    mockResolveTargetPath.mockRejectedValueOnce(new Error('could not resolve workdir'));
+    const sendMessage = jest.fn(async () => 'should not run');
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const failedRun = store.runHistory.find((run) => run.id === 'autoresearch-startup-path-failure');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.errorMessage).toContain('could not resolve workdir');
+    expect(failedRun?.status).toBe('failed');
+    expect(failedRun?.status).not.toBe('running');
+  });
+
+  it('marks the run failed when environment inspection throws after run_started', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-inspect-failure-'));
+    extraCleanupDirs.add(experimentDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("run")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
+
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-inspect-failure',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      experimentDir,
+      sessionFilePath,
+    });
+
+    mockInspectAutoResearchEnvironment.mockRejectedValueOnce(new Error('git status failed'));
+    const sendMessage = jest.fn(async () => 'should not run');
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const failedRun = store.runHistory.find((run) => run.id === 'autoresearch-inspect-failure');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.errorMessage).toContain('git status failed');
+    expect(failedRun?.status).toBe('failed');
+    expect(failedRun?.status).not.toBe('running');
+  });
+
+  it('marks the run failed when the session id is not path-safe after run_started', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: '../escape-run',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => 'should not run');
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const failedRun = store.runHistory.find((run) => run.id === '../escape-run');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(store.errorMessage).toContain('Invalid AutoResearch sessionId');
+    expect(failedRun?.status).toBe('failed');
+    expect(failedRun?.status).not.toBe('running');
+  });
+
+  it('marks the iteration as FAILED when no metrics artifact or structured output can be parsed', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-missing-metrics',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => 'finished without writing metrics');
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-missing-metrics');
+    expect(store.experiments[0]?.status).toBe('FAILED');
+    expect(store.experiments[0]?.failReason).toContain('Could not parse metrics.json or structured agent output');
+    expect(run?.status).not.toBe('running');
+  });
+
+  it('accepts FAILED metrics artifacts with failReason and exits cleanly', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-failed-metrics-artifact',
+      maxIterations: 1,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      const runDir = getCurrentRunDir();
+      if (!runDir) {
+        throw new Error('run dir not set');
+      }
+
+      await fs.writeFile(
+        runDir.metricsPath,
+        JSON.stringify({
+          metricName: 'cv_accuracy',
+          metricValue: null,
+          status: 'FAILED',
+          hypothesis: 'capture the failure reason',
+          failReason: 'evaluation timed out',
+        }, null, 2),
+        'utf8',
+      );
+
+      return JSON.stringify({
+        metricName: 'cv_accuracy',
+        metricValue: null,
+        status: 'FAILED',
+        hypothesis: 'capture the failure reason',
+        failReason: 'evaluation timed out',
+      });
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-failed-metrics-artifact');
+    expect(store.experiments[0]?.status).toBe('FAILED');
+    expect(store.experiments[0]?.failReason).toBe('evaluation timed out');
+    expect(run?.status).not.toBe('running');
+    expect(run?.events.some((event) => event.phase === 'FAILED')).toBe(true);
   });
 
   it('marks the run as failed instead of leaving it running after agent execution errors', async () => {

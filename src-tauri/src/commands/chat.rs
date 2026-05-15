@@ -368,6 +368,7 @@ pub async fn execute_tool(
                 work_dir_override,
                 work_dir.as_deref(),
                 None,
+                None,
             )?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }

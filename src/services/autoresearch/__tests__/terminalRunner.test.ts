@@ -17,6 +17,7 @@ jest.mock('../runDir', () => ({
 
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { createLocalSshConfig } from './helpers';
+import { readTargetText } from '../runDir';
 import { clearCurrentRunDir, ensureAutoResearchTerminal, getCurrentRunDir, runInTerminal, setCurrentRunDir } from '../terminalRunner';
 
 describe('terminalRunner reflection failure handling', () => {
@@ -104,6 +105,58 @@ describe('terminalRunner reflection failure handling', () => {
     await expect(promise).rejects.toThrow('Reflection did not provide a summary.');
     expect(mockInvoke).toHaveBeenCalledWith('terminal_input', expect.objectContaining({
       sessionId: 'existing-terminal',
+    }));
+  });
+
+  it('allows long quiet commands to complete when the exit marker arrives after 60 seconds', async () => {
+    let terminalOutputListener: ((event: { payload: { session_id: string; data: string } }) => Promise<void>) | undefined;
+    mockListen.mockImplementation(async (_eventName: string, handler: (event: { payload: { session_id: string; data: string } }) => Promise<void>) => {
+      terminalOutputListener = handler;
+      return () => undefined;
+    });
+    (readTargetText as jest.Mock).mockResolvedValue('');
+
+    useAutoResearchStore.getState().openTerminalPanel('existing-terminal', workDir);
+    useAutoResearchStore.getState().setTerminalReady(true);
+
+    const promise = runInTerminal({
+      cfg: createLocalSshConfig(workDir),
+      cmd: 'python run_experiment.py',
+      cwd: workDir,
+      logsDir: `${workDir}/logs`,
+      timeoutSecs: 300,
+    });
+
+    await Promise.resolve();
+
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    }).catch(() => {
+      settled = true;
+    });
+
+    await jest.advanceTimersByTimeAsync(61_000);
+    expect(settled).toBe(false);
+
+    const terminalInputCall = mockInvoke.mock.calls.find(([command]) => command === 'terminal_input');
+    expect(terminalInputCall).toBeDefined();
+    const fullCommand = String(terminalInputCall?.[1]?.data ?? '');
+    const tokenMatch = fullCommand.match(/__PIPI_AUTORESEARCH_EXIT__:(.+?):%s/);
+    expect(tokenMatch?.[1]).toBeTruthy();
+
+    await terminalOutputListener?.({
+      payload: {
+        session_id: 'existing-terminal',
+        data: `__PIPI_AUTORESEARCH_EXIT__:${tokenMatch?.[1]}:0\n`,
+      },
+    });
+
+    await expect(promise).resolves.toEqual(expect.objectContaining({
+      exitCode: 0,
+      stdoutPath: `${workDir}/logs/stdout.log`,
+      stderrPath: `${workDir}/logs/stderr.log`,
+      combinedPath: `${workDir}/logs/combined.log`,
     }));
   });
 });

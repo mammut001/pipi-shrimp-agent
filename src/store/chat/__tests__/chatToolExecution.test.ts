@@ -391,11 +391,244 @@ describe('chatToolExecution', () => {
       ensureSessionWorkDir: async () => '/tmp/workspace',
     }, deps);
 
-    expect(waitForPermission as jest.Mock).toHaveBeenCalledWith({
+    expect(waitForPermission as jest.Mock).toHaveBeenCalledWith(expect.objectContaining({
       id: 'tool-4',
       name: 'execute_command',
       arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
-    });
+      source: 'assistant_tool_call',
+      workingDirectory: '/tmp/workspace',
+      commandPreview: 'pwd',
+    }));
     expect(invoke).toHaveBeenCalled();
+  });
+
+  it('passes backend approval tokens and rich permission metadata into serial tool execution', async () => {
+    const resolved = jest.fn();
+    const waitForPermission = jest.fn(async () => true);
+    const updateTaskStep = jest.fn();
+    const invoke = jest.fn(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-5',
+          toolName: 'execute_command',
+          decision: 'awaiting_confirmation',
+          reason: 'Assistant tool calls need approval for network or package-install commands.',
+          approvalToken: 'approval-5',
+        };
+      }
+
+      if (command === 'execute_single_tool') {
+        return {
+          content: '{"status":"succeeded","stdout":"ok","stderr":""}',
+          is_error: false,
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const deps = createDeps({
+      uiStore: { getState: () => ({
+        activeSkill: null,
+        setActiveSkill: jest.fn(),
+        setTaskProgress: jest.fn(),
+        updateTaskStep,
+        showQuestionnaire: jest.fn(async () => 'user response'),
+        waitForPermission,
+        addNotification: jest.fn(),
+      }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-5',
+          name: 'execute_command',
+          arguments: { command: 'curl https://example.com', cwd: '/tmp/workspace' },
+        }],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-5',
+        name: 'execute_command',
+        arguments: '{"command":"curl https://example.com","cwd":"/tmp/workspace"}',
+      }],
+      _resolveAll: resolved,
+    };
+
+    await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    expect(waitForPermission).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'tool-5',
+      name: 'execute_command',
+      arguments: '{"command":"curl https://example.com","cwd":"/tmp/workspace"}',
+      source: 'assistant_tool_call',
+      workingDirectory: '/tmp/workspace',
+      commandPreview: 'curl https://example.com',
+      riskReason: 'Assistant tool calls need approval for network or package-install commands.',
+      approvalToken: 'approval-5',
+    }));
+    expect(invoke).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+      toolCallId: 'tool-5',
+      approvalToken: 'approval-5',
+      source: 'assistant_tool_call',
+    }));
+    const executeSingleToolCall = (invoke as jest.Mock).mock.calls.find(([command]) => command === 'execute_single_tool');
+    expect(executeSingleToolCall).toBeDefined();
+    expect(JSON.parse(executeSingleToolCall?.[1].arguments as string)).toEqual(expect.objectContaining({
+      command: 'curl https://example.com',
+      cwd: '/tmp/workspace',
+      executionId: expect.any(String),
+    }));
+    expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'awaiting_confirmation');
+    expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'approved');
+    expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'running');
+    expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'done');
+  });
+
+  it('marks serial tools as rejected when backend policy blocks them before execution', async () => {
+    const resolved = jest.fn();
+    const waitForPermission = jest.fn(async () => true);
+    const updateTaskStep = jest.fn();
+    const invoke = jest.fn(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-6',
+          toolName: 'ssh_exec',
+          decision: 'rejected',
+          reason: 'Execution source headless_agent is not allowed to run ssh_exec.',
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const deps = createDeps({
+      uiStore: { getState: () => ({
+        activeSkill: null,
+        setActiveSkill: jest.fn(),
+        setTaskProgress: jest.fn(),
+        updateTaskStep,
+        showQuestionnaire: jest.fn(async () => 'user response'),
+        waitForPermission,
+        addNotification: jest.fn(),
+      }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-6',
+          name: 'ssh_exec',
+          arguments: { command: 'pytest -q', remoteWorkDir: '/srv/project' },
+        }],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-6',
+        name: 'ssh_exec',
+        arguments: '{"command":"pytest -q","remoteWorkDir":"/srv/project"}',
+      }],
+      _resolveAll: resolved,
+    };
+
+    const results = await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    expect(waitForPermission).not.toHaveBeenCalled();
+    expect(updateTaskStep).toHaveBeenCalledWith('tool-6', 'rejected');
+    expect(results[0]).toEqual(expect.objectContaining({
+      id: 'tool-6',
+      content: expect.stringContaining('Execution source headless_agent is not allowed to run ssh_exec.'),
+    }));
+    expect(resolved).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'tool-6',
+        content: expect.stringContaining('Execution source headless_agent is not allowed to run ssh_exec.'),
+      }),
+    ]);
+  });
+
+  it('maps cancelled execute_single_tool results into cancelled task state', async () => {
+    const resolved = jest.fn();
+    const updateTaskStep = jest.fn();
+    const invoke = jest.fn(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-7',
+          toolName: 'execute_command',
+          decision: 'allowed',
+        };
+      }
+
+      if (command === 'execute_single_tool') {
+        return {
+          content: '{"status":"cancelled","stdout":"","stderr":""}',
+          is_error: true,
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const deps = createDeps({
+      uiStore: { getState: () => ({
+        activeSkill: null,
+        setActiveSkill: jest.fn(),
+        setTaskProgress: jest.fn(),
+        updateTaskStep,
+        showQuestionnaire: jest.fn(async () => 'user response'),
+        waitForPermission: jest.fn(async () => true),
+        addNotification: jest.fn(),
+      }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-7',
+          name: 'execute_command',
+          arguments: { command: 'pwd', cwd: '/tmp/workspace' },
+        }],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-7',
+        name: 'execute_command',
+        arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
+      }],
+      _resolveAll: resolved,
+    };
+
+    const results = await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    expect(updateTaskStep).toHaveBeenCalledWith('tool-7', 'cancelled');
+    expect(results[0]).toEqual(expect.objectContaining({
+      id: 'tool-7',
+      content: '{"status":"cancelled","stdout":"","stderr":""}',
+    }));
   });
 });

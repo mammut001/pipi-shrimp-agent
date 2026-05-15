@@ -1,6 +1,8 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
 const mockInvoke = jest.fn();
@@ -10,20 +12,29 @@ jest.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
-import { createRunDir, listIterations, pruneOldRuns } from '../runDir';
+import { createRunDir, getSessionRunPaths, listIterations, pruneOldRuns } from '../runDir';
+
+const execFileAsync = promisify(execFile);
 
 describe('runDir', () => {
   let workDir: string;
+  let experimentDir: string;
 
   beforeEach(async () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-rundir-'));
+    experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-rundir-exp-'));
     installLocalInvokeMock(mockInvoke);
     await initGitRepo(workDir);
+    await initGitRepo(experimentDir, {
+      'run_experiment.py': 'print("experiment")\n',
+      'AUTORESEARCH.md': '# Notes\n',
+    });
   });
 
   afterEach(async () => {
     mockInvoke.mockReset();
     await fs.rm(workDir, { recursive: true, force: true });
+    await fs.rm(experimentDir, { recursive: true, force: true });
   });
 
   it('creates ordered per-iteration directories with logs and snapshots', async () => {
@@ -52,6 +63,51 @@ describe('runDir', () => {
     expect(path.basename(first.reflectionInputPath)).toBe('reflection.input.json');
     expect(path.basename(first.reflectionRawPath)).toBe('reflection.raw.txt');
     expect(path.basename(first.reflectionParsedPath)).toBe('reflection.parsed.json');
+    expect(first.metricsPath.startsWith(`${first.iterDir}/`)).toBe(true);
+    expect(first.hypothesisPath.startsWith(`${first.iterDir}/`)).toBe(true);
+    expect(first.transcriptPath.startsWith(`${first.iterDir}/`)).toBe(true);
+    expect(first.statusPath.startsWith(`${first.iterDir}/`)).toBe(true);
+  });
+
+  it('keeps run directories under the AutoResearch workDir instead of the source experiment dir', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const run = await createRunDir(cfg, 'session-1', 1, {
+      snapshotSourceDir: experimentDir,
+    });
+
+    expect(run.iterDir.startsWith(path.join(workDir, 'runs', 'session-1'))).toBe(true);
+    expect(run.iterDir.startsWith(experimentDir)).toBe(false);
+    expect(run.codeDir.startsWith(run.iterDir)).toBe(true);
+    expect(run.codeDir.startsWith(experimentDir)).toBe(false);
+    await expect(fs.readFile(path.join(run.codeDir, 'run_experiment.py'), 'utf8')).resolves.toBe('print("experiment")\n');
+  });
+
+  it('rejects unsafe session identifiers instead of allowing path escape', () => {
+    const cfg = createLocalSshConfig(workDir);
+
+    expect(() => getSessionRunPaths(cfg, '../escape')).toThrow('Invalid AutoResearch sessionId');
+    expect(() => getSessionRunPaths(cfg, 'nested/session')).toThrow('Invalid AutoResearch sessionId');
+  });
+
+  it('rejects invalid iteration values before creating paths', async () => {
+    const cfg = createLocalSshConfig(workDir);
+
+    await expect(createRunDir(cfg, 'session-1', 0)).rejects.toThrow('expected a positive integer');
+    await expect(createRunDir(cfg, 'session-1', -1)).rejects.toThrow('expected a positive integer');
+  });
+
+  it('keeps SSH session paths anchored to the configured remote workDir', () => {
+    const sessionPaths = getSessionRunPaths({
+      ...createLocalSshConfig(workDir),
+      mode: 'ssh',
+      host: 'example.com',
+      user: 'research',
+      remoteWorkDir: '/srv/autoresearch',
+    }, 'session-ssh');
+
+    expect(sessionPaths.sessionDir).toBe('/srv/autoresearch/runs/session-ssh');
+    expect(sessionPaths.metricsJsonlPath).toBe('/srv/autoresearch/runs/session-ssh/metrics.jsonl');
+    expect(sessionPaths.livingDocPath).toBe('/srv/autoresearch/runs/session-ssh/autoresearch.md');
   });
 
   it('prunes only stale iteration directories inside the session run dir', async () => {
@@ -65,6 +121,19 @@ describe('runDir', () => {
     await expect(fs.access(first.iterDir)).rejects.toThrow();
     await expect(fs.access(second.iterDir)).rejects.toThrow();
     await expect(fs.access(third.iterDir)).resolves.toBeUndefined();
+  });
+
+  it('removes git worktree metadata when pruning stale runs', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const first = await createRunDir(cfg, 'session-prune-worktree', 1);
+
+    const before = await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: workDir });
+    expect(before.stdout).toContain(first.codeDir);
+
+    await pruneOldRuns(cfg, 'session-prune-worktree', 0);
+
+    const after = await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: workDir });
+    expect(after.stdout).not.toContain(first.codeDir);
   });
 
   it('refuses to prune directories that do not match the iter-NNN naming contract', async () => {

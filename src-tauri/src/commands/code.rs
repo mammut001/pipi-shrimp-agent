@@ -6,16 +6,16 @@ use crate::commands::file::resolve_path;
  * Includes persistent REPL session support
  */
 use crate::models::ExecuteCodeResponse;
+use crate::models::ToolExecutionStatus;
 use crate::tools::output_sanitizer::sanitize_execute_code_output;
+use crate::tools::process_manager::{spawn_bash_process, wait_for_managed_process};
 use crate::utils::{AppError, AppResult};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::io::Write;
-use std::process::Output;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 // Global session manager for persistent REPL sessions
 // Maps session_id -> Python REPL process
@@ -66,39 +66,18 @@ fn build_execute_code_response(
     exit_code: i32,
     cwd: Option<&str>,
     timed_out: bool,
+    execution_id: &str,
+    status: ToolExecutionStatus,
 ) -> ExecuteCodeResponse {
-    sanitize_execute_code_output(stdout, stderr, exit_code, cwd, timed_out)
-}
-
-fn wait_with_timeout(
-    mut child: std::process::Child,
-    timeout_secs: u64,
-) -> AppResult<(Output, bool)> {
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| AppError::ProcessError(e.to_string()))?;
-                return Ok((output, false));
-            }
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let output = child
-                        .wait_with_output()
-                        .map_err(|e| AppError::ProcessError(e.to_string()))?;
-                    return Ok((output, true));
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Err(error) => {
-                return Err(AppError::ProcessError(error.to_string()));
-            }
-        }
-    }
+    sanitize_execute_code_output(
+        stdout,
+        stderr,
+        exit_code,
+        cwd,
+        timed_out,
+        execution_id,
+        status,
+    )
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -108,6 +87,8 @@ pub struct ExecuteBashArgs {
     pub work_dir: Option<String>,
     #[allow(dead_code)]
     pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub execution_id: Option<String>,
 }
 
 /// Block known-destructive bash command patterns.
@@ -157,6 +138,7 @@ pub fn execute_bash_for_tool(
     cwd: Option<&str>,
     work_dir: Option<&str>,
     timeout_secs: Option<u64>,
+    requested_execution_id: Option<&str>,
 ) -> AppResult<ExecuteCodeResponse> {
     let resolved_cwd = resolve_command_cwd(cwd.map(str::to_string), work_dir)?;
 
@@ -168,15 +150,11 @@ pub fn execute_bash_for_tool(
         ));
     }
 
-    let child = Command::new("bash")
-        .arg("-lc")
-        .arg(command)
-        .current_dir(&resolved_cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| AppError::ProcessError(e.to_string()))?;
-    let (output, timed_out) = wait_with_timeout(child, timeout_secs.unwrap_or(300))?;
+    let handle = spawn_bash_process(command, &resolved_cwd, requested_execution_id)?;
+    let execution_id = handle.execution_id.clone();
+    let managed = wait_for_managed_process(handle, timeout_secs.unwrap_or(300))?;
+    let output = managed.output;
+    let timed_out = managed.status == ToolExecutionStatus::TimedOut;
 
     let mut stderr = output.stderr;
     if timed_out {
@@ -189,9 +167,15 @@ pub fn execute_bash_for_tool(
     Ok(build_execute_code_response(
         &output.stdout,
         &stderr,
-        if timed_out { -1 } else { output.status.code().unwrap_or(-1) },
+        if timed_out || managed.status == ToolExecutionStatus::Cancelled {
+            -1
+        } else {
+            output.status.code().unwrap_or(-1)
+        },
         Some(resolved_cwd.as_str()),
         timed_out,
+        execution_id.as_str(),
+        managed.status,
     ))
 }
 
@@ -202,7 +186,13 @@ pub fn execute_bash_for_tool(
  */
 #[tauri::command]
 pub async fn execute_bash(args: ExecuteBashArgs) -> AppResult<ExecuteCodeResponse> {
-    execute_bash_for_tool(&args.command, None, args.work_dir.as_deref(), args.timeout_secs)
+    execute_bash_for_tool(
+        &args.command,
+        None,
+        args.work_dir.as_deref(),
+        args.timeout_secs,
+        args.execution_id.as_deref(),
+    )
 }
 
 /**
@@ -239,6 +229,12 @@ pub async fn execute_python(
         output.status.code().unwrap_or(-1),
         Some(work_dir.as_str()),
         false,
+        &uuid::Uuid::new_v4().to_string(),
+        if output.status.success() {
+            ToolExecutionStatus::Succeeded
+        } else {
+            ToolExecutionStatus::Failed
+        },
     ))
 }
 
@@ -380,6 +376,8 @@ for raw_line in sys.stdin:
         0,
         Some(work_dir.as_str()),
         false,
+        &format!("python-session-{}", uuid::Uuid::new_v4()),
+        ToolExecutionStatus::Succeeded,
     ))
 }
 
@@ -433,6 +431,12 @@ pub async fn execute_node(
         output.status.code().unwrap_or(-1),
         Some(work_dir.as_str()),
         false,
+        &uuid::Uuid::new_v4().to_string(),
+        if output.status.success() {
+            ToolExecutionStatus::Succeeded
+        } else {
+            ToolExecutionStatus::Failed
+        },
     ))
 }
 
@@ -451,12 +455,66 @@ mod tests {
             None,
             Some(work_dir.to_string_lossy().as_ref()),
             Some(0),
+            Some("timeout-test"),
         )
         .expect("timeout should still return a structured response");
 
         assert!(result.timed_out);
         assert_eq!(result.exit_code, -1);
+        assert_eq!(result.execution_id, "timeout-test");
+        assert_eq!(result.status, ToolExecutionStatus::TimedOut);
         assert!(result.stderr.contains("timed out"));
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    #[test]
+    fn execute_bash_for_tool_returns_sanitized_structured_response() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-sanitize-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let result = execute_bash_for_tool(
+            "printf 'Authorization: Bearer sk-test-secret\\nOPENAI_API_KEY=sk-abc12345\\n'",
+            None,
+            Some(work_dir.to_string_lossy().as_ref()),
+            Some(5),
+            Some("smoke-command-json"),
+        )
+        .expect("command should return a structured response");
+
+        assert_eq!(result.execution_id, "smoke-command-json");
+        assert_eq!(result.status, ToolExecutionStatus::Succeeded);
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.cwd.as_deref(), Some(work_dir.to_string_lossy().as_ref()));
+        assert!(result.sanitized);
+        assert!(result.stdout.contains("Authorization: [redacted]"));
+        assert!(result.stdout.contains("OPENAI_API_KEY=[redacted]"));
+        assert!(!result.stdout.contains("sk-test-secret"));
+        assert!(!result.stdout.contains("sk-abc12345"));
+
+        println!(
+            "SMOKE_COMMAND_RESULT_JSON={}",
+            serde_json::to_string(&result).expect("result should serialize")
+        );
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    #[test]
+    fn execute_bash_for_tool_rejects_dangerous_commands() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-danger-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let error = execute_bash_for_tool(
+            "rm -rf /",
+            None,
+            Some(work_dir.to_string_lossy().as_ref()),
+            Some(5),
+            Some("dangerous-command"),
+        )
+        .expect_err("dangerous command should be blocked");
+
+        assert!(error.to_string().contains("Command blocked for safety"));
 
         let _ = std::fs::remove_dir_all(work_dir);
     }

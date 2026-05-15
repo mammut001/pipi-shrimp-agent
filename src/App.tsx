@@ -15,13 +15,13 @@
 import { useEffect, lazy, Suspense } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
+import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { setupBrowserObservabilityWiring } from '@/store/browserObservabilityWiring';
 import { useSwarmStore } from '@/store/swarmStore';
 import { initializeTelegramStore } from '@/store/telegramStore';
 import { setupTaskDiagnosticsWiring } from '@/services/taskDiagnosticsWiring';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 import { useKeyboardShortcuts, KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
-import { AutoResearchSetupModal } from '@/components/AutoResearchSetupModal';
 import { NewChatProjectPickerModal } from '@/components/NewChatProjectPickerModal';
 
 // Lazy-load heavy pages so they don't bloat the initial bundle
@@ -29,6 +29,9 @@ const Settings = lazy(() => import('@/pages/Settings'));
 const Workflow = lazy(() => import('@/pages/Workflow'));
 const Skill = lazy(() => import('@/pages/Skill'));
 const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
+const AutoResearchSetupModal = lazy(() => import('@/components/AutoResearchSetupModal').then((module) => ({
+  default: module.AutoResearchSetupModal,
+})));
 
 function AppLoadingShell() {
   return (
@@ -76,6 +79,7 @@ export default function App() {
   const settingsOpen = useUIStore((state) => state.settingsOpen);
   const currentView = useUIStore((state) => state.currentView);
   const initSwarm = useSwarmStore((s) => s.init);
+  const showAutoResearchSetupModal = useAutoResearchStore((state) => state.showSetupModal);
 
   // Keyboard shortcuts handler
   const { showShortcuts, setShowShortcuts } = useKeyboardShortcuts();
@@ -187,7 +191,11 @@ export default function App() {
       />
 
       {/* AutoResearch setup modal */}
-      <AutoResearchSetupModal />
+      {showAutoResearchSetupModal && (
+        <Suspense fallback={null}>
+          <AutoResearchSetupModal />
+        </Suspense>
+      )}
 
       {/* New chat project picker */}
       <NewChatProjectPickerModal />

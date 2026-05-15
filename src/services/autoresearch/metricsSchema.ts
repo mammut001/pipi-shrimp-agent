@@ -71,7 +71,7 @@ const DirectionSchema = z.enum(['lower', 'higher']);
 const GeneratorSchema = z.enum(['agent', 'loop_engine', 'bootstrap']);
 const MetricsExtraValueSchema = z.union([z.number().finite(), z.string(), z.boolean()]);
 
-const MetricsArtifactBaseSchema = z.object({
+const MetricsArtifactBaseObjectSchema = z.object({
   metricName: z.string().min(1),
   metricValue: z.number().finite().nullable(),
   status: StatusSchema,
@@ -81,7 +81,12 @@ const MetricsArtifactBaseSchema = z.object({
   reasoning: z.string().min(1).optional(),
   artifactPaths: z.array(z.string().min(1)).optional(),
   extra: z.record(MetricsExtraValueSchema).optional(),
-}).strict().superRefine((value, ctx) => {
+}).strict();
+
+function validateBaseMetricsArtifact(
+  value: z.infer<typeof MetricsArtifactBaseObjectSchema>,
+  ctx: z.RefinementCtx,
+): void {
   if (value.status === 'FAILED' && !value.failReason) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -89,9 +94,19 @@ const MetricsArtifactBaseSchema = z.object({
       message: 'FAILED metrics artifacts must include a failReason.',
     });
   }
-});
 
-const AgentMetricsArtifactSchema = MetricsArtifactBaseSchema.extend({
+  if (value.status !== 'FAILED' && value.metricValue === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['metricValue'],
+      message: 'metricValue may be null only when status is FAILED with a failReason.',
+    });
+  }
+}
+
+const MetricsArtifactBaseSchema = MetricsArtifactBaseObjectSchema.superRefine(validateBaseMetricsArtifact);
+
+const AgentMetricsArtifactObjectSchema = MetricsArtifactBaseObjectSchema.extend({
   schemaVersion: z.literal(1),
   sessionId: z.string().min(1),
   runId: z.string().min(1),
@@ -100,12 +115,17 @@ const AgentMetricsArtifactSchema = MetricsArtifactBaseSchema.extend({
   direction: DirectionSchema,
   timestamp: z.string().datetime(),
   generator: z.literal('agent'),
-}).strict().superRefine((value, ctx) => {
+}).strict();
+
+function validateAgentMetricsArtifact(
+  value: z.infer<typeof AgentMetricsArtifactObjectSchema>,
+  ctx: z.RefinementCtx,
+): void {
   if (value.runId !== value.sessionId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['runId'],
-      message: 'runId must match sessionId for AutoResearch metrics artifacts.',
+      message: 'Current AutoResearch uses sessionId as runId; runId must match sessionId for metrics artifacts.',
     });
   }
   if (value.primaryMetric !== value.metricName) {
@@ -115,9 +135,13 @@ const AgentMetricsArtifactSchema = MetricsArtifactBaseSchema.extend({
       message: 'primaryMetric must match metricName.',
     });
   }
-});
+}
 
-const PersistedIterationMetricsSchema = AgentMetricsArtifactSchema.extend({
+const AgentMetricsArtifactSchema = AgentMetricsArtifactObjectSchema
+  .superRefine(validateBaseMetricsArtifact)
+  .superRefine(validateAgentMetricsArtifact);
+
+const PersistedIterationMetricsSchema = AgentMetricsArtifactObjectSchema.extend({
   generator: z.enum(['loop_engine', 'bootstrap']),
   durationMs: z.number().nonnegative(),
   startedAt: z.string().datetime(),
@@ -128,7 +152,9 @@ const PersistedIterationMetricsSchema = AgentMetricsArtifactSchema.extend({
     retryCount: z.number().int().nonnegative().optional(),
     reason: z.string().min(1).optional(),
   }).strict().optional(),
-}).strict().superRefine((value, ctx) => {
+}).strict().superRefine(validateBaseMetricsArtifact)
+  .superRefine(validateAgentMetricsArtifact)
+  .superRefine((value, ctx) => {
   if (value.timestamp !== value.finishedAt) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -138,7 +164,7 @@ const PersistedIterationMetricsSchema = AgentMetricsArtifactSchema.extend({
   }
 });
 
-const LegacyPersistedIterationMetricsSchema = MetricsArtifactBaseSchema.extend({
+const LegacyPersistedIterationMetricsSchema = MetricsArtifactBaseObjectSchema.extend({
   iteration: z.number().int().positive(),
   sessionId: z.string().min(1),
   commitHash: z.string().min(1).optional(),
@@ -150,7 +176,7 @@ const LegacyPersistedIterationMetricsSchema = MetricsArtifactBaseSchema.extend({
     retryCount: z.number().int().nonnegative().optional(),
     reason: z.string().min(1).optional(),
   }).strict().optional(),
-}).strict();
+}).strict().superRefine(validateBaseMetricsArtifact);
 
 function formatSchemaError(prefix: string, error: z.ZodError): string {
   const detail = error.issues
@@ -171,7 +197,10 @@ function validateExpectedFields(
     return `Invalid metrics artifact: sessionId must be ${options.expectedSessionId}, received ${value.sessionId ?? '<missing>'}.`;
   }
   if (options.expectedRunId && value.runId !== options.expectedRunId) {
-    return `Invalid metrics artifact: runId must be ${options.expectedRunId}, received ${value.runId ?? '<missing>'}.`;
+    const contractNote = options.expectedSessionId && options.expectedRunId === options.expectedSessionId
+      ? ' Current AutoResearch uses sessionId as runId.'
+      : '';
+    return `Invalid metrics artifact: runId must be ${options.expectedRunId}, received ${value.runId ?? '<missing>'}.${contractNote}`;
   }
   if (typeof options.expectedIteration === 'number' && value.iteration !== options.expectedIteration) {
     return `Invalid metrics artifact: iteration must be ${options.expectedIteration}, received ${value.iteration ?? '<missing>'}.`;

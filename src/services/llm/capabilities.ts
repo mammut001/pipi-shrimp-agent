@@ -50,6 +50,10 @@ const UNKNOWN_PROVIDER_CAPABILITY: ProviderCapability = {
 
 const ANTHROPIC_THINKING_MODEL_PATTERN = /claude-3-7|claude-opus-4|claude-sonnet-4|claude-haiku-4/i;
 
+function isDeepSeekReasoningModel(modelLower: string): boolean {
+  return /reasoner|reasoning|(^|[-_.\s/])r1($|[-_.\s/])|v4/i.test(modelLower);
+}
+
 const PROVIDER_CAPABILITIES: Record<ProviderCapabilityId, ProviderCapability> = {
   anthropic: {
     id: 'anthropic',
@@ -190,7 +194,8 @@ export function buildProviderExecutionCapabilities(input: {
   const providerHint = resolveProviderRequestHint(providerId, input.apiFormat);
   const supportsThinking = providerHint === 'anthropic'
     && ANTHROPIC_THINKING_MODEL_PATTERN.test(normalizedModel);
-  const deepSeekReasoning = /reasoner|reasoning|\br1\b|v4/i.test(modelLower);
+  const deepSeekReasoning = isDeepSeekReasoningModel(modelLower);
+  const deepSeekSupportsToolCalls = Boolean(modelLower) && !deepSeekReasoning;
   const genericReasoning = modelLower.includes('reasoning');
 
   switch (providerId) {
@@ -271,8 +276,8 @@ export function buildProviderExecutionCapabilities(input: {
         supportsThinking: false,
         supportsReasoning: deepSeekReasoning,
         supportsReasoningStream: deepSeekReasoning,
-        supportsToolCalls: true,
-        supportsToolOpenAI: true,
+        supportsToolCalls: deepSeekSupportsToolCalls,
+        supportsToolOpenAI: deepSeekSupportsToolCalls,
         supportsStreaming: true,
         supportsResponseFormat: false,
         supportsResponseFormatJsonSchema: false,

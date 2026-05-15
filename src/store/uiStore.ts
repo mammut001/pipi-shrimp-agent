@@ -31,17 +31,33 @@ const DEFAULT_AGENT_INSTRUCTIONS = {
 
 const getDefaultAgentInstructions = (): string => DEFAULT_AGENT_INSTRUCTIONS[getCurrentLocale()];
 
+function safeLocalStorageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures so startup and navigation remain functional.
+  }
+}
+
 type CurrentView = 'chat' | 'workflow' | 'skill' | 'browser' | 'diagnostics';
 
 const persistCurrentView = (view: PersistedCurrentView): void => {
-  localStorage.setItem(CURRENT_VIEW_STORAGE_KEY, view);
+  safeLocalStorageSet(CURRENT_VIEW_STORAGE_KEY, view);
 };
 
 /**
  * Get persisted current view, default to 'chat'
  */
 const getInitialCurrentView = (): PersistedCurrentView => {
-  const saved = localStorage.getItem(CURRENT_VIEW_STORAGE_KEY);
+  const saved = safeLocalStorageGet(CURRENT_VIEW_STORAGE_KEY);
   const { currentView, migratedFromBrowser } = normalizePersistedCurrentView(saved);
 
   if (migratedFromBrowser) {
@@ -79,7 +95,7 @@ export const useUIStore = create<UIState>((set) => ({
   // Agentic UI State
   rightPanelVisible: true,
   agentPanelTab: 'main' as const,
-  agentInstructions: localStorage.getItem(AGENT_INSTRUCTIONS_STORAGE_KEY) || getDefaultAgentInstructions(),
+  agentInstructions: safeLocalStorageGet(AGENT_INSTRUCTIONS_STORAGE_KEY) || getDefaultAgentInstructions(),
   taskProgress: [],
 
   // Terminal Panel State
@@ -215,7 +231,17 @@ export const useUIStore = create<UIState>((set) => ({
   /**
    * Block and wait for user's permission (used by QueryEngine's generator)
    */
-  waitForPermission: (tool: { id: string; name: string; arguments: string }) => {
+  waitForPermission: (tool: {
+    id: string;
+    name: string;
+    arguments: string;
+    description?: string;
+    source?: string;
+    workingDirectory?: string | null;
+    commandPreview?: string | null;
+    riskReason?: string | null;
+    approvalToken?: string | null;
+  }) => {
     return new Promise<boolean>((resolve) => {
       set((state) => ({
         permissionQueue: [
@@ -224,7 +250,12 @@ export const useUIStore = create<UIState>((set) => ({
             id: tool.id,
             toolName: tool.name,
             toolInput: tool.arguments,
-            description: `Execute ${tool.name}?`,
+            description: tool.description ?? `Execute ${tool.name}?`,
+            source: tool.source,
+            workingDirectory: tool.workingDirectory,
+            commandPreview: tool.commandPreview,
+            riskReason: tool.riskReason,
+            approvalToken: tool.approvalToken,
             _resolve: resolve, // Stores the promise resolver
           }),
         ],

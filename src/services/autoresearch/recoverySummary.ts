@@ -59,6 +59,7 @@ export function buildAutoResearchRecoverySummary(run: AutoResearchRunRecord): Au
   const latestIteration = getLatestRecoveryIteration(run);
   const actions = dedupeRecoveryActions(latestIteration?.recoveryActions);
   const defaultMessage = getDefaultMessage(run, latestIteration);
+  const retryIteration = latestIteration?.index ?? run.currentIteration ?? 1;
 
   if (run.status === 'waiting_rate_limit') {
     return {
@@ -66,7 +67,7 @@ export function buildAutoResearchRecoverySummary(run: AutoResearchRunRecord): Au
       title: 'Provider cooldown active',
       message: defaultMessage
         ?? 'Provider rate limited the run and AutoResearch is cooling down before retrying the same iteration.',
-      hint: `Iteration ${latestIteration?.index ?? run.currentIteration || 1} will be retried automatically after cooldown unless you stop the run.`,
+      hint: `Iteration ${retryIteration} will be retried automatically after cooldown unless you stop the run.`,
       actions,
       iteration: latestIteration?.index ?? run.currentIteration,
       mode: 'cooldown',

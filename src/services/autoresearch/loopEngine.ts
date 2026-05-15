@@ -18,6 +18,7 @@ import { parseMetricsArtifactPayload } from './metricsSchema';
 import {
   captureCommitHash,
   createRunDir,
+  promoteRunDirToBestBaseline,
   getSessionRunPaths,
   pathExistsOnTarget,
   readTargetText,
@@ -121,7 +122,7 @@ function buildSystemPrompt({
     ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
     : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
   const toolCfgHint = isLocal
-    ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${iterationCodeDir}". Use ${toolProfile.readTool} for file reads and ${toolProfile.writeTool} for file writes. Before writing new nested paths, create parent directories with ${toolProfile.commandTool} and \`mkdir -p <path>\`.`
+    ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${iterationCodeDir}". Use ${toolProfile.readTool} for file reads, ${toolProfile.createDirectoryTool} for directory creation, and ${toolProfile.writeTool} for file writes.`
     : `Use ${toolProfile.commandTool} for target-side commands with mode="ssh", host="${sshConfig.host}", user="${sshConfig.user}", port=${sshConfig.port}, authMode="${sshConfig.authMode}"${sshConfig.authMode === 'key' ? `, keyPath="${sshConfig.keyPath}"` : ''}, remoteWorkDir="${sshConfig.remoteWorkDir}". Use ${toolProfile.readTool} for file reads. Use ${toolProfile.uploadTool} for remote file creation or replacement. Only set terminal=true when the command needs a PTY or live terminal output. Never ask for credentials.`;
   const inspectionScope = isLocal
     ? 'Read only the minimum files you need, and use only the local experiment tools listed above.'
@@ -703,6 +704,14 @@ function buildIterationParsedMetrics(
   };
 }
 
+function buildRateLimitRetryNarrative(input: {
+  iteration: number;
+  cooldownSeconds: number;
+  message: string;
+}): string {
+  return `Provider rate limited iteration ${input.iteration}. Cooling down for ${input.cooldownSeconds}s before retrying the same iteration. Last error: ${input.message}`;
+}
+
 function buildIterationRecoveryActions(options: {
   status: ExperimentStatus;
   hasLogs: boolean;
@@ -900,6 +909,7 @@ export async function startExperimentLoop(
   }
 
   let consecutiveRateLimitCount = 0;
+  let bestSnapshotDir = startup.experimentDir;
 
   while (true) {
     const state = useAutoResearchStore.getState();
@@ -957,7 +967,7 @@ export async function startExperimentLoop(
     let runDir: RunDir;
     try {
       runDir = await createRunDir(artifactCfg, sessionId, iteration, {
-        snapshotSourceDir: startup.experimentDir,
+        snapshotSourceDir: bestSnapshotDir,
       });
     } catch (error) {
       useAutoResearchStore.getState().setError(`Failed to create run directory: ${formatError(error)}`);
@@ -1321,9 +1331,11 @@ export async function startExperimentLoop(
         durationMs,
         commitHash,
       });
-      const rollbackResult = parsed.status === 'FAILED'
+      const rollbackResult = (parsed.status === 'FAILED' || parsed.status === 'NOT_IMPROVED')
         ? await rollbackIterationWorkspace(iterationCfg, iteration, runDir, {
-          reason: budgetExhausted ? 'budget_exhaustion_failed_iteration' : 'failed_iteration',
+          reason: parsed.status === 'FAILED'
+            ? budgetExhausted ? 'budget_exhaustion_failed_iteration' : 'failed_iteration'
+            : 'not_improved_iteration',
         })
         : { success: true, message: '' };
       await rebuildLivingDoc(artifactCfg, sessionId, {
@@ -1337,6 +1349,27 @@ export async function startExperimentLoop(
       if (!rollbackResult.success) {
         useAutoResearchStore.getState().setError(rollbackResult.message);
         break;
+      }
+      if (parsed.status === 'IMPROVED' && parsed.metricValue !== null) {
+        try {
+          bestSnapshotDir = await promoteRunDirToBestBaseline(artifactCfg, sessionId, runDir.codeDir);
+          emitAutoResearchRuntimeEvent({
+            level: 'info',
+            phase: 'DONE',
+            type: 'iteration_completed',
+            message: `Iteration ${iteration} promoted its workspace as the next baseline.`,
+            summary: `Iteration ${iteration} became the next baseline.`,
+            metadata: {
+              iteration,
+              baselineDir: bestSnapshotDir,
+              iterDir: runDir.iterDir,
+            },
+            iterationId: `${sessionId}-iter-${iteration}`,
+          });
+        } catch (error) {
+          useAutoResearchStore.getState().setError(`Failed to preserve improved baseline: ${formatError(error)}`);
+          break;
+        }
       }
 
       const trendInterval = useAutoResearchStore.getState().telegramConfig.trendReportInterval;
@@ -1361,6 +1394,31 @@ export async function startExperimentLoop(
         const retryAfterSeconds = getRateLimitRetryAfterSeconds(error);
         const cooldownSeconds = retryAfterSeconds ?? Math.min(60, 15 * Math.pow(2, consecutiveRateLimitCount - 1));
         const message = formatError(error);
+        const finishedAt = new Date().toISOString();
+        const durationMs = Date.now() - startMs;
+
+        useAutoResearchStore.getState().completeIterationRecord({
+          iteration,
+          status: 'failed',
+          phase: 'FAILED',
+          hypothesis: 'Provider rate limit',
+          change: 'Retry scheduled after provider cooldown',
+          reasoning: 'The provider rate limited the request before this iteration completed. AutoResearch will retry the same iteration after cooldown.',
+          narrative: buildRateLimitRetryNarrative({
+            iteration,
+            cooldownSeconds,
+            message,
+          }),
+          codeChangesSummary: 'Iteration attempt aborted before evaluation completed; retry scheduled after cooldown.',
+          durationMs,
+          parsedMetrics: buildIterationParsedMetrics(state.metricName, null),
+          reflectionSummary: 'Provider rate limited the request before AutoResearch could finish the iteration.',
+          metricValue: null,
+          commitHash: await captureCommitHash(iterationCfg),
+          error: message,
+          endedAt: finishedAt,
+          artifactPaths: getRunArtifactPaths(runDir),
+        });
 
         useAutoResearchStore.getState().setCurrentIterationValue(Math.max(0, iteration - 1));
         useAutoResearchStore.getState().setRunStatus('waiting_rate_limit', {
@@ -1398,7 +1456,7 @@ export async function startExperimentLoop(
           status: 'RATE_LIMITED',
           metricValue: null,
           failReason: message,
-          durationMs: Date.now() - startMs,
+          durationMs,
           commitHash: await captureCommitHash(iterationCfg),
           retryAfterSeconds: cooldownSeconds,
         });

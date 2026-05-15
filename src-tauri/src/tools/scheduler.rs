@@ -75,7 +75,7 @@ async fn execute_single(
         );
     }
 
-    let result = registry.execute_with_context(req).await;
+    let result = registry.execute_with_context(req, Some(session_id)).await;
 
     match result {
         Ok(tool_result) => {
@@ -230,6 +230,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
             ToolCallRequest {
                 id: "2".into(),
@@ -244,6 +245,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
             ToolCallRequest {
                 id: "3".into(),
@@ -258,6 +260,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);
@@ -287,6 +290,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
             ToolCallRequest {
                 id: "2".into(),
@@ -301,6 +305,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
             ToolCallRequest {
                 id: "3".into(),
@@ -315,6 +320,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
             ToolCallRequest {
                 id: "4".into(),
@@ -329,6 +335,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);

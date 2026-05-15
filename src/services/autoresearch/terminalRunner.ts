@@ -11,7 +11,6 @@ import { buildRemoteBashCommand, shellEscape, shellEscapePath } from '@/utils/re
 import { readTargetText, type RunDir } from './runDir';
 
 const TERMINAL_READY_TIMEOUT_MS = 20_000;
-const TERMINAL_ACTIVITY_TIMEOUT_MS = 60_000;
 const TERMINAL_WATCH_POLL_MS = 250;
 const TERMINAL_EXIT_MARKER = '__PIPI_AUTORESEARCH_EXIT__';
 
@@ -208,7 +207,6 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
   return new Promise<TerminalRunResult>((resolve, reject) => {
     let pending = '';
     let settled = false;
-    let lastActivityAt = Date.now();
     let unlistenOutput: (() => void) | undefined;
 
     const cleanup = () => {
@@ -222,12 +220,6 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
         return;
       }
       const snapshot = getTerminalRunSnapshot();
-      if (snapshot.runState === 'running' && Date.now() - lastActivityAt >= TERMINAL_ACTIVITY_TIMEOUT_MS) {
-        settled = true;
-        cleanup();
-        reject(new Error('Timed out waiting for AutoResearch terminal'));
-        return;
-      }
       if (snapshot.runState && isAutoResearchTerminalState(snapshot.runState) && snapshot.runState !== 'running') {
         settled = true;
         cleanup();
@@ -242,7 +234,6 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
         }
 
         try {
-          lastActivityAt = Date.now();
           pending += event.payload.data;
 
           const markerIndex = pending.indexOf(`${TERMINAL_EXIT_MARKER}:${token}:`);
@@ -290,7 +281,6 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
       });
 
       try {
-        lastActivityAt = Date.now();
         await invoke('terminal_input', {
           sessionId,
           data: `${fullCommand}\r`,

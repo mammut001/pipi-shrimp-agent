@@ -27,7 +27,16 @@ const OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM = `## Tool Calling Protocol
 - Do not describe tool calls in plain text.
 - If you need a tool, respond with structured tool_calls only.`;
 
-const MALFORMED_TOOL_CALL_RETRY_NOTE = 'Your previous response used text-form tool calls, which were ignored. Use the structured tool_calls channel only.';
+const MALFORMED_TOOL_CALL_RETRY_NOTES = [
+  'Your previous response used text-form tool calls, which were ignored. Use the structured tool_calls channel only.',
+  'Your previous response still used text-form or XML tool calls. Reply using only the structured tool_calls channel. Do not emit XML tags, markdown, or prose describing the tool call.',
+] as const;
+
+function buildMalformedToolCallRetryMessage(attempt: number): string {
+  return attempt === 1
+    ? 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.'
+    : 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.';
+}
 
 function shouldInjectOpenAIToolProtocol(
   config: ResolvedAgentConfig,
@@ -90,7 +99,7 @@ export async function* runChatTurn(
   let isTurnComplete = false;
   let toolBudgetSummary = createToolBudgetSummary(maxToolBudget);
   let reserveFinalResponseRound = false;
-  let malformedToolCallRetried = false;
+  let malformedToolCallRetryCount = 0;
 
   // Memory hook — fires after each final (no-tool-call) response
   const memoryHook = createMemoryHook({ projectRoot });
@@ -218,17 +227,20 @@ export async function* runChatTurn(
 
         if (
           injectOpenAIToolProtocol
-          && !malformedToolCallRetried
+          && malformedToolCallRetryCount < MALFORMED_TOOL_CALL_RETRY_NOTES.length
           && isMalformedToolCallError(e)
         ) {
-          malformedToolCallRetried = true;
+          malformedToolCallRetryCount += 1;
           currentMessages.push({
             role: 'user',
-            content: MALFORMED_TOOL_CALL_RETRY_NOTE,
+            content: MALFORMED_TOOL_CALL_RETRY_NOTES[Math.min(
+              malformedToolCallRetryCount - 1,
+              MALFORMED_TOOL_CALL_RETRY_NOTES.length - 1,
+            )],
           });
           yield {
             type: 'status_update',
-            message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+            message: buildMalformedToolCallRetryMessage(malformedToolCallRetryCount),
           };
           retryDueToMalformedToolCall = true;
           break;

@@ -129,7 +129,37 @@ describe('resolvedChatRequest', () => {
     });
   });
 
-  it('carries provider capability hints for deepseek requests', () => {
+  it('carries tool-capable hints for deepseek chat requests', () => {
+    const request = buildResolvedChatRequest({
+      ...minimaxConfig,
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      baseUrl: 'https://api.deepseek.com',
+    }, {
+      messages: [{ role: 'user', content: 'ping' }],
+      systemPrompt: 'test',
+      sessionId: 'deepseek-chat-test',
+      noTools: true,
+    });
+
+    expect(request.params.provider).toBe('deepseek');
+    expect(request.params.providerCapabilities).toMatchObject({
+      supportsReasoning: false,
+      supportsReasoningStream: false,
+      supportsToolCalls: true,
+      supportsToolOpenAI: true,
+      supportsStreaming: true,
+      supportsResponseFormat: false,
+      supportsResponseFormatJsonSchema: false,
+      supportsJsonMode: true,
+      acceptsResponseFormat: false,
+      acceptsReasoningParam: false,
+      supportsVision: false,
+      maxOutputTokens: 8192,
+    });
+  });
+
+  it('marks deepseek reasoning models as not tool-capable', () => {
     const request = buildResolvedChatRequest({
       ...minimaxConfig,
       provider: 'deepseek',
@@ -146,8 +176,8 @@ describe('resolvedChatRequest', () => {
     expect(request.params.providerCapabilities).toMatchObject({
       supportsReasoning: true,
       supportsReasoningStream: true,
-      supportsToolCalls: true,
-      supportsToolOpenAI: true,
+      supportsToolCalls: false,
+      supportsToolOpenAI: false,
       supportsStreaming: true,
       supportsResponseFormat: false,
       supportsResponseFormatJsonSchema: false,

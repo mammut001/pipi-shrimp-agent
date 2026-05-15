@@ -242,4 +242,66 @@ describe('QueryEngine context overflow fallback', () => {
       }),
     );
   });
+
+  it('retries twice when the model repeatedly emits text-form tool calls before recovering', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* malformedOnce() {
+        throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');
+      })
+      .mockImplementationOnce(async function* malformedTwice() {
+        throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');
+      })
+      .mockImplementationOnce(async function* recovered() {
+        yield { type: 'text_delta', content: 'Recovered after second retry' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 3, output_tokens: 2 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const events = [];
+    for await (const event of runChatTurn(
+      'session-4',
+      [{ role: 'user', content: 'inspect the project and use tools if needed' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: 'status_update',
+        message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+      },
+      {
+        type: 'status_update',
+        message: 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.',
+      },
+      { type: 'text_delta', content: 'Recovered after second retry' },
+      {
+        type: 'turn_complete',
+        tokenUsage: { input_tokens: 3, output_tokens: 2, model: 'MiniMax-M2.7' },
+      },
+    ]);
+    expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(3);
+    expect(mockBuildResolvedChatRequest).toHaveBeenNthCalledWith(
+      3,
+      resolvedConfig,
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: 'Your previous response used text-form tool calls, which were ignored. Use the structured tool_calls channel only.',
+          }),
+          expect.objectContaining({
+            role: 'user',
+            content: 'Your previous response still used text-form or XML tool calls. Reply using only the structured tool_calls channel. Do not emit XML tags, markdown, or prose describing the tool call.',
+          }),
+        ]),
+      }),
+    );
+  });
 });

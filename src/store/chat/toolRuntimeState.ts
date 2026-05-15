@@ -70,7 +70,31 @@ function setStepStatus(
     id: toolCallId,
     label: existing?.label ?? label,
     status,
+    executionId: existing?.executionId ?? null,
   });
+}
+
+function setStepExecutionId(
+  runtime: SessionToolRuntimeState,
+  toolCallId: string,
+  label: string,
+  executionId: string | null,
+): void {
+  const existing = runtime.steps.get(toolCallId);
+  runtime.steps.set(toolCallId, {
+    id: toolCallId,
+    label: existing?.label ?? label,
+    status: existing?.status ?? 'pending',
+    executionId,
+  });
+}
+
+function isTerminalStepStatus(status: TaskStep['status']): boolean {
+  return status === 'done'
+    || status === 'failed'
+    || status === 'cancelled'
+    || status === 'timed_out'
+    || status === 'rejected';
 }
 
 export function seedSessionToolRuntime(
@@ -100,18 +124,53 @@ export function markSessionToolRunning(
   syncCurrentSessionToolRuntime(set, get);
 }
 
+export function markSessionToolStatus(
+  sessionId: string,
+  toolCallId: string,
+  label: string,
+  status: TaskStep['status'],
+  set: ChatSetState,
+  get: () => ChatState,
+): void {
+  const runtime = getOrCreateSessionToolRuntime(sessionId);
+  setStepStatus(runtime, toolCallId, label, status);
+  if (isTerminalStepStatus(status)) {
+    runtime.unresolvedIds.delete(toolCallId);
+  } else {
+    runtime.unresolvedIds.add(toolCallId);
+  }
+  syncCurrentSessionToolRuntime(set, get);
+}
+
+export function setSessionToolExecutionId(
+  sessionId: string,
+  toolCallId: string,
+  label: string,
+  executionId: string | null,
+  set: ChatSetState,
+  get: () => ChatState,
+): void {
+  const runtime = getOrCreateSessionToolRuntime(sessionId);
+  setStepExecutionId(runtime, toolCallId, label, executionId);
+  syncCurrentSessionToolRuntime(set, get);
+}
+
 export function resolveSessionTool(
   sessionId: string,
   toolCallId: string,
   label: string,
-  status: 'done' | 'failed',
+  status: TaskStep['status'],
   result: string,
   set: ChatSetState,
   get: () => ChatState,
 ): void {
   const runtime = getOrCreateSessionToolRuntime(sessionId);
   setStepStatus(runtime, toolCallId, label, status);
-  runtime.unresolvedIds.delete(toolCallId);
+  if (isTerminalStepStatus(status)) {
+    runtime.unresolvedIds.delete(toolCallId);
+  } else {
+    runtime.unresolvedIds.add(toolCallId);
+  }
   runtime.results.set(toolCallId, result);
   syncCurrentSessionToolRuntime(set, get);
 }

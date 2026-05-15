@@ -11,10 +11,13 @@ import { runPreToolUseHooks } from '../../services/tools/preToolUseHooks';
 import {
   canAutoApproveTool,
   isPipelineSingleInvokeTool,
+  type ToolPolicyPreviewResult,
   type PermissionMode,
 } from '../../services/tools/toolExecutionPolicy';
 import type { ChatState } from '../../types/chat';
 import {
+  markSessionToolStatus,
+  setSessionToolExecutionId,
   markSessionToolRunning,
   resolveSessionTool,
   seedSessionToolRuntime,
@@ -38,6 +41,8 @@ const WORKSPACE_TOOL_NAMES = new Set([
   'compile_typst_file',
   'render_typst_to_pdf',
 ]);
+
+const CANCELLABLE_TOOL_NAMES = new Set(['execute_command', 'ssh_exec']);
 
 export interface ToolBatchExecutionContext {
   chunk: ToolBatchChunk;
@@ -90,6 +95,97 @@ const defaultDeps: ToolBatchExecutionDeps = {
   loadSwarmStore: () => import('../swarmStore'),
 };
 
+function buildPermissionContext(
+  toolName: string,
+  toolArgs: string,
+  reason?: string,
+  workDir?: string | null,
+) {
+  let commandPreview: string | null = null;
+
+  try {
+    const parsed = JSON.parse(toolArgs) as Record<string, unknown>;
+    if (typeof parsed.command === 'string') {
+      commandPreview = parsed.command;
+    }
+  } catch {
+    commandPreview = null;
+  }
+
+  return {
+    description: reason || `Approve execution for ${toolName}?`,
+    source: 'assistant_tool_call',
+    workingDirectory: workDir,
+    commandPreview,
+    riskReason: reason || null,
+  };
+}
+
+function resolveToolStepStatus(
+  content: string,
+  fallbackFailed: boolean,
+): 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected' {
+  try {
+    const parsed = JSON.parse(content) as { status?: string; error_kind?: string };
+    if (parsed.status === 'cancelled') {
+      return 'cancelled';
+    }
+    if (parsed.status === 'timed_out') {
+      return 'timed_out';
+    }
+    if (parsed.error_kind === 'permission_denied') {
+      return 'rejected';
+    }
+  } catch {
+    // Keep legacy fallback for plain-text tool results.
+  }
+
+  return fallbackFailed ? 'failed' : 'done';
+}
+
+async function previewBackendToolPolicy(
+  tool: ToolRequest,
+  effectiveArgs: string,
+  activeSessionId: string,
+  workDir: string | null,
+  deps: ToolBatchExecutionDeps,
+): Promise<ToolPolicyPreviewResult> {
+  return deps.invoke<ToolPolicyPreviewResult>('preview_tool_policy', {
+    toolCall: {
+      id: tool.id,
+      name: tool.name,
+      arguments: effectiveArgs,
+      workDir,
+      source: 'assistant_tool_call',
+      approvalToken: null,
+    },
+    sessionId: activeSessionId,
+  });
+}
+
+function prepareCancellableToolArgs(
+  toolName: string,
+  toolArgs: string,
+): { toolArgs: string; executionId: string | null } {
+  if (!CANCELLABLE_TOOL_NAMES.has(toolName)) {
+    return { toolArgs, executionId: null };
+  }
+
+  const parsed = JSON.parse(toolArgs) as Record<string, unknown>;
+  const existingExecutionId = typeof parsed.executionId === 'string' && parsed.executionId.trim().length > 0
+    ? parsed.executionId
+    : null;
+  const executionId = existingExecutionId ?? crypto.randomUUID();
+
+  return {
+    toolArgs: JSON.stringify({
+      ...parsed,
+      executionId,
+    }),
+    executionId,
+  };
+}
+
 async function executeConcurrentTools(
   concurrent: ToolRequest[],
   normalizedToolArgsById: Map<string, string>,
@@ -106,7 +202,8 @@ async function executeConcurrentTools(
 
   for (const req of concurrent) {
     markSessionToolRunning(activeSessionId, req.id, req.name, set, get);
-    uiStore.updateTaskStep(req.id, 'running');
+    uiStore.updateTaskStep(req.id, 'validating');
+    markSessionToolStatus(activeSessionId, req.id, req.name, 'validating', set, get);
 
     const hookResult = await deps.runPreToolUseHooks({
       toolName: req.name,
@@ -116,11 +213,9 @@ async function executeConcurrentTools(
       sessionId: activeSessionId,
     });
 
-    if (!hookResult.approved || hookResult.requiresConfirmation) {
-      const message = hookResult.error
-        || (hookResult.requiresConfirmation
-          ? `Tool "${req.name}" requires explicit confirmation and cannot run in a concurrent batch.`
-          : 'Tool execution blocked');
+    if (!hookResult.approved) {
+      const message = hookResult.error || 'Tool execution blocked';
+
       uiStore.addNotification('error', message, activeSessionId);
       uiStore.updateTaskStep(req.id, 'failed');
       resolveSessionTool(
@@ -180,6 +275,25 @@ async function executeConcurrentTools(
       workDir: workDir ?? undefined,
       source: 'assistant_tool_call',
       permissionMode,
+      requestPermission: async (request) => {
+        uiStore.updateTaskStep(request.id, 'awaiting_confirmation');
+        markSessionToolStatus(activeSessionId, request.id, request.name, 'awaiting_confirmation', set, get);
+        const approved = await uiStore.waitForPermission({
+          id: request.id,
+          name: request.name,
+          arguments: request.arguments,
+          ...buildPermissionContext(request.name, request.arguments, request.reason, request.workDir),
+          approvalToken: request.approvalToken ?? null,
+        });
+        if (approved) {
+          uiStore.updateTaskStep(request.id, 'approved');
+          markSessionToolStatus(activeSessionId, request.id, request.name, 'approved', set, get);
+        } else {
+          uiStore.updateTaskStep(request.id, 'rejected');
+          markSessionToolStatus(activeSessionId, request.id, request.name, 'rejected', set, get);
+        }
+        return approved;
+      },
     });
 
     return [
@@ -187,17 +301,18 @@ async function executeConcurrentTools(
       ...batchResult.results.map((result) => {
         const req = executableConcurrent.find((candidate) => candidate.id === result.id);
         if (req) {
+          const finalStatus = resolveToolStepStatus(result.content, result.is_error);
           resolveSessionTool(
             activeSessionId,
             result.id,
             req.name,
-            result.is_error ? 'failed' : 'done',
+            finalStatus,
             result.content,
             set,
             get,
           );
+          uiStore.updateTaskStep(result.id, finalStatus);
         }
-        uiStore.updateTaskStep(result.id, result.is_error ? 'failed' : 'done');
         if (req) {
           const postCtx: PostHookContext = {
             toolName: req.name,
@@ -253,6 +368,14 @@ async function resolveSerialToolPermission(
   workDir: string | null,
   requiresConfirmation: boolean,
   deps: ToolBatchExecutionDeps,
+  permissionContext?: {
+    description?: string;
+    source?: string;
+    workingDirectory?: string | null;
+    commandPreview?: string | null;
+    riskReason?: string | null;
+    approvalToken?: string | null;
+  },
 ): Promise<boolean> {
   if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name)) {
     return true;
@@ -263,6 +386,12 @@ async function resolveSerialToolPermission(
       id: tool.id,
       name: tool.name,
       arguments: effectiveArgs,
+      description: permissionContext?.description,
+      source: permissionContext?.source,
+      workingDirectory: permissionContext?.workingDirectory,
+      commandPreview: permissionContext?.commandPreview,
+      riskReason: permissionContext?.riskReason,
+      approvalToken: permissionContext?.approvalToken,
     });
   }
 
@@ -279,6 +408,12 @@ async function resolveSerialToolPermission(
       id: tool.id,
       name: tool.name,
       arguments: effectiveArgs,
+      description: permissionContext?.description,
+      source: permissionContext?.source,
+      workingDirectory: permissionContext?.workingDirectory,
+      commandPreview: permissionContext?.commandPreview,
+      riskReason: permissionContext?.riskReason,
+      approvalToken: permissionContext?.approvalToken,
     });
   }
 
@@ -474,7 +609,8 @@ async function executeSerialTool(
   const uiStore = deps.uiStore.getState();
 
   markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
-  uiStore.updateTaskStep(tool.id, 'running');
+  uiStore.updateTaskStep(tool.id, 'validating');
+  markSessionToolStatus(activeSessionId, tool.id, tool.name, 'validating', set, get);
 
   if (tool.name === 'AskUserQuestion') {
     let toolResultContent = '';
@@ -512,6 +648,7 @@ async function executeSerialTool(
 
   let effectiveArgs = normalizedToolArgs;
   let toolResultContent = '';
+  let approvalToken: string | null = null;
 
   if (!hookResult.approved) {
     uiStore.addNotification('error', hookResult.error || 'Tool execution blocked', activeSessionId);
@@ -522,20 +659,72 @@ async function executeSerialTool(
   }
 
   effectiveArgs = hookResult.modifiedArgs || normalizedToolArgs;
-  const session = deps.uiStore.getState();
-  void session;
+  let pendingExecutionId: string | null = null;
+  try {
+    const preparedArgs = prepareCancellableToolArgs(tool.name, effectiveArgs);
+    effectiveArgs = preparedArgs.toolArgs;
+    pendingExecutionId = preparedArgs.executionId;
+  } catch (error) {
+    toolResultContent = `Error: invalid tool arguments: ${error instanceof Error ? error.message : String(error)}`;
+    uiStore.updateTaskStep(tool.id, 'failed');
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', toolResultContent, set, get);
+    return {
+      id: tool.id,
+      content: toolResultContent,
+      toolName: tool.name,
+      toolArgs: effectiveArgs,
+    };
+  }
+  let preview: ToolPolicyPreviewResult;
+  try {
+    preview = await previewBackendToolPolicy(tool, effectiveArgs, activeSessionId, workDir, deps);
+  } catch (error) {
+    toolResultContent = `Error: policy preview failed: ${error instanceof Error ? error.message : String(error)}`;
+    uiStore.updateTaskStep(tool.id, 'failed');
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', toolResultContent, set, get);
+    return {
+      id: tool.id,
+      content: toolResultContent,
+      toolName: tool.name,
+      toolArgs: effectiveArgs,
+    };
+  }
+
+  if (preview.decision === 'rejected') {
+    const message = preview.reason || `Tool "${tool.name}" was rejected by backend policy.`;
+    uiStore.updateTaskStep(tool.id, 'rejected');
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'rejected', `Error: ${message}`, set, get);
+    return {
+      id: tool.id,
+      content: `Error: ${message}`,
+      toolName: tool.name,
+      toolArgs: effectiveArgs,
+    };
+  }
+
+  const requiresExplicitApproval = Boolean(hookResult.requiresConfirmation) || preview.decision === 'awaiting_confirmation';
+  if (requiresExplicitApproval) {
+    uiStore.updateTaskStep(tool.id, 'awaiting_confirmation');
+    markSessionToolStatus(activeSessionId, tool.id, tool.name, 'awaiting_confirmation', set, get);
+    approvalToken = preview.approvalToken ?? null;
+  }
+
   const approved = await resolveSerialToolPermission(
     tool,
     effectiveArgs,
     activeSessionId,
     permissionMode,
     workDir,
-    Boolean(hookResult.requiresConfirmation),
+    requiresExplicitApproval,
     deps,
+    {
+      ...buildPermissionContext(tool.name, effectiveArgs, preview.reason, workDir),
+      approvalToken,
+    },
   );
   if (!approved) {
-    uiStore.updateTaskStep(tool.id, 'failed');
-    resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', deps.t('permission.deniedMessage'), set, get);
+    uiStore.updateTaskStep(tool.id, 'rejected');
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'rejected', deps.t('permission.deniedMessage'), set, get);
     return {
       id: tool.id,
       content: deps.t('permission.deniedMessage'),
@@ -544,7 +733,19 @@ async function executeSerialTool(
     };
   }
 
+  if (requiresExplicitApproval) {
+    uiStore.updateTaskStep(tool.id, 'approved');
+    markSessionToolStatus(activeSessionId, tool.id, tool.name, 'approved', set, get);
+  }
+
+  uiStore.updateTaskStep(tool.id, 'running');
+  markSessionToolStatus(activeSessionId, tool.id, tool.name, 'running', set, get);
+  if (pendingExecutionId) {
+    setSessionToolExecutionId(activeSessionId, tool.id, tool.name, pendingExecutionId, set, get);
+  }
+
   let toolDidFail = false;
+  let finalStatus: 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected' = 'done';
   try {
     if (tool.name === 'get_current_workspace') {
       toolResultContent = workDir
@@ -563,6 +764,7 @@ async function executeSerialTool(
         arguments: effectiveArgs,
         workDir,
         source: 'assistant_tool_call',
+        approvalToken,
       });
       toolResultContent = nativeResult.content;
       toolDidFail = Boolean(nativeResult.is_error);
@@ -574,10 +776,13 @@ async function executeSerialTool(
       });
       toolDidFail = toolResultContent.startsWith('Error:');
     }
-    uiStore.updateTaskStep(tool.id, toolDidFail ? 'failed' : 'done');
+    finalStatus = resolveToolStepStatus(toolResultContent, toolDidFail);
+    uiStore.updateTaskStep(tool.id, finalStatus);
+    resolveSessionTool(activeSessionId, tool.id, tool.name, finalStatus, toolResultContent, set, get);
   } catch (error) {
     uiStore.updateTaskStep(tool.id, 'failed');
     toolResultContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    finalStatus = 'failed';
     resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', toolResultContent, set, get);
   }
 
@@ -585,7 +790,7 @@ async function executeSerialTool(
     toolName: tool.name,
     toolArgs: effectiveArgs,
     result: toolResultContent,
-    isError: toolDidFail || toolResultContent.startsWith('Error:'),
+    isError: finalStatus === 'failed' || finalStatus === 'cancelled' || finalStatus === 'timed_out' || toolResultContent.startsWith('Error:'),
     sessionId: activeSessionId,
   };
   void deps.runPostToolUseHooks(postCtx).catch((error: unknown) => {
