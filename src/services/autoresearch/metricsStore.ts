@@ -1,30 +1,15 @@
-import type { ExperimentStatus, SshConfig } from '@/store/autoresearchStore';
+import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
 import type { BootstrapPlan } from './bootstrap/types';
 import { appendTargetText, getSessionRunPaths, readTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
+import {
+  normalizeIterationMetricsRecord,
+  parsePersistedIterationMetricsLine,
+  serializeIterationMetricsRecord,
+  type IterationMetrics,
+} from './metricsSchema';
 
-export interface IterationMetrics {
-  iteration: number;
-  sessionId: string;
-  metricName: string;
-  metricValue: number | null;
-  status: ExperimentStatus;
-  failReason?: string;
-  hypothesis: string;
-  change?: string;
-  reasoning?: string;
-  artifactPaths?: string[];
-  commitHash?: string;
-  durationMs: number;
-  startedAt: string;
-  finishedAt: string;
-  extra?: Record<string, number | string | boolean>;
-  reflection?: {
-    parserPath?: string | null;
-    retryCount?: number;
-    reason?: string;
-  };
-}
+export type { IterationMetrics } from './metricsSchema';
 
 export interface MetricsSummary {
   best: IterationMetrics | null;
@@ -57,11 +42,16 @@ export async function appendIterationMetrics(
   metrics: IterationMetrics,
 ): Promise<void> {
   const paths = getSessionRunPaths(cfg, sessionId);
-  const line = `${JSON.stringify(metrics)}\n`;
+  const normalized = normalizeIterationMetricsRecord(metrics, {
+    sessionId,
+    direction: metrics.direction ?? useAutoResearchStore.getState().metricDirection,
+    generator: 'loop_engine',
+  });
+  const line = `${serializeIterationMetricsRecord(normalized)}\n`;
   const currentRun = getCurrentRunDir();
   await appendTargetText(cfg, paths.metricsJsonlPath, line);
-  if (currentRun?.iter === metrics.iteration) {
-    await writeTargetText(cfg, currentRun.metricsPath, `${JSON.stringify(metrics, null, 2)}\n`);
+  if (currentRun?.iter === normalized.iteration) {
+    await writeTargetText(cfg, currentRun.metricsPath, `${JSON.stringify(normalized, null, 2)}\n`);
   }
 }
 
@@ -70,12 +60,18 @@ export async function writeIterationMetricsFile(
   metricsPath: string,
   metrics: IterationMetrics,
 ): Promise<void> {
-  await writeTargetText(cfg, metricsPath, `${JSON.stringify(metrics, null, 2)}\n`);
+  const normalized = normalizeIterationMetricsRecord(metrics, {
+    sessionId: metrics.sessionId,
+    direction: metrics.direction ?? useAutoResearchStore.getState().metricDirection,
+    generator: 'loop_engine',
+  });
+  await writeTargetText(cfg, metricsPath, `${JSON.stringify(normalized, null, 2)}\n`);
 }
 
 export async function readAllMetrics(
   cfg: SshConfig,
   sessionId: string,
+  direction?: 'lower' | 'higher',
 ): Promise<IterationMetrics[]> {
   const { metricsJsonlPath } = getSessionRunPaths(cfg, sessionId);
   const content = await readTargetText(cfg, metricsJsonlPath);
@@ -87,7 +83,11 @@ export async function readAllMetrics(
     .split('\n')
     .map(line => line.trim())
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as IterationMetrics);
+    .map((line, index) => parsePersistedIterationMetricsLine(line, {
+      sessionId,
+      direction,
+      source: `${metricsJsonlPath}:line ${index + 1}`,
+    }));
 }
 
 export function summarize(

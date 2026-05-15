@@ -128,6 +128,19 @@ function buildFeatureSnapshot(entry: ResolvedConfigEntry): AutoResearchAgentConf
   return buildAutoResearchAgentConfigSnapshot(entry.config, entry.source);
 }
 
+function resolveSavedConfigEntry(configId: string | null | undefined, label: string): ResolvedConfigEntry | null {
+  if (!configId) {
+    return null;
+  }
+
+  const entry = resolveConfigEntryFromId(configId, 'savedRunConfig');
+  if (!entry) {
+    throw new Error(`${label}: saved config ${configId} is no longer available.`);
+  }
+
+  return assertValidConfig(entry, label);
+}
+
 export function resolveAutoResearchRunConfig(): AutoResearchRunConfigResolution {
   const { activeConfigId, autoResearchLlmSettings } = useSettingsStore.getState();
   const defaultEntry = resolveDefaultConfigEntry();
@@ -177,5 +190,49 @@ export function resolveAutoResearchRunConfig(): AutoResearchRunConfigResolution 
         reflection: getCapability(reflectionEntry.config.provider),
       },
     },
+  };
+}
+
+export function resolveAutoResearchRunConfigFromSnapshotFile(
+  snapshotFile: AutoResearchRunConfigSnapshotFile,
+): AutoResearchRunConfigResolution {
+  const defaultEntry = resolveSavedConfigEntry(
+    snapshotFile.selectedConfigIds.defaultConfigId,
+    'Saved AutoResearch default config invalid',
+  ) ?? resolveSavedConfigEntry(
+    snapshotFile.selectedConfigIds.activeConfigId,
+    'Saved AutoResearch active config invalid',
+  ) ?? assertValidConfig(
+    getFirstValidConfigEntry(),
+    'Saved AutoResearch default config invalid',
+  );
+
+  const agentEntry = resolveSavedConfigEntry(
+    snapshotFile.selectedConfigIds.agentConfigId,
+    'Saved AutoResearch agent config invalid',
+  ) ?? defaultEntry;
+  const reflectionEntry = resolveSavedConfigEntry(
+    snapshotFile.selectedConfigIds.reflectionConfigId,
+    'Saved AutoResearch reflection config invalid',
+  ) ?? defaultEntry;
+
+  const agentCapability = getCapability(agentEntry.config.provider);
+  if (agentCapability.toolCalls === 'none') {
+    throw new Error('Saved provider no longer supports tool calls. Choose another before resuming.');
+  }
+
+  const featureSnapshots = {
+    default: buildFeatureSnapshot(defaultEntry),
+    agent: buildFeatureSnapshot(agentEntry),
+    reflection: buildFeatureSnapshot(reflectionEntry),
+  };
+
+  return {
+    defaultConfig: defaultEntry.config,
+    agentConfig: agentEntry.config,
+    reflectionConfig: reflectionEntry.config,
+    snapshot: featureSnapshots.agent,
+    featureSnapshots,
+    runConfigSnapshot: snapshotFile,
   };
 }

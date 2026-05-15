@@ -85,6 +85,17 @@ function buildWriteCommand(path: string, content: string, append = false): strin
   ].join('\n');
 }
 
+function isSessionChildRunDir(sessionDir: string, iterDir: string): boolean {
+  const normalizedSessionDir = trimTrailingSlash(sessionDir);
+  const normalizedIterDir = trimTrailingSlash(iterDir);
+  if (!normalizedIterDir.startsWith(`${normalizedSessionDir}/`)) {
+    return false;
+  }
+
+  const relative = normalizedIterDir.slice(normalizedSessionDir.length + 1);
+  return /^iter-\d+-/.test(relative);
+}
+
 export function getSessionRunPaths(cfg: SshConfig, sessionId: string): SessionRunPaths {
   const sessionDir = `${trimTrailingSlash(cfg.remoteWorkDir)}/runs/${sessionId}`;
   return {
@@ -222,8 +233,13 @@ export async function listIterations(cfg: SshConfig, sessionId: string): Promise
 
 export async function pruneOldRuns(cfg: SshConfig, sessionId: string, keepLast: number): Promise<void> {
   const runs = await listIterations(cfg, sessionId);
+  const { sessionDir } = getSessionRunPaths(cfg, sessionId);
   const stale = runs.slice(0, Math.max(0, runs.length - keepLast));
   for (const run of stale) {
+    if (!isSessionChildRunDir(sessionDir, run.iterDir)) {
+      throw new Error(`Refusing to prune non-session run directory: ${run.iterDir}`);
+    }
+
     const result = await executeTargetCommand(cfg, `rm -rf ${shellEscapePath(run.iterDir)}`, 120);
     if ((result.exit_code ?? 0) !== 0) {
       throw new Error(result.stderr || `Failed to prune ${run.iterDir}`);

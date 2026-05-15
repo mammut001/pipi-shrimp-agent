@@ -15,6 +15,7 @@ import {
   toHistoryConfigSnapshot,
   type AutoResearchIterationRecord,
   type AutoResearchRecoveryAction,
+  type AutoResearchResumeToken,
   type AutoResearchRunEvent,
   type AutoResearchRunPhase,
   type AutoResearchRunRecord,
@@ -26,6 +27,10 @@ import {
   persistAutoResearchLastUsedConfig,
   type AutoResearchDefaultConfig,
 } from '@/services/autoresearch/defaultConfig';
+import {
+  createAutoResearchResumeToken,
+  patchAutoResearchResumeToken,
+} from '@/services/autoresearch/resumeToken';
 import { withSshConfigDefaults } from '@/types/ssh';
 import type { ExecMode, SshAuthMode, SshConfig } from '@/types/ssh';
 
@@ -268,6 +273,18 @@ function buildRunRecordFromInit(opts: {
     summary: undefined,
     reason: undefined,
     liveOutputExcerpt: '',
+    resumeToken: createAutoResearchResumeToken({
+      sessionId: opts.id,
+      sshConfig: opts.sshConfig,
+      experimentDir: opts.experimentDir || opts.sshConfig.remoteWorkDir || '',
+      sessionFilePath: opts.sessionFilePath,
+      livingDocPath: opts.livingDocPath,
+      metricName: opts.metricName,
+      metricDirection: opts.metricDirection,
+      maxIterations: opts.maxIterations,
+      baseline: opts.baseline ?? null,
+      createdAt: opts.createdAt,
+    }),
   };
 }
 
@@ -378,6 +395,8 @@ interface AutoResearchStore extends ExperimentSession {
   setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string; reason?: string }) => void;
   setReflectionFailed: (reason: string, options?: { summary?: string; endedAt?: string }) => void;
   setError: (msg: string) => void;
+  patchActiveRunResumeToken: (patch: Partial<Omit<AutoResearchResumeToken, 'schemaVersion' | 'sessionId' | 'createdAt'>>) => void;
+  clearActiveRunResumeToken: () => void;
   setStatusMessage: (msg?: string) => void;
   updateRunPaths: (paths: { sshConfig?: SshConfig; experimentDir?: string; sessionFilePath?: string; livingDocPath?: string; terminalCwd?: string }) => void;
   incrementIteration: () => void;
@@ -448,6 +467,23 @@ interface AutoResearchStore extends ExperimentSession {
   setLastUsedConfig: (config: AutoResearchDefaultConfig) => void;
   clearLastUsedConfig: () => void;
   setTelegramConfig: (cfg: Partial<TelegramNotifyConfig>) => void;
+  activateHistoricalRun: (input: {
+    runId: string;
+    sshConfig: SshConfig;
+    experimentDir: string;
+    sessionFilePath?: string;
+    livingDocPath?: string;
+    metricName: string;
+    metricDirection: 'lower' | 'higher';
+    maxIterations: number;
+    baseline?: number | null;
+    pendingIteration: number;
+    agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
+    resumeToken?: AutoResearchResumeToken;
+    experiments?: ExperimentEntry[];
+    liveOutput?: string;
+    telegramConfig?: Partial<TelegramNotifyConfig>;
+  }) => void;
   showSetupModal: boolean;
   setShowSetupModal: (show: boolean) => void;
 }
@@ -561,6 +597,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   setRunStatus: (status, options) => set((state) => {
     const updatedAt = options?.endedAt ?? new Date().toISOString();
     const clearReason = ['running', 'waiting_rate_limit', 'completed', 'stopped'].includes(status);
+    const clearResumeToken = ['completed', 'stopped', 'failed', 'reflection_failed', 'interrupted'].includes(status);
     const nextReason = options?.reason !== undefined
       ? sanitizeOptionalText(options.reason)
       : clearReason
@@ -587,6 +624,9 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
           : clearReason
             ? undefined
             : run.reason,
+        resumeToken: clearResumeToken
+          ? undefined
+          : patchAutoResearchResumeToken(run.resumeToken, { status }, updatedAt),
       })),
     };
   }),
@@ -609,6 +649,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         currentPhase: 'FAILED',
         summary: sanitizedSummary ?? sanitizedReason,
         reason: sanitizedReason,
+        resumeToken: undefined,
         events: [...run.events, createRunEvent(run.id, {
           timestamp: endedAt,
           level: 'error',
@@ -640,6 +681,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         currentPhase: 'FAILED',
         summary: sanitizedMessage,
         reason: sanitizedMessage,
+        resumeToken: undefined,
         events: [...run.events, createRunEvent(run.id, {
           timestamp: endedAt,
           level: 'error',
@@ -661,6 +703,20 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     })),
   })),
 
+  patchActiveRunResumeToken: (patch) => set((state) => ({
+    ...withActiveRunUpdate(state, (run) => ({
+      ...run,
+      resumeToken: patchAutoResearchResumeToken(run.resumeToken, patch),
+    })),
+  })),
+
+  clearActiveRunResumeToken: () => set((state) => ({
+    ...withActiveRunUpdate(state, (run) => ({
+      ...run,
+      resumeToken: undefined,
+    })),
+  })),
+
   updateRunPaths: (paths) => set((state) => ({
     sshConfig: paths.sshConfig ? withSshConfigDefaults(paths.sshConfig) : state.sshConfig,
     experimentDir: paths.experimentDir ?? state.experimentDir,
@@ -670,6 +726,12 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     ...withActiveRunUpdate(state, (run) => ({
       ...run,
       updatedAt: new Date().toISOString(),
+      resumeToken: patchAutoResearchResumeToken(run.resumeToken, {
+        sshConfig: paths.sshConfig ? withSshConfigDefaults(paths.sshConfig) : run.resumeToken?.sshConfig,
+        experimentDir: paths.experimentDir ?? run.resumeToken?.experimentDir,
+        sessionFilePath: paths.sessionFilePath ?? run.resumeToken?.sessionFilePath,
+        livingDocPath: paths.livingDocPath ?? run.resumeToken?.livingDocPath,
+      }),
       config: {
         ...run.config,
         experimentDir: paths.experimentDir ?? run.config.experimentDir,
@@ -687,6 +749,12 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       currentIteration: state.currentIteration + 1,
       updatedAt: new Date().toISOString(),
       status: run.status === 'waiting_rate_limit' ? 'running' : run.status,
+      resumeToken: patchAutoResearchResumeToken(run.resumeToken, {
+        status: 'running',
+        currentIteration: state.currentIteration + 1,
+        pendingIteration: state.currentIteration + 1,
+        replayIteration: true,
+      }),
     })),
   })),
 
@@ -769,6 +837,11 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
         ...run,
         updatedAt: input.endedAt ?? new Date().toISOString(),
         iterations: nextIterations,
+        resumeToken: patchAutoResearchResumeToken(run.resumeToken, {
+          currentIteration: input.iteration,
+          pendingIteration: input.iteration + 1,
+          replayIteration: false,
+        }, input.endedAt),
       };
     }),
   })),
@@ -923,6 +996,85 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   setTelegramConfig: (cfg) => set((state) => ({
     telegramConfig: { ...state.telegramConfig, ...cfg },
   })),
+
+  activateHistoricalRun: (input) => set((state) => {
+    const resumedAt = new Date().toISOString();
+    const existingRun = state.runHistory.find((run) => run.id === input.runId);
+    if (!existingRun) {
+      return {};
+    }
+
+    const restoredCurrentIteration = Math.max(0, input.pendingIteration - 1);
+    const restoredResumeToken = patchAutoResearchResumeToken(
+      input.resumeToken ?? existingRun.resumeToken,
+      {
+        status: 'running',
+        sshConfig: withSshConfigDefaults(input.sshConfig),
+        experimentDir: input.experimentDir,
+        sessionFilePath: input.sessionFilePath,
+        livingDocPath: input.livingDocPath,
+        metricName: input.metricName,
+        metricDirection: input.metricDirection,
+        maxIterations: input.maxIterations,
+        baseline: input.baseline ?? existingRun.config.baseline ?? null,
+        currentIteration: restoredCurrentIteration,
+        pendingIteration: input.pendingIteration,
+        replayIteration: true,
+      },
+      resumedAt,
+    );
+
+    return {
+      id: input.runId,
+      loopState: 'running',
+      currentIteration: restoredCurrentIteration,
+      maxIterations: input.maxIterations,
+      bestMetric: existingRun.bestMetricValue ?? input.baseline ?? null,
+      metricDirection: input.metricDirection,
+      metricName: input.metricName,
+      consecutiveFailures: existingRun.failureCount,
+      experimentDir: input.experimentDir,
+      sessionFilePath: input.sessionFilePath || '',
+      livingDocPath: input.livingDocPath || '',
+      startedAt: existingRun.startedAt || existingRun.createdAt,
+      experiments: input.experiments ?? [],
+      sshConfig: withSshConfigDefaults(input.sshConfig),
+      telegramConfig: { ...defaultTelegramConfig, ...input.telegramConfig },
+      liveOutput: input.liveOutput ?? existingRun.liveOutputExcerpt ?? '',
+      selectedExperiment: -1,
+      errorMessage: undefined,
+      statusMessage: undefined,
+      reason: undefined,
+      agentConfigSnapshot: input.agentConfigSnapshot,
+      terminalVisible: false,
+      terminalReady: false,
+      terminalSessionId: null,
+      terminalCwd: input.sshConfig.remoteWorkDir || '',
+      runHistory: updateRunRecord(state.runHistory, input.runId, (run) => ({
+        ...run,
+        status: 'running',
+        updatedAt: resumedAt,
+        endedAt: undefined,
+        summary: 'Run resumed from recovery snapshot.',
+        reason: undefined,
+        currentIteration: restoredCurrentIteration,
+        resumeToken: restoredResumeToken,
+        events: [...run.events, createRunEvent(run.id, {
+          timestamp: resumedAt,
+          level: 'info',
+          phase: 'system',
+          type: 'run_status_changed',
+          message: 'Run resumed from recovery token.',
+          summary: 'Run resumed from recovery token.',
+          metadata: {
+            pendingIteration: input.pendingIteration,
+          },
+        })].slice(-200),
+      })),
+      selectedRunId: input.runId,
+      showSetupModal: false,
+    };
+  }),
 
   setShowSetupModal: (showSetupModal) => set({ showSetupModal }),
 }));

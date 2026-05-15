@@ -15,6 +15,10 @@ import {
 } from '@/store/autoresearchStore';
 import { AutoResearchRunDetailDocument } from './autoresearch/AutoResearchRunDetailDocument';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
+import {
+  buildAutoResearchRunLockMessage,
+  getAutoResearchLifecycleLock,
+} from '@/services/autoresearch/runLock';
 import { openFileExternal } from '@/services/docService';
 import {
   buildAutoResearchLiveOutputFilename,
@@ -25,11 +29,13 @@ import {
   stopExperimentLoop,
   pauseExperimentLoop,
   resumeExperimentLoop,
+  resumeInterruptedAutoResearchRun,
 } from '@/services/autoresearch';
 import {
   buildAutoResearchModelDisplayFromSnapshot,
 } from '@/services/autoresearch/modelDisplay';
 import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
+import { buildAutoResearchRecoverySummary } from '@/services/autoresearch/recoverySummary';
 import { downloadTextFile, stripAnsiText, writeClipboardText } from '@/utils/clipboard';
 
 type LiveOutputFeedback = 'copied' | 'cleared' | null;
@@ -213,6 +219,7 @@ export function AutoResearchPanel() {
   const selectedRunContext = useAutoResearchStore(getSelectedAutoResearchRunContext);
   const selectedRun = selectedRunContext.run;
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
+  const lifecycleLock = useAutoResearchStore((state) => getAutoResearchLifecycleLock(state));
   const loopState = selectedRunContext.loopState;
   const runReason = selectedRunContext.reason;
 
@@ -221,6 +228,8 @@ export function AutoResearchPanel() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [clearedLiveChars, setClearedLiveChars] = useState(0);
   const [liveOutputFeedback, setLiveOutputFeedback] = useState<LiveOutputFeedback>(null);
+  const [panelWarning, setPanelWarning] = useState<string | null>(null);
+  const [isResumingInterruptedRun, setIsResumingInterruptedRun] = useState(false);
 
   const isSelectedRunActive = selectedRunContext.isActive;
   const rawLiveOutput = selectedRunContext.liveOutput;
@@ -230,10 +239,30 @@ export function AutoResearchPanel() {
   const iterations = selectedRun?.iterations ?? [];
   const selectedIterationIndex = selectedRunContext.selectedIterationIndex;
   const recentEvents = selectedRun?.events.slice(-6).reverse() ?? [];
+  const recoverySummary = useMemo(
+    () => (selectedRun ? buildAutoResearchRecoverySummary(selectedRun) : null),
+    [selectedRun],
+  );
   const allEventLines = useMemo(
     () => formatAutoResearchEventDump(selectedRun?.events ?? []),
     [selectedRun?.events],
   );
+  const canResumeInterruptedRun = Boolean(
+    selectedRun
+    && !isSelectedRunActive
+    && selectedRun.status === 'interrupted'
+    && selectedRun.resumeToken?.resumable,
+  );
+
+  const handleShowSetup = useCallback(() => {
+    if (lifecycleLock.locked) {
+      setPanelWarning(buildAutoResearchRunLockMessage('start a new run', lifecycleLock));
+      return;
+    }
+
+    setPanelWarning(null);
+    setShowSetupModal(true);
+  }, [lifecycleLock, setShowSetupModal]);
 
   const showLiveOutputFeedback = useCallback((next: Exclude<LiveOutputFeedback, null>) => {
     setLiveOutputFeedback(next);
@@ -254,9 +283,33 @@ export function AutoResearchPanel() {
     setLiveOutputFeedback(null);
   }, [selectedRun?.id]);
 
+  useEffect(() => {
+    if (!lifecycleLock.locked) {
+      setPanelWarning(null);
+    }
+  }, [lifecycleLock.locked]);
+
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
   const handleResume = useCallback(() => resumeExperimentLoop(), []);
   const handleStop = useCallback(() => stopExperimentLoop(), []);
+  const handleResumeInterruptedRun = useCallback(() => {
+    if (!selectedRun || !canResumeInterruptedRun || isResumingInterruptedRun) {
+      return;
+    }
+
+    setIsResumingInterruptedRun(true);
+    setPanelWarning(null);
+    void resumeInterruptedAutoResearchRun(selectedRun.id)
+      .then(() => {
+        setDetailOpen(false);
+      })
+      .catch((error) => {
+        setPanelWarning(redactSensitiveText(error instanceof Error ? error.message : String(error)));
+      })
+      .finally(() => {
+        setIsResumingInterruptedRun(false);
+      });
+  }, [canResumeInterruptedRun, isResumingInterruptedRun, selectedRun]);
   const handleOpenSelectedRunArtifact = useCallback(() => {
     const targetPath = selectedRun?.config.livingDocPath
       || selectedRun?.config.sessionFilePath
@@ -333,7 +386,7 @@ export function AutoResearchPanel() {
           Autonomous ML experiment loop on your remote VPS
         </p>
         <button
-          onClick={() => setShowSetupModal(true)}
+          onClick={handleShowSetup}
           className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-bold hover:bg-indigo-700 transition-colors"
         >
           Setup & Start
@@ -348,12 +401,17 @@ export function AutoResearchPanel() {
         <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Run History</p>
           <button
-            onClick={() => setShowSetupModal(true)}
+            onClick={handleShowSetup}
             className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[9px] font-bold hover:bg-indigo-100 transition-colors"
           >
             New Run
           </button>
         </div>
+        {panelWarning && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[9px] text-amber-800">
+            {panelWarning}
+          </div>
+        )}
         <div className="max-h-24 overflow-y-auto space-y-1">
           {sortedRuns.map((run) => (
             <button
@@ -406,16 +464,37 @@ export function AutoResearchPanel() {
               <p className="break-all">{selectedRun.config.experimentDir}</p>
             </div>
 
-            {selectedRun.summary && selectedRun.status !== 'reflection_failed' && (
-              <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5 text-[9px] text-yellow-800">
-                {redactSensitiveText(selectedRun.summary)}
+            {recoverySummary && (
+              <div className={`rounded-lg border px-2 py-1.5 text-[9px] ${recoverySummary.tone === 'error'
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : recoverySummary.tone === 'warn'
+                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : 'border-blue-200 bg-blue-50 text-blue-800'}`}
+              >
+                <p className="font-semibold uppercase tracking-wider text-[8px]">{recoverySummary.title}</p>
+                <p className="mt-0.5">{redactSensitiveText(recoverySummary.message)}</p>
+                {recoverySummary.hint && <p className="mt-1 opacity-90">{redactSensitiveText(recoverySummary.hint)}</p>}
+                {recoverySummary.actions.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {recoverySummary.actions.slice(0, 3).map((action) => (
+                      <button
+                        key={`panel-recovery-${action.type}-${action.label || 'label'}`}
+                        type="button"
+                        disabled={action.supported === false}
+                        onClick={() => setDetailOpen(true)}
+                        className="rounded-full border border-current/20 bg-white/70 px-2 py-0.5 text-[8px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {action.label || action.type}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {selectedRun.status === 'reflection_failed' && runReason && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[9px] text-red-700">
-                <p className="font-semibold uppercase tracking-wider text-[8px] text-red-500">{t('autoresearch.reflectionReason')}</p>
-                <p className="mt-0.5">{redactSensitiveText(runReason)}</p>
+            {selectedRun.summary && !recoverySummary && (
+              <div className="rounded-lg bg-yellow-50 border border-yellow-100 px-2 py-1.5 text-[9px] text-yellow-800">
+                {redactSensitiveText(selectedRun.summary)}
               </div>
             )}
 
@@ -426,6 +505,17 @@ export function AutoResearchPanel() {
             >
               Open Detail
             </button>
+
+            {canResumeInterruptedRun && (
+              <button
+                type="button"
+                onClick={handleResumeInterruptedRun}
+                disabled={isResumingInterruptedRun}
+                className="w-full py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-[9px] font-bold text-emerald-700 hover:bg-emerald-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isResumingInterruptedRun ? 'Resuming…' : 'Resume Run'}
+              </button>
+            )}
 
             {isSelectedRunActive && (
               <div className="flex gap-1.5">
@@ -464,7 +554,7 @@ export function AutoResearchPanel() {
             )}
           </div>
 
-          {isSelectedRunActive && loopState === 'error' && runReason && (
+          {isSelectedRunActive && loopState === 'error' && runReason && !recoverySummary && (
             <div className="px-3 py-2 bg-red-50 border-b border-red-100 text-red-600 text-[10px]">
               {redactSensitiveText(runReason)}
             </div>
@@ -603,6 +693,16 @@ export function AutoResearchPanel() {
                     onBack={() => setDetailOpen(false)}
                     onOpen={handleOpenSelectedRunArtifact}
                     onClose={() => setDetailOpen(false)}
+                    headerActions={canResumeInterruptedRun ? (
+                      <button
+                        type="button"
+                        onClick={handleResumeInterruptedRun}
+                        disabled={isResumingInterruptedRun}
+                        className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isResumingInterruptedRun ? 'Resuming…' : 'Resume Run'}
+                      </button>
+                    ) : undefined}
                     className="min-h-screen sm:min-h-[calc(100vh-2rem)] sm:rounded-[28px] sm:border sm:border-[#e7ded1]"
                   />
                 </div>

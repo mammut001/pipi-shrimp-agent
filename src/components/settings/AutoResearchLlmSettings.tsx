@@ -1,5 +1,10 @@
 import { getCapability } from '@/services/llm/capabilities';
+import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { getProvider } from '@/shared/providers';
+import {
+  buildAutoResearchRunLockMessage,
+  getAutoResearchLifecycleLock,
+} from '@/services/autoresearch/runLock';
 import type { AutoResearchLlmSettings, ApiConfig } from '@/types/settings';
 
 type AutoResearchLlmSettingsProps = {
@@ -53,8 +58,13 @@ export function AutoResearchLlmSettingsSection({
   settings,
   onUpdate,
 }: AutoResearchLlmSettingsProps) {
+  const lifecycleLock = useAutoResearchStore((state) => getAutoResearchLifecycleLock(state));
   const activeConfig = apiConfigs.find((config) => config.id === activeConfigId) ?? null;
   const selectedDefaultConfig = apiConfigs.find((config) => config.id === settings.defaultConfigId) ?? activeConfig;
+  const settingsLocked = lifecycleLock.locked;
+  const lockMessage = settingsLocked
+    ? buildAutoResearchRunLockMessage('change the AutoResearch provider selection', lifecycleLock)
+    : null;
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-4">
@@ -64,6 +74,12 @@ export function AutoResearchLlmSettingsSection({
           Pick the default provider snapshot for AutoResearch runs, then override agent and reflection only when needed.
         </p>
       </div>
+
+      {lockMessage && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {lockMessage}
+        </div>
+      )}
 
       {apiConfigs.length === 0 ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -76,8 +92,9 @@ export function AutoResearchLlmSettingsSection({
               <span className="mb-1 block font-medium text-gray-700">Default provider</span>
               <select
                 value={settings.defaultConfigId ?? ''}
+                disabled={settingsLocked}
                 onChange={(event) => onUpdate({ defaultConfigId: event.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
               >
                 <option value="">Use active Settings config</option>
                 {apiConfigs.map((config) => (
@@ -92,8 +109,9 @@ export function AutoResearchLlmSettingsSection({
               <span className="mb-1 block font-medium text-gray-700">Agent model override</span>
               <select
                 value={settings.agentConfigId ?? ''}
+                disabled={settingsLocked}
                 onChange={(event) => onUpdate({ agentConfigId: event.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
               >
                 <option value="">Use AutoResearch default</option>
                 {apiConfigs.map((config) => (
@@ -108,8 +126,9 @@ export function AutoResearchLlmSettingsSection({
               <span className="mb-1 block font-medium text-gray-700">Reflection model override</span>
               <select
                 value={settings.reflectionConfigId ?? ''}
+                disabled={settingsLocked}
                 onChange={(event) => onUpdate({ reflectionConfigId: event.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
               >
                 <option value="">Use AutoResearch default</option>
                 {apiConfigs.map((config) => (

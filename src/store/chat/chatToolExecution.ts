@@ -3,12 +3,22 @@ import { invoke } from '@tauri-apps/api/core';
 import type { EngineEvent } from '../../core/types';
 import { t } from '../../i18n';
 import { recordToolForReactiveCompact } from '../../services/compact/reactiveCompact';
-import { StreamingToolExecutor, partitionTools, type BatchExecutionResult, type ToolRequest } from '../../services/StreamingToolExecutor';
+import { StreamingToolExecutor, partitionTools, type ToolRequest } from '../../services/StreamingToolExecutor';
 import { getCurrentAgentContext } from '../../services/multiagent/agentContext';
 import { runAgentBackground, runAgentSync } from '../../services/multiagent/subagent';
 import { runPostToolUseHooks, type PostHookContext } from '../../services/tools/postToolUseHooks';
 import { runPreToolUseHooks } from '../../services/tools/preToolUseHooks';
+import {
+  canAutoApproveTool,
+  isPipelineSingleInvokeTool,
+  type PermissionMode,
+} from '../../services/tools/toolExecutionPolicy';
 import type { ChatState } from '../../types/chat';
+import {
+  markSessionToolRunning,
+  resolveSessionTool,
+  seedSessionToolRuntime,
+} from './toolRuntimeState';
 import { useUIStore } from '../uiStore';
 import { createToolTaskSteps } from '../taskLifecycle';
 import { registerArtifactsFromToolResults, type ArtifactDetectorModule, type ToolArtifactResult } from './chatArtifacts';
@@ -84,54 +94,154 @@ async function executeConcurrentTools(
   concurrent: ToolRequest[],
   normalizedToolArgsById: Map<string, string>,
   activeSessionId: string,
+  permissionMode: PermissionMode,
   workDir: string | null,
+  get: () => ChatState,
+  set: ChatSetState,
   deps: ToolBatchExecutionDeps,
 ): Promise<ToolArtifactResult[]> {
   const uiStore = deps.uiStore.getState();
+  const executableConcurrent: ToolRequest[] = [];
+  const blockedResults: ToolArtifactResult[] = [];
+
   for (const req of concurrent) {
+    markSessionToolRunning(activeSessionId, req.id, req.name, set, get);
     uiStore.updateTaskStep(req.id, 'running');
+
+    const hookResult = await deps.runPreToolUseHooks({
+      toolName: req.name,
+      toolArgs: normalizedToolArgsById.get(req.id) ?? JSON.stringify(req.arguments),
+      workDir: workDir ?? undefined,
+      permissionMode,
+      sessionId: activeSessionId,
+    });
+
+    if (!hookResult.approved || hookResult.requiresConfirmation) {
+      const message = hookResult.error
+        || (hookResult.requiresConfirmation
+          ? `Tool "${req.name}" requires explicit confirmation and cannot run in a concurrent batch.`
+          : 'Tool execution blocked');
+      uiStore.addNotification('error', message, activeSessionId);
+      uiStore.updateTaskStep(req.id, 'failed');
+      resolveSessionTool(
+        activeSessionId,
+        req.id,
+        req.name,
+        'failed',
+        `Error: ${message}`,
+        set,
+        get,
+      );
+      blockedResults.push({
+        id: req.id,
+        content: `Error: ${message}`,
+        toolName: req.name,
+        toolArgs: normalizedToolArgsById.get(req.id) ?? '{}',
+      });
+      continue;
+    }
+
+    const effectiveArgs = hookResult.modifiedArgs ?? normalizedToolArgsById.get(req.id) ?? JSON.stringify(req.arguments);
+    normalizedToolArgsById.set(req.id, effectiveArgs);
+    try {
+      executableConcurrent.push({
+        id: req.id,
+        name: req.name,
+        arguments: JSON.parse(effectiveArgs) as Record<string, unknown>,
+      });
+    } catch {
+      uiStore.addNotification('error', `Invalid tool arguments for ${req.name}`, activeSessionId);
+      uiStore.updateTaskStep(req.id, 'failed');
+      resolveSessionTool(
+        activeSessionId,
+        req.id,
+        req.name,
+        'failed',
+        'Error: invalid tool arguments',
+        set,
+        get,
+      );
+      blockedResults.push({
+        id: req.id,
+        content: 'Error: invalid tool arguments',
+        toolName: req.name,
+        toolArgs: effectiveArgs,
+      });
+    }
+  }
+
+  if (executableConcurrent.length === 0) {
+    return blockedResults;
   }
 
   try {
-    const batchResult = await deps.createExecutor().executeBatch(concurrent, {
+    const batchResult = await deps.createExecutor().executeBatch(executableConcurrent, {
       sessionId: activeSessionId,
       workDir: workDir ?? undefined,
+      source: 'assistant_tool_call',
+      permissionMode,
     });
 
-    return batchResult.results.map((result) => {
-      const req = concurrent.find((candidate) => candidate.id === result.id);
-      uiStore.updateTaskStep(result.id, result.is_error ? 'failed' : 'done');
-      if (req) {
-        const postCtx: PostHookContext = {
-          toolName: req.name,
+    return [
+      ...blockedResults,
+      ...batchResult.results.map((result) => {
+        const req = executableConcurrent.find((candidate) => candidate.id === result.id);
+        if (req) {
+          resolveSessionTool(
+            activeSessionId,
+            result.id,
+            req.name,
+            result.is_error ? 'failed' : 'done',
+            result.content,
+            set,
+            get,
+          );
+        }
+        uiStore.updateTaskStep(result.id, result.is_error ? 'failed' : 'done');
+        if (req) {
+          const postCtx: PostHookContext = {
+            toolName: req.name,
+            toolArgs: normalizedToolArgsById.get(result.id) ?? '{}',
+            result: result.content,
+            isError: result.is_error,
+            sessionId: activeSessionId,
+          };
+          void deps.runPostToolUseHooks(postCtx).catch((error: unknown) => {
+            console.warn('[PostToolUseHooks]', error);
+          });
+          deps.recordToolForReactiveCompact(activeSessionId, result.id, req.name, result.content);
+        }
+
+        return {
+          id: result.id,
+          content: result.content,
+          toolName: req?.name,
           toolArgs: normalizedToolArgsById.get(result.id) ?? '{}',
-          result: result.content,
-          isError: result.is_error,
-          sessionId: activeSessionId,
         };
-        void deps.runPostToolUseHooks(postCtx).catch((error: unknown) => {
-          console.warn('[PostToolUseHooks]', error);
-        });
-        deps.recordToolForReactiveCompact(activeSessionId, result.id, req.name, result.content);
-      }
-
-      return {
-        id: result.id,
-        content: result.content,
-        toolName: req?.name,
-        toolArgs: normalizedToolArgsById.get(result.id) ?? '{}',
-      };
-    });
+      }),
+    ];
   } catch (error) {
-    return concurrent.map((req) => {
-      deps.uiStore.getState().updateTaskStep(req.id, 'failed');
-      return {
-        id: req.id,
-        content: `Error: batch execution failed: ${error instanceof Error ? error.message : String(error)}`,
-        toolName: req.name,
-        toolArgs: normalizedToolArgsById.get(req.id) ?? '{}',
-      };
-    });
+    return [
+      ...blockedResults,
+      ...executableConcurrent.map((req) => {
+        resolveSessionTool(
+          activeSessionId,
+          req.id,
+          req.name,
+          'failed',
+          `Error: batch execution failed: ${error instanceof Error ? error.message : String(error)}`,
+          set,
+          get,
+        );
+        deps.uiStore.getState().updateTaskStep(req.id, 'failed');
+        return {
+          id: req.id,
+          content: `Error: batch execution failed: ${error instanceof Error ? error.message : String(error)}`,
+          toolName: req.name,
+          toolArgs: normalizedToolArgsById.get(req.id) ?? '{}',
+        };
+      }),
+    ];
   }
 }
 
@@ -139,11 +249,12 @@ async function resolveSerialToolPermission(
   tool: ToolRequest,
   effectiveArgs: string,
   activeSessionId: string,
-  permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only',
+  permissionMode: PermissionMode,
   workDir: string | null,
+  requiresConfirmation: boolean,
   deps: ToolBatchExecutionDeps,
 ): Promise<boolean> {
-  if (permissionMode === 'bypass' || permissionMode === 'auto-edits') {
+  if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name)) {
     return true;
   }
 
@@ -225,7 +336,7 @@ async function resolveSerialToolPermission(
 }
 
 async function executeAgentTool(
-  tool: ToolRequest,
+  _tool: ToolRequest,
   effectiveArgs: string,
   activeSessionId: string,
   workDir: string | null,
@@ -354,12 +465,15 @@ async function executeSerialTool(
   tool: ToolRequest,
   normalizedToolArgs: string,
   activeSessionId: string,
-  permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only',
+  permissionMode: PermissionMode,
   workDir: string | null,
+  get: () => ChatState,
+  set: ChatSetState,
   deps: ToolBatchExecutionDeps,
 ): Promise<ToolArtifactResult> {
   const uiStore = deps.uiStore.getState();
 
+  markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
   uiStore.updateTaskStep(tool.id, 'running');
 
   if (tool.name === 'AskUserQuestion') {
@@ -376,6 +490,15 @@ async function executeSerialTool(
       toolResultContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
     }
     uiStore.updateTaskStep(tool.id, toolResultContent.startsWith('Error:') ? 'failed' : 'done');
+    resolveSessionTool(
+      activeSessionId,
+      tool.id,
+      tool.name,
+      toolResultContent.startsWith('Error:') ? 'failed' : 'done',
+      toolResultContent,
+      set,
+      get,
+    );
     return { id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: normalizedToolArgs };
   }
 
@@ -394,15 +517,25 @@ async function executeSerialTool(
     uiStore.addNotification('error', hookResult.error || 'Tool execution blocked', activeSessionId);
     toolResultContent = `Error: ${hookResult.error || 'Tool execution blocked'}`;
     uiStore.updateTaskStep(tool.id, 'failed');
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', toolResultContent, set, get);
     return { id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: effectiveArgs };
   }
 
   effectiveArgs = hookResult.modifiedArgs || normalizedToolArgs;
   const session = deps.uiStore.getState();
   void session;
-  const approved = await resolveSerialToolPermission(tool, effectiveArgs, activeSessionId, permissionMode, workDir, deps);
+  const approved = await resolveSerialToolPermission(
+    tool,
+    effectiveArgs,
+    activeSessionId,
+    permissionMode,
+    workDir,
+    Boolean(hookResult.requiresConfirmation),
+    deps,
+  );
   if (!approved) {
     uiStore.updateTaskStep(tool.id, 'failed');
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', deps.t('permission.deniedMessage'), set, get);
     return {
       id: tool.id,
       content: deps.t('permission.deniedMessage'),
@@ -411,6 +544,7 @@ async function executeSerialTool(
     };
   }
 
+  let toolDidFail = false;
   try {
     if (tool.name === 'get_current_workspace') {
       toolResultContent = workDir
@@ -418,24 +552,40 @@ async function executeSerialTool(
         : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
     } else if (tool.name === 'agent_tool') {
       toolResultContent = await executeAgentTool(tool, effectiveArgs, activeSessionId, workDir, deps);
+      toolDidFail = toolResultContent.startsWith('Error:');
+    } else if (isPipelineSingleInvokeTool(tool.name)) {
+      const nativeResult = await deps.invoke<{
+        content: string;
+        is_error: boolean;
+      }>('execute_single_tool', {
+        toolCallId: tool.id,
+        name: tool.name,
+        arguments: effectiveArgs,
+        workDir,
+        source: 'assistant_tool_call',
+      });
+      toolResultContent = nativeResult.content;
+      toolDidFail = Boolean(nativeResult.is_error);
     } else {
       toolResultContent = await deps.invoke<string>('execute_tool', {
         toolName: tool.name,
         arguments: effectiveArgs,
         workDir,
       });
+      toolDidFail = toolResultContent.startsWith('Error:');
     }
-    uiStore.updateTaskStep(tool.id, 'done');
+    uiStore.updateTaskStep(tool.id, toolDidFail ? 'failed' : 'done');
   } catch (error) {
     uiStore.updateTaskStep(tool.id, 'failed');
     toolResultContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', toolResultContent, set, get);
   }
 
   const postCtx: PostHookContext = {
     toolName: tool.name,
     toolArgs: effectiveArgs,
     result: toolResultContent,
-    isError: toolResultContent.startsWith('Error:'),
+    isError: toolDidFail || toolResultContent.startsWith('Error:'),
     sessionId: activeSessionId,
   };
   void deps.runPostToolUseHooks(postCtx).catch((error: unknown) => {
@@ -455,7 +605,7 @@ export async function handleToolBatchRequest(
   context: ToolBatchExecutionContext,
   deps: ToolBatchExecutionDeps = defaultDeps,
 ): Promise<ToolArtifactResult[]> {
-  const { chunk, activeSessionId, assistantMessageId, get, ensureSessionWorkDir } = context;
+  const { chunk, activeSessionId, assistantMessageId, get, set, ensureSessionWorkDir } = context;
   const uiStore = deps.uiStore.getState();
   let currentSession = get().sessions.find((session) => session.id === activeSessionId);
   let workDir = currentSession?.workDir ?? null;
@@ -482,6 +632,7 @@ export async function handleToolBatchRequest(
     }
   }
 
+  seedSessionToolRuntime(activeSessionId, chunk.tools, set, get);
   uiStore.setTaskProgress(createToolTaskSteps(chunk.tools));
 
   const normalizedToolArgsById = new Map<string, string>();
@@ -515,7 +666,16 @@ export async function handleToolBatchRequest(
   const allResults: ToolArtifactResult[] = [];
 
   if (concurrent.length > 0) {
-    allResults.push(...(await executeConcurrentTools(concurrent, normalizedToolArgsById, activeSessionId, workDir, deps)));
+    allResults.push(...(await executeConcurrentTools(
+      concurrent,
+      normalizedToolArgsById,
+      activeSessionId,
+      permissionMode,
+      workDir,
+      get,
+      set,
+      deps,
+    )));
   }
 
   for (const tool of chunk.tools) {
@@ -529,6 +689,8 @@ export async function handleToolBatchRequest(
         activeSessionId,
         permissionMode,
         workDir,
+        get,
+        set,
         deps,
       ),
     );

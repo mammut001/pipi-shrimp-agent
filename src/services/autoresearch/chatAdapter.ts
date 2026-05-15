@@ -39,6 +39,13 @@ import { appendTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
 import type { AutoResearchEnvironmentSummary } from './preflight';
 import { buildAutoResearchToolCatalog } from './toolCatalog';
+import type { AutoResearchRunPhase } from './history';
+import {
+  buildAutoResearchToolLaneError,
+  classifyAutoResearchToolPhase,
+  getAutoResearchAllowedToolsForPhase,
+  isAutoResearchToolLaneTransitionAllowed,
+} from './toolLanes';
 import {
   getRemainingToolBudget,
   getToolBudgetSummaryFromUnknown,
@@ -256,6 +263,14 @@ function buildIterationFailureOutput(input: {
   budgetExhausted?: boolean;
 }): string {
   const payload = {
+    schemaVersion: 1,
+    sessionId: useAutoResearchStore.getState().id,
+    runId: useAutoResearchStore.getState().id,
+    iteration: useAutoResearchStore.getState().currentIteration,
+    primaryMetric: input.metricName,
+    direction: useAutoResearchStore.getState().metricDirection,
+    timestamp: new Date().toISOString(),
+    generator: 'agent',
     metricName: input.metricName,
     metricValue: null,
     status: 'FAILED',
@@ -572,6 +587,7 @@ export function createAutoResearchSendMessage(
     let reflectionPasses = 0;
     let attemptPrompt = systemPrompt;
     const baseAllowedTools = buildAutoResearchToolCatalog(store.sshConfig);
+    let toolLanePhase: AutoResearchRunPhase = 'READ_CONTEXT';
     const currentRunDir = getCurrentRunDir();
     const effectiveWorkDir = store.sshConfig?.mode === 'local'
       ? (currentRunDir?.iterDir || workDir)
@@ -586,7 +602,13 @@ export function createAutoResearchSendMessage(
     let consecutiveApiRequestFailures = 0;
 
     while (true) {
-      const toolCallsById = new Map<string, { name: string; command?: string; argumentsText: string; path?: string }>();
+      const toolCallsById = new Map<string, {
+        name: string;
+        command?: string;
+        argumentsText: string;
+        path?: string;
+        phase?: AutoResearchRunPhase;
+      }>();
       const toolResults: AutoResearchObservedToolResult[] = [];
       const failedCommands: string[] = [];
       let reasoningBuffer = '';
@@ -632,6 +654,7 @@ export function createAutoResearchSendMessage(
           workDir: effectiveWorkDir,
           agentConfig: agentConfig!,
           allowedTools: retryConstraintState.allowedTools,
+          toolExecutionSource: 'autoresearch_phase',
           onTextDelta: (chunk) => {
             useAutoResearchStore.getState().appendLiveOutput(chunk);
           },
@@ -650,17 +673,54 @@ export function createAutoResearchSendMessage(
             }
             await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
           },
+          allowToolExecution: (call) => {
+            const command = parseToolCommand(call);
+            const nextPhase = classifyAutoResearchToolPhase({
+              currentPhase: toolLanePhase,
+              toolName: call.name,
+              isExperimentRun: isExperimentRunCommand(command, options.environmentSummary),
+              config: useAutoResearchStore.getState().sshConfig,
+            });
+            const phaseAllowedTools = getAutoResearchAllowedToolsForPhase(
+              useAutoResearchStore.getState().sshConfig,
+              nextPhase,
+            );
+
+            if (!phaseAllowedTools.includes(call.name)) {
+              return {
+                allowed: false,
+                reason: buildAutoResearchToolLaneError(call.name, nextPhase, phaseAllowedTools),
+              };
+            }
+
+            if (!isAutoResearchToolLaneTransitionAllowed(toolLanePhase, nextPhase)) {
+              return {
+                allowed: false,
+                reason: `Tool lane transition ${toolLanePhase} -> ${nextPhase} is not allowed in the same iteration.`,
+              };
+            }
+
+            toolLanePhase = nextPhase;
+            return { allowed: true };
+          },
           onToolCall: async (call) => {
             const command = parseToolCommand(call);
             const path = readToolPath(call.arguments);
             const parameterSummary = summarizeToolInput(call.arguments);
+            const toolPhase = classifyAutoResearchToolPhase({
+              currentPhase: toolLanePhase,
+              toolName: call.name,
+              isExperimentRun: isExperimentRunCommand(command, options.environmentSummary),
+              config: useAutoResearchStore.getState().sshConfig,
+            });
             toolCallsById.set(call.id, {
               name: call.name,
               command,
               argumentsText: call.arguments,
               path,
+              phase: toolPhase,
             });
-            if (command && isExperimentRunCommand(command, options.environmentSummary)) {
+            if (toolPhase === 'RUN_EXPERIMENT') {
               setAutoResearchPhase('RUN_EXPERIMENT', {
                 summary: `Running experiment command for iteration ${useAutoResearchStore.getState().currentIteration}.`,
               });
@@ -680,13 +740,13 @@ export function createAutoResearchSendMessage(
                 },
               });
             } else {
-              setAutoResearchPhase('EDIT_CODE', {
-                summary: `Tool ${call.name} is running.`,
+              setAutoResearchPhase(toolPhase, {
+                summary: `Tool ${call.name} is running in ${toolPhase}.`,
               });
             }
             emitAutoResearchRuntimeEvent({
               level: 'info',
-              phase: command && isExperimentRunCommand(command, options.environmentSummary) ? 'RUN_EXPERIMENT' : 'EDIT_CODE',
+              phase: toolPhase,
               type: 'tool_call_started',
               message: `${call.name} started.`,
               summary: parameterSummary,
@@ -695,6 +755,7 @@ export function createAutoResearchSendMessage(
                 arguments: call.arguments,
                 command,
                 path,
+                phase: toolPhase,
                 parameterSummary,
               },
             });
@@ -710,9 +771,15 @@ export function createAutoResearchSendMessage(
               failedCommands.push(observed.command);
             }
             const toolFailed = (typeof observed.exitCode === 'number' && observed.exitCode !== 0) || Boolean(observed.stderr);
+            const toolPhase = toolCall?.phase ?? classifyAutoResearchToolPhase({
+              currentPhase: toolLanePhase,
+              toolName: call.name,
+              isExperimentRun: isExperimentRunCommand(observed.command, options.environmentSummary),
+              config: useAutoResearchStore.getState().sshConfig,
+            });
             emitAutoResearchRuntimeEvent({
               level: toolFailed ? 'warn' : 'info',
-              phase: observed.command && isExperimentRunCommand(observed.command, options.environmentSummary) ? 'RUN_EXPERIMENT' : 'EDIT_CODE',
+              phase: toolPhase,
               type: toolFailed ? 'tool_call_failed' : 'tool_call_completed',
               message: `${call.name} ${toolFailed ? 'failed' : 'completed'}.`,
               summary: toolFailed
@@ -723,12 +790,13 @@ export function createAutoResearchSendMessage(
                 command: observed.command,
                 durationMs: call.durationMs,
                 exitCode: observed.exitCode,
+                phase: toolPhase,
                 path: toolCall?.path,
               },
             });
             emitAutoResearchRuntimeEvent({
               level: toolFailed ? 'warn' : 'debug',
-              phase: observed.command && isExperimentRunCommand(observed.command, options.environmentSummary) ? 'RUN_EXPERIMENT' : 'EDIT_CODE',
+              phase: toolPhase,
               type: 'tool_result',
               message: previewFirstLines(call.result, 10) || '(empty tool result)',
               summary: `${call.name} output`,

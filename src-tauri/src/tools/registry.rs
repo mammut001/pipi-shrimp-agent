@@ -12,7 +12,11 @@ use std::sync::Arc;
 
 use super::autoresearch_bootstrap::{self, BootstrapExecutionContext, BootstrapProviderContext};
 use super::{ToolCallRequest, ToolCallResult, ToolMetadata};
-use crate::commands::path_security::validate_path;
+use crate::commands::code::execute_bash_for_tool;
+use crate::commands::file::{
+    create_directory_for_tool, read_file_for_tool, resolve_path as resolve_tool_path,
+    write_file_for_tool,
+};
 use jsonschema::{JSONSchema, ValidationError};
 
 /// Tool handler: receives parsed JSON arguments, returns result string
@@ -65,7 +69,7 @@ impl ToolRegistry {
             .get(&req.name)
             .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", req.name))?;
 
-        let args: serde_json::Value = serde_json::from_str(&req.arguments).map_err(|e| {
+        let mut args: serde_json::Value = serde_json::from_str(&req.arguments).map_err(|e| {
             anyhow::anyhow!("Invalid JSON arguments for tool '{}': {}", req.name, e)
         })?;
 
@@ -82,6 +86,17 @@ impl ToolRegistry {
                 ));
             }
         }
+
+        if let Some(object) = args.as_object_mut() {
+            if let Some(work_dir) = &req.work_dir {
+                object
+                    .entry("work_dir".to_string())
+                    .or_insert_with(|| serde_json::Value::String(work_dir.clone()));
+            }
+        }
+
+        crate::tools::execution_policy::enforce_request_policy(req, &args)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         Ok((entry, args))
     }
@@ -333,10 +348,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
-            validate_path(path, work_dir)
-                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
-            std::fs::read_to_string(path)
-                .map_err(|e| anyhow::anyhow!("Cannot read '{}': {}", path, e))
+            read_file_for_tool(path, work_dir)
+                .map(|result| result.content)
+                .map_err(|error| anyhow::anyhow!(error.message))
         }),
         ToolMetadata {
             name: "read_file".to_string(),
@@ -368,20 +382,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: content"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
-            validate_path(path, work_dir)
-                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
-
-            // Ensure parent directory exists
-            if let Some(parent) = std::path::Path::new(path).parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| anyhow::anyhow!("Cannot create directory for '{}': {}", path, e))?;
-                }
-            }
-
-            std::fs::write(path, content)
-                .map_err(|e| anyhow::anyhow!("Cannot write '{}': {}", path, e))?;
-            Ok(format!("Successfully wrote {} bytes to {}", content.len(), path))
+            write_file_for_tool(path, content, work_dir).map_err(|error| anyhow::anyhow!(error.message))
         }),
         ToolMetadata {
             name: "write_file".to_string(),
@@ -414,15 +415,15 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
-            validate_path(path, work_dir)
-                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
+            let resolved = resolve_tool_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-            let dir = std::path::Path::new(path);
+            let dir = resolved.as_path();
             if !dir.exists() {
-                return Err(anyhow::anyhow!("Path does not exist: {}", path));
+                return Err(anyhow::anyhow!("Path does not exist: {}", resolved.display()));
             }
             if !dir.is_dir() {
-                return Err(anyhow::anyhow!("Path is not a directory: {}", path));
+                return Err(anyhow::anyhow!("Path is not a directory: {}", resolved.display()));
             }
 
             let mut entries: Vec<String> = Vec::new();
@@ -465,11 +466,8 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
-            validate_path(path, work_dir)
-                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
-            std::fs::create_dir_all(path)
-                .map_err(|e| anyhow::anyhow!("Cannot create directory '{}': {}", path, e))?;
-            Ok(format!("Directory created: {}", path))
+            create_directory_for_tool(path, work_dir)
+                .map_err(|error| anyhow::anyhow!(error.message))
         }),
         ToolMetadata {
             name: "create_directory".to_string(),
@@ -498,13 +496,13 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
-            validate_path(path, work_dir)
-                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
-            let exists = std::path::Path::new(path).exists();
-            let is_dir = std::path::Path::new(path).is_dir();
-            let is_file = std::path::Path::new(path).is_file();
+            let resolved = resolve_tool_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            let exists = resolved.exists();
+            let is_dir = resolved.is_dir();
+            let is_file = resolved.is_file();
             let kind = if is_dir { "directory" } else if is_file { "file" } else { "unknown" };
-            Ok(format!("{}: {} ({})", path, exists, kind))
+            Ok(format!("{}: {} ({})", resolved.display(), exists, kind))
         }),
         ToolMetadata {
             name: "path_exists".to_string(),
@@ -536,8 +534,8 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .and_then(|v| v.as_str())
                 .unwrap_or(".");
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
-            validate_path(path, work_dir)
-                .map_err(|e| anyhow::anyhow!("Path security violation: {}", e))?;
+            let resolved = resolve_tool_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
             let output = std::process::Command::new("rg")
                 .arg("--line-number")
@@ -545,7 +543,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .arg("--max-count")
                 .arg("50")
                 .arg(pattern)
-                .arg(path)
+                .arg(&resolved)
                 .output()
                 .map_err(|e| anyhow::anyhow!("Cannot run ripgrep: {}. Is rg installed?", e))?;
 
@@ -584,6 +582,52 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                     }
                 },
                 "required": ["pattern"],
+                "additionalProperties": false,
+            }),
+        },
+    );
+
+    // --- execute_command ---
+    registry.register(
+        "execute_command",
+        Arc::new(|args| {
+            let command = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing required parameter: command"))?;
+            let cwd = args.get("cwd").and_then(|v| v.as_str());
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            let timeout_secs = args
+                .get("timeoutSecs")
+                .and_then(|v| v.as_u64())
+                .or_else(|| args.get("timeout").and_then(|v| v.as_u64()));
+            let result = execute_bash_for_tool(command, cwd, work_dir, timeout_secs)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            serde_json::to_string(&result)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize command result: {}", e))
+        }),
+        ToolMetadata {
+            name: "execute_command".to_string(),
+            description: "Execute a shell command inside the bound work directory. Returns structured JSON with stdout, stderr, exit code, cwd, and truncation metadata.".to_string(),
+            is_read_only: false,
+            is_concurrency_safe: false,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional explicit cwd inside the bound workDir"
+                    },
+                    "timeoutSecs": {
+                        "type": "number",
+                        "description": "Optional timeout hint in seconds"
+                    }
+                },
+                "required": ["command"],
                 "additionalProperties": false,
             }),
         },
@@ -724,6 +768,8 @@ mod tests {
             name: name.to_string(),
             arguments: arguments.to_string(),
             work_dir: None,
+            source: super::super::ToolExecutionSource::Unknown,
+            allowed_tools: None,
             api_key: None,
             model: None,
             base_url: None,
@@ -783,6 +829,38 @@ mod tests {
         assert!(result.content.contains("python-ml-baseline"));
         assert!(work_dir.join("run_experiment.py").exists());
         assert!(work_dir.join("AUTORESEARCH.md").exists());
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    #[tokio::test]
+    async fn write_file_uses_bound_work_dir_for_relative_paths() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        let work_dir = std::env::temp_dir().join(format!(
+            "pipi-registry-write-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should be created");
+
+        let mut request = make_request(
+            "write_file",
+            serde_json::json!({
+                "path": "notes.txt",
+                "content": "hello"
+            }),
+        );
+        request.work_dir = Some(work_dir.to_string_lossy().to_string());
+        request.source = super::super::ToolExecutionSource::AssistantToolCall;
+
+        let result = registry
+            .execute_with_context(&request)
+            .await
+            .expect("execution should succeed");
+
+        assert!(!result.is_error);
+        assert!(work_dir.join("notes.txt").exists());
 
         let _ = std::fs::remove_dir_all(work_dir);
     }

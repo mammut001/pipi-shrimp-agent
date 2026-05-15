@@ -1032,9 +1032,16 @@ async fn execute_bootstrap_finalize_tool(
 
     let bootstrap_work_dir = resolve_target_path(&scaffold.work_dir, context)?;
     let bootstrap_file_path = get_bootstrap_result_path(&bootstrap_work_dir);
+    let bootstrap_temp_path = bootstrap_file_path.with_extension("json.tmp");
     let pretty = serde_json::to_string_pretty(&result)
         .map_err(|error| AppError::InternalError(format!("Failed to encode bootstrap result: {error}")))?;
-    write_text_file(&bootstrap_file_path, &format!("{pretty}\n")).await?;
+    write_text_file(&bootstrap_temp_path, &format!("{pretty}\n")).await?;
+    fs::rename(&bootstrap_temp_path, &bootstrap_file_path)
+        .await
+        .map_err(|error| AppError::InternalError(format!(
+            "Failed to finalize bootstrap result file {}: {error}",
+            bootstrap_file_path.display()
+        )))?;
 
     Ok(serde_json::to_string(&result)
         .map_err(|error| AppError::InternalError(format!("Failed to encode bootstrap result: {error}")))?)

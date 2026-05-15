@@ -126,7 +126,10 @@ function sanitizeSensitiveText(value: string, maxChars: number): string {
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"']+/ig, '$1[redacted]')
     .replace(/(x-api-key\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
     .replace(/(api[_ -]?key\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
-    .replace(/(token\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]');
+    .replace(/(token\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/)[^\s"']+/ig, '$1[redacted]')
+    .replace(/((?:database_url|db_uri|redis_url|mongodb_uri|postgres_url|mysql_url)\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/(([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|DB_URI)[A-Z0-9_]*)\s*[:=]\s*)[^\s"']+/g, '$1[redacted]');
 }
 
 function compactWhitespace(value: string): string {

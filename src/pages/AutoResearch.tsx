@@ -36,6 +36,10 @@ import {
 } from '@/services/autoresearch/defaultConfig';
 import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
+import {
+  buildAutoResearchRunLockMessage,
+  getAutoResearchLifecycleLock,
+} from '@/services/autoresearch/runLock';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
@@ -211,12 +215,18 @@ function AutoResearchView() {
   const agentConfigError = agentConfigIssues.length > 0
     ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
     : '';
+  const lifecycleLock = useAutoResearchStore((state) => getAutoResearchLifecycleLock(state));
   const displayRun = selectedRun;
   const displayedLiveOutput = selectedRunContext.liveOutput;
   const displayReason = selectedRunContext.reason;
   const loopState = selectedRunContext.loopState;
   const statusMessage = selectedRunContext.statusMessage;
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
+  const setupLocked = lifecycleLock.locked;
+
+  const getLifecycleLockMessage = useCallback((action: string) => (
+    buildAutoResearchRunLockMessage(action, lifecycleLock)
+  ), [lifecycleLock]);
 
   useEffect(() => {
     const { password: _password, ...persisted } = setupForm;
@@ -277,6 +287,11 @@ function AutoResearchView() {
   }, [agentConfigError, baselineInput, direction, experimentDir, maxIter, metric, setupForm, connectionTest.status]);
 
   const handlePickLocalWorkDir = useCallback(async () => {
+    if (setupLocked) {
+      setSetupError(getLifecycleLockMessage('change the workdir'));
+      return;
+    }
+
     const selection = await open({
       directory: true,
       multiple: false,
@@ -285,9 +300,14 @@ function AutoResearchView() {
     if (typeof selection === 'string') {
       setSetupForm((current) => ({ ...current, remoteWorkDir: selection }));
     }
-  }, [setupForm.remoteWorkDir]);
+  }, [getLifecycleLockMessage, setupForm.remoteWorkDir, setupLocked]);
 
   const handleShowSetup = useCallback(async () => {
+    if (lifecycleLock.locked) {
+      setSetupError(getLifecycleLockMessage('open the setup form'));
+      return;
+    }
+
     try {
       await assertSupportedPlatform();
       setSetupError(null);
@@ -295,9 +315,14 @@ function AutoResearchView() {
     } catch (error) {
       useAutoResearchStore.getState().setError(formatError(error));
     }
-  }, []);
+  }, [getLifecycleLockMessage, lifecycleLock.locked]);
 
   const handleResetToDefaults = useCallback(() => {
+    if (setupLocked) {
+      setSetupError(getLifecycleLockMessage('change the setup'));
+      return;
+    }
+
     const defaults = getAutoResearchDefaultConfig();
     clearLastUsedConfig();
     setSetupForm((current) => ({
@@ -310,9 +335,14 @@ function AutoResearchView() {
     setExperimentDir(defaults.experimentDir);
     setPrefillSource('defaults');
     setSetupError(null);
-  }, [clearLastUsedConfig]);
+  }, [clearLastUsedConfig, getLifecycleLockMessage, setupLocked]);
 
   const handleTestConnection = useCallback(async () => {
+    if (setupLocked) {
+      setSetupError(getLifecycleLockMessage('test a different execution target'));
+      return;
+    }
+
     try {
       await assertSupportedPlatform();
     } catch (error) {
@@ -353,9 +383,14 @@ function AutoResearchView() {
       const message = formatError(error);
       setConnectionTest({ status: 'error', output: message });
     }
-  }, [setupForm]);
+  }, [getLifecycleLockMessage, setupForm, setupLocked]);
 
   const handleStart = useCallback(async () => {
+    if (lifecycleLock.locked) {
+      setSetupError(getLifecycleLockMessage('start a new run'));
+      return;
+    }
+
     const validation = validateAutoResearchSetupDraft({
       sshConfig: setupForm,
       experimentDir,
@@ -402,7 +437,9 @@ function AutoResearchView() {
     connectionTest.status,
     direction,
     experimentDir,
+      getLifecycleLockMessage,
     initSession,
+      lifecycleLock.locked,
     maxIter,
     metric,
     openTerminalPanel,
@@ -468,138 +505,145 @@ function AutoResearchView() {
           </p>
 
           <form className="space-y-3" onSubmit={handleSetupSubmit}>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-              <span>
-                {prefillSource === 'last-used'
-                  ? t('autoresearch.prefillLastUsed')
-                  : t('autoresearch.prefillDefaults')}
-              </span>
-              <button
-                type="button"
-                className="font-semibold hover:text-blue-800"
-                onClick={handleResetToDefaults}
-              >
-                {t('autoresearch.resetToDefaults')}
-              </button>
-            </div>
-            {/* Mode toggle */}
-            <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setSetupForm(f => ({ ...f, mode: 'ssh' }))}
-                className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all ${setupForm.mode === 'ssh' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-              >{t('autoresearch.modeRemote')}</button>
-              <button
-                type="button"
-                onClick={() => setSetupForm(f => ({ ...f, mode: 'local' }))}
-                className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all ${setupForm.mode === 'local' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-              >{t('autoresearch.modeLocal')}</button>
-            </div>
+            <fieldset className="space-y-3" disabled={setupLocked || isStarting}>
+              {setupLocked && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {getLifecycleLockMessage('change the setup')}
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                <span>
+                  {prefillSource === 'last-used'
+                    ? t('autoresearch.prefillLastUsed')
+                    : t('autoresearch.prefillDefaults')}
+                </span>
+                <button
+                  type="button"
+                  className="font-semibold hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-400"
+                  onClick={handleResetToDefaults}
+                >
+                  {t('autoresearch.resetToDefaults')}
+                </button>
+              </div>
+              {/* Mode toggle */}
+              <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setSetupForm(f => ({ ...f, mode: 'ssh' }))}
+                  className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${setupForm.mode === 'ssh' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+                >{t('autoresearch.modeRemote')}</button>
+                <button
+                  type="button"
+                  onClick={() => setSetupForm(f => ({ ...f, mode: 'local' }))}
+                  className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${setupForm.mode === 'local' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+                >{t('autoresearch.modeLocal')}</button>
+              </div>
 
-            {setupForm.mode === 'ssh' && (
-              <>
-                <input
-                  className="w-full px-3 py-2 border rounded-lg text-sm"
-                  placeholder={t('autoresearch.hostPlaceholder')}
-                  value={setupForm.host}
-                  onChange={e => setSetupForm(f => ({ ...f, host: e.target.value }))}
-                />
+              {setupForm.mode === 'ssh' && (
+                <>
+                  <input
+                    className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                    placeholder={t('autoresearch.hostPlaceholder')}
+                    value={setupForm.host}
+                    onChange={e => setSetupForm(f => ({ ...f, host: e.target.value }))}
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      placeholder={t('autoresearch.userPlaceholder')}
+                      value={setupForm.user}
+                      onChange={e => setSetupForm(f => ({ ...f, user: e.target.value }))}
+                    />
+                    <input
+                      className="w-20 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      placeholder={t('autoresearch.portPlaceholder')}
+                      type="number"
+                      value={setupForm.port}
+                      onChange={e => setSetupForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
+                    />
+                  </div>
+                  <select
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                    value={setupForm.authMode}
+                    onChange={e => setSetupForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
+                  >
+                    <option value="agent">{t('autoresearch.authAgent')}</option>
+                    <option value="password">{t('autoresearch.authPassword')}</option>
+                    <option value="key">{t('autoresearch.authKey')}</option>
+                  </select>
+                  {setupForm.authMode === 'password' && (
+                    <input
+                      className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      placeholder={t('autoresearch.passwordPlaceholder')}
+                      type="password"
+                      autoComplete="off"
+                      value={setupForm.password}
+                      onChange={e => setSetupForm(f => ({ ...f, password: e.target.value }))}
+                    />
+                  )}
+                  {setupForm.authMode === 'key' && (
+                    <input
+                      className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      placeholder={t('autoresearch.sshKeyPathPlaceholder')}
+                      value={setupForm.keyPath}
+                      onChange={e => setSetupForm(f => ({ ...f, keyPath: e.target.value }))}
+                    />
+                  )}
+                </>
+              )}
+              {setupForm.mode === 'local' ? (
                 <div className="flex gap-2">
                   <input
-                    className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                    placeholder={t('autoresearch.userPlaceholder')}
-                    value={setupForm.user}
-                    onChange={e => setSetupForm(f => ({ ...f, user: e.target.value }))}
+                    className="flex-1 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                    placeholder={t('autoresearch.localWorkDirPlaceholder')}
+                    value={setupForm.remoteWorkDir}
+                    onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
                   />
-                  <input
-                    className="w-20 px-3 py-2 border rounded-lg text-sm"
-                    placeholder={t('autoresearch.portPlaceholder')}
-                    type="number"
-                    value={setupForm.port}
-                    onChange={e => setSetupForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
-                  />
+                  <button
+                    type="button"
+                    className="px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                    onClick={handlePickLocalWorkDir}
+                  >
+                    {t('autoresearch.chooseDirectory')}
+                  </button>
                 </div>
-                <select
-                  className="w-full px-3 py-2 border rounded-lg text-sm bg-white"
-                  value={setupForm.authMode}
-                  onChange={e => setSetupForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
-                >
-                  <option value="agent">{t('autoresearch.authAgent')}</option>
-                  <option value="password">{t('autoresearch.authPassword')}</option>
-                  <option value="key">{t('autoresearch.authKey')}</option>
-                </select>
-                {setupForm.authMode === 'password' && (
-                  <input
-                    className="w-full px-3 py-2 border rounded-lg text-sm"
-                    placeholder={t('autoresearch.passwordPlaceholder')}
-                    type="password"
-                    autoComplete="off"
-                    value={setupForm.password}
-                    onChange={e => setSetupForm(f => ({ ...f, password: e.target.value }))}
-                  />
-                )}
-                {setupForm.authMode === 'key' && (
-                  <input
-                    className="w-full px-3 py-2 border rounded-lg text-sm"
-                    placeholder={t('autoresearch.sshKeyPathPlaceholder')}
-                    value={setupForm.keyPath}
-                    onChange={e => setSetupForm(f => ({ ...f, keyPath: e.target.value }))}
-                  />
-                )}
-              </>
-            )}
-            {setupForm.mode === 'local' ? (
-              <div className="flex gap-2">
+              ) : (
                 <input
-                  className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                  placeholder={t('autoresearch.localWorkDirPlaceholder')}
+                  className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                  placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
                   value={setupForm.remoteWorkDir}
                   onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
                 />
-                <button
-                  type="button"
-                  className="px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-                  onClick={handlePickLocalWorkDir}
-                >
-                  {t('autoresearch.chooseDirectory')}
-                </button>
-              </div>
-            ) : (
+              )}
+
               <input
-                className="w-full px-3 py-2 border rounded-lg text-sm"
-                placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
-                value={setupForm.remoteWorkDir}
-                onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
+                className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                placeholder={t('autoresearch.experimentDirPlaceholder')}
+                value={experimentDir}
+                onChange={e => setExperimentDir(sanitizePathInput(e.target.value))}
               />
-            )}
 
-            <input
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder={t('autoresearch.experimentDirPlaceholder')}
-              value={experimentDir}
-              onChange={e => setExperimentDir(sanitizePathInput(e.target.value))}
-            />
-
-            <button
-              type="button"
-              className="w-full py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              disabled={
-                setupForm.mode === 'ssh'
-                  ? (!setupForm.host || !setupForm.user
-                      || (setupForm.authMode === 'password' && !setupForm.password)
-                      || (setupForm.authMode === 'key' && !setupForm.keyPath)
-                      || !setupForm.remoteWorkDir
-                      || !experimentDir
-                        || Boolean(agentConfigError)
-                        || baselineInvalid)
-                      : !setupForm.remoteWorkDir || !experimentDir || Boolean(agentConfigError) || baselineInvalid
-              }
-              onClick={handleTestConnection}
-            >
-              {connectionTest.status === 'testing'
-                ? t('autoresearch.connectionTesting')
-                : t('autoresearch.testConnection')}
-            </button>
+              <button
+                type="button"
+                className="w-full py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                disabled={
+                  setupLocked
+                    || (setupForm.mode === 'ssh'
+                      ? (!setupForm.host || !setupForm.user
+                          || (setupForm.authMode === 'password' && !setupForm.password)
+                          || (setupForm.authMode === 'key' && !setupForm.keyPath)
+                          || !setupForm.remoteWorkDir
+                          || !experimentDir
+                            || Boolean(agentConfigError)
+                            || baselineInvalid)
+                          : !setupForm.remoteWorkDir || !experimentDir || Boolean(agentConfigError) || baselineInvalid)
+                }
+                onClick={handleTestConnection}
+              >
+                {connectionTest.status === 'testing'
+                  ? t('autoresearch.connectionTesting')
+                  : t('autoresearch.testConnection')}
+              </button>
 
             {connectionTest.output && (
               <div className={`rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap ${
@@ -613,58 +657,59 @@ function AutoResearchView() {
               </div>
             )}
 
-            <hr className="border-gray-200" />
+              <hr className="border-gray-200" />
 
-            <div className="flex gap-2">
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                  placeholder={t('autoresearch.metricNamePlaceholder')}
+                  value={metric}
+                  onChange={e => setMetric(e.target.value)}
+                />
+                <select
+                  className="px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                  value={direction}
+                  onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
+                >
+                  <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
+                  <option value="higher">{t('autoresearch.higherIsBetter')}</option>
+                </select>
+              </div>
               <input
-                className="flex-1 px-3 py-2 border rounded-lg text-sm"
-                placeholder={t('autoresearch.metricNamePlaceholder')}
-                value={metric}
-                onChange={e => setMetric(e.target.value)}
+                className={`w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400 ${baselineInvalid ? 'border-red-300' : ''}`}
+                placeholder="Baseline (optional, e.g. 0.963284)"
+                value={baselineInput}
+                onChange={e => setBaselineInput(e.target.value)}
               />
-              <select
-                className="px-3 py-2 border rounded-lg text-sm"
-                value={direction}
-                onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
+              {baselineInvalid && (
+                <div className="text-xs text-red-500">{t('autoresearch.validationBaselineNumber')}</div>
+              )}
+              <input
+                className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                placeholder={t('autoresearch.maxIterationsPlaceholder')}
+                type="number"
+                value={maxIter}
+                onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
+              />
+              {setupError && setupError !== agentConfigError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+                  {setupError}
+                </div>
+              )}
+              <button
+                type="submit"
+                className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                disabled={isStarting || setupLocked}
+                aria-busy={isStarting}
               >
-                <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
-                <option value="higher">{t('autoresearch.higherIsBetter')}</option>
-              </select>
-            </div>
-            <input
-              className={`w-full px-3 py-2 border rounded-lg text-sm ${baselineInvalid ? 'border-red-300' : ''}`}
-              placeholder="Baseline (optional, e.g. 0.963284)"
-              value={baselineInput}
-              onChange={e => setBaselineInput(e.target.value)}
-            />
-            {baselineInvalid && (
-              <div className="text-xs text-red-500">{t('autoresearch.validationBaselineNumber')}</div>
-            )}
-            <input
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-              placeholder={t('autoresearch.maxIterationsPlaceholder')}
-              type="number"
-              value={maxIter}
-              onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
-            />
-            {setupError && setupError !== agentConfigError && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
-                {setupError}
-              </div>
-            )}
-            <button
-              type="submit"
-              className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-              disabled={isStarting}
-              aria-busy={isStarting}
-            >
-              {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
-            </button>
-            {agentConfigError && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {agentConfigError}
-              </div>
-            )}
+                {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
+              </button>
+              {agentConfigError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {agentConfigError}
+                </div>
+              )}
+            </fieldset>
           </form>
         </div>
       </div>
@@ -741,6 +786,11 @@ function AutoResearchView() {
 
   return (
     <div className="flex-1 flex min-h-0 flex-col bg-[#f6f1e8]">
+      {!showSetup && setupError && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          {setupError}
+        </div>
+      )}
       {statusMessage && loopState !== 'error' && (
         <div className="border-b border-yellow-200 bg-yellow-50 px-4 py-2 text-sm text-yellow-800">
           {redactSensitiveText(statusMessage)}

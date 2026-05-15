@@ -1,4 +1,5 @@
 import type { AutoResearchAgentConfigSnapshot, AutoResearchConfigSource } from './errors';
+import type { SshConfig } from '@/types/ssh';
 
 export type AutoResearchRunStatus =
   | 'draft'
@@ -54,6 +55,26 @@ export interface AutoResearchRecoveryAction {
   supported: boolean;
   label?: string;
   reason?: string;
+}
+
+export interface AutoResearchResumeToken {
+  schemaVersion: 1;
+  sessionId: string;
+  status: 'running' | 'paused' | 'waiting_rate_limit' | 'interrupted';
+  sshConfig: SshConfig;
+  experimentDir: string;
+  sessionFilePath?: string;
+  livingDocPath?: string;
+  metricName: string;
+  metricDirection: 'higher' | 'lower';
+  maxIterations: number;
+  baseline?: number | null;
+  currentIteration: number;
+  pendingIteration: number;
+  replayIteration: boolean;
+  resumable: boolean;
+  createdAt: string;
+  lastUpdatedAt: string;
 }
 
 export interface AutoResearchConfigSnapshot {
@@ -140,6 +161,7 @@ export interface AutoResearchRunRecord {
   summary?: string;
   reason?: string;
   liveOutputExcerpt?: string;
+  resumeToken?: AutoResearchResumeToken;
 }
 
 export interface PersistedAutoResearchHistory {
@@ -234,7 +256,10 @@ export function redactAutoResearchSensitiveText(value: string): string {
     .replace(/((?:key[_ -]?path|ssh[_ -]?key[_ -]?path|private[_ -]?key[_ -]?path)\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
     .replace(/(password\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
     .replace(/(secret\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
-    .replace(/(token\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]');
+    .replace(/(token\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/)[^\s"']+/ig, '$1[redacted]')
+    .replace(/((?:database_url|db_uri|redis_url|mongodb_uri|postgres_url|mysql_url)\s*[:=]\s*)[^\s"']+/ig, '$1[redacted]')
+    .replace(/(([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|DB_URI)[A-Z0-9_]*)\s*[:=]\s*)[^\s"']+/g, '$1[redacted]');
 }
 
 function safeLocalStorage(): Storage | null {
@@ -267,6 +292,65 @@ function sanitizeDisplayString(value: unknown, maxChars: number): string | undef
 
 function sanitizePath(value: unknown): string | undefined {
   return sanitizeDisplayString(value, MAX_PATH_CHARS);
+}
+
+function normalizeResumeToken(value: unknown, runId: string): AutoResearchResumeToken | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const sshRecord = isRecord(value.sshConfig) ? value.sshConfig : null;
+  if (!sshRecord) {
+    return undefined;
+  }
+
+  const mode = sshRecord.mode === 'local' ? 'local' : 'ssh';
+  const authMode = sshRecord.authMode === 'key'
+    ? 'key'
+    : sshRecord.authMode === 'password'
+      ? 'password'
+      : 'agent';
+  const pendingIteration = typeof value.pendingIteration === 'number'
+    ? Math.max(1, value.pendingIteration)
+    : 1;
+  const currentIteration = typeof value.currentIteration === 'number'
+    ? Math.max(0, value.currentIteration)
+    : 0;
+
+  return {
+    schemaVersion: 1,
+    sessionId: typeof value.sessionId === 'string' ? value.sessionId : runId,
+    status: value.status === 'paused'
+      ? 'paused'
+      : value.status === 'waiting_rate_limit'
+        ? 'waiting_rate_limit'
+        : value.status === 'interrupted'
+          ? 'interrupted'
+          : 'running',
+    sshConfig: {
+      mode,
+      host: sanitizeDisplayString(sshRecord.host, MAX_CONFIG_VALUE_CHARS) || '',
+      user: sanitizeDisplayString(sshRecord.user, MAX_CONFIG_VALUE_CHARS) || '',
+      keyPath: sanitizePath(sshRecord.keyPath) || '',
+      port: typeof sshRecord.port === 'number' ? sshRecord.port : 22,
+      remoteWorkDir: sanitizePath(sshRecord.remoteWorkDir) || '',
+      authMode,
+      password: '',
+    },
+    experimentDir: sanitizePath(value.experimentDir) || '',
+    sessionFilePath: sanitizePath(value.sessionFilePath),
+    livingDocPath: sanitizePath(value.livingDocPath),
+    metricName: sanitizeDisplayString(value.metricName, MAX_CONFIG_VALUE_CHARS) || '',
+    metricDirection: value.metricDirection === 'higher' ? 'higher' : 'lower',
+    maxIterations: typeof value.maxIterations === 'number' ? value.maxIterations : 0,
+    baseline: typeof value.baseline === 'number' || value.baseline === null ? value.baseline : undefined,
+    currentIteration,
+    pendingIteration,
+    replayIteration: value.replayIteration !== false,
+    resumable: value.resumable !== false,
+    createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date(0).toISOString(),
+    lastUpdatedAt: typeof value.lastUpdatedAt === 'string' ? value.lastUpdatedAt : new Date(0).toISOString(),
+  };
 }
 
 function isSensitiveMetadataKey(key: string): boolean {
@@ -451,6 +535,7 @@ function normalizeRunRecord(record: unknown): AutoResearchRunRecord | null {
     liveOutputExcerpt: typeof record.liveOutputExcerpt === 'string'
       ? clipLiveOutputExcerpt(record.liveOutputExcerpt)
       : undefined,
+    resumeToken: normalizeResumeToken(record.resumeToken, runId),
   };
 }
 
@@ -533,6 +618,19 @@ function compactRunRecord(record: AutoResearchRunRecord): AutoResearchRunRecord 
     summary: record.summary ? truncateString(record.summary, MAX_SUMMARY_CHARS) : undefined,
     reason: record.reason ? truncateString(record.reason, MAX_REASON_CHARS) : undefined,
     liveOutputExcerpt: record.liveOutputExcerpt ? clipLiveOutputExcerpt(record.liveOutputExcerpt) : undefined,
+    resumeToken: record.resumeToken ? {
+      ...record.resumeToken,
+      sshConfig: {
+        ...record.resumeToken.sshConfig,
+        password: '',
+      },
+      experimentDir: truncateString(record.resumeToken.experimentDir, MAX_PATH_CHARS),
+      sessionFilePath: record.resumeToken.sessionFilePath ? truncateString(record.resumeToken.sessionFilePath, MAX_PATH_CHARS) : undefined,
+      livingDocPath: record.resumeToken.livingDocPath ? truncateString(record.resumeToken.livingDocPath, MAX_PATH_CHARS) : undefined,
+      metricName: truncateString(record.resumeToken.metricName, MAX_CONFIG_VALUE_CHARS),
+      currentIteration: Math.max(0, record.resumeToken.currentIteration),
+      pendingIteration: Math.max(1, record.resumeToken.pendingIteration),
+    } : undefined,
   };
 }
 
@@ -582,6 +680,13 @@ export function loadPersistedAutoResearchHistory(now = new Date().toISOString())
         updatedAt: now,
         endedAt: run.endedAt ?? now,
         summary: run.summary || 'Interrupted after app restart.',
+        resumeToken: run.resumeToken
+          ? {
+            ...run.resumeToken,
+            status: 'interrupted',
+            lastUpdatedAt: now,
+          }
+          : undefined,
         events: [
           ...run.events,
           {

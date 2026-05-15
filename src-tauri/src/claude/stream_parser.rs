@@ -120,7 +120,12 @@ pub async fn stream_response(
                     }
                 }
                 Err(e) => {
-                    // Log parse error but continue streaming
+                    let is_tool_protocol_error = e.message.contains("malformed_tool_call");
+                    if is_tool_protocol_error {
+                        return Err(e);
+                    }
+
+                    // Log non-fatal parse errors but continue streaming
                     eprintln!("⚠️ Failed to parse stream chunk: {}", e);
                 }
             }

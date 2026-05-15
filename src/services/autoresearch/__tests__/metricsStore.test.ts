@@ -68,9 +68,41 @@ describe('metricsStore', () => {
     expect(metrics[0].artifactPaths).toEqual(['/tmp/session-1/iter-1/plot.png']);
 
     const metricsFile = JSON.parse(await fs.readFile(runDir.metricsPath, 'utf8'));
+    expect(metricsFile.schemaVersion).toBe(1);
+    expect(metricsFile.runId).toBe('session-1');
+    expect(metricsFile.primaryMetric).toBe('val_loss');
+    expect(metricsFile.direction).toBe('lower');
+    expect(metricsFile.generator).toBe('loop_engine');
     expect(metricsFile.iteration).toBe(1);
     expect(metricsFile.metricValue).toBe(0.9);
     expect(metricsFile.change).toBe('lowered lr from 1e-3 to 5e-4');
+  });
+
+  it('rejects malformed metrics artifacts before hydrating run history', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const metricsPath = path.join(workDir, 'runs', 'session-1', 'metrics.jsonl');
+    await fs.mkdir(path.dirname(metricsPath), { recursive: true });
+    await fs.writeFile(metricsPath, `${JSON.stringify({
+      schemaVersion: 1,
+      sessionId: 'session-1',
+      runId: 'session-1',
+      iteration: 1,
+      primaryMetric: 'val_loss',
+      direction: 'lower',
+      timestamp: '2026-05-05T00:00:01.000Z',
+      generator: 'loop_engine',
+      metricName: 'val_loss',
+      metricValue: null,
+      status: 'FAILED',
+      hypothesis: 'bad payload',
+      durationMs: 1000,
+      startedAt: '2026-05-05T00:00:00.000Z',
+      finishedAt: '2026-05-05T00:00:01.000Z',
+    })}\n`, 'utf8');
+
+    await expect(readAllMetrics(cfg, 'session-1', 'lower')).rejects.toThrow(
+      'FAILED metrics artifacts must include a failReason.',
+    );
   });
 
   it('summarizes numeric metrics', () => {
@@ -83,8 +115,8 @@ describe('metricsStore', () => {
         status: 'IMPROVED',
         hypothesis: 'baseline',
         durationMs: 100,
-        startedAt: '',
-        finishedAt: '',
+        startedAt: '2026-05-05T00:00:00.000Z',
+        finishedAt: '2026-05-05T00:00:00.100Z',
       },
       {
         iteration: 2,
@@ -94,8 +126,8 @@ describe('metricsStore', () => {
         status: 'IMPROVED',
         hypothesis: 'dropout',
         durationMs: 100,
-        startedAt: '',
-        finishedAt: '',
+        startedAt: '2026-05-05T00:01:00.000Z',
+        finishedAt: '2026-05-05T00:01:00.100Z',
       },
     ], 'lower');
 

@@ -14,6 +14,7 @@ import {
   summarize,
   type IterationMetrics,
 } from './metricsStore';
+import { parseMetricsArtifactPayload } from './metricsSchema';
 import {
   captureCommitHash,
   createRunDir,
@@ -45,6 +46,7 @@ import {
   type AutoResearchEnvironmentSummary,
 } from './preflight';
 import { formatAutoResearchToolCatalog, getAutoResearchToolProfile } from './toolCatalog';
+import { formatAutoResearchToolLanes } from './toolLanes';
 import { applyBootstrapIfPresent } from './bootstrap/applyBootstrap';
 
 interface ParsedResult {
@@ -71,6 +73,8 @@ interface PromptInput {
   sshConfig: SshConfig;
   runDir: RunDir;
   environmentSummary: AutoResearchEnvironmentSummary;
+  metricDirection: 'lower' | 'higher';
+  metricName: string;
   maxIterations: number;
 }
 
@@ -83,6 +87,7 @@ interface StartupContext {
 }
 
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
+const MAX_CONSECUTIVE_RATE_LIMITS = 3;
 
 // AUDIT-016 FIX: Budget reserve is now calculated dynamically based on remaining iterations.
 // This ensures the reserve is meaningful even when maxIterations is small (e.g., 1).
@@ -101,6 +106,8 @@ function buildSystemPrompt({
   sshConfig,
   runDir,
   environmentSummary,
+  metricDirection,
+  metricName,
   maxIterations,
 }: PromptInput): string {
   // AUDIT-016 FIX: Calculate budget reserve dynamically based on maxIterations
@@ -108,6 +115,7 @@ function buildSystemPrompt({
   const isLocal = sshConfig.mode === 'local';
   const toolProfile = getAutoResearchToolProfile(sshConfig);
   const allowedTools = formatAutoResearchToolCatalog(sshConfig);
+  const toolLanes = formatAutoResearchToolLanes(sshConfig);
   const iterationCodeDir = runDir.codeDir;
   const envLine = isLocal
     ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
@@ -134,6 +142,9 @@ You are running one autonomous experiment iteration inside Pipi-Shrimp AutoResea
 - Execution target: ${envLine}
 - Tool config: ${toolCfgHint}
 - Only permitted experiment tools for this run: ${allowedTools}
+
+## Phase Tool Lanes
+${toolLanes}
 
 ## Environment Preflight
 - Experiment directory: ${environmentSummary.experimentDir}
@@ -171,7 +182,7 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 3. Write a short hypothesis summary to ${runDir.hypothesisPath}.
 4. ${executionRequirement}
 5. Before finishing, write exactly one valid JSON object to ${runDir.metricsPath} with:
-  {"metricName":"<name>","metricValue":<number|null>,"status":"IMPROVED|NOT_IMPROVED|FAILED","hypothesis":"<one line>","change":"<short summary>","reasoning":"<brief reasoning>","artifactPaths":["<optional path>"],"failReason":"<optional>","extra":{"<optional>":"<optional>"}}
+  {"schemaVersion":1,"sessionId":"${runDir.sessionId}","runId":"${runDir.sessionId}","iteration":${runDir.iter},"primaryMetric":"${metricName}","direction":"${metricDirection}","timestamp":"<ISO8601>","generator":"agent","metricName":"${metricName}","metricValue":<number|null>,"status":"IMPROVED|NOT_IMPROVED|FAILED","hypothesis":"<one line>","change":"<short summary>","reasoning":"<brief reasoning>","artifactPaths":["<optional path>"],"failReason":"<optional>","extra":{"<optional>":"<optional>"}}
 6. If the metric is missing, the command crashes, or the run times out, still write the JSON object with status FAILED, metricValue null, and a concrete failReason.
 7. Also emit a final fallback line as a deprecated backup only if the host cannot read metrics.json:
    EXPERIMENT_RESULT: metric_value=<number_or_null> status=<IMPROVED|NOT_IMPROVED|FAILED> hypothesis="<one line>"
@@ -181,10 +192,11 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 9. Run the expensive experiment or training/evaluation command at most once in this iteration. If it fails, read logs or metrics and emit FAILED instead of patching and rerunning.
 10. If the change is not improved or the run fails, revert your working tree before finishing.
 11. ${toolLaneGuard}
-12. Do not repeat dead ends from the living doc unless you have a materially different reason.
-13. If you are still exploring after the first inspection pass, stop exploring and either run the experiment or emit a FAILED result with a concrete failReason.
-14. Treat GPU thermal state as a safety constraint. If telemetry shows GPU temperature >= 85C, fan speed is unavailable/0 during a GPU-heavy run, or the target appears thermally unsafe, avoid escalating workload and write a FAILED result with failReason="thermal_guard" instead of pushing another run.
-15. Do not change GPU fan speed, power limits, persistence mode, or other hardware controls unless the session file explicitly permits hardware control and the command is safe for the target.
+12. Respect the phase tool lanes above. Once you move into PARSE_METRICS or DECIDE_NEXT, do not go back to editing code or rerunning the experiment in the same iteration.
+13. Do not repeat dead ends from the living doc unless you have a materially different reason.
+14. If you are still exploring after the first inspection pass, stop exploring and either run the experiment or emit a FAILED result with a concrete failReason.
+15. Treat GPU thermal state as a safety constraint. If telemetry shows GPU temperature >= 85C, fan speed is unavailable/0 during a GPU-heavy run, or the target appears thermally unsafe, avoid escalating workload and write a FAILED result with failReason="thermal_guard" instead of pushing another run.
+16. Do not change GPU fan speed, power limits, persistence mode, or other hardware controls unless the session file explicitly permits hardware control and the command is safe for the target.
 `;
 }
 
@@ -543,13 +555,29 @@ async function parseIterationMetrics(
   cfg: SshConfig,
   runDir: RunDir,
   metricName: string,
+  metricDirection: 'lower' | 'higher',
   agentOutput: string,
 ): Promise<ParsedIterationMetricsResult> {
   const metricsContent = await readTargetText(cfg, runDir.metricsPath);
   if (metricsContent) {
     try {
+      const raw = JSON.parse(metricsContent) as unknown;
+      const artifact = parseMetricsArtifactPayload(raw, {
+        expectedSessionId: runDir.sessionId,
+        expectedRunId: runDir.sessionId,
+        expectedIteration: runDir.iter,
+        expectedMetricName: metricName,
+        expectedDirection: metricDirection,
+      });
+      if (!artifact.value) {
+        return {
+          parsed: null,
+          parseError: artifact.error ?? 'Invalid metrics artifact.',
+        };
+      }
+
       return normalizeParsedResult(
-        JSON.parse(metricsContent) as Record<string, unknown>,
+        artifact.value as Record<string, unknown>,
         metricName,
         'metrics_json',
       );
@@ -699,7 +727,7 @@ function buildIterationRecoveryActions(options: {
 }
 
 async function hydrateSessionFromDisk(cfg: SshConfig, sessionId: string, direction: 'lower' | 'higher'): Promise<void> {
-  const metrics = await readAllMetrics(cfg, sessionId);
+  const metrics = await readAllMetrics(cfg, sessionId, direction);
   const entries = metrics.map(toExperimentEntry);
   const best = summarize(metrics, direction).best;
   const lastIteration = metrics.reduce((max, entry) => Math.max(max, entry.iteration), 0);
@@ -982,6 +1010,8 @@ export async function startExperimentLoop(
         sshConfig: experimentCfg,
         runDir,
         environmentSummary,
+        metricDirection: store.metricDirection,
+        metricName: state.metricName,
         maxIterations: store.maxIterations,
       });
       await writeTargetText(artifactCfg, runDir.systemPromptPath, `${systemPrompt}\n`);
@@ -998,7 +1028,13 @@ export async function startExperimentLoop(
         iteration,
         summary: `Iteration ${iteration} is parsing experiment metrics.`,
       });
-      const { parsed, parseError } = await parseIterationMetrics(artifactCfg, runDir, state.metricName, agentOutput);
+      const { parsed, parseError } = await parseIterationMetrics(
+        artifactCfg,
+        runDir,
+        state.metricName,
+        state.metricDirection,
+        agentOutput,
+      );
       const diff = await getRemoteDiff(iterationCfg);
       const commitHash = await captureCommitHash(iterationCfg);
       const finishedAt = new Date().toISOString();
@@ -1011,6 +1047,12 @@ export async function startExperimentLoop(
         const failedRecord: IterationMetrics = {
           iteration,
           sessionId,
+          runId: sessionId,
+          primaryMetric: state.metricName,
+          direction: state.metricDirection,
+          timestamp: finishedAt,
+          generator: 'loop_engine',
+          schemaVersion: 1,
           metricName: state.metricName,
           metricValue: null,
           status: 'FAILED',
@@ -1124,6 +1166,12 @@ export async function startExperimentLoop(
       const metricsRecord: IterationMetrics = {
         iteration,
         sessionId,
+        runId: sessionId,
+        primaryMetric: parsed.metricName,
+        direction: state.metricDirection,
+        timestamp: finishedAt,
+        generator: 'loop_engine',
+        schemaVersion: 1,
         metricName: parsed.metricName,
         metricValue: parsed.metricValue,
         status: parsed.status,
@@ -1361,6 +1409,31 @@ export async function startExperimentLoop(
           useAutoResearchStore.getState().setError(rollbackResult.message);
           break;
         }
+        if (consecutiveRateLimitCount >= MAX_CONSECUTIVE_RATE_LIMITS) {
+          const endedAt = new Date().toISOString();
+          const summary = `Provider rate limited the run ${MAX_CONSECUTIVE_RATE_LIMITS} times consecutively. Stopping AutoResearch.`;
+          useAutoResearchStore.getState().setRunStatus('failed', {
+            summary,
+            endedAt,
+            reason: message,
+          });
+          useAutoResearchStore.getState().setStatusMessage(undefined);
+          emitAutoResearchRuntimeEvent({
+            level: 'error',
+            phase: 'FAILED',
+            type: 'run_completed',
+            message: summary,
+            summary,
+            metadata: {
+              cooldownSeconds,
+              consecutiveRateLimitCount,
+              iteration,
+              iterDir: runDir.iterDir,
+            },
+          });
+          useAutoResearchStore.getState().setLoopState('stopped');
+          break;
+        }
         await sleep(cooldownSeconds * 1000);
         continue;
       }
@@ -1522,12 +1595,14 @@ export function pauseExperimentLoop(): void {
     message: 'Run paused by user.',
     summary: 'Run paused by user.',
   });
+  useAutoResearchStore.getState().patchActiveRunResumeToken({ status: 'paused' });
   useAutoResearchStore.getState().setLoopState('paused');
 }
 
 export function resumeExperimentLoop(): void {
   const state = useAutoResearchStore.getState();
   if (state.loopState === 'paused') {
+    useAutoResearchStore.getState().patchActiveRunResumeToken({ status: 'running' });
     useAutoResearchStore.getState().setRunStatus('running', {
       summary: 'Run resumed.',
     });

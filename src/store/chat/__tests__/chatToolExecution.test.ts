@@ -1,5 +1,43 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
+jest.mock('@/services/StreamingToolExecutor', () => ({
+  StreamingToolExecutor: jest.fn(),
+  partitionTools: jest.fn((tools: unknown[]) => ({ concurrent: tools, serial: [] })),
+}));
+
+jest.mock('@/services/multiagent/agentContext', () => ({
+  getCurrentAgentContext: jest.fn(() => null),
+}));
+
+jest.mock('@/services/multiagent/subagent', () => ({
+  runAgentBackground: jest.fn(async () => 'bg-agent'),
+  runAgentSync: jest.fn(async () => ({ success: true, content: 'sync-result' })),
+}));
+
+jest.mock('@/store/uiStore', () => ({
+  useUIStore: {
+    getState: () => ({
+      activeSkill: null,
+      setActiveSkill: jest.fn(),
+      setTaskProgress: jest.fn(),
+      updateTaskStep: jest.fn(),
+      clearTaskProgress: jest.fn(),
+      showQuestionnaire: jest.fn(async () => 'user response'),
+      waitForPermission: jest.fn(async () => true),
+      addNotification: jest.fn(),
+    }),
+  },
+}));
+
+Object.defineProperty(globalThis, 'localStorage', {
+  value: {
+    getItem: jest.fn(() => null),
+    setItem: jest.fn(),
+    removeItem: jest.fn(),
+  },
+  configurable: true,
+});
+
 import { handleToolBatchRequest, type ToolBatchExecutionDeps } from '../chatToolExecution';
 import type { ChatState } from '../../../types/chat';
 import type { EngineEvent } from '../../../core/types';
@@ -56,6 +94,7 @@ function createChatState(): ChatState {
     clearSessionWorkDir: jest.fn(async () => {}),
     writeToWorkDir: jest.fn(async () => null),
     getWorkDirIndex: jest.fn(async () => []),
+    ensureSessionWorkDir: jest.fn(async () => null),
     addSessionWorkingFiles: jest.fn(async () => {}),
     removeSessionWorkingFile: jest.fn(async () => {}),
     clearSessionWorkingFiles: jest.fn(async () => {}),
@@ -66,7 +105,13 @@ function createChatState(): ChatState {
     getModelTokenStats: jest.fn(async () => []),
     getTotalTokenStats: jest.fn(async () => ({ input: 0, output: 0, total: 0 })),
     resetTokenEstimate: jest.fn(async () => {}),
-  };
+  } as unknown as ChatState;
+}
+
+function createChatStateWithMode(permissionMode: ChatState['sessions'][number]['permissionMode']): ChatState {
+  const state = createChatState();
+  state.sessions[0].permissionMode = permissionMode;
+  return state;
 }
 
 function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchExecutionDeps {
@@ -89,19 +134,19 @@ function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchE
         errors: [],
       })),
     }),
-    partitionTools: jest.fn((tools) => ({ concurrent: tools, serial: [] })),
+    partitionTools: jest.fn((tools: any) => ({ concurrent: tools, serial: [] })),
     runPreToolUseHooks: jest.fn(async () => ({ approved: true })),
     runPostToolUseHooks: jest.fn(async () => {}),
-    normalizeResumeWorkspaceToolArgs: jest.fn((_, args) => args),
-    normalizeCompileTypstArgs: jest.fn(async (args) => args),
+    normalizeResumeWorkspaceToolArgs: jest.fn((_toolName: any, args: any) => args),
+    normalizeCompileTypstArgs: jest.fn(async (args: any) => args),
     registerArtifactsFromToolResults: jest.fn(async () => {}),
-    loadArtifactDetector: jest.fn(async () => ({ detectAndRegisterArtifacts: jest.fn() })),
+    loadArtifactDetector: jest.fn(async () => ({ detectAndRegisterArtifacts: jest.fn() })) as unknown as ToolBatchExecutionDeps['loadArtifactDetector'],
     invoke: jest.fn(async () => 'invoke result') as ToolBatchExecutionDeps['invoke'],
     recordToolForReactiveCompact: jest.fn(),
     t: ((key: string) => key) as ToolBatchExecutionDeps['t'],
     getCurrentAgentContext: jest.fn(() => null),
     runAgentBackground: jest.fn(async () => 'bg-agent'),
-    runAgentSync: jest.fn(async () => ({ success: true, content: 'sync-result' })),
+    runAgentSync: jest.fn(async () => ({ success: true, content: 'sync-result' })) as unknown as ToolBatchExecutionDeps['runAgentSync'],
     loadSwarmModule: jest.fn(async () => ({
       getActiveRunForChatSession: jest.fn(() => null),
       startRun: jest.fn(() => ({ id: 'run-1' })),
@@ -115,11 +160,11 @@ function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchE
       startAgent: jest.fn(),
       startTask: jest.fn(),
       recordUserPrompt: jest.fn(),
-    })) as ToolBatchExecutionDeps['loadSwarmModule'],
-    loadInboxCoordinator: jest.fn(async () => ({ onAgentStarted: jest.fn(), onTeamCreated: jest.fn() })),
-    loadSwarmStore: jest.fn(async () => ({ useSwarmStore: { getState: () => ({ init: jest.fn() }) } })),
+    })) as unknown as ToolBatchExecutionDeps['loadSwarmModule'],
+    loadInboxCoordinator: jest.fn(async () => ({ onAgentStarted: jest.fn(), onTeamCreated: jest.fn() })) as unknown as ToolBatchExecutionDeps['loadInboxCoordinator'],
+    loadSwarmStore: jest.fn(async () => ({ useSwarmStore: { getState: () => ({ init: jest.fn() }) } })) as unknown as ToolBatchExecutionDeps['loadSwarmStore'],
     ...overrides,
-  };
+  } as unknown as ToolBatchExecutionDeps;
 }
 
 describe('chatToolExecution', () => {
@@ -182,8 +227,175 @@ describe('chatToolExecution', () => {
       ensureSessionWorkDir: async () => null,
     }, deps);
 
-    expect(showQuestionnaire).toHaveBeenCalledWith('session-1', expect.objectContaining({ toolCallId: 'tool-2' }));
+    expect(showQuestionnaire as jest.Mock).toHaveBeenCalledWith('session-1', expect.objectContaining({ toolCallId: 'tool-2' }));
     expect(results).toEqual([{ id: 'tool-2', content: 'filled form', toolName: 'AskUserQuestion', toolArgs: chunk.tools[0].arguments }]);
     expect(resolved).toHaveBeenCalledWith([{ id: 'tool-2', content: 'filled form' }]);
+  });
+
+  it('routes serial execute_command calls through execute_single_tool with assistant source metadata', async () => {
+    const resolved = jest.fn();
+    const invoke = jest.fn(async () => ({
+      content: '{"stdout":"ok","stderr":"","exit_code":0}',
+      is_error: false,
+    }));
+    const deps = createDeps({
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-3',
+          name: 'execute_command',
+          arguments: { command: 'pwd', cwd: '/tmp/workspace' },
+        }],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-3',
+        name: 'execute_command',
+        arguments: JSON.stringify({ command: 'pwd', cwd: '/tmp/workspace' }),
+      }],
+      _resolveAll: resolved,
+    };
+
+    const results = await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    expect(invoke as jest.Mock).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+      toolCallId: 'tool-3',
+      name: 'execute_command',
+      workDir: '/tmp/workspace',
+      source: 'assistant_tool_call',
+    }));
+    expect(results).toEqual([{ id: 'tool-3', content: '{"stdout":"ok","stderr":"","exit_code":0}', toolName: 'execute_command', toolArgs: chunk.tools[0].arguments }]);
+    expect(resolved).toHaveBeenCalledWith([{ id: 'tool-3', content: '{"stdout":"ok","stderr":"","exit_code":0}' }]);
+  });
+
+  it('runs pre-tool hooks for concurrent tools and blocks only the rejected tool', async () => {
+    const resolved = jest.fn();
+    const runPreToolUseHooks = jest.fn(async ({ toolName }: { toolName: string }) => (
+      toolName === 'read_file'
+        ? { approved: false, error: 'Path is outside working directory' }
+        : { approved: true }
+    ));
+    const deps = createDeps({
+      runPreToolUseHooks,
+      createExecutor: () => ({
+        executeBatch: jest.fn(async () => ({
+          results: [{ id: 'tool-2', content: 'search results', is_error: false }],
+          totalExecutionTime: 1,
+          errors: [],
+        })),
+      }),
+      partitionTools: jest.fn(() => ({
+        concurrent: [
+          { id: 'tool-1', name: 'read_file', arguments: { path: '../secret.txt' } },
+          { id: 'tool-2', name: 'search_files', arguments: { path: 'src', pattern: 'needle' } },
+        ],
+        serial: [],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [
+        { id: 'tool-1', name: 'read_file', arguments: '{"path":"../secret.txt"}' },
+        { id: 'tool-2', name: 'search_files', arguments: '{"path":"src","pattern":"needle"}' },
+      ],
+      _resolveAll: resolved,
+    };
+
+    const results = await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    expect(runPreToolUseHooks).toHaveBeenCalledTimes(2);
+    expect(results).toEqual([
+      {
+        id: 'tool-1',
+        content: 'Error: Path is outside working directory',
+        toolName: 'read_file',
+        toolArgs: '{"path":"../secret.txt"}',
+      },
+      {
+        id: 'tool-2',
+        content: 'search results',
+        toolName: 'search_files',
+        toolArgs: '{"path":"src","pattern":"needle"}',
+      },
+    ]);
+    expect(resolved).toHaveBeenCalledWith([
+      { id: 'tool-1', content: 'Error: Path is outside working directory' },
+      { id: 'tool-2', content: 'search results' },
+    ]);
+  });
+
+  it('does not auto-approve execute_command in auto-edits mode when hooks require confirmation', async () => {
+    const resolved = jest.fn();
+    const waitForPermission = jest.fn(async () => true);
+    const invoke = jest.fn(async () => ({
+      content: '{"stdout":"ok","stderr":"","exit_code":0}',
+      is_error: false,
+    }));
+    const deps = createDeps({
+      uiStore: { getState: () => ({
+        activeSkill: null,
+        setActiveSkill: jest.fn(),
+        setTaskProgress: jest.fn(),
+        updateTaskStep: jest.fn(),
+        showQuestionnaire: jest.fn(async () => 'user response'),
+        waitForPermission,
+        addNotification: jest.fn(),
+      }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      runPreToolUseHooks: jest.fn(async () => ({ approved: true, requiresConfirmation: true })),
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-4',
+          name: 'execute_command',
+          arguments: { command: 'pwd', cwd: '/tmp/workspace' },
+        }],
+      })),
+    });
+    const state = createChatStateWithMode('auto-edits');
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-4',
+        name: 'execute_command',
+        arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
+      }],
+      _resolveAll: resolved,
+    };
+
+    await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    expect(waitForPermission as jest.Mock).toHaveBeenCalledWith({
+      id: 'tool-4',
+      name: 'execute_command',
+      arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
+    });
+    expect(invoke).toHaveBeenCalled();
   });
 });

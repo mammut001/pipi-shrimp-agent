@@ -217,6 +217,7 @@ describe('createAutoResearchSendMessage', () => {
       workDir: '/tmp/research',
       agentConfig: activeConfig,
       allowedTools: localToolCatalog,
+      toolExecutionSource: 'autoresearch_phase',
       initialMessages: [
         {
           role: 'user',
@@ -252,6 +253,7 @@ describe('createAutoResearchSendMessage', () => {
     expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
+        toolExecutionSource: 'autoresearch_phase',
         initialMessages: [
           {
             role: 'user',
@@ -263,6 +265,7 @@ describe('createAutoResearchSendMessage', () => {
     expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
+        toolExecutionSource: 'autoresearch_phase',
         initialMessages: [
           {
             role: 'user',
@@ -285,6 +288,7 @@ describe('createAutoResearchSendMessage', () => {
 
     expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
       workDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z',
+      toolExecutionSource: 'autoresearch_phase',
     }));
   });
 
@@ -322,6 +326,7 @@ describe('createAutoResearchSendMessage', () => {
       agentConfig: expect.objectContaining({
         model: 'MiniMax-M2.7',
       }),
+      toolExecutionSource: 'autoresearch_phase',
     }));
   });
 
@@ -720,11 +725,13 @@ describe('createAutoResearchSendMessage', () => {
     const thirdCallInput = mockRunHeadlessAgentTurn.mock.calls[2]?.[0] as {
       workDir: string;
       allowedTools: string[];
+      toolExecutionSource: string;
       systemPrompt: string;
       initialMessages: Array<{ role: string; content: string }>;
     };
     expect(thirdCallInput.workDir).toBe(deepseekMixedFailureTranscriptFixture.runDir.iterDir);
     expect(thirdCallInput.allowedTools).toEqual(localToolCatalog);
+    expect(thirdCallInput.toolExecutionSource).toBe('autoresearch_phase');
     expect(thirdCallInput.systemPrompt).toContain(`HARD CONSTRAINT: do not call ${deepseekMixedFailureTranscriptFixture.expected.blockedTool}.`);
     expect(thirdCallInput.systemPrompt).toContain(deepseekMixedFailureTranscriptFixture.runDir.metricsPath);
     expect(thirdCallInput.initialMessages).toEqual(expect.arrayContaining([

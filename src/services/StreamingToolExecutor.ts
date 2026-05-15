@@ -18,6 +18,13 @@ import { runSshExec, runSshReadFile, runSshUpload } from '@/tools/impl/SshTool';
 import {
   AUTORESEARCH_BOOTSTRAP_TOOL_NAMES,
 } from '@/services/tools/autoresearchBootstrap';
+import {
+  DEFAULT_TOOL_EXECUTION_SOURCE,
+  type PermissionMode,
+  type ToolExecutionSource,
+} from '@/services/tools/toolExecutionPolicy';
+import { runPreToolUseHooks } from '@/services/tools/preToolUseHooks';
+import { sanitizeToolExecutionContent } from '@/services/tools/outputSanitizer';
 
 /** Convert MCP ContentBlock array to a plain string for tool output */
 function contentBlocksToString(blocks: ContentBlock[]): string {
@@ -47,11 +54,17 @@ export interface ToolResult {
   is_error: boolean;
   error_message?: string;
   execution_time_ms?: number;
+  output_truncated?: boolean;
+  sanitized?: boolean;
+  original_length?: number;
 }
 
 export interface ToolExecutionOptions {
   sessionId: string;
   workDir?: string;
+  source?: ToolExecutionSource;
+  permissionMode?: PermissionMode;
+  allowedTools?: string[];
   onProgress?: (completed: number, total: number, currentTool?: string) => void;
   concurrencyLimit?: number;
   timeoutMs?: number;
@@ -98,13 +111,47 @@ function buildStructuredToolError(
   return JSON.stringify(payload);
 }
 
-function isStructuredToolError(content: string): boolean {
-  try {
-    const parsed = JSON.parse(content) as Record<string, unknown>;
-    return parsed?.error === true || typeof parsed?.error_kind === 'string';
-  } catch {
-    return false;
-  }
+function buildPolicyErrorResult(
+  request: ToolRequest,
+  message: string,
+  errorKind = 'permission_denied',
+): ToolResult {
+  const content = JSON.stringify({
+    error: true,
+    error_kind: errorKind,
+    message,
+    tool: request.name,
+    cause: message,
+  });
+  const sanitized = sanitizeToolExecutionContent(request.name, content);
+  return {
+    id: request.id,
+    content: sanitized.content,
+    is_error: true,
+    error_message: message,
+    execution_time_ms: 0,
+    output_truncated: sanitized.outputTruncated,
+    sanitized: sanitized.sanitized,
+    original_length: sanitized.originalLength,
+  };
+}
+
+function finalizeToolResult(
+  toolName: string,
+  result: ToolResult,
+): ToolResult {
+  const sanitizedContent = sanitizeToolExecutionContent(toolName, result.content ?? '');
+  const sanitizedError = result.error_message
+    ? sanitizeToolExecutionContent(toolName, result.error_message)
+    : null;
+  return {
+    ...result,
+    content: sanitizedContent.content,
+    error_message: sanitizedError?.content ?? result.error_message,
+    output_truncated: sanitizedContent.outputTruncated || sanitizedError?.outputTruncated || false,
+    sanitized: sanitizedContent.sanitized || sanitizedError?.sanitized || false,
+    original_length: sanitizedContent.originalLength,
+  };
 }
 
 /**
@@ -116,7 +163,6 @@ const READ_ONLY_TOOLS = new Set([
   'read_file',
   'list_files',
   'path_exists',
-  'ssh_read_file',
   // Search — all read-only scans
   'search_files',
   'glob_search',
@@ -200,11 +246,9 @@ function isFrontendOnlyTool(toolName: string): boolean {
  * Streaming Tool Executor with concurrency control
  */
 export class StreamingToolExecutor {
-  private concurrencyLimit: number;
   private timeoutMs: number;
 
   constructor(options: { concurrencyLimit?: number; timeoutMs?: number } = {}) {
-    this.concurrencyLimit = options.concurrencyLimit ?? 5;
     this.timeoutMs = options.timeoutMs ?? 30000; // 30 seconds
   }
 
@@ -237,7 +281,14 @@ export class StreamingToolExecutor {
     options: ToolExecutionOptions
   ): Promise<BatchExecutionResult> {
     const startTime = Date.now();
-    const { onProgress, workDir, sessionId } = options;
+    const {
+      onProgress,
+      workDir,
+      sessionId,
+      source = DEFAULT_TOOL_EXECUTION_SOURCE,
+      permissionMode = 'standard',
+      allowedTools,
+    } = options;
 
     if (toolRequests.length === 0) {
       return { results: [], totalExecutionTime: 0, errors: [] };
@@ -252,16 +303,86 @@ export class StreamingToolExecutor {
       onProgress?.(completed, total, currentTool);
     };
 
-    const frontendOnlyRequests = toolRequests.filter((request) => isFrontendOnlyTool(request.name));
-    const nativeRequests = toolRequests.filter((request) => !isFrontendOnlyTool(request.name));
+    const prevalidatedResults: ToolResult[] = [];
+    const executableRequests: ToolRequest[] = [];
+    const allowedToolSet = allowedTools ? new Set(allowedTools) : null;
 
-    const [frontendResults, nativeResults] = await Promise.all([
-      this.executeFrontendOnlyBatch(frontendOnlyRequests, reportProgress, workDir),
-      this.executeNativeBatch(nativeRequests, sessionId, reportProgress, workDir),
-    ]);
+    for (const request of toolRequests) {
+      if (allowedToolSet && !allowedToolSet.has(request.name)) {
+        prevalidatedResults.push(buildPolicyErrorResult(
+          request,
+          `Tool "${request.name}" is not allowed in this execution lane.`,
+          'tool_disabled',
+        ));
+        reportProgress(request.name);
+        continue;
+      }
+
+      const rawArgs = JSON.stringify(request.arguments);
+      const hookResult = await runPreToolUseHooks({
+        toolName: request.name,
+        toolArgs: rawArgs,
+        workDir,
+        permissionMode,
+        sessionId,
+      });
+
+      if (!hookResult.approved) {
+        prevalidatedResults.push(buildPolicyErrorResult(
+          request,
+          hookResult.error || 'Tool execution blocked by policy.',
+          hookResult.blockedBy === 'dangerous-command' ? 'dangerous_command' : 'permission_denied',
+        ));
+        reportProgress(request.name);
+        continue;
+      }
+
+      if (hookResult.requiresConfirmation) {
+        prevalidatedResults.push(buildPolicyErrorResult(
+          request,
+          `Tool "${request.name}" requires confirmation before execution.`,
+          'confirmation_required',
+        ));
+        reportProgress(request.name);
+        continue;
+      }
+
+      if (hookResult.modifiedArgs) {
+        try {
+          executableRequests.push({
+            ...request,
+            arguments: JSON.parse(hookResult.modifiedArgs) as Record<string, any>,
+          });
+          continue;
+        } catch {
+          prevalidatedResults.push(buildPolicyErrorResult(
+            request,
+            `Tool "${request.name}" produced invalid modified arguments.`,
+            'invalid_arguments',
+          ));
+          reportProgress(request.name);
+          continue;
+        }
+      }
+
+      executableRequests.push(request);
+    }
+
+    const frontendOnlyRequests = executableRequests.filter((request) => isFrontendOnlyTool(request.name));
+    const nativeRequests = executableRequests.filter((request) => !isFrontendOnlyTool(request.name));
+
+    const nativeResults = await this.executeNativeBatch(
+      nativeRequests,
+      sessionId,
+      reportProgress,
+      workDir,
+      source,
+      allowedTools,
+    );
+    const frontendResults = await this.executeFrontendOnlyBatch(frontendOnlyRequests, reportProgress, workDir);
 
     const resultsById = new Map<string, ToolResult>();
-    for (const result of [...frontendResults.results, ...nativeResults.results]) {
+    for (const result of [...prevalidatedResults, ...nativeResults.results, ...frontendResults.results]) {
       resultsById.set(result.id, result);
     }
 
@@ -293,32 +414,19 @@ export class StreamingToolExecutor {
     const results: ToolResult[] = [];
     const errors: ToolResult[] = [];
 
-    // Process in batches to respect concurrency limit
-    for (let i = 0; i < toolRequests.length; i += this.concurrencyLimit) {
-      const batch = toolRequests.slice(i, i + this.concurrencyLimit);
-      const batchPromises = batch.map(request =>
-        this.executeFrontendOnlyTool(request, workDir).then(result => {
-          onProgress(request.name);
-          return result;
-        }).catch(error => {
-          onProgress(request.name);
-          const errorResult: ToolResult = {
-            id: request.id,
-            content: '',
-            is_error: true,
-            error_message: error instanceof Error ? error.message : 'Unknown error',
-            execution_time_ms: 0,
-          };
-          return errorResult;
-        })
-      );
-
-      const batchResults = await Promise.all(batchPromises);
-      for (const result of batchResults) {
-        results.push(result);
-        if (result.is_error) {
-          errors.push(result);
-        }
+    for (const request of toolRequests) {
+      const result = await this.executeFrontendOnlyTool(request, workDir).catch((error) => ({
+        id: request.id,
+        content: '',
+        is_error: true,
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+        execution_time_ms: 0,
+      } satisfies ToolResult));
+      onProgress(request.name);
+      const finalized = finalizeToolResult(request.name, result);
+      results.push(finalized);
+      if (finalized.is_error) {
+        errors.push(finalized);
       }
     }
 
@@ -333,6 +441,8 @@ export class StreamingToolExecutor {
     sessionId: string,
     onProgress: (toolName: string) => void,
     workDir?: string,
+    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
+    allowedTools?: string[],
   ): Promise<{ results: ToolResult[]; errors: ToolResult[] }> {
     if (toolRequests.length === 0) {
       return { results: [], errors: [] };
@@ -351,6 +461,8 @@ export class StreamingToolExecutor {
             name: tool.name,
             arguments: JSON.stringify(tool.arguments),
             workDir: workDir ?? null,
+            source,
+            allowedTools: allowedTools?.length ? allowedTools : null,
             apiKey: activeConfig?.apiKey ?? null,
             model: activeConfig?.model ?? null,
             baseUrl: activeConfig?.baseUrl || null,
@@ -371,13 +483,13 @@ export class StreamingToolExecutor {
       const elapsed = Date.now() - startTime;
       const results = rawResults.map((result) => {
         const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-        return {
+        return finalizeToolResult(result.name ?? 'unknown', {
           id: result.id,
           content,
           is_error: Boolean(result.is_error),
           error_message: result.is_error ? content : undefined,
           execution_time_ms: elapsed,
-        } satisfies ToolResult;
+        } satisfies ToolResult);
       });
 
       for (const request of toolRequests) {
@@ -393,13 +505,13 @@ export class StreamingToolExecutor {
       const message = error instanceof Error ? error.message : 'Unknown error';
       const results = toolRequests.map((request) => {
         onProgress(request.name);
-        return {
+        return finalizeToolResult(request.name, {
           id: request.id,
           content: buildStructuredToolError(request.name, request.arguments, error),
           is_error: true,
           error_message: message,
           execution_time_ms: elapsed,
-        } satisfies ToolResult;
+        } satisfies ToolResult);
       });
 
       return { results, errors: results };
@@ -411,7 +523,7 @@ export class StreamingToolExecutor {
    */
   private async executeFrontendOnlyTool(
     request: ToolRequest,
-    workDir?: string,
+    _workDir?: string,
   ): Promise<ToolResult> {
     const startTime = Date.now();
 

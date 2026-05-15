@@ -22,9 +22,15 @@ const mockExecuteBatch = jest.fn();
 const mockDetectAndRegisterArtifacts = jest.fn();
 const mockSavePlanModeDoc = jest.fn();
 const mockShouldSavePlanDoc = jest.fn();
+const mockListen = jest.fn();
+const eventHandlers = new Map<string, (event: { payload: any }) => void>();
 
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
+jest.mock('@tauri-apps/api/event', () => ({
+  listen: (...args: unknown[]) => mockListen(...args),
 }));
 
 jest.mock('../../settingsStore', () => ({
@@ -177,6 +183,30 @@ async function* streamPlanAssistantReply() {
   };
 }
 
+async function* streamWithToolBatchThenContinuation() {
+  let resolved = false;
+
+  yield {
+    type: 'tool_batch_request' as const,
+    tools: [{ id: 'tool-cancel', name: 'execute_command', arguments: '{"command":"pwd"}' }],
+    _resolveAll: () => {
+      resolved = true;
+    },
+  };
+
+  if (resolved) {
+    yield { type: 'text_delta' as const, content: 'should not continue after cancel' };
+    yield {
+      type: 'turn_complete' as const,
+      tokenUsage: {
+        input_tokens: 3,
+        output_tokens: 1,
+        model: 'mock-model',
+      },
+    };
+  }
+}
+
 function resetChatState(overrides: Partial<Session> = {}) {
   const session: Session = {
     id: 'session-1',
@@ -228,6 +258,8 @@ describe('chatStore sendMessage integration', () => {
     mockDetectAndRegisterArtifacts.mockReset();
     mockSavePlanModeDoc.mockReset();
     mockShouldSavePlanDoc.mockReset();
+    mockListen.mockReset();
+    eventHandlers.clear();
 
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -244,6 +276,12 @@ describe('chatStore sendMessage integration', () => {
     });
 
     mockInvoke.mockResolvedValue(undefined);
+    mockListen.mockImplementation(async (eventName: string, handler: (event: { payload: any }) => void) => {
+      eventHandlers.set(eventName, handler);
+      return () => {
+        eventHandlers.delete(eventName);
+      };
+    });
     mockGetActiveConfig.mockReturnValue({
       id: 'api-config-1',
       apiKey: 'sk-test',
@@ -370,6 +408,136 @@ describe('chatStore sendMessage integration', () => {
       sessionId: 'session-1',
     });
     expect(mockAddNotification).toHaveBeenCalledWith('success', 'Plan saved to Docs: 021-plan.md', 'session-1');
+  });
+
+  it('wires tool runtime events into chat task state during init', async () => {
+    useChatStore.setState({
+      sessions: [],
+      currentSessionId: null,
+      isInitialized: false,
+      pendingToolCalls: 0,
+      pendingToolResults: [],
+    });
+    mockInvoke.mockImplementation(async (command: unknown, args?: Record<string, unknown>) => {
+      switch (command) {
+        case 'db_get_all_projects':
+          return [];
+        case 'db_get_all_sessions':
+          return [{
+            id: 'session-1',
+            title: 'Chat',
+            created_at: 1,
+            updated_at: 1,
+            cwd: null,
+            project_id: null,
+            model: null,
+            work_dir: null,
+            working_files: null,
+            permission_mode: 'standard',
+          }];
+        case 'db_get_messages':
+          expect(args).toEqual({ sessionId: 'session-1' });
+          return [];
+        default:
+          return undefined;
+      }
+    });
+
+    await useChatStore.getState().init();
+    useChatStore.getState().selectSession('session-1');
+
+    eventHandlers.get('tool-start')?.({
+      payload: { session_id: 'session-1', tool_call_id: 'tool-evt', name: 'execute_command' },
+    });
+
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(mockSetTaskProgress).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 'tool-evt', label: 'execute_command', status: 'running' }),
+    ]);
+
+    eventHandlers.get('tool-complete')?.({
+      payload: { session_id: 'session-1', tool_call_id: 'tool-evt', name: 'execute_command', is_error: false },
+    });
+
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(useChatStore.getState().pendingToolResults).toEqual([{ toolCallId: 'tool-evt', result: '' }]);
+    expect(mockSetTaskProgress).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 'tool-evt', label: 'execute_command', status: 'done' }),
+    ]);
+  });
+
+  it('marks runtime tool steps as failed when tool-error events arrive', async () => {
+    useChatStore.setState({
+      sessions: [],
+      currentSessionId: null,
+      isInitialized: false,
+      pendingToolCalls: 0,
+      pendingToolResults: [],
+    });
+    mockInvoke.mockImplementation(async (command: unknown, args?: Record<string, unknown>) => {
+      switch (command) {
+        case 'db_get_all_projects':
+          return [];
+        case 'db_get_all_sessions':
+          return [{
+            id: 'session-1',
+            title: 'Chat',
+            created_at: 1,
+            updated_at: 1,
+            cwd: null,
+            project_id: null,
+            model: null,
+            work_dir: null,
+            working_files: null,
+            permission_mode: 'standard',
+          }];
+        case 'db_get_messages':
+          expect(args).toEqual({ sessionId: 'session-1' });
+          return [];
+        default:
+          return undefined;
+      }
+    });
+
+    await useChatStore.getState().init();
+    useChatStore.getState().selectSession('session-1');
+
+    eventHandlers.get('tool-start')?.({
+      payload: { session_id: 'session-1', tool_call_id: 'tool-fail', name: 'write_file' },
+    });
+    eventHandlers.get('tool-error')?.({
+      payload: { session_id: 'session-1', tool_call_id: 'tool-fail', name: 'write_file', error: 'permission denied' },
+    });
+
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(useChatStore.getState().pendingToolResults).toEqual([
+      { toolCallId: 'tool-fail', result: 'Error: permission denied' },
+    ]);
+    expect(mockSetTaskProgress).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 'tool-fail', label: 'write_file', status: 'failed' }),
+    ]);
+  });
+
+  it('cancels after an in-flight tool batch and prevents the next model round from running', async () => {
+    mockRunChatTurn.mockImplementation(() => streamWithToolBatchThenContinuation());
+    mockExecuteBatch.mockImplementation(async () => {
+      await useChatStore.getState().stopGeneration();
+      return {
+        results: [{ id: 'tool-cancel', content: '{"stdout":"/tmp","stderr":"","exit_code":0}', is_error: false }],
+        totalExecutionTime: 1,
+        errors: [],
+      };
+    });
+
+    await useChatStore.getState().sendMessage('cancel this run');
+
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
+      ['user', 'cancel this run'],
+    ]);
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(mockInvoke).toHaveBeenCalledWith('stop_subprocess', { sessionId: 'session-1' });
   });
 
   it('does not save non-plan replies in plan-only mode', async () => {

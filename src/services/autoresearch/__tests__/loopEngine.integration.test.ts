@@ -385,6 +385,34 @@ describe('loopEngine integration', () => {
     expect(store.experiments[0]?.iteration).toBe(1);
   });
 
+  it('stops after three consecutive provider rate limits and preserves recovery context', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-rate-limit-stop',
+      maxIterations: 1,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const sendMessage = jest.fn(async () => {
+      throw new Error('phase=agent_execution; config=MiniMax; provider=minimax; model=MiniMax-M2.7; message=Rate limited. Retry after 0s');
+    });
+
+    await startExperimentLoop(sendMessage);
+
+    const store = useAutoResearchStore.getState();
+    const run = store.runHistory.find((entry) => entry.id === 'autoresearch-rate-limit-stop');
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(store.loopState).toBe('stopped');
+    expect(store.statusMessage).toBeUndefined();
+    expect(run?.status).toBe('failed');
+    expect(run?.summary).toContain('Provider rate limited the run 3 times consecutively');
+    expect(run?.events.some((event) => event.message.includes('Provider rate limited the run 3 times consecutively'))).toBe(true);
+  });
+
   it('completes two local cv_accuracy iterations and records iter-002 metrics', async () => {
     const cfg = createLocalSshConfig(workDir);
     const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-cv-accuracy-'));

@@ -122,6 +122,100 @@ describe('resolveAutoResearchRunConfig', () => {
     expect(secondRun.runConfigSnapshot.configs.agent.model).toBe('MiniMax-M2.7');
   });
 
+  it('rebuilds the saved provider selection from a persisted run config snapshot', async () => {
+    storeState.apiConfigs = [
+      {
+        id: 'cfg-default',
+        name: 'Default Config',
+        provider: 'openai',
+        apiKey: 'key-openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4.1',
+      },
+      {
+        id: 'cfg-agent',
+        name: 'Agent Config',
+        provider: 'minimax',
+        apiKey: 'key-minimax',
+        baseUrl: 'https://api.minimaxi.com/v1',
+        model: 'MiniMax-M2.7',
+      },
+      {
+        id: 'cfg-reflection',
+        name: 'Reflection Config',
+        provider: 'anthropic',
+        apiKey: 'key-anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-5',
+      },
+    ];
+    storeState.activeConfigId = 'cfg-default';
+
+    const { resolveAutoResearchRunConfigFromSnapshotFile } = await import('../runConfig');
+    const result = resolveAutoResearchRunConfigFromSnapshotFile({
+      createdAt: '2026-05-14T00:00:00.000Z',
+      selectedConfigIds: {
+        activeConfigId: 'cfg-default',
+        defaultConfigId: null,
+        agentConfigId: 'cfg-agent',
+        reflectionConfigId: 'cfg-reflection',
+      },
+      resolvedSources: {
+        default: 'settings.activeConfig',
+        agent: 'autoresearch.agentOverride',
+        reflection: 'autoresearch.reflectionOverride',
+      },
+      configs: {
+        default: {
+          configId: 'cfg-default',
+          configName: 'Default Config',
+          provider: 'openai',
+          providerLabel: 'OpenAI',
+          apiFormat: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-4.1',
+          keyPreview: 'sk-open',
+          keyPresent: true,
+          source: 'settings.activeConfig',
+        },
+        agent: {
+          configId: 'cfg-agent',
+          configName: 'Agent Config',
+          provider: 'minimax',
+          providerLabel: 'MiniMax',
+          apiFormat: 'openai',
+          baseUrl: 'https://api.minimaxi.com/v1',
+          model: 'MiniMax-M2.7',
+          keyPreview: 'mm-open',
+          keyPresent: true,
+          source: 'autoresearch.agentOverride',
+        },
+        reflection: {
+          configId: 'cfg-reflection',
+          configName: 'Reflection Config',
+          provider: 'anthropic',
+          providerLabel: 'Anthropic',
+          apiFormat: 'anthropic',
+          baseUrl: 'https://api.anthropic.com/v1',
+          model: 'claude-sonnet-4-5',
+          keyPreview: 'an-open',
+          keyPresent: true,
+          source: 'autoresearch.reflectionOverride',
+        },
+      },
+      capabilities: {
+        default: mockGetCapability(),
+        agent: mockGetCapability(),
+        reflection: mockGetCapability(),
+      },
+    });
+
+    expect(result.defaultConfig.configId).toBe('cfg-default');
+    expect(result.agentConfig.configId).toBe('cfg-agent');
+    expect(result.reflectionConfig.configId).toBe('cfg-reflection');
+    expect(result.snapshot.source).toBe('savedRunConfig');
+  });
+
   it('honors per-feature agent and reflection overrides', async () => {
     storeState.apiConfigs = [
       {

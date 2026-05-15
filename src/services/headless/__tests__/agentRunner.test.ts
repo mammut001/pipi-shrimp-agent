@@ -13,6 +13,14 @@ jest.mock('@/services/StreamingToolExecutor', () => ({
   partitionTools: (...args: unknown[]) => mockPartitionTools(...args),
 }));
 
+jest.mock('@/store', () => ({
+  useSettingsStore: {
+    getState: () => ({
+      agentSettings: {},
+    }),
+  },
+}));
+
 function createAsyncGenerator(events: unknown[]) {
   return (async function* generate() {
     for (const event of events) {
@@ -108,6 +116,7 @@ describe('runHeadlessAgentTurn', () => {
       expect.objectContaining({
         sessionId: 'session-1',
         workDir: '/tmp/headless',
+        source: 'headless_agent',
       }),
     );
     expect(resolveAll).toHaveBeenCalledWith([
@@ -168,6 +177,10 @@ describe('runHeadlessAgentTurn', () => {
         outputTokens: 5,
         totalTokens: 15,
       },
+      toolBudgetSummary: expect.objectContaining({
+        successfulCalls: 2,
+        failedCalls: 0,
+      }),
     });
   });
 
@@ -338,6 +351,8 @@ describe('runHeadlessAgentTurn', () => {
       expect.objectContaining({
         sessionId: 'session-local-autoresearch',
         workDir: '/tmp/headless',
+        source: 'headless_agent',
+        allowedTools: expect.arrayContaining(['get_current_workspace', 'execute_command', 'read_file', 'write_file']),
       }),
     );
     expect(mockExecuteBatch).toHaveBeenNthCalledWith(
@@ -352,6 +367,8 @@ describe('runHeadlessAgentTurn', () => {
       expect.objectContaining({
         sessionId: 'session-local-autoresearch',
         workDir: '/tmp/headless',
+        source: 'headless_agent',
+        allowedTools: expect.arrayContaining(['get_current_workspace', 'execute_command', 'read_file', 'write_file']),
       }),
     );
   });
