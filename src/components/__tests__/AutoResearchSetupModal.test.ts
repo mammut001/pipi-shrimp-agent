@@ -21,6 +21,7 @@ jest.mock('@/i18n', () => ({
     'autoresearch.metricNamePlaceholder': 'Metric name',
     'autoresearch.lowerIsBetter': 'Lower is better',
     'autoresearch.higherIsBetter': 'Higher is better',
+    'autoresearch.maxIterationsPlaceholder': 'Max iterations (default: 50)',
     'autoresearch.maxIterationsShortPlaceholder': 'max',
     'autoresearch.prefillDefaults': 'Prefilled from AutoResearch defaults.',
     'autoresearch.prefillLastUsed': 'Prefilled from your last run.',
@@ -35,6 +36,29 @@ jest.mock('@/i18n', () => ({
     'autoresearch.validationExperimentDirRequired': 'Experiment directory is required.',
     'autoresearch.validationMetricRequired': 'Metric name is required.',
     'autoresearch.validationBaselineNumber': 'Baseline must be a number.',
+    'autoresearch.tabs.guided': 'Guided',
+    'autoresearch.tabs.manual': 'Manual',
+    'autoresearch.tabs.guidedSubtitle': 'Describe your experiment and let Pipi prepare the setup.',
+    'autoresearch.tabs.manualSubtitle': 'Use exact paths, target, metric, and run limits.',
+    'autoresearch.card.runTarget': 'Where should AutoResearch run?',
+    'autoresearch.card.experimentGoal': 'What experiment should it optimize?',
+    'autoresearch.card.readiness': 'Readiness',
+    'autoresearch.workdirHelper': 'AutoResearch stores run artifacts here.',
+    'autoresearch.experimentDirHelper': 'Must contain run_experiment.py and AUTORESEARCH.md.',
+    'autoresearch.metricHelper': 'This must match the metric written by metrics.json.',
+    'autoresearch.baselineHelper': 'Optional. Used only as the initial best score.',
+    'autoresearch.summaryTitle': 'Review before start',
+    'autoresearch.summaryTarget': 'Target',
+    'autoresearch.summaryWorkdir': 'Workdir',
+    'autoresearch.summaryExperimentDir': 'Experiment dir',
+    'autoresearch.summaryMetric': 'Metric',
+    'autoresearch.summaryIterations': 'Iterations',
+    'autoresearch.summaryDirectionMinimize': 'minimize',
+    'autoresearch.summaryDirectionMaximize': 'maximize',
+    'autoresearch.preparing': 'Preparing AutoResearch…',
+    'autoresearch.preparingStepValidating': 'Validating config',
+    'autoresearch.preparingStepChecking': 'Checking target',
+    'autoresearch.preparingStepPreparing': 'Preparing run',
   }[key] ?? key),
 }));
 
@@ -86,9 +110,9 @@ function findButtonByText(container: ParentNode, label: string): HTMLButtonEleme
 }
 
 function changeInputValue(input: HTMLInputElement, value: string) {
-  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
   act(() => {
-    descriptor?.set?.call(input, value);
+    nativeInputValueSetter.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
   });
@@ -124,6 +148,8 @@ function renderModal() {
 
 describe('AutoResearchSetupModal', () => {
   beforeAll(async () => {
+    // Mock navigator.platform for assertSupportedPlatform
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
     ({ AutoResearchSetupModal } = await import('../AutoResearchSetupModal'));
   });
 
@@ -384,6 +410,9 @@ describe('AutoResearchSetupModal', () => {
     }));
 
     const view = renderModal();
+    // Switch to Manual tab first to show the form
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     const workdirInput = view.container.querySelector('input[aria-label="AutoResearch workdir"]') as HTMLInputElement | null;
     const experimentInput = view.container.querySelector('input[aria-label="Experiment path"]') as HTMLInputElement | null;
     expect(workdirInput).not.toBeNull();
@@ -460,6 +489,9 @@ describe('AutoResearchSetupModal', () => {
     });
 
     const view = renderModal();
+    // Switch to Manual tab first
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     const sshButton = findButtonByText(view.container, 'SSH');
     expect(sshButton).not.toBeNull();
 
@@ -517,31 +549,93 @@ describe('AutoResearchSetupModal', () => {
     expect(state.activeFailureSnapshot?.taskId).toBe('failure-1');
   });
 
-  it('defaults to Conversational tab showing BootstrapChatView', () => {
+  it('defaults to Guided tab showing BootstrapChatView', () => {
     const view = renderModal();
     expect(view.container.querySelector('[data-testid="bootstrap-chat-view"]')).not.toBeNull();
     expect(view.container.querySelector('input[aria-label="AutoResearch workdir"]')).toBeNull();
   });
 
-  it('Advanced tab shows workdir form without BootstrapChatView', () => {
+  it('Manual tab shows card-based form without BootstrapChatView', () => {
     const view = renderModal();
-    const advancedTab = findButtonByText(view.container, 'Advanced');
-    expect(advancedTab).not.toBeNull();
+    const manualTab = findButtonByText(view.container, 'Manual');
+    expect(manualTab).not.toBeNull();
     act(() => {
-      advancedTab!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(view.container.querySelector('input[aria-label="AutoResearch workdir"]')).not.toBeNull();
     expect(view.container.querySelector('[data-testid="bootstrap-chat-view"]')).toBeNull();
+    // Verify card sections exist
+    expect(view.container.textContent).toContain('Where should AutoResearch run?');
+    expect(view.container.textContent).toContain('What experiment should it optimize?');
+    expect(view.container.textContent).toContain('Readiness');
   });
 
-  it('switching back to Conversational tab restores BootstrapChatView', () => {
+  it('switching back to Guided tab restores BootstrapChatView', () => {
     const view = renderModal();
-    const advancedTab = findButtonByText(view.container, 'Advanced');
-    act(() => { advancedTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-    const conversationalTab = findButtonByText(view.container, 'Conversational');
-    act(() => { conversationalTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const guidedTab = findButtonByText(view.container, 'Guided');
+    act(() => { guidedTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     expect(view.container.querySelector('[data-testid="bootstrap-chat-view"]')).not.toBeNull();
     expect(view.container.querySelector('input[aria-label="AutoResearch workdir"]')).toBeNull();
+  });
+
+  it('tab labels are "Guided" and "Manual"', () => {
+    const view = renderModal();
+    expect(view.container.textContent).toContain('Guided');
+    expect(view.container.textContent).toContain('Manual');
+    // Old labels should not appear
+    expect(view.container.textContent).not.toContain('Conversational Bootstrap');
+    expect(view.container.textContent).not.toContain('Advanced Workdir');
+  });
+
+  it('required field hints appear in Manual mode', () => {
+    const view = renderModal();
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    // Switch to SSH mode to trigger host/user hints
+    const sshButton = findButtonByText(view.container, 'SSH');
+    act(() => { sshButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(view.container.textContent).toContain('SSH host is required.');
+    // User defaults to 'root', so user hint won't show. Clear it to trigger the hint.
+    const userInput = view.container.querySelector('input[placeholder="user"]') as HTMLInputElement;
+    expect(userInput).not.toBeNull();
+    changeInputValue(userInput, '');
+    expect(view.container.textContent).toContain('SSH user is required.');
+  });
+
+  it('provider config error shows Missing status in Readiness card', async () => {
+    jest.mocked(resolveAutoResearchRunConfig).mockImplementation(() => { throw new Error('Configure a provider first'); });
+    const view = renderModal();
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    // The readiness section should show Missing and Open Settings button
+    expect(view.container.textContent).toContain('Missing');
+    expect(view.container.textContent).toContain('Open Settings');
+  });
+
+  it('baseline invalid message still appears', () => {
+    const view = renderModal();
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const baselineInput = view.container.querySelector('input[placeholder="e.g. 0.963284"]') as HTMLInputElement;
+    expect(baselineInput).not.toBeNull();
+    // Use React-compatible input simulation
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      nativeInputValueSetter.call(baselineInput, 'not-a-number');
+      baselineInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(view.container.textContent).toContain('Baseline must be a number.');
+  });
+
+  it('summary strip shows configured values', () => {
+    const view = renderModal();
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(view.container.textContent).toContain('Review before start');
+    expect(view.container.textContent).toContain('Target');
+    expect(view.container.textContent).toContain('Workdir');
   });
 
   it('onReady from BootstrapChatView closes modal and switches to autoresearch tab', async () => {
