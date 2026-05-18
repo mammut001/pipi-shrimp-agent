@@ -59,6 +59,31 @@ jest.mock('@/i18n', () => ({
     'autoresearch.preparingStepValidating': 'Validating config',
     'autoresearch.preparingStepChecking': 'Checking target',
     'autoresearch.preparingStepPreparing': 'Preparing run',
+    'autoresearch.card.setupChecklist': 'Setup checklist',
+    'autoresearch.readiness.filled': 'Filled',
+    'autoresearch.readiness.check': 'Check',
+    'autoresearch.readiness.missing': 'Missing',
+    'autoresearch.readiness.helper': 'Paths and provider settings will be verified when you start the run.',
+    'autoresearch.field.host': 'Host',
+    'autoresearch.field.userAuth': 'User & Auth',
+    'autoresearch.field.password': 'Password',
+    'autoresearch.field.keyPath': 'Key Path',
+    'autoresearch.field.localWorkDir': 'Local Work Directory',
+    'autoresearch.field.remoteWorkDir': 'Remote Work Directory',
+    'autoresearch.field.experimentDir': 'Experiment Directory',
+    'autoresearch.field.metricName': 'Metric Name',
+    'autoresearch.field.maxIterations': 'Max Iterations',
+    'autoresearch.field.baselineOptional': 'Baseline (optional)',
+    'autoresearch.check.provider': 'Provider / API',
+    'autoresearch.check.workdir': 'Work directory',
+    'autoresearch.check.experimentDir': 'Experiment directory',
+    'autoresearch.check.metric': 'Metric',
+    'autoresearch.check.sshConnection': 'SSH connection',
+    'autoresearch.action.openSettings': 'Open Settings',
+    'autoresearch.mode.local': 'Local',
+    'autoresearch.mode.ssh': 'SSH',
+    'autoresearch.headerSubtitle': 'Prepare an autonomous experiment run.',
+    'autoresearch.loadingBootstrap': 'Loading AutoResearch bootstrap...',
   }[key] ?? key),
 }));
 
@@ -567,7 +592,7 @@ describe('AutoResearchSetupModal', () => {
     // Verify card sections exist
     expect(view.container.textContent).toContain('Where should AutoResearch run?');
     expect(view.container.textContent).toContain('What experiment should it optimize?');
-    expect(view.container.textContent).toContain('Readiness');
+    expect(view.container.textContent).toContain('Setup checklist');
   });
 
   it('switching back to Guided tab restores BootstrapChatView', () => {
@@ -604,14 +629,15 @@ describe('AutoResearchSetupModal', () => {
     expect(view.container.textContent).toContain('SSH user is required.');
   });
 
-  it('provider config error shows Missing status in Readiness card', async () => {
+  it('provider config error shows Missing status in setup checklist', async () => {
     jest.mocked(resolveAutoResearchRunConfig).mockImplementation(() => { throw new Error('Configure a provider first'); });
     const view = renderModal();
     const manualTab = findButtonByText(view.container, 'Manual');
     act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-    // The readiness section should show Missing and Open Settings button
+    // The checklist section should show Missing and Open Settings action
     expect(view.container.textContent).toContain('Missing');
     expect(view.container.textContent).toContain('Open Settings');
+    expect(view.container.textContent).toContain('Setup checklist');
   });
 
   it('baseline invalid message still appears', () => {
@@ -629,6 +655,21 @@ describe('AutoResearchSetupModal', () => {
     expect(view.container.textContent).toContain('Baseline must be a number.');
   });
 
+  it('Manual labels render from i18n mock keys', () => {
+    const view = renderModal();
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    // Field labels should come from i18n
+    expect(view.container.textContent).toContain('Experiment Directory');
+    expect(view.container.textContent).toContain('Metric Name');
+    expect(view.container.textContent).toContain('Baseline (optional)');
+    expect(view.container.textContent).toContain('Local Work Directory');
+    expect(view.container.textContent).toContain('Setup checklist');
+    expect(view.container.textContent).toContain('Provider / API');
+    expect(view.container.textContent).toContain('Work directory');
+    expect(view.container.textContent).toContain('Paths and provider settings will be verified when you start the run.');
+  });
+
   it('summary strip shows configured values', () => {
     const view = renderModal();
     const manualTab = findButtonByText(view.container, 'Manual');
@@ -636,6 +677,7 @@ describe('AutoResearchSetupModal', () => {
     expect(view.container.textContent).toContain('Review before start');
     expect(view.container.textContent).toContain('Target');
     expect(view.container.textContent).toContain('Workdir');
+    expect(view.container.textContent).toContain('Filled');
   });
 
   it('onReady from BootstrapChatView closes modal and switches to autoresearch tab', async () => {

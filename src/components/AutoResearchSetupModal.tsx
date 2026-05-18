@@ -42,7 +42,7 @@ const BootstrapChatView = lazy(() => import('@/components/autoresearch/Bootstrap
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-gray-200/80 bg-white p-4 space-y-3">
+    <div className="rounded-xl border border-gray-200/80 bg-white p-4 space-y-4">
       <h4 className="text-xs font-bold text-gray-800">{title}</h4>
       {children}
     </div>
@@ -65,13 +65,16 @@ function InlineHint({ children }: { children: React.ReactNode }) {
 function ReadinessRow({ label, status, action }: { label: string; status: 'ok' | 'warn' | 'error'; action?: React.ReactNode }) {
   const colors = { ok: 'text-emerald-600', warn: 'text-amber-600', error: 'text-red-500' };
   const icons = { ok: '✓', warn: '⚠', error: '✗' };
+  const statusLabel = { ok: t('autoresearch.readiness.filled'), warn: t('autoresearch.readiness.check'), error: t('autoresearch.readiness.missing') };
   return (
-    <div className="flex items-center justify-between text-[11px]">
-      <span className="text-gray-600">{label}</span>
-      <span className={`font-semibold ${colors[status]}`}>
-        {icons[status]} {status === 'ok' ? 'Ready' : status === 'warn' ? 'Warning' : 'Missing'}
-      </span>
-      {action}
+    <div className="flex items-center justify-between gap-3 text-[11px]">
+      <span className="min-w-0 text-gray-600">{label}</span>
+      <div className="flex shrink-0 items-center gap-2">
+        <span className={`font-semibold ${colors[status]}`}>
+          {icons[status]} {statusLabel[status]}
+        </span>
+        {action}
+      </div>
     </div>
   );
 }
@@ -357,7 +360,7 @@ export function AutoResearchSetupModal() {
               </div>
               <div>
                 <h3 className="text-sm font-bold text-gray-900">AutoResearch</h3>
-                <p className="text-[10px] text-gray-400 mt-0.5">Prepare an autonomous experiment run.</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">{t('autoresearch.headerSubtitle')}</p>
               </div>
             </div>
             <button
@@ -410,7 +413,7 @@ export function AutoResearchSetupModal() {
             ) : (
               <Suspense fallback={
                 <div className="flex h-full items-center justify-center px-6 text-center text-sm text-gray-500">
-                  Loading AutoResearch bootstrap...
+                  {t('autoresearch.loadingBootstrap')}
                 </div>
               }>
                 <BootstrapChatView onReady={handleBootstrapReady} />
@@ -429,18 +432,18 @@ export function AutoResearchSetupModal() {
                 type="button"
                 onClick={() => setForm(f => ({ ...f, mode: 'local' }))}
                 className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'local' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
-              >Local</button>
+              >{t('autoresearch.mode.local')}</button>
               <button
                 type="button"
                 onClick={() => setForm(f => ({ ...f, mode: 'ssh' }))}
                 className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'ssh' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
-              >SSH</button>
+              >{t('autoresearch.mode.ssh')}</button>
             </div>
 
             {form.mode === 'ssh' && (
               <>
                 <div className="space-y-1.5">
-                  <FieldLabel label="Host" required />
+                  <FieldLabel label={t('autoresearch.field.host')} required />
                   <div className="flex gap-2">
                     <input
                       className={`flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.host ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
@@ -459,7 +462,7 @@ export function AutoResearchSetupModal() {
                   {fieldHints.host && <InlineHint>{fieldHints.host}</InlineHint>}
                 </div>
                 <div className="space-y-1.5">
-                  <FieldLabel label="User & Auth" required />
+                  <FieldLabel label={t('autoresearch.field.userAuth')} required />
                   <div className="flex gap-2">
                     <input
                       className={`w-24 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.user ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
@@ -481,7 +484,7 @@ export function AutoResearchSetupModal() {
                 </div>
                 {form.authMode === 'password' && (
                   <div className="space-y-1.5">
-                    <FieldLabel label="Password" required />
+                    <FieldLabel label={t('autoresearch.field.password')} required />
                     <input
                       className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.password ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
                       placeholder="password"
@@ -499,7 +502,7 @@ export function AutoResearchSetupModal() {
                 )}
                 {form.authMode === 'key' && (
                   <div className="space-y-1.5">
-                    <FieldLabel label="Key Path" required />
+                    <FieldLabel label={t('autoresearch.field.keyPath')} required />
                     <input
                       className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.keyPath ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
                       placeholder="e.g. ~/.ssh/id_rsa"
@@ -513,7 +516,7 @@ export function AutoResearchSetupModal() {
             )}
 
             <div className="space-y-1.5">
-              <FieldLabel label={form.mode === 'local' ? 'Local Work Directory' : 'Remote Work Directory'} required />
+              <FieldLabel label={form.mode === 'local' ? t('autoresearch.field.localWorkDir') : t('autoresearch.field.remoteWorkDir')} required />
               <input
                 className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.workdir ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
                 placeholder={form.mode === 'local'
@@ -545,7 +548,7 @@ export function AutoResearchSetupModal() {
               </button>
             </div>
             <div className="space-y-1.5">
-              <FieldLabel label="Experiment Directory" required />
+              <FieldLabel label={t('autoresearch.field.experimentDir')} required />
               <input
                 className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors font-mono disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.experimentDir ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
                 placeholder={t('autoresearch.experimentDirPlaceholder')}
@@ -557,7 +560,7 @@ export function AutoResearchSetupModal() {
               <InlineHint>{t('autoresearch.experimentDirHelper')}</InlineHint>
             </div>
             <div className="space-y-1.5">
-              <FieldLabel label="Metric Name" required />
+              <FieldLabel label={t('autoresearch.field.metricName')} required />
               <div className="flex gap-2">
                 <input
                   className={`flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.metric ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
@@ -577,7 +580,7 @@ export function AutoResearchSetupModal() {
               <InlineHint>{t('autoresearch.metricHelper')}</InlineHint>
             </div>
             <div className="space-y-1.5">
-              <FieldLabel label="Max Iterations" />
+              <FieldLabel label={t('autoresearch.field.maxIterations')} />
               <input
                 className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
                 placeholder={t('autoresearch.maxIterationsPlaceholder')}
@@ -587,7 +590,7 @@ export function AutoResearchSetupModal() {
               />
             </div>
             <div className="space-y-1.5">
-              <FieldLabel label="Baseline (optional)" />
+              <FieldLabel label={t('autoresearch.field.baselineOptional')} />
               <input
                 className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors ${fieldHints.baseline ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
                 placeholder="e.g. 0.963284"
@@ -600,34 +603,35 @@ export function AutoResearchSetupModal() {
           </SectionCard>
 
           {/* Card 3: Readiness & Start */}
-          <SectionCard title={t('autoresearch.card.readiness')}>
+          <SectionCard title={t('autoresearch.card.setupChecklist')}>
             {/* Readiness checklist */}
             <div className="space-y-2 rounded-lg bg-gray-50 p-3">
               <ReadinessRow
-                label="Provider / API"
+                label={t('autoresearch.check.provider')}
                 status={providerReady ? 'ok' : 'error'}
                 action={!providerReady && (
                   <button
                     type="button"
                     onClick={toggleSettings}
-                    className="ml-2 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
+                    className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
                   >
-                    Open Settings
+                    {t('autoresearch.action.openSettings')}
                   </button>
                 )}
               />
-              <ReadinessRow label="Work directory" status={workdirReady ? 'ok' : 'warn'} />
-              <ReadinessRow label="Experiment directory" status={experimentDirReady ? 'ok' : 'warn'} />
-              <ReadinessRow label="Metric" status={metricReady ? 'ok' : 'warn'} />
+              <ReadinessRow label={t('autoresearch.check.workdir')} status={workdirReady ? 'ok' : 'warn'} />
+              <ReadinessRow label={t('autoresearch.check.experimentDir')} status={experimentDirReady ? 'ok' : 'warn'} />
+              <ReadinessRow label={t('autoresearch.check.metric')} status={metricReady ? 'ok' : 'warn'} />
               {form.mode === 'ssh' && (
-                <ReadinessRow label="SSH connection" status={sshReady ? 'ok' : 'warn'} />
+                <ReadinessRow label={t('autoresearch.check.sshConnection')} status={sshReady ? 'ok' : 'warn'} />
               )}
+              <p className="text-[10px] text-gray-400 pt-1">{t('autoresearch.readiness.helper')}</p>
             </div>
 
             {/* Summary strip */}
             <div className="space-y-2 rounded-lg border border-gray-200 p-3">
               <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{t('autoresearch.summaryTitle')}</h5>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
                 <SummaryItem label={t('autoresearch.summaryTarget')} value={form.mode === 'local' ? 'Local' : `SSH ${form.user}@${form.host || '...'}`} />
                 <SummaryItem label={t('autoresearch.summaryWorkdir')} value={form.remoteWorkDir || '—'} />
                 <SummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
