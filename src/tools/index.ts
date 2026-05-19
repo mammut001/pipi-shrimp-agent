@@ -74,8 +74,6 @@ export function registerAllTools(): void {
 
     // Shell
     bashTool,
-    // Shell
-    bashTool,
 
     // Web
     webSearchTool,

@@ -590,7 +590,7 @@ export function createAutoResearchSendMessage(
     let toolLanePhase: AutoResearchRunPhase = 'READ_CONTEXT';
     const currentRunDir = getCurrentRunDir();
     const effectiveWorkDir = store.sshConfig?.mode === 'local'
-      ? (currentRunDir?.iterDir || workDir)
+      ? (currentRunDir?.codeDir || workDir)
       : workDir;
     const disabledToolAttemptCounts = new Map<string, number>();
     const blockedTools = new Set<string>();

@@ -12,6 +12,10 @@ export class ToolRegistry {
    * 注册一个工具
    */
   register(tool: Tool): void {
+    if (this.tools.has(tool.name) && process.env.NODE_ENV !== 'production') {
+      console.warn(`[ToolRegistry] Duplicate tool registration: ${tool.name}`);
+    }
+
     this.tools.set(tool.name, tool);
 
     // 注册别名

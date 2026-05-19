@@ -29,6 +29,19 @@ use commands::web::BrowserController;
 use database::init_database;
 use utils::{build_fonts, init_font_database};
 
+/// Tracks whether critical subsystems initialized successfully at startup.
+/// Managed as Tauri state so the frontend can query startup health.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StartupHealthState {
+    pub database_ok: bool,
+    pub database_error: Option<String>,
+}
+
+#[tauri::command]
+fn get_startup_health(state: tauri::State<'_, StartupHealthState>) -> StartupHealthState {
+    (*state).clone()
+}
+
 /**
  * Main entry point for the Tauri application
  */
@@ -47,14 +60,24 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            // Initialize database - CRITICAL, cannot proceed without it
-            if let Err(e) = init_database() {
-                eprintln!("❌ CRITICAL: Failed to initialize database: {}", e);
-                eprintln!("   Make sure the database file is writable at: ~/.local/share/pipi-shrimp-agent/data.db");
-                // TODO (AUDIT-026): Consider using tauri dialog for user-facing error message
-                // instead of raw panic, which provides a better UX and suggests solutions.
-                panic!("Database initialization failed: {}. Application cannot start.", e);
-            }
+            // Initialize database — start in degraded mode if it fails instead of
+            // panicking. The frontend can query startup health and surface diagnostics.
+            let db_health = match init_database() {
+                Ok(()) => StartupHealthState {
+                    database_ok: true,
+                    database_error: None,
+                },
+                Err(e) => {
+                    eprintln!("❌ Failed to initialize database: {}", e);
+                    eprintln!("   The app will continue in degraded mode — sessions and history will not persist.");
+                    eprintln!("   Make sure the database file is writable at: ~/.local/share/pipi-shrimp-agent/data.db");
+                    StartupHealthState {
+                        database_ok: false,
+                        database_error: Some(e.to_string()),
+                    }
+                }
+            };
+            app.manage(db_health);
 
             // Confirm the main window exists.
             let _window = app.get_webview_window("main").unwrap();
@@ -353,6 +376,8 @@ pub fn run() {
             commands::mcp::mcp_update_server,
             commands::mcp::mcp_remove_server,
             commands::mcp::mcp_get_preset_templates,
+            // Startup health
+            get_startup_health,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
