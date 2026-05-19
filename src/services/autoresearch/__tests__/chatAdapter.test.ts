@@ -277,9 +277,10 @@ describe('createAutoResearchSendMessage', () => {
     );
   });
 
-  it('binds local file tools to the current iteration root when available', async () => {
+  it('binds local file tools to the current iteration code snapshot when available', async () => {
     mockGetCurrentRunDir.mockReturnValue({
       iterDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z',
+      codeDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code',
     });
 
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
@@ -288,7 +289,7 @@ describe('createAutoResearchSendMessage', () => {
     await expect(sendMessage('system prompt', 'use iteration workspace')).resolves.toBe('final answer');
 
     expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
-      workDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z',
+      workDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code',
       toolExecutionSource: 'autoresearch_phase',
     }));
   });
@@ -541,6 +542,7 @@ describe('createAutoResearchSendMessage', () => {
   it('repeats the metrics contract and local tool lane in recovery retries', async () => {
     mockGetCurrentRunDir.mockReturnValue({
       iterDir: '/tmp/research/runs/run-1/iter-003',
+      codeDir: '/tmp/research/runs/run-1/iter-003/code',
       metricsPath: '/tmp/research/runs/run-1/iter-003/metrics.json',
     });
     mockRunHeadlessAgentTurn
@@ -730,7 +732,7 @@ describe('createAutoResearchSendMessage', () => {
       systemPrompt: string;
       initialMessages: Array<{ role: string; content: string }>;
     };
-    expect(thirdCallInput.workDir).toBe(deepseekMixedFailureTranscriptFixture.runDir.iterDir);
+    expect(thirdCallInput.workDir).toBe(deepseekMixedFailureTranscriptFixture.runDir.codeDir);
     expect(thirdCallInput.allowedTools).toEqual(localToolCatalog);
     expect(thirdCallInput.toolExecutionSource).toBe('autoresearch_phase');
     expect(thirdCallInput.systemPrompt).toContain(`HARD CONSTRAINT: do not call ${deepseekMixedFailureTranscriptFixture.expected.blockedTool}.`);

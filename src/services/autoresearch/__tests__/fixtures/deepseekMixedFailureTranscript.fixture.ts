@@ -31,6 +31,7 @@ export interface AutoResearchTranscriptFixture {
   userMessage: string;
   runDir: {
     iterDir: string;
+    codeDir: string;
     transcriptPath: string;
     metricsPath: string;
   };
@@ -44,6 +45,7 @@ export interface AutoResearchTranscriptFixture {
 
 const fixtureRunDir = {
   iterDir: '/tmp/research/runs/run-1/iter-003',
+  codeDir: '/tmp/research/runs/run-1/iter-003/code',
   transcriptPath: '/tmp/research/runs/run-1/iter-003/transcript.md',
   metricsPath: '/tmp/research/runs/run-1/iter-003/metrics.json',
 };
