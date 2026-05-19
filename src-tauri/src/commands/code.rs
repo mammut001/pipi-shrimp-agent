@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // Global session manager for persistent REPL sessions
 // Maps session_id -> Python REPL process
@@ -245,34 +245,37 @@ fn run_with_timeout(
         let _ = std::io::Read::read_to_end(&mut reader, &mut stderr_buf_c.lock().unwrap());
     });
 
+    // Wrap child so the timeout path can call .kill() cross-platform.
+    let child_arc: Arc<Mutex<Option<std::process::Child>>> =
+        Arc::new(Mutex::new(Some(child)));
+    let child_arc_c = child_arc.clone();
+
     // Wait with timeout
     let (tx, rx) = mpsc::channel();
-    let pid = child.id();
     std::thread::spawn(move || {
-        let status = child.wait();
+        let status = {
+            let mut guard = child_arc_c.lock().unwrap();
+            guard.as_mut().and_then(|c| c.wait().ok())
+        };
         let _ = tx.send(status);
     });
 
     match rx.recv_timeout(timeout) {
-        Ok(Ok(status)) => {
+        Ok(Some(status)) => {
             let stdout = stdout_buf.lock().unwrap().clone();
             let stderr = stderr_buf.lock().unwrap().clone();
             Ok((stdout, stderr, status.code().unwrap_or(-1), false))
         }
-        Ok(Err(e)) => Err(AppError::ProcessError(format!("Process wait error: {}", e))),
+        Ok(None) => Err(AppError::ProcessError("Process wait error".to_string())),
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            // Kill the process
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
+            // Kill the process cross-platform via the Child::kill() method
+            if let Ok(mut guard) = child_arc.lock() {
+                if let Some(ref mut c) = *guard {
+                    let _ = c.kill();
+                }
             }
             let stderr = stderr_buf.lock().unwrap().clone();
-            Ok((
-                Vec::new(),
-                stderr,
-                -1,
-                true,
-            ))
+            Ok((Vec::new(), stderr, -1, true))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             Err(AppError::ProcessError("Process channel disconnected".to_string()))
@@ -511,6 +514,12 @@ pub async fn execute_python_session(
     let exec_line = format!("__EXEC__:{}\n", encoded);
     let sentinel_line = format!("__SENTINEL__:{}\n", sentinel_marker);
 
+    // Record stderr position before writing so we only return stderr from this call.
+    let stderr_start_len = stderr_buf_arc
+        .lock()
+        .map_err(|e| AppError::ProcessError(format!("Failed to lock stderr_buf: {}", e)))?
+        .len();
+
     {
         let mut stdin = stdin_arc
             .lock()
@@ -526,9 +535,14 @@ pub async fn execute_python_session(
             .map_err(|e| AppError::ProcessError(format!("Flush error: {}", e)))?;
     } // stdin lock dropped
 
-    // --- Read from stdout channel until sentinel or timeout ---
-    let timeout = Duration::from_secs(30);
+    // --- Read from stdout channel with absolute 30-second deadline ---
+    // Bug 1 fix: absolute deadline, not per-line timeout.
+    // Bug 3 fix: cap collected output at MAX_SESSION_OUTPUT_BYTES.
+    const MAX_SESSION_OUTPUT_BYTES: usize = 1_048_576; // 1 MB
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut output_lines: Vec<String> = Vec::new();
+    let mut output_bytes: usize = 0;
+    let mut output_truncated = false;
     let mut got_sentinel = false;
 
     {
@@ -536,19 +550,42 @@ pub async fn execute_python_session(
             .lock()
             .map_err(|e| AppError::ProcessError(format!("Failed to lock stdout_rx: {}", e)))?;
         loop {
-            match rx.recv_timeout(timeout) {
+            if Instant::now() >= deadline {
+                break;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(remaining) {
                 Ok(l) => {
                     if l == sentinel_marker {
                         got_sentinel = true;
                         break;
                     }
-                    output_lines.push(l);
+                    if !output_truncated {
+                        let line_bytes = l.len() + 1; // +1 for newline separator
+                        if output_bytes + line_bytes > MAX_SESSION_OUTPUT_BYTES {
+                            output_truncated = true;
+                            output_lines.push("[output truncated after 1048576 bytes]".to_string());
+                        } else {
+                            output_bytes += line_bytes;
+                            output_lines.push(l);
+                        }
+                    }
+                    // If truncated, keep draining until sentinel or deadline to
+                    // avoid leaving stale lines in the channel for the next call.
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
     } // stdout_rx lock dropped
+
+    // Compute per-call stderr (only the portion produced since we wrote code).
+    let per_call_stderr = {
+        let buf = stderr_buf_arc
+            .lock()
+            .map_err(|e| AppError::ProcessError(format!("Failed to lock stderr_buf: {}", e)))?;
+        buf.get(stderr_start_len..).unwrap_or("").to_string()
+    };
 
     if !got_sentinel {
         // Timed out or process crashed — kill and remove the session
@@ -558,10 +595,15 @@ pub async fn execute_python_session(
         if let Some(mut session) = sessions.remove(&session_id) {
             let _ = session.process.kill();
         }
-        let stderr_snapshot = stderr_buf_arc.lock().unwrap().clone();
+        // Append timeout message to per-call stderr
+        let mut final_stderr = per_call_stderr;
+        if !final_stderr.is_empty() && !final_stderr.ends_with('\n') {
+            final_stderr.push('\n');
+        }
+        final_stderr.push_str("Python session timed out after 30 seconds");
         return Ok(build_execute_code_response(
             output_lines.join("\n").as_bytes(),
-            stderr_snapshot.as_bytes(),
+            final_stderr.as_bytes(),
             -1,
             Some(work_dir.as_str()),
             true,
@@ -571,10 +613,9 @@ pub async fn execute_python_session(
     }
 
     // Success — session stays alive for the next call
-    let stderr_snapshot = stderr_buf_arc.lock().unwrap().clone();
     Ok(build_execute_code_response(
         output_lines.join("\n").as_bytes(),
-        stderr_snapshot.as_bytes(),
+        per_call_stderr.as_bytes(),
         0,
         Some(work_dir.as_str()),
         false,
@@ -878,28 +919,41 @@ print("done")
         let _ = std::fs::remove_dir_all(work_dir);
     }
 
-    /// Test 4: Timeout cleanup — infinite loop triggers timeout, then same
-    /// session_id can create a fresh session that works.
+    /// Test 4: Absolute timeout despite continuous stdout.
+    /// A script that prints forever must still timeout within ~30 seconds.
     #[tokio::test]
-    async fn python_session_timeout_cleanup_and_recreate() {
-        let work_dir = std::env::temp_dir().join(format!("pipi-code-toclean-{}", Uuid::new_v4()));
+    async fn python_session_absolute_timeout_despite_continuous_stdout() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-absto-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
 
-        let session_id = format!("test-toclean-{}", Uuid::new_v4());
+        let session_id = format!("test-absto-{}", Uuid::new_v4());
 
-        // Infinite loop — should time out
-        let r1 = execute_python_session(
-            "while True: pass".to_string(),
+        let start = std::time::Instant::now();
+        let r = execute_python_session(
+            "while True:\n    print('still running', flush=True)".to_string(),
             session_id.clone(),
             None,
             Some(work_dir.to_string_lossy().to_string()),
         )
         .await
         .expect("should return a response, not hang");
-        assert_eq!(r1.status, ToolExecutionStatus::TimedOut);
-        assert!(r1.timed_out);
+        let elapsed = start.elapsed();
 
-        // Same session_id should create a fresh session and work
+        assert_eq!(r.status, ToolExecutionStatus::TimedOut);
+        assert!(r.timed_out);
+        // Must complete in a bounded time — well under 60s even on slow CI
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "Expected timeout in ~30s, took {:?}",
+            elapsed
+        );
+        assert!(
+            r.stderr.contains("timed out"),
+            "Expected timeout message in stderr, got: {}",
+            r.stderr
+        );
+
+        // Session should be killed/removed — a fresh call with same id works
         let r2 = execute_python_session(
             "print('recovered')".to_string(),
             session_id.clone(),
@@ -910,10 +964,55 @@ print("done")
         .expect("fresh session should succeed");
         assert_eq!(r2.status, ToolExecutionStatus::Succeeded);
         assert!(!r2.timed_out);
+        assert!(r2.stdout.contains("recovered"));
+
+        let _ = close_python_session(session_id).await;
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    /// Test: stderr from a previous call does not leak into a later call.
+    #[tokio::test]
+    async fn python_session_stderr_is_per_call_not_stale() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-stderriso-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let session_id = format!("test-stderriso-{}", Uuid::new_v4());
+
+        // Call 1: write to stderr
+        let r1 = execute_python_session(
+            r#"import sys; print("old warning", file=sys.stderr)"#.to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("first call should succeed");
+        assert_eq!(r1.status, ToolExecutionStatus::Succeeded);
         assert!(
-            r2.stdout.contains("recovered"),
-            "Expected 'recovered' in stdout, got: {}",
+            r1.stderr.contains("old warning"),
+            "Expected 'old warning' in stderr, got: {}",
+            r1.stderr
+        );
+
+        // Call 2: produce no stderr
+        let r2 = execute_python_session(
+            "print('clean call')".to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("second call should succeed");
+        assert_eq!(r2.status, ToolExecutionStatus::Succeeded);
+        assert!(
+            r2.stdout.contains("clean call"),
+            "Expected 'clean call' in stdout, got: {}",
             r2.stdout
+        );
+        assert!(
+            !r2.stderr.contains("old warning"),
+            "Expected NO 'old warning' in stderr, got: {}",
+            r2.stderr
         );
 
         let _ = close_python_session(session_id).await;
