@@ -22,8 +22,22 @@ use std::time::Duration;
 static PYTHON_SESSIONS: Lazy<Mutex<HashMap<String, PythonSession>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// A persistent Python REPL session.
+///
+/// stdout/stderr reader threads are spawned once when the session is created.
+/// Each `execute_python_session` call writes to stdin and reads from the
+/// long-lived stdout channel, so handles are never consumed.
 struct PythonSession {
+    /// The child process (kept for killing on cleanup / Drop).
     process: std::process::Child,
+    /// Writer to the child's stdin. Wrapped in Arc<Mutex<>> so we can use it
+    /// without holding the PYTHON_SESSIONS lock.
+    stdin: Arc<Mutex<std::io::BufWriter<std::process::ChildStdin>>>,
+    /// Receiver end of the stdout line channel. The sender end is held by the
+    /// long-lived reader thread.
+    stdout_rx: Arc<Mutex<mpsc::Receiver<String>>>,
+    /// Shared stderr buffer. The long-lived stderr reader thread appends to it.
+    stderr_buf: Arc<Mutex<String>>,
 }
 
 impl Drop for PythonSession {
@@ -322,42 +336,16 @@ pub async fn execute_python(
     ))
 }
 
-/**
- * Execute Python code in a persistent REPL session
- *
- * Uses a sentinel-based protocol so the session process stays alive across
- * multiple calls and variables/imports are preserved between invocations.
- */
-#[tauri::command]
-pub async fn execute_python_session(
-    code: String,
-    session_id: String,
-    cwd: Option<String>,
-    work_dir: Option<String>,
-) -> AppResult<ExecuteCodeResponse> {
-    let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
-
-    if !command_exists("python3") {
-        return Err(AppError::ProcessError(
-            "Python 3 is not installed on your system".to_string(),
-        ));
-    }
-
-    // Unique per-call sentinel so we know when output is complete
-    let sentinel = uuid::Uuid::new_v4().to_string().replace('-', "");
-    let sentinel_marker = format!("__PIPI_DONE_{}__", sentinel);
-
-    let mut sessions = PYTHON_SESSIONS
-        .lock()
-        .map_err(|e| AppError::ProcessError(format!("Failed to lock sessions: {}", e)))?;
-
-    // Launch persistent REPL process if not already running
-    if !sessions.contains_key(&session_id) {
-        // The REPL reads lines from stdin forever.
-        // Lines prefixed with __EXEC__: carry base64-encoded Python source.
-        // Lines prefixed with __SENTINEL__: are echoed back to stdout so the
-        // caller can detect end-of-output without closing stdin.
-        let repl_script = r#"
+/// Create a new persistent Python REPL session with long-lived reader threads.
+/// Stdout/stderr are taken once and reader threads are spawned once; each
+/// `execute_python_session` call reads from the channel rather than consuming
+/// the handles.
+fn create_python_session(session_id: &str, work_dir: &str) -> AppResult<()> {
+    // The REPL reads lines from stdin forever.
+    // Lines prefixed with __EXEC__: carry base64-encoded Python source.
+    // Lines prefixed with __SENTINEL__: are echoed back to stdout so the
+    // caller can detect end-of-output without closing stdin.
+    let repl_script = r#"
 import sys, traceback, base64
 
 _locals = {}
@@ -379,60 +367,49 @@ for raw_line in sys.stdin:
     sys.stderr.flush()
 "#;
 
-        let child = Command::new("python3")
-            .arg("-u") // unbuffered stdout/stderr
-            .arg("-c")
-            .arg(repl_script)
-            .current_dir(&work_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                AppError::ProcessError(format!("Failed to start Python session: {}", e))
-            })?;
+    let mut child = Command::new("python3")
+        .arg("-u") // unbuffered stdout/stderr
+        .arg("-c")
+        .arg(repl_script)
+        .current_dir(work_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::ProcessError(format!("Failed to start Python session: {}", e)))?;
 
-        sessions.insert(session_id.clone(), PythonSession { process: child });
-    }
-
-    let session = sessions.get_mut(&session_id).unwrap();
-
-    // Check that the process is still alive before writing
-    if let Ok(Some(status)) = session.process.try_wait() {
-        sessions.remove(&session_id);
-        return Err(AppError::ProcessError(format!(
-            "Python session {} has ended (exit code {:?})",
-            session_id,
-            status.code()
-        )));
-    }
-    // Re-borrow after the check (the remove path returned early)
-    let session = sessions.get_mut(&session_id).unwrap();
-
-    // Take stdin/stdout/stderr handles so we can do IO without holding the
-    // sessions lock for the entire read loop.
-    let mut stdin_handle = session
-        .process
+    // Take stdin/stdout/stderr once — they stay valid for the session lifetime.
+    let stdin_handle = child
         .stdin
         .take()
         .ok_or_else(|| AppError::ProcessError("stdin unavailable".to_string()))?;
-    let stdout_handle = session
-        .process
+    let stdout_handle = child
         .stdout
         .take()
         .ok_or_else(|| AppError::ProcessError("stdout unavailable".to_string()))?;
-    let stderr_handle = session
-        .process
+    let stderr_handle = child
         .stderr
         .take()
         .ok_or_else(|| AppError::ProcessError("stderr unavailable".to_string()))?;
 
-    // Drop the lock while we perform blocking IO
-    drop(sessions);
+    // Long-lived stdout reader thread: sends each line through a channel.
+    let (stdout_tx, stdout_rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let reader = std::io::BufReader::new(stdout_handle);
+        for line in reader.lines() {
+            match line {
+                Ok(l) => {
+                    if stdout_tx.send(l).is_err() {
+                        break; // receiver dropped
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
 
-    // Drain stderr into a shared buffer so we can surface it if needed
-    let stderr_buf: std::sync::Arc<Mutex<String>> =
-        std::sync::Arc::new(Mutex::new(String::new()));
+    // Long-lived stderr reader thread: appends to a shared buffer.
+    let stderr_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let stderr_buf_clone = stderr_buf.clone();
     std::thread::spawn(move || {
         let reader = std::io::BufReader::new(stderr_handle);
@@ -450,56 +427,128 @@ for raw_line in sys.stdin:
         }
     });
 
-    // Encode code as base64 to avoid newline/escaping issues in the protocol
+    let session = PythonSession {
+        process: child,
+        stdin: Arc::new(Mutex::new(std::io::BufWriter::new(stdin_handle))),
+        stdout_rx: Arc::new(Mutex::new(stdout_rx)),
+        stderr_buf,
+    };
+
+    let mut sessions = PYTHON_SESSIONS
+        .lock()
+        .map_err(|e| AppError::ProcessError(format!("Failed to lock sessions: {}", e)))?;
+    sessions.insert(session_id.to_string(), session);
+    Ok(())
+}
+
+/**
+ * Execute Python code in a persistent REPL session
+ *
+ * Uses a sentinel-based protocol so the session process stays alive across
+ * multiple calls and variables/imports are preserved between invocations.
+ *
+ * The global PYTHON_SESSIONS mutex is never held while waiting for output.
+ */
+#[tauri::command]
+pub async fn execute_python_session(
+    code: String,
+    session_id: String,
+    cwd: Option<String>,
+    work_dir: Option<String>,
+) -> AppResult<ExecuteCodeResponse> {
+    let work_dir = resolve_command_cwd(cwd, work_dir.as_deref())?;
+
+    if !command_exists("python3") {
+        return Err(AppError::ProcessError(
+            "Python 3 is not installed on your system".to_string(),
+        ));
+    }
+
+    // Unique per-call sentinel so we know when output is complete
+    let sentinel = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let sentinel_marker = format!("__PIPI_DONE_{}__", sentinel);
+
+    // --- Brief lock: create session if needed, clone Arc handles, drop lock ---
+    let (stdin_arc, stdout_rx_arc, stderr_buf_arc) = {
+        let mut sessions = PYTHON_SESSIONS
+            .lock()
+            .map_err(|e| AppError::ProcessError(format!("Failed to lock sessions: {}", e)))?;
+
+        // Create session if it doesn't exist yet
+        if !sessions.contains_key(&session_id) {
+            // Drop lock before spawning (create_python_session re-acquires it)
+            drop(sessions);
+            create_python_session(&session_id, &work_dir)?;
+            sessions = PYTHON_SESSIONS
+                .lock()
+                .map_err(|e| AppError::ProcessError(format!("Failed to lock sessions: {}", e)))?;
+        }
+
+        // Check that the process is still alive before writing
+        if let Some(session) = sessions.get_mut(&session_id) {
+            if let Ok(Some(status)) = session.process.try_wait() {
+                let sid = session_id.clone();
+                sessions.remove(&session_id);
+                return Err(AppError::ProcessError(format!(
+                    "Python session {} has ended (exit code {:?})",
+                    sid,
+                    status.code()
+                )));
+            }
+        }
+
+        let session = sessions.get(&session_id).unwrap();
+        (
+            session.stdin.clone(),
+            session.stdout_rx.clone(),
+            session.stderr_buf.clone(),
+        )
+    }; // PYTHON_SESSIONS lock is dropped here
+
+    // --- Write to stdin (brief lock on session-level stdin mutex) ---
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(code.as_bytes());
     let exec_line = format!("__EXEC__:{}\n", encoded);
     let sentinel_line = format!("__SENTINEL__:{}\n", sentinel_marker);
 
-    stdin_handle
-        .write_all(exec_line.as_bytes())
-        .map_err(|e| AppError::ProcessError(format!("Write error: {}", e)))?;
-    stdin_handle
-        .write_all(sentinel_line.as_bytes())
-        .map_err(|e| AppError::ProcessError(format!("Write sentinel error: {}", e)))?;
-    stdin_handle
-        .flush()
-        .map_err(|e| AppError::ProcessError(format!("Flush error: {}", e)))?;
+    {
+        let mut stdin = stdin_arc
+            .lock()
+            .map_err(|e| AppError::ProcessError(format!("Failed to lock stdin: {}", e)))?;
+        stdin
+            .write_all(exec_line.as_bytes())
+            .map_err(|e| AppError::ProcessError(format!("Write error: {}", e)))?;
+        stdin
+            .write_all(sentinel_line.as_bytes())
+            .map_err(|e| AppError::ProcessError(format!("Write sentinel error: {}", e)))?;
+        stdin
+            .flush()
+            .map_err(|e| AppError::ProcessError(format!("Flush error: {}", e)))?;
+    } // stdin lock dropped
 
-    // Read stdout lines in a dedicated thread so we can enforce a timeout
-    let (tx, rx) = mpsc::channel::<String>();
-    std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(stdout_handle);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    if tx.send(l).is_err() {
-                        break; // receiver dropped
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // Wait for sentinel with a 30-second timeout
+    // --- Read from stdout channel until sentinel or timeout ---
     let timeout = Duration::from_secs(30);
     let mut output_lines: Vec<String> = Vec::new();
     let mut got_sentinel = false;
 
-    loop {
-        match rx.recv_timeout(timeout) {
-            Ok(l) => {
-                if l == sentinel_marker {
-                    got_sentinel = true;
-                    break;
+    {
+        let rx = stdout_rx_arc
+            .lock()
+            .map_err(|e| AppError::ProcessError(format!("Failed to lock stdout_rx: {}", e)))?;
+        loop {
+            match rx.recv_timeout(timeout) {
+                Ok(l) => {
+                    if l == sentinel_marker {
+                        got_sentinel = true;
+                        break;
+                    }
+                    output_lines.push(l);
                 }
-                output_lines.push(l);
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => break,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-    }
+    } // stdout_rx lock dropped
 
     if !got_sentinel {
         // Timed out or process crashed — kill and remove the session
@@ -509,9 +558,10 @@ for raw_line in sys.stdin:
         if let Some(mut session) = sessions.remove(&session_id) {
             let _ = session.process.kill();
         }
+        let stderr_snapshot = stderr_buf_arc.lock().unwrap().clone();
         return Ok(build_execute_code_response(
             output_lines.join("\n").as_bytes(),
-            stderr_buf.lock().unwrap().as_bytes(),
+            stderr_snapshot.as_bytes(),
             -1,
             Some(work_dir.as_str()),
             true,
@@ -520,20 +570,11 @@ for raw_line in sys.stdin:
         ));
     }
 
-    // Reinsert stdin/stdout/stderr handles back into the session so it stays
-    // alive for the next call. We need to re-acquire the lock.
-    let mut sessions = PYTHON_SESSIONS
-        .lock()
-        .map_err(|e| AppError::ProcessError(format!("Failed to lock sessions: {}", e)))?;
-    if let Some(session) = sessions.get_mut(&session_id) {
-        session.process.stdin = Some(stdin_handle);
-        // stdout/stderr are owned by reader threads now; leave as None
-    }
-
-    let stderr_bytes = stderr_buf.lock().unwrap();
+    // Success — session stays alive for the next call
+    let stderr_snapshot = stderr_buf_arc.lock().unwrap().clone();
     Ok(build_execute_code_response(
         output_lines.join("\n").as_bytes(),
-        stderr_bytes.as_bytes(),
+        stderr_snapshot.as_bytes(),
         0,
         Some(work_dir.as_str()),
         false,
@@ -698,11 +739,6 @@ mod tests {
         let work_dir = std::env::temp_dir().join(format!("pipi-code-pysess-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
 
-        // Start a session, then send code that produces no sentinel-compatible
-        // output. The function should return a TimedOut response rather than
-        // hanging forever. We rely on the internal 30 s timeout but since this
-        // is a unit test we just verify the response shape after a short call
-        // (the real timeout fires quickly because we send a tiny snippet).
         let session_id = format!("test-timeout-{}", Uuid::new_v4());
         let result = execute_python_session(
             "import time; time.sleep(0.1)".to_string(),
@@ -719,6 +755,210 @@ mod tests {
 
         // Cleanup
         let _ = close_python_session(session_id).await;
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    /// Test 1: Persistent state — variable set in first call is visible in second call.
+    #[tokio::test]
+    async fn python_session_persists_state_between_calls() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-persist-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let session_id = format!("test-persist-{}", Uuid::new_v4());
+
+        // First call: set x = 41
+        let r1 = execute_python_session(
+            "x = 41".to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("first call should succeed");
+        assert_eq!(r1.status, ToolExecutionStatus::Succeeded);
+        assert!(!r1.timed_out);
+
+        // Second call: print(x + 1) → should print 42
+        let r2 = execute_python_session(
+            "print(x + 1)".to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("second call should succeed");
+        assert_eq!(r2.status, ToolExecutionStatus::Succeeded);
+        assert!(!r2.timed_out);
+        assert!(
+            r2.stdout.contains("42"),
+            "Expected stdout to contain '42', got: {}",
+            r2.stdout
+        );
+
+        let _ = close_python_session(session_id).await;
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    /// Test 2: Second call doesn't fail — two sequential print calls both succeed.
+    #[tokio::test]
+    async fn python_session_second_call_succeeds() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-second-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let session_id = format!("test-second-{}", Uuid::new_v4());
+
+        let r1 = execute_python_session(
+            "print('first')".to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("first call should succeed");
+        assert_eq!(r1.status, ToolExecutionStatus::Succeeded);
+        assert!(r1.stdout.contains("first"), "Expected 'first', got: {}", r1.stdout);
+
+        let r2 = execute_python_session(
+            "print('second')".to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("second call should succeed");
+        assert_eq!(r2.status, ToolExecutionStatus::Succeeded);
+        assert!(
+            r2.stdout.contains("second"),
+            "Expected 'second', got: {}",
+            r2.stdout
+        );
+
+        let _ = close_python_session(session_id).await;
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    /// Test 3: stderr-heavy code doesn't hang.
+    #[tokio::test]
+    async fn python_session_stderr_heavy_does_not_hang() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-stderr-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let session_id = format!("test-stderr-{}", Uuid::new_v4());
+
+        // Write a lot to stderr, then to stdout
+        let code = r#"
+import sys
+for i in range(200):
+    print(f"err line {i}", file=sys.stderr)
+print("done")
+"#;
+        let result = execute_python_session(
+            code.to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("should return within timeout");
+
+        assert_eq!(result.status, ToolExecutionStatus::Succeeded);
+        assert!(!result.timed_out);
+        assert!(
+            result.stdout.contains("done"),
+            "Expected 'done' in stdout, got: {}",
+            result.stdout
+        );
+        assert!(
+            result.stderr.contains("err line 199"),
+            "Expected stderr to contain 'err line 199', got: {}",
+            result.stderr
+        );
+
+        let _ = close_python_session(session_id).await;
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    /// Test 4: Timeout cleanup — infinite loop triggers timeout, then same
+    /// session_id can create a fresh session that works.
+    #[tokio::test]
+    async fn python_session_timeout_cleanup_and_recreate() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-toclean-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let session_id = format!("test-toclean-{}", Uuid::new_v4());
+
+        // Infinite loop — should time out
+        let r1 = execute_python_session(
+            "while True: pass".to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("should return a response, not hang");
+        assert_eq!(r1.status, ToolExecutionStatus::TimedOut);
+        assert!(r1.timed_out);
+
+        // Same session_id should create a fresh session and work
+        let r2 = execute_python_session(
+            "print('recovered')".to_string(),
+            session_id.clone(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("fresh session should succeed");
+        assert_eq!(r2.status, ToolExecutionStatus::Succeeded);
+        assert!(!r2.timed_out);
+        assert!(
+            r2.stdout.contains("recovered"),
+            "Expected 'recovered' in stdout, got: {}",
+            r2.stdout
+        );
+
+        let _ = close_python_session(session_id).await;
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    /// Test 5: execute_python infinite loop returns timed_out.
+    #[test]
+    fn execute_python_infinite_loop_returns_timed_out() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-pyto-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let result = execute_python(
+            "while True: pass".to_string(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .expect("should return a response, not hang");
+
+        assert!(result.timed_out);
+        assert_eq!(result.status, ToolExecutionStatus::TimedOut);
+        assert_eq!(result.exit_code, -1);
+        assert!(result.stderr.contains("timed out"));
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    /// Test 6: execute_node long-running interval returns timed_out.
+    #[test]
+    fn execute_node_long_running_returns_timed_out() {
+        let work_dir = std::env::temp_dir().join(format!("pipi-code-nodeto-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+
+        let result = execute_node(
+            "setInterval(() => {}, 100)".to_string(),
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+        )
+        .expect("should return a response, not hang");
+
+        assert!(result.timed_out);
+        assert_eq!(result.status, ToolExecutionStatus::TimedOut);
+        assert_eq!(result.exit_code, -1);
+        assert!(result.stderr.contains("timed out"));
+
         let _ = std::fs::remove_dir_all(work_dir);
     }
 }
