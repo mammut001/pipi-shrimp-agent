@@ -130,4 +130,11 @@ describe('settingsStore AutoResearch mutation guard', () => {
     expect(useSettingsStore.getState().apiConfigs[0]?.model).toBe('gpt-4.1-mini');
     expect(useAutoResearchStore.getState().statusMessage).toBeUndefined();
   });
+
+  it('persists the Windows shell profile selection', async () => {
+    useSettingsStore.getState().setWindowsShellProfile('wsl');
+
+    expect(useSettingsStore.getState().windowsShellProfile).toBe('wsl');
+    expect(storage.setItem).toHaveBeenCalledWith('ai-agent-windows-shell-profile', 'wsl');
+  });
 });

@@ -17,6 +17,7 @@ use crate::commands::file::{
     create_directory_for_tool, read_file_for_tool, resolve_path as resolve_tool_path,
     write_file_for_tool,
 };
+use crate::tools::shell_profile::WindowsShellProfile;
 use crate::tools::ssh_bridge::{execute_ssh_exec, execute_ssh_read_file, execute_ssh_upload};
 use jsonschema::{JSONSchema, ValidationError};
 
@@ -611,14 +612,27 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .get("executionId")
                 .and_then(|v| v.as_str())
                 .or_else(|| args.get("execution_id").and_then(|v| v.as_str()));
-            let result = execute_bash_for_tool(command, cwd, work_dir, timeout_secs, execution_id)
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            let windows_shell_profile = args
+                .get("windowsShellProfile")
+                .cloned()
+                .map(serde_json::from_value::<WindowsShellProfile>)
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("Invalid windowsShellProfile: {}", e))?;
+            let result = execute_bash_for_tool(
+                command,
+                cwd,
+                work_dir,
+                timeout_secs,
+                execution_id,
+                windows_shell_profile,
+            )
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
             serde_json::to_string(&result)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize command result: {}", e))
         }),
         ToolMetadata {
             name: "execute_command".to_string(),
-            description: "Execute a shell command inside the bound work directory. Returns structured JSON with stdout, stderr, exit code, cwd, and truncation metadata.".to_string(),
+            description: "Execute a shell command inside the bound work directory. On Windows, Auto uses PowerShell for Windows paths and WSL only for WSL/Linux workspaces; do not mix PowerShell and WSL installs or build artifacts in the same workspace. Returns structured JSON with stdout, stderr, exit code, cwd, and truncation metadata.".to_string(),
             is_read_only: false,
             is_concurrency_safe: false,
             input_schema: serde_json::json!({
@@ -635,6 +649,11 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                     "timeoutSecs": {
                         "type": "number",
                         "description": "Optional timeout hint in seconds"
+                    },
+                    "windowsShellProfile": {
+                        "type": "string",
+                        "enum": ["auto", "powershell", "wsl"],
+                        "description": "Optional Windows shell profile override. Auto uses PowerShell for Windows paths and WSL for WSL/Linux workspaces."
                     }
                 },
                 "required": ["command"],

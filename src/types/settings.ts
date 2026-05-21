@@ -66,6 +66,8 @@ export interface AgentSettings {
   maxToolRounds: number;  // Maximum tool loop rounds (default: 17)
 }
 
+export type WindowsShellProfile = 'auto' | 'powershell' | 'wsl';
+
 export interface AutoResearchLlmSettings {
   defaultConfigId: string | null;
   agentConfigId: string | null;
@@ -76,6 +78,8 @@ export interface AutoResearchLlmSettings {
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   maxToolRounds: 17,
 };
+
+export const DEFAULT_WINDOWS_SHELL_PROFILE: WindowsShellProfile = 'auto';
 
 export const DEFAULT_AUTORESEARCH_LLM_SETTINGS: AutoResearchLlmSettings = {
   defaultConfigId: null,
@@ -111,6 +115,7 @@ export interface SettingsState {
   agentSettings: AgentSettings;      // Agent behavior settings
   autoResearchLlmSettings: AutoResearchLlmSettings;
   visionSettings: VisionSettings;
+  windowsShellProfile: WindowsShellProfile;
 
   // ========== Action Methods ==========
 
@@ -202,6 +207,7 @@ export interface SettingsState {
   updateAgentSettings: (settings: Partial<AgentSettings>) => void;
   updateAutoResearchLlmSettings: (settings: Partial<AutoResearchLlmSettings>) => void;
   updateVisionSettings: (settings: Partial<VisionSettings>) => void;
+  setWindowsShellProfile: (profile: WindowsShellProfile) => void;
 
   /**
    * Get pricing for a specific model (custom or default)

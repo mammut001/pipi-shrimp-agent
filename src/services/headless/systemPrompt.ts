@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { ImportedFile } from '@/types/settings';
-import { useUIStore } from '@/store';
+import { useSettingsStore, useUIStore } from '@/store';
 import { usePromptStore } from '@/store/promptStore';
+import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 
 interface ReadFileResult {
   content: string;
@@ -53,6 +54,11 @@ export async function buildHeadlessSystemPrompt(
     ? workingFiles.map((file) => `- ${file.name}: ${file.path}`).join('\n')
     : '';
 
+  const shellProfileContext = buildShellProfilePromptContext({
+    selection: useSettingsStore.getState().windowsShellProfile,
+    workDir,
+  });
+
   const { buildPrompt } = await import('@/services/prompt/promptBuilder');
   const { systemPrompt } = buildPrompt(template?.sections || [], {
     agentInstructions: useUIStore.getState().agentInstructions,
@@ -60,6 +66,8 @@ export async function buildHeadlessSystemPrompt(
     coreMdContent,
     workingFilesList,
     memoryContext,
+    shellProfileLabel: shellProfileContext.shellProfileLabel,
+    shellProfileGuidance: shellProfileContext.shellProfileGuidance,
     originalQuery,
     browserResult: '',
   });

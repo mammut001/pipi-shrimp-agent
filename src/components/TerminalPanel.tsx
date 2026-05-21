@@ -18,6 +18,13 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import '@xterm/xterm/css/xterm.css';
+import { t } from '@/i18n';
+import { useSettingsStore } from '@/store';
+import {
+  convertWindowsPathToWsl,
+  formatShellProfileLabel,
+  resolveWindowsShellProfile,
+} from '@/utils/windowsShellProfile';
 
 /** Monochrome theme matching the app's palette (black accents, light surfaces). */
 const TERMINAL_THEME = {
@@ -78,6 +85,23 @@ export function TerminalPanel({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [status, setStatus] = useState<'connecting' | 'ready' | 'exited' | 'error'>('connecting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
+  const shellResolution = resolveWindowsShellProfile(windowsShellProfile, cwd);
+  const shellLabel = formatShellProfileLabel(shellResolution);
+
+  const buildCwdCommand = useCallback((target: string): string => {
+    if (!shellResolution.isWindows || shellResolution.resolved === 'default') {
+      const escaped = target.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `cd "${escaped}" && clear\r`;
+    }
+    if (shellResolution.resolved === 'powershell') {
+      const escaped = target.replace(/'/g, "''");
+      return `Set-Location -LiteralPath '${escaped}'\r\nClear-Host\r`;
+    }
+    const wslPath = convertWindowsPathToWsl(target) ?? target;
+    const escaped = wslPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `cd "${escaped}" && clear\r`;
+  }, [shellResolution]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -189,6 +213,7 @@ export function TerminalPanel({
           cwd: cwd || null,
           rows: dims?.rows ?? 24,
           cols: dims?.cols ?? 80,
+          shellProfile: windowsShellProfile,
         });
 
         if (disposed) {
@@ -206,10 +231,10 @@ export function TerminalPanel({
         // We send `cd "<dir>" && clear` after a brief delay so the shell is
         // fully initialized. The `clear` keeps the terminal looking clean.
         if (cwd && !disposed) {
-          const escapedCwd = cwd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
           cwdSetupTimeoutId = setTimeout(() => {
             if (!disposed) {
-              invoke('terminal_input', { sessionId, data: `cd "${escapedCwd}" && clear\r` }).catch(() => {});
+              const cmd = buildCwdCommand(cwd);
+              invoke('terminal_input', { sessionId, data: cmd }).catch(() => {});
             }
             cwdSetupTimeoutId = null;
           }, 350);
@@ -246,7 +271,7 @@ export function TerminalPanel({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [cwd, externalSessionId, onSessionExit, onSessionReady]);
+  }, [cwd, externalSessionId, onSessionExit, onSessionReady, buildCwdCommand, windowsShellProfile]);
 
   const handleClear = useCallback(() => {
     terminalRef.current?.clear();
@@ -303,6 +328,9 @@ export function TerminalPanel({
               {shortenPath(cwd)}
             </span>
           )}
+          <span className="text-[11px] text-white/50 ml-2">
+            {t('terminal.shell.activeProfile')}: {shellLabel}
+          </span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -334,6 +362,11 @@ export function TerminalPanel({
       {status === 'error' && errorMessage && (
         <div className="px-3 py-1.5 bg-red-900/30 border-b border-red-500/30 text-[11px] text-red-200 flex-shrink-0">
           {errorMessage}
+        </div>
+      )}
+      {shellResolution.isWindows && shellResolution.resolved === 'wsl' && (
+        <div className="px-3 py-1.5 bg-amber-900/25 border-b border-amber-500/30 text-[11px] text-amber-200 flex-shrink-0">
+          {t('terminal.shell.wslWarning')}
         </div>
       )}
 

@@ -363,12 +363,19 @@ pub async fn execute_tool(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'command' argument for execute_command".to_string()))?;
             let work_dir_override = args.get("cwd").and_then(|v| v.as_str());
+            let windows_shell_profile = args
+                .get("windowsShellProfile")
+                .cloned()
+                .map(serde_json::from_value::<crate::tools::shell_profile::WindowsShellProfile>)
+                .transpose()
+                .map_err(|e| AppError::InternalError(format!("Invalid windowsShellProfile: {}", e)))?;
             let result = crate::commands::code::execute_bash_for_tool(
                 command,
                 work_dir_override,
                 work_dir.as_deref(),
                 None,
                 None,
+                windows_shell_profile,
             )?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }

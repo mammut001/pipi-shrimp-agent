@@ -228,6 +228,16 @@ const enUS: TranslationKeys = {
   'settings.saveSettings': 'Save Settings',
   'settings.tokenStats': 'Token Usage Statistics',
   'settings.tokenStatsDescription': 'View your API token consumption',
+  'settings.terminal.windowsShellProfile.title': 'Windows shell profile',
+  'settings.terminal.windowsShellProfile.auto': 'Auto',
+  'settings.terminal.windowsShellProfile.powershell': 'PowerShell',
+  'settings.terminal.windowsShellProfile.wsl': 'WSL',
+  'settings.terminal.windowsShellProfile.autoDescription': 'Use PowerShell for Windows projects and WSL only for WSL/Linux workspaces.',
+  'settings.terminal.windowsShellProfile.powershellDescription': 'Best for Windows projects, Tauri Windows builds, npm, Cargo, and local Windows paths.',
+  'settings.terminal.windowsShellProfile.wslDescription': 'Best for Linux/bash workflows. Avoid mixing WSL and PowerShell builds in the same workspace.',
+  'terminal.shell.activeProfile': 'Active shell',
+  'terminal.shell.powerShellRecommended': 'PowerShell is recommended for Windows builds and native Windows projects.',
+  'terminal.shell.wslWarning': 'WSL uses a separate Linux environment. Avoid mixing WSL and PowerShell builds in the same workspace.',
 
   // Diagnostics
   'diagnostics.dbHealth': 'Database Health',
