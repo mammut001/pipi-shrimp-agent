@@ -8,6 +8,7 @@
  */
 
 import { safeInvoke } from '../../utils/safeInvoke';
+import { invoke } from '@tauri-apps/api/core';
 import type { AutoCompactConfig, ContextTokenStats } from '../../types/compact';
 import { DEFAULT_AUTO_COMPACT_CONFIG } from '../../types/compact';
 

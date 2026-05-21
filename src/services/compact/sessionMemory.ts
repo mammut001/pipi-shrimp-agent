@@ -13,6 +13,7 @@
  */
 
 import { safeInvoke } from '../../utils/safeInvoke';
+import { invoke } from '@tauri-apps/api/core';
 import type { Message } from '../../types/chat';
 import { getCompactConfig } from './config';
 import { estimateMessagesTokens } from '../tokens/tokenEstimator';
