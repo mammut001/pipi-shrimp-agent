@@ -9,6 +9,7 @@
  */
 
 import { safeInvoke } from '../../utils/safeInvoke';
+import { invoke } from '@tauri-apps/api/core';
 import { createLogger } from '../../utils/logger';
 import type { CompactibleMessage } from '../../types/compact';
 import type { Message } from '../../types/chat';
