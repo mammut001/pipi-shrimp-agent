@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { SshConfig } from '@/store/autoresearchStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { buildRemoteBashCommand, shellEscape, shellEscapePath } from '@/utils/remoteExec';
 
 interface RawBashResult {
@@ -159,10 +160,14 @@ export async function executeTargetCommand(
   command: string,
   timeoutSecs = 120,
 ): Promise<RawBashResult> {
+  const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
+  const isLocalTarget = cfg.mode === 'local';
   return invoke<RawBashResult>('execute_bash', {
     args: {
-      command: buildRemoteBashCommand(cfg, command),
+      command: isLocalTarget ? command : buildRemoteBashCommand(cfg, command),
+      workDir: isLocalTarget ? (cfg.remoteWorkDir || undefined) : undefined,
       timeoutSecs,
+      windowsShellProfile,
     },
   });
 }

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore } from '@/store/settingsStore';
+import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 import {
   type WorkflowAgent,
 } from '@/types/workflow';
@@ -41,11 +42,15 @@ function buildSystemPrompt(agent: WorkflowAgent, model: string, override?: strin
     return override.trim();
   }
 
+  const shellProfileContext = buildShellProfilePromptContext({
+    selection: useSettingsStore.getState().windowsShellProfile,
+  });
   const parts = [
     agent.soulPrompt?.trim(),
     agent.task ? `## Role\n${agent.task}` : null,
     agent.taskInstruction?.trim() ? `## Task Instruction\n${agent.taskInstruction.trim()}` : null,
     agent.taskPrompt?.trim() ? `## Current Task\n${agent.taskPrompt.trim()}` : null,
+    `## Shell Profile\nActive shell profile: ${shellProfileContext.shellProfileLabel}\n${shellProfileContext.shellProfileGuidance}`,
     `[系统注记：你当前运行的模型是 "${model}"。]`,
   ].filter(Boolean);
 

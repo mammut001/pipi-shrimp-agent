@@ -194,6 +194,7 @@ function AutoResearchView() {
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
   const activeConfigId = useSettingsStore((state) => state.activeConfigId);
   const apiConfigs = useSettingsStore((state) => state.apiConfigs);
+  const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
 
   const [showSetup, setShowSetup] = useState(!sshConfig && runHistory.length === 0);
   const [setupForm, setSetupForm] = useState<SshConfig>(() => loadPersistedSetup());
@@ -358,6 +359,7 @@ function AutoResearchView() {
         args: {
           command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
           timeoutSecs: 30,
+          windowsShellProfile,
         },
       });
       const stdout = (result.stdout || '').trim();
@@ -383,7 +385,7 @@ function AutoResearchView() {
       const message = formatError(error);
       setConnectionTest({ status: 'error', output: message });
     }
-  }, [getLifecycleLockMessage, setupForm, setupLocked]);
+  }, [getLifecycleLockMessage, setupForm, setupLocked, windowsShellProfile]);
 
   const handleStart = useCallback(async () => {
     if (lifecycleLock.locked) {

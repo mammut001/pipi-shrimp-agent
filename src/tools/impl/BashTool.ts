@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { invoke } from '@tauri-apps/api/core';
+import { useSettingsStore } from '@/store/settingsStore';
 import { BaseTool, ToolContext, ToolResult } from '../base/Tool';
 
 /**
@@ -99,11 +100,13 @@ export class BashTool extends BaseTool<BashInput, BashOutput> {
     }
 
     try {
+      const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
       const result = await invoke<RawBashResult>('execute_bash', {
         args: {
           command: input.command,
           workDir: context.cwd || undefined,
           timeoutSecs: input.timeout,
+          windowsShellProfile,
         },
       });
 
