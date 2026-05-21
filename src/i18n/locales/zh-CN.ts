@@ -228,6 +228,16 @@ const zhCN: TranslationKeys = {
   'settings.saveSettings': '保存设置',
   'settings.tokenStats': 'Token 使用统计',
   'settings.tokenStatsDescription': '查看您的 API token 消耗情况',
+  'settings.terminal.windowsShellProfile.title': 'Windows Shell 配置',
+  'settings.terminal.windowsShellProfile.auto': '自动',
+  'settings.terminal.windowsShellProfile.powershell': 'PowerShell',
+  'settings.terminal.windowsShellProfile.wsl': 'WSL',
+  'settings.terminal.windowsShellProfile.autoDescription': 'Windows 项目使用 PowerShell，仅在 WSL/Linux 工作区使用 WSL。',
+  'settings.terminal.windowsShellProfile.powershellDescription': '适合 Windows 项目、Tauri Windows 构建、npm、Cargo 和本地 Windows 路径。',
+  'settings.terminal.windowsShellProfile.wslDescription': '适合 Linux/bash 工作流。避免在同一工作区混用 WSL 和 PowerShell 构建产物。',
+  'terminal.shell.activeProfile': '当前 Shell',
+  'terminal.shell.powerShellRecommended': 'Windows 构建和原生 Windows 项目建议使用 PowerShell。',
+  'terminal.shell.wslWarning': 'WSL 是独立的 Linux 环境。避免在同一工作区混用 WSL 和 PowerShell 构建。',
 
   // Diagnostics
   'diagnostics.dbHealth': '数据库健康',

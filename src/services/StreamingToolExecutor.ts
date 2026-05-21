@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { useMCPStore } from '@/store/mcpStore';
+import { useSettingsStore } from '@/store';
 import { parseMCPToolName } from '@/services/mcp/toolNormalizer';
 import type { ToolResult as MCPToolResult, ContentBlock } from '@/services/mcp/types';
 import { resolveActiveAgentConfig } from '@/services/agentConfig';
@@ -25,6 +26,7 @@ import {
 } from '@/services/tools/toolExecutionPolicy';
 import { runPreToolUseHooks } from '@/services/tools/preToolUseHooks';
 import { sanitizeToolExecutionContent } from '@/services/tools/outputSanitizer';
+import { withWindowsShellProfileArgs } from '@/utils/windowsShellProfile';
 
 /** Convert MCP ContentBlock array to a plain string for tool output */
 function contentBlocksToString(blocks: ContentBlock[]): string {
@@ -301,8 +303,14 @@ export class StreamingToolExecutor {
       return { results: [], totalExecutionTime: 0, errors: [] };
     }
 
+    const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
+    const normalizedToolRequests = toolRequests.map((request) => ({
+      ...request,
+      arguments: withWindowsShellProfileArgs(request.name, request.arguments, windowsShellProfile),
+    }));
+
     let completed = 0;
-    const total = toolRequests.length;
+    const total = normalizedToolRequests.length;
 
     // Progress callback helper
     const reportProgress = (currentTool?: string) => {
@@ -314,7 +322,7 @@ export class StreamingToolExecutor {
     const executableRequests: ToolRequest[] = [];
     const allowedToolSet = allowedTools ? new Set(allowedTools) : null;
 
-    for (let request of toolRequests) {
+    for (let request of normalizedToolRequests) {
       if (allowedToolSet && !allowedToolSet.has(request.name)) {
         prevalidatedResults.push(buildPolicyErrorResult(
           request,
@@ -455,7 +463,7 @@ export class StreamingToolExecutor {
       resultsById.set(result.id, result);
     }
 
-    const allResults = toolRequests.map((request) => resultsById.get(request.id) ?? {
+    const allResults = normalizedToolRequests.map((request) => resultsById.get(request.id) ?? {
       id: request.id,
       content: buildStructuredToolError(request.name, request.arguments, new Error(`Missing tool result: ${request.name}`)),
       is_error: true,

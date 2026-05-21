@@ -69,6 +69,16 @@ export type TranslationKeys = {
   'settings.saveSettings': string;
   'settings.tokenStats': string;
   'settings.tokenStatsDescription': string;
+  'settings.terminal.windowsShellProfile.title': string;
+  'settings.terminal.windowsShellProfile.auto': string;
+  'settings.terminal.windowsShellProfile.powershell': string;
+  'settings.terminal.windowsShellProfile.wsl': string;
+  'settings.terminal.windowsShellProfile.autoDescription': string;
+  'settings.terminal.windowsShellProfile.powershellDescription': string;
+  'settings.terminal.windowsShellProfile.wslDescription': string;
+  'terminal.shell.activeProfile': string;
+  'terminal.shell.powerShellRecommended': string;
+  'terminal.shell.wslWarning': string;
 
   // Diagnostics
   'diagnostics.dbHealth': string;

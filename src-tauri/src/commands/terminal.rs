@@ -13,6 +13,8 @@ use once_cell::sync::Lazy;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use tauri::Emitter;
 
+use crate::tools::shell_profile::{resolve_terminal_shell, WindowsShellProfile};
+
 /// Payload emitted to the frontend via `terminal-output` event.
 #[derive(Clone, serde::Serialize)]
 struct TerminalOutputPayload {
@@ -54,6 +56,7 @@ pub async fn terminal_create(
     cwd: Option<String>,
     rows: Option<u16>,
     cols: Option<u16>,
+    shell_profile: Option<WindowsShellProfile>,
     window: tauri::Window,
 ) -> Result<(), String> {
     let rows = rows.unwrap_or(24);
@@ -79,13 +82,24 @@ pub async fn terminal_create(
         })
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-    let mut cmd = CommandBuilder::new(detect_shell());
-    // Login shell (reads .zprofile / .bash_profile)
-    cmd.arg("-l");
-
-    if let Some(ref dir) = cwd {
-        cmd.cwd(dir);
-    }
+    let terminal_plan = resolve_terminal_shell(shell_profile, cwd.as_deref()).map_err(|e| e.to_string())?;
+    let mut cmd = if let Some(plan) = terminal_plan {
+        let mut builder = CommandBuilder::new(plan.program);
+        for arg in plan.args {
+            builder.arg(arg);
+        }
+        if let Some(dir) = plan.host_cwd {
+            builder.cwd(dir);
+        }
+        builder
+    } else {
+        let mut builder = CommandBuilder::new(detect_shell());
+        builder.arg("-l");
+        if let Some(ref dir) = cwd {
+            builder.cwd(dir);
+        }
+        builder
+    };
 
     // Ensure common env vars are passed through
     cmd.env("TERM", "xterm-256color");

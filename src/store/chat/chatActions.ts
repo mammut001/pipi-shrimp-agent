@@ -23,7 +23,7 @@ import {
   registerDiagnosticsTaskCancel,
   updateDiagnosticsTask,
 } from '../taskRegistryStore';
-import { useUIStore } from '../uiStore';
+import { useSettingsStore, useUIStore } from '@/store';
 import { appendBrowserResultToSystemPrompt, createBrowserResultMessages, mapBrowserResponseArtifacts } from './chatBrowserHandoff';
 import { CHAT_ERROR_MESSAGES, normalizeCaughtErrorMessage } from './chatErrors';
 import { shouldPersistMessage } from './chatPersistence';
@@ -42,6 +42,7 @@ import {
   STREAMING_TIMEOUT_MS,
 } from './chatStreaming';
 import { handleToolBatchRequest } from './chatToolExecution';
+import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 
 export function shouldRemoveEmptyAssistantPlaceholder(message: Message | undefined): boolean {
   return Boolean(message && message.role === 'assistant' && !message.content && !message.reasoning);
@@ -434,12 +435,18 @@ export function createChatActionMethods({
         }
 
         const { buildPrompt } = await import('../../services/prompt/promptBuilder');
+        const shellProfileContext = buildShellProfilePromptContext({
+          selection: useSettingsStore.getState().windowsShellProfile,
+          workDir: sessionWorkDir,
+        });
         const { systemPrompt } = buildPrompt(template?.sections || [], {
           agentInstructions: useUIStore.getState().agentInstructions,
           workDir: sessionWorkDir || '',
           coreMdContent,
           workingFilesList,
           memoryContext,
+          shellProfileLabel: shellProfileContext.shellProfileLabel,
+          shellProfileGuidance: shellProfileContext.shellProfileGuidance,
           originalQuery: '',
           browserResult: '',
         });

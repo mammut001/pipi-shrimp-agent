@@ -73,12 +73,25 @@ You have access to the following tools:
 Your working directory for this session is: \`{{workDir}}\`
 Use this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and \`grep\` tools. Resolve all relative paths against this directory.`,
       },
+      {
+        id: 'session-shell-profile',
+        label: 'Shell Profile',
+        order: 41,
+        cacheable: true,
+        enabled: true,
+        category: 'session',
+        description: 'Active shell profile guidance for command execution',
+        content: `## Shell Profile
+
+Active shell profile: {{shellProfileLabel}}
+{{shellProfileGuidance}}`,
+      },
 
       // Layer 4: Session - Project Core Memory (cached until core.md changes)
       {
         id: 'session-core-md',
         label: 'Project Core Memory',
-        order: 41,
+        order: 42,
         cacheable: true,
         enabled: true,
         category: 'session',
@@ -94,7 +107,7 @@ Use this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and 
       {
         id: 'session-working-files',
         label: 'Working Files',
-        order: 42,
+        order: 43,
         cacheable: true,
         enabled: true,
         category: 'session',
@@ -111,7 +124,7 @@ Use \`read_file\` with the exact paths above to read their contents before editi
       {
         id: 'session-memory-context',
         label: 'Relevant Memories',
-        order: 43,
+        order: 44,
         cacheable: true,
         enabled: true,
         category: 'session',
@@ -123,7 +136,7 @@ Use \`read_file\` with the exact paths above to read their contents before editi
       {
         id: 'session-docs-system',
         label: 'Document System',
-        order: 44,
+        order: 45,
         cacheable: true,
         enabled: true,
         category: 'session',

@@ -42,6 +42,7 @@ import { AgentBehaviorSettings } from '@/components/settings/AgentBehaviorSettin
 import { AutoResearchLlmSettingsSection } from '@/components/settings/AutoResearchLlmSettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { DatabaseHealthSection } from '@/components/settings/DatabaseHealthSection';
+import { TerminalSettings } from '@/components/settings/TerminalSettings';
 import type { Locale } from '@/i18n/types';
 import { t, getCurrentLocale, setLocale, convertToOldLanguageCode } from '@/i18n';
 import { getSectionTokenInfo, exportPrompt } from '@/services/prompt/promptBuilder';
@@ -64,6 +65,7 @@ export function Settings() {
     availableModelEntries,
     agentSettings,
     autoResearchLlmSettings,
+    windowsShellProfile,
     addApiConfig,
     updateApiConfig,
     removeApiConfig,
@@ -73,6 +75,7 @@ export function Settings() {
     setLanguage,
     updateAgentSettings,
     updateAutoResearchLlmSettings,
+    setWindowsShellProfile,
   } = useSettingsStore();
 
   const {
@@ -966,6 +969,11 @@ export function Settings() {
           <AgentBehaviorSettings
             agentSettings={agentSettings}
             onUpdate={updateAgentSettings}
+          />
+
+          <TerminalSettings
+            windowsShellProfile={windowsShellProfile}
+            onChange={setWindowsShellProfile}
           />
 
           {/* ====== Database Health Section ====== */}

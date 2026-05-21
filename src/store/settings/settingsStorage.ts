@@ -12,6 +12,7 @@ export const SETTINGS_STORAGE_KEYS = {
   budgetSettings: 'ai-agent-budget-settings',
   agentSettings: 'ai-agent-agent-settings',
   visionSettings: 'ai-agent-vision-settings',
+  windowsShellProfile: 'ai-agent-windows-shell-profile',
   legacyApiConfig: 'ai-agent-api-config',
 } as const;
 

@@ -133,13 +133,26 @@ pub fn spawn_bash_process(
     cwd: &str,
     requested_execution_id: Option<&str>,
 ) -> AppResult<ManagedProcessHandle> {
-    let mut child_command = Command::new("bash");
-    child_command
-        .arg("-lc")
-        .arg(command)
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    spawn_shell_process(
+        "bash",
+        &["-lc".to_string(), command.to_string()],
+        Some(cwd),
+        requested_execution_id,
+    )
+}
+
+pub fn spawn_shell_process(
+    program: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    requested_execution_id: Option<&str>,
+) -> AppResult<ManagedProcessHandle> {
+    let mut child_command = Command::new(program);
+    child_command.args(args);
+    if let Some(dir) = cwd {
+        child_command.current_dir(dir);
+    }
+    child_command.stdout(Stdio::piped()).stderr(Stdio::piped());
     prepare_command(&mut child_command);
 
     let child = child_command

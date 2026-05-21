@@ -14,6 +14,8 @@ import { finalizeBootstrapPlan } from './tsTools/bootstrapFinalize';
 import { parsePaperExtractMetaResponse } from './tsTools/paperExtractMeta';
 import { buildPdfReadResult } from './tsTools/pdfRead';
 import { renderKnownScaffoldTemplate } from './tsTools/scaffoldGenerate';
+import { useSettingsStore } from '@/store';
+import { withWindowsShellProfileArgs } from '@/utils/windowsShellProfile';
 
 export * from './tsTools/arxivSearch';
 export * from './tsTools/baselineExtract';
@@ -63,7 +65,9 @@ async function writeTextFile(path: string, content: string, workDir?: string): P
 }
 
 async function executeCommand(command: string, workDir?: string): Promise<CommandResult> {
-  const raw = await invokeCoreTool('execute_command', { command, cwd: workDir }, workDir);
+  const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
+  const args = withWindowsShellProfileArgs('execute_command', { command, cwd: workDir }, windowsShellProfile);
+  const raw = await invokeCoreTool('execute_command', args, workDir);
   return JSON.parse(raw) as CommandResult;
 }
 

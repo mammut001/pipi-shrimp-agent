@@ -22,10 +22,12 @@ import {
   resolveSessionTool,
   seedSessionToolRuntime,
 } from './toolRuntimeState';
+import { useSettingsStore } from '@/store';
 import { useUIStore } from '../uiStore';
 import { createToolTaskSteps } from '../taskLifecycle';
 import { registerArtifactsFromToolResults, type ArtifactDetectorModule, type ToolArtifactResult } from './chatArtifacts';
 import { normalizeCompileTypstArgs, normalizeResumeWorkspaceToolArgs } from './chatResumeTools';
+import { applyWindowsShellProfileToArgsJson } from '@/utils/windowsShellProfile';
 
 type ToolBatchChunk = Extract<EngineEvent, { type: 'tool_batch_request' }>;
 
@@ -815,6 +817,7 @@ export async function handleToolBatchRequest(
   let currentSession = get().sessions.find((session) => session.id === activeSessionId);
   let workDir = currentSession?.workDir ?? null;
   const permissionMode = currentSession?.permissionMode || 'standard';
+  const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
 
   if (!workDir) {
     const needsWorkDir = chunk.tools.some((tool) => WORKSPACE_TOOL_NAMES.has(tool.name));
@@ -853,6 +856,7 @@ export async function handleToolBatchRequest(
       normalizedArgs = await deps.normalizeCompileTypstArgs(normalizedArgs, workDir ?? currentSession?.workDir);
     }
 
+    normalizedArgs = applyWindowsShellProfileToArgsJson(tool.name, normalizedArgs, windowsShellProfile);
     normalizedToolArgsById.set(tool.id, normalizedArgs);
   }
 
