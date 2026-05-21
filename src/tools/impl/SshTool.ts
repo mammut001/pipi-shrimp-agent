@@ -9,6 +9,7 @@ import {
   type SshAuthMode,
   shellEscapePath,
 } from '../../utils/remoteExec';
+import { useSettingsStore } from '@/store/settingsStore';
 import type { SshConfig } from '@/types/ssh';
 import { runInTerminal, getCurrentRunDir } from '@/services/autoresearch/terminalRunner';
 import { readTargetText } from '@/services/autoresearch/runDir';
@@ -69,6 +70,33 @@ function toCfg(input: any): SshConfig {
 function labelForCommand(command: string): string {
   const compact = command.replace(/\s+/g, ' ').trim();
   return compact.length > 72 ? `${compact.slice(0, 72)}...` : compact || 'ssh_exec';
+}
+
+function buildLocalOrRemoteExecuteBashArgs(
+  cfg: SshConfig,
+  command: string,
+  timeoutSecs: number,
+): {
+  command: string;
+  timeoutSecs: number;
+  workDir?: string;
+  windowsShellProfile: 'auto' | 'powershell' | 'wsl';
+} {
+  const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
+  if ((cfg.mode ?? 'ssh') === 'local') {
+    return {
+      command,
+      timeoutSecs,
+      workDir: cfg.remoteWorkDir || undefined,
+      windowsShellProfile,
+    };
+  }
+
+  return {
+    command: buildRemoteBashCommand(cfg, command),
+    timeoutSecs,
+    windowsShellProfile,
+  };
 }
 
 async function preflight(cfg: SshConfig): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -161,12 +189,8 @@ export async function runSshExec(
     }
   }
 
-  const fullCmd = buildRemoteBashCommand(cfg, input.command);
   const result = await invoke<RawBashResult>('execute_bash', {
-    args: {
-      command: fullCmd,
-      timeoutSecs: timeout,
-    },
+    args: buildLocalOrRemoteExecuteBashArgs(cfg, input.command, timeout),
   });
 
   return {

@@ -3,6 +3,8 @@
  */
 
 import { useAutoResearchStore, type ExperimentEntry, type ExperimentStatus, type SshConfig } from '@/store/autoresearchStore';
+import { useSettingsStore } from '@/store/settingsStore';
+import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 import { logExperiment } from './expLogger';
 import { rollback, getRemoteDiff } from './rollback';
 import { createNotifier } from './notifier';
@@ -121,6 +123,12 @@ function buildSystemPrompt({
   const envLine = isLocal
     ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
     : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
+  const shellProfileContext = isLocal
+    ? buildShellProfilePromptContext({
+        selection: useSettingsStore.getState().windowsShellProfile,
+        workDir: sshConfig.remoteWorkDir,
+      })
+    : null;
   const toolCfgHint = isLocal
     ? `Use ${toolProfile.commandTool} for target-side commands with cwd="${iterationCodeDir}". Use ${toolProfile.readTool} for file reads, ${toolProfile.createDirectoryTool} for directory creation, and ${toolProfile.writeTool} for file writes.`
     : `Use ${toolProfile.commandTool} for target-side commands with mode="ssh", host="${sshConfig.host}", user="${sshConfig.user}", port=${sshConfig.port}, authMode="${sshConfig.authMode}"${sshConfig.authMode === 'key' ? `, keyPath="${sshConfig.keyPath}"` : ''}, remoteWorkDir="${sshConfig.remoteWorkDir}". Use ${toolProfile.readTool} for file reads. Use ${toolProfile.uploadTool} for remote file creation or replacement. Only set terminal=true when the command needs a PTY or live terminal output. Never ask for credentials.`;
@@ -143,6 +151,7 @@ You are running one autonomous experiment iteration inside Pipi-Shrimp AutoResea
 - Execution target: ${envLine}
 - Tool config: ${toolCfgHint}
 - Only permitted experiment tools for this run: ${allowedTools}
+${shellProfileContext ? `- Active shell profile: ${shellProfileContext.shellProfileLabel}\n- ${shellProfileContext.shellProfileGuidance}` : ''}
 
 ## Phase Tool Lanes
 ${toolLanes}
