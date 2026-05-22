@@ -800,7 +800,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
           updateDiagnosticsTask(completedTaskId, {
             state: 'completed',
             cancelable: false,
-            detail: resultText || null,
+            detail: resultText || undefined,
           });
         }
         set({ status: 'completed', lastCompletedTaskId: completedTaskId, lastTaskResult: resultText || null });

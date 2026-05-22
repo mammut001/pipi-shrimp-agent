@@ -70,6 +70,9 @@ async function executeCommand(command: string, workDir?: string): Promise<Comman
 async function runJsonBootstrapInference(systemPrompt: string, userPrompt: string): Promise<string> {
   const config = resolveActiveAgentConfig();
   const issues = validateResolvedAgentConfig(config);
+  if (!config) {
+    throw new Error("No active agent config available.");
+  }
   if (issues.length > 0) {
     throw new Error(formatAgentConfigValidationError(config, issues));
   }

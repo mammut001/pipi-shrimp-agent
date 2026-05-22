@@ -618,7 +618,7 @@ export async function requestReflectionDecision(
   for (let attempt = 0; attempt <= MAX_REFLECTION_RETRIES; attempt += 1) {
     const sessionId = `autoresearch-reflection-${Date.now()}-${attempt}`;
     const request = buildResolvedChatRequest(agentConfig, {
-      messages: requestMessages,
+      messages: requestMessages as unknown as Record<string, unknown>[],
       systemPrompt,
       sessionId,
       allowBrowserTools: false,

@@ -626,7 +626,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
             : run.reason,
         resumeToken: clearResumeToken
           ? undefined
-          : patchAutoResearchResumeToken(run.resumeToken, { status }, updatedAt),
+          : patchAutoResearchResumeToken(run.resumeToken, { status: status as "running" | "paused" | "waiting_rate_limit" | "interrupted" }, updatedAt),
       })),
     };
   }),

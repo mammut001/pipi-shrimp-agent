@@ -56,7 +56,7 @@ export function clearCurrentRunDir(): void {
 }
 
 function getTerminalRunSnapshot(): {
-  runState: ReturnType<typeof getActiveAutoResearchRun>['status'] | null;
+  runState: NonNullable<ReturnType<typeof getActiveAutoResearchRun>>['status'] | null;
   reason?: string;
 } {
   const state = useAutoResearchStore.getState();

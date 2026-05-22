@@ -118,7 +118,7 @@ const AgentMetricsArtifactObjectSchema = MetricsArtifactBaseObjectSchema.extend(
 }).strict();
 
 function validateAgentMetricsArtifact(
-  value: z.infer<typeof AgentMetricsArtifactObjectSchema>,
+  value: Record<string, unknown>,
   ctx: z.RefinementCtx,
 ): void {
   if (value.runId !== value.sessionId) {
@@ -216,7 +216,7 @@ function validateExpectedFields(
 
 function hasSchemaFields(value: unknown): value is Record<string, unknown> {
   return Boolean(value)
-    && typeof value === 'object'
+    && value !== null && typeof value === 'object'
     && (
       'schemaVersion' in value
       || 'runId' in value

@@ -79,8 +79,10 @@ pub fn run() {
             };
             app.manage(db_health);
 
-            // Confirm the main window exists.
-            let _window = app.get_webview_window("main").unwrap();
+            // Confirm the main window exists. Log a warning instead of panicking.
+            if app.get_webview_window("main").is_none() {
+                eprintln!("❌ Failed to find main window after setup. The app may not display correctly.");
+            }
 
             // Initialize Claude HTTP client (no Node.js required)
             let claude_client = ClaudeClient::new();

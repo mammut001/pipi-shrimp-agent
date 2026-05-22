@@ -295,7 +295,7 @@ export class WorkflowEngine {
   }
 
   private async writeRunFile(relativePath: string, content: string): Promise<string | null> {
-    if (!this.workingDirectory) return;
+    if (!this.workingDirectory) return null;
     if (this.deps.writeRunFile) {
       return this.deps.writeRunFile(this.workingDirectory, relativePath, content);
     }

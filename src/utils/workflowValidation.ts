@@ -166,6 +166,10 @@ export async function testWorkflowDelete(): Promise<WorkflowValidation> {
       projectGoal: 'Test goal',
       status: 'idle',
       startTime: Date.now(),
+      successCriteria: "",
+      currentIteration: 0,
+      goalEvaluations: [],
+      reachedGoal: false,
       agents: [],
     });
 

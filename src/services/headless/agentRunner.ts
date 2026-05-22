@@ -28,7 +28,7 @@ const WORKSPACE_SENSITIVE_TOOLS = new Set([
   'render_typst_to_pdf',
 ]);
 
-type HeadlessMessage = {
+export type HeadlessMessage = {
   role: 'user' | 'assistant';
   content: string;
   tool_calls?: ToolCallParams[];

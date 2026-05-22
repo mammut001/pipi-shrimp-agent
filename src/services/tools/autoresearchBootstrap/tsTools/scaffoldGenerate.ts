@@ -146,7 +146,7 @@ export function renderScaffoldFiles(input: {
   } satisfies ScaffoldPlan;
 
   return {
-    scaffold: BootstrapPlanSchema.shape.scaffold.parse(scaffold),
+    scaffold: (BootstrapPlanSchema as any).shape.scaffold.parse(scaffold),
     renderedFiles,
   };
 }

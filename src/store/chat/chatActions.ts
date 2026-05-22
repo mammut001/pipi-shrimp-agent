@@ -556,7 +556,7 @@ export function createChatActionMethods({
 
             try {
               const latestSession = get().sessions.find((session) => session.id === activeSessionId);
-              let planWorkDir = latestSession?.workDir ?? sessionWorkDir;
+              let planWorkDir: string | null | undefined = latestSession?.workDir ?? sessionWorkDir;
 
               if (!planWorkDir) {
                 planWorkDir = await ensureSessionWorkDir(activeSessionId, set, get);

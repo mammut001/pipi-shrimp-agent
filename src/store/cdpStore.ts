@@ -127,8 +127,9 @@ export const useCdpStore = create<CdpState>((set, get) => {
         const currentRefCount = get()._monitorRefCount;
         const newCount = Math.max(0, currentRefCount - 1);
         set({ _monitorRefCount: newCount });
-        if (newCount === 0 && get()._monitorInterval) {
-          clearInterval(get()._monitorInterval);
+        const currentInterval = get()._monitorInterval;
+        if (newCount === 0 && currentInterval) {
+          clearInterval(currentInterval);
           set({ _monitorInterval: null });
         }
       };

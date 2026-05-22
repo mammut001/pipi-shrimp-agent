@@ -5,6 +5,7 @@ import { z } from 'zod';
  */
 export interface ToolResult<T = unknown> {
   success: boolean;
+  requiresConfirmation?: boolean;
   data?: T;
   error?: string;
   metadata?: ToolResultMetadata;
@@ -35,6 +36,7 @@ export interface ToolSettings {
   maxResultSizeChars?: number;
   sandboxEnabled?: boolean;
   maxSearchUses?: number;  // Max uses for WebSearchTool per session
+  permissionMode?: "default" | "acceptEdits" | "bypass" | "plan-only";
 }
 
 export interface PermissionContext {

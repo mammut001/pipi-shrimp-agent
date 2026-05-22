@@ -578,7 +578,7 @@ async function parseIterationMetrics(
       }
 
       return normalizeParsedResult(
-        artifact.value as Record<string, unknown>,
+        artifact.value as unknown as Record<string, unknown>,
         metricName,
         'metrics_json',
       );

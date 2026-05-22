@@ -211,7 +211,7 @@ export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
     try {
       await runHeadlessAgentTurn({
         sessionId: `autoresearch-bootstrap-${Date.now()}`,
-        initialMessages: toHeadlessMessages(nextMessages),
+        initialMessages: toHeadlessMessages(nextMessages) as any,
         systemPrompt: [
           AUTORESEARCH_BOOTSTRAP_TEMPLATE.soulPrompt,
           AUTORESEARCH_BOOTSTRAP_TEMPLATE.taskInstruction,

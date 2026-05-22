@@ -649,7 +649,7 @@ export function createAutoResearchSendMessage(
         const attemptSessionId = `autoresearch-${adapterSessionCounter}-${Date.now()}`;
         const result = await runHeadlessAgentTurn({
           sessionId: attemptSessionId,
-          initialMessages: [...turnMessages, ...retryConstraintState.retryMessages],
+          initialMessages: [...turnMessages, ...retryConstraintState.retryMessages] as any,
           systemPrompt: attemptPrompt,
           workDir: effectiveWorkDir,
           agentConfig: agentConfig!,
@@ -732,7 +732,7 @@ export function createAutoResearchSendMessage(
                 level: 'info',
                 phase: 'RUN_EXPERIMENT',
                 type: 'experiment_command_started',
-                message: command,
+                message: command || "unknown",
                 summary: parameterSummary,
                 metadata: {
                   toolName: call.name,
