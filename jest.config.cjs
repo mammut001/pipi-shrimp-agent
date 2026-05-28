@@ -6,6 +6,7 @@ module.exports = {
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       useESM: true,
+      tsconfig: { esModuleInterop: true },
     }],
   },
   extensionsToTreatAsEsm: ['.ts', '.tsx'],
@@ -17,5 +18,5 @@ module.exports = {
     'src/**/*.{ts,tsx}',
     '!src/**/*.d.ts',
   ],
-  setupFilesAfterEnv: [],
+  setupFiles: ['<rootDir>/jest.setup.js'],
 };

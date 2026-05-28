@@ -6,6 +6,24 @@ import type { SshConfig } from '@/store/autoresearchStore';
 
 const execFileAsync = promisify(execFile);
 
+async function findBash(): Promise<string> {
+  if (process.platform !== 'win32') return 'bash';
+  if (process.env.GIT_INSTALL_ROOT) {
+    const candidate = path.join(process.env.GIT_INSTALL_ROOT, 'bin', 'bash.exe');
+    try { await fs.access(candidate); return candidate; } catch {}
+  }
+  const cands = ['C:\\Program Files\\Git\\bin\\bash.exe','C:\\Program Files (x86)\\Git\\bin\\bash.exe'];
+  for (const cd of cands) { try { await fs.access(cd); return cd; } catch {} }
+  try {
+    const { stdout } = await execFileAsync('git', ['--exec-path'], { encoding: 'utf8' });
+    const bp = path.join(path.dirname(stdout.trim()), '..', 'bin', 'bash.exe');
+    try { await fs.access(bp); return bp; } catch {}
+  } catch {}
+  return 'bash';
+}
+
+
+
 export function createLocalSshConfig(workDir: string): SshConfig {
   return {
     mode: 'local',
@@ -43,7 +61,8 @@ export function installLocalInvokeMock(mockInvoke: jest.Mock): void {
       case 'execute_bash': {
         const payload = (args.args as Record<string, unknown> | undefined) ?? args;
         try {
-          const { stdout, stderr } = await execFileAsync('/bin/bash', ['-lc', String(payload.command ?? '')], {
+          const bashPath = await findBash();
+          const { stdout, stderr } = await execFileAsync(bashPath, ['-lc', String(payload.command ?? '')], {
             encoding: 'utf8',
             maxBuffer: 10 * 1024 * 1024,
           });

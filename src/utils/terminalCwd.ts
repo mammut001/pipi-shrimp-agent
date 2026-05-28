@@ -1,7 +1,7 @@
 import { safeInvokeOrNull } from '@/utils/safeInvoke';
 
 export async function resolveFallbackTerminalCwd(): Promise<string | undefined> {
-  if (!import.meta.env.DEV) {
+  if (process.env.NODE_ENV !== 'development') {
     return undefined;
   }
 
