@@ -17,6 +17,7 @@ jest.mock('@tauri-apps/api/core', () => ({
 const mockLogError = jest.fn();
 jest.mock('../utils/errorLogger', () => ({
   logError: (...args: unknown[]) => mockLogError(...args),
+  sanitize: (text: string) => text,
 }));
 
 // Mock localStorage
