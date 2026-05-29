@@ -19,6 +19,12 @@ const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 jest.mock('../i18n', () => ({
   t: (key: string) => key,
+  getCurrentLocale: () => 'en-US',
+  setLocale: jest.fn(),
+  addLocaleChangeListener: jest.fn(() => jest.fn()),
+  getSupportedLocales: () => [{ value: 'en-US', label: 'English', flag: 'US' }],
+  convertOldLanguageCode: (code: string) => (code === 'en' ? 'en-US' : 'zh-CN'),
+  convertToOldLanguageCode: (locale: string) => (locale === 'en-US' ? 'en' : 'zh'),
 }));
 
 jest.mock('../utils/safeInvoke', () => ({
@@ -95,7 +101,7 @@ describe('DatabaseHealthSection', () => {
     mockSaveDialog.mockReset();
     mockAddNotification.mockReset();
     mockReload.mockReset();
-    jest.spyOn(window.location, 'reload').mockImplementation(mockReload);
+    delete (window as { location?: Location }).location; (window as { location: { reload: jest.Mock } }).location = { reload: mockReload } as unknown as Location;
 
     mockSafeInvoke.mockImplementation((command: string) => {
       switch (command) {
