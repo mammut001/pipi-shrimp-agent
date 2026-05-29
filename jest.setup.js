@@ -76,3 +76,40 @@ jest.mock('@tauri-apps/api/window', () => ({
   }),
   getAllWindows: jest.fn().mockResolvedValue([]),
 }));
+// Global ESM package mocks (react-markdown, remark-gfm, rehype-raw are ESM-only and break under CJS)
+jest.mock('react-markdown', () => {
+  const React = require('react');
+  return {
+    __esModule: true,
+    default: function ReactMarkdown(props) {
+      return React.createElement('div', { 'data-testid': 'react-markdown' }, props.children || '');
+    },
+  };
+});
+
+jest.mock('remark-gfm', () => ({
+  __esModule: true,
+  default: function remarkGfm() { return function noop() {}; },
+}));
+
+jest.mock('rehype-raw', () => ({
+  __esModule: true,
+  default: function rehypeRaw() { return function noop() {}; },
+}));
+
+jest.mock('react-syntax-highlighter', () => {
+  const React = require('react');
+  return {
+    Prism: function PrismHighlighter(props) {
+      return React.createElement('pre', { 'data-testid': 'syntax-highlighter' },
+        React.createElement('code', null, props.children || props.code || ''));
+    },
+    default: function SyntaxHighlighter(props) {
+      return React.createElement('pre', { 'data-testid': 'syntax-highlighter' },
+        React.createElement('code', null, props.children || props.code || ''));
+    },
+  };
+});
+
+jest.mock('react-syntax-highlighter/dist/cjs/styles/prism', () => ({}));
+jest.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({}));
