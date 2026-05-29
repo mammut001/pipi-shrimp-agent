@@ -3,15 +3,19 @@ import type { AutoResearchRunPhase } from './history';
 import { getAutoResearchToolProfile } from './toolCatalog';
 
 const TOOL_LANE_PHASE_ORDER: AutoResearchRunPhase[] = [
+  'INIT',
   'READ_CONTEXT',
+  'AUDIT',
   'PLAN_HYPOTHESIS',
   'EDIT_CODE',
   'RUN_EXPERIMENT',
+  'VERIFY',
   'PARSE_METRICS',
   'REFLECT',
   'DECIDE_NEXT',
   'DONE',
   'FAILED',
+  'NEEDS_REVIEW',
 ];
 
 function phaseRank(phase: AutoResearchRunPhase): number {
@@ -32,6 +36,7 @@ export function getAutoResearchAllowedToolsForPhase(
 
   switch (phase) {
     case 'READ_CONTEXT':
+    case 'AUDIT':
     case 'PLAN_HYPOTHESIS':
       return uniqueTools([
         'get_current_workspace',
@@ -46,6 +51,7 @@ export function getAutoResearchAllowedToolsForPhase(
         writeTool,
       ]);
     case 'RUN_EXPERIMENT':
+    case 'VERIFY':
       return uniqueTools([
         'get_current_workspace',
         profile.commandTool,
@@ -60,6 +66,8 @@ export function getAutoResearchAllowedToolsForPhase(
       ]);
     case 'DONE':
     case 'FAILED':
+    case 'NEEDS_REVIEW':
+    case 'INIT':
     default:
       return uniqueTools([
         'get_current_workspace',
@@ -72,9 +80,12 @@ export function formatAutoResearchToolLanes(
 ): string {
   const phases: AutoResearchRunPhase[] = [
     'READ_CONTEXT',
+    'AUDIT',
     'EDIT_CODE',
     'RUN_EXPERIMENT',
+    'VERIFY',
     'PARSE_METRICS',
+    'REFLECT',
     'DECIDE_NEXT',
   ];
 
@@ -104,11 +115,17 @@ export function classifyAutoResearchToolPhase(input: {
     if (input.currentPhase === 'RUN_EXPERIMENT' || input.currentPhase === 'PARSE_METRICS') {
       return 'PARSE_METRICS';
     }
+    if (input.currentPhase === 'VERIFY') {
+      return 'VERIFY';
+    }
     if (input.currentPhase === 'REFLECT' || input.currentPhase === 'DECIDE_NEXT') {
       return input.currentPhase;
     }
     if (input.currentPhase === 'EDIT_CODE') {
       return 'EDIT_CODE';
+    }
+    if (input.currentPhase === 'AUDIT') {
+      return 'AUDIT';
     }
     return 'READ_CONTEXT';
   }
@@ -124,6 +141,10 @@ export function classifyAutoResearchToolPhase(input: {
   if (input.toolName === profile.commandTool) {
     if (input.isExperimentRun) {
       return 'RUN_EXPERIMENT';
+    }
+
+    if (input.currentPhase === 'VERIFY') {
+      return 'VERIFY';
     }
 
     if (input.currentPhase === 'RUN_EXPERIMENT' || input.currentPhase === 'PARSE_METRICS') {

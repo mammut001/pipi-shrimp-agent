@@ -16,14 +16,20 @@ export type AutoResearchIterationStatus = 'pending' | 'running' | 'failed' | 'co
 export type AutoResearchRunPhase =
   | 'INIT'
   | 'READ_CONTEXT'
+  | 'AUDIT'
   | 'PLAN_HYPOTHESIS'
   | 'EDIT_CODE'
   | 'RUN_EXPERIMENT'
+  | 'VERIFY'
   | 'PARSE_METRICS'
   | 'REFLECT'
   | 'DECIDE_NEXT'
   | 'DONE'
-  | 'FAILED';
+  | 'FAILED'
+  | 'NEEDS_REVIEW';
+
+/** AutoResearch operation mode. */
+export type AutoResearchMode = 'ml_experiment' | 'repo_self_improve';
 
 export type AutoResearchRunEventLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -101,6 +107,8 @@ export interface AutoResearchRunConfig {
   iterations: number;
   baseline?: number | null;
   configSnapshot: AutoResearchConfigSnapshot;
+  mode?: AutoResearchMode;
+  verificationCommands?: string[];
 }
 
 export interface AutoResearchIterationRecord {

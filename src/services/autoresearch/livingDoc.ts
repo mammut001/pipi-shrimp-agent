@@ -1,4 +1,5 @@
 import type { SshConfig } from '@/store/autoresearchStore';
+import type { AutoResearchMode } from './history';
 import { BootstrapPlanSchema } from './bootstrap/schema';
 import type { BootstrapPlan } from './bootstrap/types';
 import { readAllMetrics, summarize, type IterationMetrics } from './metricsStore';
@@ -9,6 +10,7 @@ export interface LivingDocOptions {
   workDir: string;
   metricName: string;
   direction: 'lower' | 'higher';
+  mode?: AutoResearchMode;
 }
 
 interface BootstrapDocSeed {
@@ -86,6 +88,59 @@ async function readBootstrapSeed(cfg: SshConfig, sessionId: string): Promise<Boo
   }
 }
 
+function renderSelfImproveLivingDoc(
+  sessionId: string,
+  objective: string,
+  metrics: IterationMetrics[],
+  options: LivingDocOptions,
+): string {
+  const improved = metrics.filter((entry) => entry.status === 'IMPROVED');
+  const failed = metrics.filter((entry) => entry.status === 'FAILED');
+  const noChange = metrics.filter((entry) => entry.status === 'NOT_IMPROVED');
+
+  const successfulFixes = improved
+    .map((entry) => `- iter-${String(entry.iteration).padStart(3, '0')}: ${entry.hypothesis}`)
+    .join('\n') || '- No successful fixes yet.';
+
+  const failedAttempts = failed
+    .map((entry) => `- iter-${String(entry.iteration).padStart(3, '0')}: ${entry.hypothesis}${entry.failReason ? ` (${entry.failReason})` : ''}`)
+    .join('\n') || '- No failed attempts yet.';
+
+  const noChangeAttempts = noChange
+    .map((entry) => `- iter-${String(entry.iteration).padStart(3, '0')}: ${entry.hypothesis}`)
+    .join('\n') || '- None yet.';
+
+  const knownIssues = metrics
+    .filter((entry) => entry.extra?.selfImproveMode && entry.extra?.buildPassed === false)
+    .map((entry) => `- iter-${String(entry.iteration).padStart(3, '0')}: Build failure — ${entry.hypothesis}`)
+    .join('\n') || '- No build failures recorded.';
+
+  return [
+    `# Self-Improve Session ${sessionId}`,
+    `Started: ${options.startedAt}`,
+    `Workdir: ${options.workDir}`,
+    `Mode: Repository Self-Improve`,
+    '',
+    '## Objective',
+    objective.trim() || '(empty objective)',
+    '',
+    `## Iterations: ${metrics.length} total, ${improved.length} improved, ${failed.length} failed, ${noChange.length} no change`,
+    '',
+    '## Successful Fixes',
+    successfulFixes,
+    '',
+    '## Failed Attempts (do not repeat)',
+    failedAttempts,
+    '',
+    '## No Change Attempts',
+    noChangeAttempts,
+    '',
+    '## Known Build Failures',
+    knownIssues,
+    '',
+  ].join('\n');
+}
+
 export function renderLivingDoc(
   sessionId: string,
   objective: string,
@@ -93,6 +148,9 @@ export function renderLivingDoc(
   options: LivingDocOptions,
   bootstrapPlan?: BootstrapPlan | null,
 ): string {
+  if (options.mode === 'repo_self_improve') {
+    return renderSelfImproveLivingDoc(sessionId, objective, metrics, options);
+  }
   const summary = summarize(metrics, options.direction);
   const best = summary.best;
   const kept = metrics

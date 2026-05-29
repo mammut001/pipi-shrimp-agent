@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export type MetricsDirection = 'lower' | 'higher';
-export type MetricsGenerator = 'agent' | 'loop_engine' | 'bootstrap';
+export type MetricsGenerator = 'agent' | 'loop_engine' | 'bootstrap' | 'self_improve';
 
 export interface IterationMetrics {
   schemaVersion?: 1;
@@ -68,7 +68,7 @@ interface NormalizeMetricsRecordOptions {
 
 const StatusSchema = z.enum(['IMPROVED', 'NOT_IMPROVED', 'FAILED']);
 const DirectionSchema = z.enum(['lower', 'higher']);
-const GeneratorSchema = z.enum(['agent', 'loop_engine', 'bootstrap']);
+const GeneratorSchema = z.enum(['agent', 'loop_engine', 'bootstrap', 'self_improve']);
 const MetricsExtraValueSchema = z.union([z.number().finite(), z.string(), z.boolean()]);
 
 const MetricsArtifactBaseObjectSchema = z.object({

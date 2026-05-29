@@ -52,13 +52,13 @@ describe('autoresearch default config', () => {
     (globalThis as Record<string, unknown>).__AUTORESEARCH_DEFAULT_DIRECTION__ = 'Higher';
     (globalThis as Record<string, unknown>).__AUTORESEARCH_DEFAULT_ITERATIONS__ = '99';
 
-    expect(getAutoResearchDefaultConfig()).toEqual({
+    expect(getAutoResearchDefaultConfig()).toEqual(expect.objectContaining({
       workdir: '~/autoresearch',
       experimentDir: '/Users/yuhansong/Documents/tiny-autoresearch-digits',
       metric: 'cv_accuracy',
       direction: 'higher',
       iterations: 50,
-    });
+    }));
   });
 
   it('prefers last-used config over defaults when resolving setup values', () => {
@@ -71,13 +71,13 @@ describe('autoresearch default config', () => {
     });
 
     expect(resolved.source).toBe('last-used');
-    expect(resolved.config).toEqual({
+    expect(resolved.config).toEqual(expect.objectContaining({
       workdir: '/tmp/workdir',
       experimentDir: '/tmp/exp',
       metric: 'accuracy',
       direction: 'lower',
       iterations: 3,
-    });
+    }));
   });
 
   it('persists and loads the last-used config through localStorage', () => {
@@ -90,13 +90,13 @@ describe('autoresearch default config', () => {
     });
 
     expect(storage.data[AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY]).toContain('"metric":"f1"');
-    expect(loadPersistedAutoResearchLastUsedConfig()).toEqual({
+    expect(loadPersistedAutoResearchLastUsedConfig()).toEqual(expect.objectContaining({
       workdir: '/tmp/workdir',
       experimentDir: '/tmp/exp',
       metric: 'f1',
       direction: 'higher',
       iterations: 7,
-    });
+    }));
 
     persistAutoResearchLastUsedConfig(null);
     expect(storage.data[AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY]).toBeUndefined();

@@ -14,6 +14,7 @@ import {
   redactAutoResearchSensitiveText,
   toHistoryConfigSnapshot,
   type AutoResearchIterationRecord,
+  type AutoResearchMode,
   type AutoResearchRecoveryAction,
   type AutoResearchResumeToken,
   type AutoResearchRunEvent,
@@ -97,6 +98,8 @@ export interface ExperimentSession {
   runHistory: AutoResearchRunRecord[];
   selectedRunId: string | null;
   lastUsedConfig: AutoResearchDefaultConfig | null;
+  autoResearchMode: AutoResearchMode;
+  verificationCommands: string[];
 }
 
 const defaultTelegramConfig: TelegramNotifyConfig = {
@@ -139,6 +142,8 @@ function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'selectedR
     terminalSessionId: null,
     terminalCwd: '',
     errorMessage: undefined,
+    autoResearchMode: 'ml_experiment',
+    verificationCommands: ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
   };
 }
 
@@ -391,6 +396,8 @@ interface AutoResearchStore extends ExperimentSession {
   resetSession: () => void;
   selectRun: (runId: string) => void;
   setLoopState: (state: LoopState) => void;
+  setAutoResearchMode: (mode: AutoResearchMode) => void;
+  setVerificationCommands: (commands: string[]) => void;
   setCurrentPhase: (phase?: AutoResearchRunPhase) => void;
   setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string; reason?: string }) => void;
   setReflectionFailed: (reason: string, options?: { summary?: string; endedAt?: string }) => void;
@@ -585,6 +592,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   })),
 
   setLoopState: (loopState) => set({ loopState }),
+  setAutoResearchMode: (autoResearchMode) => set({ autoResearchMode }),
+  setVerificationCommands: (verificationCommands) => set({ verificationCommands }),
 
   setCurrentPhase: (currentPhase) => set((state) => ({
     ...withActiveRunUpdate(state, (run) => ({

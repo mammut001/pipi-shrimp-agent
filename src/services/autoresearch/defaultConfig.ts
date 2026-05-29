@@ -6,6 +6,8 @@ export interface AutoResearchDefaultConfig {
   metric: string;
   direction: 'higher' | 'lower';
   iterations: number;
+  mode: 'ml_experiment' | 'repo_self_improve';
+  verificationCommands: string[];
 }
 
 export type AutoResearchDefaultSource = 'defaults' | 'last-used';
@@ -21,6 +23,8 @@ export const AUTORESEARCH_FALLBACK_CONFIG: AutoResearchDefaultConfig = {
   metric: 'cv_accuracy',
   direction: 'higher',
   iterations: 5,
+  mode: 'ml_experiment',
+  verificationCommands: ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
 };
 
 function safeLocalStorage(): Storage | null {
@@ -114,6 +118,22 @@ export function normalizeDirection(value: unknown): 'higher' | 'lower' {
   return normalized === 'lower' ? 'lower' : 'higher';
 }
 
+function normalizeMode(value: unknown): 'ml_experiment' | 'repo_self_improve' {
+  if (typeof value === 'string' && value === 'repo_self_improve') {
+    return 'repo_self_improve';
+  }
+  return 'ml_experiment';
+}
+
+function normalizeVerificationCommands(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return AUTORESEARCH_FALLBACK_CONFIG.verificationCommands;
+  }
+  return value
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .slice(0, 10); // Max 10 commands
+}
+
 export function normalizeAutoResearchDefaultConfig(
   input?: AutoResearchDefaultConfigInput | null,
 ): AutoResearchDefaultConfig {
@@ -123,6 +143,8 @@ export function normalizeAutoResearchDefaultConfig(
     metric: normalizeMetric(input?.metric, AUTORESEARCH_FALLBACK_CONFIG.metric),
     direction: normalizeDirection(input?.direction ?? AUTORESEARCH_FALLBACK_CONFIG.direction),
     iterations: normalizeIterations(input?.iterations, AUTORESEARCH_FALLBACK_CONFIG.iterations),
+    mode: normalizeMode(input?.mode),
+    verificationCommands: normalizeVerificationCommands(input?.verificationCommands),
   };
 }
 

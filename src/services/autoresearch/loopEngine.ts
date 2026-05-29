@@ -49,6 +49,18 @@ import {
 import { formatAutoResearchToolCatalog, getAutoResearchToolProfile } from './toolCatalog';
 import { formatAutoResearchToolLanes } from './toolLanes';
 import { applyBootstrapIfPresent } from './bootstrap/applyBootstrap';
+import { buildSelfImproveSystemPrompt } from './selfImprove/prompt';
+import { parseSelfImproveAgentOutput } from './selfImprove/resultParser';
+import {
+  computeSelfImproveScore,
+  determineSelfImproveStatus,
+  classifySelfImproveRiskLevel,
+} from './selfImprove/scoring';
+import {
+  mapSelfImproveStatusToExperimentStatus,
+  buildSelfImproveMetricValue,
+  type SelfImproveResult,
+} from './selfImprove/schema';
 
 interface ParsedResult {
   metricName: string;
@@ -860,6 +872,7 @@ export async function startExperimentLoop(
       workDir: startup.workDir,
       metricName: store.metricName,
       direction: store.metricDirection,
+      mode: store.autoResearchMode,
     });
     setAutoResearchPhase('READ_CONTEXT', {
       summary: 'Run artifacts initialized.',
@@ -1014,37 +1027,101 @@ export async function startExperimentLoop(
         summary: `Iteration ${iteration} is loading context and run artifacts.`,
       });
       const livingDoc = await readLivingDoc(artifactCfg, sessionId) || '';
-      const systemPrompt = buildSystemPrompt({
-        sessionContent,
-        livingDoc,
-        sshConfig: experimentCfg,
-        runDir,
-        environmentSummary,
-        metricDirection: store.metricDirection,
-        metricName: state.metricName,
-        maxIterations: store.maxIterations,
-      });
+      const isSelfImproveMode = store.autoResearchMode === 'repo_self_improve';
+      const systemPrompt = isSelfImproveMode
+        ? buildSelfImproveSystemPrompt({
+            sessionContent,
+            livingDoc,
+            sshConfig: experimentCfg,
+            runDir,
+            environmentSummary,
+            maxIterations: store.maxIterations,
+            verificationCommands: store.verificationCommands,
+          })
+        : buildSystemPrompt({
+            sessionContent,
+            livingDoc,
+            sshConfig: experimentCfg,
+            runDir,
+            environmentSummary,
+            metricDirection: store.metricDirection,
+            metricName: state.metricName,
+            maxIterations: store.maxIterations,
+          });
       await writeTargetText(artifactCfg, runDir.systemPromptPath, `${systemPrompt}\n`);
 
-      const userMessage = `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
-      setAutoResearchPhase('PLAN_HYPOTHESIS', {
+      const userMessage = isSelfImproveMode
+        ? `Run self-improve iteration #${iteration}. Follow the iteration workspace contract exactly. Start with AUDIT, then PLAN, PATCH, VERIFY, REFLECT, and DECIDE_NEXT.`
+        : `Run experiment iteration #${iteration}. Follow the iteration workspace contract exactly.`;
+      setAutoResearchPhase(isSelfImproveMode ? 'AUDIT' : 'PLAN_HYPOTHESIS', {
         iteration,
-        summary: `Iteration ${iteration} is planning the next hypothesis.`,
+        summary: isSelfImproveMode
+          ? `Iteration ${iteration} is auditing the codebase.`
+          : `Iteration ${iteration} is planning the next hypothesis.`,
       });
       const agentOutput = await sendMessage(systemPrompt, userMessage);
       consecutiveRateLimitCount = 0;
       const budgetExhausted = isBudgetExhaustedIterationSignal(agentOutput);
-      setAutoResearchPhase('PARSE_METRICS', {
+      setAutoResearchPhase(isSelfImproveMode ? 'VERIFY' : 'PARSE_METRICS', {
         iteration,
-        summary: `Iteration ${iteration} is parsing experiment metrics.`,
+        summary: isSelfImproveMode
+          ? `Iteration ${iteration} is verifying changes.`
+          : `Iteration ${iteration} is parsing experiment metrics.`,
       });
-      const { parsed, parseError } = await parseIterationMetrics(
-        artifactCfg,
-        runDir,
-        state.metricName,
-        state.metricDirection,
-        agentOutput,
-      );
+
+      let parsed: ParsedResult | null = null;
+      let parseError: string | undefined;
+
+      if (isSelfImproveMode) {
+        // Self-improve mode: parse the self-improve result artifact
+        const selfImproveResult = parseSelfImproveAgentOutput(agentOutput);
+        if (selfImproveResult) {
+          const score = computeSelfImproveScore(selfImproveResult);
+          const status = determineSelfImproveStatus(selfImproveResult, score);
+          const riskLevel = classifySelfImproveRiskLevel(
+            selfImproveResult.changedFiles,
+            selfImproveResult.commandsRun,
+          );
+          // Update risk level if our classification differs
+          selfImproveResult.riskLevel = riskLevel;
+          selfImproveResult.status = status;
+
+          parsed = {
+            metricName: 'repo_health',
+            metricValue: buildSelfImproveMetricValue(selfImproveResult),
+            status: mapSelfImproveStatusToExperimentStatus(status),
+            hypothesis: selfImproveResult.summary,
+            change: selfImproveResult.changedFiles.join(', '),
+            reasoning: selfImproveResult.nextRecommendation,
+            artifactPaths: [],
+            parseSource: 'agent_json',
+            failReason: status === 'FAILED' || status === 'NEEDS_REVIEW'
+              ? `Verification: build=${selfImproveResult.buildPassed}, tests=${selfImproveResult.testsPassed}, typecheck=${selfImproveResult.typecheckPassed}`
+              : undefined,
+            extra: {
+              selfImproveMode: true,
+              riskLevel: selfImproveResult.riskLevel,
+              buildPassed: selfImproveResult.buildPassed ?? 'unknown',
+              testsPassed: selfImproveResult.testsPassed ?? 'unknown',
+              typecheckPassed: selfImproveResult.typecheckPassed ?? 'unknown',
+              score,
+            },
+          };
+        } else {
+          parseError = 'Could not parse self_improve_result.json from agent output.';
+        }
+      } else {
+        // ML experiment mode: parse metrics as before
+        const result = await parseIterationMetrics(
+          artifactCfg,
+          runDir,
+          state.metricName,
+          state.metricDirection,
+          agentOutput,
+        );
+        parsed = result.parsed;
+        parseError = result.parseError;
+      }
       const diff = await getRemoteDiff(iterationCfg);
       const commitHash = await captureCommitHash(iterationCfg);
       const finishedAt = new Date().toISOString();
@@ -1163,6 +1240,7 @@ export async function startExperimentLoop(
           workDir: startup.workDir,
           metricName: state.metricName,
           direction: state.metricDirection,
+          mode: store.autoResearchMode,
         });
         await logExperiment(entry, useAutoResearchStore.getState());
         await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
@@ -1343,6 +1421,7 @@ export async function startExperimentLoop(
         workDir: startup.workDir,
         metricName: state.metricName,
         direction: state.metricDirection,
+        mode: store.autoResearchMode,
       });
       await logExperiment(entry, useAutoResearchStore.getState());
       await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
@@ -1614,6 +1693,7 @@ export async function startExperimentLoop(
         workDir: startup.workDir,
         metricName: useAutoResearchStore.getState().metricName,
         direction: useAutoResearchStore.getState().metricDirection,
+        mode: useAutoResearchStore.getState().autoResearchMode,
       });
       const rollbackResult = await rollbackIterationWorkspace(iterationCfg, iteration, runDir, {
         terminal: !isTerminalFailureError(error),

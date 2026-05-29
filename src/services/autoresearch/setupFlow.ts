@@ -33,6 +33,8 @@ export interface AutoResearchSetupDraft {
   agentConfigError?: string;
   requireConnectionTest?: boolean;
   connectionTestStatus?: AutoResearchConnectionTestStatus;
+  mode?: 'ml_experiment' | 'repo_self_improve';
+  verificationCommands?: string[];
 }
 
 export interface AutoResearchValidatedSetup {
@@ -42,6 +44,8 @@ export interface AutoResearchValidatedSetup {
   direction: 'higher' | 'lower';
   iterations: number;
   baseline: number | null;
+  mode?: 'ml_experiment' | 'repo_self_improve';
+  verificationCommands?: string[];
 }
 
 interface StartCallbacks {
@@ -108,10 +112,13 @@ export function validateAutoResearchSetupDraft(draft: AutoResearchSetupDraft): {
 
   const sshConfig = sanitizeSshConfig(draft.sshConfig);
   const experimentDir = sanitizePathInput(draft.experimentDir, { trim: true });
-  const metric = draft.metric.trim();
+  const isSelfImprove = draft.mode === 'repo_self_improve';
+  const metric = isSelfImprove ? 'repo_health' : draft.metric.trim();
   const normalizedDefaults = buildAutoResearchDefaultConfig({
     direction: draft.direction,
     iterations: draft.iterations,
+    mode: draft.mode,
+    verificationCommands: draft.verificationCommands,
   });
 
   if (sshConfig.mode === 'ssh') {
@@ -135,7 +142,7 @@ export function validateAutoResearchSetupDraft(draft: AutoResearchSetupDraft): {
   if (!experimentDir) {
     return { error: t('autoresearch.validationExperimentDirRequired'), value: null };
   }
-  if (!metric) {
+  if (!isSelfImprove && !metric) {
     return { error: t('autoresearch.validationMetricRequired'), value: null };
   }
   if (draft.requireConnectionTest && draft.connectionTestStatus !== 'success') {
@@ -151,6 +158,8 @@ export function validateAutoResearchSetupDraft(draft: AutoResearchSetupDraft): {
       direction: normalizeDirection(normalizedDefaults.direction),
       iterations: normalizedDefaults.iterations,
       baseline,
+      mode: normalizedDefaults.mode,
+      verificationCommands: normalizedDefaults.verificationCommands,
     },
   };
 }
@@ -269,6 +278,8 @@ export async function startAutoResearchRun(
     metric: setup.metric,
     direction: setup.direction,
     iterations: setup.iterations,
+    mode: setup.mode ?? 'ml_experiment',
+    verificationCommands: setup.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
   });
   callbacks.initSession({
     id: sessionId,
@@ -282,6 +293,11 @@ export async function startAutoResearchRun(
     livingDocPath: preflight.livingDocPath,
     agentConfigSnapshot: runConfig.snapshot,
   });
+  // Set mode and verification commands on the store directly
+  useAutoResearchStore.getState().setAutoResearchMode(setup.mode ?? 'ml_experiment');
+  useAutoResearchStore.getState().setVerificationCommands(
+    setup.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+  );
 
   const [{ createAutoResearchSendMessage }, { startExperimentLoop }] = await Promise.all([
     import('./chatAdapter'),
@@ -390,6 +406,8 @@ export async function resumeInterruptedAutoResearchRun(
     metric: token.metricName || run.config.metric,
     direction: token.metricDirection || run.config.direction,
     iterations: token.maxIterations || run.config.iterations,
+    mode: run.config.mode ?? 'ml_experiment',
+    verificationCommands: run.config.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
   });
   useAutoResearchStore.getState().activateHistoricalRun({
     runId,
