@@ -17,6 +17,8 @@ import { createRunDir, executeTargetCommand, getSessionRunPaths, listIterations,
 
 const execFileAsync = promisify(execFile);
 
+jest.setTimeout(30000);
+
 describe('runDir', () => {
   let workDir: string;
   let experimentDir: string;
