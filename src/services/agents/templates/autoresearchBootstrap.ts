@@ -1,5 +1,6 @@
 import type { AgentTemplate } from '@/types/workflow';
 import { AUTORESEARCH_BOOTSTRAP_TOOL_NAMES } from '@/services/tools/autoresearchBootstrap';
+import { buildWorkflowMarkerToken } from '@/services/workflow/templates/markers';
 
 export const AUTORESEARCH_BOOTSTRAP_TEMPLATE: AgentTemplate = {
   id: 'autoresearch-bootstrap',
@@ -34,6 +35,7 @@ Preferred workflow:
   },
   allowedTools: [...AUTORESEARCH_BOOTSTRAP_TOOL_NAMES],
   recommendedRole: 'planner',
+  requiredOutputMarkers: [buildWorkflowMarkerToken('PASS'), buildWorkflowMarkerToken('GOAL_NOT_REACHED')],
 };
 
 export default AUTORESEARCH_BOOTSTRAP_TEMPLATE;
