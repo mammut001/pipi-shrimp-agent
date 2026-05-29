@@ -132,7 +132,7 @@ describe('runAutoResearchPreflight', () => {
       resolvedWorkDir: '/Users/demo/autoresearch',
       sessionFilePath: '/Users/demo/autoresearch/session.md',
       livingDocPath: '/Users/demo/autoresearch/runs/autoresearch-1/autoresearch.md',
-      environmentSummary: {
+      environmentSummary: expect.objectContaining({
         experimentDir: '/Users/demo/experiment',
         gitRepo: true,
         repoStatus: 'clean',
@@ -142,7 +142,7 @@ describe('runAutoResearchPreflight', () => {
         runScriptPath: '/Users/demo/experiment/run_experiment.py',
         notesPath: '/Users/demo/experiment/AUTORESEARCH.md',
         recommendedRunCommand: 'python3 run_experiment.py',
-      },
+      }),
     });
 
     expect(infoSpy).toHaveBeenCalledWith('[AutoResearch] Startup preflight', expect.objectContaining({

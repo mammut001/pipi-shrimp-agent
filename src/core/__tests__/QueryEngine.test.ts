@@ -139,6 +139,7 @@ describe('QueryEngine context overflow fallback', () => {
   });
 
   it('reserves a final response round before hard tool exhaustion', async () => {
+    mockInvokeRustAPIStream.mockReset();
     mockInvokeRustAPIStream
       .mockImplementationOnce(async function* firstToolTurn() {
         yield {
@@ -187,6 +188,7 @@ describe('QueryEngine context overflow fallback', () => {
   });
 
   it('retries once when the model emits text-form tool calls instead of structured tool_calls', async () => {
+    mockInvokeRustAPIStream.mockReset();
     mockInvokeRustAPIStream
       .mockImplementationOnce(async function* malformed() {
         throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');
@@ -244,6 +246,7 @@ describe('QueryEngine context overflow fallback', () => {
   });
 
   it('retries twice when the model repeatedly emits text-form tool calls before recovering', async () => {
+    mockInvokeRustAPIStream.mockReset();
     mockInvokeRustAPIStream
       .mockImplementationOnce(async function* malformedOnce() {
         throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');

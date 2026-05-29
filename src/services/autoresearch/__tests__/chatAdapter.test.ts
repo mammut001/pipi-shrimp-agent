@@ -61,6 +61,8 @@ jest.mock('@/store/autoresearchStore', () => ({
       ],
       appendLiveOutput: mockAppendLiveOutput,
       addRunEvent: mockAddRunEvent,
+      patchIterationRecord: jest.fn(),
+      setCurrentPhase: jest.fn(),
     }),
   },
 }));

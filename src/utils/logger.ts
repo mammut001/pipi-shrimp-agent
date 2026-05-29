@@ -27,7 +27,7 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
 };
 
 /** Minimum log level to output to console. In production, only warn+error. */
-const isDev = import.meta.env?.DEV ?? import.meta.env?.MODE === 'development';
+const isDev = process.env.NODE_ENV !== 'production';
 const MIN_CONSOLE_LEVEL: LogLevel = isDev ? 'debug' : 'warn';
 
 interface Logger {

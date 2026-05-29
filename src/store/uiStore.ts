@@ -29,7 +29,10 @@ const DEFAULT_AGENT_INSTRUCTIONS = {
   'en-US': 'You are PiPi Shrimp Agent, a local-first AI assistant focused on helping users complete tasks clearly, safely, and efficiently.',
 } as const;
 
-const getDefaultAgentInstructions = (): string => DEFAULT_AGENT_INSTRUCTIONS[getCurrentLocale()];
+const getDefaultAgentInstructions = (): string => {
+  if (typeof getCurrentLocale !== 'function') return DEFAULT_AGENT_INSTRUCTIONS['zh-CN'];
+  return DEFAULT_AGENT_INSTRUCTIONS[getCurrentLocale()];
+};
 
 function safeLocalStorageGet(key: string): string | null {
   try {

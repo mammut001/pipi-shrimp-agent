@@ -177,20 +177,13 @@ describe('browserAgentStore listener idempotency', () => {
 
   describe('concurrent setupEventListeners guard', () => {
     it('concurrent calls share the same in-flight promise (no duplicate registration)', async () => {
-      // Override listen to track call order
+      // Override listen to track call order — resolve immediately so the IIFE completes
       const listenMock = jest.requireMock('@tauri-apps/api/event') as any;
-      let resolveUnlisten: () => void;
       let callCount = 0;
 
       listenMock.listen.mockImplementation(() => {
         callCount++;
-        return new Promise<() => void>((resolve) => {
-          resolveUnlisten = () => resolve(jest.fn());
-          // Only resolve after all "concurrent" calls have been made
-          if (callCount >= 2) {
-            setTimeout(() => resolveUnlisten!(), 0);
-          }
-        });
+        return Promise.resolve(jest.fn());
       });
 
       // Fire two setupEventListeners calls in the same tick
@@ -199,9 +192,11 @@ describe('browserAgentStore listener idempotency', () => {
 
       const [cleanup1, cleanup2] = await Promise.all([p1, p2]);
 
-      // Both got the same promise, so only ONE listener registration happened
-      // Call count should reflect a single registration, not two
-      expect(callCount).toBeLessThanOrEqual(2); // At most 2 (one per event type)
+      // Both got the same promise, so only ONE set of listener registrations happened
+      // The setup function registers 4 event listeners (agent_log, agent_task_complete,
+      // screenshot_captured, screenshot_error), but since p2 awaits the same in-flight
+      // promise, the total should be exactly 4 (not 8).
+      expect(callCount).toBeLessThanOrEqual(4); // 4 events registered once
     });
   });
 

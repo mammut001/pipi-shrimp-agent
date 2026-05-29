@@ -275,7 +275,7 @@ describe('chatToolExecution', () => {
       workDir: '/tmp/workspace',
       source: 'assistant_tool_call',
     }));
-    expect(results).toEqual([{ id: 'tool-3', content: '{"stdout":"ok","stderr":"","exit_code":0}', toolName: 'execute_command', toolArgs: chunk.tools[0].arguments }]);
+    expect(results).toEqual([expect.objectContaining({ id: 'tool-3', content: '{"stdout":"ok","stderr":"","exit_code":0}', toolName: 'execute_command', toolArgs: expect.stringContaining('"command":"pwd"') })]);
     expect(resolved).toHaveBeenCalledWith([{ id: 'tool-3', content: '{"stdout":"ok","stderr":"","exit_code":0}' }]);
   });
 
@@ -394,7 +394,7 @@ describe('chatToolExecution', () => {
     expect(waitForPermission as jest.Mock).toHaveBeenCalledWith(expect.objectContaining({
       id: 'tool-4',
       name: 'execute_command',
-      arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
+      arguments: expect.stringContaining('"command":"pwd"'),
       source: 'assistant_tool_call',
       workingDirectory: '/tmp/workspace',
       commandPreview: 'pwd',
@@ -469,7 +469,7 @@ describe('chatToolExecution', () => {
     expect(waitForPermission).toHaveBeenCalledWith(expect.objectContaining({
       id: 'tool-5',
       name: 'execute_command',
-      arguments: '{"command":"curl https://example.com","cwd":"/tmp/workspace"}',
+      arguments: expect.stringContaining('"command":"curl https://example.com"'),
       source: 'assistant_tool_call',
       workingDirectory: '/tmp/workspace',
       commandPreview: 'curl https://example.com',

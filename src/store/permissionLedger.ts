@@ -22,8 +22,8 @@ export function createPermissionLedgerEntry(
     decision,
     requestedAt: request.requestedAt ?? resolvedAt,
     resolvedAt,
-    toolInputPreview: request.toolInput.slice(0, MAX_PERMISSION_INPUT_PREVIEW),
-    toolInputLength: request.toolInput.length,
+    toolInputPreview: (request.toolInput ?? '').slice(0, MAX_PERMISSION_INPUT_PREVIEW),
+    toolInputLength: (request.toolInput ?? '').length,
   };
 }
 

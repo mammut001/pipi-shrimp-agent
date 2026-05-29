@@ -179,7 +179,7 @@ describe('validateAutoResearchSetupDraft', () => {
       setSshConfig: jest.fn(),
       setLastUsedConfig: jest.fn(),
       initSession: jest.fn(),
-    })).rejects.toThrow('Another AutoResearch run is already in progress. Stop it or wait for it to finish before starting a new run.');
+    })).rejects.toThrow('AutoResearch is still running. Stop the active run before you start a new run.');
 
     mockStoreState.id = '';
     mockStoreState.loopState = 'idle';

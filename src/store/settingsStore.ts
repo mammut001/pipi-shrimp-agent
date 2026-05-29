@@ -560,13 +560,17 @@ const initializeSettings = () => {
     if (storedLanguage === 'en' || storedLanguage === 'zh') {
       useSettingsStore.setState({ language: storedLanguage });
       // 同时更新 i18n 系统的语言
-      const locale = convertOldLanguageCode(storedLanguage);
-      setLocale(locale);
+      if (typeof convertOldLanguageCode === 'function' && typeof setLocale === 'function') {
+        const locale = convertOldLanguageCode(storedLanguage);
+        setLocale(locale);
+      }
     } else {
       // 尝试从新的 locale 存储加载
-      const currentLocale = getCurrentLocale();
-      const oldLanguage = convertToOldLanguageCode(currentLocale);
-      useSettingsStore.setState({ language: oldLanguage });
+      if (typeof getCurrentLocale === 'function' && typeof convertToOldLanguageCode === 'function') {
+        const currentLocale = getCurrentLocale();
+        const oldLanguage = convertToOldLanguageCode(currentLocale);
+        useSettingsStore.setState({ language: oldLanguage });
+      }
     }
 
     // Load Telegram token (migrate from legacy key if needed)

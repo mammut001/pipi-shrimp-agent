@@ -34,6 +34,7 @@ Preferred workflow:
   },
   allowedTools: [...AUTORESEARCH_BOOTSTRAP_TOOL_NAMES],
   recommendedRole: 'planner',
+  requiredOutputMarkers: ['PASS', 'GOAL_NOT_REACHED'],
 };
 
 export default AUTORESEARCH_BOOTSTRAP_TEMPLATE;

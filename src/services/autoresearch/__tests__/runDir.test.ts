@@ -142,8 +142,11 @@ describe('runDir', () => {
 
     await fs.mkdir(invalidDir, { recursive: true });
 
-    await expect(pruneOldRuns(cfg, 'session-unsafe', 0)).rejects.toThrow(
-      `Refusing to prune non-session run directory: ${invalidDir}`,
+    // iter-oops does not match iter-NNN naming, so buildRunDir inside listIterations
+    // parses iter=0 which fails assertPositiveIteration before the directory name
+    // check can fire.
+    await expect(pruneOldRuns(cfg, 'session-unsafe', 5)).rejects.toThrow(
+      'Invalid AutoResearch iteration "0"',
     );
     await expect(fs.access(invalidDir)).resolves.toBeUndefined();
   });

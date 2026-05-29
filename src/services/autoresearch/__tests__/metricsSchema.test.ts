@@ -15,7 +15,7 @@ function createValidArtifact() {
     primaryMetric: 'cv_accuracy',
     direction: 'higher' as const,
     timestamp: '2026-05-05T00:00:01.000Z',
-    generator: 'agent' as const,
+    generator: 'loop_engine' as const,
     metricName: 'cv_accuracy',
     metricValue: 0.42,
     status: 'IMPROVED' as const,
@@ -23,6 +23,9 @@ function createValidArtifact() {
     change: 'reuse transformed examples',
     reasoning: 'preprocessing dominated iteration time',
     artifactPaths: ['runs/run-1/iter-001/metrics.json'],
+    durationMs: 1000,
+    startedAt: '2026-05-05T00:00:00.000Z',
+    finishedAt: '2026-05-05T00:00:01.000Z',
   };
 }
 
@@ -92,7 +95,7 @@ describe('metricsSchema', () => {
     });
 
     expect(result.value).toBeNull();
-    expect(result.error).toContain('Current AutoResearch uses sessionId as runId.');
+    expect(result.error).toContain('Current AutoResearch uses sessionId as runId');
   });
 
   it('rejects sessionId mismatches', () => {

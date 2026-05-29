@@ -224,10 +224,14 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   setupEventListeners: async () => {
     _listenerRefCount += 1;
 
-    // If listeners are already registered, return a cleanup that just decrements count
+    // If listeners are already registered, return a cleanup that decrements count
+    // and tears down when the last ref is released
     if (_listenerCleanup) {
       return () => {
         _listenerRefCount = Math.max(0, _listenerRefCount - 1);
+        if (_listenerRefCount === 0 && _listenerCleanup) {
+          _listenerCleanup();
+        }
       };
     }
 

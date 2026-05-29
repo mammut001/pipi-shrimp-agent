@@ -167,6 +167,16 @@ function setHasIntersection(source: Set<string>, target: Set<string>): boolean {
   return false;
 }
 
+/** Check if `source` has any values NOT in `excluded` (i.e. exclusive to source). */
+function setHasExclusive(source: Set<string>, excluded: Set<string>): boolean {
+  for (const value of source) {
+    if (!excluded.has(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isLocalLaneTool(tool?: string): boolean {
   return typeof tool === 'string' && LOCAL_ALLOWED_TOOLS.has(tool);
 }
@@ -545,8 +555,12 @@ export function getDeterministicRecoveryDecision(
   const allowedTools = parseAllowedToolsFromDisabledMessage(stderr);
 
   if (stderr.includes('disabled for this AutoResearch run')) {
-    const localLaneAllowed = setHasIntersection(allowedTools, LOCAL_ALLOWED_TOOLS) || isLocalLaneTool(failedToolResult.tool);
-    const sshLaneAllowed = setHasIntersection(allowedTools, SSH_ALLOWED_TOOLS) || isSshLaneTool(failedToolResult.tool);
+    // Use exclusive checks: local lane is detected when allowed tools include
+    // tools that are local-only (not in SSH set), and vice versa.
+    // Shared tools like get_current_workspace exist in both sets and should
+    // not determine the lane.
+    const localLaneAllowed = setHasExclusive(allowedTools, SSH_ALLOWED_TOOLS);
+    const sshLaneAllowed = setHasExclusive(allowedTools, LOCAL_ALLOWED_TOOLS);
 
     if (localLaneAllowed && !sshLaneAllowed) {
       return {
