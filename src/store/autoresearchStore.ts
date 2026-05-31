@@ -249,10 +249,14 @@ function buildRunRecordFromInit(opts: {
   livingDocPath?: string;
   baseline?: number | null;
   agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
+  autoResearchMode?: AutoResearchMode;
+  verificationCommands?: string[];
 }): AutoResearchRunRecord {
+  const mode = opts.autoResearchMode ?? 'ml_experiment';
+  const titlePrefix = mode === 'repo_self_improve' ? 'Self-Improve' : opts.metricName;
   return {
     id: opts.id,
-    title: `${opts.metricName} · ${opts.experimentDir || opts.sshConfig.remoteWorkDir || 'AutoResearch'}`,
+    title: `${titlePrefix} · ${opts.experimentDir || opts.sshConfig.remoteWorkDir || 'AutoResearch'}`,
     status: 'running',
     createdAt: opts.createdAt,
     updatedAt: opts.createdAt,
@@ -268,6 +272,8 @@ function buildRunRecordFromInit(opts: {
       iterations: opts.maxIterations,
       baseline: opts.baseline ?? null,
       configSnapshot: toHistoryConfigSnapshot(opts.agentConfigSnapshot),
+      mode,
+      verificationCommands: opts.verificationCommands,
     },
     currentIteration: 0,
     bestMetricValue: opts.baseline ?? null,
@@ -528,6 +534,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       livingDocPath: opts.livingDocPath,
       baseline: opts.baseline,
       agentConfigSnapshot: opts.agentConfigSnapshot,
+      autoResearchMode: state.autoResearchMode,
+      verificationCommands: state.verificationCommands,
     });
     nextRun.events = [
       createRunEvent(opts.id, {
@@ -1059,6 +1067,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       terminalReady: false,
       terminalSessionId: null,
       terminalCwd: input.sshConfig.remoteWorkDir || '',
+      autoResearchMode: existingRun.config.mode ?? 'ml_experiment',
+      verificationCommands: existingRun.config.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
       runHistory: updateRunRecord(state.runHistory, input.runId, (run) => ({
         ...run,
         status: 'running',

@@ -110,7 +110,7 @@ describe('validateAutoResearchSetupDraft', () => {
     });
 
     expect(result.error).toBeNull();
-    expect(result.value).toEqual({
+    expect(result.value).toEqual(expect.objectContaining({
       sshConfig: {
         mode: 'local',
         host: '',
@@ -126,7 +126,7 @@ describe('validateAutoResearchSetupDraft', () => {
       direction: 'higher',
       iterations: 50,
       baseline: 0.91,
-    });
+    }));
   });
 
   it('surfaces SSH validation errors instead of silently returning', () => {
@@ -346,13 +346,13 @@ describe('validateAutoResearchSetupDraft', () => {
       sessionId: 'run-interrupted',
       agentConfig: { configId: 'cfg-agent', provider: 'openai', model: 'gpt-4.1' },
     });
-    expect(mockStoreState.setLastUsedConfig).toHaveBeenCalledWith({
+    expect(mockStoreState.setLastUsedConfig).toHaveBeenCalledWith(expect.objectContaining({
       workdir: '/tmp/work-resolved',
       experimentDir: '/tmp/exp-resolved',
       metric: 'cv_accuracy',
       direction: 'higher',
       iterations: 5,
-    });
+    }));
     expect(mockStoreState.activateHistoricalRun).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'run-interrupted',
       experimentDir: '/tmp/exp-resolved',

@@ -173,13 +173,13 @@ describe('autoresearchStore history behavior', () => {
       iterations: 5,
     });
 
-    expect(useAutoResearchStore.getState().lastUsedConfig).toEqual({
+    expect(useAutoResearchStore.getState().lastUsedConfig).toEqual(expect.objectContaining({
       workdir: '~/autoresearch',
       experimentDir: '/tmp/experiment',
       metric: 'cv_accuracy',
       direction: 'higher',
       iterations: 5,
-    });
+    }));
     expect(localStorage.getItem(AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY)).toContain('"cv_accuracy"');
 
     store.resetSession();

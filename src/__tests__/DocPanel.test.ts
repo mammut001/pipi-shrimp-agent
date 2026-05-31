@@ -16,7 +16,7 @@ jest.mock('remark-gfm', () => ({
   default: mockRemarkGfm,
 }));
 
-import { DocMarkdownPreview } from '@/components/DocPanel';
+import { MarkdownDocumentPreview as DocMarkdownPreview } from '@/components/document/MarkdownDocumentPreview';
 
 describe('DocMarkdownPreview', () => {
   beforeEach(() => {

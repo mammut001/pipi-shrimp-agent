@@ -17,9 +17,11 @@ module.exports = {
     '^react-markdown$': '<rootDir>/tests/__mocks__/react-markdown.cjs',
     '^remark-gfm$': '<rootDir>/tests/__mocks__/noop.cjs',
     '^rehype-raw$': '<rootDir>/tests/__mocks__/noop.cjs',
+    '^@exodus/bytes(/.*)?$': '<rootDir>/tests/__mocks__/exodus-bytes.cjs',
+    '^parse5$': '<rootDir>/tests/__mocks__/parse5.cjs',
   },
   transformIgnorePatterns: [
-    '/node_modules/(?!(react-markdown|remark-gfm|rehype-raw|mdast-util-.*|micromark.*|unified|bail|is-plain-obj|trough|vfile.*|unist-.*|hast-.*|property-information|comma-separated-tokens|space-separated-tokens|decode-named-character-reference|character-entities|ccount|escape-string-regexp|trim-lines|rehype-.*|web-namespaces|zwitch|html-void-elements|stringify-entities|character-entities-html4|devlop)/)',
+    '/node_modules/(?!(react-markdown|remark-gfm|rehype-raw|mdast-util-.*|micromark.*|unified|bail|is-plain-obj|trough|vfile.*|unist-.*|hast-.*|property-information|comma-separated-tokens|space-separated-tokens|decode-named-character-reference|character-entities|ccount|escape-string-regexp|trim-lines|rehype-.*|web-namespaces|zwitch|html-void-elements|stringify-entities|character-entities-html4|devlop|@exodus|whatwg-.*|html-encoding-sniffer)/)',
   ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',

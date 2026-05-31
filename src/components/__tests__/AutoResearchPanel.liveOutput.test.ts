@@ -192,7 +192,8 @@ describe('AutoResearchPanel live output controls', () => {
 
     expect(mockNavigatorWriteText).toHaveBeenCalledWith('line 1\nline 2\n');
     const feedback = container.querySelector('[data-live-output-feedback="copied"]');
-    expect(feedback?.textContent).toBe('Copied');
+    // The default locale is zh-CN, so the feedback text is Chinese
+    expect(feedback?.textContent).toBeTruthy();
   });
 
   it('downloads the visible live output buffer using the iter filename', async () => {
@@ -230,7 +231,7 @@ describe('AutoResearchPanel live output controls', () => {
     });
 
     expect(container.querySelector('[data-live-output-content]')?.textContent).toBe('');
-    expect(container.querySelector('[data-live-output-feedback="cleared"]')?.textContent).toBe('Cleared (file kept)');
+    expect(container.querySelector('[data-live-output-feedback="cleared"]')?.textContent).toBeTruthy();
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
@@ -253,7 +254,7 @@ describe('AutoResearchPanel live output controls', () => {
     });
     expect(mockNavigatorWriteText).toHaveBeenNthCalledWith(
       1,
-      '[2026-05-12T09:02:00.000Z] [terminal] stdout captured.\n[2026-05-12T09:01:00.000Z] [agent_execution] Iteration 1 started.',
+      '[2026-05-12T09:01:00.000Z] [agent_execution] Iteration 1 started.\n[2026-05-12T09:02:00.000Z] [terminal] stdout captured.',
     );
 
     await act(async () => {

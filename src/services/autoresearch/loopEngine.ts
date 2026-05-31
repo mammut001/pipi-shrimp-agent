@@ -59,6 +59,7 @@ import {
 import {
   mapSelfImproveStatusToExperimentStatus,
   buildSelfImproveMetricValue,
+  parseSelfImproveResult,
   type SelfImproveResult,
 } from './selfImprove/schema';
 
@@ -67,8 +68,8 @@ interface ParsedResult {
   metricValue: number | null;
   status: ExperimentStatus;
   hypothesis: string;
-  change: string;
-  reasoning: string;
+  change?: string;
+  reasoning?: string;
   artifactPaths: string[];
   parseSource: 'metrics_json' | 'agent_json' | 'deprecated_result_line';
   failReason?: string;
@@ -395,16 +396,18 @@ function normalizeParsedResult(
     };
   }
 
-  const change = typeof candidate.change === 'string'
+  const changeRaw = typeof candidate.change === 'string'
     ? candidate.change.trim()
     : typeof candidate.patchSummary === 'string'
       ? candidate.patchSummary.trim()
       : '';
-  const reasoning = typeof candidate.reasoning === 'string'
+  const change = changeRaw || undefined;
+  const reasoningRaw = typeof candidate.reasoning === 'string'
     ? candidate.reasoning.trim()
     : typeof candidate.analysis === 'string'
       ? candidate.analysis.trim()
       : '';
+  const reasoning = reasoningRaw || undefined;
   const artifactPaths = Array.isArray(candidate.artifactPaths)
     ? candidate.artifactPaths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     : Array.isArray(candidate.artifacts)
@@ -465,8 +468,8 @@ function parseExperimentResult(agentOutput: string, metricName: string): ParsedI
       status: status as ExperimentStatus,
       failReason: match[3] || undefined,
       hypothesis,
-      change: '',
-      reasoning: '',
+      change: undefined,
+      reasoning: undefined,
       artifactPaths: [],
       parseSource: 'deprecated_result_line',
     },
@@ -1073,8 +1076,20 @@ export async function startExperimentLoop(
       let parseError: string | undefined;
 
       if (isSelfImproveMode) {
-        // Self-improve mode: parse the self-improve result artifact
-        const selfImproveResult = parseSelfImproveAgentOutput(agentOutput);
+        // Self-improve mode: first try to read the structured result from the metrics file,
+        // then fall back to parsing from agent output text.
+        let selfImproveResult = null;
+        try {
+          const metricsFileContent = await readTargetText(artifactCfg, runDir.metricsPath);
+          if (metricsFileContent) {
+            selfImproveResult = parseSelfImproveResult(metricsFileContent);
+          }
+        } catch {
+          // File read failed — fall through to agent output parsing
+        }
+        if (!selfImproveResult) {
+          selfImproveResult = parseSelfImproveAgentOutput(agentOutput);
+        }
         if (selfImproveResult) {
           const score = computeSelfImproveScore(selfImproveResult);
           const status = determineSelfImproveStatus(selfImproveResult, score);

@@ -26,7 +26,7 @@ function getActiveRun(state: AutoResearchLifecycleState): AutoResearchRunRecord 
     return null;
   }
 
-  return state.runHistory.find((run) => run.id === state.id) ?? null;
+  return state.runHistory?.find((run) => run.id === state.id) ?? null;
 }
 
 function getLockReason(
