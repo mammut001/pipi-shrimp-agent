@@ -32,7 +32,12 @@ import {
   buildAutoResearchDefaultConfig,
   getAutoResearchDefaultConfig,
   resolveAutoResearchDefaultConfig,
+  resolveVerificationPresetId,
+  resolveVerificationCommands,
+  VERIFICATION_PRESETS,
+  DEFAULT_VERIFICATION_PRESET,
   type AutoResearchDefaultSource,
+  type VerificationPresetId,
 } from '@/services/autoresearch/defaultConfig';
 import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
@@ -140,36 +145,98 @@ function ExperimentDetailPanel() {
             <span className="ml-2 text-red-500 text-xs">({entry.error})</span>
           )}
         </p>
-        {/* Self-improve mode details */}
+        {/* Self-improve mode report card */}
         {entry.parsedMetrics?.selfImproveMode && (
-          <div className="mt-2 space-y-1">
-            <div className="flex flex-wrap gap-1.5">
-              {entry.parsedMetrics.buildPassed !== undefined && (
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${entry.parsedMetrics.buildPassed === true ? 'bg-green-100 text-green-700' : entry.parsedMetrics.buildPassed === false ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
-                  Build: {entry.parsedMetrics.buildPassed === true ? 'PASS' : entry.parsedMetrics.buildPassed === false ? 'FAIL' : String(entry.parsedMetrics.buildPassed)}
-                </span>
-              )}
-              {entry.parsedMetrics.testsPassed !== undefined && (
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${entry.parsedMetrics.testsPassed === true ? 'bg-green-100 text-green-700' : entry.parsedMetrics.testsPassed === false ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
-                  Tests: {entry.parsedMetrics.testsPassed === true ? 'PASS' : entry.parsedMetrics.testsPassed === false ? 'FAIL' : String(entry.parsedMetrics.testsPassed)}
-                </span>
-              )}
-              {entry.parsedMetrics.typecheckPassed !== undefined && (
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${entry.parsedMetrics.typecheckPassed === true ? 'bg-green-100 text-green-700' : entry.parsedMetrics.typecheckPassed === false ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
-                  Typecheck: {entry.parsedMetrics.typecheckPassed === true ? 'PASS' : entry.parsedMetrics.typecheckPassed === false ? 'FAIL' : String(entry.parsedMetrics.typecheckPassed)}
-                </span>
-              )}
-            </div>
-            {entry.parsedMetrics.riskLevel && (
-              <p className="text-[10px] text-gray-500">Risk: <span className={`font-semibold ${entry.parsedMetrics.riskLevel === 'low' ? 'text-blue-600' : entry.parsedMetrics.riskLevel === 'medium' ? 'text-amber-600' : 'text-red-600'}`}>{String(entry.parsedMetrics.riskLevel)}</span></p>
+          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+            <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Self-Improve Report</h4>
+
+            {/* Issue Found */}
+            {entry.hypothesis && entry.hypothesis !== '—' && (
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Issue Found</p>
+                <p className="text-xs text-gray-700 mt-0.5">{entry.hypothesis}</p>
+              </div>
             )}
-            {entry.parsedMetrics.score !== undefined && (
-              <p className="text-[10px] text-gray-500">Score: <span className="font-semibold text-gray-700">{String(entry.parsedMetrics.score)}</span></p>
+
+            {/* Evidence */}
+            {entry.reasoning && entry.reasoning !== '—' && (
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Evidence</p>
+                <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{entry.reasoning}</p>
+              </div>
             )}
+
+            {/* Files Changed */}
             {entry.change && (
               <div>
-                <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Changed Files</p>
-                <p className="text-[10px] text-gray-600 font-mono break-all">{entry.change}</p>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Files Changed</p>
+                <p className="text-xs text-gray-600 font-mono break-all mt-0.5">{entry.change}</p>
+              </div>
+            )}
+
+            {/* Verification Results */}
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-1">Verification Results</p>
+              <div className="flex flex-wrap gap-1.5">
+                {entry.parsedMetrics.buildPassed !== undefined && (
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${entry.parsedMetrics.buildPassed === true ? 'bg-green-100 text-green-700' : entry.parsedMetrics.buildPassed === false ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                    Build: {entry.parsedMetrics.buildPassed === true ? 'PASS' : entry.parsedMetrics.buildPassed === false ? 'FAIL' : String(entry.parsedMetrics.buildPassed)}
+                  </span>
+                )}
+                {entry.parsedMetrics.testsPassed !== undefined && (
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${entry.parsedMetrics.testsPassed === true ? 'bg-green-100 text-green-700' : entry.parsedMetrics.testsPassed === false ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                    Tests: {entry.parsedMetrics.testsPassed === true ? 'PASS' : entry.parsedMetrics.testsPassed === false ? 'FAIL' : String(entry.parsedMetrics.testsPassed)}
+                  </span>
+                )}
+                {entry.parsedMetrics.typecheckPassed !== undefined && (
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${entry.parsedMetrics.typecheckPassed === true ? 'bg-green-100 text-green-700' : entry.parsedMetrics.typecheckPassed === false ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                    Typecheck: {entry.parsedMetrics.typecheckPassed === true ? 'PASS' : entry.parsedMetrics.typecheckPassed === false ? 'FAIL' : String(entry.parsedMetrics.typecheckPassed)}
+                  </span>
+                )}
+                {entry.parsedMetrics.lintPassed !== undefined && (
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${entry.parsedMetrics.lintPassed === true ? 'bg-green-100 text-green-700' : entry.parsedMetrics.lintPassed === false ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                    Lint: {entry.parsedMetrics.lintPassed === true ? 'PASS' : entry.parsedMetrics.lintPassed === false ? 'FAIL' : String(entry.parsedMetrics.lintPassed)}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Risk */}
+            {entry.parsedMetrics.riskLevel && (
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Risk</p>
+                <p className="text-xs mt-0.5">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold ${
+                    entry.parsedMetrics.riskLevel === 'low' ? 'bg-blue-100 text-blue-700'
+                      : entry.parsedMetrics.riskLevel === 'medium' ? 'bg-amber-100 text-amber-700'
+                      : 'bg-red-100 text-red-700'
+                  }`}>
+                    {String(entry.parsedMetrics.riskLevel).toUpperCase()}
+                  </span>
+                  {entry.parsedMetrics.score !== undefined && (
+                    <span className="ml-2 text-gray-500">Score: <span className="font-semibold text-gray-700">{String(entry.parsedMetrics.score)}</span></span>
+                  )}
+                </p>
+              </div>
+            )}
+
+            {/* Next Recommendation */}
+            {entry.parsedMetrics.nextRecommendation && (
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Next Recommendation</p>
+                <p className="text-xs text-gray-700 mt-0.5">{String(entry.parsedMetrics.nextRecommendation)}</p>
+              </div>
+            )}
+
+            {/* Needs Review Reason (shown when failed) */}
+            {(entry.status === 'failed' || entry.error) && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-2">
+                <p className="text-[10px] text-red-600 uppercase tracking-wider font-medium">Needs Review</p>
+                <p className="text-xs text-red-700 mt-0.5">
+                  {entry.parsedMetrics.needsReviewReason
+                    ? String(entry.parsedMetrics.needsReviewReason)
+                    : entry.error || 'Verification failed — changes may need manual review.'}
+                </p>
               </div>
             )}
           </div>
@@ -246,6 +313,9 @@ function AutoResearchView() {
   );
   const [verificationCommands, setVerificationCommands] = useState<string[]>(
     getAutoResearchDefaultConfig().verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+  );
+  const [verificationPreset, setVerificationPreset] = useState<VerificationPresetId>(
+    resolveVerificationPresetId(getAutoResearchDefaultConfig().verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit']),
   );
   const agentConfig = useMemo(
     () => resolveActiveAgentConfig(),
@@ -374,7 +444,9 @@ function AutoResearchView() {
     setMaxIter(defaults.iterations);
     setExperimentDir(defaults.experimentDir);
     setAutoResearchMode(defaults.mode ?? 'ml_experiment');
-    setVerificationCommands(defaults.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit']);
+    const defaultCommands = defaults.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'];
+    setVerificationCommands(defaultCommands);
+    setVerificationPreset(resolveVerificationPresetId(defaultCommands));
     setPrefillSource('defaults');
     setSetupError(null);
   }, [clearLastUsedConfig, getLifecycleLockMessage, setupLocked]);
@@ -434,6 +506,13 @@ function AutoResearchView() {
     }
 
     const isSelfImprove = autoResearchMode === 'repo_self_improve';
+
+    // Filter out empty commands and validate
+    const filteredCommands = verificationCommands.map(c => c.trim()).filter(Boolean);
+    if (isSelfImprove && filteredCommands.length === 0) {
+      setSetupError('At least one verification command is required in self-improve mode.');
+      return;
+    }
     const validation = validateAutoResearchSetupDraft({
       sshConfig: setupForm,
       experimentDir,
@@ -445,7 +524,7 @@ function AutoResearchView() {
       requireConnectionTest: true,
       connectionTestStatus: connectionTest.status,
       mode: autoResearchMode,
-      verificationCommands: isSelfImprove ? verificationCommands : undefined,
+      verificationCommands: isSelfImprove ? filteredCommands : undefined,
     });
     if (!validation.value) {
       setSetupError(validation.error);
@@ -478,19 +557,21 @@ function AutoResearchView() {
     }
   }, [
     agentConfigError,
+    autoResearchMode,
     baselineInput,
     connectionTest.status,
     direction,
     experimentDir,
-      getLifecycleLockMessage,
+    getLifecycleLockMessage,
     initSession,
-      lifecycleLock.locked,
+    lifecycleLock.locked,
     maxIter,
     metric,
     openTerminalPanel,
     setLastUsedConfig,
     setSshConfig,
     setupForm,
+    verificationCommands,
   ]);
 
   const handleSetupSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
@@ -546,7 +627,9 @@ function AutoResearchView() {
         <div className="w-full max-w-md space-y-4">
           <h2 className="text-xl font-bold text-gray-800">{t('autoresearch.setupTitle')}</h2>
           <p className="text-sm text-gray-500">
-            {t('autoresearch.setupDescription')}
+            {autoResearchMode === 'repo_self_improve'
+              ? 'Analyze a repository for issues and automatically propose fixes. Run locally or on a remote machine via SSH.'
+              : t('autoresearch.setupDescription')}
           </p>
 
           <form className="space-y-3" onSubmit={handleSetupSubmit}>
@@ -602,30 +685,73 @@ function AutoResearchView() {
               {autoResearchMode === 'repo_self_improve' && (
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-gray-600 uppercase tracking-wider">Verification Commands</label>
-                  {verificationCommands.map((cmd, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      <input
-                        className="flex-1 px-3 py-2 border rounded-lg text-sm font-mono disabled:bg-gray-50 disabled:text-gray-400"
-                        value={cmd}
-                        onChange={e => {
-                          const next = [...verificationCommands];
-                          next[idx] = e.target.value;
-                          setVerificationCommands(next);
-                        }}
-                      />
+                  <div className="grid grid-cols-4 gap-1 p-0.5 bg-gray-100 rounded-lg">
+                    {VERIFICATION_PRESETS.map((preset) => (
                       <button
+                        key={preset.id}
                         type="button"
-                        className="px-2 py-1 text-xs text-red-500 hover:text-red-700 border border-red-200 rounded-lg hover:bg-red-50"
-                        onClick={() => setVerificationCommands(verificationCommands.filter((_, i) => i !== idx))}
-                      >×</button>
+                        onClick={() => {
+                          setVerificationPreset(preset.id);
+                          if (preset.id !== 'custom') {
+                            setVerificationCommands(preset.commands);
+                          } else {
+                            setVerificationCommands(verificationCommands.map(c => c.trim()).filter(Boolean).length > 0
+                              ? verificationCommands
+                              : ['']);
+                          }
+                        }}
+                        className={`py-1.5 text-[11px] font-semibold rounded-md transition-all ${
+                          verificationPreset === preset.id
+                            ? 'bg-white shadow-sm text-emerald-700'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                        title={preset.description}
+                      >{preset.label}</button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-gray-400">
+                    {VERIFICATION_PRESETS.find(p => p.id === verificationPreset)?.description ?? ''}
+                  </p>
+
+                  {/* Show commands preview for non-custom presets */}
+                  {verificationPreset !== 'custom' && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 space-y-1">
+                      {verificationCommands.filter(c => c.trim()).map((cmd, idx) => (
+                        <p key={idx} className="text-xs font-mono text-gray-600">{cmd}</p>
+                      ))}
                     </div>
-                  ))}
-                  {verificationCommands.length < 10 && (
-                    <button
-                      type="button"
-                      className="text-xs text-blue-600 hover:text-blue-800"
-                      onClick={() => setVerificationCommands([...verificationCommands, ''])}
-                    >+ Add command</button>
+                  )}
+
+                  {/* Editable commands for custom preset */}
+                  {verificationPreset === 'custom' && (
+                    <div className="space-y-2">
+                      {verificationCommands.map((cmd, idx) => (
+                        <div key={idx} className="flex gap-2">
+                          <input
+                            className="flex-1 px-3 py-2 border rounded-lg text-sm font-mono disabled:bg-gray-50 disabled:text-gray-400"
+                            placeholder="e.g. pnpm run build"
+                            value={cmd}
+                            onChange={e => {
+                              const next = [...verificationCommands];
+                              next[idx] = e.target.value;
+                              setVerificationCommands(next);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="px-2 py-1 text-xs text-red-500 hover:text-red-700 border border-red-200 rounded-lg hover:bg-red-50"
+                            onClick={() => setVerificationCommands(verificationCommands.filter((_, i) => i !== idx))}
+                          >×</button>
+                        </div>
+                      ))}
+                      {verificationCommands.length < 10 && (
+                        <button
+                          type="button"
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                          onClick={() => setVerificationCommands([...verificationCommands, ''])}
+                        >+ Add command</button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -707,9 +833,20 @@ function AutoResearchView() {
                 />
               )}
 
+              {autoResearchMode === 'repo_self_improve' && (
+                <p className="text-[10px] text-gray-400">{t('autoresearch.selfImproveWorkdirHint')}</p>
+              )}
+
+              <label className="text-xs font-medium text-gray-600 uppercase tracking-wider">
+                {autoResearchMode === 'repo_self_improve'
+                  ? t('autoresearch.selfImproveRepoField')
+                  : 'Experiment Directory'}
+              </label>
               <input
                 className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
-                placeholder={t('autoresearch.experimentDirPlaceholder')}
+                placeholder={autoResearchMode === 'repo_self_improve'
+                  ? t('autoresearch.selfImproveRepoPlaceholder')
+                  : t('autoresearch.experimentDirPlaceholder')}
                 value={experimentDir}
                 onChange={e => setExperimentDir(sanitizePathInput(e.target.value))}
               />
@@ -782,7 +919,7 @@ function AutoResearchView() {
               )}
               {autoResearchMode === 'repo_self_improve' && (
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-                  Self-improve mode uses build/test/typecheck as evaluation signals. No ML metric needed.
+                  {t('autoresearch.selfImproveInfo')}
                 </div>
               )}
               <input

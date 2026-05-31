@@ -928,6 +928,11 @@ export type TranslationKeys = {
   'autoresearch.chooseDirectory': string;
   'autoresearch.remoteWorkDirPlaceholder': string;
   'autoresearch.experimentDirPlaceholder': string;
+  'autoresearch.selfImproveRepoPlaceholder': string;
+  'autoresearch.selfImproveRepoField': string;
+  'autoresearch.selfImproveWorkdirHint': string;
+  'autoresearch.selfImproveCardGoal': string;
+  'autoresearch.selfImproveInfo': string;
   'autoresearch.testConnection': string;
   'autoresearch.connectionTesting': string;
   'autoresearch.connectionTestRequired': string;

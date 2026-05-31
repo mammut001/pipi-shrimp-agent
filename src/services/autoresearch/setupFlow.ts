@@ -62,6 +62,8 @@ interface StartCallbacks {
     livingDocPath?: string;
     baseline?: number | null;
     agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
+    mode?: 'ml_experiment' | 'repo_self_improve';
+    verificationCommands?: string[];
   }) => void;
 }
 
@@ -144,6 +146,12 @@ export function validateAutoResearchSetupDraft(draft: AutoResearchSetupDraft): {
   }
   if (!isSelfImprove && !metric) {
     return { error: t('autoresearch.validationMetricRequired'), value: null };
+  }
+  if (isSelfImprove) {
+    const filteredCommands = (normalizedDefaults.verificationCommands ?? []).map(c => c.trim()).filter(Boolean);
+    if (filteredCommands.length === 0) {
+      return { error: 'At least one verification command is required in self-improve mode.', value: null };
+    }
   }
   if (draft.requireConnectionTest && draft.connectionTestStatus !== 'success') {
     return { error: t('autoresearch.connectionTestRequired'), value: null };
@@ -292,12 +300,9 @@ export async function startAutoResearchRun(
     sessionFilePath: preflight.sessionFilePath,
     livingDocPath: preflight.livingDocPath,
     agentConfigSnapshot: runConfig.snapshot,
+    mode: setup.mode ?? 'ml_experiment',
+    verificationCommands: setup.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
   });
-  // Set mode and verification commands on the store directly
-  useAutoResearchStore.getState().setAutoResearchMode(setup.mode ?? 'ml_experiment');
-  useAutoResearchStore.getState().setVerificationCommands(
-    setup.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
-  );
 
   const [{ createAutoResearchSendMessage }, { startExperimentLoop }] = await Promise.all([
     import('./chatAdapter'),

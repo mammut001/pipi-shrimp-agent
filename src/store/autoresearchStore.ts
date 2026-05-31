@@ -398,6 +398,8 @@ interface AutoResearchStore extends ExperimentSession {
     baseline?: number | null;
     agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
     telegramConfig?: Partial<TelegramNotifyConfig>;
+    mode?: AutoResearchMode;
+    verificationCommands?: string[];
   }) => void;
   resetSession: () => void;
   selectRun: (runId: string) => void;
@@ -522,6 +524,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
 
   initSession: (opts) => set((state) => {
     const createdAt = new Date().toISOString();
+    const resolvedMode = opts.mode ?? state.autoResearchMode;
+    const resolvedVerificationCommands = opts.verificationCommands ?? state.verificationCommands;
     const nextRun = buildRunRecordFromInit({
       id: opts.id,
       createdAt,
@@ -534,8 +538,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       livingDocPath: opts.livingDocPath,
       baseline: opts.baseline,
       agentConfigSnapshot: opts.agentConfigSnapshot,
-      autoResearchMode: state.autoResearchMode,
-      verificationCommands: state.verificationCommands,
+      autoResearchMode: resolvedMode,
+      verificationCommands: resolvedVerificationCommands,
     });
     nextRun.events = [
       createRunEvent(opts.id, {
@@ -581,6 +585,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       terminalReady: false,
       terminalSessionId: null,
       terminalCwd: opts.sshConfig.remoteWorkDir || '',
+      autoResearchMode: resolvedMode,
+      verificationCommands: resolvedVerificationCommands,
       runHistory: upsertRunRecord(state.runHistory, nextRun),
       selectedRunId: opts.id,
     };

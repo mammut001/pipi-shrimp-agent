@@ -388,4 +388,106 @@ describe('validateAutoResearchSetupDraft', () => {
       }),
     }));
   });
+
+  it('validates self-improve mode with empty verification commands', () => {
+    const result = validateAutoResearchSetupDraft({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '~/Documents/repo',
+      metric: 'repo_health',
+      direction: 'higher',
+      iterations: 5,
+      baselineInput: '',
+      mode: 'repo_self_improve',
+      verificationCommands: [],
+    });
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBe('At least one verification command is required in self-improve mode.');
+  });
+
+  it('validates self-improve mode with whitespace-only verification commands', () => {
+    const result = validateAutoResearchSetupDraft({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '~/Documents/repo',
+      metric: 'repo_health',
+      direction: 'higher',
+      iterations: 5,
+      baselineInput: '',
+      mode: 'repo_self_improve',
+      verificationCommands: ['  ', ''],
+    });
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBe('At least one verification command is required in self-improve mode.');
+  });
+
+  it('accepts self-improve mode with valid verification commands', () => {
+    const result = validateAutoResearchSetupDraft({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '~/Documents/repo',
+      metric: 'repo_health',
+      direction: 'higher',
+      iterations: 5,
+      baselineInput: '',
+      mode: 'repo_self_improve',
+      verificationCommands: ['pnpm run build', 'pnpm test'],
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.value).toEqual(expect.objectContaining({
+      mode: 'repo_self_improve',
+      verificationCommands: ['pnpm run build', 'pnpm test'],
+      metric: 'repo_health',
+    }));
+  });
+
+  it('defaults mode to ml_experiment when not specified', () => {
+    const result = validateAutoResearchSetupDraft({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '~/Documents/exp',
+      metric: 'cv_accuracy',
+      direction: 'higher',
+      iterations: 5,
+      baselineInput: '',
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.value?.mode).toBe('ml_experiment');
+  });
 });

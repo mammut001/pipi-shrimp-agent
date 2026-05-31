@@ -381,4 +381,134 @@ describe('autoresearchStore history behavior', () => {
     expect(resumedRun?.resumeToken?.pendingIteration).toBe(2);
     expect(resumedRun?.events.at(-1)?.message).toContain('resumed from recovery token');
   });
+
+  it('stores mode=repo_self_improve on the run record when passed to initSession', () => {
+    useAutoResearchStore.getState().initSession({
+      id: 'run-self-improve',
+      maxIterations: 3,
+      metricName: 'repo_health',
+      metricDirection: 'higher',
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/repo',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/repo',
+      mode: 'repo_self_improve',
+      verificationCommands: ['pnpm run build', 'pnpm test'],
+    });
+
+    const state = useAutoResearchStore.getState();
+    expect(state.autoResearchMode).toBe('repo_self_improve');
+    expect(state.verificationCommands).toEqual(['pnpm run build', 'pnpm test']);
+
+    const run = state.runHistory.find((r) => r.id === 'run-self-improve');
+    expect(run?.config.mode).toBe('repo_self_improve');
+    expect(run?.config.verificationCommands).toEqual(['pnpm run build', 'pnpm test']);
+    expect(run?.title).toContain('Self-Improve');
+  });
+
+  it('defaults mode to ml_experiment when not passed to initSession', () => {
+    useAutoResearchStore.getState().initSession({
+      id: 'run-ml',
+      maxIterations: 3,
+      metricName: 'cv_accuracy',
+      metricDirection: 'higher',
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/ml',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/ml',
+    });
+
+    const state = useAutoResearchStore.getState();
+    expect(state.autoResearchMode).toBe('ml_experiment');
+
+    const run = state.runHistory.find((r) => r.id === 'run-ml');
+    expect(run?.config.mode).toBe('ml_experiment');
+    expect(run?.title).toContain('cv_accuracy');
+  });
+
+  it('preserves mode and verificationCommands in run history across resets', () => {
+    const store = useAutoResearchStore.getState();
+
+    store.initSession({
+      id: 'run-persist',
+      maxIterations: 2,
+      metricName: 'repo_health',
+      metricDirection: 'higher',
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/persist',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/persist',
+      mode: 'repo_self_improve',
+      verificationCommands: ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+    });
+
+    store.resetSession();
+
+    const state = useAutoResearchStore.getState();
+    expect(state.id).toBe('');
+    expect(state.runHistory).toHaveLength(1);
+
+    const persistedRun = state.runHistory.find((r) => r.id === 'run-persist');
+    expect(persistedRun?.config.mode).toBe('repo_self_improve');
+    expect(persistedRun?.config.verificationCommands).toEqual([
+      'pnpm run build',
+      'pnpm test',
+      'node_modules/.bin/tsc --noEmit',
+    ]);
+  });
+
+  it('sets autoResearchMode and verificationCommands on the store state from initSession', () => {
+    const store = useAutoResearchStore.getState();
+
+    // First set a different mode to confirm it gets overwritten
+    useAutoResearchStore.setState({
+      autoResearchMode: 'ml_experiment',
+      verificationCommands: ['old-command'],
+    });
+
+    store.initSession({
+      id: 'run-mode-set',
+      maxIterations: 3,
+      metricName: 'repo_health',
+      metricDirection: 'higher',
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/mode-set',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/mode-set',
+      mode: 'repo_self_improve',
+      verificationCommands: ['pnpm run build'],
+    });
+
+    const state = useAutoResearchStore.getState();
+    expect(state.autoResearchMode).toBe('repo_self_improve');
+    expect(state.verificationCommands).toEqual(['pnpm run build']);
+  });
 });

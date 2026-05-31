@@ -17,6 +17,66 @@ export const AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresear
 const MIN_ITERATIONS = 1;
 const MAX_ITERATIONS = 50;
 
+export type VerificationPresetId = 'fast' | 'standard' | 'full' | 'custom';
+
+export interface VerificationPreset {
+  id: VerificationPresetId;
+  label: string;
+  description: string;
+  commands: string[];
+}
+
+export const VERIFICATION_PRESETS: VerificationPreset[] = [
+  {
+    id: 'fast',
+    label: 'Fast',
+    description: 'Build check only',
+    commands: ['pnpm run build'],
+  },
+  {
+    id: 'standard',
+    label: 'Standard',
+    description: 'Build + test + typecheck',
+    commands: ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+  },
+  {
+    id: 'full',
+    label: 'Full',
+    description: 'Build + test + typecheck + lint',
+    commands: ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit', 'pnpm run lint'],
+  },
+  {
+    id: 'custom',
+    label: 'Custom',
+    description: 'Define your own commands',
+    commands: [],
+  },
+];
+
+export const DEFAULT_VERIFICATION_PRESET: VerificationPresetId = 'standard';
+
+export function resolveVerificationPresetId(commands: string[]): VerificationPresetId {
+  const trimmed = commands.map(c => c.trim()).filter(Boolean);
+  for (const preset of VERIFICATION_PRESETS) {
+    if (preset.id === 'custom') continue;
+    if (
+      trimmed.length === preset.commands.length &&
+      trimmed.every((cmd, i) => cmd === preset.commands[i])
+    ) {
+      return preset.id;
+    }
+  }
+  return 'custom';
+}
+
+export function resolveVerificationCommands(presetId: VerificationPresetId, customCommands?: string[]): string[] {
+  if (presetId === 'custom') {
+    return (customCommands ?? []).map(c => c.trim()).filter(Boolean);
+  }
+  const preset = VERIFICATION_PRESETS.find(p => p.id === presetId);
+  return preset?.commands ?? VERIFICATION_PRESETS.find(p => p.id === DEFAULT_VERIFICATION_PRESET)!.commands;
+}
+
 export const AUTORESEARCH_FALLBACK_CONFIG: AutoResearchDefaultConfig = {
   workdir: '~/autoresearch',
   experimentDir: '~/Documents/tiny-autoresearch-digits',
