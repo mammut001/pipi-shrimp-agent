@@ -17,9 +17,14 @@ import {
 } from '@/services/autoresearch/pathInput';
 import {
   buildAutoResearchDefaultConfig,
+  DEFAULT_VERIFICATION_PRESET,
   getAutoResearchDefaultConfig,
   resolveAutoResearchDefaultConfig,
+  resolveVerificationCommands,
+  resolveVerificationPresetId,
+  VERIFICATION_PRESETS,
   type AutoResearchDefaultSource,
+  type VerificationPresetId,
 } from '@/services/autoresearch/defaultConfig';
 import {
   logAutoResearchSetupFailure,
@@ -129,10 +134,20 @@ export function AutoResearchSetupModal() {
   const [maxIter, setMaxIter] = useState(getAutoResearchDefaultConfig().iterations);
   const [baselineInput, setBaselineInput] = useState('');
   const [experimentDir, setExperimentDir] = useState(getAutoResearchDefaultConfig().experimentDir);
+  const [repositoryPath, setRepositoryPath] = useState(getAutoResearchDefaultConfig().repositoryPath);
   const [prefillSource, setPrefillSource] = useState<AutoResearchDefaultSource>('defaults');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'conversational' | 'advanced'>('conversational');
+  const [activeTab, setActiveTab] = useState<'conversational' | 'advanced' | 'self_improve'>('conversational');
+  const [autoResearchMode, setAutoResearchMode] = useState<'ml_experiment' | 'repo_self_improve'>(
+    getAutoResearchDefaultConfig().mode ?? 'ml_experiment',
+  );
+  const [verificationCommands, setVerificationCommands] = useState<string[]>(
+    getAutoResearchDefaultConfig().verificationCommands ?? resolveVerificationCommands(DEFAULT_VERIFICATION_PRESET),
+  );
+  const [verificationPreset, setVerificationPreset] = useState<VerificationPresetId>(
+    resolveVerificationPresetId(getAutoResearchDefaultConfig().verificationCommands ?? resolveVerificationCommands(DEFAULT_VERIFICATION_PRESET)),
+  );
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
   const setupLocked = lifecycleLock.locked;
   const lockMessage = setupLocked
@@ -180,6 +195,15 @@ export function AutoResearchSetupModal() {
     setDirection(config.direction);
     setMaxIter(config.iterations);
     setExperimentDir(config.experimentDir);
+    setRepositoryPath(config.repositoryPath);
+    setAutoResearchMode(config.mode);
+    const presetId = resolveVerificationPresetId(config.verificationCommands);
+    setVerificationPreset(presetId);
+    setVerificationCommands(
+      presetId === 'custom'
+        ? (config.verificationCommands.length > 0 ? config.verificationCommands : [''])
+        : config.verificationCommands,
+    );
     setPrefillSource(source);
   }, []);
 
@@ -192,7 +216,51 @@ export function AutoResearchSetupModal() {
     setActiveTab('conversational');
     const resolved = resolveAutoResearchDefaultConfig(lastUsedConfig);
     applyPrefillConfig(resolved.source, resolved.config);
+    // Keep autoResearchMode consistent with the default Guided tab so a
+    // persisted self-improve run doesn't leak into a fresh ML run.
+    setAutoResearchMode('ml_experiment');
   }, [applyPrefillConfig, lastUsedConfig, setActiveTab, showSetupModal]);
+
+  // Helpers for self-improve tab command list
+  const handleVerificationPresetChange = useCallback((presetId: VerificationPresetId) => {
+    // If the user is leaving the Custom preset with non-empty edits,
+    // remember them so a later switch back to Custom can restore them.
+    if (verificationPreset === 'custom' && presetId !== 'custom') {
+      const hasContent = verificationCommands.some(c => c.trim().length > 0);
+      if (hasContent) customCommandsSnapshotRef.current = verificationCommands;
+    }
+    setVerificationPreset(presetId);
+    if (presetId !== 'custom') {
+      setVerificationCommands(resolveVerificationCommands(presetId));
+      return;
+    }
+    // Entering Custom: prefer the user's last edit, then fall back to the
+    // non-empty entries in the current list, then to a single empty row.
+    const snapshot = customCommandsSnapshotRef.current;
+    if (snapshot && snapshot.some(c => c.trim().length > 0)) {
+      setVerificationCommands(snapshot);
+      return;
+    }
+    const existing = verificationCommands.map(c => c.trim()).filter(Boolean);
+    setVerificationCommands(existing.length > 0 ? existing : ['']);
+  }, [verificationCommands, verificationPreset]);
+
+  const handleAddVerificationCommand = useCallback(() => {
+    if (verificationCommands.length >= 10) return;
+    setVerificationCommands([...verificationCommands, '']);
+  }, [verificationCommands]);
+
+  const handleUpdateVerificationCommand = useCallback((index: number, value: string) => {
+    setVerificationCommands((current) => {
+      const next = [...current];
+      next[index] = value;
+      return next;
+    });
+  }, []);
+
+  const handleRemoveVerificationCommand = useCallback((index: number) => {
+    setVerificationCommands((current) => current.filter((_, i) => i !== index));
+  }, []);
 
   useEffect(() => {
     setSubmitError(null);
@@ -240,6 +308,37 @@ export function AutoResearchSetupModal() {
     }
   }, []);
 
+  const tabOrder: Array<'conversational' | 'advanced' | 'self_improve'> = ['conversational', 'advanced', 'self_improve'];
+  const tabToMode: Record<'conversational' | 'advanced' | 'self_improve', 'ml_experiment' | 'repo_self_improve'> = {
+    conversational: 'ml_experiment',
+    advanced: 'ml_experiment',
+    self_improve: 'repo_self_improve',
+  };
+  const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([null, null, null]);
+  // Remembers the user-edited Custom commands across preset switches so
+  // "switch to Standard then back to Custom" does not silently overwrite
+  // the user's work with the preset they were just looking at.
+  const customCommandsSnapshotRef = useRef<string[] | null>(null);
+  const handleTabKeyDown = useCallback((
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    current: 'conversational' | 'advanced' | 'self_improve',
+  ) => {
+    if (!isHorizontalArrowKey(event.key)) return;
+    event.preventDefault();
+    const idx = tabOrder.indexOf(current);
+    if (idx < 0) return;
+    const delta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+    const nextIdx = (idx + delta + tabOrder.length) % tabOrder.length;
+    const next = tabOrder[nextIdx];
+    setActiveTab(next);
+    setAutoResearchMode(tabToMode[next]);
+    // Defer focus to the next frame so we win against the Guided tab's
+    // ChatInput auto-focus useEffect.
+    requestAnimationFrame(() => {
+      tabButtonRefs.current[nextIdx]?.focus();
+    });
+  }, []);
+
   const handleWorkDirChange = useCallback((value: string) => {
     if (setupLocked) {
       setSubmitError(lockMessage);
@@ -261,6 +360,15 @@ export function AutoResearchSetupModal() {
     setExperimentDir(sanitizePathInput(value));
   }, [lockMessage, setupLocked]);
 
+  const handleRepositoryPathChange = useCallback((value: string) => {
+    if (setupLocked) {
+      setSubmitError(lockMessage);
+      return;
+    }
+
+    setRepositoryPath(sanitizePathInput(value));
+  }, [lockMessage, setupLocked]);
+
   const handleResetToDefaults = useCallback(() => {
     if (setupLocked) {
       setSubmitError(lockMessage);
@@ -277,13 +385,19 @@ export function AutoResearchSetupModal() {
       return;
     }
 
+    const filteredVerificationCommands = verificationCommands
+      .map(cmd => cmd.trim())
+      .filter(Boolean);
+
     if (process.env.NODE_ENV !== 'production') {
       console.debug('[AutoResearch] Modal handleStart called', {
         mode: form.mode,
+        autoResearchMode,
         experimentDir,
         metric,
         direction,
         iterations: maxIter,
+        verificationCommandCount: filteredVerificationCommands.length,
       });
     }
 
@@ -296,12 +410,16 @@ export function AutoResearchSetupModal() {
 
     const validation = validateAutoResearchSetupDraft({
       sshConfig: form,
-      experimentDir,
+      experimentDir: autoResearchMode === 'repo_self_improve' ? repositoryPath : experimentDir,
       metric,
       direction,
       iterations: maxIter,
       baselineInput,
       agentConfigError,
+      mode: autoResearchMode,
+      verificationCommands: autoResearchMode === 'repo_self_improve'
+        ? filteredVerificationCommands
+        : undefined,
     });
     if (!validation.value) {
       setSubmitError(validation.error);
@@ -328,7 +446,7 @@ export function AutoResearchSetupModal() {
     } finally {
       setIsStarting(false);
     }
-  }, [agentConfigError, baselineInput, direction, experimentDir, form, initSession, lifecycleLock, maxIter, metric, setAgentPanelTab, setLastUsedConfig, setShowSetupModal, setSshConfig, setupLocked]);
+  }, [agentConfigError, autoResearchMode, baselineInput, direction, experimentDir, form, initSession, lifecycleLock, maxIter, metric, repositoryPath, setAgentPanelTab, setLastUsedConfig, setShowSetupModal, setSshConfig, setupLocked, verificationCommands]);
 
   const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -378,10 +496,19 @@ export function AutoResearchSetupModal() {
             </div>
           )}
           {/* Tab bar */}
-          <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+          <div
+            className="flex gap-1 p-0.5 bg-gray-100 rounded-lg"
+            role="tablist"
+            aria-label={t('autoresearch.tabs.ariaLabel')}
+          >
             <button
               type="button"
-              onClick={() => setActiveTab('conversational')}
+              role="tab"
+              ref={(el) => { tabButtonRefs.current[0] = el; }}
+              aria-selected={activeTab === 'conversational'}
+              aria-controls="setup-modal-tabpanel"
+              onClick={() => { setActiveTab('conversational'); setAutoResearchMode('ml_experiment'); }}
+              onKeyDown={(e) => handleTabKeyDown(e, 'conversational')}
               disabled={setupLocked}
               className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'conversational' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
             >
@@ -389,21 +516,50 @@ export function AutoResearchSetupModal() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('advanced')}
+              role="tab"
+              ref={(el) => { tabButtonRefs.current[1] = el; }}
+              aria-selected={activeTab === 'advanced'}
+              aria-controls="setup-modal-tabpanel"
+              onClick={() => { setActiveTab('advanced'); setAutoResearchMode('ml_experiment'); }}
+              onKeyDown={(e) => handleTabKeyDown(e, 'advanced')}
               disabled={setupLocked}
               className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'advanced' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
             >
               {t('autoresearch.tabs.manual')}
             </button>
+            <button
+              type="button"
+              role="tab"
+              ref={(el) => { tabButtonRefs.current[2] = el; }}
+              aria-selected={activeTab === 'self_improve'}
+              aria-controls="setup-modal-tabpanel"
+              onClick={() => { setActiveTab('self_improve'); setAutoResearchMode('repo_self_improve'); }}
+              onKeyDown={(e) => handleTabKeyDown(e, 'self_improve')}
+              disabled={setupLocked}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'self_improve' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              {t('autoresearch.tabs.selfImprove')}
+            </button>
           </div>
           <p className="text-[10px] text-gray-400 mt-1.5 px-1">
             {activeTab === 'conversational'
               ? t('autoresearch.tabs.guidedSubtitle')
-              : t('autoresearch.tabs.manualSubtitle')}
+              : activeTab === 'self_improve'
+                ? t('autoresearch.tabs.selfImproveSubtitle')
+                : t('autoresearch.tabs.manualSubtitle')}
           </p>
         </div>
 
         {/* Body */}
+        <div
+          id="setup-modal-tabpanel"
+          role="tabpanel"
+          aria-label={
+            activeTab === 'conversational' ? t('autoresearch.tabs.guided')
+              : activeTab === 'advanced' ? t('autoresearch.tabs.manual')
+              : t('autoresearch.tabs.selfImprove')
+          }
+        >
         {activeTab === 'conversational' ? (
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {setupLocked ? (
@@ -427,14 +583,20 @@ export function AutoResearchSetupModal() {
           {/* Card 1: Run Target */}
           <SectionCard title={t('autoresearch.card.runTarget')}>
             {/* Mode toggle */}
-            <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+            <div
+              role="group"
+              aria-label={t('autoresearch.card.runTarget')}
+              className="flex gap-1 p-0.5 bg-gray-100 rounded-lg"
+            >
               <button
                 type="button"
+                aria-pressed={form.mode === 'local'}
                 onClick={() => setForm(f => ({ ...f, mode: 'local' }))}
                 className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'local' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
               >{t('autoresearch.mode.local')}</button>
               <button
                 type="button"
+                aria-pressed={form.mode === 'ssh'}
                 onClick={() => setForm(f => ({ ...f, mode: 'ssh' }))}
                 className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'ssh' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
               >{t('autoresearch.mode.ssh')}</button>
@@ -527,12 +689,20 @@ export function AutoResearchSetupModal() {
                 onChange={e => handleWorkDirChange(e.target.value)}
                 onKeyDown={handlePathInputKeyDown}
               />
-              <InlineHint>{t('autoresearch.workdirHelper')}</InlineHint>
+              <InlineHint>
+                {autoResearchMode === 'repo_self_improve'
+                  ? t('autoresearch.selfImproveWorkdirHint')
+                  : t('autoresearch.workdirHelper')}
+              </InlineHint>
             </div>
           </SectionCard>
 
-          {/* Card 2: Experiment Goal */}
-          <SectionCard title={t('autoresearch.card.experimentGoal')}>
+          {/* Card 2: Experiment Goal (mode-aware) */}
+          <SectionCard
+            title={autoResearchMode === 'repo_self_improve'
+              ? t('autoresearch.selfImproveCardGoal')
+              : t('autoresearch.card.experimentGoal')}
+          >
             <div className="flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2.5 py-2 text-[10px] text-indigo-700">
               <span>
                 {prefillSource === 'last-used'
@@ -547,59 +717,142 @@ export function AutoResearchSetupModal() {
                 {t('autoresearch.resetToDefaults')}
               </button>
             </div>
-            <div className="space-y-1.5">
-              <FieldLabel label={t('autoresearch.field.experimentDir')} required />
-              <input
-                className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors font-mono disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.experimentDir ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                placeholder={t('autoresearch.experimentDirPlaceholder')}
-                aria-label="Experiment path"
-                value={experimentDir}
-                onChange={e => handleExperimentDirChange(e.target.value)}
-                onKeyDown={handlePathInputKeyDown}
-              />
-              <InlineHint>{t('autoresearch.experimentDirHelper')}</InlineHint>
-            </div>
-            <div className="space-y-1.5">
-              <FieldLabel label={t('autoresearch.field.metricName')} required />
-              <div className="flex gap-2">
-                <input
-                  className={`flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.metric ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                  placeholder={t('autoresearch.metricNamePlaceholder')}
-                  value={metric}
-                  onChange={e => setMetric(e.target.value)}
-                />
-                <select
-                  className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white disabled:bg-gray-50 disabled:text-gray-400"
-                  value={direction}
-                  onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
-                >
-                  <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
-                  <option value="higher">{t('autoresearch.higherIsBetter')}</option>
-                </select>
-              </div>
-              <InlineHint>{t('autoresearch.metricHelper')}</InlineHint>
-            </div>
-            <div className="space-y-1.5">
-              <FieldLabel label={t('autoresearch.field.maxIterations')} />
-              <input
-                className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
-                placeholder={t('autoresearch.maxIterationsPlaceholder')}
-                type="number"
-                value={maxIter}
-                onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <FieldLabel label={t('autoresearch.field.baselineOptional')} />
-              <input
-                className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors ${fieldHints.baseline ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                placeholder="e.g. 0.963284"
-                value={baselineInput}
-                onChange={e => setBaselineInput(e.target.value)}
-              />
-              {fieldHints.baseline && <InlineHint>{fieldHints.baseline}</InlineHint>}
-              <InlineHint>{t('autoresearch.baselineHelper')}</InlineHint>
-            </div>
+            {autoResearchMode === 'repo_self_improve' ? (
+              <>
+                <div className="space-y-1.5">
+                  <FieldLabel label={t('autoresearch.selfImproveRepoField')} required />
+                  <input
+                    className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors font-mono disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.experimentDir ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                    placeholder={t('autoresearch.selfImproveRepoPlaceholder')}
+                    aria-label="Repository to improve"
+                    value={repositoryPath}
+                    onChange={e => handleRepositoryPathChange(e.target.value)}
+                    onKeyDown={handlePathInputKeyDown}
+                  />
+                  <InlineHint>{t('autoresearch.selfImproveInfo')}</InlineHint>
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel label={t('autoresearch.verificationCommands')} required />
+                  <div
+                    role="group"
+                    aria-label={t('autoresearch.verificationCommands')}
+                    className="grid grid-cols-4 gap-1 p-0.5 bg-gray-100 rounded-lg"
+                  >
+                    {VERIFICATION_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        aria-pressed={verificationPreset === preset.id}
+                        onClick={() => handleVerificationPresetChange(preset.id)}
+                        className={`py-1.5 text-[11px] font-semibold rounded-md transition-all ${verificationPreset === preset.id ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+                        title={preset.description}
+                      >{t(`autoresearch.preset.${preset.id}`)}</button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-gray-400">
+                    {t(`autoresearch.preset.${verificationPreset}Desc`)}
+                  </p>
+                  {verificationPreset !== 'custom' ? (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 space-y-1">
+                      {verificationCommands.filter(c => c.trim()).map((cmd, idx) => (
+                        <p key={idx} className="text-xs font-mono text-gray-600">{cmd}</p>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {verificationCommands.map((cmd, idx) => (
+                        <div key={idx} className="flex gap-2">
+                          <input
+                            className="flex-1 px-2.5 py-1.5 border rounded-lg text-xs font-mono focus:outline-none focus:border-indigo-400 transition-colors"
+                            placeholder="e.g. pnpm run build"
+                            value={cmd}
+                            onChange={e => handleUpdateVerificationCommand(idx, e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="px-2 py-1 text-[11px] text-red-500 hover:text-red-700 border border-red-200 rounded-lg hover:bg-red-50"
+                            onClick={() => handleRemoveVerificationCommand(idx)}
+                          >×</button>
+                        </div>
+                      ))}
+                      {verificationCommands.length < 10 && (
+                        <button
+                          type="button"
+                          className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold"
+                          onClick={handleAddVerificationCommand}
+                        >+ {t('autoresearch.addCommand')}</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel label={t('autoresearch.field.maxIterations')} />
+                  <input
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    placeholder={t('autoresearch.maxIterationsPlaceholder')}
+                    type="number"
+                    value={maxIter}
+                    onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <FieldLabel label={t('autoresearch.field.experimentDir')} required />
+                  <input
+                    className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors font-mono disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.experimentDir ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                    placeholder={t('autoresearch.experimentDirPlaceholder')}
+                    aria-label="Experiment path"
+                    value={experimentDir}
+                    onChange={e => handleExperimentDirChange(e.target.value)}
+                    onKeyDown={handlePathInputKeyDown}
+                  />
+                  <InlineHint>{t('autoresearch.experimentDirHelper')}</InlineHint>
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel label={t('autoresearch.field.metricName')} required />
+                  <div className="flex gap-2">
+                    <input
+                      className={`flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.metric ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                      placeholder={t('autoresearch.metricNamePlaceholder')}
+                      value={metric}
+                      onChange={e => setMetric(e.target.value)}
+                    />
+                    <select
+                      className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                      value={direction}
+                      onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
+                    >
+                      <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
+                      <option value="higher">{t('autoresearch.higherIsBetter')}</option>
+                    </select>
+                  </div>
+                  <InlineHint>{t('autoresearch.metricHelper')}</InlineHint>
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel label={t('autoresearch.field.maxIterations')} />
+                  <input
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                    placeholder={t('autoresearch.maxIterationsPlaceholder')}
+                    type="number"
+                    value={maxIter}
+                    onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel label={t('autoresearch.field.baselineOptional')} />
+                  <input
+                    className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors ${fieldHints.baseline ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                    placeholder="e.g. 0.963284"
+                    value={baselineInput}
+                    onChange={e => setBaselineInput(e.target.value)}
+                  />
+                  {fieldHints.baseline && <InlineHint>{fieldHints.baseline}</InlineHint>}
+                  <InlineHint>{t('autoresearch.baselineHelper')}</InlineHint>
+                </div>
+              </>
+            )}
           </SectionCard>
 
           {/* Card 3: Readiness & Start */}
@@ -620,8 +873,23 @@ export function AutoResearchSetupModal() {
                 )}
               />
               <ReadinessRow label={t('autoresearch.check.workdir')} status={workdirReady ? 'ok' : 'warn'} />
-              <ReadinessRow label={t('autoresearch.check.experimentDir')} status={experimentDirReady ? 'ok' : 'warn'} />
-              <ReadinessRow label={t('autoresearch.check.metric')} status={metricReady ? 'ok' : 'warn'} />
+              {autoResearchMode === 'repo_self_improve' ? (
+                <>
+                  <ReadinessRow
+                    label={t('autoresearch.selfImproveRepoField')}
+                    status={repositoryPath.trim() ? 'ok' : 'warn'}
+                  />
+                  <ReadinessRow
+                    label={t('autoresearch.verificationCommands')}
+                    status={verificationCommands.map(c => c.trim()).filter(Boolean).length > 0 ? 'ok' : 'warn'}
+                  />
+                </>
+              ) : (
+                <>
+                  <ReadinessRow label={t('autoresearch.check.experimentDir')} status={experimentDirReady ? 'ok' : 'warn'} />
+                  <ReadinessRow label={t('autoresearch.check.metric')} status={metricReady ? 'ok' : 'warn'} />
+                </>
+              )}
               {form.mode === 'ssh' && (
                 <ReadinessRow label={t('autoresearch.check.sshConnection')} status={sshReady ? 'ok' : 'warn'} />
               )}
@@ -634,8 +902,27 @@ export function AutoResearchSetupModal() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
                 <SummaryItem label={t('autoresearch.summaryTarget')} value={form.mode === 'local' ? 'Local' : `SSH ${form.user}@${form.host || '...'}`} />
                 <SummaryItem label={t('autoresearch.summaryWorkdir')} value={form.remoteWorkDir || '—'} />
-                <SummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
-                <SummaryItem label={t('autoresearch.summaryMetric')} value={`${metric || '—'} (${direction === 'lower' ? t('autoresearch.summaryDirectionMinimize') : t('autoresearch.summaryDirectionMaximize')})`} />
+                {autoResearchMode === 'repo_self_improve' ? (
+                  <>
+                    <SummaryItem
+                      label={t('autoresearch.summaryExperimentDir')}
+                      value={repositoryPath || '—'}
+                    />
+                    <SummaryItem
+                      label={t('autoresearch.summaryMetric')}
+                      value={`repo_health (${t('autoresearch.higherIsBetter')})`}
+                    />
+                    <SummaryItem
+                      label={t('autoresearch.verificationCommands')}
+                      value={`${verificationCommands.map(c => c.trim()).filter(Boolean).length} ${t('autoresearch.verificationCommands').toLowerCase()}`}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <SummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
+                    <SummaryItem label={t('autoresearch.summaryMetric')} value={`${metric || '—'} (${direction === 'lower' ? t('autoresearch.summaryDirectionMinimize') : t('autoresearch.summaryDirectionMaximize')})`} />
+                  </>
+                )}
                 <SummaryItem label={t('autoresearch.summaryIterations')} value={String(maxIter)} />
               </div>
             </div>
@@ -676,6 +963,7 @@ export function AutoResearchSetupModal() {
           </fieldset>
         </form>
         )}
+        </div>
       </div>
     </div>
   );

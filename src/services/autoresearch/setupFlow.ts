@@ -283,6 +283,7 @@ export async function startAutoResearchRun(
   callbacks.setLastUsedConfig({
     workdir: preflight.resolvedWorkDir,
     experimentDir: preflight.resolvedExperimentDir,
+    repositoryPath: setup.experimentDir,
     metric: setup.metric,
     direction: setup.direction,
     iterations: setup.iterations,
@@ -408,6 +409,7 @@ export async function resumeInterruptedAutoResearchRun(
   useAutoResearchStore.getState().setLastUsedConfig({
     workdir: preflight.resolvedWorkDir,
     experimentDir: preflight.resolvedExperimentDir,
+    repositoryPath: token.experimentDir || run.config.experimentDir || '',
     metric: token.metricName || run.config.metric,
     direction: token.metricDirection || run.config.direction,
     iterations: token.maxIterations || run.config.iterations,

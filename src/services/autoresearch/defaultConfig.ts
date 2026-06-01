@@ -3,6 +3,7 @@ import { sanitizePathInput } from './pathInput';
 export interface AutoResearchDefaultConfig {
   workdir: string;
   experimentDir: string;
+  repositoryPath: string;
   metric: string;
   direction: 'higher' | 'lower';
   iterations: number;
@@ -80,6 +81,7 @@ export function resolveVerificationCommands(presetId: VerificationPresetId, cust
 export const AUTORESEARCH_FALLBACK_CONFIG: AutoResearchDefaultConfig = {
   workdir: '~/autoresearch',
   experimentDir: '~/Documents/tiny-autoresearch-digits',
+  repositoryPath: '~/projects',
   metric: 'cv_accuracy',
   direction: 'higher',
   iterations: 5,
@@ -200,6 +202,7 @@ export function normalizeAutoResearchDefaultConfig(
   return {
     workdir: sanitizeString(input?.workdir, AUTORESEARCH_FALLBACK_CONFIG.workdir),
     experimentDir: sanitizeString(input?.experimentDir, AUTORESEARCH_FALLBACK_CONFIG.experimentDir),
+    repositoryPath: sanitizeString(input?.repositoryPath, AUTORESEARCH_FALLBACK_CONFIG.repositoryPath),
     metric: normalizeMetric(input?.metric, AUTORESEARCH_FALLBACK_CONFIG.metric),
     direction: normalizeDirection(input?.direction ?? AUTORESEARCH_FALLBACK_CONFIG.direction),
     iterations: normalizeIterations(input?.iterations, AUTORESEARCH_FALLBACK_CONFIG.iterations),
