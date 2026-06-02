@@ -273,6 +273,7 @@ const enUS: TranslationKeys = {
   'diagnostics.size': 'Size',
   'diagnostics.actions': 'Actions',
   'diagnostics.loadFailed': 'Failed to load database diagnostics.',
+  'diagnostics.notAvailableInBrowser': 'Database diagnostics are only available in the Tauri desktop app.',
   'diagnostics.exportSuccess': 'Database backup exported.',
   'diagnostics.exportFailed': 'Failed to export database backup.',
   'diagnostics.openDirectorySuccess': 'Opened the data directory.',

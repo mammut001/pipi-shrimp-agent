@@ -92,6 +92,7 @@ export type TranslationKeys = {
   'diagnostics.size': string;
   'diagnostics.actions': string;
   'diagnostics.loadFailed': string;
+  'diagnostics.notAvailableInBrowser': string;
   'diagnostics.exportSuccess': string;
   'diagnostics.exportFailed': string;
   'diagnostics.openDirectorySuccess': string;

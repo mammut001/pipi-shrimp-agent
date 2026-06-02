@@ -273,6 +273,7 @@ const zhCN: TranslationKeys = {
   'diagnostics.size': '大小',
   'diagnostics.actions': '操作',
   'diagnostics.loadFailed': '加载数据库诊断信息失败。',
+  'diagnostics.notAvailableInBrowser': '数据库诊断功能仅在 Tauri 桌面端可用。',
   'diagnostics.exportSuccess': '数据库备份已导出。',
   'diagnostics.exportFailed': '导出数据库备份失败。',
   'diagnostics.openDirectorySuccess': '已打开数据目录。',
