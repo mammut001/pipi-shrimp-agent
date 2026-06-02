@@ -35,6 +35,8 @@ export interface Message {
   token_usage?: {                // Token usage for this message (assistant only)
     input_tokens: number;
     output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
     model?: string;
   };
 }
@@ -279,22 +281,23 @@ export interface ChatState {
   /**
    * Get daily token stats for a specific month (YYYY-MM format)
    */
-  getDailyTokenStats: (yearMonth: string, apiConfigId?: string) => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+  getDailyTokenStats: (yearMonth: string, apiConfigId?: string) => Promise<DailyTokenStats[]>;
 
   /**
    * Get monthly token stats
    */
-  getMonthlyTokenStats: (apiConfigId?: string) => Promise<{ date: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+  getMonthlyTokenStats: (apiConfigId?: string) => Promise<DailyTokenStats[]>;
 
   /**
    * Get token stats by model
    */
-  getModelTokenStats: (apiConfigId?: string) => Promise<{ model: string; input_tokens: number; output_tokens: number; total_tokens: number }[]>;
+  getModelTokenStats: (apiConfigId?: string) => Promise<ModelTokenStats[]>;
 
     /**
-    * Get total token stats (input, output, total)
+    * Get total token stats — input, output, cache_read, cache_create,
+    * total (input+output), total_real (all four), request_count.
     */
-    getTotalTokenStats: (apiConfigId?: string) => Promise<{ input: number; output: number; total: number }>;
+    getTotalTokenStats: (apiConfigId?: string) => Promise<TotalTokenStats>;
 
     /**
     * Reset token usage statistics
@@ -304,6 +307,44 @@ export interface ChatState {
   // ========== Token Stats ==========
 }
 
+
+
+// ============= Token Stats (mirrors Rust db structs) =============
+
+/** Daily or monthly token stats — date is YYYY-MM-DD or YYYY-MM. */
+export interface DailyTokenStats {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  /** input + output (legacy) */
+  total_tokens: number;
+  /** input + output + cache_read + cache_create ("real consumed") */
+  total_real_tokens: number;
+}
+
+/** Per-model token stats. */
+export interface ModelTokenStats {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  total_tokens: number;
+  total_real_tokens: number;
+}
+
+/** Aggregate totals across all rows. */
+export interface TotalTokenStats {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  total_tokens: number;
+  total_real_tokens: number;
+  request_count: number;
+}
 // ============= Helper Functions =============
 
 /**

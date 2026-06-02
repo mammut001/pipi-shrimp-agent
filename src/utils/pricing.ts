@@ -16,20 +16,83 @@ export function calculateTokenCost(tokens: number, pricePerMillion: number): num
 }
 
 /**
- * Calculate total cost for a request based on token usage
- * @param inputTokens - Number of input tokens
- * @param outputTokens - Number of output tokens
- * @param pricing - Model pricing configuration
- * @returns Total cost in USD
+ * Per-bucket cost breakdown for a single request.
+ *
+ * Mirrors ccswitch's 4-bucket model: input / output / cache_read /
+ * cache_create, plus a derived `savedByCache` that quantifies how much
+ * the prompt cache saved vs. paying full input price.
+ */
+export interface RequestCostBreakdown {
+  inputCost: number;
+  outputCost: number;
+  cacheReadCost: number;
+  cacheWriteCost: number;
+  totalCost: number;
+  /**
+   * Cache_read tokens that would have cost `inputPrice` but cost
+   * `cacheReadPrice` instead — i.e. inputPrice - cacheReadPrice per token.
+   * Always >= 0.
+   */
+  savedByCache: number;
+}
+
+/**
+ * Calculate the cost of a single token bucket, with a 1.25x fallback
+ * for cache_write when the registry didn't specify `cacheWritePrice`.
+ * Matches ccswitch's `cache_create_rate = inputPrice * 1.25` rule.
+ */
+function bucketCost(tokens: number, pricePerMillion: number | undefined, fallback: number): number {
+  const rate = pricePerMillion ?? fallback;
+  return calculateTokenCost(tokens, rate);
+}
+
+/**
+ * Calculate total cost for a request based on token usage.
+ *
+ * 4-bucket aware: if the caller omits the cache fields, this behaves
+ * identically to the legacy 2-bucket version.
  */
 export function calculateRequestCost(
   inputTokens: number,
   outputTokens: number,
-  pricing: ModelPricing
+  pricing: ModelPricing,
+  cacheReadTokens: number = 0,
+  cacheWriteTokens: number = 0,
 ): number {
+  return calculateRequestCostDetailed(inputTokens, outputTokens, pricing, cacheReadTokens, cacheWriteTokens).totalCost;
+}
+
+/**
+ * Cost breakdown for a request — input / output / cache_read /
+ * cache_create priced independently. Use this from the UI to surface
+ * the per-bucket cards and the green "saved by cache" pill.
+ */
+export function calculateRequestCostDetailed(
+  inputTokens: number,
+  outputTokens: number,
+  pricing: ModelPricing,
+  cacheReadTokens: number = 0,
+  cacheWriteTokens: number = 0,
+): RequestCostBreakdown {
   const inputCost = calculateTokenCost(inputTokens, pricing.inputPrice);
   const outputCost = calculateTokenCost(outputTokens, pricing.outputPrice);
-  return inputCost + outputCost;
+  const cacheReadCost = bucketCost(cacheReadTokens, pricing.cacheReadPrice, 0);
+  // 1.25x of input is Anthropic's documented cache write surcharge; the
+  // registry can override with `cacheWritePrice` (e.g. 3.75 for Sonnet).
+  const cacheWriteCost = bucketCost(cacheWriteTokens, pricing.cacheWritePrice, pricing.inputPrice * 1.25);
+  // Saving = tokens that would have been charged at full input price but
+  // were billed at the cache rate instead. Only meaningful when
+  // cacheReadPrice < inputPrice (the Anthropic case).
+  const effectiveCacheReadPrice = pricing.cacheReadPrice ?? 0;
+  const savedByCache = Math.max(0, pricing.inputPrice - effectiveCacheReadPrice) * cacheReadTokens / 1_000_000;
+  return {
+    inputCost,
+    outputCost,
+    cacheReadCost,
+    cacheWriteCost,
+    totalCost: inputCost + outputCost + cacheReadCost + cacheWriteCost,
+    savedByCache,
+  };
 }
 
 /**

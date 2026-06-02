@@ -8,7 +8,7 @@ import { getCompactConfig, getContextTokenStats } from '../services/compact/conf
 import { runMicrocompactCheck } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
 import type { ImportedFile } from '../types/settings';
-import type { ChatState, Message, OutputFolder, Session } from '../types/chat';
+import type { ChatState, Message, OutputFolder, Session, TotalTokenStats } from '../types/chat';
 import { createMessage, createProject, createSession } from '../types/chat';
 import {
   dbToProject,
@@ -921,11 +921,18 @@ export const useChatStore = create<ChatState>()(
 
     getTotalTokenStats: async (apiConfigId?: string) => {
       try {
-        const [input, output, total] = await invoke<[number, number, number]>('db_get_total_token_stats', { apiConfigId: apiConfigId ?? null });
-        return { input, output, total };
+        return await invoke<TotalTokenStats>('db_get_total_token_stats', { apiConfigId: apiConfigId ?? null });
       } catch (error) {
         console.error('Failed to get total token stats:', error);
-        return { input: 0, output: 0, total: 0 };
+        return {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          total_tokens: 0,
+          total_real_tokens: 0,
+          request_count: 0,
+        } satisfies TotalTokenStats;
       }
     },
 
@@ -935,4 +942,4 @@ export const useChatStore = create<ChatState>()(
   })),
 );
 
-export type { Message, Project, Session } from '../types/chat';
+export type { Message, Project, Session, TotalTokenStats } from '../types/chat';

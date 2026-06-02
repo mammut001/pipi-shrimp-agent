@@ -147,7 +147,13 @@ export async function* runChatTurn(
     let pendingToolCalls: ToolCallParams[] = [];
     let assistantMessageContent = '';
     let assistantMessageReasoning = '';
-    let tokenUsage: { input_tokens: number; output_tokens: number; model?: string } | undefined;
+    let tokenUsage: {
+            input_tokens: number;
+            output_tokens: number;
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+            model?: string;
+          } | undefined;
     let strictBudgetRetry = false;
     let retryDueToMalformedToolCall = false;
 
@@ -198,6 +204,8 @@ export async function* runChatTurn(
               tokenUsage = {
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
+                cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+                cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
                 model: chunk.response?.model || resolvedConfig!.model,
               };
             }

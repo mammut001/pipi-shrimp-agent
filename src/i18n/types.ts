@@ -210,6 +210,16 @@ export type TranslationKeys = {
   'token.selectMonth': string;
   'token.noData': string;
   'token.input': string;
+  'token.totalRequests': string;
+  'token.realConsumed': string;
+  'token.newInput': string;
+  'token.cacheHit': string;
+  'token.cacheHitRate': string;
+  'token.savedByCache': string;
+  'token.cacheBreakdown': string;
+  'token.requestCount': string;
+  'chat.cacheRead': string;
+  'chat.cacheWrite': string;
   'token.output': string;
   'token.total': string;
   'token.cost': string;

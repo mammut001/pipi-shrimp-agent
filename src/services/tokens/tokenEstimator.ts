@@ -41,11 +41,25 @@ export function estimateTextTokens(text: string): number {
  * 源码参考: roughTokenCountEstimationForMessages() 在 tokenEstimation.ts
  */
 export async function estimateMessagesTokens(
-  messages: { role: string; content: string; tool_calls?: unknown[]; reasoning?: string }[],
+  messages: {
+    role: string;
+    content: string;
+    tool_calls?: unknown[];
+    reasoning?: string;
+    token_usage?: BudgetUsageInput;
+  }[],
 ): Promise<number> {
   let total = 0;
 
   for (const msg of messages) {
+    // Real per-message usage (from the API) wins over the character
+    // heuristic when available. cache_read still counts toward context
+    // window per Anthropic docs, so tokenUsageToBudgetTokens returns the
+    // full 4-bucket sum.
+    if (msg.token_usage) {
+      total += tokenUsageToBudgetTokens(msg.token_usage);
+      continue;
+    }
     const contentTokens = estimateTextTokens(msg.content || '');
     let effective = contentTokens;
 
@@ -76,8 +90,17 @@ export async function estimateMessagesTokens(
  * 估算单条消息的 token 数
  */
 export function estimateMessageTokens(
-  msg: { role: string; content: string; tool_calls?: unknown[]; reasoning?: string },
+  msg: {
+    role: string;
+    content: string;
+    tool_calls?: unknown[];
+    reasoning?: string;
+    token_usage?: BudgetUsageInput;
+  },
 ): number {
+  if (msg.token_usage) {
+    return tokenUsageToBudgetTokens(msg.token_usage);
+  }
   let tokens = estimateTextTokens(msg.content || '');
 
   if (msg.tool_calls && msg.tool_calls.length > 0) {
@@ -94,4 +117,29 @@ export function estimateMessageTokens(
   }
 
   return Math.ceil(tokens * 1.33);
+}
+
+
+/**
+ * Convert a real usage payload (post-API) into budget-weighted tokens.
+ *
+ * Anthropic's prompt cache counts toward the context window, so
+ * cache_read + cache_create are both added to the budget. Use this when
+ * you have a real usage snapshot and want to skip the character-heuristic
+ * estimator entirely (more accurate, no re-counting).
+ */
+export interface BudgetUsageInput {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+export function tokenUsageToBudgetTokens(usage: BudgetUsageInput): number {
+  const in_ = Math.max(0, usage.input_tokens || 0);
+  const out = Math.max(0, usage.output_tokens || 0);
+  const cr = Math.max(0, usage.cache_read_input_tokens || 0);
+  const cc = Math.max(0, usage.cache_creation_input_tokens || 0);
+  // All four buckets occupy context (cache_read per Anthropic docs).
+  return in_ + out + cr + cc;
 }

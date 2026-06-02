@@ -184,7 +184,12 @@ export function createChatActionMethods({
           content: string;
           artifacts: Array<{ type: string; content: string; title?: string; language?: string }>;
           model: string;
-          usage: { input_tokens: number; output_tokens: number };
+          usage: {
+            input_tokens: number;
+            output_tokens: number;
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+          };
           tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
         }>('send_claude_sdk_chat_streaming', request.params);
 
@@ -202,6 +207,8 @@ export function createChatActionMethods({
           ? {
               input_tokens: response.usage.input_tokens,
               output_tokens: response.usage.output_tokens,
+              cache_read_input_tokens: response.usage.cache_read_input_tokens ?? 0,
+              cache_creation_input_tokens: response.usage.cache_creation_input_tokens ?? 0,
               model: response.model || resolvedConfig!.model,
             }
           : undefined;
@@ -504,6 +511,8 @@ export function createChatActionMethods({
           ? {
               input_tokens: tokenUsageResult.input_tokens,
               output_tokens: tokenUsageResult.output_tokens,
+              cache_read_input_tokens: tokenUsageResult.cache_read_input_tokens ?? 0,
+              cache_creation_input_tokens: tokenUsageResult.cache_creation_input_tokens ?? 0,
               model: tokenUsageResult.model || resolvedConfig!.model,
             }
           : undefined;
@@ -520,14 +529,16 @@ export function createChatActionMethods({
           await safeInvoke('db_save_token_usage', {
             usage: {
               id: crypto.randomUUID(),
-               session_id: activeSessionId,
-               date: now.toISOString().split('T')[0],
-               input_tokens: tokenUsage.input_tokens,
-               output_tokens: tokenUsage.output_tokens,
-               model: tokenUsage.model || resolvedConfig!.model,
-               api_config_id: resolvedConfig!.configId,
-               created_at: Math.floor(now.getTime() / 1000),
-             },
+              session_id: activeSessionId,
+              date: now.toISOString().split('T')[0],
+              input_tokens: tokenUsage.input_tokens,
+              output_tokens: tokenUsage.output_tokens,
+              cache_read_input_tokens: tokenUsage.cache_read_input_tokens ?? 0,
+              cache_creation_input_tokens: tokenUsage.cache_creation_input_tokens ?? 0,
+              model: tokenUsage.model || resolvedConfig!.model,
+              api_config_id: resolvedConfig!.configId,
+              created_at: Math.floor(now.getTime() / 1000),
+            },
           }).catch((error: unknown) => {
             console.error('Failed to save token usage:', error);
           });

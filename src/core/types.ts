@@ -5,11 +5,22 @@ export type ToolCallParams = {
 };
 
 /**
- * Token usage statistics from API response
+ * Token usage statistics from API response.
+ *
+ * Mirrors Anthropic's 4-bucket usage shape (see ccswitch TOKEN_BANK):
+ *   - `input_tokens`                 : uncached new input (full price)
+ *   - `output_tokens`                : generated output (full price)
+ *   - `cache_read_input_tokens`      : served from prompt cache (~0.1x)
+ *   - `cache_creation_input_tokens`  : written into prompt cache (~1.25x)
+ *
+ * The cache fields default to 0 for non-Anthropic providers and for older
+ * payloads that did not report them.
  */
 export interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
   model?: string;
 }
 
@@ -22,6 +33,8 @@ export interface APIResponse {
   usage?: {
     input_tokens: number;
     output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
     total_tokens?: number;
   };
   stop_reason?: string;

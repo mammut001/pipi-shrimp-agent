@@ -373,6 +373,19 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                   </svg>
                   <span>{t('chat.total')}: {(message.token_usage.input_tokens + message.token_usage.output_tokens).toLocaleString()}</span>
                 </span>
+                {((message.token_usage.cache_read_input_tokens ?? 0) > 0 || (message.token_usage.cache_creation_input_tokens ?? 0) > 0) && (
+                  <span className="flex items-center gap-1" title={t('token.cacheBreakdown')}>
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span className="text-green-600">
+                      {t('chat.cacheRead')}: {(message.token_usage.cache_read_input_tokens ?? 0).toLocaleString()}
+                      {(message.token_usage.cache_creation_input_tokens ?? 0) > 0 && (
+                        <> · {t('chat.cacheWrite')}: {(message.token_usage.cache_creation_input_tokens ?? 0).toLocaleString()}</>
+                      )}
+                    </span>
+                  </span>
+                )}
               </div>
             )}
           </div>

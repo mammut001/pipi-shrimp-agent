@@ -56,7 +56,12 @@ export async function callCompactLLM(
     content: string;
     artifacts: Array<{ type: string; content: string; title?: string; language?: string }>;
     model: string;
-    usage: { input_tokens: number; output_tokens: number };
+    usage: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
     tool_calls: Array<{ tool_call_id: string; name: string; arguments: string }>;
   }>('send_claude_sdk_chat', {
     messages: apiMessages,

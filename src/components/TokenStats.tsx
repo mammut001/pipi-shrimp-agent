@@ -6,30 +6,22 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useChatStore, useSettingsStore } from '@/store';
-import { calculateRequestCost, formatCost } from '@/utils/pricing';
+import type { DailyTokenStats as DailyStatsT, ModelTokenStats as ModelStatsT, TotalTokenStats as TotalStatsT } from '@/types/chat';
+import { calculateRequestCost, calculateRequestCostDetailed, formatCost } from '@/utils/pricing';
 import { t } from '@/i18n';
 
-interface DailyStats {
-  date: string;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-}
+type DailyStats = DailyStatsT;
+type ModelStats = ModelStatsT;
 
-interface ModelStats {
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-}
-
-interface DailyStatsWithCost extends DailyStats {
+interface DailyStatsWithCost extends DailyStatsT {
   cost: number;
+  savedByCache: number;
 }
 
-interface ModelStatsWithCost extends ModelStats {
+interface ModelStatsWithCost extends ModelStatsT {
   cost: number;
-  pricing: { inputPrice: number; outputPrice: number } | null;
+  savedByCache: number;
+  pricing: { inputPrice: number; outputPrice: number; cacheReadPrice?: number; cacheWritePrice?: number } | null;
 }
 
 export function TokenStats() {
@@ -42,7 +34,17 @@ export function TokenStats() {
   const [dailyStats, setDailyStats] = useState<DailyStatsWithCost[]>([]);
   const [monthlyStats, setMonthlyStats] = useState<DailyStatsWithCost[]>([]);
   const [modelStats, setModelStats] = useState<ModelStatsWithCost[]>([]);
-  const [totalStats, setTotalStats] = useState({ input: 0, output: 0, total: 0, cost: 0 });
+  const [totalStats, setTotalStats] = useState<TotalStatsT & { cost: number; savedByCache: number }>({
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    total_tokens: 0,
+    total_real_tokens: 0,
+    request_count: 0,
+    cost: 0,
+    savedByCache: 0,
+  });
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -55,6 +57,15 @@ export function TokenStats() {
   } = useChatStore();
 
   const apiConfigs = useSettingsStore((s) => s.apiConfigs);
+
+  // Cache hit rate = cache_read / (input + cache_read + cache_create) * 100
+  // (ccswitch formula). Guard against div-by-zero and missing cache fields.
+  const cacheHitRate = (() => {
+    const denom = totalStats.input_tokens + totalStats.cache_read_input_tokens + totalStats.cache_creation_input_tokens;
+    if (denom === 0) return 0;
+    return (totalStats.cache_read_input_tokens / denom) * 100;
+  })();
+  const cacheHitRateLabel = totalStats.cache_read_input_tokens > 0 ? `${cacheHitRate.toFixed(1)}%` : '—';
 
   const handleResetTokenEstimate = async () => {
     if (resetting) return;
@@ -98,45 +109,60 @@ export function TokenStats() {
         getTotalTokenStats(filterConfigId),
       ]);
 
-      // Calculate costs for daily stats (using default model pricing as approximation)
-      const dailyWithCost = daily.map((stat): DailyStatsWithCost => ({
-        ...stat,
-        cost: 0, // Daily stats don't have model info, show aggregate cost only
-      }));
-
-      // Calculate costs for monthly stats
-      const monthlyWithCost = monthly.map((stat): DailyStatsWithCost => ({
+      // Daily / monthly rows are aggregate (no model per row), so we just
+      // pass them through — cost & savedByCache stay at 0 and the new top
+      // cards handle the bucket totals from `total` below.
+      const dailyWithCost: DailyStatsWithCost[] = daily.map((stat) => ({
         ...stat,
         cost: 0,
+        savedByCache: 0,
+      }));
+      const monthlyWithCost: DailyStatsWithCost[] = monthly.map((stat) => ({
+        ...stat,
+        cost: 0,
+        savedByCache: 0,
       }));
 
-      // Calculate costs for model stats
-      const modelWithCost = model.map((stat): ModelStatsWithCost => {
+      // Per-model: compute full 4-bucket cost breakdown using the registry.
+      const modelWithCost: ModelStatsWithCost[] = model.map((stat) => {
         const pricing = getModelPricing(stat.model, 'anthropic');
-        const cost = pricing
-          ? calculateRequestCost(stat.input_tokens, stat.output_tokens, pricing)
-          : 0;
-
+        const breakdown = pricing
+          ? calculateRequestCostDetailed(
+              stat.input_tokens,
+              stat.output_tokens,
+              pricing,
+              stat.cache_read_input_tokens,
+              stat.cache_creation_input_tokens,
+            )
+          : null;
         return {
           ...stat,
-          cost,
-          pricing: pricing ? { inputPrice: pricing.inputPrice, outputPrice: pricing.outputPrice } : null,
+          cost: breakdown?.totalCost ?? 0,
+          savedByCache: breakdown?.savedByCache ?? 0,
+          pricing: pricing
+            ? {
+                inputPrice: pricing.inputPrice,
+                outputPrice: pricing.outputPrice,
+                cacheReadPrice: pricing.cacheReadPrice,
+                cacheWritePrice: pricing.cacheWritePrice,
+              }
+            : null,
         };
       });
 
-      // Calculate total cost
       const totalCost = modelWithCost.reduce((sum, stat) => sum + stat.cost, 0);
+      const totalSavedByCache = modelWithCost.reduce((sum, stat) => sum + stat.savedByCache, 0);
 
       setDailyStats(dailyWithCost);
       setMonthlyStats(monthlyWithCost);
       setModelStats(modelWithCost);
-      setTotalStats({ ...total, cost: totalCost });
+      setTotalStats({ ...total, cost: totalCost, savedByCache: totalSavedByCache });
     } catch (error) {
       console.error('Failed to load token stats:', error);
     } finally {
       setLoading(false);
     }
-  }, [selectedMonth, selectedApiConfigId, getDailyTokenStats, getMonthlyTokenStats, getModelTokenStats, getTotalTokenStats, getModelPricing, calculateStatsCost]);
+  }, [selectedMonth, selectedApiConfigId, getDailyTokenStats, getMonthlyTokenStats, getModelTokenStats, getTotalTokenStats, getModelPricing]);
 
   useEffect(() => {
     loadData();
@@ -212,16 +238,16 @@ export function TokenStats() {
         )}
         <div className="grid grid-cols-3 gap-4">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{formatNumber(totalStats.input)}</div>
-            <div className="text-xs text-gray-500">{t('token.totalInput')}</div>
+            <div className="text-2xl font-bold text-blue-600">{formatNumber(totalStats.input_tokens)}</div>
+            <div className="text-xs text-gray-500">{t('token.input')}</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{formatNumber(totalStats.output)}</div>
-            <div className="text-xs text-gray-500">{t('token.totalOutput')}</div>
+            <div className="text-2xl font-bold text-green-600">{formatNumber(totalStats.output_tokens)}</div>
+            <div className="text-xs text-gray-500">{t('token.output')}</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">{formatNumber(totalStats.total)}</div>
-            <div className="text-xs text-gray-500">{t('token.total')}</div>
+            <div className="text-2xl font-bold text-purple-600">{formatNumber(totalStats.total_real_tokens)}</div>
+            <div className="text-xs text-gray-500">{t('token.realConsumed')}</div>
           </div>
         </div>
       </div>
@@ -389,6 +415,36 @@ export function TokenStats() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Compact stat card for the 4-bucket top row.
+ */
+function StatCard({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent: 'indigo' | 'cyan' | 'green' | 'amber';
+}) {
+  const accentBar: Record<typeof accent, string> = {
+    indigo: 'bg-indigo-500',
+    cyan: 'bg-cyan-500',
+    green: 'bg-green-500',
+    amber: 'bg-amber-500',
+  };
+  return (
+    <div className="bg-white rounded-lg p-3 border border-gray-200 relative overflow-hidden">
+      <div className={`absolute top-0 left-0 right-0 h-1 ${accentBar[accent]}`} />
+      <div className="text-xs text-gray-500 mt-1">{label}</div>
+      <div className="text-xl font-semibold text-gray-900 tabular-nums">{value}</div>
+      {hint && <div className="text-xs text-gray-400 mt-0.5">{hint}</div>}
     </div>
   );
 }
