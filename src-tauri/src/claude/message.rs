@@ -64,11 +64,25 @@ pub struct Artifact {
 
 /**
  * Token usage information
+ *
+ * Splits Anthropic's per-request usage into 4 buckets so we can bill and
+ * budget them separately:
+ * - `input_tokens`             : uncached new input (full price)
+ * - `output_tokens`            : generated output (full price)
+ * - `cache_read_input_tokens`  : served from prompt cache (~0.1x price)
+ * - `cache_creation_input_tokens` : written into prompt cache (~1.25x price)
+ *
+ * The Anthropic provider populates all four. Other providers (OpenAI,
+ * Gemini, etc) leave the cache buckets at 0.
  */
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UsageInfo {
     pub input_tokens: i32,
     pub output_tokens: i32,
+    #[serde(default)]
+    pub cache_read_input_tokens: i32,
+    #[serde(default)]
+    pub cache_creation_input_tokens: i32,
 }
 
 /**

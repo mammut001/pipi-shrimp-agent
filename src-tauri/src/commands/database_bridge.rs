@@ -10,7 +10,7 @@ use crate::database::{
     save_swarm_snapshot, save_telegram_binding, save_telegram_task, save_token_usage,
     set_telegram_runtime_state, update_project, DailyTokenStats, DbBackupEntry,
     DbDiagnostics, DbMessage, DbProject, DbSession, DbTelegramBinding, DbTelegramTask,
-    DbTokenUsage, ModelTokenStats,
+    DbTokenUsage, ModelTokenStats, TotalTokenStats,
 };
 use std::path::Path;
 
@@ -229,7 +229,7 @@ pub fn db_get_model_token_stats(api_config_id: Option<String>) -> Result<Vec<Mod
 }
 
 #[tauri::command]
-pub fn db_get_total_token_stats(api_config_id: Option<String>) -> Result<(i64, i64, i64), String> {
+pub fn db_get_total_token_stats(api_config_id: Option<String>) -> Result<TotalTokenStats, String> {
     get_total_token_stats(api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 

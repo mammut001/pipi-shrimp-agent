@@ -120,6 +120,8 @@ fn row_to_token_usage(row: &Row) -> SqliteResult<DbTokenUsage> {
         date: row.get(2)?,
         input_tokens: row.get(3)?,
         output_tokens: row.get(4)?,
+        cache_read_input_tokens: row.get(8).unwrap_or(0),
+        cache_creation_input_tokens: row.get(9).unwrap_or(0),
         model: row.get(5)?,
         api_config_id: row.get(6)?,
         created_at: row.get(7)?,
@@ -189,6 +191,12 @@ pub struct DbTokenUsage {
     pub date: String, // YYYY-MM-DD format
     pub input_tokens: i32,
     pub output_tokens: i32,
+    /// Tokens served from Anthropic's prompt cache (priced at cacheReadPrice,
+    /// ~0.1x input). Always 0 for non-Anthropic providers.
+    pub cache_read_input_tokens: i32,
+    /// Tokens written into Anthropic's prompt cache (priced at cacheWritePrice,
+    /// ~1.25x input). Always 0 for non-Anthropic providers.
+    pub cache_creation_input_tokens: i32,
     pub model: String,
     pub api_config_id: Option<String>,
     pub created_at: i64,
@@ -801,6 +809,25 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 [],
             )?;
         }
+        7 => {
+            // 4-bucket prompt-cache tracking for token_usage. Mirrors the
+            // Anthropic usage payload (cache_read_input_tokens /
+            // cache_creation_input_tokens). New columns default to 0 so
+            // existing rows remain valid and pre-v7 statistics still
+            // aggregate cleanly.
+            let _ = conn.execute(
+                "ALTER TABLE token_usage ADD COLUMN cache_read_input_tokens INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            let _ = conn.execute(
+                "ALTER TABLE token_usage ADD COLUMN cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (7, strftime('%s','now'))",
+                [],
+            )?;
+        }
         _ => {
             eprintln!("⚠️  Unknown migration version {}", version);
         }
@@ -817,7 +844,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
  * `LATEST_VERSION`.
  */
 pub fn init_database() -> SqliteResult<()> {
-    const LATEST_VERSION: i64 = 6;
+    const LATEST_VERSION: i64 = 7;
 
     let db_path = get_db_path();
     println!("📂 Database path: {:?}", db_path);
@@ -1393,14 +1420,20 @@ pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT INTO token_usage (id, session_id, date, input_tokens, output_tokens, model, api_config_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO token_usage (
+                id, session_id, date, input_tokens, output_tokens,
+                cache_read_input_tokens, cache_creation_input_tokens,
+                model, api_config_id, created_at
+            )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 usage.id,
                 usage.session_id,
                 usage.date,
                 usage.input_tokens,
                 usage.output_tokens,
+                usage.cache_read_input_tokens,
+                usage.cache_creation_input_tokens,
                 usage.model,
                 usage.api_config_id,
                 usage.created_at
@@ -1429,7 +1462,12 @@ pub struct DailyTokenStats {
     pub date: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub cache_read_input_tokens: i64,
+    pub cache_creation_input_tokens: i64,
+    /// input + output (legacy, kept for backwards compatibility)
     pub total_tokens: i64,
+    /// input + output + cache_read + cache_create (Anthropic's "real consumed")
+    pub total_real_tokens: i64,
 }
 
 /**
@@ -1440,7 +1478,12 @@ pub struct ModelTokenStats {
     pub model: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub cache_read_input_tokens: i64,
+    pub cache_creation_input_tokens: i64,
+    /// input + output (legacy)
     pub total_tokens: i64,
+    /// input + output + cache_read + cache_create ("real consumed")
+    pub total_real_tokens: i64,
 }
 
 /**
@@ -1458,13 +1501,16 @@ pub fn get_daily_token_stats(
         let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = match api_config_id
         {
             Some(config_id) => (
-                "SELECT date, 
-                        SUM(input_tokens) as total_input, 
+                "SELECT date,
+                        SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
-                        SUM(input_tokens + output_tokens) as total
-                 FROM token_usage 
+                        SUM(cache_read_input_tokens) as total_cache_read,
+                        SUM(cache_creation_input_tokens) as total_cache_create,
+                        SUM(input_tokens + output_tokens) as total,
+                        SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens) as total_real
+                 FROM token_usage
                  WHERE date LIKE ?1 AND api_config_id = ?2
-                 GROUP BY date 
+                 GROUP BY date
                  ORDER BY date DESC"
                     .to_string(),
                 vec![
@@ -1473,13 +1519,16 @@ pub fn get_daily_token_stats(
                 ],
             ),
             None => (
-                "SELECT date, 
-                        SUM(input_tokens) as total_input, 
+                "SELECT date,
+                        SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
-                        SUM(input_tokens + output_tokens) as total
-                 FROM token_usage 
+                        SUM(cache_read_input_tokens) as total_cache_read,
+                        SUM(cache_creation_input_tokens) as total_cache_create,
+                        SUM(input_tokens + output_tokens) as total,
+                        SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens) as total_real
+                 FROM token_usage
                  WHERE date LIKE ?1
-                 GROUP BY date 
+                 GROUP BY date
                  ORDER BY date DESC"
                     .to_string(),
                 vec![Box::new(pattern) as Box<dyn rusqlite::types::ToSql>],
@@ -1493,7 +1542,10 @@ pub fn get_daily_token_stats(
                 date: row.get(0)?,
                 input_tokens: row.get(1)?,
                 output_tokens: row.get(2)?,
-                total_tokens: row.get(3)?,
+                cache_read_input_tokens: row.get(3).unwrap_or(0),
+                cache_creation_input_tokens: row.get(4).unwrap_or(0),
+                total_tokens: row.get(5)?,
+                total_real_tokens: row.get(6).unwrap_or(0),
             })
         })?;
 
@@ -1519,7 +1571,10 @@ pub fn get_monthly_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<
                 "SELECT SUBSTR(date, 1, 7) as month,
                         SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
-                        SUM(input_tokens + output_tokens) as total
+                        SUM(cache_read_input_tokens) as total_cache_read,
+                        SUM(cache_creation_input_tokens) as total_cache_create,
+                        SUM(input_tokens + output_tokens) as total,
+                        SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens) as total_real
                  FROM token_usage
                  WHERE api_config_id = ?1
                  GROUP BY month
@@ -1531,7 +1586,10 @@ pub fn get_monthly_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<
                 "SELECT SUBSTR(date, 1, 7) as month,
                         SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
-                        SUM(input_tokens + output_tokens) as total
+                        SUM(cache_read_input_tokens) as total_cache_read,
+                        SUM(cache_creation_input_tokens) as total_cache_create,
+                        SUM(input_tokens + output_tokens) as total,
+                        SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens) as total_real
                  FROM token_usage
                  GROUP BY month
                  ORDER BY month DESC"
@@ -1547,7 +1605,10 @@ pub fn get_monthly_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<
                 date: row.get(0)?,
                 input_tokens: row.get(1)?,
                 output_tokens: row.get(2)?,
-                total_tokens: row.get(3)?,
+                cache_read_input_tokens: row.get(3).unwrap_or(0),
+                cache_creation_input_tokens: row.get(4).unwrap_or(0),
+                total_tokens: row.get(5)?,
+                total_real_tokens: row.get(6).unwrap_or(0),
             })
         })?;
 
@@ -1573,7 +1634,10 @@ pub fn get_model_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<Mo
                 "SELECT model,
                         SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
-                        SUM(input_tokens + output_tokens) as total
+                        SUM(cache_read_input_tokens) as total_cache_read,
+                        SUM(cache_creation_input_tokens) as total_cache_create,
+                        SUM(input_tokens + output_tokens) as total,
+                        SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens) as total_real
                  FROM token_usage
                  WHERE api_config_id = ?1
                  GROUP BY model
@@ -1585,7 +1649,10 @@ pub fn get_model_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<Mo
                 "SELECT model,
                         SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
-                        SUM(input_tokens + output_tokens) as total
+                        SUM(cache_read_input_tokens) as total_cache_read,
+                        SUM(cache_creation_input_tokens) as total_cache_create,
+                        SUM(input_tokens + output_tokens) as total,
+                        SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens) as total_real
                  FROM token_usage
                  GROUP BY model
                  ORDER BY total DESC"
@@ -1601,7 +1668,10 @@ pub fn get_model_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<Mo
                 model: row.get(0)?,
                 input_tokens: row.get(1)?,
                 output_tokens: row.get(2)?,
-                total_tokens: row.get(3)?,
+                cache_read_input_tokens: row.get(3).unwrap_or(0),
+                cache_creation_input_tokens: row.get(4).unwrap_or(0),
+                total_tokens: row.get(5)?,
+                total_real_tokens: row.get(6).unwrap_or(0),
             })
         })?;
 
@@ -1616,7 +1686,33 @@ pub fn get_model_token_stats(api_config_id: Option<&str>) -> SqliteResult<Vec<Mo
 /**
  * Get total token stats
  */
-pub fn get_total_token_stats(api_config_id: Option<&str>) -> SqliteResult<(i64, i64, i64)> {
+/// Extended total token stats: input / output / cache_read / cache_create,
+/// plus derived "real consumed" and "total requests" numbers. Returned as a
+/// struct so future fields (e.g. saved_by_cache) can be added without
+/// breaking the bridge signature.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TotalTokenStats {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_input_tokens: i64,
+    pub cache_creation_input_tokens: i64,
+    /// input + output (legacy total)
+    pub total_tokens: i64,
+    /// input + output + cache_read + cache_create ("real consumed")
+    pub total_real_tokens: i64,
+    pub request_count: i64,
+}
+
+pub fn get_total_token_stats(api_config_id: Option<&str>) -> SqliteResult<TotalTokenStats> {
+    get_total_token_stats_full(api_config_id)
+}
+
+/// 4-bucket total token stats. The legacy 3-tuple signature is kept above
+/// (returns zeros) for backwards source compatibility; new code should use
+/// this and let the bridge unwrap the struct.
+pub fn get_total_token_stats_full(
+    api_config_id: Option<&str>,
+) -> SqliteResult<TotalTokenStats> {
     let guard = get_db()?;
 
     if let Some(conn) = guard.as_ref() {
@@ -1625,7 +1721,11 @@ pub fn get_total_token_stats(api_config_id: Option<&str>) -> SqliteResult<(i64, 
             Some(config_id) => (
                 "SELECT COALESCE(SUM(input_tokens), 0),
                         COALESCE(SUM(output_tokens), 0),
-                        COALESCE(SUM(input_tokens + output_tokens), 0)
+                        COALESCE(SUM(cache_read_input_tokens), 0),
+                        COALESCE(SUM(cache_creation_input_tokens), 0),
+                        COALESCE(SUM(input_tokens + output_tokens), 0),
+                        COALESCE(SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens), 0),
+                        COUNT(*)
                  FROM token_usage
                  WHERE api_config_id = ?1"
                     .to_string(),
@@ -1634,7 +1734,11 @@ pub fn get_total_token_stats(api_config_id: Option<&str>) -> SqliteResult<(i64, 
             None => (
                 "SELECT COALESCE(SUM(input_tokens), 0),
                         COALESCE(SUM(output_tokens), 0),
-                        COALESCE(SUM(input_tokens + output_tokens), 0)
+                        COALESCE(SUM(cache_read_input_tokens), 0),
+                        COALESCE(SUM(cache_creation_input_tokens), 0),
+                        COALESCE(SUM(input_tokens + output_tokens), 0),
+                        COALESCE(SUM(input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens), 0),
+                        COUNT(*)
                  FROM token_usage"
                     .to_string(),
                 vec![],
@@ -1644,17 +1748,29 @@ pub fn get_total_token_stats(api_config_id: Option<&str>) -> SqliteResult<(i64, 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
         let row = stmt.query_row(params_refs.as_slice(), |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
+            Ok(TotalTokenStats {
+                input_tokens: row.get(0)?,
+                output_tokens: row.get(1)?,
+                cache_read_input_tokens: row.get(2).unwrap_or(0),
+                cache_creation_input_tokens: row.get(3).unwrap_or(0),
+                total_tokens: row.get(4)?,
+                total_real_tokens: row.get(5).unwrap_or(0),
+                request_count: row.get(6).unwrap_or(0),
+            })
         })?;
 
         return Ok(row);
     }
 
-    Ok((0, 0, 0))
+    Ok(TotalTokenStats {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        total_tokens: 0,
+        total_real_tokens: 0,
+        request_count: 0,
+    })
 }
 
 // =============================================================================

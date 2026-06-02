@@ -41,6 +41,8 @@ pub enum StreamEvent {
     Usage {
         input_tokens: i32,
         output_tokens: i32,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
     },
     /// Error occurred
     Error(String),
@@ -87,6 +89,8 @@ impl StreamContext {
             usage: UsageInfo {
                 input_tokens: estimated_input,
                 output_tokens: 0,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             },
             model: String::new(),
             session_id,
@@ -344,6 +348,8 @@ impl ProviderAdapter for AnthropicAdapter {
         let usage = UsageInfo {
             input_tokens: body["usage"]["input_tokens"].as_i64().unwrap_or(0) as i32,
             output_tokens: body["usage"]["output_tokens"].as_i64().unwrap_or(0) as i32,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
         };
 
         // Detect tool calls
@@ -575,6 +581,8 @@ impl ProviderAdapter for OpenAIAdapter {
                 .and_then(|u| u.get("completion_tokens"))
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0) as i32,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
         };
 
         // Detect tool calls

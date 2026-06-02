@@ -95,6 +95,12 @@ impl ProviderAdapter for AnthropicAdapter {
         let usage = UsageInfo {
             input_tokens: body["usage"]["input_tokens"].as_i64().unwrap_or(0) as i32,
             output_tokens: body["usage"]["output_tokens"].as_i64().unwrap_or(0) as i32,
+            cache_read_input_tokens: body["usage"]["cache_read_input_tokens"]
+                .as_i64()
+                .unwrap_or(0) as i32,
+            cache_creation_input_tokens: body["usage"]["cache_creation_input_tokens"]
+                .as_i64()
+                .unwrap_or(0) as i32,
         };
 
         let mut tool_calls = Vec::new();
@@ -134,6 +140,26 @@ impl ProviderAdapter for AnthropicAdapter {
 
         #[allow(unreachable_patterns)]
         match event_type {
+            "message_start" => {
+                // Anthropic sends the full initial usage here, including the
+                // prompt-cache breakdown. Capture all four buckets and emit
+                // once so the UI sees a coherent snapshot.
+                if let Some(message) = json.get("message") {
+                    if let Some(usage) = message.get("usage") {
+                        ctx.usage.input_tokens =
+                            usage["input_tokens"].as_i64().unwrap_or(0) as i32;
+                        ctx.usage.cache_read_input_tokens =
+                            usage["cache_read_input_tokens"].as_i64().unwrap_or(0) as i32;
+                        ctx.usage.cache_creation_input_tokens =
+                            usage["cache_creation_input_tokens"].as_i64().unwrap_or(0) as i32;
+                        // output_tokens is usually 0 here; some accounts send
+                        // a partial value, accept whatever is in the payload.
+                        ctx.usage.output_tokens =
+                            usage["output_tokens"].as_i64().unwrap_or(0) as i32;
+                        ctx.emit_usage();
+                    }
+                }
+            }
             "content_block_delta" => {
                 if let Some(delta) = json.get("delta") {
                     if delta.get("type").and_then(|value| value.as_str()) == Some("input_json_delta") {
@@ -177,6 +203,15 @@ impl ProviderAdapter for AnthropicAdapter {
             "message_delta" => {
                 if let Some(usage) = json.get("usage") {
                     ctx.usage.output_tokens = usage["output_tokens"].as_i64().unwrap_or(0) as i32;
+                    // Some Anthropic accounts emit updated cache totals in
+                    // message_delta. Overwrite with the latest cumulative
+                    // values when present; the 0-or_absent case is fine.
+                    if let Some(v) = usage.get("cache_read_input_tokens").and_then(|x| x.as_i64()) {
+                        ctx.usage.cache_read_input_tokens = v as i32;
+                    }
+                    if let Some(v) = usage.get("cache_creation_input_tokens").and_then(|x| x.as_i64()) {
+                        ctx.usage.cache_creation_input_tokens = v as i32;
+                    }
                     ctx.emit_usage();
                 }
             }

@@ -137,6 +137,11 @@ impl ProviderAdapter for OpenAIAdapter {
                 .and_then(|usage| usage.get("completion_tokens"))
                 .and_then(|value| value.as_i64())
                 .unwrap_or(0) as i32,
+            // OpenAI-compatible endpoints don't surface Anthropic-style
+            // prompt-cache buckets; default both to 0 so the JSON shape
+            // stays stable for downstream consumers.
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
         };
 
         let mut tool_calls = Vec::new();

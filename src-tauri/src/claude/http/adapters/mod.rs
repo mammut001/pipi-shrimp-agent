@@ -26,6 +26,8 @@ pub enum StreamEvent {
     Usage {
         input_tokens: i32,
         output_tokens: i32,
+        cache_read_input_tokens: i32,
+        cache_creation_input_tokens: i32,
     },
     Error(String),
     Done,
@@ -60,6 +62,8 @@ impl StreamContext {
             usage: UsageInfo {
                 input_tokens: estimated_input,
                 output_tokens: 0,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             },
             model: String::new(),
             session_id,
@@ -106,6 +110,8 @@ impl StreamContext {
                 "session_id": self.session_id.clone().unwrap_or_default(),
                 "input_tokens": self.usage.input_tokens,
                 "output_tokens": self.usage.output_tokens,
+                "cache_read_input_tokens": self.usage.cache_read_input_tokens,
+                "cache_creation_input_tokens": self.usage.cache_creation_input_tokens,
             });
             let _ = window.emit("claude-usage", payload);
         }
