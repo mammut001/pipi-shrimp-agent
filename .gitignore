@@ -27,7 +27,6 @@ dist-ssr
 doc/
 .cowork-temp/
 node-scripts/.env
-/docs
 
 # Backup and temp files
 *.bak
