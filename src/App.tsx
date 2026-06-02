@@ -14,6 +14,7 @@
 
 import { useEffect, lazy, Suspense } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { isTauri } from '@/utils/isTauri';
 import { useSettingsStore, useChatStore, useUIStore } from '@/store';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { setupBrowserObservabilityWiring } from '@/store/browserObservabilityWiring';
@@ -138,10 +139,12 @@ export default function App() {
           return;
         }
 
-        try {
-          await getCurrentWindow().show();
-        } catch (error) {
-          console.error('Failed to confirm main window visibility after initialization:', error);
+        if (isTauri()) {
+          try {
+            await getCurrentWindow().show();
+          } catch (error) {
+            console.error('Failed to confirm main window visibility after initialization:', error);
+          }
         }
 
         if (!disposed) {

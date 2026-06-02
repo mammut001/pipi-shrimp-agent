@@ -3,6 +3,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import type { DbBackupEntry, DbDiagnostics } from '@/types/database';
 import { safeInvoke } from '@/utils/safeInvoke';
+import { isTauri } from '@/utils/isTauri';
 
 type NotificationLevel = 'success' | 'error' | 'info' | 'warning';
 
@@ -55,6 +56,13 @@ export function DatabaseHealthSection({ addNotification }: DatabaseHealthSection
 
   const loadDatabaseHealth = async () => {
     setIsLoading(true);
+
+    if (!isTauri()) {
+      setErrorMessage(t('diagnostics.notAvailableInBrowser'));
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const [nextDiagnostics, nextBackups] = await Promise.all([
         safeInvoke<DbDiagnostics>('db_get_diagnostics'),

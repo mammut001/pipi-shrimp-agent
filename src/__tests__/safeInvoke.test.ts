@@ -7,7 +7,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 
-// Mock @tauri-apps/api/core
+// Mock isTauri to return true (simulate Tauri environment in tests)
+jest.mock('../utils/isTauri', () => ({
+  isTauri: () => true,
+}));
+
+// Mock @tauri-apps/api/core (used via dynamic import in safeInvoke)
 const mockInvoke = jest.fn();
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),

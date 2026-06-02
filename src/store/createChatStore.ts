@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 
+import { isTauri } from "../utils/isTauri";
 import { triggerLegacyCompact } from '../services/compact/compact';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
 import { runMicrocompactCheck } from '../services/compact/microCompact';
@@ -302,6 +303,26 @@ export const useChatStore = create<ChatState>()(
         return;
       }
       set({ isInitialized: true });
+
+      if (!isTauri()) {
+        // Browser dev mode: load sessions from localStorage
+        try {
+          const stored = localStorage.getItem('ai-agent-sessions');
+          if (stored) {
+            set({ sessions: JSON.parse(stored) as Session[] });
+          }
+          const savedSessionId = localStorage.getItem(CURRENT_SESSION_ID_STORAGE_KEY);
+          if (savedSessionId && get().sessions.some((session) => session.id === savedSessionId)) {
+            set({ currentSessionId: savedSessionId });
+          }
+          set({ isInitialized: true, error: null });
+          console.log('[init] Loaded sessions from localStorage (browser dev mode)');
+        } catch (localStorageError) {
+          console.error('Failed to load from localStorage:', localStorageError);
+          set({ isInitialized: true, error: null });
+        }
+        return;
+      }
 
       try {
         try {

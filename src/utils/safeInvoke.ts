@@ -7,9 +7,10 @@
  * - Optional retry with backoff
  * - Silent mode (suppresses console.error)
  * - Automatic logging to errorLogger
+ * - Graceful fallback when running outside Tauri (browser dev mode)
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { isTauri } from './isTauri';
 import { logError } from './errorLogger';
 import { extractErrorDetails } from './errorFormat';
 
@@ -75,8 +76,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Lazily load the Tauri invoke function, or return null if not in Tauri. */
+async function getInvoke(): Promise<typeof import('@tauri-apps/api/core').invoke | null> {
+  if (!isTauri()) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke;
+}
+
 /**
  * Invoke a Tauri command safely with timeout, retry, and error logging.
+ *
+ * When running outside Tauri (regular browser), throws an InvokeError with
+ * kind 'network' so callers can fall back gracefully.
  *
  * @example
  * ```ts
@@ -97,13 +108,30 @@ export async function safeInvoke<T = unknown>(
     skipLogging = false,
   } = options;
 
+  const invokeFn = await getInvoke();
+
+  if (!invokeFn) {
+    const err = new Error(`Tauri not available - cannot invoke '${command}'. Running in browser mode?`) as InvokeError;
+    err.name = 'InvokeError';
+    err.kind = 'network';
+    err.command = command;
+    err.originalError = null;
+    if (!silent) {
+      console.warn(`[safeInvoke] ${command}: Tauri bridge not available (browser dev mode)`, err);
+    }
+    if (!skipLogging) {
+      logError('warn', err.message, source, err);
+    }
+    throw err;
+  }
+
   let lastError: InvokeError | undefined;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       // Race the invoke against a timeout
       const result = await Promise.race([
-        invoke<T>(command, args),
+        invokeFn<T>(command, args),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`invoke '${command}' timed out after ${timeoutMs}ms`)), timeoutMs),
         ),

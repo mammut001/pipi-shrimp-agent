@@ -16,7 +16,8 @@
     "test:browser-gate": "bash tests/browser/release-gate.sh",
     "tauri": "cargo-tauri",
     "tauri:dev": "cargo-tauri dev",
-    "tauri:build": "cargo-tauri build"
+    "tauri:build": "cargo-tauri build",
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
