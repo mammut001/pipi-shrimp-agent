@@ -147,7 +147,9 @@ async function* streamOneAssistantReply() {
       input_tokens: 12,
       output_tokens: 5,
       model: 'mock-model',
-    },
+    ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0},
   };
 }
 
@@ -164,7 +166,9 @@ async function* streamWithToolBatch() {
       input_tokens: 7,
       output_tokens: 3,
       model: 'mock-model',
-    },
+    ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0},
   };
 }
 
@@ -179,7 +183,9 @@ async function* streamPlanAssistantReply() {
       input_tokens: 20,
       output_tokens: 9,
       model: 'mock-model',
-    },
+    ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0},
   };
 }
 
@@ -202,7 +208,9 @@ async function* streamWithToolBatchThenContinuation() {
         input_tokens: 3,
         output_tokens: 1,
         model: 'mock-model',
-      },
+      ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0},
     };
   }
 }

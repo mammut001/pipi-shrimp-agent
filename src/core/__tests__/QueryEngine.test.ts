@@ -100,7 +100,9 @@ describe('QueryEngine context overflow fallback', () => {
         yield { type: 'text_delta', content: 'OK' };
         yield {
           type: 'api_response_complete',
-          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+          response: { usage: { input_tokens: 1, output_tokens: 1 ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0}, model: 'MiniMax-M2.7' },
         };
       });
   });
@@ -123,7 +125,9 @@ describe('QueryEngine context overflow fallback', () => {
       { type: 'text_delta', content: 'OK' },
       {
         type: 'turn_complete',
-        tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'MiniMax-M2.7' },
+        tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'MiniMax-M2.7' ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0},
       },
     ]);
     expect(mockBuildResolvedChatRequest).toHaveBeenNthCalledWith(
@@ -148,7 +152,9 @@ describe('QueryEngine context overflow fallback', () => {
         };
         yield {
           type: 'api_response_complete',
-          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+          response: { usage: { input_tokens: 1, output_tokens: 1 ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0}, model: 'MiniMax-M2.7' },
         };
       })
       .mockImplementationOnce(async function* secondToolTurn() {
@@ -158,7 +164,9 @@ describe('QueryEngine context overflow fallback', () => {
         };
         yield {
           type: 'api_response_complete',
-          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+          response: { usage: { input_tokens: 1, output_tokens: 1 ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0}, model: 'MiniMax-M2.7' },
         };
       });
 
@@ -197,7 +205,9 @@ describe('QueryEngine context overflow fallback', () => {
         yield { type: 'text_delta', content: 'Recovered' };
         yield {
           type: 'api_response_complete',
-          response: { usage: { input_tokens: 2, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+          response: { usage: { input_tokens: 2, output_tokens: 1 ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0}, model: 'MiniMax-M2.7' },
         };
       });
 
@@ -221,7 +231,9 @@ describe('QueryEngine context overflow fallback', () => {
       { type: 'text_delta', content: 'Recovered' },
       {
         type: 'turn_complete',
-        tokenUsage: { input_tokens: 2, output_tokens: 1, model: 'MiniMax-M2.7' },
+        tokenUsage: { input_tokens: 2, output_tokens: 1, model: 'MiniMax-M2.7' ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0},
       },
     ]);
     expect(mockBuildResolvedChatRequest).toHaveBeenNthCalledWith(
@@ -258,7 +270,9 @@ describe('QueryEngine context overflow fallback', () => {
         yield { type: 'text_delta', content: 'Recovered after second retry' };
         yield {
           type: 'api_response_complete',
-          response: { usage: { input_tokens: 3, output_tokens: 2 }, model: 'MiniMax-M2.7' },
+          response: { usage: { input_tokens: 3, output_tokens: 2 ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0}, model: 'MiniMax-M2.7' },
         };
       });
 
@@ -286,7 +300,9 @@ describe('QueryEngine context overflow fallback', () => {
       { type: 'text_delta', content: 'Recovered after second retry' },
       {
         type: 'turn_complete',
-        tokenUsage: { input_tokens: 3, output_tokens: 2, model: 'MiniMax-M2.7' },
+        tokenUsage: { input_tokens: 3, output_tokens: 2, model: 'MiniMax-M2.7' ,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0},
       },
     ]);
     expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(3);

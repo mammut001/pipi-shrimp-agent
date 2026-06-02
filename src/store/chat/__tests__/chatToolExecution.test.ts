@@ -103,7 +103,15 @@ function createChatState(): ChatState {
     getDailyTokenStats: jest.fn(async () => []),
     getMonthlyTokenStats: jest.fn(async () => []),
     getModelTokenStats: jest.fn(async () => []),
-    getTotalTokenStats: jest.fn(async () => ({ input: 0, output: 0, total: 0 })),
+    getTotalTokenStats: jest.fn(async () => ({
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      total_tokens: 0,
+      total_real_tokens: 0,
+      request_count: 0,
+    })),
     resetTokenEstimate: jest.fn(async () => {}),
   } as unknown as ChatState;
 }
