@@ -29,6 +29,10 @@ doc/
 node-scripts/.env
 /docs
 
+# Backup and temp files
+*.bak
+*.tmp
+
 # Vite build cache files
 vite.config.ts.timestamp-*.mjs
 *.timestamp-*
