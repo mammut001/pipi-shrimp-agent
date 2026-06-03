@@ -48,8 +48,8 @@ importers:
         specifier: ^10.6.0
         version: 10.9.5
       page-agent:
-        specifier: ^1.5.9
-        version: 1.5.11(zod@3.25.76)
+        specifier: ^1.8.1
+        version: 1.8.1(zod@3.25.76)
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -726,21 +726,21 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@page-agent/core@1.5.11':
-    resolution: {integrity: sha512-7/kp8ulKg1jdAo9KTki8nZPwnRGQPRgz0ypFR2YS1NQxvcv2xCmoSFSawpxHkThl7uWFx8fVukL1qdLhH4jrgA==}
+  '@page-agent/core@1.8.1':
+    resolution: {integrity: sha512-ZwsJF+L1JT5k6FJR/5mJAsXce8Z7X9usj6NQmh9jnB+c1mUwCBCGeSa5G9AcdBVp5JNHWGgDU3J3QhreCwNVNA==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@page-agent/llms@1.5.11':
-    resolution: {integrity: sha512-8OOq9qZwTgLeeZDrHQ91WML7Y7T6YwpCz5umwfQbMi2S0hRoxpacgctofQ6Z2JNUPmpVYyuIJ7C6hrW0iV2aqQ==}
+  '@page-agent/llms@1.8.1':
+    resolution: {integrity: sha512-gSACYJBKJSp6doetwZyhDFPUwg2Vifbo3I99iEoVT4mTtT7QXFThej+5H++afhN63BCXR4B56+HFfmgRIV0+Zg==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@page-agent/page-controller@1.5.11':
-    resolution: {integrity: sha512-zBv9EnO1BkVtTDA8t3bgfXtqDDzZaAgbcxSvVP6pEmj3JIOAKMDi33EVmyAKCpTihnSAFL5J7S5lyVHs/bVlFg==}
+  '@page-agent/page-controller@1.8.1':
+    resolution: {integrity: sha512-0GDa+54i/Oc+AJ+Sdbz7MTjW8G3ctFhouRhXUjyB0Hkh29hB7Zw8tGtEqwpWHMopPtqu/icfAApTadAq+4psmg==}
 
-  '@page-agent/ui@1.5.11':
-    resolution: {integrity: sha512-8pqQwxHMDIFgsGASRBeg4YkxakSQPUkHO8t9lXZisr4Yc7I1/fqDtzYAcum/4x1dVXvsXKtFIV0J+5efbVYE6g==}
+  '@page-agent/ui@1.8.1':
+    resolution: {integrity: sha512-xfRKq3wPV6Zzm+4sJ5R/BnTibiZxY34QzO4iL+QQJyLsmi2DbLH4eOz101l2YhgXQukvLxs3p+tSF/zNQyshEw==}
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -2630,8 +2630,8 @@ packages:
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
 
-  page-agent@1.5.11:
-    resolution: {integrity: sha512-Xyx6yFqCMOwij5+4Cds0GKHU1SSWB/hSZQQPzTmO1SkerhJAmbsTtMX2mpE15GkX+Xn5Wb57d5fR0YtYFhGjdA==}
+  page-agent@1.8.1:
+    resolution: {integrity: sha512-R4H2l+iY/zmDe8FM6FENFP7eR2Nwy9KZNQ+ytElqa5X3W2Z5vqRlxTIhQGgLkUhbuJ6lR+uMm3BTIkg0g1JYlw==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -4007,23 +4007,23 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@page-agent/core@1.5.11(zod@3.25.76)':
+  '@page-agent/core@1.8.1(zod@3.25.76)':
     dependencies:
-      '@page-agent/llms': 1.5.11(zod@3.25.76)
-      '@page-agent/page-controller': 1.5.11
+      '@page-agent/llms': 1.8.1(zod@3.25.76)
+      '@page-agent/page-controller': 1.8.1
       chalk: 5.6.2
       zod: 3.25.76
 
-  '@page-agent/llms@1.5.11(zod@3.25.76)':
+  '@page-agent/llms@1.8.1(zod@3.25.76)':
     dependencies:
       chalk: 5.6.2
       zod: 3.25.76
 
-  '@page-agent/page-controller@1.5.11':
+  '@page-agent/page-controller@1.8.1':
     dependencies:
       ai-motion: 0.4.8
 
-  '@page-agent/ui@1.5.11': {}
+  '@page-agent/ui@1.8.1': {}
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -6439,12 +6439,12 @@ snapshots:
 
   package-json-from-dist@1.0.1: {}
 
-  page-agent@1.5.11(zod@3.25.76):
+  page-agent@1.8.1(zod@3.25.76):
     dependencies:
-      '@page-agent/core': 1.5.11(zod@3.25.76)
-      '@page-agent/llms': 1.5.11(zod@3.25.76)
-      '@page-agent/page-controller': 1.5.11
-      '@page-agent/ui': 1.5.11
+      '@page-agent/core': 1.8.1(zod@3.25.76)
+      '@page-agent/llms': 1.8.1(zod@3.25.76)
+      '@page-agent/page-controller': 1.8.1
+      '@page-agent/ui': 1.8.1
       chalk: 5.6.2
       zod: 3.25.76
 
