@@ -21,19 +21,68 @@ export interface AutoResearchNotifier {
 
   /** Called every N iterations with a trend summary */
   onTrendReport(report: string, session: ExperimentSession): Promise<void>;
+
+  /**
+   * AUDIT-2026-06-02 (silent errors): return the status of the most recent
+   * delivery attempt so the consuming UI can render an "AutoResearch
+   * notifications failing" banner instead of silently swallowing every
+   * error in console. `null` means no attempt has been made yet.
+   */
+  getLastDelivery(): NotifierDeliveryStatus | null;
+}
+
+export interface NotifierDeliveryStatus {
+  at: number;
+  ok: boolean;
+  reason?: string;
+  /** Disabled means the call was skipped because Telegram is off / chatId missing. */
+  disabled?: boolean;
 }
 
 /**
  * Create a notifier instance. If Telegram is disabled or chatId is missing,
  * all methods are no-ops (no errors thrown).
+ *
+ * AUDIT-2026-06-02 (silent errors): the previous implementation silently
+ * no-op'd when the config was missing/disabled, so an operator with a
+ * misconfigured bot (chatId revoked, never set, etc.) got zero in-app
+ * signal and saw a "quiet" dashboard while critical events (loop stopped,
+ * 3 consecutive failures, trend reports) vanished. We now log the disabled
+ * state ONCE at notifier construction so devtools clearly shows whether
+ * notifications are wired up, and we log each send failure with the chatId
+ * so the operator can map it to their Telegram config.
  */
 export function createNotifier(config: TelegramNotifyConfig): AutoResearchNotifier {
+  const isDisabled = !config.enabled || !config.chatId;
+  if (isDisabled) {
+    console.info(
+      `[AutoResearch Notifier] disabled (enabled=${Boolean(config.enabled)}, chatId set=${Boolean(config.chatId)}). All onExperimentComplete / onLoopStopped / onTrendReport calls will be no-ops.`,
+    );
+  }
+
+  // AUDIT-2026-06-02 (silent errors): track the most recent delivery so the
+  // UI can render a status banner via getLastDelivery(). Keeps the notifier
+  // self-contained (no store cross-cutting required) while still making the
+  // misconfig / send-failure visible to consumers.
+  let lastDelivery: NotifierDeliveryStatus | null = isDisabled
+    ? { at: Date.now(), ok: false, disabled: true, reason: 'Telegram disabled or chatId not configured' }
+    : null;
+
   const send = async (text: string) => {
-    if (!config.enabled || !config.chatId) return;
+    if (isDisabled || !config.chatId) {
+      lastDelivery = { at: Date.now(), ok: false, disabled: true, reason: 'Telegram disabled or chatId not configured' };
+      return;
+    }
     try {
       await telegramSendMessage(config.chatId, text, { parseMode: 'MarkdownV2' });
+      lastDelivery = { at: Date.now(), ok: true };
     } catch (e) {
-      console.warn('[AutoResearch Notifier] Failed to send Telegram message:', e);
+      const reason = e instanceof Error ? e.message : String(e);
+      lastDelivery = { at: Date.now(), ok: false, reason };
+      console.warn(
+        `[AutoResearch Notifier] Failed to send Telegram message (chatId=${config.chatId}):`,
+        e,
+      );
     }
   };
 
@@ -78,6 +127,10 @@ export function createNotifier(config: TelegramNotifyConfig): AutoResearchNotifi
       ].join('\n');
 
       await send(text);
+    },
+
+    getLastDelivery() {
+      return lastDelivery;
     },
   };
 }

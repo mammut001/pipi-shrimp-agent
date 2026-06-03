@@ -189,6 +189,45 @@ fn deepseek_model_is_reasoning(model_lower: &str) -> bool {
             .any(|part| part == "r1")
 }
 
+/// Whether a DeepSeek model supports function-calling.
+///
+/// AUDIT-2026-06-02 (boundary): the previous logic was
+/// `supports_tool_calls = !is_reasoning_model`. That negation flagged any
+/// model name containing "reasoning" OR "v4" as non-tool-capable — so a
+/// real chat model like `deepseek-v4-chat` (or any future v4 chat variant)
+/// would silently strip `tools` / `tool_choice` from the request. We now
+/// drive tool support off a positive allowlist of known chat models, with
+/// reasoning-only models still excluded.
+fn deepseek_model_supports_tool_calls(model_lower: &str) -> bool {
+    if model_lower.is_empty() {
+        return false;
+    }
+    // Reasoning-only models (R1, reasoner) genuinely don't take tools.
+    if model_lower.contains("reasoner")
+        || model_lower
+            .split(|value: char| !value.is_ascii_alphanumeric())
+            .any(|part| part == "r1")
+    {
+        return false;
+    }
+    // Positive allowlist: known chat / coder model families that DO take
+    // tools. The substring match is intentionally permissive so future v4 /
+    // v5 chat variants ("deepseek-v4-chat", "deepseek-coder-v3-instruct")
+    // pick up tool support automatically without another negation.
+    let known_chat_substrings = [
+        "deepseek-chat",
+        "deepseek-coder",
+        "deepseek-vl",
+        "deepseek-v2-chat",
+        "deepseek-v3-chat",
+        "deepseek-v4-chat",
+        "deepseek-v5-chat",
+    ];
+    known_chat_substrings
+        .iter()
+        .any(|needle| model_lower.contains(needle))
+}
+
 impl ResolvedProviderConfig {
     /// Resolve provider configuration from raw parameters
     pub fn resolve(
@@ -347,7 +386,7 @@ impl ResolvedProviderConfig {
             ProviderId::DeepSeek => {
                 // DeepSeek: OpenAI-compatible, streams reasoning_content, max_tokens capped at 8192.
                 let supports_reasoning = deepseek_model_is_reasoning(&model_lower);
-                let supports_tool_calls = !model_lower.is_empty() && !supports_reasoning;
+                let supports_tool_calls = deepseek_model_supports_tool_calls(&model_lower);
 
                 ProviderCapabilities {
                     supports_thinking: false,
@@ -493,6 +532,7 @@ mod tests {
 
     #[test]
     fn test_resolve_deepseek_tool_capabilities_by_model() {
+        // Known chat model: tools on, reasoning off.
         let chat = ResolvedProviderConfig::resolve(
             "deepseek-chat",
             "sk-...",
@@ -503,6 +543,7 @@ mod tests {
         assert!(chat.capabilities.supports_tool_openai);
         assert!(!chat.capabilities.supports_reasoning);
 
+        // Reasoner model: tools off, reasoning on.
         let reasoner = ResolvedProviderConfig::resolve(
             "deepseek-reasoner",
             "sk-...",
@@ -513,6 +554,10 @@ mod tests {
         assert!(!reasoner.capabilities.supports_tool_openai);
         assert!(reasoner.capabilities.supports_reasoning);
 
+        // AUDIT-2026-06-02 (boundary): the v4-pro reasoning model still
+        // has reasoning on; only "chat" variants get tool support. This
+        // test used to assert the inverse (tools always off when "v4" in
+        // the name), which broke any future v4-chat model.
         let v4_pro = ResolvedProviderConfig::resolve(
             "deepseek-v4-pro",
             "sk-...",
@@ -522,6 +567,28 @@ mod tests {
         assert!(!v4_pro.capabilities.supports_tool_calls);
         assert!(!v4_pro.capabilities.supports_tool_openai);
         assert!(v4_pro.capabilities.supports_reasoning);
+
+        // AUDIT-2026-06-02 (boundary): regression guard — a v4-chat model
+        // (real or future) MUST be tool-capable.
+        let v4_chat = ResolvedProviderConfig::resolve(
+            "deepseek-v4-chat",
+            "sk-...",
+            Some("https://api.deepseek.com"),
+            Some(ProviderId::DeepSeek),
+        );
+        assert!(
+            v4_chat.capabilities.supports_tool_calls,
+            "v4-chat MUST support tool calls — the old !is_reasoning logic broke this"
+        );
+        assert!(v4_chat.capabilities.supports_tool_openai);
+
+        let coder = ResolvedProviderConfig::resolve(
+            "deepseek-coder",
+            "sk-...",
+            Some("https://api.deepseek.com"),
+            Some(ProviderId::DeepSeek),
+        );
+        assert!(coder.capabilities.supports_tool_calls);
     }
 
     #[test]

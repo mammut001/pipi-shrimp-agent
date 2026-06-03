@@ -80,6 +80,31 @@ export interface ChatActionFactoryDeps {
 let activeChatDiagnosticsTaskId: string | null = null;
 const cancellationRequestedSessions = new Set<string>();
 
+/**
+ * AUDIT-2026-06-02 (session isolation): tracks the session whose engine is
+ * currently streaming. `stopGeneration` was previously reading
+ * `get().currentSessionId` — which is the session the user is VIEWING right now,
+ * not necessarily the one whose model is actually streaming. After a fast
+ * switch (A starts a turn, user clicks B, then user clicks Stop) the original
+ * code cancelled B and left A's engine running forever, leaking tokens and
+ * letting A's response corrupt B's last assistant message.
+ *
+ * `activeStreamingSessionId` is set when sendMessage begins streaming and
+ * cleared in its finally block. `stopGeneration` consults it first, falling
+ * back to currentSessionId for legacy callers.
+ */
+let activeStreamingSessionId: string | null = null;
+
+function markStreamingSessionActive(sessionId: string): void {
+  activeStreamingSessionId = sessionId;
+}
+
+function clearStreamingSessionActive(sessionId: string | null | undefined): void {
+  if (sessionId && activeStreamingSessionId === sessionId) {
+    activeStreamingSessionId = null;
+  }
+}
+
 class ChatGenerationCancelledError extends Error {
   sessionId: string;
 
@@ -136,6 +161,11 @@ export function createChatActionMethods({
       if (!currentSessionId) {
         return;
       }
+
+      // AUDIT-2026-06-02 (session isolation): pin the session at the start
+      // of the operation so post-await mutations land in the session that
+      // owns the work, even if the user switched away mid-flight.
+      const pinnedSessionId = currentSessionId;
 
       const resolvedConfig = resolveActiveAgentConfig();
       const configIssues = validateResolvedAgentConfig(resolvedConfig);
@@ -218,6 +248,7 @@ export function createChatActionMethods({
           mapBrowserResponseArtifacts(response.artifacts, () => crypto.randomUUID()),
           mergeReasoningParts(streamingReasoning, parsedReasoning),
           tokenUsage,
+          pinnedSessionId,
         );
 
         setStreaming(false);
@@ -233,7 +264,7 @@ export function createChatActionMethods({
         const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
         if (errContent || errReasoning) {
           const { content: cleanErr, reasoning: parsedErrReasoning } = parseThinkContent(errContent || '');
-          void saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning)).catch((saveError: unknown) => {
+          void saveLastMsg(cleanErr, undefined, mergeReasoningParts(errReasoning, parsedErrReasoning), undefined, pinnedSessionId).catch((saveError: unknown) => {
             console.error('Failed to persist browser response error content:', saveError);
           });
         }
@@ -360,6 +391,7 @@ export function createChatActionMethods({
 
         setStreaming(true);
         set({ streamingContent: '', streamingSessionId: activeSessionId });
+        markStreamingSessionActive(activeSessionId);
         updateDiagnosticsTask(diagnosticsTaskId, {
           state: 'running',
           cancelable: true,
@@ -522,6 +554,11 @@ export function createChatActionMethods({
           undefined,
           mergeReasoningParts(get().streamingReasoning, streamed.reasoning, parsed.reasoning),
           tokenUsage,
+          // AUDIT-2026-06-02 (session isolation): pin the session the
+          // engine started with — never `currentSessionId`, which may
+          // have changed under us if the user switched sessions while
+          // we were awaiting the stream.
+          activeSessionId,
         );
 
         if (tokenUsage) {
@@ -629,6 +666,7 @@ export function createChatActionMethods({
           }
 
           clearChatGenerationCancel(activeSessionId);
+          clearStreamingSessionActive(activeSessionId);
           setStreaming(false);
           set({
             streamingContent: '',
@@ -673,7 +711,10 @@ export function createChatActionMethods({
         if (errContent || errReasoning) {
           const flushed = flushBuffer(streamState);
           const parsed = parseThinkContent(errContent || flushed.content || '');
-          void saveLastMsg(parsed.content, undefined, mergeReasoningParts(errReasoning, flushed.reasoning, parsed.reasoning)).catch((saveError: unknown) => {
+          // AUDIT-2026-06-02 (session isolation): pin the error-path persist
+          // to the engine's session so flushed content lands on the right
+          // last message after a fast switch.
+          void saveLastMsg(parsed.content, undefined, mergeReasoningParts(errReasoning, flushed.reasoning, parsed.reasoning), undefined, activeSessionId).catch((saveError: unknown) => {
             console.error('Failed to persist sendMessage error content:', saveError);
           });
         }
@@ -702,6 +743,7 @@ export function createChatActionMethods({
         }));
       } finally {
         clearChatGenerationCancel(activeSessionId);
+        clearStreamingSessionActive(activeSessionId);
       }
     },
 
@@ -720,10 +762,16 @@ export function createChatActionMethods({
         return;
       }
 
-      requestChatGenerationCancel(currentSessionId);
-      if (currentSessionId) {
+      // AUDIT-2026-06-02 (session isolation): prefer the engine's actual session
+      // over whatever the user is currently viewing. Otherwise a fast switch
+      // before clicking Stop cancels the wrong session and leaves the original
+      // engine running.
+      const targetSessionId = activeStreamingSessionId ?? currentSessionId;
+
+      requestChatGenerationCancel(targetSessionId);
+      if (targetSessionId) {
         failUnresolvedSessionTools(
-          currentSessionId,
+          targetSessionId,
           set,
           get,
           (_toolCallId, label) => `Error: ${label} cancelled by user`,
@@ -731,7 +779,7 @@ export function createChatActionMethods({
       }
 
       try {
-        await safeInvoke('stop_subprocess', { sessionId: currentSessionId }, { silent: true });
+        await safeInvoke('stop_subprocess', { sessionId: targetSessionId }, { silent: true });
       } catch (error) {
         console.error('Failed to stop subprocess:', error);
         setError(`Failed to stop generation: ${formatError(error)}`);
@@ -744,8 +792,11 @@ export function createChatActionMethods({
       });
       set({ streamingContent: '', streamingReasoning: '' });
 
-      if (currentSessionId && (flushed.content || flushed.reasoning)) {
-        await get().updateLastMessage(flushed.content, undefined, flushed.reasoning);
+      if (targetSessionId && (flushed.content || flushed.reasoning)) {
+        // AUDIT-2026-06-02 (session isolation): pin the engine's session
+        // (computed above) so the final flush lands on the right last
+        // assistant message even after a fast switch.
+        await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, targetSessionId);
       }
 
       setStreaming(false);
@@ -839,9 +890,18 @@ export function createChatActionMethods({
       }));
     },
 
-    updateLastMessage: async (content: string, artifacts?: Message['artifacts'], reasoning?: string, tokenUsage?: Message['token_usage']) => {
-      const { currentSessionId } = get();
-      if (!currentSessionId) {
+    updateLastMessage: async (
+      content: string,
+      artifacts?: Message['artifacts'],
+      reasoning?: string,
+      tokenUsage?: Message['token_usage'],
+      targetSessionId?: string,
+    ) => {
+      // AUDIT-2026-06-02 (session isolation): prefer the explicit target
+      // session over `currentSessionId` so post-await mutations land in the
+      // session that owns the work, even if the user switched away.
+      const sessionId = targetSessionId ?? get().currentSessionId;
+      if (!sessionId) {
         return;
       }
 
@@ -849,7 +909,7 @@ export function createChatActionMethods({
 
       set((state) => ({
         sessions: state.sessions.map((session) => {
-          if (session.id !== currentSessionId || session.messages.length === 0) {
+          if (session.id !== sessionId || session.messages.length === 0) {
             return session;
           }
 
@@ -879,7 +939,7 @@ export function createChatActionMethods({
 
       if (messageToUpdate) {
         try {
-          await safeInvoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
+          await safeInvoke('db_save_message', { message: messageToDb(messageToUpdate, sessionId) });
         } catch (error) {
           console.error('Failed to persist streaming update to database:', error);
         }

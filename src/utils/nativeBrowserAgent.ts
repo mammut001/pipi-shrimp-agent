@@ -59,11 +59,26 @@ const OVERLAY_REMOVE_SCRIPT = `(function(){
   var s=document.getElementById('__ppa_style__');if(s)s.remove();
 })();`;
 
+// AUDIT-2026-06-02 (silent errors): the previous `catch { /* ignore */ }`
+// swallowed inject/remove failures. If the page's context vanished mid-flow
+// (navigation, target destroyed) the overlay simply wouldn't render, and the
+// agent state machine would happily wait for a user click that never arrives —
+// users saw a frozen UI and had to abort. We now log at minimum so devtools
+// shows what happened; a future patch can promote this to the observability
+// store for an in-app banner.
 async function injectOverlay(): Promise<void> {
-  try { await executeBrowserScript(OVERLAY_INJECT_SCRIPT); } catch { /* ignore */ }
+  try {
+    await executeBrowserScript(OVERLAY_INJECT_SCRIPT);
+  } catch (error) {
+    console.warn('[nativeBrowserAgent] overlay inject failed — page context likely gone:', error);
+  }
 }
 async function removeOverlay(): Promise<void> {
-  try { await executeBrowserScript(OVERLAY_REMOVE_SCRIPT); } catch { /* ignore */ }
+  try {
+    await executeBrowserScript(OVERLAY_REMOVE_SCRIPT);
+  } catch (error) {
+    console.warn('[nativeBrowserAgent] overlay remove failed — page context likely gone:', error);
+  }
 }
 // ──────────────────────────────────────────────────────────────────────────
 

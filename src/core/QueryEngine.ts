@@ -100,6 +100,11 @@ export async function* runChatTurn(
   let toolBudgetSummary = createToolBudgetSummary(maxToolBudget);
   let reserveFinalResponseRound = false;
   let malformedToolCallRetryCount = 0;
+  // Bounded retry counter for "model returned empty after a tool result" — without this nudge,
+  // a model that answers "好" + tool_call, then stalls on the post-tool round, causes the entire
+  // conversation to end silently after the bare acknowledgement.
+  let emptyAfterToolRetries = 0;
+  const MAX_EMPTY_AFTER_TOOL_RETRIES = 1;
 
   // Memory hook — fires after each final (no-tool-call) response
   const memoryHook = createMemoryHook({ projectRoot });
@@ -262,7 +267,43 @@ export async function* runChatTurn(
     if (retryDueToMalformedToolCall) {
       continue;
     }
-    
+
+    // CONTINUITY FIX: detect "model produced nothing after a tool result" and nudge once.
+    // The repro case: user asks "看一下这个项目"; round 1 the model emits "好" + a tool_call;
+    // tool result is appended; round 2 the model returns an empty stream (no text, no tools).
+    // The original code path below would push an empty assistant message, see !hasToolCalls,
+    // mark isTurnComplete=true, and end the turn — the user sees just "好" with no follow-up.
+    // Instead, inject one explicit continuation prompt and re-issue the API call.
+    const lastMessage = currentMessages[currentMessages.length - 1];
+    const lastMessageContent =
+      typeof lastMessage?.content === 'string' ? lastMessage.content : '';
+    const lastWasToolResult = Boolean(
+      lastMessage
+        && lastMessage.role === 'user'
+        && (lastMessageContent.startsWith('__TOOL_RESULT__:') || lastMessage.tool_call_id),
+    );
+    const responseIsEmpty =
+      !hasToolCalls
+      && assistantMessageContent.trim().length === 0
+      && assistantMessageReasoning.trim().length === 0;
+    if (
+      lastWasToolResult
+      && responseIsEmpty
+      && emptyAfterToolRetries < MAX_EMPTY_AFTER_TOOL_RETRIES
+    ) {
+      emptyAfterToolRetries += 1;
+      currentMessages.push({
+        role: 'user',
+        content:
+          "You ran one or more tools but did not respond afterward. Please now answer the user's original request using the tool result(s) above — briefly summarize what you found, call more tools if you still need more context, and follow through to a real final answer in the same language as the user. Do not stop after a bare acknowledgement.",
+      });
+      yield {
+        type: 'status_update',
+        message: 'Model returned an empty response after tool results. Nudging it to continue.',
+      };
+      continue;
+    }
+
     // Record the Assistant's turn in the local history BEFORE yielding tool execution.
     const assistantMessage = {
       role: 'assistant',

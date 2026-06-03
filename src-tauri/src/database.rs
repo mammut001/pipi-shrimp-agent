@@ -619,6 +619,39 @@ pub fn get_database_diagnostics() -> SqliteResult<DbDiagnostics> {
  * All DDL for version N is applied inside a single transaction so either
  * every statement in a version succeeds or none do.
  */
+/// Execute a migration statement that may already have been applied.
+///
+/// AUDIT-2026-06-02 (silent errors): the migration code base was full of
+/// `let _ = conn.execute(...)` calls that silently swallowed every error,
+/// including non-benign ones (DB locked, disk full, malformed SQL). This
+/// helper now distinguishes "column already exists" (benign — earlier
+/// version of this app added it) from real errors, which propagate.
+fn execute_idempotent_migration(
+    conn: &Connection,
+    sql: &str,
+    label: &str,
+) -> SqliteResult<()> {
+    match conn.execute(sql, []) {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            let msg = err.to_string().to_lowercase();
+            if msg.contains("duplicate column") || msg.contains("already exists") {
+                eprintln!(
+                    "[db migration] {} returned a benign 'already exists' error — continuing.",
+                    label
+                );
+                Ok(())
+            } else {
+                eprintln!(
+                    "[db migration] {} failed: {} — aborting migration to keep schema consistent.",
+                    label, err
+                );
+                Err(err)
+            }
+        }
+    }
+}
+
 fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
     match version {
         1 => {
@@ -703,7 +736,7 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 "ALTER TABLE projects  ADD COLUMN work_dir TEXT",
             ];
             for sql in &alters {
-                let _ = conn.execute(sql, []);
+                execute_idempotent_migration(conn, sql, sql)?;
             }
 
             conn.execute(
@@ -730,19 +763,28 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
         }
         3 => {
             // Add api_config_id column to token_usage for per-API-key tracking
-            let _ = conn.execute("ALTER TABLE token_usage ADD COLUMN api_config_id TEXT", []);
+            execute_idempotent_migration(
+                conn,
+                "ALTER TABLE token_usage ADD COLUMN api_config_id TEXT",
+                "v3 add token_usage.api_config_id",
+            )?;
             // Index for efficient per-key queries
-            let _ = conn.execute(
+            execute_idempotent_migration(
+                conn,
                 "CREATE INDEX IF NOT EXISTS idx_token_usage_api_config ON token_usage(api_config_id)",
-                [],
-            );
+                "v3 idx_token_usage_api_config",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (3, strftime('%s','now'))",
                 [],
             )?;
         }
         4 => {
-            let _ = conn.execute("ALTER TABLE messages ADD COLUMN token_usage TEXT", []);
+            execute_idempotent_migration(
+                conn,
+                "ALTER TABLE messages ADD COLUMN token_usage TEXT",
+                "v4 add messages.token_usage",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (4, strftime('%s','now'))",
                 [],
@@ -803,7 +845,11 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             )?;
         }
         6 => {
-            let _ = conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT", []);
+            execute_idempotent_migration(
+                conn,
+                "ALTER TABLE messages ADD COLUMN attachments TEXT",
+                "v6 add messages.attachments",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (6, strftime('%s','now'))",
                 [],
@@ -815,14 +861,16 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             // cache_creation_input_tokens). New columns default to 0 so
             // existing rows remain valid and pre-v7 statistics still
             // aggregate cleanly.
-            let _ = conn.execute(
+            execute_idempotent_migration(
+                conn,
                 "ALTER TABLE token_usage ADD COLUMN cache_read_input_tokens INTEGER NOT NULL DEFAULT 0",
-                [],
-            );
-            let _ = conn.execute(
+                "v7 add token_usage.cache_read_input_tokens",
+            )?;
+            execute_idempotent_migration(
+                conn,
                 "ALTER TABLE token_usage ADD COLUMN cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0",
-                [],
-            );
+                "v7 add token_usage.cache_creation_input_tokens",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (7, strftime('%s','now'))",
                 [],

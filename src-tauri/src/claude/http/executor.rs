@@ -258,7 +258,12 @@ pub async fn send_streaming_request(
     }
 
     let result = tokio::select! {
-        _ = cancel_token.cancelled() => Ok(empty_response()),
+        // AUDIT-2026-06-02 (boundary): return an explicit Cancelled error
+        // instead of Ok(empty_response()). The old behaviour made cancellation
+        // indistinguishable from a successful empty turn — the frontend
+        // persisted a zero-token assistant message and the user got no
+        // feedback that they actually cancelled.
+        _ = cancel_token.cancelled() => Err(ClaudeHttpError::Cancelled),
         response = send_request_impl(
             client,
             messages,
@@ -389,10 +394,23 @@ mod tests {
     }
 
     #[test]
-    fn creates_empty_response_for_cancelled_requests() {
+    fn empty_response_constructs_a_well_formed_zero_token_chatresponse() {
+        // Kept as a utility constructor (no longer used for cancellation —
+        // see ClaudeHttpError::Cancelled). Still useful for tests / future
+        // placeholder responses.
         let response = empty_response();
         assert!(response.content.is_empty());
         assert_eq!(response.usage.input_tokens, 0);
         assert!(response.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn cancelled_error_is_not_retryable_and_maps_to_app_process_error() {
+        let err = ClaudeHttpError::Cancelled;
+        assert!(!err.retryable());
+        match err.to_app_error() {
+            AppError::ProcessError(msg) => assert!(msg.contains("cancelled")),
+            other => panic!("expected ProcessError, got {:?}", other),
+        }
     }
 }

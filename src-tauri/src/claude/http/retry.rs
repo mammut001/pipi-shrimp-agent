@@ -23,6 +23,37 @@ pub fn next_retry_delay(attempt: usize, policy: RetryPolicy) -> Duration {
     Duration::from_millis((policy.base_delay_ms.saturating_mul(multiplier)).min(policy.max_delay_ms))
 }
 
+/// Compute the next retry delay, honouring an upstream Retry-After hint if present.
+///
+/// AUDIT-2026-06-02 (boundary): the previous `run_with_retry` always used a
+/// fixed exponential schedule (capped at max_delay_ms) even when the 429
+/// path had extracted a `Retry-After: N` value. The client therefore retried
+/// faster than the server asked, producing more 429s and a longer outage.
+///
+/// We now honour the server hint: the actual delay is
+/// `max(exponential_backoff, retry_after)` clamped by `max_delay_ms * 4` so
+/// a pathological `Retry-After: 3600` from a misbehaving upstream can't
+/// freeze the client indefinitely (the absolute ceiling is the max_delay_ms
+/// for that policy multiplied by 4 — empirically enough for transient 429s
+/// but not enough for hour-long server outages, which the user should see).
+pub fn next_retry_delay_with_hint(
+    attempt: usize,
+    policy: RetryPolicy,
+    error: &ClaudeHttpError,
+) -> Duration {
+    let backoff = next_retry_delay(attempt, policy);
+    let hint_ms = match error {
+        ClaudeHttpError::RateLimit { retry_after: Some(seconds) } => seconds.saturating_mul(1_000),
+        _ => 0,
+    };
+    if hint_ms == 0 {
+        return backoff;
+    }
+    let absolute_cap_ms = policy.max_delay_ms.saturating_mul(4).max(policy.max_delay_ms);
+    let chosen_ms = hint_ms.max(backoff.as_millis() as u64).min(absolute_cap_ms);
+    Duration::from_millis(chosen_ms)
+}
+
 pub fn should_retry(error: &ClaudeHttpError) -> bool {
     error.retryable()
 }
@@ -40,7 +71,8 @@ where
         match operation(attempt).await {
             Ok(value) => return Ok(value),
             Err(error) if attempt < policy.max_attempts && should_retry(&error) => {
-                sleep(next_retry_delay(attempt, policy)).await;
+                let delay = next_retry_delay_with_hint(attempt, policy, &error);
+                sleep(delay).await;
                 attempt += 1;
             }
             Err(error) => return Err(error),
@@ -64,6 +96,68 @@ mod tests {
         assert_eq!(next_retry_delay(1, policy), Duration::from_millis(100));
         assert_eq!(next_retry_delay(2, policy), Duration::from_millis(200));
         assert_eq!(next_retry_delay(3, policy), Duration::from_millis(250));
+    }
+
+    #[test]
+    fn retry_after_overrides_exponential_when_larger() {
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            base_delay_ms: 100,
+            max_delay_ms: 500,
+        };
+        let err = ClaudeHttpError::RateLimit { retry_after: Some(2) };
+        // 2s >> exponential of 100ms; should win, clamped by 4*max_delay = 2000ms.
+        assert_eq!(
+            next_retry_delay_with_hint(1, policy, &err),
+            Duration::from_millis(2_000),
+        );
+    }
+
+    #[test]
+    fn retry_after_falls_back_to_exponential_when_smaller() {
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            base_delay_ms: 1_000,
+            max_delay_ms: 4_000,
+        };
+        let err = ClaudeHttpError::RateLimit { retry_after: Some(1) };
+        // Exponential is 1s, hint is 1s → take the larger of the two (1s).
+        // attempt=2 → exponential 2s, still capped at 4s, so hint of 1s
+        // should not pull us BELOW exponential.
+        assert_eq!(
+            next_retry_delay_with_hint(2, policy, &err),
+            Duration::from_millis(2_000),
+        );
+    }
+
+    #[test]
+    fn retry_after_clamped_to_absolute_cap_to_protect_against_pathological_upstream() {
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            base_delay_ms: 100,
+            max_delay_ms: 500,
+        };
+        let err = ClaudeHttpError::RateLimit { retry_after: Some(3_600) };
+        // Pathological 1-hour Retry-After should not freeze the client.
+        // Absolute cap is 4 * max_delay_ms = 2000ms.
+        assert_eq!(
+            next_retry_delay_with_hint(1, policy, &err),
+            Duration::from_millis(2_000),
+        );
+    }
+
+    #[test]
+    fn no_retry_after_uses_pure_exponential() {
+        let policy = RetryPolicy {
+            max_attempts: 3,
+            base_delay_ms: 100,
+            max_delay_ms: 500,
+        };
+        let err = ClaudeHttpError::Network { retryable: true };
+        assert_eq!(
+            next_retry_delay_with_hint(2, policy, &err),
+            Duration::from_millis(200),
+        );
     }
 
     #[tokio::test]

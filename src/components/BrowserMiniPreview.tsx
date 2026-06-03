@@ -117,6 +117,26 @@ export function BrowserMiniPreview() {
   const [taskInput, setTaskInput] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [copiedLogs, setCopiedLogs] = useState(false);
+  // AUDIT-2026-06-02 (lifecycle): wrap the copy-feedback timer in a ref so
+  // it can be cleared on unmount / before scheduling a new one.
+  const copyLogsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copyLogsTimerRef.current !== null) {
+        clearTimeout(copyLogsTimerRef.current);
+        copyLogsTimerRef.current = null;
+      }
+    };
+  }, []);
+  const scheduleCopyLogsReset = () => {
+    if (copyLogsTimerRef.current !== null) {
+      clearTimeout(copyLogsTimerRef.current);
+    }
+    copyLogsTimerRef.current = setTimeout(() => {
+      copyLogsTimerRef.current = null;
+      setCopiedLogs(false);
+    }, 2000);
+  };
   const [activityView, setActivityView] = useState<'logs' | 'debug'>('logs');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [inlineNotice, setInlineNotice] = useState<InlineNotice | null>(null);
@@ -149,7 +169,7 @@ export function BrowserMiniPreview() {
     try {
       await navigator.clipboard.writeText(logText);
       setCopiedLogs(true);
-      setTimeout(() => setCopiedLogs(false), 2000);
+      scheduleCopyLogsReset();
     } catch {
       try {
         const textarea = document.createElement('textarea');
@@ -161,7 +181,7 @@ export function BrowserMiniPreview() {
         document.execCommand('copy');
         document.body.removeChild(textarea);
         setCopiedLogs(true);
-        setTimeout(() => setCopiedLogs(false), 2000);
+        scheduleCopyLogsReset();
       } catch (fallbackErr) {
         console.error('Failed to copy logs:', fallbackErr);
         setCopiedLogs(false);

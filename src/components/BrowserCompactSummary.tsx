@@ -81,6 +81,26 @@ export function BrowserCompactSummary() {
   const [copiedLogs, setCopiedLogs] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  // AUDIT-2026-06-02 (lifecycle): same ref-based timer cleanup as
+  // BrowserMiniPreview — keeps setCopiedLogs from firing after unmount.
+  const copyLogsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copyLogsTimerRef.current !== null) {
+        clearTimeout(copyLogsTimerRef.current);
+        copyLogsTimerRef.current = null;
+      }
+    };
+  }, []);
+  const scheduleCopyLogsReset = () => {
+    if (copyLogsTimerRef.current !== null) {
+      clearTimeout(copyLogsTimerRef.current);
+    }
+    copyLogsTimerRef.current = setTimeout(() => {
+      copyLogsTimerRef.current = null;
+      setCopiedLogs(false);
+    }, 2000);
+  };
 
   const handleCopyLogs = async () => {
     if (logs.length === 0) return;
@@ -91,7 +111,7 @@ export function BrowserCompactSummary() {
     try {
       await navigator.clipboard.writeText(logText);
       setCopiedLogs(true);
-      setTimeout(() => setCopiedLogs(false), 2000);
+      scheduleCopyLogsReset();
     } catch {
       try {
         const textarea = document.createElement('textarea');
@@ -103,7 +123,7 @@ export function BrowserCompactSummary() {
         document.execCommand('copy');
         document.body.removeChild(textarea);
         setCopiedLogs(true);
-        setTimeout(() => setCopiedLogs(false), 2000);
+        scheduleCopyLogsReset();
       } catch (fallbackErr) {
         console.error('Failed to copy logs:', fallbackErr);
         setCopiedLogs(false);

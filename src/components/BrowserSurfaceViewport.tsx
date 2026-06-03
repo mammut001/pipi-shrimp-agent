@@ -39,12 +39,20 @@ export function BrowserSurfaceViewport({
       return false;
     }
 
+    // AUDIT-2026-06-02 (silent errors): previously `.catch(() => {})` swallowed
+    // every backend failure. moveBrowserSurface positions the native browser
+    // overlay; a silent failure means the user's clicks land on offset pixels
+    // (or the wrong element entirely) without any signal. At minimum log the
+    // failure so devtools shows the desync; downstream observability can
+    // promote this to a UI surface later (F5 follow-up).
     await moveBrowserSurface(mode, {
       x: rect.left,
       y: rect.top,
       width: rect.width,
       height: rect.height,
-    }).catch(() => {});
+    }).catch((error) => {
+      console.warn('[BrowserSurfaceViewport] moveBrowserSurface failed — overlay may be desynced from native window:', error);
+    });
 
     return true;
   }, [mode]);
@@ -54,7 +62,9 @@ export function BrowserSurfaceViewport({
 
     if (!isActive) {
       // This mode is not the active one — hide the native surface
-      void setEmbeddedSurfaceVisibility(false).catch(() => {});
+      void setEmbeddedSurfaceVisibility(false).catch((error) => {
+        console.warn('[BrowserSurfaceViewport] setEmbeddedSurfaceVisibility(false) failed on deactivate:', error);
+      });
       return;
     }
 
@@ -96,7 +106,9 @@ export function BrowserSurfaceViewport({
       window.removeEventListener('resize', scheduleSync);
       window.removeEventListener('scroll', scheduleSync, true);
       // Hide on unmount / mode-switch
-      void setEmbeddedSurfaceVisibility(false).catch(() => {});
+      void setEmbeddedSurfaceVisibility(false).catch((error) => {
+        console.warn('[BrowserSurfaceViewport] setEmbeddedSurfaceVisibility(false) failed on cleanup:', error);
+      });
     };
   // Re-run whenever the active state changes (isWindowOpen OR presentationMode changed)
   // eslint-disable-next-line react-hooks/exhaustive-deps

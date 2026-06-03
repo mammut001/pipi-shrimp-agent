@@ -233,6 +233,14 @@ pub async fn execute_tool(
     provider: Option<String>,
     #[allow(non_snake_case)] apiFormat: Option<String>,
     #[allow(non_snake_case)] providerCapabilities: Option<crate::claude::provider::ProviderCapabilities>,
+    // AUDIT-2026-06-02 (boundary): the legacy execute_tool command did not
+    // accept executionId. The frontend `chatToolExecution.ts` was already
+    // generating one (visible to UI as a cancel target) but it was silently
+    // dropped on the wire — Cancel was a no-op for every tool that flowed
+    // through this command. We now accept it and forward to spawn_bash_process
+    // via execute_bash_for_tool so cancel_tool_execution can actually find
+    // and kill the process.
+    #[allow(non_snake_case)] executionId: Option<String>,
 ) -> AppResult<String> {
     println!("🔧 Executing tool: {} with args: {}", tool_name, arguments);
 
@@ -363,12 +371,20 @@ pub async fn execute_tool(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'command' argument for execute_command".to_string()))?;
             let work_dir_override = args.get("cwd").and_then(|v| v.as_str());
+            // Prefer the executionId embedded in the tool args (set by
+            // prepareCancellableToolArgs) over the top-level Tauri arg,
+            // because the args form is what the frontend's Cancel button
+            // round-trips. Fall back to the top-level if absent.
+            let inline_execution_id = args
+                .get("executionId")
+                .and_then(|v| v.as_str())
+                .or(executionId.as_deref());
             let result = crate::commands::code::execute_bash_for_tool(
                 command,
                 work_dir_override,
                 work_dir.as_deref(),
                 None,
-                None,
+                inline_execution_id,
             )?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }

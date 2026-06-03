@@ -8,6 +8,13 @@ pub enum ClaudeHttpError {
     RateLimit { retry_after: Option<u64> },
     Validation { field: String, message: String },
     Provider { provider: String, message: String },
+    /// AUDIT-2026-06-02 (boundary): user-initiated cancellation. Previously
+    /// the executor returned `Ok(empty_response())` on cancel which made the
+    /// frontend record a zero-token "successful" empty assistant turn — the
+    /// user saw no signal that they actually cancelled. Distinguish the case
+    /// explicitly so the caller can map it to a cancelled event and avoid
+    /// retrying as if it were a transient failure.
+    Cancelled,
     Unknown { source: Box<dyn std::error::Error + Send + Sync> },
 }
 
@@ -19,6 +26,7 @@ impl ClaudeHttpError {
             ClaudeHttpError::Auth { .. }
             | ClaudeHttpError::Validation { .. }
             | ClaudeHttpError::Provider { .. }
+            | ClaudeHttpError::Cancelled
             | ClaudeHttpError::Unknown { .. } => false,
         }
     }
@@ -39,6 +47,9 @@ impl ClaudeHttpError {
             }
             ClaudeHttpError::Provider { provider, message } => {
                 AppError::ProcessError(format!("{}: {}", provider, sanitize_provider_message(message)))
+            }
+            ClaudeHttpError::Cancelled => {
+                AppError::ProcessError("Request cancelled by user".to_string())
             }
             ClaudeHttpError::Unknown { source } => {
                 AppError::InternalError(sanitize_provider_message(&source.to_string()))
@@ -68,6 +79,7 @@ impl std::fmt::Display for ClaudeHttpError {
             ClaudeHttpError::Provider { provider, message } => {
                 write!(f, "provider {} error: {}", provider, message)
             }
+            ClaudeHttpError::Cancelled => write!(f, "cancelled by user"),
             ClaudeHttpError::Unknown { source } => write!(f, "unknown error: {}", source),
         }
     }

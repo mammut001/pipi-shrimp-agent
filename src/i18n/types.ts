@@ -1073,6 +1073,7 @@ export type TranslationKeys = {
   'autoresearch.detail.failedNoMetric': string;
   'autoresearch.liveOutput.copy': string;
   'autoresearch.liveOutput.copied': string;
+  'autoresearch.liveOutput.copyFailed': string;
   'autoresearch.liveOutput.download': string;
   'autoresearch.liveOutput.clear': string;
   'autoresearch.liveOutput.cleared': string;

@@ -166,6 +166,33 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<Value> {
                         "content": content,
                     }]
                 }));
+            } else {
+                // AUDIT-2026-06-02 (boundary): the previous code silently
+                // `continue`'d on a malformed __TOOL_RESULT__ envelope. The
+                // previous turn's tool_use block was still in the history,
+                // so Anthropic received a turn with a dangling tool_use and
+                // either rejected the request or hallucinated. Now we
+                // synthesise a placeholder error tool_result so the
+                // turn-validation passes and the model sees a clear signal
+                // that the tool result was lost.
+                let fallback_id = message
+                    .tool_call_id
+                    .clone()
+                    .unwrap_or_else(|| "__lost_tool_result__".to_string());
+                eprintln!(
+                    "[format_messages_for_anthropic] dropping malformed tool_result for id={} (raw content len={})",
+                    fallback_id,
+                    message.content.len()
+                );
+                formatted.push(serde_json::json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": fallback_id,
+                        "content": "Error: tool result envelope was malformed and could not be parsed. The original tool output was lost.",
+                        "is_error": true,
+                    }]
+                }));
             }
             continue;
         }
@@ -218,9 +245,19 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<Value> {
         }
 
         if let Some(tool_calls) = &message.tool_calls {
+            // OpenAI allows assistant content to be either a string or null when tool_calls
+            // are present. We must NOT drop the model's preceding text (e.g. "好", "OK, let me
+            // check") — dropping it makes the next-round model lose the breadcrumb that it
+            // already acknowledged the user and committed to a tool plan, which contributes
+            // to the "agent says '好' then stops after one tool" regression.
+            let content_value = if message.content.is_empty() {
+                Value::Null
+            } else {
+                Value::String(message.content.clone())
+            };
             formatted.push(serde_json::json!({
                 "role": "assistant",
-                "content": Value::Null,
+                "content": content_value,
                 "tool_calls": tool_calls.iter().map(format_openai_tool_call).collect::<Vec<_>>(),
             }));
             continue;

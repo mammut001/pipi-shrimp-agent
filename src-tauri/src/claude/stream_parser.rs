@@ -57,6 +57,16 @@ pub fn parse_stream_data(
     adapter.parse_stream_chunk(data, ctx)
 }
 
+/// Maximum size of the in-flight SSE line buffer.
+///
+/// AUDIT-2026-06-02 (boundary): a malicious or buggy upstream that streams an
+/// arbitrarily long line without `\n` could grow this buffer without bound and
+/// OOM the desktop process. 16 MiB is well above any legitimate SSE event payload
+/// from Anthropic / OpenAI / MiniMax / Gemini (multi-MB tool args are already
+/// pathological); past this threshold we abort the stream with a process error
+/// so the user sees a real failure instead of a hung / crashed app.
+const SSE_LINE_BUFFER_MAX_BYTES: usize = 16 * 1024 * 1024;
+
 /// Stream a response using the unified stream parser
 ///
 /// This function:
@@ -88,6 +98,13 @@ pub async fn stream_response(
         };
 
         buffer.extend_from_slice(&chunk);
+
+        if buffer.len() > SSE_LINE_BUFFER_MAX_BYTES {
+            return Err(AppError::ProcessError(format!(
+                "SSE line buffer exceeded {} bytes without a newline — aborting stream to prevent OOM.",
+                SSE_LINE_BUFFER_MAX_BYTES
+            )));
+        }
 
         while let Some(newline_pos) = buffer.iter().position(|&byte| byte == b'\n') {
             let line_bytes = buffer.drain(..=newline_pos).collect::<Vec<u8>>();

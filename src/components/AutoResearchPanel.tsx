@@ -38,7 +38,7 @@ import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { buildAutoResearchRecoverySummary } from '@/services/autoresearch/recoverySummary';
 import { downloadTextFile, stripAnsiText, writeClipboardText } from '@/utils/clipboard';
 
-type LiveOutputFeedback = 'copied' | 'cleared' | null;
+type LiveOutputFeedback = 'copied' | 'cleared' | 'copy_failed' | null;
 
 function CopyIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
   return (
@@ -323,9 +323,15 @@ export function AutoResearchPanel() {
     if (!visibleLiveOutput) {
       return;
     }
+    // AUDIT-2026-06-02 (silent errors): previously the .catch swallowed
+    // clipboard failures, leaving the user thinking the content was copied
+    // when it wasn't. Now surface the failure via the same feedback chip.
     void writeClipboardText(visibleLiveOutput)
       .then(() => showLiveOutputFeedback('copied'))
-      .catch(() => undefined);
+      .catch((error) => {
+        console.warn('[AutoResearch] copy live output failed:', error);
+        showLiveOutputFeedback('copy_failed');
+      });
   }, [showLiveOutputFeedback, visibleLiveOutput]);
 
   const handleDownloadLiveOutput = useCallback(() => {
@@ -344,8 +350,13 @@ export function AutoResearchPanel() {
     if (!allEventLines) {
       return;
     }
-    void writeClipboardText(allEventLines).catch(() => undefined);
-  }, [allEventLines]);
+    void writeClipboardText(allEventLines)
+      .then(() => showLiveOutputFeedback('copied'))
+      .catch((error) => {
+        console.warn('[AutoResearch] copy event lines failed:', error);
+        showLiveOutputFeedback('copy_failed');
+      });
+  }, [allEventLines, showLiveOutputFeedback]);
 
   useEffect(() => {
     if (liveOutputRef.current && liveExpanded) {
@@ -643,7 +654,9 @@ export function AutoResearchPanel() {
                     >
                       {liveOutputFeedback === 'copied'
                         ? t('autoresearch.liveOutput.copied')
-                        : t('autoresearch.liveOutput.cleared')}
+                        : liveOutputFeedback === 'copy_failed'
+                          ? t('autoresearch.liveOutput.copyFailed')
+                          : t('autoresearch.liveOutput.cleared')}
                     </span>
                   )}
                   <HeaderActionButton

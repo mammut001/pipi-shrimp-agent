@@ -86,6 +86,12 @@ export function WorkflowOutputPanel() {
       }));
 
   // Stream callback
+  //
+  // AUDIT-2026-06-02 (lifecycle): the previous implementation registered the
+  // stream callback on mount with no cleanup. After unmount the engine still
+  // held the callback closure and would call setAgentOutputs on an unmounted
+  // component, both leaking the component and triggering React warnings.
+  // Now we clear the callback on unmount.
   useEffect(() => {
     workflowEngine.setStreamChunkCallback((agentId, _chunk, fullContent) => {
       setAgentOutputs((prev) => {
@@ -94,6 +100,9 @@ export function WorkflowOutputPanel() {
         return newMap;
       });
     });
+    return () => {
+      workflowEngine.setStreamChunkCallback(null);
+    };
   }, []);
 
   useEffect(() => {

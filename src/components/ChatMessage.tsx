@@ -465,12 +465,39 @@ function ReasoningHeader({
 /** Reasoning body - scrollable content with copy button */
 function ReasoningBody({ content, isStreaming }: { content: string; isStreaming: boolean }) {
   const [copied, setCopied] = useState(false);
+  // AUDIT-2026-06-02 (lifecycle): the previous handleCopy fired
+  // `setTimeout(...,2000)` with no ref; if the reasoning block unmounted
+  // within the window (session switch, message removed, scroll-virtualised
+  // out) the timer would fire setCopied on an unmounted component. Keep
+  // the latest id in a ref and clear it on unmount + before scheduling
+  // a new one. Skip state updates after unmount via mountedRef.
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (copyTimerRef.current !== null) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(content);
+      if (!mountedRef.current) return;
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimerRef.current !== null) {
+        clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = setTimeout(() => {
+        copyTimerRef.current = null;
+        if (mountedRef.current) {
+          setCopied(false);
+        }
+      }, 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
     }

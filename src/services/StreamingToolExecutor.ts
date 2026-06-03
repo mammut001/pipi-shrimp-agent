@@ -78,6 +78,17 @@ export interface ToolExecutionOptions {
   onProgress?: (completed: number, total: number, currentTool?: string) => void;
   concurrencyLimit?: number;
   timeoutMs?: number;
+  /**
+   * AUDIT-2026-06-02 (tool execution): when the caller has already run
+   * `runPreToolUseHooks` on each request (e.g. `chatToolExecution.executeConcurrentTools`
+   * does this before handing the request to `executeBatch`), set this to
+   * `true` to skip the redundant second pass inside `executeBatch`. The
+   * previous always-run-hooks behaviour double-counted classifier metrics,
+   * could re-evaluate dangerous-command checks against stale state, and
+   * silently clobbered `modifiedArgs` from the first pass when the second
+   * pass produced different ones.
+   */
+  skipPreHooks?: boolean;
 }
 
 export interface BatchExecutionResult {
@@ -295,6 +306,7 @@ export class StreamingToolExecutor {
       permissionMode = 'standard',
       allowedTools,
       requestPermission,
+      skipPreHooks = false,
     } = options;
 
     if (toolRequests.length === 0) {
@@ -326,13 +338,17 @@ export class StreamingToolExecutor {
       }
 
       const rawArgs = JSON.stringify(request.arguments);
-      const hookResult = await runPreToolUseHooks({
-        toolName: request.name,
-        toolArgs: rawArgs,
-        workDir,
-        permissionMode,
-        sessionId,
-      });
+      // AUDIT-2026-06-02 (tool execution): skip the redundant pre-hook run
+      // when the caller already ran them. See ToolExecutionOptions.skipPreHooks.
+      const hookResult = skipPreHooks
+        ? { approved: true, modifiedArgs: undefined, requiresConfirmation: false, error: undefined, blockedBy: undefined } as Awaited<ReturnType<typeof runPreToolUseHooks>>
+        : await runPreToolUseHooks({
+            toolName: request.name,
+            toolArgs: rawArgs,
+            workDir,
+            permissionMode,
+            sessionId,
+          });
 
       if (!hookResult.approved) {
         prevalidatedResults.push(buildPolicyErrorResult(
@@ -450,8 +466,40 @@ export class StreamingToolExecutor {
     );
     const frontendResults = await this.executeFrontendOnlyBatch(frontendOnlyRequests, reportProgress, workDir);
 
+    // AUDIT-2026-06-02 (tool execution): the original implementation used a
+    // single `Map<string, ToolResult>` keyed by tool id — when a batch contained
+    // two tool_use blocks with the same id (model retries, chunk-merge artifacts,
+    // or the same id appearing in both prevalidated and native results), the second
+    // `.set` would silently overwrite the first and the model would see the wrong
+    // output attributed to a single id. We now detect collisions, log them, mark
+    // the result as a structured error so the model knows something is wrong, and
+    // surface the duplicates in the returned errors list.
     const resultsById = new Map<string, ToolResult>();
+    const duplicateIds = new Set<string>();
     for (const result of [...prevalidatedResults, ...nativeResults.results, ...frontendResults.results]) {
+      if (resultsById.has(result.id)) {
+        duplicateIds.add(result.id);
+        const existing = resultsById.get(result.id)!;
+        const collisionResult: ToolResult = {
+          id: result.id,
+          content: buildStructuredToolError(
+            existing.id,
+            {},
+            new Error(
+              `Duplicate tool_call_id "${result.id}" in batch — refusing to silently overwrite. Re-emit each tool call with a unique id.`,
+            ),
+          ),
+          is_error: true,
+          error_message: `Duplicate tool_call_id: ${result.id}`,
+          execution_time_ms: 0,
+        };
+        resultsById.set(result.id, collisionResult);
+        console.warn(
+          `[StreamingToolExecutor] duplicate tool_call_id "${result.id}" detected; first result discarded`,
+          { existing, latest: result },
+        );
+        continue;
+      }
       resultsById.set(result.id, result);
     }
 
@@ -464,6 +512,11 @@ export class StreamingToolExecutor {
     });
 
     const errors = allResults.filter((result) => result.is_error);
+    if (duplicateIds.size > 0) {
+      console.warn(
+        `[StreamingToolExecutor] batch contained ${duplicateIds.size} duplicate tool_call_id(s): ${[...duplicateIds].join(', ')}`,
+      );
+    }
 
     return {
       results: allResults,
@@ -484,9 +537,15 @@ export class StreamingToolExecutor {
     const errors: ToolResult[] = [];
 
     for (const request of toolRequests) {
+      // AUDIT-2026-06-02 (silent errors): the previous .catch built a plain
+      // `{ content: '', error_message }` envelope that lost the structured
+      // error_kind. classifyToolBudgetEntry then fell back to message regexes
+      // and every failure looked like a transient hiccup. Route through
+      // buildStructuredToolError so error_kind survives into telemetry / the
+      // tool budget classifier / the model's view of the failure.
       const result = await this.executeFrontendOnlyTool(request, workDir).catch((error) => ({
         id: request.id,
-        content: '',
+        content: buildStructuredToolError(request.name, request.arguments, error),
         is_error: true,
         error_message: error instanceof Error ? error.message : 'Unknown error',
         execution_time_ms: 0,
@@ -523,6 +582,13 @@ export class StreamingToolExecutor {
       : { activeConfig: null, provider: null, providerCapabilities: null };
 
     try {
+      // AUDIT-2026-06-02 (lifecycle): the previous Promise.race created a
+      // setTimeout via inline `setTimeout(...)` but never stored / cleared
+      // its handle. When the batch resolved first the timer still ran for
+      // `timeoutMs * toolRequests.length` ms, keeping its closure alive and
+      // potentially throwing a "timeout" rejection that nothing was waiting
+      // on. Now we own the id and clear it in finally.
+      let watchdogId: ReturnType<typeof setTimeout> | null = null;
       const rawResults = await Promise.race([
         invoke<any[]>('execute_tool_batch', {
           toolCalls: toolRequests.map((tool) => ({
@@ -541,13 +607,21 @@ export class StreamingToolExecutor {
             providerCapabilities,
           })),
           sessionId,
+        }).finally(() => {
+          if (watchdogId !== null) {
+            clearTimeout(watchdogId);
+            watchdogId = null;
+          }
         }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Tool batch execution timeout: ${toolRequests.map((tool) => tool.name).join(', ')}`)),
+        new Promise<never>((_, reject) => {
+          watchdogId = setTimeout(
+            () => {
+              watchdogId = null;
+              reject(new Error(`Tool batch execution timeout: ${toolRequests.map((tool) => tool.name).join(', ')}`));
+            },
             this.timeoutMs * Math.max(1, toolRequests.length),
-          )
-        ),
+          );
+        }),
       ]);
 
       const elapsed = Date.now() - startTime;
