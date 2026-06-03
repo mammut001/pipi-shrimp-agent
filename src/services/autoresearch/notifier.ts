@@ -40,6 +40,38 @@ export interface NotifierDeliveryStatus {
 }
 
 /**
+ * AUDIT-2026-06-02 (F3): module-scope holder for the most recently
+ * observed notifier delivery status, so a UI banner component can
+ * subscribe without needing to thread the notifier instance through
+ * props. Updated by every send() call across every notifier.
+ */
+type DeliveryListener = (status: NotifierDeliveryStatus | null) => void;
+let globalLastDelivery: NotifierDeliveryStatus | null = null;
+const deliveryListeners = new Set<DeliveryListener>();
+
+export function getLastNotifierDelivery(): NotifierDeliveryStatus | null {
+  return globalLastDelivery;
+}
+
+export function subscribeNotifierDelivery(listener: DeliveryListener): () => void {
+  deliveryListeners.add(listener);
+  return () => {
+    deliveryListeners.delete(listener);
+  };
+}
+
+function publishDelivery(status: NotifierDeliveryStatus | null): void {
+  globalLastDelivery = status;
+  for (const listener of deliveryListeners) {
+    try {
+      listener(status);
+    } catch (e) {
+      console.warn('[AutoResearch Notifier] subscriber threw:', e);
+    }
+  }
+}
+
+/**
  * Create a notifier instance. If Telegram is disabled or chatId is missing,
  * all methods are no-ops (no errors thrown).
  *
@@ -63,22 +95,30 @@ export function createNotifier(config: TelegramNotifyConfig): AutoResearchNotifi
   // AUDIT-2026-06-02 (silent errors): track the most recent delivery so the
   // UI can render a status banner via getLastDelivery(). Keeps the notifier
   // self-contained (no store cross-cutting required) while still making the
-  // misconfig / send-failure visible to consumers.
+  // misconfig / send-failure visible to consumers. Also published via
+  // publishDelivery() so a global banner (F3) can subscribe.
+  const setLastDelivery = (status: NotifierDeliveryStatus | null) => {
+    lastDelivery = status;
+    publishDelivery(status);
+  };
   let lastDelivery: NotifierDeliveryStatus | null = isDisabled
     ? { at: Date.now(), ok: false, disabled: true, reason: 'Telegram disabled or chatId not configured' }
     : null;
+  if (lastDelivery) {
+    publishDelivery(lastDelivery);
+  }
 
   const send = async (text: string) => {
     if (isDisabled || !config.chatId) {
-      lastDelivery = { at: Date.now(), ok: false, disabled: true, reason: 'Telegram disabled or chatId not configured' };
+      setLastDelivery({ at: Date.now(), ok: false, disabled: true, reason: 'Telegram disabled or chatId not configured' });
       return;
     }
     try {
       await telegramSendMessage(config.chatId, text, { parseMode: 'MarkdownV2' });
-      lastDelivery = { at: Date.now(), ok: true };
+      setLastDelivery({ at: Date.now(), ok: true });
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
-      lastDelivery = { at: Date.now(), ok: false, reason };
+      setLastDelivery({ at: Date.now(), ok: false, reason });
       console.warn(
         `[AutoResearch Notifier] Failed to send Telegram message (chatId=${config.chatId}):`,
         e,

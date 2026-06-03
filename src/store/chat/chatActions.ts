@@ -42,6 +42,11 @@ import {
   STREAMING_TIMEOUT_MS,
 } from './chatStreaming';
 import { handleToolBatchRequest } from './chatToolExecution';
+import {
+  abortActiveStreaming,
+  clearStreamingAbortController,
+  markStreamingAbortController,
+} from './streamingAbort';
 
 export function shouldRemoveEmptyAssistantPlaceholder(message: Message | undefined): boolean {
   return Boolean(message && message.role === 'assistant' && !message.content && !message.reasoning);
@@ -190,7 +195,9 @@ export function createChatActionMethods({
 
         const messages = createBrowserResultMessages(originalQuery);
         const assistantMessage = createMessage('assistant', '');
-        await addMessage(assistantMessage);
+        // AUDIT-2026-06-02 (B6 / B3): pin the placeholder to pinnedSessionId
+        // so it lands in the session that owns the browser-result follow-up.
+        await get().addMessageToSession(pinnedSessionId, assistantMessage);
 
         const baseSystemPrompt = useUIStore.getState().agentInstructions;
         const currentSession = get().sessions.find((session) => session.id === currentSessionId);
@@ -348,10 +355,16 @@ export function createChatActionMethods({
 
       try {
         const userMessage = createMessage('user', content, undefined, options?.attachments);
+        // AUDIT-2026-06-02 (B6): use addMessageToSession with the pinned
+        // activeSessionId rather than addMessage (which reads
+        // get().currentSessionId at await resolution time). This guarantees
+        // the user message lands on the intended session even if a
+        // concurrent click triggers another selectSession between our
+        // synchronous selectSession call and the next await boundary.
         if (targetSessionId && targetSessionId !== get().currentSessionId) {
           get().selectSession(targetSessionId);
         }
-        await addMessage(userMessage);
+        await get().addMessageToSession(activeSessionId, userMessage);
 
         if (!isPlanMode) {
           try {
@@ -392,6 +405,12 @@ export function createChatActionMethods({
         setStreaming(true);
         set({ streamingContent: '', streamingSessionId: activeSessionId });
         markStreamingSessionActive(activeSessionId);
+        // AUDIT-2026-06-02 (B4): explicit AbortController for this turn so
+        // the streaming-timeout path and stopGeneration can actually break
+        // the for-await loop instead of relying on stop_subprocess and
+        // hoping the engine drains.
+        const turnAbortController = new AbortController();
+        markStreamingAbortController(activeSessionId, turnAbortController);
         updateDiagnosticsTask(diagnosticsTaskId, {
           state: 'running',
           cancelable: true,
@@ -404,6 +423,10 @@ export function createChatActionMethods({
             set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
             setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded). Please try again.`);
             safeInvokeOrNull('stop_subprocess', { sessionId: activeSessionId });
+            // AUDIT-2026-06-02 (B4): also abort the in-flight engine so
+            // the for-await loop breaks instead of waiting on
+            // stop_subprocess to land and the engine to drain naturally.
+            turnAbortController.abort(new Error(`Streaming timeout after ${STREAMING_TIMEOUT_MS / 1000}s`));
           }
         }, STREAMING_TIMEOUT_MS);
 
@@ -416,7 +439,8 @@ export function createChatActionMethods({
         }
 
         const assistantMessage = createMessage('assistant', '');
-        await addMessage(assistantMessage);
+        // AUDIT-2026-06-02 (B6): pin the placeholder to activeSessionId.
+        await get().addMessageToSession(activeSessionId, assistantMessage);
 
         const template = usePromptStore.getState().getActiveTemplate();
         const currentSession = get().sessions.find((session) => session.id === activeSessionId);
@@ -488,10 +512,16 @@ export function createChatActionMethods({
 
         const { runChatTurn } = await import('../../core/QueryEngine');
         const engine = isPlanMode
-          ? runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, false, undefined, { noTools: true })
-          : runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, options?.allowBrowserTools || false);
+          ? runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, false, undefined, { noTools: true, signal: turnAbortController.signal })
+          : runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, options?.allowBrowserTools || false, undefined, { signal: turnAbortController.signal });
         const uiStore = useUIStore.getState();
         let tokenUsageResult: TokenUsage | undefined;
+        // AUDIT-2026-06-02 (B7): accumulate every tool_call the engine
+        // emits this turn so they can be persisted on the assistant
+        // message. Without this the in-store assistant turn loses its
+        // tool_calls history on reload (the engine sees them, the DB
+        // doesn't).
+        const accumulatedToolCalls: import('../../core/types').ToolCallParams[] = [];
 
         for await (const chunk of engine) {
           if (consumeChatGenerationCancel(activeSessionId)) {
@@ -506,6 +536,12 @@ export function createChatActionMethods({
           } else if (chunk.type === 'status_update') {
             uiStore.addNotification('info', chunk.message, activeSessionId);
           } else if (chunk.type === 'tool_batch_request') {
+            // AUDIT-2026-06-02 (B7): remember the tool_calls that were
+            // sent to handleToolBatchRequest so we can persist them on
+            // the assistant message at turn end.
+            for (const tool of chunk.tools) {
+              accumulatedToolCalls.push(tool);
+            }
             await handleToolBatchRequest(
               {
                 chunk,
@@ -559,6 +595,16 @@ export function createChatActionMethods({
           // have changed under us if the user switched sessions while
           // we were awaiting the stream.
           activeSessionId,
+          // AUDIT-2026-06-02 (B7): persist tool_calls so reload doesn't
+          // diverge from the engine's view (e.g. drop assistant blocks
+          // whose tool_use isn't matched).
+          accumulatedToolCalls.length > 0
+            ? accumulatedToolCalls.map((t) => ({
+                id: t.id,
+                name: t.name,
+                arguments: t.arguments,
+              }))
+            : undefined,
         );
 
         if (tokenUsage) {
@@ -667,6 +713,7 @@ export function createChatActionMethods({
 
           clearChatGenerationCancel(activeSessionId);
           clearStreamingSessionActive(activeSessionId);
+          clearStreamingAbortController(activeSessionId);
           setStreaming(false);
           set({
             streamingContent: '',
@@ -744,6 +791,7 @@ export function createChatActionMethods({
       } finally {
         clearChatGenerationCancel(activeSessionId);
         clearStreamingSessionActive(activeSessionId);
+        clearStreamingAbortController(activeSessionId);
       }
     },
 
@@ -769,6 +817,10 @@ export function createChatActionMethods({
       const targetSessionId = activeStreamingSessionId ?? currentSessionId;
 
       requestChatGenerationCancel(targetSessionId);
+      // AUDIT-2026-06-02 (B4): fire the AbortSignal too — without this the
+      // engine's for-await loop would keep draining until it hit a chunk
+      // boundary check, which can be slow on a long-running stream.
+      abortActiveStreaming(targetSessionId, 'User clicked Stop');
       if (targetSessionId) {
         failUnresolvedSessionTools(
           targetSessionId,
@@ -896,6 +948,7 @@ export function createChatActionMethods({
       reasoning?: string,
       tokenUsage?: Message['token_usage'],
       targetSessionId?: string,
+      toolCalls?: Message['tool_calls'],
     ) => {
       // AUDIT-2026-06-02 (session isolation): prefer the explicit target
       // session over `currentSessionId` so post-await mutations land in the
@@ -925,6 +978,10 @@ export function createChatActionMethods({
             reasoning: mergeReasoningParts(reasoning, lastMessage.reasoning),
             artifacts: artifacts !== undefined ? artifacts : lastMessage.artifacts,
             token_usage: tokenUsage !== undefined ? tokenUsage : lastMessage.token_usage,
+            // AUDIT-2026-06-02 (B7): write tool_calls when supplied. Merge
+            // so a later updateLastMessage that doesn't pass toolCalls
+            // does NOT erase a previous round's persisted calls.
+            tool_calls: toolCalls !== undefined ? toolCalls : lastMessage.tool_calls,
             updatedAt: Date.now(),
           };
 

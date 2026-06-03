@@ -23,6 +23,7 @@ import {
 import { safeInvoke, safeInvokeOrNull } from '../utils/safeInvoke';
 import { useArtifactsStore } from './artifactsStore';
 import { createChatActionMethods } from './chat/chatActions';
+import { abortActiveStreaming } from './chat/streamingAbort';
 import { resetTransientSessionStateForNewChat } from './chat/sessionIsolation';
 import { filterSessionsByProject, selectCurrentMessages, selectCurrentSession } from './chat/chatSelectors';
 import {
@@ -616,6 +617,12 @@ export const useChatStore = create<ChatState>()(
         clearTimeout(get().streamingTimeoutId!);
       }
       if (previousSessionId && previousSessionId !== sessionId && get().isStreaming) {
+        // AUDIT-2026-06-02 (B5): fire the engine's AbortSignal before we
+        // reset streaming state. Without this the in-flight runChatTurn
+        // keeps draining (the `isStreaming = false` set below makes the
+        // next chunk's session-routing pick the WRONG session and corrupt
+        // the new session's last message).
+        abortActiveStreaming(previousSessionId, 'User switched to another session');
         safeInvokeOrNull('stop_subprocess', { sessionId: previousSessionId });
       }
       useUIStore.getState().clearAllPermissions();

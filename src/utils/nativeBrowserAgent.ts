@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { useUIStore } from '@/store';
 import {
   clickBrowserElement,
   executeBrowserScript,
@@ -59,18 +60,33 @@ const OVERLAY_REMOVE_SCRIPT = `(function(){
   var s=document.getElementById('__ppa_style__');if(s)s.remove();
 })();`;
 
-// AUDIT-2026-06-02 (silent errors): the previous `catch { /* ignore */ }`
-// swallowed inject/remove failures. If the page's context vanished mid-flow
+// AUDIT-2026-06-02 (F6): the previous `catch { /* ignore */ }` swallowed
+// inject/remove failures. If the page's context vanished mid-flow
 // (navigation, target destroyed) the overlay simply wouldn't render, and the
 // agent state machine would happily wait for a user click that never arrives —
 // users saw a frozen UI and had to abort. We now log at minimum so devtools
-// shows what happened; a future patch can promote this to the observability
-// store for an in-app banner.
+// shows what happened AND emit a throttled in-app warning notification so
+// the user has a chance to recover (e.g. retry the action).
+let lastOverlayNotifyAt = 0;
+function notifyOverlayDesync(message: string): void {
+  const now = Date.now();
+  if (now - lastOverlayNotifyAt < 5_000) {
+    return;
+  }
+  lastOverlayNotifyAt = now;
+  try {
+    useUIStore.getState().addNotification('warning', message);
+  } catch {
+    // ignore — happens only in tests with no UI store
+  }
+}
+
 async function injectOverlay(): Promise<void> {
   try {
     await executeBrowserScript(OVERLAY_INJECT_SCRIPT);
   } catch (error) {
     console.warn('[nativeBrowserAgent] overlay inject failed — page context likely gone:', error);
+    notifyOverlayDesync('Browser overlay could not be shown — the page navigated or closed before it rendered.');
   }
 }
 async function removeOverlay(): Promise<void> {

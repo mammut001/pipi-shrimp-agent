@@ -384,6 +384,19 @@ async function resolveSerialToolPermission(
   },
 ): Promise<boolean> {
   if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name)) {
+    // AUDIT-2026-06-02 (D6): log the auto-approve to the ledger so the
+    // trail doesn't skip tools the user never saw.
+    deps.uiStore.getState().recordPermissionDecision({
+      id: tool.id,
+      toolName: tool.name,
+      toolInput: effectiveArgs,
+      description: permissionContext?.description,
+      source: permissionContext?.source,
+      workingDirectory: permissionContext?.workingDirectory,
+      commandPreview: permissionContext?.commandPreview,
+      riskReason: permissionContext?.riskReason,
+      decision: 'auto_approved',
+    });
     return true;
   }
 
@@ -713,6 +726,17 @@ async function executeSerialTool(
     uiStore.updateTaskStep(tool.id, 'awaiting_confirmation');
     markSessionToolStatus(activeSessionId, tool.id, tool.name, 'awaiting_confirmation', set, get);
     approvalToken = preview.approvalToken ?? null;
+  } else if (preview.decision === 'allowed') {
+    // AUDIT-2026-06-02 (D6): record backend-allowed tools too — without
+    // this the ledger only sees tools that hit the prompt, biasing the
+    // sample toward debated tools.
+    uiStore.recordPermissionDecision({
+      id: tool.id,
+      toolName: tool.name,
+      toolInput: effectiveArgs,
+      ...buildPermissionContext(tool.name, effectiveArgs, preview.reason, workDir),
+      decision: 'allowed_by_backend',
+    });
   }
 
   const approved = await resolveSerialToolPermission(

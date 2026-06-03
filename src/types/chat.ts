@@ -155,6 +155,13 @@ export interface ChatState {
    * streaming tail / final content into someone else's last message. Long-
    * running sendMessage / generateBrowserResultResponse / stopGeneration
    * paths should always pass their captured `activeSessionId` here.
+   *
+   * AUDIT-2026-06-02 (B7): the optional `toolCalls` lets the chat layer
+   * persist the tool_calls the engine actually made during the turn —
+   * without this the in-store assistant message diverges from the engine's
+   * view on reload (`buildApiMessages` drops assistant blocks whose
+   * tool_calls are not followed by matching tool_results, so the next
+   * turn either re-executes the call or loses history).
    */
   updateLastMessage: (
     content: string,
@@ -162,6 +169,7 @@ export interface ChatState {
     reasoning?: string,
     tokenUsage?: Message['token_usage'],
     targetSessionId?: string,
+    toolCalls?: ToolCall[],
   ) => Promise<void>;
 
   /**

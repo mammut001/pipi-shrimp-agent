@@ -35,7 +35,16 @@ export interface PermissionLedgerEntry {
   id: string;
   toolName: string;
   description?: string;
-  decision: 'approved' | 'denied' | 'cancelled';
+  /**
+   * AUDIT-2026-06-02 (D6): the ledger used to record only 'approved' /
+   * 'denied' / 'cancelled' — i.e. tools the user actually saw. That made
+   * the ledger a biased sample (skewed toward debated tools). Now we
+   * also record `auto_approved` (canAutoApproveTool / bypass mode) and
+   * `allowed_by_backend` (preview_tool_policy returned 'allowed') so
+   * the trail covers every decision the system made on the user's
+   * behalf.
+   */
+  decision: 'approved' | 'denied' | 'cancelled' | 'auto_approved' | 'allowed_by_backend';
   requestedAt: number;
   resolvedAt: number;
   toolInputPreview: string;
@@ -203,6 +212,26 @@ export interface UIState {
 
   /** Clear permission decision history for the current app session. */
   clearPermissionLedger: () => void;
+
+  /**
+   * AUDIT-2026-06-02 (D6): single chokepoint for recording a permission
+   * decision in the ledger from code paths that don't go through
+   * `waitForPermission` (auto-approve, backend allowed, bypass mode).
+   * Without this the ledger only saw "debated" tools, making it a
+   * biased sample. Now every decision the system makes on the user's
+   * behalf is logged uniformly.
+   */
+  recordPermissionDecision: (entry: {
+    id: string;
+    toolName: string;
+    description?: string;
+    toolInput?: string;
+    source?: string;
+    workingDirectory?: string | null;
+    commandPreview?: string | null;
+    riskReason?: string | null;
+    decision: PermissionLedgerEntry['decision'];
+  }) => void;
 
   /**
    * Wait for user permission for a specific tool call. Resolves with true if approved.

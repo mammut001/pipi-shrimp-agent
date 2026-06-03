@@ -77,6 +77,32 @@ function isMalformedToolCallError(error: unknown): boolean {
 export interface RunChatTurnOptions {
   noTools?: boolean;
   allowedTools?: string[];
+  /**
+   * AUDIT-2026-06-02 (session isolation, B4): an AbortSignal the engine
+   * consults between API calls and at chunk boundaries. The previous
+   * cancellation mechanism was the module-scope `cancellationRequestedSessions`
+   * set in chatActions, which works but is invisible to callers that don't
+   * live in chatActions. When set, the engine yields an `error` event with
+   * a `ChatGenerationCancelledError`-shaped error and returns immediately.
+   * The streaming timeout in chatActions now uses this to actually break
+   * the for-await loop instead of relying on `stop_subprocess` and hoping
+   * the engine drains.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Error sentinel emitted when `RunChatTurnOptions.signal` aborts during
+ * a turn. Re-uses the existing ChatGenerationCancelledError shape so the
+ * consumer's existing catch path applies.
+ */
+export class RunChatTurnAbortedError extends Error {
+  sessionId: string;
+  constructor(sessionId: string, reason?: string) {
+    super(reason ? `runChatTurn aborted for session ${sessionId}: ${reason}` : `runChatTurn aborted for session ${sessionId}`);
+    this.name = 'RunChatTurnAbortedError';
+    this.sessionId = sessionId;
+  }
 }
 
 export async function* runChatTurn(
@@ -114,11 +140,33 @@ export async function* runChatTurn(
   // This prevents transient tool failures from prematurely exhausting maxModelRounds.
   let modelRound = 0;
 
+  // AUDIT-2026-06-02 (B4): if an abort signal was passed and is already
+  // aborted, refuse to start the turn at all.
+  const signal = options?.signal;
+  const abortReason = (): string | undefined => {
+    if (!signal) return undefined;
+    const reason = (signal as any).reason;
+    if (reason instanceof Error) return reason.message;
+    if (typeof reason === 'string') return reason;
+    return reason ? String(reason) : 'abort signal fired';
+  };
+  if (signal?.aborted) {
+    yield { type: 'error', error: new RunChatTurnAbortedError(sessionId, abortReason()) };
+    return;
+  }
+
   while (
     !isTurnComplete
     && modelRound < maxModelRounds
     && (toolBudgetSummary.toolBudgetUsedRaw < maxToolBudget || reserveFinalResponseRound)
   ) {
+    // AUDIT-2026-06-02 (B4): check between rounds so the streaming-timeout
+    // path in chatActions actually breaks the loop instead of letting the
+    // engine drain naturally.
+    if (signal?.aborted) {
+      yield { type: 'error', error: new RunChatTurnAbortedError(sessionId, abortReason()) };
+      return;
+    }
     round++; // round tracks overall loop iterations for logging/debugging
     modelRound++; // modelRound tracks actual API calls made
     
@@ -194,6 +242,13 @@ export async function* runChatTurn(
       try {
         // Consume the chunks stream
         for await (const chunk of stream) {
+          // AUDIT-2026-06-02 (B4): abort mid-stream too. Without this an
+          // engine sitting on a slow LLM response would only learn about
+          // the cancel between API calls.
+          if (signal?.aborted) {
+            yield { type: 'error', error: new RunChatTurnAbortedError(sessionId, abortReason()) };
+            return;
+          }
           if (chunk.type === 'text_delta') {
             assistantMessageContent += chunk.content;
             yield { type: 'text_delta', content: chunk.content };

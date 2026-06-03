@@ -241,13 +241,22 @@ impl Transport for StdioTransport {
 
 impl Drop for StdioTransport {
     fn drop(&mut self) {
+        // AUDIT-2026-06-02 (lifecycle, E7): abort the stderr-draining
+        // task BEFORE killing the child. Reverse order (kill → abort)
+        // had a small window where the task could still observe pipe
+        // bytes between start_kill and abort and write a final log
+        // line that referenced a process the rest of the app already
+        // considered gone. Aborting first guarantees the task is no
+        // longer running by the time we issue the kill, so its
+        // closure-captured state (logger handle, child pid for log
+        // attribution) is definitely released.
+        if let Some(task) = self.stderr_task.take() {
+            task.abort();
+        }
         if let Some(mut child) = self.child.take() {
             drop(child.stdin.take());
             // Best-effort kill — no async in Drop
             let _ = child.start_kill();
-        }
-        if let Some(task) = self.stderr_task.take() {
-            task.abort();
         }
     }
 }
