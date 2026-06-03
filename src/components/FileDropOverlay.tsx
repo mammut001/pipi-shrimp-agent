@@ -226,17 +226,37 @@ export function FileDropOverlay() {
 
   // Tauri native file drop events (handles OS-level drag from Finder/Explorer)
   // Tauri intercepts these before DOM events when fileDropEnabled=true (the default)
+  //
+  // AUDIT-2026-06-02 (lifecycle): the original implementation pushed the
+  // unlisten fn returned by listen() into an array via `.then`. If the
+  // component unmounted before the listen promise resolved (route change,
+  // dialog closed during initial render), the unlisten was never registered
+  // and the closure-captured listener leaked — subsequent drops fired
+  // setIsDragging/setPendingFiles on a detached React tree. Now we track a
+  // `cancelled` flag set in cleanup; if a listen resolves after cancel, we
+  // immediately invoke the unlisten so it never makes it into the array.
   useEffect(() => {
+    let cancelled = false;
     const unlistens: Array<() => void> = [];
+
+    const collect = (u: () => void) => {
+      if (cancelled) {
+        u();
+      } else {
+        unlistens.push(u);
+      }
+    };
 
     // User hovers over window with files → show overlay
     listen<string[]>('tauri://file-drop-hover', () => {
+      if (cancelled) return;
       dragCounterRef.current = 1;
       setIsDragging(true);
-    }).then((u) => unlistens.push(u));
+    }).then(collect);
 
     // User drops files → add paths to pending list (don't auto-close, let user confirm)
     listen<string[]>('tauri://file-drop', (event) => {
+      if (cancelled) return;
       const paths = event.payload ?? [];
       if (paths.length === 0) return;
       const newFiles: PendingFile[] = paths.map((p) => ({
@@ -250,10 +270,11 @@ export function FileDropOverlay() {
       });
       // Ensure overlay stays visible so user can confirm
       setIsDragging(true);
-    }).then((u) => unlistens.push(u));
+    }).then(collect);
 
     // User cancelled drag (moved out of window)
     listen('tauri://file-drop-cancelled', () => {
+      if (cancelled) return;
       // Only close overlay if no files were dropped yet
       setPendingFiles((prev) => {
         if (prev.length === 0) {
@@ -262,9 +283,10 @@ export function FileDropOverlay() {
         }
         return prev;
       });
-    }).then((u) => unlistens.push(u));
+    }).then(collect);
 
     return () => {
+      cancelled = true;
       unlistens.forEach((u) => u());
     };
   }, []);

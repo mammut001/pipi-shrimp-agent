@@ -36,9 +36,14 @@ import {
 } from '@/services/autoresearch/modelDisplay';
 import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { buildAutoResearchRecoverySummary } from '@/services/autoresearch/recoverySummary';
+import {
+  getLastNotifierDelivery,
+  subscribeNotifierDelivery,
+  type NotifierDeliveryStatus,
+} from '@/services/autoresearch/notifier';
 import { downloadTextFile, stripAnsiText, writeClipboardText } from '@/utils/clipboard';
 
-type LiveOutputFeedback = 'copied' | 'cleared' | null;
+type LiveOutputFeedback = 'copied' | 'cleared' | 'copy_failed' | null;
 
 function CopyIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
   return (
@@ -223,6 +228,18 @@ export function AutoResearchPanel() {
   const loopState = selectedRunContext.loopState;
   const runReason = selectedRunContext.reason;
 
+  // AUDIT-2026-06-02 (F3): subscribe to Telegram notifier delivery status
+  // so the panel can render a banner when notifications are misconfigured
+  // or the last send failed. Otherwise the user sees a "quiet" dashboard
+  // and assumes critical alerts (loop stopped, 3 consecutive failures,
+  // trend report) are reaching their Telegram — when in fact they're not.
+  const [notifierStatus, setNotifierStatus] = useState<NotifierDeliveryStatus | null>(
+    () => getLastNotifierDelivery(),
+  );
+  useEffect(() => {
+    return subscribeNotifierDelivery(setNotifierStatus);
+  }, []);
+
   const liveOutputRef = useRef<HTMLDivElement>(null);
   const [liveExpanded, setLiveExpanded] = useState(true);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -323,9 +340,15 @@ export function AutoResearchPanel() {
     if (!visibleLiveOutput) {
       return;
     }
+    // AUDIT-2026-06-02 (silent errors): previously the .catch swallowed
+    // clipboard failures, leaving the user thinking the content was copied
+    // when it wasn't. Now surface the failure via the same feedback chip.
     void writeClipboardText(visibleLiveOutput)
       .then(() => showLiveOutputFeedback('copied'))
-      .catch(() => undefined);
+      .catch((error) => {
+        console.warn('[AutoResearch] copy live output failed:', error);
+        showLiveOutputFeedback('copy_failed');
+      });
   }, [showLiveOutputFeedback, visibleLiveOutput]);
 
   const handleDownloadLiveOutput = useCallback(() => {
@@ -344,8 +367,13 @@ export function AutoResearchPanel() {
     if (!allEventLines) {
       return;
     }
-    void writeClipboardText(allEventLines).catch(() => undefined);
-  }, [allEventLines]);
+    void writeClipboardText(allEventLines)
+      .then(() => showLiveOutputFeedback('copied'))
+      .catch((error) => {
+        console.warn('[AutoResearch] copy event lines failed:', error);
+        showLiveOutputFeedback('copy_failed');
+      });
+  }, [allEventLines, showLiveOutputFeedback]);
 
   useEffect(() => {
     if (liveOutputRef.current && liveExpanded) {
@@ -397,6 +425,26 @@ export function AutoResearchPanel() {
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
+      {/* AUDIT-2026-06-02 (F3): notifier delivery banner. Renders only when
+          the most recent send failed or the notifier is disabled, so a
+          healthy / unconfigured setup stays out of the way. */}
+      {notifierStatus && !notifierStatus.ok && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-notifier-banner={notifierStatus.disabled ? 'disabled' : 'failed'}
+          className={`px-3 py-1.5 text-[10px] border-b ${
+            notifierStatus.disabled
+              ? 'bg-amber-50 text-amber-800 border-amber-200'
+              : 'bg-red-50 text-red-800 border-red-200'
+          }`}
+        >
+          <span className="font-semibold mr-1">
+            {notifierStatus.disabled ? 'Telegram notifier off:' : 'Telegram delivery failed:'}
+          </span>
+          <span>{notifierStatus.reason ?? (notifierStatus.disabled ? 'enable it in settings' : 'see devtools console for details')}</span>
+        </div>
+      )}
       <div className="px-3 py-2 border-b border-gray-200/60 bg-white/70 space-y-2">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Run History</p>
@@ -643,7 +691,9 @@ export function AutoResearchPanel() {
                     >
                       {liveOutputFeedback === 'copied'
                         ? t('autoresearch.liveOutput.copied')
-                        : t('autoresearch.liveOutput.cleared')}
+                        : liveOutputFeedback === 'copy_failed'
+                          ? t('autoresearch.liveOutput.copyFailed')
+                          : t('autoresearch.liveOutput.cleared')}
                     </span>
                   )}
                   <HeaderActionButton

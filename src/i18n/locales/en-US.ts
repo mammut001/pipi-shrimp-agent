@@ -211,6 +211,7 @@ const enUS: TranslationKeys = {
   'autoresearch.detail.failedNoMetric': 'failed/no metric',
   'autoresearch.liveOutput.copy': 'Copy',
   'autoresearch.liveOutput.copied': 'Copied',
+  'autoresearch.liveOutput.copyFailed': 'Copy failed — clipboard unavailable',
   'autoresearch.liveOutput.download': 'Download .log',
   'autoresearch.liveOutput.clear': 'Clear',
   'autoresearch.liveOutput.cleared': 'Cleared (file kept)',

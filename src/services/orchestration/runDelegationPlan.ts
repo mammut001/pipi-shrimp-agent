@@ -169,9 +169,17 @@ export async function runDelegationPlan(
     });
   }
 
-  // Set timeout for delegation completion
+  // Set timeout for delegation completion.
+  //
+  // AUDIT-2026-06-02 (lifecycle): the previous version did not store the
+  // timer id; even when completionPromise won the race the timer kept
+  // firing and called forceFinish on an already-completed plan, which
+  // re-released shared state and could emit duplicate events. We now
+  // capture the id and clear it whichever side of the race wins.
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<DelegationResult>((resolve) => {
-    setTimeout(() => {
+    timeoutId = setTimeout(() => {
+      timeoutId = null;
       const result = forceFinish(plan.id);
       if (result) {
         resolve(result);
@@ -181,6 +189,11 @@ export async function runDelegationPlan(
 
   // Wait for either all agents to complete or timeout
   const result = await Promise.race([completionPromise, timeoutPromise]);
+
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  }
 
   // Clean up event listener
   unsubscribeTaskResults();

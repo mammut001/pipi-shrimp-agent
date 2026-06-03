@@ -146,9 +146,31 @@ export interface ChatState {
   addMessageToSession: (sessionId: string, message: Message) => Promise<void>;
 
   /**
-   * Update last message (for streaming updates) and persist to database
+   * Update last message (for streaming updates) and persist to database.
+   *
+   * AUDIT-2026-06-02 (session isolation): the optional `targetSessionId`
+   * lets callers explicitly pin the session whose last assistant message is
+   * being mutated. Without it the method falls back to `currentSessionId`,
+   * which after a fast session switch can be the WRONG session and route the
+   * streaming tail / final content into someone else's last message. Long-
+   * running sendMessage / generateBrowserResultResponse / stopGeneration
+   * paths should always pass their captured `activeSessionId` here.
+   *
+   * AUDIT-2026-06-02 (B7): the optional `toolCalls` lets the chat layer
+   * persist the tool_calls the engine actually made during the turn —
+   * without this the in-store assistant message diverges from the engine's
+   * view on reload (`buildApiMessages` drops assistant blocks whose
+   * tool_calls are not followed by matching tool_results, so the next
+   * turn either re-executes the call or loses history).
    */
-  updateLastMessage: (content: string, artifacts?: Artifact[], reasoning?: string, tokenUsage?: Message['token_usage']) => Promise<void>;
+  updateLastMessage: (
+    content: string,
+    artifacts?: Artifact[],
+    reasoning?: string,
+    tokenUsage?: Message['token_usage'],
+    targetSessionId?: string,
+    toolCalls?: ToolCall[],
+  ) => Promise<void>;
 
   /**
    * Update a specific message by ID (content + metadata) and persist to database.

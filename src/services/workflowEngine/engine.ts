@@ -185,8 +185,8 @@ export class WorkflowEngine {
     this.deps = { ...defaultDeps(), ...deps };
   }
 
-  setStreamChunkCallback(cb: StreamChunkCallback): void {
-    this.onStreamChunk = cb;
+  setStreamChunkCallback(cb: StreamChunkCallback | null): void {
+    this.onStreamChunk = cb ?? undefined;
   }
 
   getIsRunning(): boolean {

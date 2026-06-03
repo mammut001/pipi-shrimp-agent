@@ -231,6 +231,28 @@ export const useUIStore = create<UIState>((set) => ({
 
   clearPermissionLedger: () => set({ permissionLedger: [] }),
 
+  recordPermissionDecision: (entry) => {
+    // AUDIT-2026-06-02 (D6): chokepoint used by auto-approve and
+    // backend-allowed paths. Reuses the same helpers as
+    // resolvePermissionRequest so the ledger row shape is identical.
+    const request = createPermissionRequest({
+      id: entry.id,
+      toolName: entry.toolName,
+      toolInput: entry.toolInput ?? '',
+      description: entry.description ?? `Execute ${entry.toolName}?`,
+      source: entry.source,
+      workingDirectory: entry.workingDirectory,
+      commandPreview: entry.commandPreview,
+      riskReason: entry.riskReason,
+    });
+    set((state) => ({
+      permissionLedger: prependPermissionLedgerEntry(
+        state.permissionLedger,
+        createPermissionLedgerEntry(request, entry.decision),
+      ),
+    }));
+  },
+
   /**
    * Block and wait for user's permission (used by QueryEngine's generator)
    */

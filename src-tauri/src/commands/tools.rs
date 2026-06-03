@@ -56,6 +56,13 @@ pub async fn preview_tool_policy(
  * Execute a single tool call.
  *
  * Used by the frontend for individual tool execution.
+ *
+ * AUDIT-2026-06-02 (boundary): the previous implementation called
+ * `execute_with_context(&req, None)`. With `None`, `consume_matching_approval`
+ * cannot match the approval token that the frontend just obtained from
+ * `preview_tool_policy`, so every tool that required explicit confirmation
+ * failed with a "requires confirmation" error even after the user clicked
+ * approve. We now accept the `sessionId` and forward it.
  */
 #[tauri::command]
 pub async fn execute_single_tool(
@@ -72,6 +79,7 @@ pub async fn execute_single_tool(
     #[allow(non_snake_case)] apiFormat: Option<String>,
     #[allow(non_snake_case)] providerCapabilities: Option<crate::claude::provider::ProviderCapabilities>,
     #[allow(non_snake_case)] approvalToken: Option<String>,
+    #[allow(non_snake_case)] sessionId: Option<String>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<ToolCallResult, String> {
     let req = ToolCallRequest {
@@ -91,7 +99,10 @@ pub async fn execute_single_tool(
     };
 
     let registry = state.0.lock().await;
-    match registry.execute_with_context(&req, None).await {
+    match registry
+        .execute_with_context(&req, sessionId.as_deref())
+        .await
+    {
         Ok(result) => Ok(result),
         Err(error) => Ok(ToolCallResult {
             id: req.id,

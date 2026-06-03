@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useCallback } from 'react';
 import { moveBrowserSurface, setEmbeddedSurfaceVisibility } from '@/utils/browserCommands';
-import { useBrowserAgentStore } from '@/store';
+import { useBrowserAgentStore, useUIStore } from '@/store';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 
 interface BrowserSurfaceViewportProps {
@@ -16,8 +16,22 @@ export function BrowserSurfaceViewport({
 }: BrowserSurfaceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // AUDIT-2026-06-02 (F5): throttle the user-visible banner so a
+  // sustained desync (re-fires on every resize / scroll) doesn't spam.
+  // The console.warn still fires for every call so devtools has full
+  // detail; only the in-app notification is throttled.
+  const lastNotifyAtRef = useRef<number>(0);
   const { isWindowOpen, presentationMode } = useBrowserAgentStore();
   const autoResearchSetupVisible = useAutoResearchStore((state) => state.showSetupModal);
+
+  const notifyDesync = useCallback((message: string) => {
+    const now = Date.now();
+    if (now - lastNotifyAtRef.current < 5_000) {
+      return;
+    }
+    lastNotifyAtRef.current = now;
+    useUIStore.getState().addNotification('warning', message);
+  }, []);
 
   // This viewport is "active" only when isWindowOpen AND our mode matches presentationMode
   const isActive = isWindowOpen && presentationMode === mode && !autoResearchSetupVisible;
@@ -39,22 +53,33 @@ export function BrowserSurfaceViewport({
       return false;
     }
 
+    // AUDIT-2026-06-02 (silent errors): previously `.catch(() => {})` swallowed
+    // every backend failure. moveBrowserSurface positions the native browser
+    // overlay; a silent failure means the user's clicks land on offset pixels
+    // (or the wrong element entirely) without any signal. At minimum log the
+    // failure so devtools shows the desync; downstream observability can
+    // promote this to a UI surface later (F5 follow-up).
     await moveBrowserSurface(mode, {
       x: rect.left,
       y: rect.top,
       width: rect.width,
       height: rect.height,
-    }).catch(() => {});
+    }).catch((error) => {
+      console.warn('[BrowserSurfaceViewport] moveBrowserSurface failed — overlay may be desynced from native window:', error);
+      notifyDesync('Browser overlay positioning failed — clicks may land in the wrong place. Try re-opening the browser window.');
+    });
 
     return true;
-  }, [mode]);
+  }, [mode, notifyDesync]);
 
   useLayoutEffect(() => {
     clearRetry();
 
     if (!isActive) {
       // This mode is not the active one — hide the native surface
-      void setEmbeddedSurfaceVisibility(false).catch(() => {});
+      void setEmbeddedSurfaceVisibility(false).catch((error) => {
+        console.warn('[BrowserSurfaceViewport] setEmbeddedSurfaceVisibility(false) failed on deactivate:', error);
+      });
       return;
     }
 
@@ -96,7 +121,9 @@ export function BrowserSurfaceViewport({
       window.removeEventListener('resize', scheduleSync);
       window.removeEventListener('scroll', scheduleSync, true);
       // Hide on unmount / mode-switch
-      void setEmbeddedSurfaceVisibility(false).catch(() => {});
+      void setEmbeddedSurfaceVisibility(false).catch((error) => {
+        console.warn('[BrowserSurfaceViewport] setEmbeddedSurfaceVisibility(false) failed on cleanup:', error);
+      });
     };
   // Re-run whenever the active state changes (isWindowOpen OR presentationMode changed)
   // eslint-disable-next-line react-hooks/exhaustive-deps

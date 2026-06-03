@@ -275,6 +275,12 @@ async function executeConcurrentTools(
       workDir: workDir ?? undefined,
       source: 'assistant_tool_call',
       permissionMode,
+      // AUDIT-2026-06-02 (tool execution): the chat layer above already ran
+      // `runPreToolUseHooks` for each tool (see `executeConcurrentTools`
+      // earlier in this file). Skip the second pass inside `executeBatch`
+      // so classifier metrics don't double-count and a second-pass
+      // modifiedArgs can't silently clobber the first.
+      skipPreHooks: true,
       requestPermission: async (request) => {
         uiStore.updateTaskStep(request.id, 'awaiting_confirmation');
         markSessionToolStatus(activeSessionId, request.id, request.name, 'awaiting_confirmation', set, get);
@@ -378,6 +384,19 @@ async function resolveSerialToolPermission(
   },
 ): Promise<boolean> {
   if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name)) {
+    // AUDIT-2026-06-02 (D6): log the auto-approve to the ledger so the
+    // trail doesn't skip tools the user never saw.
+    deps.uiStore.getState().recordPermissionDecision({
+      id: tool.id,
+      toolName: tool.name,
+      toolInput: effectiveArgs,
+      description: permissionContext?.description,
+      source: permissionContext?.source,
+      workingDirectory: permissionContext?.workingDirectory,
+      commandPreview: permissionContext?.commandPreview,
+      riskReason: permissionContext?.riskReason,
+      decision: 'auto_approved',
+    });
     return true;
   }
 
@@ -707,6 +726,17 @@ async function executeSerialTool(
     uiStore.updateTaskStep(tool.id, 'awaiting_confirmation');
     markSessionToolStatus(activeSessionId, tool.id, tool.name, 'awaiting_confirmation', set, get);
     approvalToken = preview.approvalToken ?? null;
+  } else if (preview.decision === 'allowed') {
+    // AUDIT-2026-06-02 (D6): record backend-allowed tools too — without
+    // this the ledger only sees tools that hit the prompt, biasing the
+    // sample toward debated tools.
+    uiStore.recordPermissionDecision({
+      id: tool.id,
+      toolName: tool.name,
+      toolInput: effectiveArgs,
+      ...buildPermissionContext(tool.name, effectiveArgs, preview.reason, workDir),
+      decision: 'allowed_by_backend',
+    });
   }
 
   const approved = await resolveSerialToolPermission(
@@ -755,6 +785,9 @@ async function executeSerialTool(
       toolResultContent = await executeAgentTool(tool, effectiveArgs, activeSessionId, workDir, deps);
       toolDidFail = toolResultContent.startsWith('Error:');
     } else if (isPipelineSingleInvokeTool(tool.name)) {
+      // AUDIT-2026-06-02 (boundary): sessionId must be forwarded so the backend
+      // can match approvalToken against the session that minted it (otherwise
+      // every tool requiring confirmation fails after the user clicks Approve).
       const nativeResult = await deps.invoke<{
         content: string;
         is_error: boolean;
@@ -765,14 +798,25 @@ async function executeSerialTool(
         workDir,
         source: 'assistant_tool_call',
         approvalToken,
+        sessionId: activeSessionId,
       });
       toolResultContent = nativeResult.content;
       toolDidFail = Boolean(nativeResult.is_error);
     } else {
+      // AUDIT-2026-06-02 (boundary): the previous call forwarded only toolName /
+      // arguments / workDir — the approvalToken from preview_tool_policy and the
+      // executionId for cancel-tool-execution were silently dropped, so:
+      //   1. tools requiring user confirmation could not match their approval
+      //      and were rejected as "requires_confirmation" after the user OK'd them,
+      //   2. the cancel button became a no-op because the backend never learned
+      //      the executionId.
       toolResultContent = await deps.invoke<string>('execute_tool', {
         toolName: tool.name,
         arguments: effectiveArgs,
         workDir,
+        approvalToken,
+        sessionId: activeSessionId,
+        executionId: pendingExecutionId,
       });
       toolDidFail = toolResultContent.startsWith('Error:');
     }
@@ -826,13 +870,27 @@ export async function handleToolBatchRequest(
 
   for (const tool of chunk.tools) {
     if (tool.name === 'Skill' || tool.name === 'skill' || tool.name === 'execute_skill') {
+      // AUDIT-2026-06-02 (silent errors): the previous `catch {}` silently
+      // dropped malformed Skill args. The Skill tool's own execution still
+      // ran, but `activeSkill` stayed stale — `normalizeResumeWorkspaceToolArgs`
+      // then read the WRONG workspace shape downstream and the user got a tool
+      // result they couldn't reconcile with the agent's intent. Now we surface
+      // the parse failure to the user via an error notification, so the
+      // mismatch between "what the LLM asked for" and "what activeSkill says"
+      // is visible.
       try {
         const args = JSON.parse(tool.arguments);
         if (args.skill) {
           uiStore.setActiveSkill(args.skill);
         }
-      } catch {
-        // ignore malformed skill args and keep executing
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[Skill tool] malformed arguments for ${tool.name}:`, message, tool.arguments);
+        uiStore.addNotification(
+          'error',
+          `Skill tool received malformed arguments (${message}); activeSkill not updated.`,
+          activeSessionId,
+        );
       }
     }
   }
@@ -887,13 +945,21 @@ export async function handleToolBatchRequest(
     if (!serialIds.has(tool.id)) {
       continue;
     }
+    // AUDIT-2026-06-02 (tool execution): re-read workDir from the live
+    // session before each serial tool — a previous serial tool (or an
+    // external action) may have mutated session.workDir between the
+    // snapshot at the top of this function and the current tool, and
+    // running against the stale snapshot would mis-target paths /
+    // commands. Falls back to the snapshot when the session is gone.
+    const liveSession = get().sessions.find((session) => session.id === activeSessionId);
+    const liveWorkDir = liveSession?.workDir ?? workDir;
     allResults.push(
       await executeSerialTool(
         { id: tool.id, name: tool.name, arguments: {} },
         normalizedToolArgsById.get(tool.id) ?? tool.arguments,
         activeSessionId,
         permissionMode,
-        workDir,
+        liveWorkDir,
         get,
         set,
         deps,

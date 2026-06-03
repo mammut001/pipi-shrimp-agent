@@ -132,12 +132,31 @@ export function TerminalPanel({
     let unlistenExit: UnlistenFn | null = null;
     let cwdSetupTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    // Wire up user input / resize forwarding (safe to register before open)
+    // Wire up user input / resize forwarding (safe to register before open).
+    //
+    // AUDIT-2026-06-02 (silent errors): previously these `invoke` calls used
+    // `.catch(() => {})`, swallowing every failure. If the PTY died or IPC
+    // wedged, the user's keystrokes vanished and the panel kept looking
+    // healthy — including dangerous bytes like `rm -rf …` that the user
+    // assumed reached the shell. Now we surface failures via the existing
+    // status/errorMessage UI so the user can SEE the panel desync'd.
+    let inputErrorReported = false;
+    const reportTerminalIpcFailure = (kind: 'input' | 'resize', err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only surface the first failure to avoid spamming on a stuck PTY;
+      // subsequent failures still console.warn.
+      if (!inputErrorReported) {
+        inputErrorReported = true;
+        setStatus('error');
+        setErrorMessage(`Terminal ${kind} failed: ${msg}. Bytes you type may not reach the shell — restart this terminal.`);
+      }
+      console.warn(`[TerminalPanel] terminal_${kind} invoke failed:`, err);
+    };
     const onDataDisposable = terminal.onData((data) => {
-      invoke('terminal_input', { sessionId, data }).catch(() => {});
+      invoke('terminal_input', { sessionId, data }).catch((err) => reportTerminalIpcFailure('input', err));
     });
     const onResizeDisposable = terminal.onResize(({ rows, cols }) => {
-      invoke('terminal_resize', { sessionId, rows, cols }).catch(() => {});
+      invoke('terminal_resize', { sessionId, rows, cols }).catch((err) => reportTerminalIpcFailure('resize', err));
     });
 
     // ── Single sequential async flow ──

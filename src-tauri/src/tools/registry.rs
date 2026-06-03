@@ -171,7 +171,7 @@ impl ToolRegistry {
         req: &ToolCallRequest,
         session_id: Option<&str>,
     ) -> anyhow::Result<ToolCallResult> {
-        let (_entry, args) = self.validate_request(req, session_id)?;
+        let (entry, args) = self.validate_request(req, session_id)?;
 
         if args
             .get("__schema_validation_error")
@@ -248,7 +248,39 @@ impl ToolRegistry {
             }
         }
 
-        self.execute(req)
+        self.execute_with_validated_entry(req, entry, args)
+    }
+
+    /// Execute the tool's handler with already-validated args.
+    ///
+    /// AUDIT-2026-06-02 (boundary): `execute_with_context` previously fell through
+    /// to `self.execute(req)` after running policy validation with the session_id.
+    /// That re-ran `validate_request(req, None)`, which consumed the approval token
+    /// against a session-less context — every confirmation-required tool failed
+    /// even after the user clicked Approve. Now `execute_with_context` dispatches
+    /// the handler directly via this helper without re-validating.
+    fn execute_with_validated_entry(
+        &self,
+        req: &ToolCallRequest,
+        entry: &ToolEntry,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolCallResult> {
+        match (entry.handler)(args) {
+            Ok(content) => Ok(ToolCallResult {
+                id: req.id.clone(),
+                name: req.name.clone(),
+                content,
+                is_error: false,
+                error_code: None,
+            }),
+            Err(e) => Ok(ToolCallResult {
+                id: req.id.clone(),
+                name: req.name.clone(),
+                content: format!("Error: {}", e),
+                is_error: true,
+                error_code: Some("internal_error".to_string()),
+            }),
+        }
     }
 
     /// Check if a tool is concurrency-safe

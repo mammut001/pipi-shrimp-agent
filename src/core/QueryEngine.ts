@@ -77,6 +77,32 @@ function isMalformedToolCallError(error: unknown): boolean {
 export interface RunChatTurnOptions {
   noTools?: boolean;
   allowedTools?: string[];
+  /**
+   * AUDIT-2026-06-02 (session isolation, B4): an AbortSignal the engine
+   * consults between API calls and at chunk boundaries. The previous
+   * cancellation mechanism was the module-scope `cancellationRequestedSessions`
+   * set in chatActions, which works but is invisible to callers that don't
+   * live in chatActions. When set, the engine yields an `error` event with
+   * a `ChatGenerationCancelledError`-shaped error and returns immediately.
+   * The streaming timeout in chatActions now uses this to actually break
+   * the for-await loop instead of relying on `stop_subprocess` and hoping
+   * the engine drains.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Error sentinel emitted when `RunChatTurnOptions.signal` aborts during
+ * a turn. Re-uses the existing ChatGenerationCancelledError shape so the
+ * consumer's existing catch path applies.
+ */
+export class RunChatTurnAbortedError extends Error {
+  sessionId: string;
+  constructor(sessionId: string, reason?: string) {
+    super(reason ? `runChatTurn aborted for session ${sessionId}: ${reason}` : `runChatTurn aborted for session ${sessionId}`);
+    this.name = 'RunChatTurnAbortedError';
+    this.sessionId = sessionId;
+  }
 }
 
 export async function* runChatTurn(
@@ -100,6 +126,11 @@ export async function* runChatTurn(
   let toolBudgetSummary = createToolBudgetSummary(maxToolBudget);
   let reserveFinalResponseRound = false;
   let malformedToolCallRetryCount = 0;
+  // Bounded retry counter for "model returned empty after a tool result" — without this nudge,
+  // a model that answers "好" + tool_call, then stalls on the post-tool round, causes the entire
+  // conversation to end silently after the bare acknowledgement.
+  let emptyAfterToolRetries = 0;
+  const MAX_EMPTY_AFTER_TOOL_RETRIES = 1;
 
   // Memory hook — fires after each final (no-tool-call) response
   const memoryHook = createMemoryHook({ projectRoot });
@@ -109,11 +140,33 @@ export async function* runChatTurn(
   // This prevents transient tool failures from prematurely exhausting maxModelRounds.
   let modelRound = 0;
 
+  // AUDIT-2026-06-02 (B4): if an abort signal was passed and is already
+  // aborted, refuse to start the turn at all.
+  const signal = options?.signal;
+  const abortReason = (): string | undefined => {
+    if (!signal) return undefined;
+    const reason = (signal as any).reason;
+    if (reason instanceof Error) return reason.message;
+    if (typeof reason === 'string') return reason;
+    return reason ? String(reason) : 'abort signal fired';
+  };
+  if (signal?.aborted) {
+    yield { type: 'error', error: new RunChatTurnAbortedError(sessionId, abortReason()) };
+    return;
+  }
+
   while (
     !isTurnComplete
     && modelRound < maxModelRounds
     && (toolBudgetSummary.toolBudgetUsedRaw < maxToolBudget || reserveFinalResponseRound)
   ) {
+    // AUDIT-2026-06-02 (B4): check between rounds so the streaming-timeout
+    // path in chatActions actually breaks the loop instead of letting the
+    // engine drain naturally.
+    if (signal?.aborted) {
+      yield { type: 'error', error: new RunChatTurnAbortedError(sessionId, abortReason()) };
+      return;
+    }
     round++; // round tracks overall loop iterations for logging/debugging
     modelRound++; // modelRound tracks actual API calls made
     
@@ -189,6 +242,13 @@ export async function* runChatTurn(
       try {
         // Consume the chunks stream
         for await (const chunk of stream) {
+          // AUDIT-2026-06-02 (B4): abort mid-stream too. Without this an
+          // engine sitting on a slow LLM response would only learn about
+          // the cancel between API calls.
+          if (signal?.aborted) {
+            yield { type: 'error', error: new RunChatTurnAbortedError(sessionId, abortReason()) };
+            return;
+          }
           if (chunk.type === 'text_delta') {
             assistantMessageContent += chunk.content;
             yield { type: 'text_delta', content: chunk.content };
@@ -262,7 +322,43 @@ export async function* runChatTurn(
     if (retryDueToMalformedToolCall) {
       continue;
     }
-    
+
+    // CONTINUITY FIX: detect "model produced nothing after a tool result" and nudge once.
+    // The repro case: user asks "看一下这个项目"; round 1 the model emits "好" + a tool_call;
+    // tool result is appended; round 2 the model returns an empty stream (no text, no tools).
+    // The original code path below would push an empty assistant message, see !hasToolCalls,
+    // mark isTurnComplete=true, and end the turn — the user sees just "好" with no follow-up.
+    // Instead, inject one explicit continuation prompt and re-issue the API call.
+    const lastMessage = currentMessages[currentMessages.length - 1];
+    const lastMessageContent =
+      typeof lastMessage?.content === 'string' ? lastMessage.content : '';
+    const lastWasToolResult = Boolean(
+      lastMessage
+        && lastMessage.role === 'user'
+        && (lastMessageContent.startsWith('__TOOL_RESULT__:') || lastMessage.tool_call_id),
+    );
+    const responseIsEmpty =
+      !hasToolCalls
+      && assistantMessageContent.trim().length === 0
+      && assistantMessageReasoning.trim().length === 0;
+    if (
+      lastWasToolResult
+      && responseIsEmpty
+      && emptyAfterToolRetries < MAX_EMPTY_AFTER_TOOL_RETRIES
+    ) {
+      emptyAfterToolRetries += 1;
+      currentMessages.push({
+        role: 'user',
+        content:
+          "You ran one or more tools but did not respond afterward. Please now answer the user's original request using the tool result(s) above — briefly summarize what you found, call more tools if you still need more context, and follow through to a real final answer in the same language as the user. Do not stop after a bare acknowledgement.",
+      });
+      yield {
+        type: 'status_update',
+        message: 'Model returned an empty response after tool results. Nudging it to continue.',
+      };
+      continue;
+    }
+
     // Record the Assistant's turn in the local history BEFORE yielding tool execution.
     const assistantMessage = {
       role: 'assistant',
