@@ -18,7 +18,7 @@ use crate::commands::file::{
     write_file_for_tool,
 };
 use crate::tools::ssh_bridge::{execute_ssh_exec, execute_ssh_read_file, execute_ssh_upload};
-use jsonschema::{JSONSchema, ValidationError};
+use jsonschema::Validator;
 
 /// Tool handler: receives parsed JSON arguments, returns result string
 pub type ToolHandler = Arc<dyn Fn(serde_json::Value) -> anyhow::Result<String> + Send + Sync>;
@@ -27,7 +27,7 @@ pub type ToolHandler = Arc<dyn Fn(serde_json::Value) -> anyhow::Result<String> +
 struct ToolEntry {
     handler: ToolHandler,
     metadata: ToolMetadata,
-    compiled_schema: Option<JSONSchema>,
+    compiled_schema: Option<Validator>,
 }
 
 pub struct ToolRegistry {
@@ -53,7 +53,7 @@ impl ToolRegistry {
 
     /// Register a tool with its handler and metadata
     pub fn register(&mut self, name: &str, handler: ToolHandler, metadata: ToolMetadata) {
-        let compiled_schema = JSONSchema::compile(&metadata.input_schema).ok();
+        let compiled_schema = Validator::new(&metadata.input_schema).ok();
         self.tools.insert(
             name.to_string(),
             ToolEntry {
@@ -79,9 +79,13 @@ impl ToolRegistry {
         })?;
 
         if let Some(schema) = &entry.compiled_schema {
-            if let Err(errors) = schema.validate(&args) {
-                let error_msgs: Vec<String> =
-                    errors.map(|e: ValidationError| format!("{}", e)).collect();
+            // AUDIT-2026-06-02 (jsonschema 0.18→0.46): the new API returns
+            // `Result<(), ValidationError>` (single error semantics) instead
+            // of the old `Result<Vec<ValidationError>, _>`. Wrap the single
+            // error into a one-element vec so the downstream `messages`
+            // shape stays identical.
+            if let Err(error) = schema.validate(&args) {
+                let error_msgs: Vec<String> = vec![format!("{}", error)];
                 return Ok((
                     entry,
                     serde_json::json!({
