@@ -42,8 +42,8 @@ importers:
         specifier: ^3.3.3
         version: 3.3.3
       grammy:
-        specifier: ^1.21.0
-        version: 1.41.1
+        specifier: ^1.42.0
+        version: 1.42.0
       mermaid:
         specifier: ^10.6.0
         version: 10.9.5
@@ -568,8 +568,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@grammyjs/types@3.25.0':
-    resolution: {integrity: sha512-iN9i5p+8ZOu9OMxWNcguojQfz4K/PDyMPOnL7PPCON+SoA/F8OKMH3uR7CVUkYfdNe0GCz8QOzAWrnqusQYFOg==}
+  '@grammyjs/types@3.26.0':
+    resolution: {integrity: sha512-jlnyfxfev/2o68HlvAGRocAXgdPPX5QabG7jZlbqC2r9DZyWBfzTlg+nu3O3Fy4EhgLWu28hZ/8wr7DsNamP9A==}
 
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
@@ -1862,8 +1862,8 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  grammy@1.41.1:
-    resolution: {integrity: sha512-wcHAQ1e7svL3fJMpDchcQVcWUmywhuepOOjHUHmMmWAwUJEIyK5ea5sbSjZd+Gy1aMpZeP8VYJa+4tP+j1YptQ==}
+  grammy@1.42.0:
+    resolution: {integrity: sha512-1AdCge+AkjSdp2FwfICSFnVbl8Mq3KVHJDy+DgTI9+D6keJ0zWALPRKas5jv/8psiCzL4N2cEOcGW7O45Kn39g==}
     engines: {node: ^12.20.0 || >=14.13.1}
 
   handlebars@4.7.9:
@@ -3725,7 +3725,7 @@ snapshots:
 
   '@exodus/bytes@1.15.0': {}
 
-  '@grammyjs/types@3.25.0': {}
+  '@grammyjs/types@3.26.0': {}
 
   '@isaacs/cliui@8.0.2':
     dependencies:
@@ -5087,9 +5087,9 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  grammy@1.41.1:
+  grammy@1.42.0:
     dependencies:
-      '@grammyjs/types': 3.25.0
+      '@grammyjs/types': 3.26.0
       abort-controller: 3.0.0
       debug: 4.4.3
       node-fetch: 2.7.0
