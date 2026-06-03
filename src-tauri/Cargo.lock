@@ -907,10 +907,23 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df6916408a724339aa77b18214233355f3eb04c42eb895e5f8909215bd8a7a91"
 dependencies = [
- "comemo-macros",
+ "comemo-macros 0.4.0",
  "once_cell",
  "parking_lot",
  "siphasher 1.0.2",
+]
+
+[[package]]
+name = "comemo"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c963350b2b08aa4b725d7802593245380ab53dacfedcaa971385fc33306c0d4"
+dependencies = [
+ "comemo-macros 0.5.1",
+ "parking_lot",
+ "rustc-hash",
+ "siphasher 1.0.2",
+ "slab",
 ]
 
 [[package]]
@@ -918,6 +931,17 @@ name = "comemo-macros"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8936e42f9b4f5bdfaf23700609ac1f11cb03ad4c1ec128a4ee4fd0903e228db"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "comemo-macros"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3c400139ba1389ef9e20ad2d87cda68b437a66483aa0da616bdf2cea7413853"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4357,7 +4381,7 @@ dependencies = [
  "base64 0.22.1",
  "chromiumoxide",
  "chrono",
- "comemo",
+ "comemo 0.5.1",
  "dirs 5.0.1",
  "fontdb",
  "futures",
@@ -6947,7 +6971,7 @@ dependencies = [
  "bitflags 2.11.0",
  "chinese-number",
  "ciborium",
- "comemo",
+ "comemo 0.4.0",
  "csv",
  "ecow",
  "fontdb",
@@ -7025,7 +7049,7 @@ checksum = "54f743b64330e576d31b2108626490ae1fbd7fb4bb28307536ceff3227a4e0d5"
 dependencies = [
  "base64 0.22.1",
  "bytemuck",
- "comemo",
+ "comemo 0.4.0",
  "ecow",
  "image",
  "miniz_oxide 0.7.4",
@@ -7050,7 +7074,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cef4e3640269c81ceafb09e0afe8374b2c25890e82c013550a1d25a2b9aae23b"
 dependencies = [
  "base64 0.22.1",
- "comemo",
+ "comemo 0.4.0",
  "ecow",
  "flate2",
  "ttf-parser",
@@ -7067,7 +7091,7 @@ version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3db69f2f41613b1ff6edbec44fd7dc524137f099ee36c46f560cedeaadb40c4"
 dependencies = [
- "comemo",
+ "comemo 0.4.0",
  "ecow",
  "once_cell",
  "serde",
