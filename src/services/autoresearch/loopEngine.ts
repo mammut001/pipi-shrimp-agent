@@ -62,6 +62,10 @@ import {
   parseSelfImproveResult,
   type SelfImproveResult,
 } from './selfImprove/schema';
+import {
+  parseSelfImproveResultV2,
+  type SelfImproveResultV2,
+} from './selfImprove/schemaV2';
 
 interface ParsedResult {
   metricName: string;
@@ -73,7 +77,7 @@ interface ParsedResult {
   artifactPaths: string[];
   parseSource: 'metrics_json' | 'agent_json' | 'deprecated_result_line';
   failReason?: string;
-  extra?: Record<string, number | string | boolean>;
+  extra?: Record<string, number | string | boolean | null>;
 }
 
 interface ParsedIterationMetricsResult {
@@ -711,7 +715,7 @@ function buildIterationNarrative(input: {
 function buildIterationParsedMetrics(
   metricName: string,
   metricValue: number | null,
-  extra?: Record<string, number | string | boolean>,
+  extra?: Record<string, number | string | boolean | null>,
 ): Record<string, number | string | boolean | null> {
   return {
     [metricName]: metricValue,
@@ -776,6 +780,12 @@ function getRunArtifactPaths(runDir: RunDir): string[] {
     runDir.hypothesisPath,
     runDir.diffPath,
     runDir.metricsPath,
+    `${runDir.iterDir}/result.json`,
+    `${runDir.iterDir}/events.jsonl`,
+    `${runDir.iterDir}/run.jsonl`,
+    `${runDir.iterDir}/apply.md`,
+    `${runDir.iterDir}/revert.md`,
+    `${runDir.iterDir}/logs`,
     runDir.statusPath,
     runDir.reflectionInputPath,
     runDir.reflectionRawPath,
@@ -785,6 +795,79 @@ function getRunArtifactPaths(runDir: RunDir): string[] {
     `${runDir.logsDir}/stderr.log`,
     `${runDir.logsDir}/combined.log`,
   ];
+}
+
+/**
+ * Reconstruct a v2-shaped result from the legacy `ParsedResult` so we can
+ * write a `result.json` artifact that's compatible with the patch gate
+ * viewer. We don't try to recover `verification[]` or `decision` — those are
+ * only present when the agent writes a real v2 result. The viewer prefers
+ * the real v2 if present and falls back to this synthesized view.
+ */
+function synthesizeV2FromParsed(parsed: ParsedResult, iter: number): SelfImproveResultV2 | null {
+  const extra = parsed.extra;
+  if (!extra) return null;
+  const buildPassed = (extra.buildPassed === 'unknown' || extra.buildPassed === undefined)
+    ? null
+    : Boolean(extra.buildPassed);
+  const testsPassed = (extra.testsPassed === 'unknown' || extra.testsPassed === undefined)
+    ? null
+    : Boolean(extra.testsPassed);
+  const typecheckPassed = (extra.typecheckPassed === 'unknown' || extra.typecheckPassed === undefined)
+    ? null
+    : Boolean(extra.typecheckPassed);
+  const status = (parsed.status === 'IMPROVED' || parsed.status === 'NOT_IMPROVED' || parsed.status === 'FAILED')
+    ? (parsed.status === 'IMPROVED' ? 'IMPROVED' : parsed.status === 'NOT_IMPROVED' ? 'NO_CHANGE' : 'FAILED')
+    : 'FAILED';
+  const riskLevel = (extra.riskLevel === 'low' || extra.riskLevel === 'medium' || extra.riskLevel === 'high')
+    ? extra.riskLevel
+    : 'low';
+  const changedFiles = (parsed.change ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+  return {
+    schemaVersion: 2,
+    mode: 'repo_self_improve',
+    iteration: iter,
+    phaseResults: {},
+    changedFiles,
+    commandsRun: [],
+    buildPassed,
+    testsPassed,
+    typecheckPassed,
+    riskLevel,
+    status,
+    summary: parsed.hypothesis ?? '',
+    nextRecommendation: parsed.reasoning ?? '',
+    issue: extra.issueSummary
+      ? {
+          summary: String(extra.issueSummary),
+          evidence: [],
+          category: (extra.issueCategory as 'build' | 'test' | 'typecheck' | 'lint' | 'security' | 'performance' | 'docs' | 'refactor' | 'bugfix' | 'other' | undefined) ?? 'other',
+          severity: (extra.issueSeverity as 'info' | 'minor' | 'major' | 'critical' | undefined) ?? 'info',
+        }
+      : undefined,
+    patch: extra.patchDiffPath
+      ? {
+          diffPath: String(extra.patchDiffPath),
+          addedLines: Number(extra.patchAddedLines ?? 0),
+          deletedLines: Number(extra.patchDeletedLines ?? 0),
+          reverted: Boolean(extra.patchReverted),
+        }
+      : undefined,
+    workspace: extra.dirtyBefore !== undefined || extra.dirtyAfter !== undefined
+      ? {
+          dirtyBefore: Boolean(extra.dirtyBefore),
+          dirtyAfter: Boolean(extra.dirtyAfter),
+        }
+      : undefined,
+    decision: extra.decisionStatus
+      ? {
+          status: status as 'IMPROVED' | 'NO_CHANGE' | 'FAILED' | 'NEEDS_REVIEW',
+          score: typeof extra.decisionScore === 'number' ? extra.decisionScore : 0,
+          nextRecommendation: parsed.reasoning ?? '',
+        }
+      : undefined,
+  };
 }
 
 async function assertRemoteLinux(cfg: SshConfig): Promise<void> {
@@ -1077,18 +1160,55 @@ export async function startExperimentLoop(
 
       if (isSelfImproveMode) {
         // Self-improve mode: first try to read the structured result from the metrics file,
-        // then fall back to parsing from agent output text.
-        let selfImproveResult = null;
+        // then fall back to parsing from agent output text. Prefer the v2 schema; v1 is
+        // auto-upgraded and we tag the source schema for downstream UI surfaces.
+        let selfImproveResult: SelfImproveResult | null = null;
+        let v2Result: SelfImproveResultV2 | null = null;
+        let sourceSchema: 1 | 2 = 2;
         try {
           const metricsFileContent = await readTargetText(artifactCfg, runDir.metricsPath);
           if (metricsFileContent) {
-            selfImproveResult = parseSelfImproveResult(metricsFileContent);
+            const parsedV2 = parseSelfImproveResultV2(metricsFileContent);
+            if (parsedV2) {
+              v2Result = parsedV2.result;
+              sourceSchema = parsedV2.sourceSchema;
+              selfImproveResult = parsedV2.sourceSchema === 1 && parsedV2.originalV1
+                ? parsedV2.originalV1
+                : (() => {
+                    // v2 result — synthesize a v1 view for legacy downstream fields
+                    return {
+                      schemaVersion: 1,
+                      mode: 'repo_self_improve',
+                      iteration: parsedV2.result.iteration,
+                      phaseResults: parsedV2.result.phaseResults,
+                      changedFiles: parsedV2.result.changedFiles,
+                      commandsRun: parsedV2.result.commandsRun,
+                      buildPassed: parsedV2.result.buildPassed,
+                      testsPassed: parsedV2.result.testsPassed,
+                      typecheckPassed: parsedV2.result.typecheckPassed,
+                      riskLevel: parsedV2.result.riskLevel,
+                      status: parsedV2.result.status,
+                      summary: parsedV2.result.summary,
+                      nextRecommendation: parsedV2.result.nextRecommendation,
+                    };
+                  })();
+            } else {
+              // Last-resort legacy parser
+              selfImproveResult = parseSelfImproveResult(metricsFileContent);
+              if (selfImproveResult) sourceSchema = 1;
+            }
           }
         } catch {
           // File read failed — fall through to agent output parsing
         }
         if (!selfImproveResult) {
-          selfImproveResult = parseSelfImproveAgentOutput(agentOutput);
+          const fallbackOutput = parseSelfImproveAgentOutput(agentOutput);
+          if (fallbackOutput) {
+            selfImproveResult = fallbackOutput;
+            // The v2 wrap was already attempted inside parseSelfImproveAgentOutput; if it
+            // returned a v1, keep sourceSchema as 1; otherwise mark as 2.
+            sourceSchema = fallbackOutput.schemaVersion;
+          }
         }
         if (selfImproveResult) {
           const score = computeSelfImproveScore(selfImproveResult);
@@ -1101,26 +1221,67 @@ export async function startExperimentLoop(
           selfImproveResult.riskLevel = riskLevel;
           selfImproveResult.status = status;
 
+          // Pull v2-only fields when available; fall back to undefined when v1.
+          const v2Issue = v2Result?.issue;
+          const v2Patch = v2Result?.patch;
+          const v2Verification = v2Result?.verification;
+          const v2Workspace = v2Result?.workspace;
+          const v2Decision = v2Result?.decision;
+
+          const extra: Record<string, number | string | boolean | null> = {
+            selfImproveMode: true,
+            sourceSchema,
+            riskLevel: selfImproveResult.riskLevel,
+            buildPassed: selfImproveResult.buildPassed ?? 'unknown',
+            testsPassed: selfImproveResult.testsPassed ?? 'unknown',
+            typecheckPassed: selfImproveResult.typecheckPassed ?? 'unknown',
+            score,
+          };
+
+          if (v2Issue) {
+            extra.issueCategory = v2Issue.category;
+            extra.issueSeverity = v2Issue.severity;
+            extra.issueSummary = v2Issue.summary;
+          }
+          if (v2Patch) {
+            extra.patchDiffPath = v2Patch.diffPath;
+            extra.patchAddedLines = v2Patch.addedLines;
+            extra.patchDeletedLines = v2Patch.deletedLines;
+            extra.patchReverted = v2Patch.reverted;
+          }
+          if (v2Workspace) {
+            extra.dirtyBefore = v2Workspace.dirtyBefore;
+            extra.dirtyAfter = v2Workspace.dirtyAfter;
+          }
+          if (v2Verification) {
+            extra.verificationCount = v2Verification.length;
+            extra.verificationFailures = v2Verification.filter((v) => v.status === 'fail' || (v.exitCode !== null && v.exitCode !== 0)).length;
+          }
+          if (v2Decision) {
+            extra.decisionStatus = v2Decision.status;
+            extra.decisionScore = v2Decision.score;
+          }
+
+          // Embed v2 evidence & full nextRecommendation into parsedMetrics for UI.
+          // v1 already exposed summary/nextRecommendation via hypothesis/reasoning.
+          // For v2 we additionally surface evidence as part of reasoning so the UI
+          // can render it without a separate field.
+          const evidence = v2Issue?.evidence?.length ? `\n\nEvidence:\n${v2Issue.evidence.join('\n')}` : '';
+          const reasoningWithEvidence = `${selfImproveResult.nextRecommendation}${evidence}`;
+
           parsed = {
             metricName: 'repo_health',
             metricValue: buildSelfImproveMetricValue(selfImproveResult),
             status: mapSelfImproveStatusToExperimentStatus(status),
             hypothesis: selfImproveResult.summary,
             change: selfImproveResult.changedFiles.join(', '),
-            reasoning: selfImproveResult.nextRecommendation,
+            reasoning: reasoningWithEvidence,
             artifactPaths: [],
             parseSource: 'agent_json',
             failReason: status === 'FAILED' || status === 'NEEDS_REVIEW'
               ? `Verification: build=${selfImproveResult.buildPassed}, tests=${selfImproveResult.testsPassed}, typecheck=${selfImproveResult.typecheckPassed}`
               : undefined,
-            extra: {
-              selfImproveMode: true,
-              riskLevel: selfImproveResult.riskLevel,
-              buildPassed: selfImproveResult.buildPassed ?? 'unknown',
-              testsPassed: selfImproveResult.testsPassed ?? 'unknown',
-              typecheckPassed: selfImproveResult.typecheckPassed ?? 'unknown',
-              score,
-            },
+            extra,
           };
         } else {
           parseError = 'Could not parse self_improve_result.json from agent output.';
@@ -1143,6 +1304,26 @@ export async function startExperimentLoop(
       const durationMs = Date.now() - startMs;
 
       await writeTargetText(artifactCfg, runDir.diffPath, diff);
+
+      // Persist a v2-shaped result.json (if we got a structured result). This
+      // makes the patch gate artifacts (apply.md, revert.md, result.json,
+      // events.jsonl) consistent between the UI loop and the headless runner.
+      if (isSelfImproveMode && parsed?.extra) {
+        try {
+          const v2Synthesized = synthesizeV2FromParsed(parsed, runDir.iter);
+          if (v2Synthesized) {
+            await writeTargetText(
+              artifactCfg,
+              `${runDir.iterDir}/result.json`,
+              `${JSON.stringify(v2Synthesized, null, 2)}\n`,
+            );
+          }
+        } catch {
+          // Non-fatal: a missing result.json is not a hard error in the
+          // legacy loop path. The patch-gate artifact viewer will just show
+          // a "no result.json" state.
+        }
+      }
 
       if (!parsed) {
         const failureReason = parseError ?? 'Could not parse metrics.json or structured agent output.';

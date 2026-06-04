@@ -11,6 +11,8 @@ import { t } from '@/i18n';
 import { TerminalPanel } from '@/components';
 import { AutoResearchTabs } from '@/components/autoresearch/AutoResearchTabs';
 import { AutoResearchRunDetailDocument } from '@/components/autoresearch/AutoResearchRunDetailDocument';
+import { AutoResearchPatchGateArtifacts } from '@/components/autoresearch/AutoResearchPatchGateArtifacts';
+import { AutoResearchPatchGateStatusCard } from '@/components/autoresearch/AutoResearchPatchGateStatusCard';
 import { MainLayout } from '@/layout';
 import { useSettingsStore } from '@/store';
 import {
@@ -246,15 +248,16 @@ function ExperimentDetailPanel() {
         <label className="text-xs text-gray-500 uppercase tracking-wider">{t('autoresearch.reasoning')}</label>
         <p className="text-gray-600 mt-1 whitespace-pre-wrap">{entry.reasoning || t('autoresearch.emptyValue')}</p>
       </div>
+      {entry.parsedMetrics?.selfImproveMode && (
+        <AutoResearchPatchGateStatusCard
+          iteration={entry}
+          className="mt-3"
+        />
+      )}
       {entry.artifactPaths && entry.artifactPaths.length > 0 && (
-        <div>
-          <label className="text-xs text-gray-500 uppercase tracking-wider">Artifacts</label>
-          <div className="mt-1 space-y-1">
-            {entry.artifactPaths.slice(0, 8).map((artifactPath) => (
-              <p key={artifactPath} className="text-xs text-gray-500 break-all font-mono">{artifactPath}</p>
-            ))}
-          </div>
-        </div>
+        <AutoResearchPatchGateArtifacts
+          artifactPaths={entry.artifactPaths}
+        />
       )}
       {selectedRun && selectedRun.events.length > 0 && (
         <div>
@@ -316,6 +319,9 @@ function AutoResearchView() {
   );
   const [verificationPreset, setVerificationPreset] = useState<VerificationPresetId>(
     resolveVerificationPresetId(getAutoResearchDefaultConfig().verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit']),
+  );
+  const [permissionProfile, setPermissionProfile] = useState<'read_only' | 'workspace_write' | 'danger_full_access'>(
+    getAutoResearchDefaultConfig().permissionProfile ?? 'workspace_write',
   );
   const agentConfig = useMemo(
     () => resolveActiveAgentConfig(),
@@ -525,6 +531,7 @@ function AutoResearchView() {
       connectionTestStatus: connectionTest.status,
       mode: autoResearchMode,
       verificationCommands: isSelfImprove ? filteredCommands : undefined,
+      permissionProfile: isSelfImprove ? permissionProfile : undefined,
     });
     if (!validation.value) {
       setSetupError(validation.error);
@@ -751,6 +758,25 @@ function AutoResearchView() {
                           onClick={() => setVerificationCommands([...verificationCommands, ''])}
                         >+ Add command</button>
                       )}
+                    </div>
+                  )}
+
+                  {/* Permission profile selector */}
+                  <label className="block text-xs font-medium text-gray-600 mt-3">Permission Profile</label>
+                  <select
+                    aria-label="Permission profile"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-emerald-400 transition-colors bg-white"
+                    value={permissionProfile}
+                    onChange={e => setPermissionProfile(e.target.value as 'read_only' | 'workspace_write' | 'danger_full_access')}
+                  >
+                    <option value="read_only">Read-only</option>
+                    <option value="workspace_write">Workspace write (default)</option>
+                    <option value="danger_full_access">Danger: full access</option>
+                  </select>
+                  {permissionProfile === 'danger_full_access' && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
+                      <strong>Danger:</strong> removes the in-harness command, write-root, and diff-size checks.
+                      Only use this for trusted recovery flows. The patch is still not auto-applied.
                     </div>
                   )}
                 </div>

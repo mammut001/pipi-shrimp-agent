@@ -27,6 +27,10 @@ import {
   type VerificationPresetId,
 } from '@/services/autoresearch/defaultConfig';
 import {
+  listPermissionProfiles,
+  type PermissionProfileId,
+} from '@/services/autoresearch/permissions';
+import {
   logAutoResearchSetupFailure,
   parseOptionalBaseline,
   startAutoResearchRun,
@@ -148,6 +152,9 @@ export function AutoResearchSetupModal() {
   const [verificationPreset, setVerificationPreset] = useState<VerificationPresetId>(
     resolveVerificationPresetId(getAutoResearchDefaultConfig().verificationCommands ?? resolveVerificationCommands(DEFAULT_VERIFICATION_PRESET)),
   );
+  const [permissionProfile, setPermissionProfile] = useState<PermissionProfileId>(
+    getAutoResearchDefaultConfig().permissionProfile ?? 'workspace_write',
+  );
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
   const setupLocked = lifecycleLock.locked;
   const lockMessage = setupLocked
@@ -197,6 +204,7 @@ export function AutoResearchSetupModal() {
     setExperimentDir(config.experimentDir);
     setRepositoryPath(config.repositoryPath);
     setAutoResearchMode(config.mode);
+    setPermissionProfile(config.permissionProfile);
     const presetId = resolveVerificationPresetId(config.verificationCommands);
     setVerificationPreset(presetId);
     setVerificationCommands(
@@ -420,6 +428,7 @@ export function AutoResearchSetupModal() {
       verificationCommands: autoResearchMode === 'repo_self_improve'
         ? filteredVerificationCommands
         : undefined,
+      permissionProfile: autoResearchMode === 'repo_self_improve' ? permissionProfile : undefined,
     });
     if (!validation.value) {
       setSubmitError(validation.error);
@@ -794,6 +803,29 @@ export function AutoResearchSetupModal() {
                     value={maxIter}
                     onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
                   />
+                </div>
+                <div className="space-y-1.5">
+                  <FieldLabel label="Permission Profile" />
+                  <select
+                    aria-label="Permission profile"
+                    className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white"
+                    value={permissionProfile}
+                    onChange={e => setPermissionProfile(e.target.value as PermissionProfileId)}
+                  >
+                    {listPermissionProfiles().map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.label}</option>
+                    ))}
+                  </select>
+                  <InlineHint>
+                    {listPermissionProfiles().find((p) => p.id === permissionProfile)?.description}
+                  </InlineHint>
+                  {permissionProfile === 'danger_full_access' && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[10px] text-red-700">
+                      <strong>Danger:</strong> danger_full_access removes the in-harness command, write-root, and
+                      diff-size checks. Only use this for trusted recovery flows. The patch is still not auto-applied
+                      to the original repo.
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

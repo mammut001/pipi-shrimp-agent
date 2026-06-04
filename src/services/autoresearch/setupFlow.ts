@@ -21,6 +21,8 @@ import { assertAutoResearchLifecycleUnlocked } from './runLock';
 import type { AutoResearchPreflightResult } from './preflight';
 import { sanitizeAutoResearchResumeSshConfig } from './resumeToken';
 
+import type { PermissionProfileId } from './permissions';
+
 export type AutoResearchConnectionTestStatus = 'idle' | 'testing' | 'success' | 'error';
 
 export interface AutoResearchSetupDraft {
@@ -35,6 +37,7 @@ export interface AutoResearchSetupDraft {
   connectionTestStatus?: AutoResearchConnectionTestStatus;
   mode?: 'ml_experiment' | 'repo_self_improve';
   verificationCommands?: string[];
+  permissionProfile?: PermissionProfileId;
 }
 
 export interface AutoResearchValidatedSetup {
@@ -46,6 +49,7 @@ export interface AutoResearchValidatedSetup {
   baseline: number | null;
   mode?: 'ml_experiment' | 'repo_self_improve';
   verificationCommands?: string[];
+  permissionProfile: PermissionProfileId;
 }
 
 interface StartCallbacks {
@@ -64,6 +68,7 @@ interface StartCallbacks {
     agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
     mode?: 'ml_experiment' | 'repo_self_improve';
     verificationCommands?: string[];
+    permissionProfile?: PermissionProfileId;
   }) => void;
 }
 
@@ -121,6 +126,7 @@ export function validateAutoResearchSetupDraft(draft: AutoResearchSetupDraft): {
     iterations: draft.iterations,
     mode: draft.mode,
     verificationCommands: draft.verificationCommands,
+    permissionProfile: draft.permissionProfile,
   });
 
   if (sshConfig.mode === 'ssh') {
@@ -168,6 +174,7 @@ export function validateAutoResearchSetupDraft(draft: AutoResearchSetupDraft): {
       baseline,
       mode: normalizedDefaults.mode,
       verificationCommands: normalizedDefaults.verificationCommands,
+      permissionProfile: normalizedDefaults.permissionProfile,
     },
   };
 }
@@ -289,6 +296,7 @@ export async function startAutoResearchRun(
     iterations: setup.iterations,
     mode: setup.mode ?? 'ml_experiment',
     verificationCommands: setup.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+    permissionProfile: setup.permissionProfile,
   });
   callbacks.initSession({
     id: sessionId,
@@ -303,6 +311,7 @@ export async function startAutoResearchRun(
     agentConfigSnapshot: runConfig.snapshot,
     mode: setup.mode ?? 'ml_experiment',
     verificationCommands: setup.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+    permissionProfile: setup.permissionProfile,
   });
 
   const [{ createAutoResearchSendMessage }, { startExperimentLoop }] = await Promise.all([
@@ -415,6 +424,7 @@ export async function resumeInterruptedAutoResearchRun(
     iterations: token.maxIterations || run.config.iterations,
     mode: run.config.mode ?? 'ml_experiment',
     verificationCommands: run.config.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+    permissionProfile: run.config.permissionProfile ?? 'workspace_write',
   });
   useAutoResearchStore.getState().activateHistoricalRun({
     runId,

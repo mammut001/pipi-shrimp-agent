@@ -24,7 +24,7 @@ export interface IterationMetrics {
   durationMs: number;
   startedAt: string;
   finishedAt: string;
-  extra?: Record<string, number | string | boolean>;
+  extra?: Record<string, number | string | boolean | null>;
   reflection?: {
     parserPath?: string | null;
     retryCount?: number;
@@ -49,7 +49,7 @@ export interface MetricsArtifactPayload {
   change?: string;
   reasoning?: string;
   artifactPaths?: string[];
-  extra?: Record<string, number | string | boolean>;
+  extra?: Record<string, number | string | boolean | null>;
 }
 
 interface ParseMetricsArtifactOptions {

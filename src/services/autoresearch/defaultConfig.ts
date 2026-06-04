@@ -1,4 +1,8 @@
 import { sanitizePathInput } from './pathInput';
+import {
+  PROFILE_CATALOG,
+  type PermissionProfileId,
+} from './permissions';
 
 export interface AutoResearchDefaultConfig {
   workdir: string;
@@ -9,6 +13,7 @@ export interface AutoResearchDefaultConfig {
   iterations: number;
   mode: 'ml_experiment' | 'repo_self_improve';
   verificationCommands: string[];
+  permissionProfile: PermissionProfileId;
 }
 
 export type AutoResearchDefaultSource = 'defaults' | 'last-used';
@@ -87,6 +92,7 @@ export const AUTORESEARCH_FALLBACK_CONFIG: AutoResearchDefaultConfig = {
   iterations: 5,
   mode: 'ml_experiment',
   verificationCommands: ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+  permissionProfile: 'workspace_write',
 };
 
 function safeLocalStorage(): Storage | null {
@@ -196,6 +202,13 @@ function normalizeVerificationCommands(value: unknown): string[] {
     .slice(0, 10); // Max 10 commands
 }
 
+function normalizePermissionProfile(value: unknown): PermissionProfileId {
+  if (typeof value === 'string' && value in PROFILE_CATALOG) {
+    return value as PermissionProfileId;
+  }
+  return AUTORESEARCH_FALLBACK_CONFIG.permissionProfile;
+}
+
 export function normalizeAutoResearchDefaultConfig(
   input?: AutoResearchDefaultConfigInput | null,
 ): AutoResearchDefaultConfig {
@@ -208,6 +221,7 @@ export function normalizeAutoResearchDefaultConfig(
     iterations: normalizeIterations(input?.iterations, AUTORESEARCH_FALLBACK_CONFIG.iterations),
     mode: normalizeMode(input?.mode),
     verificationCommands: normalizeVerificationCommands(input?.verificationCommands),
+    permissionProfile: normalizePermissionProfile(input?.permissionProfile),
   };
 }
 

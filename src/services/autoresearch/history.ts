@@ -109,6 +109,7 @@ export interface AutoResearchRunConfig {
   configSnapshot: AutoResearchConfigSnapshot;
   mode?: AutoResearchMode;
   verificationCommands?: string[];
+  permissionProfile?: 'read_only' | 'workspace_write' | 'danger_full_access';
 }
 
 export interface AutoResearchIterationRecord {

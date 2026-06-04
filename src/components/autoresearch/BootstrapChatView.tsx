@@ -122,6 +122,7 @@ export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
         metric: result.plan.primaryMetric,
         direction,
         iterations: 50,
+        permissionProfile: 'workspace_write',
         baseline,
       }, {
         setSshConfig: autoResearchState.setSshConfig,

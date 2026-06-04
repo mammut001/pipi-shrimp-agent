@@ -336,3 +336,161 @@ pnpm run autoresearch:exec -- \
   --dry-run --json --session-id smoke-$(date +%s) \
   --verification "node -e \"console.log('ok')\""
 ```
+
+---
+
+## 11. v1.1 integration: UI ↔ headless
+
+The v1.1 release connects the harness to the actual `repo_self_improve`
+user flow. The loop engine reads v2 result artifacts and the React UI
+exposes a patch-gate artifact viewer and a status card.
+
+### How the loop engine reads v2
+
+When `mode === 'repo_self_improve'`, the loop engine:
+
+1. Reads `result.json` from `<workdir>/runs/<sessionId>/iter-NNN-<ts>/`.
+2. Tries `parseSelfImproveResultV2` first (v2 + v1 auto-upgrade).
+3. Falls back to `parseSelfImproveResult` (legacy v1).
+4. Falls back to `parseSelfImproveAgentOutput` (parses agent's text).
+5. Writes a synthesized v2 result to `result.json` if the agent only
+   produced a v1-shaped payload, so the UI viewer always has a file
+   to render.
+6. Stores the v2 issue / patch / verification / workspace / decision
+   fields in `parsedMetrics` (as both v1 and v2 field shapes), tagged
+   with `sourceSchema: 1 | 2`.
+
+The legacy `parsedMetrics.buildPassed` / `testsPassed` / `typecheckPassed`
+fields are still populated, so the v1-aware UI does not break.
+
+### How the UI surfaces artifacts
+
+The right-hand detail panel (and the dashboard table row) now render two
+new components when `parsedMetrics.selfImproveMode` is true:
+
+- **Patch Gate Status Card** — `AutoResearchPatchGateStatusCard`
+  Shows: changed files, +N added / -N deleted, per-check badges
+  (build / tests / typecheck), verification command count + failure
+  count, dirtyBefore / dirtyAfter, risk level, decision.status / score,
+  and the v1/v2 source badge. Prefers v2 fields; falls back to v1.
+- **Patch Gate Artifacts** — `AutoResearchPatchGateArtifacts`
+  Renders a button grid for `result.json`, `diff.patch`,
+  `events.jsonl` / `run.jsonl`, `apply.md`, `revert.md`, and
+  the `logs/` folder. Clicking an artifact delegates to
+  `openFileExternal` (or a host-provided handler) — **the harness
+  does not auto-apply the patch**.
+
+### Headless smoke (v1.1)
+
+```bash
+# 1. Create a small fixture repo
+rm -rf /tmp/smoke-v1-1 && mkdir -p /tmp/smoke-v1-1/{repo,work}
+cd /tmp/smoke-v1-1/repo
+git init -q && git config user.email t@t && git config user.name t
+echo "console.log('hello')" > app.js
+git add . && git commit -qm init
+
+# 2. Run one iteration headless (no LLM attached yet, no auto-apply)
+pnpm run autoresearch:exec -- \
+  --repo /tmp/smoke-v1-1/repo \
+  --workdir /tmp/smoke-v1-1/work \
+  --dry-run --json --session-id smoke-ui-v1
+# → prints JSON with runDir + result.schemaVersion=2
+
+# 3. Inspect the artifacts
+ls /tmp/smoke-v1-1/work/runs/smoke-ui-v1/iter-*/
+# apply.md  diff.patch  events.jsonl  result.json  revert.md  run.jsonl  logs/
+
+# 4. Read the patch gate report
+cat /tmp/smoke-v1-1/work/runs/smoke-ui-v1/iter-*/apply.md
+# → "Patch Gate — Apply Instructions" with diff preview
+
+# 5. Verify the JSONL event log
+head -3 /tmp/smoke-v1-1/work/runs/smoke-ui-v1/iter-*/events.jsonl
+# → run.started, preflight.completed, verification.started, ...
+
+# 6. Run the parity test to confirm UI and headless are in sync
+pnpm test -- src/services/autoresearch/__tests__/uiHeadlessParity.test.ts
+# → 8 tests pass: standard verification commands, profile ids, v2
+#   parsing, artifact paths
+```
+
+### Inspecting artifacts in the UI
+
+After a self-improve iteration (UI loop or headless runner):
+
+1. Open AutoResearch → select a run → pick an iteration.
+2. The right-hand detail panel shows the **Patch Gate Status Card**:
+   `v2` / `v1` badge, status pill, risk pill, issue summary,
+   patch line counts, verification badges, workspace state, decision.
+3. Below it the **Patch Gate Artifacts** grid lists the run's
+   artifact paths as buttons. Click `result.json` to open it,
+   `diff.patch` to inspect, `apply.md` for instructions, `logs/`
+   to view the folder.
+4. The **default behavior is read-only** — the patch is never
+   auto-applied. The artifacts are *evidence*, not actions.
+
+### How to manually apply / discard a patch
+
+When the status card says `IMPROVED` or `NO_CHANGE` and you trust
+the diff, the standard flow is:
+
+```bash
+# 1. Inspect the diff
+less /tmp/.../iter-001-.../diff.patch
+
+# 2. Read the apply instructions
+cat /tmp/.../iter-001-.../apply.md
+
+# 3. Dry-run apply (catches conflicts without touching the tree)
+cd /path/to/original/repo
+git apply --check /tmp/.../iter-001-.../diff.patch
+
+# 4. Real apply
+git apply /tmp/.../iter-001-.../diff.patch
+
+# 5. Revert if needed
+git apply -R /tmp/.../iter-001-.../diff.patch
+# or, if the patch was already committed:
+git restore --source=HEAD~1 <path>
+# or:
+git revert <commit-sha>
+```
+
+To **discard** a patch: do nothing. The original repo is never
+modified by the harness. The diff sits in the iter dir until you
+prune it (see `pruneOldRuns` in `src/services/autoresearch/runDir.ts`).
+
+### What is still NOT supported (v1.1)
+
+- **No auto-apply.** Apply flow is manual. The UI has buttons to
+  *open* artifacts but no button to *apply* them. This is intentional.
+- **No PR creation.** No remote push, no branch, no draft PR.
+- **The headless runner does not yet call the LLM agent.** It
+  exercises the harness layer (preflight, verification, scoring,
+  patch gate). A future version will wire `createAutoResearchSendMessage`
+  in to perform a real audit/plan/patch cycle.
+- **ML Experiment mode is unchanged.** The v1.1 work only touched
+  the self-improve path.
+- **Loop engine still emits the legacy `metrics.json` and
+  `status.json` artifacts.** Those are kept for the ML path and
+  for the existing store-driven UI surfaces.
+
+### Parity tests
+
+`src/services/autoresearch/__tests__/uiHeadlessParity.test.ts` pins
+five invariants between the UI and the headless runner:
+
+1. `VERIFICATION_PRESETS['standard']` matches the script's
+   `STANDARD_VERIFICATION` constant.
+2. The set of permission profile ids is identical (3 ids in
+   the same order).
+3. Field-level constraints (maxChangedFiles, maxDiffBytes, etc.)
+   are identical for every profile.
+4. v2 result parsing produces a v2 object for both script-emitted
+   artifacts and legacy v1 agent output.
+5. The patch gate artifact paths the script writes are exactly
+   the paths the UI's `derivePatchGateArtifactEntries` recognizes.
+
+If any of these drift, the test fails.
+

@@ -100,6 +100,7 @@ export interface ExperimentSession {
   lastUsedConfig: AutoResearchDefaultConfig | null;
   autoResearchMode: AutoResearchMode;
   verificationCommands: string[];
+  permissionProfile: 'read_only' | 'workspace_write' | 'danger_full_access';
 }
 
 const defaultTelegramConfig: TelegramNotifyConfig = {
@@ -144,6 +145,7 @@ function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'selectedR
     errorMessage: undefined,
     autoResearchMode: 'ml_experiment',
     verificationCommands: ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+    permissionProfile: 'workspace_write',
   };
 }
 
@@ -251,6 +253,7 @@ function buildRunRecordFromInit(opts: {
   agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
   autoResearchMode?: AutoResearchMode;
   verificationCommands?: string[];
+  permissionProfile?: 'read_only' | 'workspace_write' | 'danger_full_access';
 }): AutoResearchRunRecord {
   const mode = opts.autoResearchMode ?? 'ml_experiment';
   const titlePrefix = mode === 'repo_self_improve' ? 'Self-Improve' : opts.metricName;
@@ -274,6 +277,7 @@ function buildRunRecordFromInit(opts: {
       configSnapshot: toHistoryConfigSnapshot(opts.agentConfigSnapshot),
       mode,
       verificationCommands: opts.verificationCommands,
+      permissionProfile: opts.permissionProfile,
     },
     currentIteration: 0,
     bestMetricValue: opts.baseline ?? null,
@@ -400,6 +404,7 @@ interface AutoResearchStore extends ExperimentSession {
     telegramConfig?: Partial<TelegramNotifyConfig>;
     mode?: AutoResearchMode;
     verificationCommands?: string[];
+    permissionProfile?: 'read_only' | 'workspace_write' | 'danger_full_access';
   }) => void;
   resetSession: () => void;
   selectRun: (runId: string) => void;
@@ -526,6 +531,9 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     const createdAt = new Date().toISOString();
     const resolvedMode = opts.mode ?? state.autoResearchMode;
     const resolvedVerificationCommands = opts.verificationCommands ?? state.verificationCommands;
+    const resolvedPermissionProfile = opts.permissionProfile
+      ?? state.lastUsedConfig?.permissionProfile
+      ?? 'workspace_write';
     const nextRun = buildRunRecordFromInit({
       id: opts.id,
       createdAt,
@@ -540,6 +548,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       agentConfigSnapshot: opts.agentConfigSnapshot,
       autoResearchMode: resolvedMode,
       verificationCommands: resolvedVerificationCommands,
+      permissionProfile: resolvedPermissionProfile,
     });
     nextRun.events = [
       createRunEvent(opts.id, {
@@ -1075,6 +1084,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       terminalCwd: input.sshConfig.remoteWorkDir || '',
       autoResearchMode: existingRun.config.mode ?? 'ml_experiment',
       verificationCommands: existingRun.config.verificationCommands ?? ['pnpm run build', 'pnpm test', 'node_modules/.bin/tsc --noEmit'],
+      permissionProfile: existingRun.config.permissionProfile ?? 'workspace_write',
       runHistory: updateRunRecord(state.runHistory, input.runId, (run) => ({
         ...run,
         status: 'running',
