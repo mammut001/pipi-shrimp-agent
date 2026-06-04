@@ -1,0 +1,11 @@
+{
+  "name": "small-typescript-repo-fixture",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"console.log('build ok')\"",
+    "test": "node -e \"console.log('tests ok')\"",
+    "typecheck": "node -e \"console.log('tsc ok')\""
+  }
+}

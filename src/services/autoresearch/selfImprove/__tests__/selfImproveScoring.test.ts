@@ -1,10 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   computeSelfImproveScore,
+  computeSelfImproveScoreV2,
   determineSelfImproveStatus,
   classifySelfImproveRiskLevel,
 } from '../scoring';
 import type { SelfImproveResult } from '../schema';
+import type { SelfImproveResultV2 } from '../schemaV2';
 
 function createResult(overrides: Partial<SelfImproveResult> = {}): SelfImproveResult {
   return {
@@ -165,5 +167,92 @@ describe('classifySelfImproveRiskLevel', () => {
 
   it('returns low for empty changes', () => {
     expect(classifySelfImproveRiskLevel([], [])).toBe('low');
+  });
+});
+
+describe('computeSelfImproveScoreV2', () => {
+  function v2Base(overrides: Partial<SelfImproveResultV2> = {}): SelfImproveResultV2 {
+    return {
+      schemaVersion: 2,
+      mode: 'repo_self_improve',
+      iteration: 1,
+      phaseResults: {},
+      changedFiles: ['src/foo.ts'],
+      commandsRun: ['pnpm run build'],
+      buildPassed: true,
+      testsPassed: true,
+      typecheckPassed: true,
+      riskLevel: 'low',
+      status: 'IMPROVED',
+      summary: 'fix foo',
+      nextRecommendation: '',
+      patch: { diffPath: 'diff.patch', addedLines: 3, deletedLines: 1, reverted: false },
+      verification: [
+        { command: 'pnpm run build', exitCode: 0, durationMs: 1000, status: 'pass', stdoutPath: null, stderrPath: null },
+      ],
+      workspace: { dirtyBefore: false, dirtyAfter: false },
+      ...overrides,
+    };
+  }
+
+  it('hard-fails when result.json is missing', () => {
+    const out = computeSelfImproveScoreV2({
+      result: v2Base(),
+      options: { resultJsonPresent: false },
+    });
+    expect(out.status).toBe('FAILED');
+    expect(out.score).toBeLessThan(-500);
+    expect(out.notes).toContain('no_result_json: result.json missing on disk; iteration is a hard failure.');
+  });
+
+  it('penalizes per-command non-zero exit codes', () => {
+    const out = computeSelfImproveScoreV2({
+      result: v2Base({
+        verification: [
+          { command: 'pnpm run build', exitCode: 0, durationMs: 1000, status: 'pass', stdoutPath: null, stderrPath: null },
+          { command: 'pnpm test', exitCode: 1, durationMs: 2000, status: 'fail', stdoutPath: null, stderrPath: null },
+        ],
+      }),
+    });
+    expect(out.notes.some((n) => n.startsWith('verification_failed'))).toBe(true);
+  });
+
+  it('penalizes dirtyAfter', () => {
+    const out = computeSelfImproveScoreV2({
+      result: v2Base({ workspace: { dirtyBefore: false, dirtyAfter: true } }),
+    });
+    expect(out.notes).toContain('dirty_after: workspace remained dirty after iteration.');
+  });
+
+  it('downgrades IMPROVED with no diff to NEEDS_REVIEW', () => {
+    const out = computeSelfImproveScoreV2({
+      result: v2Base({
+        status: 'IMPROVED',
+        patch: { diffPath: 'diff.patch', addedLines: 0, deletedLines: 0, reverted: false },
+      }),
+    });
+    expect(out.status).toBe('NEEDS_REVIEW');
+  });
+
+  it('downgrades to NEEDS_REVIEW when changedFiles mismatches actual diff', () => {
+    const out = computeSelfImproveScoreV2({
+      result: v2Base({ changedFiles: ['src/a.ts'] }),
+      options: { actualChangedFiles: ['src/b.ts'] },
+    });
+    expect(out.status).toBe('NEEDS_REVIEW');
+    expect(out.notes.some((n) => n.includes('changed_files_mismatch'))).toBe(true);
+  });
+
+  it('forces NEEDS_REVIEW or FAILED on high-risk commands', () => {
+    const out = computeSelfImproveScoreV2({
+      result: v2Base({ commandsRun: ['rm -rf /tmp/build'] }),
+    });
+    expect(['NEEDS_REVIEW', 'FAILED']).toContain(out.status);
+  });
+
+  it('preserves IMPROVED when v2 signals are clean', () => {
+    const out = computeSelfImproveScoreV2({ result: v2Base() });
+    expect(out.status).toBe('IMPROVED');
+    expect(out.score).toBeGreaterThan(0);
   });
 });

@@ -3,19 +3,18 @@
  *
  * Parses self-improve results from agent output and builds living doc sections.
  * Handles both the structured JSON artifact and the fallback text line.
+ * Prefers schema v2 when available; falls back to v1 (auto-upgraded).
  */
 
-import type {
-  SelfImproveResult,
-  SelfImprovePhaseResult,
-  SelfImproveStatus,
-} from './schema';
+import type { SelfImproveResult } from './schema';
+import type { SelfImproveResultV2 } from './schemaV2';
 import { parseSelfImproveResult as parseStructuredResult } from './schema';
+import { parseSelfImproveResultV2 } from './schemaV2';
 
 // ─── Fallback Line Parser ───────────────────────────────────────────────────
 
 interface FallbackResult {
-  status: SelfImproveStatus;
+  status: 'IMPROVED' | 'NO_CHANGE' | 'FAILED' | 'NEEDS_REVIEW';
   summary: string;
 }
 
@@ -32,7 +31,7 @@ function parseFallbackLine(text: string): FallbackResult | null {
     return null;
   }
 
-  return { status: status as SelfImproveStatus, summary };
+  return { status: status as FallbackResult['status'], summary };
 }
 
 // ─── Main Parser ────────────────────────────────────────────────────────────
@@ -40,19 +39,26 @@ function parseFallbackLine(text: string): FallbackResult | null {
 /**
  * Parse a SelfImproveResult from agent output.
  *
- * Tries structured JSON first, then falls back to the text line.
- * Returns null if no valid result is found.
+ * Tries structured v2 JSON first (falls back to v1 internally), then falls
+ * back to the text line. Returns null if no valid result is found.
  */
 export function parseSelfImproveAgentOutput(output: string): SelfImproveResult | null {
-  // Try structured JSON first
-  const structured = parseStructuredResult(output);
-  if (structured) return structured;
+  // Try v2 first (auto-upgrades v1 internally); flatten to v1.
+  const v2 = parseSelfImproveResultV2(output);
+  if (v2 && v2.sourceSchema === 1 && v2.originalV1) {
+    return v2.originalV1;
+  }
+  if (v2) {
+    // v2 result — emit a synthesized v1 representation for backward
+    // compatibility. The UI can call parseSelfImproveResultV2 directly
+    // for full v2 fields.
+    return v1FromV2(v2.result);
+  }
 
-  // Fall back to text line
+  // Last-resort text line.
   const fallback = parseFallbackLine(output);
   if (!fallback) return null;
 
-  // Build a minimal SelfImproveResult from the fallback
   return {
     schemaVersion: 1,
     mode: 'repo_self_improve',
@@ -67,6 +73,24 @@ export function parseSelfImproveAgentOutput(output: string): SelfImproveResult |
     status: fallback.status,
     summary: fallback.summary,
     nextRecommendation: '',
+  };
+}
+
+function v1FromV2(v2: SelfImproveResultV2): SelfImproveResult {
+  return {
+    schemaVersion: 1,
+    mode: 'repo_self_improve',
+    iteration: v2.iteration,
+    phaseResults: v2.phaseResults,
+    changedFiles: v2.changedFiles,
+    commandsRun: v2.commandsRun,
+    buildPassed: v2.buildPassed,
+    testsPassed: v2.testsPassed,
+    typecheckPassed: v2.typecheckPassed,
+    riskLevel: v2.riskLevel,
+    status: v2.status,
+    summary: v2.summary,
+    nextRecommendation: v2.nextRecommendation,
   };
 }
 
@@ -171,7 +195,7 @@ export function buildSuccessfulFixesSection(
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function getStatusEmoji(status: SelfImproveStatus): string {
+function getStatusEmoji(status: 'IMPROVED' | 'NO_CHANGE' | 'FAILED' | 'NEEDS_REVIEW'): string {
   switch (status) {
     case 'IMPROVED': return '✅';
     case 'NO_CHANGE': return '⚪';

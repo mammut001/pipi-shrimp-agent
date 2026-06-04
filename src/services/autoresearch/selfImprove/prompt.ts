@@ -154,13 +154,14 @@ Do NOT continue piling changes on top of a failed verification.
 - If verification fails, STOP and mark NEEDS_REVIEW instead of piling more changes
 - Keep all existing tests passing unless the test itself is the bug being fixed
 
-## Result Contract
+## Result Contract (v2)
 
-Before finishing, write exactly one valid JSON object to ${runDir.metricsPath} with this shape:
+Before finishing, write exactly one valid JSON object to ${runDir.metricsPath} with this shape.
+v2 is the preferred format; v1 is still accepted and auto-upgraded.
 
 \`\`\`json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "mode": "repo_self_improve",
   "iteration": ${runDir.iter},
   "phaseResults": {
@@ -171,6 +172,37 @@ Before finishing, write exactly one valid JSON object to ${runDir.metricsPath} w
     "REFLECT": { "phase": "REFLECT", "success": true },
     "DECIDE_NEXT": { "phase": "DECIDE_NEXT", "success": true }
   },
+  "issue": {
+    "summary": "What is wrong, in one line.",
+    "evidence": ["exact error message or test output"],
+    "category": "build|test|typecheck|lint|security|performance|docs|refactor|bugfix|other",
+    "severity": "info|minor|major|critical"
+  },
+  "patch": {
+    "diffPath": "diff.patch",
+    "addedLines": 0,
+    "deletedLines": 0,
+    "reverted": false
+  },
+  "verification": [
+    {
+      "command": "pnpm run build",
+      "exitCode": 0,
+      "durationMs": 12345,
+      "status": "pass|fail|skipped|timeout",
+      "stdoutPath": "logs/verify-build.stdout.log",
+      "stderrPath": "logs/verify-build.stderr.log"
+    }
+  ],
+  "workspace": {
+    "dirtyBefore": false,
+    "dirtyAfter": false
+  },
+  "decision": {
+    "status": "IMPROVED|NO_CHANGE|FAILED|NEEDS_REVIEW",
+    "score": 0,
+    "nextRecommendation": "What to attempt next iteration."
+  },
   "changedFiles": ["src/example.ts"],
   "commandsRun": ["pnpm run build", "pnpm test"],
   "buildPassed": true,
@@ -179,7 +211,7 @@ Before finishing, write exactly one valid JSON object to ${runDir.metricsPath} w
   "riskLevel": "low|medium|high",
   "status": "IMPROVED|NO_CHANGE|FAILED|NEEDS_REVIEW",
   "summary": "One line summary of what was done and why.",
-  "nextRecommendation": "What to attempt next."
+  "nextRecommendation": "Free-form next-step hint."
 }
 \`\`\`
 

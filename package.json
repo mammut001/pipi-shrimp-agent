@@ -11,6 +11,7 @@
     "check:skill-sync": "node scripts/check-skill-sync.mjs",
     "check:repo-hygiene": "node scripts/check-repo-hygiene.mjs",
     "smoke:autoresearch:local": "bash scripts/smoke-autoresearch-local.sh",
+    "autoresearch:exec": "node scripts/autoresearch-exec.mjs",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:browser-gate": "bash tests/browser/release-gate.sh",
