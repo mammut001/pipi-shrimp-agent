@@ -1,17 +1,18 @@
-module.exports = {
+﻿module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/?(*.)+(spec|test).ts'],
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', {
+    '^.+\.tsx?$': ['ts-jest', {
       useESM: true,
+      tsconfig: { esModuleInterop: true },
     }],
   },
   extensionsToTreatAsEsm: ['.ts', '.tsx'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
-    '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^(\.{1,2}/.*)\.js$': '$1',
     '^@tauri-apps/api/window$': '<rootDir>/tests/__mocks__/tauri-window.cjs',
     '^@tauri-apps/api/image$': '<rootDir>/tests/__mocks__/tauri-image.cjs',
     '^react-markdown$': '<rootDir>/tests/__mocks__/react-markdown.cjs',
@@ -27,6 +28,5 @@ module.exports = {
     'src/**/*.{ts,tsx}',
     '!src/**/*.d.ts',
   ],
-  setupFilesAfterEnv: [],
   setupFiles: ['<rootDir>/jest.setup.node.cjs'],
 };

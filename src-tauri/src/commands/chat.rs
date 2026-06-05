@@ -1,4 +1,4 @@
-use crate::browser::dom::PageState;
+﻿use crate::browser::dom::PageState;
 use crate::commands::web::{self, BrowserController};
 /**
  * Chat commands
@@ -371,6 +371,12 @@ pub async fn execute_tool(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'command' argument for execute_command".to_string()))?;
             let work_dir_override = args.get("cwd").and_then(|v| v.as_str());
+            let windows_shell_profile = args
+                .get("windowsShellProfile")
+                .cloned()
+                .map(serde_json::from_value::<crate::tools::shell_profile::WindowsShellProfile>)
+                .transpose()
+                .map_err(|e| AppError::InternalError(format!("Invalid windowsShellProfile: {}", e)))?;
             // Prefer the executionId embedded in the tool args (set by
             // prepareCancellableToolArgs) over the top-level Tauri arg,
             // because the args form is what the frontend's Cancel button
@@ -385,6 +391,7 @@ pub async fn execute_tool(
                 work_dir.as_deref(),
                 None,
                 inline_execution_id,
+                windows_shell_profile,
             )?;
             serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
         }

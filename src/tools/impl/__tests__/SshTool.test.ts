@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { useSettingsStore } from '@/store/settingsStore';
 
 const mockInvoke = jest.fn();
 const mockRunInTerminal = jest.fn();
@@ -23,11 +24,13 @@ import { runSshExec, runSshUpload } from '../SshTool';
 describe('SshTool helpers', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    useSettingsStore.setState({ windowsShellProfile: 'auto' });
     mockGetCurrentRunDir.mockReturnValue({ logsDir: '/tmp/autoresearch-logs' });
     mockReadTargetText.mockResolvedValue('');
   });
 
   it('uses the silent bash path by default even during an active AutoResearch run', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'powershell' });
     mockInvoke.mockResolvedValue({
       stdout: 'ok\n',
       stderr: '',
@@ -47,7 +50,9 @@ describe('SshTool helpers', () => {
     expect(mockRunInTerminal).not.toHaveBeenCalled();
     expect(mockInvoke).toHaveBeenCalledWith('execute_bash', expect.objectContaining({
       args: expect.objectContaining({
-        command: expect.stringContaining('echo ok'),
+        command: 'echo ok',
+        workDir: '/tmp/work',
+        windowsShellProfile: 'powershell',
       }),
     }));
   });
@@ -88,7 +93,7 @@ describe('SshTool helpers', () => {
       workDir: null,
     }));
     expect(String(mockInvoke.mock.calls[1]?.[1]?.args?.command ?? '')).toContain(tempPath);
-    expect(String(mockInvoke.mock.calls[2]?.[1]?.args?.command ?? '')).toContain(`rm -f ${tempPath}`);
+    expect(String(mockInvoke.mock.calls[2]?.[1]?.args?.command ?? '')).toContain(`rm -f '${tempPath}'`);
     expect(result).toEqual({
       success: true,
       message: 'Uploaded inline content → /tmp/work/hypothesis.md',

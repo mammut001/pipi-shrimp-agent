@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { useSettingsStore } from '@/store';
 
 const mockInvoke = jest.fn();
 const mockRunPreToolUseHooks = jest.fn();
@@ -33,6 +34,7 @@ import { StreamingToolExecutor } from '@/services/StreamingToolExecutor';
 describe('StreamingToolExecutor.executeBatch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    useSettingsStore.setState({ windowsShellProfile: 'auto' });
     mockRunPreToolUseHooks.mockResolvedValue({ approved: true });
     mockResolveActiveAgentConfig.mockReturnValue({
       id: 'cfg-minimax',
@@ -196,6 +198,38 @@ describe('StreamingToolExecutor.executeBatch', () => {
       id: 'tool-2',
       is_error: false,
     }));
+  });
+
+  it('injects the active Windows shell profile into execute_command tool calls', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'wsl' });
+    mockInvoke.mockImplementation(async (command: string, payload?: any) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-shell',
+          toolName: 'execute_command',
+          decision: 'allowed',
+        };
+      }
+      if (command === 'execute_tool_batch') {
+        expect(payload.toolCalls[0].arguments).toContain('"windowsShellProfile":"wsl"');
+        return [{
+          id: 'tool-shell',
+          name: 'execute_command',
+          content: '{"status":"succeeded","stdout":"ok"}',
+          is_error: false,
+        }];
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    await executor.executeBatch([
+      { id: 'tool-shell', name: 'execute_command', arguments: { command: 'bash scripts/test.sh', cwd: 'C:\\repo' } },
+    ], {
+      sessionId: 'session-1',
+      workDir: 'C:\\repo',
+      source: 'assistant_tool_call',
+    });
   });
 
   it('blocks disallowed tools before execution and sanitizes native output', async () => {

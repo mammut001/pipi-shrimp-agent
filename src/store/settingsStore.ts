@@ -11,12 +11,14 @@ import type {
   BudgetSettings,
   AgentSettings,
   AutoResearchLlmSettings,
+  WindowsShellProfile,
 } from '../types/settings';
 import {
   DEFAULT_AGENT_SETTINGS,
   DEFAULT_AUTORESEARCH_LLM_SETTINGS,
   DEFAULT_BUDGET_SETTINGS,
   DEFAULT_VISION_SETTINGS_STATE,
+  DEFAULT_WINDOWS_SHELL_PROFILE,
 } from '../types/settings';
 import { resolvePricing } from '../shared/providers';
 import { setLocale, getCurrentLocale, convertOldLanguageCode, convertToOldLanguageCode } from '../i18n';
@@ -99,6 +101,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   agentSettings: DEFAULT_AGENT_SETTINGS,
   autoResearchLlmSettings: DEFAULT_AUTORESEARCH_LLM_SETTINGS,
   visionSettings: DEFAULT_VISION_SETTINGS_STATE,
+  windowsShellProfile: DEFAULT_WINDOWS_SHELL_PROFILE,
 
   // ========== Imported Files Methods ==========
 
@@ -497,6 +500,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  setWindowsShellProfile: (profile: WindowsShellProfile) => {
+    set({ windowsShellProfile: profile });
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEYS.windowsShellProfile, profile);
+    } catch (error) {
+      console.error('Failed to persist Windows shell profile:', error);
+    }
+  },
+
   /**
    * Get pricing for a specific model (custom or default)
    */
@@ -560,17 +572,18 @@ const initializeSettings = () => {
     if (storedLanguage === 'en' || storedLanguage === 'zh') {
       useSettingsStore.setState({ language: storedLanguage });
       // 同时更新 i18n 系统的语言
-      if (typeof convertOldLanguageCode === 'function' && typeof setLocale === 'function') {
-        const locale = convertOldLanguageCode(storedLanguage);
-        setLocale(locale);
-      }
+      const locale = convertOldLanguageCode(storedLanguage);
+      setLocale(locale);
     } else {
       // 尝试从新的 locale 存储加载
-      if (typeof getCurrentLocale === 'function' && typeof convertToOldLanguageCode === 'function') {
-        const currentLocale = getCurrentLocale();
-        const oldLanguage = convertToOldLanguageCode(currentLocale);
-        useSettingsStore.setState({ language: oldLanguage });
-      }
+      const currentLocale = getCurrentLocale();
+      const oldLanguage = convertToOldLanguageCode(currentLocale);
+      useSettingsStore.setState({ language: oldLanguage });
+    }
+
+    const storedShellProfile = localStorage.getItem(SETTINGS_STORAGE_KEYS.windowsShellProfile);
+    if (storedShellProfile === 'auto' || storedShellProfile === 'powershell' || storedShellProfile === 'wsl') {
+      useSettingsStore.setState({ windowsShellProfile: storedShellProfile });
     }
 
     // Load Telegram token (migrate from legacy key if needed)

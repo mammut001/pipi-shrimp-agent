@@ -103,6 +103,7 @@ export function AdvancedWorkdirSetup() {
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
   const activeConfigId = useSettingsStore((state) => state.activeConfigId);
   const apiConfigs = useSettingsStore((state) => state.apiConfigs);
+  const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
 
   const [showSetup, setShowSetup] = useState(!sshConfig && runHistory.length === 0);
   const [setupForm, setSetupForm] = useState<SshConfig>(() => loadPersistedSetup());
@@ -155,16 +156,6 @@ export function AdvancedWorkdirSetup() {
   }, [lastUsedConfig, showSetup]);
 
   useEffect(() => {
-    if (!showSetup) {
-      return;
-    }
-    void assertSupportedPlatform().catch((error) => {
-      useAutoResearchStore.getState().setError(formatError(error));
-      setShowSetup(false);
-    });
-  }, [showSetup]);
-
-  useEffect(() => {
     if (activeRunId) {
       setShowRunList(false);
     }
@@ -201,13 +192,8 @@ export function AdvancedWorkdirSetup() {
   }, [setupForm.remoteWorkDir]);
 
   const handleShowSetup = useCallback(async () => {
-    try {
-      await assertSupportedPlatform();
-      setSetupError(null);
-      setShowSetup(true);
-    } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
-    }
+    setSetupError(null);
+    setShowSetup(true);
   }, []);
 
   const handleResetToDefaults = useCallback(() => {
@@ -226,14 +212,14 @@ export function AdvancedWorkdirSetup() {
   }, [clearLastUsedConfig]);
 
   const handleTestConnection = useCallback(async () => {
+    const cfg = setupForm;
     try {
-      await assertSupportedPlatform();
+      await assertSupportedPlatform(cfg);
     } catch (error) {
       useAutoResearchStore.getState().setError(formatError(error));
       return;
     }
 
-    const cfg = setupForm;
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
@@ -241,6 +227,7 @@ export function AdvancedWorkdirSetup() {
         args: {
           command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
           timeoutSecs: 30,
+          windowsShellProfile,
         },
       });
       const stdout = (result.stdout || '').trim();
@@ -266,7 +253,7 @@ export function AdvancedWorkdirSetup() {
       const message = formatError(error);
       setConnectionTest({ status: 'error', output: message });
     }
-  }, [setupForm]);
+  }, [setupForm, windowsShellProfile]);
 
   const handleStart = useCallback(async () => {
     const validation = validateAutoResearchSetupDraft({

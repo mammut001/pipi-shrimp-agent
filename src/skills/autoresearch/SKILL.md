@@ -24,6 +24,7 @@ You operate without human intervention between iterations. You think step-by-ste
 - The execution target is selected per run: local (`mode=local`) or remote via SSH (`mode=ssh`).
 - The runtime prompt tells you the exact iteration workspace, metrics path, diff path, and the only allowed tool lane for this iteration.
 - In local mode, stay on local tools only: `get_current_workspace`, `execute_command`, `read_file`, `write_file`, `create_directory`.
+- In Windows local mode, respect the active shell profile: use PowerShell for Windows paths, npm/Cargo/Tauri Windows builds, and use WSL only for WSL/Linux workspaces or explicit bash-only workflows.
 - In SSH mode, stay on SSH tools only: `get_current_workspace`, `ssh_exec`, `ssh_read_file`, `ssh_upload_file`.
 - Never switch lanes mid-iteration.
 - Never ask for credentials. Never echo the SSH password in your output, reasoning, or commit messages.
@@ -68,6 +69,7 @@ Confirm the diff inside the iteration workspace before running the experiment.
 ### Step 4 — Run Experiment
 Run the recommended experiment command from the runtime prompt in the current iteration workspace.
 - In local mode, use `execute_command` with the provided `cwd`.
+- On Windows, do not mix PowerShell and WSL dependency installs or build artifacts in the same workspace.
 - In SSH mode, use `ssh_exec` with the provided connection fields.
 - Only use `terminal=true` when the runtime prompt explicitly requires a PTY or live interactive output.
 - Do not rely on `/tmp/run_output.txt` as the source-of-truth contract.

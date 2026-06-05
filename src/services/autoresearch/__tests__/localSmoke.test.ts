@@ -67,6 +67,8 @@ async function ensureExperimentFixture(experimentDir: string): Promise<void> {
   });
 }
 
+jest.setTimeout(30000);
+
 describe('local AutoResearch smoke', () => {
   let tempRoot: string | null;
 

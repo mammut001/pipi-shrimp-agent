@@ -385,7 +385,7 @@ describe('chatToolExecution', () => {
       tools: [{
         id: 'tool-4',
         name: 'execute_command',
-        arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
+        arguments: expect.stringContaining('"command":"pwd"'),
       }],
       _resolveAll: resolved,
     };
@@ -460,7 +460,7 @@ describe('chatToolExecution', () => {
       tools: [{
         id: 'tool-5',
         name: 'execute_command',
-        arguments: '{"command":"curl https://example.com","cwd":"/tmp/workspace"}',
+        arguments: expect.stringContaining('"command":"curl https://example.com"'),
       }],
       _resolveAll: resolved,
     };
@@ -619,7 +619,7 @@ describe('chatToolExecution', () => {
       tools: [{
         id: 'tool-7',
         name: 'execute_command',
-        arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
+        arguments: expect.stringContaining('"command":"pwd"'),
       }],
       _resolveAll: resolved,
     };

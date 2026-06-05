@@ -117,7 +117,8 @@ function extractLegacyConnections(agents: WorkflowAgent[]): WorkflowConnection[]
 
 function mergeConnections(agents: WorkflowAgent[], connections: WorkflowConnection[]): WorkflowConnection[] {
   const connectionMap = new Map<string, WorkflowConnection>();
-  const candidates = [...connections, ...extractLegacyConnections(agents)];
+  const legacyExtras = connections.length > 0 ? [] : extractLegacyConnections(agents);
+  const candidates = [...connections, ...legacyExtras];
 
   for (const candidate of candidates) {
     const normalized = normalizeConnection(candidate);

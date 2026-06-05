@@ -50,6 +50,7 @@ export type {
   ModelTokenStats,
   ModelPricing,
   BudgetSettings,
+  WindowsShellProfile,
 } from '../types/settings';
 
 export {
@@ -58,6 +59,7 @@ export {
   PROVIDER_MODELS,
   DEFAULT_MODEL_PRICING,
   DEFAULT_BUDGET_SETTINGS,
+  DEFAULT_WINDOWS_SHELL_PROFILE,
 } from '../types/settings';
 
 // Re-export registry for direct access

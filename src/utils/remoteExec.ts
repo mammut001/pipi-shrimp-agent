@@ -13,6 +13,8 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { useSettingsStore } from '@/store/settingsStore';
+import { resolveWindowsShellProfile } from '@/utils/windowsShellProfile';
 
 export type ExecMode = 'local' | 'ssh';
 export type SshAuthMode = 'agent' | 'password' | 'key';
@@ -115,7 +117,9 @@ function buildSshArgs(cfg: RemoteExecConfig, binary: 'ssh' | 'scp'): {
 /**
  * Build a full bash command that runs `remoteCmd` in the configured
  * working directory on the target (local or remote). Returned string is
- * suitable for `execute_bash { command }`.
+ * suitable for `execute_bash { command }`. Callers that target the local
+ * machine should prefer passing the working directory to `execute_bash`
+ * directly so the active Windows shell profile stays in control.
  */
 export function buildRemoteBashCommand(
   raw: Partial<RemoteExecConfig>,
@@ -184,9 +188,15 @@ interface RawBashResult {
 export async function ensureSshpassAvailable(): Promise<{ ok: boolean; hint?: string }> {
   if (_sshpassCache) return _sshpassCache;
   try {
+    const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
+    const shellResolution = resolveWindowsShellProfile(windowsShellProfile);
+    const command = shellResolution.isWindows && shellResolution.resolved === 'powershell'
+      ? `if (Get-Command sshpass -ErrorAction SilentlyContinue) { 'OK' } else { 'MISSING' }`
+      : 'command -v sshpass >/dev/null 2>&1 && echo OK || echo MISSING';
     const result = await invoke<RawBashResult>('execute_bash', {
       args: {
-        command: 'command -v sshpass >/dev/null 2>&1 && echo OK || echo MISSING',
+        command,
+        windowsShellProfile,
       },
     });
     const ok = (result.stdout || '').trim() === 'OK';

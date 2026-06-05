@@ -8,7 +8,11 @@ use crate::commands::file::resolve_path;
 use crate::models::ExecuteCodeResponse;
 use crate::models::ToolExecutionStatus;
 use crate::tools::output_sanitizer::sanitize_execute_code_output;
-use crate::tools::process_manager::{spawn_bash_process, wait_for_managed_process};
+use crate::tools::process_manager::{spawn_shell_process, wait_for_managed_process};
+use crate::tools::shell_profile::{
+    convert_windows_path_to_wsl, detect_path_kind, resolve_command_shell, ShellPathKind,
+    WindowsShellProfile,
+};
 use crate::utils::{AppError, AppResult};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -49,7 +53,12 @@ impl Drop for PythonSession {
 
 /// Check if a command exists in PATH
 fn command_exists(command: &str) -> bool {
-    Command::new("which")
+    let locator = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
+    Command::new(locator)
         .arg(command)
         .output()
         .map(|output| output.status.success())
@@ -58,6 +67,13 @@ fn command_exists(command: &str) -> bool {
 
 fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult<String> {
     let base = cwd.unwrap_or_else(|| ".".to_string());
+    if cfg!(target_os = "windows") {
+        let base_kind = detect_path_kind(Some(base.as_str()));
+        let work_dir_kind = detect_path_kind(work_dir);
+        if base_kind == ShellPathKind::Wsl || work_dir_kind == ShellPathKind::Wsl {
+            return resolve_windows_command_cwd(base.as_str(), work_dir);
+        }
+    }
     let resolved = resolve_path(&base, work_dir)?;
     if !resolved.exists() {
         return Err(AppError::ProcessError(format!(
@@ -72,6 +88,63 @@ fn resolve_command_cwd(cwd: Option<String>, work_dir: Option<&str>) -> AppResult
         )));
     }
     Ok(resolved.to_string_lossy().to_string())
+}
+
+fn resolve_windows_command_cwd(cwd: &str, work_dir: Option<&str>) -> AppResult<String> {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return Err(AppError::ProcessError(
+            "Working directory cannot be empty".to_string(),
+        ));
+    }
+
+    if cwd == "." {
+        return work_dir
+            .map(normalize_wsl_style_path)
+            .transpose()?
+            .ok_or_else(|| AppError::ProcessError("Relative working directory requires work_dir".to_string()));
+    }
+
+    match detect_path_kind(Some(cwd)) {
+        ShellPathKind::Wsl => return normalize_wsl_style_path(cwd),
+        ShellPathKind::Windows => return Ok(cwd.to_string()),
+        ShellPathKind::Unknown => {}
+    }
+
+    match work_dir {
+        Some(root) if detect_path_kind(Some(root)) == ShellPathKind::Wsl => {
+            let root = normalize_wsl_style_path(root)?;
+            return Ok(join_wsl_paths(root.as_str(), cwd));
+        }
+        _ => {}
+    }
+
+    let resolved = resolve_path(cwd, work_dir)?;
+    Ok(resolved.to_string_lossy().to_string())
+}
+
+fn normalize_wsl_style_path(path: &str) -> AppResult<String> {
+    convert_windows_path_to_wsl(path).ok_or_else(|| {
+        AppError::ProcessError(format!(
+            "Unable to normalize WSL working directory '{}'",
+            path
+        ))
+    })
+}
+
+fn join_wsl_paths(root: &str, child: &str) -> String {
+    let trimmed_root = root.trim_end_matches('/');
+    let normalized_child = child.replace('\\', "/");
+    let trimmed_child = normalized_child
+        .trim_start_matches("./")
+        .trim_start_matches('/');
+    if trimmed_child.is_empty() {
+        trimmed_root.to_string()
+    } else if trimmed_root.is_empty() {
+        format!("/{}", trimmed_child)
+    } else {
+        format!("{}/{}", trimmed_root, trimmed_child)
+    }
 }
 
 fn build_execute_code_response(
@@ -94,6 +167,35 @@ fn build_execute_code_response(
     )
 }
 
+fn build_failed_command_response(
+    message: &str,
+    cwd: Option<&str>,
+    execution_id: Option<&str>,
+) -> ExecuteCodeResponse {
+    let execution_id = execution_id
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    build_execute_code_response(
+        b"",
+        message.as_bytes(),
+        -1,
+        cwd,
+        false,
+        execution_id.as_str(),
+        ToolExecutionStatus::Failed,
+    )
+}
+
+fn append_warning(stderr: &mut Vec<u8>, warning: &str) {
+    if warning.trim().is_empty() {
+        return;
+    }
+    if !stderr.is_empty() && !stderr.ends_with(b"\n") {
+        stderr.push(b'\n');
+    }
+    stderr.extend_from_slice(warning.as_bytes());
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecuteBashArgs {
@@ -103,6 +205,8 @@ pub struct ExecuteBashArgs {
     pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub execution_id: Option<String>,
+    #[serde(default)]
+    pub windows_shell_profile: Option<WindowsShellProfile>,
 }
 
 /// Block known-destructive bash command patterns.
@@ -153,29 +257,52 @@ pub fn execute_bash_for_tool(
     work_dir: Option<&str>,
     timeout_secs: Option<u64>,
     requested_execution_id: Option<&str>,
+    windows_shell_profile: Option<WindowsShellProfile>,
 ) -> AppResult<ExecuteCodeResponse> {
     let resolved_cwd = resolve_command_cwd(cwd.map(str::to_string), work_dir)?;
 
     check_command_safety(command)?;
 
-    if !command_exists("bash") {
-        return Err(AppError::ProcessError(
-            "Bash is not installed on your system".to_string(),
+    let shell_plan = resolve_command_shell(windows_shell_profile, Some(resolved_cwd.as_str()), command)?;
+    if let Some(message) = shell_plan.blocking_message.as_deref() {
+        return Ok(build_failed_command_response(
+            message,
+            shell_plan.display_cwd.as_deref().or(Some(resolved_cwd.as_str())),
+            requested_execution_id,
         ));
     }
 
-    let handle = spawn_bash_process(command, &resolved_cwd, requested_execution_id)?;
+    if !command_exists(&shell_plan.program) {
+        return Ok(build_failed_command_response(
+            &format!(
+                "The selected shell '{}' is not available on this system.",
+                shell_plan.program
+            ),
+            shell_plan.display_cwd.as_deref().or(Some(resolved_cwd.as_str())),
+            requested_execution_id,
+        ));
+    }
+
+    let handle = spawn_shell_process(
+        &shell_plan.program,
+        &shell_plan.args,
+        shell_plan.host_cwd.as_deref(),
+        requested_execution_id,
+    )?;
     let execution_id = handle.execution_id.clone();
     let managed = wait_for_managed_process(handle, timeout_secs.unwrap_or(300))?;
     let output = managed.output;
     let timed_out = managed.status == ToolExecutionStatus::TimedOut;
 
     let mut stderr = output.stderr;
+    if let Some(warning) = shell_plan.warning.as_deref() {
+        append_warning(&mut stderr, warning);
+    }
     if timed_out {
-        if !stderr.is_empty() && !stderr.ends_with(b"\n") {
-            stderr.push(b'\n');
-        }
-        stderr.extend_from_slice(format!("Command timed out after {} seconds", timeout_secs.unwrap_or(300)).as_bytes());
+        append_warning(
+            &mut stderr,
+            &format!("Command timed out after {} seconds", timeout_secs.unwrap_or(300)),
+        );
     }
 
     Ok(build_execute_code_response(
@@ -186,7 +313,10 @@ pub fn execute_bash_for_tool(
         } else {
             output.status.code().unwrap_or(-1)
         },
-        Some(resolved_cwd.as_str()),
+        shell_plan
+            .display_cwd
+            .as_deref()
+            .or(Some(resolved_cwd.as_str())),
         timed_out,
         execution_id.as_str(),
         managed.status,
@@ -194,9 +324,9 @@ pub fn execute_bash_for_tool(
 }
 
 /**
- * Execute a bash command
+ * Execute a shell command
  *
- * Runs the command in a bash shell and returns stdout/stderr
+ * Runs the command in the resolved shell profile and returns stdout/stderr
  */
 #[tauri::command]
 pub async fn execute_bash(args: ExecuteBashArgs) -> AppResult<ExecuteCodeResponse> {
@@ -206,6 +336,7 @@ pub async fn execute_bash(args: ExecuteBashArgs) -> AppResult<ExecuteCodeRespons
         args.work_dir.as_deref(),
         args.timeout_secs,
         args.execution_id.as_deref(),
+        args.windows_shell_profile,
     )
 }
 
@@ -712,6 +843,7 @@ mod tests {
             Some(work_dir.to_string_lossy().as_ref()),
             Some(0),
             Some("timeout-test"),
+            None,
         )
         .expect("timeout should still return a structured response");
 
@@ -735,6 +867,7 @@ mod tests {
             Some(work_dir.to_string_lossy().as_ref()),
             Some(5),
             Some("smoke-command-json"),
+            None,
         )
         .expect("command should return a structured response");
 
@@ -767,6 +900,7 @@ mod tests {
             Some(work_dir.to_string_lossy().as_ref()),
             Some(5),
             Some("dangerous-command"),
+            None,
         )
         .expect_err("dangerous command should be blocked");
 

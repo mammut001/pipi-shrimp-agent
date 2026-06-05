@@ -41,6 +41,12 @@ const BROWSER_TOOLS_GUIDE: &str = r#"
 You have access to browser tools for web automation. Use these when the user asks you to browse websites, search for information, interact with web pages, or perform any web-based task.
 "#;
 
+const WINDOWS_SHELL_GUIDE: &str = r#"
+## Windows Shell Guidance
+
+On Windows, use the configured shell profile. Auto uses PowerShell for Windows workspaces and WSL only for WSL/Linux workspaces. Use PowerShell for npm, Cargo, Tauri Windows builds, and Windows paths. Use WSL only when the user explicitly selected WSL, the workspace is inside WSL, or the command requires a Unix shell. Do not mix PowerShell and WSL dependency installs or build artifacts in the same workspace.
+"#;
+
 pub fn merge_system_prompt(user_prompt: Option<&str>, allow_browser_tools: bool) -> String {
     let mut base_prompt = format!(
         "{}\n\n{}",
@@ -51,6 +57,7 @@ pub fn merge_system_prompt(user_prompt: Option<&str>, allow_browser_tools: bool)
     if allow_browser_tools {
         base_prompt.push_str(&format!("\n\n{}", BROWSER_TOOLS_GUIDE.trim()));
     }
+    base_prompt.push_str(&format!("\n\n{}", WINDOWS_SHELL_GUIDE.trim()));
 
     match user_prompt {
         Some(user) if !user.is_empty() => format!(
@@ -197,12 +204,16 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
         }),
         serde_json::json!({
             "name": "execute_command",
-            "description": "Execute a bash command in the terminal.",
+            "description": "Execute a shell command in the terminal. On Windows, Auto uses PowerShell for Windows workspaces and WSL only for WSL/Linux workspaces. Use PowerShell for npm, Cargo, and Tauri Windows builds, and do not mix PowerShell and WSL build artifacts in the same workspace.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string" },
-                    "cwd": { "type": "string" }
+                    "cwd": { "type": "string" },
+                    "windowsShellProfile": {
+                        "type": "string",
+                        "enum": ["auto", "powershell", "wsl"]
+                    }
                 },
                 "required": ["command"],
                 "additionalProperties": false

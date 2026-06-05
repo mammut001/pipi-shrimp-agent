@@ -198,7 +198,7 @@ pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<String> {
         .and_then(Value::as_str);
 
     let full_command = build_remote_bash_command(&cfg, command)?;
-    let result = execute_bash_for_tool(&full_command, None, None, timeout_secs, execution_id)
+    let result = execute_bash_for_tool(&full_command, None, None, timeout_secs, execution_id, None)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     serialize_execute_response(result)
 }
@@ -225,7 +225,7 @@ pub fn execute_ssh_upload(args: &Value) -> anyhow::Result<String> {
     };
 
     let command = build_upload_command(&cfg, &local_path, remote_path)?;
-    let result = execute_bash_for_tool(&command, None, None, Some(120), None)
+    let result = execute_bash_for_tool(&command, None, None, Some(120), None, None)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     if result.exit_code != 0 {
         return Err(anyhow::anyhow!(if result.stderr.trim().is_empty() {
@@ -260,7 +260,7 @@ pub fn execute_ssh_read_file(args: &Value) -> anyhow::Result<String> {
         ..cfg
     };
     let command = build_remote_bash_command(&read_cfg, &remote_cmd)?;
-    let result = execute_bash_for_tool(&command, None, None, Some(30), None)
+    let result = execute_bash_for_tool(&command, None, None, Some(30), None, None)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     if result.exit_code != 0 {
         return Err(anyhow::anyhow!(if result.stderr.trim().is_empty() {

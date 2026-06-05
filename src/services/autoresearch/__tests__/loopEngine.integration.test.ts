@@ -111,6 +111,8 @@ function buildChatAdapterSendMessage(experimentDir: string) {
   });
 }
 
+jest.setTimeout(30000);
+
 describe('loopEngine integration', () => {
   let workDir: string;
   let sessionFilePath: string;

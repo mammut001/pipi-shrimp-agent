@@ -16,6 +16,7 @@ pub mod output_sanitizer;
 pub mod process_manager;
 pub mod registry;
 pub mod scheduler;
+pub mod shell_profile;
 pub mod ssh_bridge;
 
 use serde::{Deserialize, Serialize};

@@ -35,6 +35,15 @@ export interface SubagentResult {
   error?: string;
 }
 
+export function resolveSubagentWorkingDirLabel(
+  parentContext: Pick<AgentContext, 'workDir'>,
+): string {
+  const workDir = parentContext.workDir?.trim();
+  return workDir && workDir.length > 0
+    ? workDir
+    : '[no bound working directory]';
+}
+
 /**
  * Run a subagent synchronously (await result).
  */
@@ -240,6 +249,7 @@ export async function runAgentBackground(options: SubagentOptions): Promise<stri
 async function buildSubagentPrompt(options: SubagentOptions): Promise<string> {
   const isWorker = options.subagentType === 'worker';
   const isCoordinator = options.subagentType === 'coordinator';
+  const workingDirLabel = resolveSubagentWorkingDirLabel(options.parentContext);
 
   let base: string;
 
@@ -251,7 +261,7 @@ ${COORDINATOR_TOOL_GUIDANCE}
 
 ## Current Context
 
-Working directory: ${options.parentContext.workDir || process.cwd()}
+Working directory: ${workingDirLabel}
 Session ID: ${options.sessionId}
 Agent: ${options.name}
 Role: Coordinator
@@ -273,7 +283,7 @@ ${WORKER_SYSTEM_PROMPT_ADDENDUM}
 ${options.prompt}
 
 ## Context
-Working directory: ${options.parentContext.workDir || process.cwd()}
+Working directory: ${workingDirLabel}
 Agent name: ${options.name}
 `;
   } else {
@@ -293,7 +303,7 @@ ${options.prompt}
 4. Summarize your findings or work at the end
 
 ## Context
-Working directory: ${options.parentContext.workDir || process.cwd()}
+Working directory: ${workingDirLabel}
 `;
   }
 

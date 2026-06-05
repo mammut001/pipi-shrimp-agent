@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { useSettingsStore } from '@/store/settingsStore';
 
 const mockInvoke = jest.fn();
 
@@ -12,9 +13,11 @@ jest.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
-import { createRunDir, getSessionRunPaths, listIterations, pruneOldRuns } from '../runDir';
+import { createRunDir, executeTargetCommand, getSessionRunPaths, listIterations, pruneOldRuns } from '../runDir';
 
 const execFileAsync = promisify(execFile);
+
+jest.setTimeout(30000);
 
 describe('runDir', () => {
   let workDir: string;
@@ -24,6 +27,7 @@ describe('runDir', () => {
     workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-rundir-'));
     experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-rundir-exp-'));
     installLocalInvokeMock(mockInvoke);
+    useSettingsStore.setState({ windowsShellProfile: 'auto' });
     await initGitRepo(workDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("experiment")\n',
@@ -108,6 +112,44 @@ describe('runDir', () => {
     expect(sessionPaths.sessionDir).toBe('/srv/autoresearch/runs/session-ssh');
     expect(sessionPaths.metricsJsonlPath).toBe('/srv/autoresearch/runs/session-ssh/metrics.jsonl');
     expect(sessionPaths.livingDocPath).toBe('/srv/autoresearch/runs/session-ssh/autoresearch.md');
+  });
+
+  it('passes the active Windows shell profile through local target execution', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'wsl' });
+    const cfg = createLocalSshConfig(workDir);
+
+    await expect(executeTargetCommand(cfg, 'printf test', 30)).resolves.toEqual(expect.objectContaining({
+      stdout: 'test',
+      exit_code: 0,
+    }));
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_bash', {
+      args: expect.objectContaining({
+        command: 'printf test',
+        workDir: workDir,
+        timeoutSecs: 30,
+        windowsShellProfile: 'wsl',
+      }),
+    });
+  });
+
+  it('falls back to /tmp when a local AutoResearch helper clears the workdir', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'wsl' });
+    const cfg = createLocalSshConfig('');
+
+    await expect(executeTargetCommand(cfg, 'printf test', 30)).resolves.toEqual(expect.objectContaining({
+      stdout: 'test',
+      exit_code: 0,
+    }));
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_bash', {
+      args: expect.objectContaining({
+        command: 'printf test',
+        workDir: '/tmp',
+        timeoutSecs: 30,
+        windowsShellProfile: 'wsl',
+      }),
+    });
   });
 
   it('prunes only stale iteration directories inside the session run dir', async () => {
