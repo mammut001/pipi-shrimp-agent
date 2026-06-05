@@ -156,16 +156,6 @@ export function AdvancedWorkdirSetup() {
   }, [lastUsedConfig, showSetup]);
 
   useEffect(() => {
-    if (!showSetup) {
-      return;
-    }
-    void assertSupportedPlatform().catch((error) => {
-      useAutoResearchStore.getState().setError(formatError(error));
-      setShowSetup(false);
-    });
-  }, [showSetup]);
-
-  useEffect(() => {
     if (activeRunId) {
       setShowRunList(false);
     }
@@ -202,13 +192,8 @@ export function AdvancedWorkdirSetup() {
   }, [setupForm.remoteWorkDir]);
 
   const handleShowSetup = useCallback(async () => {
-    try {
-      await assertSupportedPlatform();
-      setSetupError(null);
-      setShowSetup(true);
-    } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
-    }
+    setSetupError(null);
+    setShowSetup(true);
   }, []);
 
   const handleResetToDefaults = useCallback(() => {
@@ -227,14 +212,14 @@ export function AdvancedWorkdirSetup() {
   }, [clearLastUsedConfig]);
 
   const handleTestConnection = useCallback(async () => {
+    const cfg = setupForm;
     try {
-      await assertSupportedPlatform();
+      await assertSupportedPlatform(cfg);
     } catch (error) {
       useAutoResearchStore.getState().setError(formatError(error));
       return;
     }
 
-    const cfg = setupForm;
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {

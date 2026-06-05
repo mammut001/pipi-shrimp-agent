@@ -1,9 +1,24 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Sync <html lang> with the i18n locale before React mounts so that
+      // screen readers and CSS :lang() selectors see the correct language.
+      // The i18n module reads from the same key (ai-agent-locale) and
+      // defaults to 'zh-CN', so the values stay in lockstep.
+      (function () {
+        try {
+          var stored = localStorage.getItem('ai-agent-locale');
+          var lang = (stored === 'en-US' || stored === 'zh-CN') ? stored : 'zh-CN';
+          document.documentElement.lang = lang;
+        } catch (e) {
+          document.documentElement.lang = 'zh-CN';
+        }
+      })();
+    </script>
     <!--
       Keep CSP out of the dev HTML entrypoint.
       In Tauri/Vite dev, an inline meta CSP here can block module bootstrap or HMR

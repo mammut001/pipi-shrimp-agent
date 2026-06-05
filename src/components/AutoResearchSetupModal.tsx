@@ -288,7 +288,7 @@ export function AutoResearchSetupModal() {
     }
 
     try {
-      await assertSupportedPlatform();
+      await assertSupportedPlatform(form);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error));
       return;
@@ -343,9 +343,12 @@ export function AutoResearchSetupModal() {
   if (!showSetupModal) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-150" role="presentation">
       <div
         ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="autoresearch-setup-modal-title"
         className="flex w-[860px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-2xl border border-gray-200/60 bg-white shadow-2xl animate-in zoom-in-95 duration-200"
         style={{ height: 'min(760px, calc(100vh - 48px))' }}
       >
@@ -359,12 +362,13 @@ export function AutoResearchSetupModal() {
                 </svg>
               </div>
               <div>
-                <h3 className="text-sm font-bold text-gray-900">AutoResearch</h3>
+                <h3 id="autoresearch-setup-modal-title" className="text-sm font-bold text-gray-900">AutoResearch</h3>
                 <p className="text-[10px] text-gray-400 mt-0.5">{t('autoresearch.headerSubtitle')}</p>
               </div>
             </div>
             <button
               onClick={() => setShowSetupModal(false)}
+              aria-label="Close setup modal"
               className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
             >
               <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -381,16 +385,24 @@ export function AutoResearchSetupModal() {
           <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
             <button
               type="button"
+              id="autoresearch-setup-tab-btn-guided"
               onClick={() => setActiveTab('conversational')}
               disabled={setupLocked}
+              role="tab"
+              aria-selected={activeTab === 'conversational'}
+              aria-controls="autoresearch-setup-tab-guided"
               className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'conversational' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
             >
               {t('autoresearch.tabs.guided')}
             </button>
             <button
               type="button"
+              id="autoresearch-setup-tab-btn-manual"
               onClick={() => setActiveTab('advanced')}
               disabled={setupLocked}
+              role="tab"
+              aria-selected={activeTab === 'advanced'}
+              aria-controls="autoresearch-setup-tab-manual"
               className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'advanced' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
             >
               {t('autoresearch.tabs.manual')}
@@ -405,7 +417,7 @@ export function AutoResearchSetupModal() {
 
         {/* Body */}
         {activeTab === 'conversational' ? (
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div id="autoresearch-setup-tab-guided" role="tabpanel" aria-labelledby="autoresearch-setup-tab-btn-guided" className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {setupLocked ? (
               <div className="flex h-full items-center justify-center px-6 text-center text-sm text-amber-800">
                 {buildAutoResearchRunLockMessage('start a new run', lifecycleLock)}
@@ -421,7 +433,7 @@ export function AutoResearchSetupModal() {
             )}
           </div>
         ) : (
-        <form className="min-h-0 flex-1 overflow-y-auto px-5 pb-5" onSubmit={handleSubmit}>
+        <form id="autoresearch-setup-tab-manual" role="tabpanel" aria-labelledby="autoresearch-setup-tab-btn-manual" className="min-h-0 flex-1 overflow-y-auto px-5 pb-5" onSubmit={handleSubmit}>
           <fieldset className="space-y-4" disabled={setupLocked || isStarting}>
 
           {/* Card 1: Run Target */}
@@ -447,13 +459,13 @@ export function AutoResearchSetupModal() {
                   <div className="flex gap-2">
                     <input
                       className={`flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.host ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                      placeholder="e.g. 192.168.1.10 or connect.westd.seetacloud.com"
+                      placeholder={t('autoresearch.hostPlaceholder')}
                       value={form.host}
                       onChange={e => setForm(f => ({ ...f, host: e.target.value }))}
                     />
                     <input
                       className="w-16 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
-                      placeholder="port"
+                      placeholder={t('autoresearch.portPlaceholder')}
                       type="number"
                       value={form.port}
                       onChange={e => setForm(f => ({ ...f, port: parseInt(e.target.value) || 22 }))}
@@ -466,7 +478,7 @@ export function AutoResearchSetupModal() {
                   <div className="flex gap-2">
                     <input
                       className={`w-24 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.user ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                      placeholder="user"
+                      placeholder={t('autoresearch.userPlaceholder')}
                       value={form.user}
                       onChange={e => setForm(f => ({ ...f, user: e.target.value }))}
                     />
@@ -475,9 +487,9 @@ export function AutoResearchSetupModal() {
                       value={form.authMode}
                       onChange={e => setForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
                     >
-                      <option value="agent">Auth: Agent (~/.ssh/config)</option>
-                      <option value="password">Auth: Password</option>
-                      <option value="key">Auth: Private key</option>
+                      <option value="agent">{t('autoresearch.authOptionAgent')}</option>
+                      <option value="password">{t('autoresearch.authOptionPassword')}</option>
+                      <option value="key">{t('autoresearch.authOptionKey')}</option>
                     </select>
                   </div>
                   {fieldHints.user && <InlineHint>{fieldHints.user}</InlineHint>}
@@ -487,7 +499,7 @@ export function AutoResearchSetupModal() {
                     <FieldLabel label={t('autoresearch.field.password')} required />
                     <input
                       className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.password ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                      placeholder="password"
+                      placeholder={t('autoresearch.passwordPlaceholder')}
                       type="password"
                       autoComplete="off"
                       value={form.password}
@@ -495,8 +507,8 @@ export function AutoResearchSetupModal() {
                     />
                     {fieldHints.password && <InlineHint>{fieldHints.password}</InlineHint>}
                     <p className="text-[10px] text-gray-400 leading-snug">
-                      Kept in memory only (not saved to disk). Requires <code className="px-1 py-0.5 bg-gray-100 rounded">sshpass</code>:<br/>
-                      <code className="px-1 py-0.5 bg-gray-100 rounded">brew install hudochenkov/sshpass/sshpass</code>
+                      {t('autoresearch.passwordHintBefore')}<code className="px-1 py-0.5 bg-gray-100 rounded">sshpass</code>:<br/>
+                      <code className="px-1 py-0.5 bg-gray-100 rounded">{t('autoresearch.sshpassHintCommand')}</code>
                     </p>
                   </div>
                 )}
@@ -505,7 +517,7 @@ export function AutoResearchSetupModal() {
                     <FieldLabel label={t('autoresearch.field.keyPath')} required />
                     <input
                       className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.keyPath ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                      placeholder="e.g. ~/.ssh/id_rsa"
+                      placeholder={t('autoresearch.keyPathPlaceholder')}
                       value={form.keyPath}
                       onChange={e => setForm(f => ({ ...f, keyPath: e.target.value }))}
                     />
@@ -593,7 +605,7 @@ export function AutoResearchSetupModal() {
               <FieldLabel label={t('autoresearch.field.baselineOptional')} />
               <input
                 className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors ${fieldHints.baseline ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                placeholder="e.g. 0.963284"
+                placeholder={t('autoresearch.baselinePlaceholder')}
                 value={baselineInput}
                 onChange={e => setBaselineInput(e.target.value)}
               />

@@ -9,7 +9,12 @@ import { t } from '@/i18n';
 import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
 import { isAuthConnectionError } from '@/services/settings/settingsConnection';
 import type { SshConfig } from '@/store/autoresearchStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { formatError } from '@/utils/errorFormat';
+import {
+  convertWindowsPathToWsl,
+  resolveWindowsShellProfile,
+} from '@/utils/windowsShellProfile';
 import {
   getAutoResearchLivingDocPathFromWorkDir,
   getAutoResearchSessionFilePathFromWorkDir,
@@ -71,6 +76,15 @@ async function resolveTargetHomeDirectory(cfg: SshConfig): Promise<string> {
   return homeDir;
 }
 
+function normalizeLocalTargetPath(path: string): string {
+  const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
+  const shellResolution = resolveWindowsShellProfile(windowsShellProfile, path);
+  if (!shellResolution.isWindows || shellResolution.resolved !== 'wsl') {
+    return path;
+  }
+  return convertWindowsPathToWsl(path) ?? path;
+}
+
 export async function resolveTargetPath(
   cfg: SshConfig,
   fieldName: string,
@@ -80,11 +94,18 @@ export async function resolveTargetPath(
   if (!trimmed) {
     throw new Error(`Invalid ${fieldName}: expected non-empty string`);
   }
+
+  let resolvedPath = trimmed;
   if (trimmed === '~' || trimmed.startsWith('~/')) {
     const homeDir = await resolveTargetHomeDirectory(cfg);
-    return trimmed === '~' ? homeDir : `${homeDir}/${trimmed.slice(2)}`;
+    resolvedPath = trimmed === '~' ? homeDir : `${homeDir}/${trimmed.slice(2)}`;
   }
-  return trimmed;
+
+  if (cfg.mode === 'local') {
+    resolvedPath = normalizeLocalTargetPath(resolvedPath);
+  }
+
+  return resolvedPath;
 }
 
 function buildRequiredPath(parentDir: string, fileName: string): string {

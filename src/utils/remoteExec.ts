@@ -14,7 +14,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '@/store/settingsStore';
-import { isWindowsPlatform } from '@/utils/windowsShellProfile';
+import { resolveWindowsShellProfile } from '@/utils/windowsShellProfile';
 
 export type ExecMode = 'local' | 'ssh';
 export type SshAuthMode = 'agent' | 'password' | 'key';
@@ -189,7 +189,8 @@ export async function ensureSshpassAvailable(): Promise<{ ok: boolean; hint?: st
   if (_sshpassCache) return _sshpassCache;
   try {
     const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
-    const command = isWindowsPlatform()
+    const shellResolution = resolveWindowsShellProfile(windowsShellProfile);
+    const command = shellResolution.isWindows && shellResolution.resolved === 'powershell'
       ? `if (Get-Command sshpass -ErrorAction SilentlyContinue) { 'OK' } else { 'MISSING' }`
       : 'command -v sshpass >/dev/null 2>&1 && echo OK || echo MISSING';
     const result = await invoke<RawBashResult>('execute_bash', {

@@ -35,6 +35,7 @@ export interface SessionRunPaths {
 }
 
 const SNAPSHOT_EXCLUDES = ['.git', 'node_modules', 'target', 'runs'] as const;
+const DEFAULT_LOCAL_COMMAND_CWD = '/tmp';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/[\\/]+$/, '');
@@ -165,7 +166,7 @@ export async function executeTargetCommand(
   return invoke<RawBashResult>('execute_bash', {
     args: {
       command: isLocalTarget ? command : buildRemoteBashCommand(cfg, command),
-      workDir: isLocalTarget ? (cfg.remoteWorkDir || undefined) : undefined,
+      workDir: isLocalTarget ? (cfg.remoteWorkDir || DEFAULT_LOCAL_COMMAND_CWD) : undefined,
       timeoutSecs,
       windowsShellProfile,
     },
