@@ -227,7 +227,7 @@ export async function startAutoResearchRun(
   setup: AutoResearchValidatedSetup,
   callbacks: StartCallbacks,
 ): Promise<StartAutoResearchRunResult> {
-  await assertSupportedPlatform();
+  await assertSupportedPlatform(setup.sshConfig);
   assertNoConcurrentAutoResearchRun();
 
   const sessionId = createAutoResearchRunId();
@@ -318,17 +318,16 @@ export async function startAutoResearchRun(
 export async function resumeInterruptedAutoResearchRun(
   runId: string,
 ): Promise<ResumeAutoResearchRunResult> {
-  await assertSupportedPlatform();
-  assertAutoResearchLifecycleUnlocked(
-    useAutoResearchStore.getState(),
-    'resume the interrupted run',
-  );
-
   const { run, token } = getInterruptedRunForResume(runId);
   const resumeSshConfig: SshConfig = {
     ...sanitizeAutoResearchResumeSshConfig(token.sshConfig),
     remoteWorkDir: token.sshConfig.remoteWorkDir || run.config.workdir,
   };
+  await assertSupportedPlatform(resumeSshConfig);
+  assertAutoResearchLifecycleUnlocked(
+    useAutoResearchStore.getState(),
+    'resume the interrupted run',
+  );
 
   const [
     { runAutoResearchPreflight },

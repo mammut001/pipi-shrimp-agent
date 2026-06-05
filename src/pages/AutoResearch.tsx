@@ -253,16 +253,6 @@ function AutoResearchView() {
   }, [lastUsedConfig, showSetup]);
 
   useEffect(() => {
-    if (!showSetup) {
-      return;
-    }
-    void assertSupportedPlatform().catch((error) => {
-      useAutoResearchStore.getState().setError(formatError(error));
-      setShowSetup(false);
-    });
-  }, [showSetup]);
-
-  useEffect(() => {
     if (activeRunId) {
       setShowRunList(false);
     }
@@ -309,13 +299,8 @@ function AutoResearchView() {
       return;
     }
 
-    try {
-      await assertSupportedPlatform();
-      setSetupError(null);
-      setShowSetup(true);
-    } catch (error) {
-      useAutoResearchStore.getState().setError(formatError(error));
-    }
+    setSetupError(null);
+    setShowSetup(true);
   }, [getLifecycleLockMessage, lifecycleLock.locked]);
 
   const handleResetToDefaults = useCallback(() => {
@@ -344,14 +329,14 @@ function AutoResearchView() {
       return;
     }
 
+    const cfg = setupForm;
     try {
-      await assertSupportedPlatform();
+      await assertSupportedPlatform(cfg);
     } catch (error) {
       useAutoResearchStore.getState().setError(formatError(error));
       return;
     }
 
-    const cfg = setupForm;
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {

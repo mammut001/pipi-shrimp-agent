@@ -14,9 +14,9 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:browser-gate": "bash tests/browser/release-gate.sh",
-    "tauri": "cargo-tauri",
-    "tauri:dev": "cargo-tauri dev",
-    "tauri:build": "cargo-tauri build"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

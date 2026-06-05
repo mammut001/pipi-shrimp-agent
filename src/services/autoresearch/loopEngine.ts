@@ -797,13 +797,6 @@ export async function startExperimentLoop(
 ): Promise<void> {
   const store = useAutoResearchStore.getState();
 
-  try {
-    await assertSupportedPlatform();
-  } catch (error) {
-    useAutoResearchStore.getState().setError(formatError(error));
-    return;
-  }
-
   if (!store.sshConfig) {
     useAutoResearchStore.getState().setError('SSH config not set');
     return;
@@ -812,6 +805,14 @@ export async function startExperimentLoop(
   const notifier = createNotifier(store.telegramConfig);
   const sessionId = store.id;
   const cfg = store.sshConfig;
+
+  try {
+    await assertSupportedPlatform(cfg);
+  } catch (error) {
+    useAutoResearchStore.getState().setError(formatError(error));
+    return;
+  }
+
   useAutoResearchStore.getState().setRunStatus('running', { summary: 'Run started.' });
   useAutoResearchStore.getState().setCurrentPhase('INIT');
   emitAutoResearchRuntimeEvent({

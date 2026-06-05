@@ -133,6 +133,25 @@ describe('runDir', () => {
     });
   });
 
+  it('falls back to /tmp when a local AutoResearch helper clears the workdir', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'wsl' });
+    const cfg = createLocalSshConfig('');
+
+    await expect(executeTargetCommand(cfg, 'printf test', 30)).resolves.toEqual(expect.objectContaining({
+      stdout: 'test',
+      exit_code: 0,
+    }));
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_bash', {
+      args: expect.objectContaining({
+        command: 'printf test',
+        workDir: '/tmp',
+        timeoutSecs: 30,
+        windowsShellProfile: 'wsl',
+      }),
+    });
+  });
+
   it('prunes only stale iteration directories inside the session run dir', async () => {
     const cfg = createLocalSshConfig(workDir);
     const first = await createRunDir(cfg, 'session-1', 1);
