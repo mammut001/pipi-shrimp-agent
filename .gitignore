@@ -56,3 +56,15 @@ IDENTITY.md
 /coverage
 TESTING.md
 /.pipi-shrimp
+
+# Local desktop test artifacts
+/.playwright-cli/
+/.tmp-*
+/.tauri-dev.log
+/build-stderr.log
+/build-stdout.log
+/F*autoresearch-loop-*
+/F*autoresearch-rundir-*
+/F*autoresearch-metrics-*
+/F*autoresearch-project-adapter-*
+/F*session.md

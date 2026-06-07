@@ -170,6 +170,31 @@ function assertNoConcurrentAutoResearchRun(): void {
   );
 }
 
+function recordProjectAdaptationEvent(preflight: AutoResearchPreflightResult): void {
+  const actions = preflight.environmentSummary.projectAdaptationActions ?? [];
+  if (!preflight.environmentSummary.projectAutoAdapted || actions.length === 0) {
+    return;
+  }
+
+  useAutoResearchStore.getState().addRunEvent({
+    timestamp: new Date().toISOString(),
+    level: 'info',
+    phase: 'preflight',
+    type: 'raw',
+    message: `Project auto-adapted before AutoResearch start: ${actions.join('; ')}`,
+    summary: 'Project auto-adapted.',
+    metadata: {
+      experimentDir: preflight.resolvedExperimentDir,
+      actions,
+      recommendedRunCommand: preflight.environmentSummary.recommendedRunCommand,
+      inferredProjectType: preflight.environmentSummary.inferredProjectType,
+      detectedEntryScript: preflight.environmentSummary.detectedEntryScript,
+      detectedCommand: preflight.environmentSummary.detectedCommand,
+      detectedResultFiles: preflight.environmentSummary.detectedResultFiles ?? [],
+    },
+  });
+}
+
 function toRecoveredExperimentStatus(
   run: AutoResearchRunRecord,
   iteration: AutoResearchIterationRecord,
@@ -246,6 +271,7 @@ export async function startAutoResearchRun(
     experimentDir: setup.experimentDir,
     workDir: setup.sshConfig.remoteWorkDir,
     sessionId,
+    metricName: setup.metric,
     agentConfig: runConfig.agentConfig,
   });
 
@@ -282,6 +308,7 @@ export async function startAutoResearchRun(
     livingDocPath: preflight.livingDocPath,
     agentConfigSnapshot: runConfig.snapshot,
   });
+  recordProjectAdaptationEvent(preflight);
 
   const [{ createAutoResearchSendMessage }, { startExperimentLoop }] = await Promise.all([
     import('./chatAdapter'),
@@ -362,6 +389,7 @@ export async function resumeInterruptedAutoResearchRun(
     experimentDir: token.experimentDir || run.config.experimentDir,
     workDir: resumeSshConfig.remoteWorkDir,
     sessionId: runId,
+    metricName: token.metricName || run.config.metric,
     agentConfig: runConfig.agentConfig,
   });
 
@@ -406,6 +434,7 @@ export async function resumeInterruptedAutoResearchRun(
     experiments: buildRecoveredExperiments(run),
     liveOutput: run.liveOutputExcerpt || '',
   });
+  recordProjectAdaptationEvent(preflight);
 
   const sendMessage = createAutoResearchSendMessage(
     preflight.resolvedExperimentDir,

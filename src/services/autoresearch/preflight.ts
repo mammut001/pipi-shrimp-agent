@@ -11,6 +11,7 @@ import { isAuthConnectionError } from '@/services/settings/settingsConnection';
 import type { SshConfig } from '@/store/autoresearchStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { formatError } from '@/utils/errorFormat';
+import { shellEscape } from '@/utils/remoteExec';
 import {
   convertWindowsPathToWsl,
   resolveWindowsShellProfile,
@@ -19,6 +20,7 @@ import {
   getAutoResearchLivingDocPathFromWorkDir,
   getAutoResearchSessionFilePathFromWorkDir,
 } from './paths';
+import { ensureAutoResearchProjectReady } from './projectAdapter';
 import { executeTargetCommand, pathExistsOnTarget } from './runDir';
 
 export interface AutoResearchPreflightInput {
@@ -26,7 +28,9 @@ export interface AutoResearchPreflightInput {
   experimentDir: string;
   workDir: string;
   sessionId: string;
+  metricName?: string;
   agentConfig?: ResolvedAgentConfig | null;
+  autoAdapt?: boolean;
 }
 
 export interface AutoResearchPreflightResult {
@@ -57,6 +61,13 @@ export interface AutoResearchEnvironmentSummary {
   gpuUtilizationPercent?: number | null;
   gpuMemoryUsedMb?: number | null;
   gpuMemoryTotalMb?: number | null;
+  projectAutoAdapted?: boolean;
+  projectAdaptationActions?: string[];
+  inferredProjectType?: 'python' | 'node' | 'unknown';
+  detectedEntryScript?: string | null;
+  detectedCommand?: string | null;
+  detectedNotebookFiles?: string[];
+  detectedResultFiles?: string[];
 }
 
 async function resolveTargetHomeDirectory(cfg: SshConfig): Promise<string> {
@@ -112,6 +123,14 @@ function buildRequiredPath(parentDir: string, fileName: string): string {
   return `${parentDir.replace(/[\\/]+$/, '')}/${fileName}`;
 }
 
+function buildRecommendedRunCommand(preferredPythonCommand: string, metricName?: string): string {
+  const normalizedMetric = metricName?.trim();
+  if (!normalizedMetric) {
+    return `${preferredPythonCommand} run_experiment.py`;
+  }
+  return `${preferredPythonCommand} run_experiment.py --primary-metric ${normalizedMetric}`;
+}
+
 function buildNotGitRepoMessage(experimentDir: string): string {
   return [
     t('autoresearch.preflight.notGitRepoTitle'),
@@ -139,7 +158,11 @@ async function assertTargetPathExists(
   }
 }
 
-function parseEnvironmentSummary(raw: string, experimentDir: string): AutoResearchEnvironmentSummary {
+function parseEnvironmentSummary(
+  raw: string,
+  experimentDir: string,
+  metricName?: string,
+): AutoResearchEnvironmentSummary {
   const values = new Map<string, string>();
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
@@ -187,7 +210,7 @@ function parseEnvironmentSummary(raw: string, experimentDir: string): AutoResear
     worktreeWritable,
     runScriptPath: buildRequiredPath(experimentDir, 'run_experiment.py'),
     notesPath: buildRequiredPath(experimentDir, 'AUTORESEARCH.md'),
-    recommendedRunCommand: `${preferredPythonCommand} run_experiment.py`,
+    recommendedRunCommand: buildRecommendedRunCommand(preferredPythonCommand, metricName),
     gpuTelemetryAvailable,
     gpuSummary: gpuTelemetryAvailable
       ? [
@@ -218,9 +241,10 @@ function parseOptionalTelemetryNumber(value: string | undefined): number | null 
 export async function inspectAutoResearchEnvironment(
   cfg: SshConfig,
   experimentDir: string,
+  metricName?: string,
 ): Promise<AutoResearchEnvironmentSummary> {
   const command = [
-    `repo=${JSON.stringify(experimentDir)}`,
+    `repo=${shellEscape(experimentDir)}`,
     'preferred_python=""',
     'if command -v python3 >/dev/null 2>&1; then',
     '  preferred_python="python3"',
@@ -257,7 +281,7 @@ export async function inspectAutoResearchEnvironment(
     throw new Error(result.stderr || `Failed to inspect experiment environment: ${experimentDir}`);
   }
 
-  return parseEnvironmentSummary(result.stdout || '', experimentDir);
+  return parseEnvironmentSummary(result.stdout || '', experimentDir, metricName);
 }
 
 export async function runAutoResearchPreflight(
@@ -291,6 +315,18 @@ export async function runAutoResearchPreflight(
 
   await assertTargetPathExists(input.sshConfig, 'Experiment directory', resolvedExperimentDir);
 
+  const adaptation = input.autoAdapt === false
+    ? {
+      adapted: false,
+      actions: [] as string[],
+      inferredProjectType: 'unknown' as const,
+      detectedEntryScript: null,
+      detectedCommand: null,
+      detectedNotebookFiles: [] as string[],
+      detectedResultFiles: [] as string[],
+    }
+    : await ensureAutoResearchProjectReady(input.sshConfig, resolvedExperimentDir);
+
   for (const fileName of REQUIRED_EXPERIMENT_FILES) {
     await assertTargetPathExists(
       input.sshConfig,
@@ -301,7 +337,18 @@ export async function runAutoResearchPreflight(
 
   const sessionFilePath = getAutoResearchSessionFilePathFromWorkDir(resolvedWorkDir);
   const livingDocPath = getAutoResearchLivingDocPathFromWorkDir(resolvedWorkDir, input.sessionId);
-  const environmentSummary = await inspectAutoResearchEnvironment(input.sshConfig, resolvedExperimentDir);
+  const environmentSummary = await inspectAutoResearchEnvironment(
+    input.sshConfig,
+    resolvedExperimentDir,
+    input.metricName,
+  );
+  environmentSummary.projectAutoAdapted = adaptation.adapted;
+  environmentSummary.projectAdaptationActions = adaptation.actions;
+  environmentSummary.inferredProjectType = adaptation.inferredProjectType;
+  environmentSummary.detectedEntryScript = adaptation.detectedEntryScript;
+  environmentSummary.detectedCommand = adaptation.detectedCommand;
+  environmentSummary.detectedNotebookFiles = adaptation.detectedNotebookFiles;
+  environmentSummary.detectedResultFiles = adaptation.detectedResultFiles;
 
   console.info('[AutoResearch] Startup preflight', {
     ...getAgentConfigDiagnostics(agentConfig!),
@@ -313,6 +360,12 @@ export async function runAutoResearchPreflight(
     repoStatus: environmentSummary.repoStatus,
     dirtyFileCount: environmentSummary.dirtyFileCount,
     gpu: environmentSummary.gpuSummary,
+    projectAutoAdapted: environmentSummary.projectAutoAdapted,
+    projectAdaptationActions: environmentSummary.projectAdaptationActions,
+    inferredProjectType: environmentSummary.inferredProjectType,
+    detectedEntryScript: environmentSummary.detectedEntryScript,
+    detectedCommand: environmentSummary.detectedCommand,
+    detectedResultFiles: environmentSummary.detectedResultFiles,
   });
 
   return {
