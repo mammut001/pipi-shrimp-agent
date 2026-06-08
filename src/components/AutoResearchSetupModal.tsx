@@ -31,7 +31,7 @@ import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
 import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
 import {
   buildAutoResearchRunLockMessage,
-  getAutoResearchLifecycleLock,
+  useAutoResearchLifecycleLock,
 } from '@/services/autoresearch/runLock';
 
 const BootstrapChatView = lazy(() => import('@/components/autoresearch/BootstrapChatView').then((module) => ({
@@ -93,7 +93,7 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
 export function AutoResearchSetupModal() {
   const showSetupModal = useAutoResearchStore(s => s.showSetupModal);
   const setShowSetupModal = useAutoResearchStore(s => s.setShowSetupModal);
-  const lifecycleLock = useAutoResearchStore((state) => getAutoResearchLifecycleLock(state));
+  const lifecycleLock = useAutoResearchLifecycleLock();
   const sshConfig = useAutoResearchStore(s => s.sshConfig);
   const lastUsedConfig = useAutoResearchStore(s => s.lastUsedConfig);
   const setSshConfig = useAutoResearchStore(s => s.setSshConfig);

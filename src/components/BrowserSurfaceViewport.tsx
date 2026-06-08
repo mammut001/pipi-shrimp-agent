@@ -16,6 +16,7 @@ export function BrowserSurfaceViewport({
 }: BrowserSurfaceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const { isWindowOpen, presentationMode } = useBrowserAgentStore();
   const autoResearchSetupVisible = useAutoResearchStore((state) => state.showSetupModal);
 
@@ -39,12 +40,25 @@ export function BrowserSurfaceViewport({
       return false;
     }
 
-    await moveBrowserSurface(mode, {
+    const bounds = {
       x: rect.left,
       y: rect.top,
       width: rect.width,
       height: rect.height,
-    }).catch(() => {});
+    };
+    const lastBounds = lastBoundsRef.current;
+    if (
+      lastBounds
+      && lastBounds.x === bounds.x
+      && lastBounds.y === bounds.y
+      && lastBounds.width === bounds.width
+      && lastBounds.height === bounds.height
+    ) {
+      return true;
+    }
+
+    lastBoundsRef.current = bounds;
+    await moveBrowserSurface(mode, bounds).catch(() => {});
 
     return true;
   }, [mode]);
@@ -53,6 +67,7 @@ export function BrowserSurfaceViewport({
     clearRetry();
 
     if (!isActive) {
+      lastBoundsRef.current = null;
       // This mode is not the active one — hide the native surface
       void setEmbeddedSurfaceVisibility(false).catch(() => {});
       return;
@@ -87,14 +102,13 @@ export function BrowserSurfaceViewport({
     }
 
     window.addEventListener('resize', scheduleSync);
-    window.addEventListener('scroll', scheduleSync, true);
 
     return () => {
       clearRetry();
       cancelAnimationFrame(rafId);
+      lastBoundsRef.current = null;
       resizeObserver.disconnect();
       window.removeEventListener('resize', scheduleSync);
-      window.removeEventListener('scroll', scheduleSync, true);
       // Hide on unmount / mode-switch
       void setEmbeddedSurfaceVisibility(false).catch(() => {});
     };

@@ -38,7 +38,7 @@ import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import {
   buildAutoResearchRunLockMessage,
-  getAutoResearchLifecycleLock,
+  useAutoResearchLifecycleLock,
 } from '@/services/autoresearch/runLock';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
@@ -216,7 +216,7 @@ function AutoResearchView() {
   const agentConfigError = agentConfigIssues.length > 0
     ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
     : '';
-  const lifecycleLock = useAutoResearchStore((state) => getAutoResearchLifecycleLock(state));
+  const lifecycleLock = useAutoResearchLifecycleLock();
   const displayRun = selectedRun;
   const displayedLiveOutput = selectedRunContext.liveOutput;
   const displayReason = selectedRunContext.reason;

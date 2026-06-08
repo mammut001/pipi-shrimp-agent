@@ -17,7 +17,7 @@ import { AutoResearchRunDetailDocument } from './autoresearch/AutoResearchRunDet
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import {
   buildAutoResearchRunLockMessage,
-  getAutoResearchLifecycleLock,
+  useAutoResearchLifecycleLock,
 } from '@/services/autoresearch/runLock';
 import { openFileExternal } from '@/services/docService';
 import {
@@ -219,7 +219,7 @@ export function AutoResearchPanel() {
   const selectedRunContext = useAutoResearchStore(getSelectedAutoResearchRunContext);
   const selectedRun = selectedRunContext.run;
   const sortedRuns = useAutoResearchStore(getSortedAutoResearchRuns);
-  const lifecycleLock = useAutoResearchStore((state) => getAutoResearchLifecycleLock(state));
+  const lifecycleLock = useAutoResearchLifecycleLock();
   const loopState = selectedRunContext.loopState;
   const runReason = selectedRunContext.reason;
 

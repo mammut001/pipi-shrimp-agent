@@ -1,3 +1,4 @@
+import { useAutoResearchStore } from '@/store/autoresearchStore';
 import type { AutoResearchRunRecord, AutoResearchRunStatus } from './history';
 
 type AutoResearchLifecycleLoopState = 'idle' | 'running' | 'paused' | 'stopped' | 'error';
@@ -56,6 +57,16 @@ function getLockReason(
   return null;
 }
 
+function lifecycleLocksEqual(a: AutoResearchLifecycleLock, b: AutoResearchLifecycleLock): boolean {
+  return (
+    a.locked === b.locked
+    && a.loopState === b.loopState
+    && a.reason === b.reason
+    && a.activeRun?.id === b.activeRun?.id
+    && a.activeRun?.status === b.activeRun?.status
+  );
+}
+
 export function getAutoResearchLifecycleLock(
   state: AutoResearchLifecycleState,
 ): AutoResearchLifecycleLock {
@@ -75,6 +86,13 @@ export function getAutoResearchLifecycleLock(
     activeRun,
     reason: locked ? getLockReason(state, activeRun) : null,
   };
+}
+
+export function useAutoResearchLifecycleLock(): AutoResearchLifecycleLock {
+  return useAutoResearchStore(
+    (state) => getAutoResearchLifecycleLock(state),
+    lifecycleLocksEqual,
+  );
 }
 
 export function buildAutoResearchRunLockMessage(
