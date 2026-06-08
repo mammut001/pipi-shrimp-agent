@@ -25,6 +25,7 @@ import {
   executeAgentTask,
   inspectEmbeddedSurface,
   captureScreenshot,
+  setEmbeddedSurfaceVisibility,
   type AgentLog,
   type AgentTaskComplete,
 } from '../utils/browserCommands';
@@ -1141,6 +1142,7 @@ Complete the task efficiently and call "done" when finished.`;
     // Sync with UI store for layout changes
     if (mode === 'hidden') {
       uiStore.closeBrowserDock();
+      void setEmbeddedSurfaceVisibility(false).catch(() => {});
     } else if (mode === 'mini') {
       uiStore.setBrowserDockMode('panel');
     } else if (mode === 'expanded') {
@@ -1214,6 +1216,7 @@ Complete the task efficiently and call "done" when finished.`;
     const { addLog } = get();
     // Sync with UI store
     useUIStore.getState().closeBrowserDock();
+    void setEmbeddedSurfaceVisibility(false).catch(() => {});
     set({ presentationMode: 'hidden' });
     addLog('info', t('browserAgent.log.hideBrowser'));
   },

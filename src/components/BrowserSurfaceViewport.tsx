@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useCallback } from 'react';
-import { moveBrowserSurface, setEmbeddedSurfaceVisibility } from '@/utils/browserCommands';
+import { moveBrowserSurface } from '@/utils/browserCommands';
 import { useBrowserAgentStore } from '@/store';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 
@@ -9,6 +9,21 @@ interface BrowserSurfaceViewportProps {
   emptyState?: React.ReactNode;
 }
 
+type SurfaceBounds = { x: number; y: number; width: number; height: number };
+
+function normalizeBounds(rect: DOMRect): SurfaceBounds {
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.max(1, Math.round(rect.width)),
+    height: Math.max(1, Math.round(rect.height)),
+  };
+}
+
+function boundsEqual(a: SurfaceBounds, b: SurfaceBounds): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
 export function BrowserSurfaceViewport({
   mode,
   className,
@@ -16,7 +31,8 @@ export function BrowserSurfaceViewport({
 }: BrowserSurfaceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBoundsRef = useRef<SurfaceBounds | null>(null);
   const { isWindowOpen, presentationMode } = useBrowserAgentStore();
   const autoResearchSetupVisible = useAutoResearchStore((state) => state.showSetupModal);
 
@@ -30,6 +46,13 @@ export function BrowserSurfaceViewport({
     }
   }, []);
 
+  const clearDebounce = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+  }, []);
+
   const syncBounds = useCallback(async (): Promise<boolean> => {
     const element = containerRef.current;
     if (!element) return false;
@@ -40,20 +63,9 @@ export function BrowserSurfaceViewport({
       return false;
     }
 
-    const bounds = {
-      x: rect.left,
-      y: rect.top,
-      width: rect.width,
-      height: rect.height,
-    };
+    const bounds = normalizeBounds(rect);
     const lastBounds = lastBoundsRef.current;
-    if (
-      lastBounds
-      && lastBounds.x === bounds.x
-      && lastBounds.y === bounds.y
-      && lastBounds.width === bounds.width
-      && lastBounds.height === bounds.height
-    ) {
+    if (lastBounds && boundsEqual(lastBounds, bounds)) {
       return true;
     }
 
@@ -65,23 +77,25 @@ export function BrowserSurfaceViewport({
 
   useLayoutEffect(() => {
     clearRetry();
+    clearDebounce();
 
     if (!isActive) {
       lastBoundsRef.current = null;
-      // This mode is not the active one — hide the native surface
-      void setEmbeddedSurfaceVisibility(false).catch(() => {});
       return;
     }
 
     let rafId = 0;
+    let disposed = false;
 
-    // Schedule sync after RAF (layout settled)
-    const scheduleSync = () => {
+    const runSync = () => {
+      if (disposed) {
+        return;
+      }
+
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(async () => {
         const ok = await syncBounds();
-        if (!ok) {
-          // Div has no size yet — retry after a short delay
+        if (!ok && !disposed) {
           clearRetry();
           retryRef.current = setTimeout(() => {
             retryRef.current = null;
@@ -89,6 +103,11 @@ export function BrowserSurfaceViewport({
           }, 50);
         }
       });
+    };
+
+    const scheduleSync = () => {
+      clearDebounce();
+      debounceRef.current = setTimeout(runSync, 32);
     };
 
     scheduleSync();
@@ -104,17 +123,17 @@ export function BrowserSurfaceViewport({
     window.addEventListener('resize', scheduleSync);
 
     return () => {
+      disposed = true;
       clearRetry();
+      clearDebounce();
       cancelAnimationFrame(rafId);
       lastBoundsRef.current = null;
       resizeObserver.disconnect();
       window.removeEventListener('resize', scheduleSync);
-      // Hide on unmount / mode-switch
-      void setEmbeddedSurfaceVisibility(false).catch(() => {});
     };
   // Re-run whenever the active state changes (isWindowOpen OR presentationMode changed)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive]);
+  }, [isActive, clearDebounce, clearRetry, mode, syncBounds]);
 
   return (
     <div ref={containerRef} className={className}>
