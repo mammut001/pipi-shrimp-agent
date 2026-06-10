@@ -239,6 +239,20 @@ impl ProviderAdapter for OpenAIAdapter {
                                 .to_string();
 
                             if let Some(index) = index {
+                                // AUDIT-FIX [fix-2#15] — The loop used to
+                                // push empty `ToolCall` placeholders so it
+                                // could index into the vector at `index`.
+                                // That is fine, but the placeholders are
+                                // immediately overwritten on the *first*
+                                // event for that index. On subsequent
+                                // deltas we must NOT re-overwrite
+                                // tool_call_id or name (they would be empty
+                                // strings anyway, but a non-empty
+                                // accidental overwrite could clobber the
+                                // values from a prior chunk). The `if
+                                // !id.is_empty()` and `if !name.is_empty()`
+                                // guards already prevent that; we keep
+                                // them and document the invariant.
                                 while ctx.tool_calls.len() <= index {
                                     ctx.tool_calls.push(ToolCall {
                                         tool_call_id: String::new(),

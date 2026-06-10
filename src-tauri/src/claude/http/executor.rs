@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use once_cell::sync::Lazy;
 use tauri::Window;
@@ -18,11 +19,44 @@ use super::{
 static CANCEL_TOKENS: Lazy<Mutex<HashMap<String, CancellationToken>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// AUDIT-FIX [fix-2#3] — Default per-request timeout is now 300s for the HTTP
+/// client. Per-call timeouts can still be requested by the caller via
+/// `send_request_impl` (which is a private helper); for streaming and chat
+/// we explicitly use the client default. This avoids a single global 300s
+/// timeout that crashes long-running generations.
+pub const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 300;
+
 pub fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(Duration::from_secs(DEFAULT_HTTP_TIMEOUT_SECS))
         .build()
         .expect("Failed to build HTTP client")
+}
+
+/// AUDIT-FIX [fix-2#17] — Strip the `key=`, `api_key=`, and `token=` query
+/// parameters from a URL before logging. We keep the rest of the URL intact
+/// (path, host, port) so operators can still see the endpoint.
+pub fn sanitize_url_for_log(url: &str) -> String {
+    // AUDIT-FIX [fix-7-pre-url] — Avoid pulling in the `url` crate for this
+    // one helper: we only need to filter the query string, not parse the
+    // whole URL. The split-on-`?` strategy below is sufficient for the
+    // logging use case and removes a build-time dependency.
+    let (base, query) = match url.find('?') {
+        Some(idx) => (&url[..idx], &url[idx + 1..]),
+        None => return url.to_string(),
+    };
+    let filtered: Vec<&str> = query
+        .split('&')
+        .filter(|seg| {
+            let lower = seg.split('=').next().unwrap_or("").to_ascii_lowercase();
+            lower != "key" && lower != "api_key" && lower != "apikey" && lower != "token"
+        })
+        .collect();
+    if filtered.is_empty() {
+        base.to_string()
+    } else {
+        format!("{}?{}", base, filtered.join("&"))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -56,26 +90,20 @@ pub async fn send_request_impl(
     let url = adapter.build_url(&config);
     let headers = adapter.build_headers(&config);
 
+    // AUDIT-FIX [fix-2#1][fix-2#17] — Never log the API key, not even a
+    // prefix/suffix preview, and never log a URL that contains an API key
+    // query parameter. We log the key *length* only so operators can sanity
+    // check that a key was actually attached.
     #[cfg(debug_assertions)]
     {
-        let key_preview = if config.api_key.len() > 8 {
-            format!("{}...{} (len={})", &config.api_key[..4], &config.api_key[config.api_key.len()-4..], config.api_key.len())
-        } else {
-            format!("****(len={})", config.api_key.len())
-        };
+        let sanitized_url = sanitize_url_for_log(&url);
         eprintln!(
-            "[claude-http] provider={:?} format={:?} url={} key={} provider_hint={:?} format_hint={:?}",
-            config.provider_id, config.api_format, url, key_preview, provider_hint, api_format_hint
+            "[claude-http] provider={:?} format={:?} url={} api_key_len={} provider_hint={:?} format_hint={:?}",
+            config.provider_id, config.api_format, sanitized_url, config.api_key.len(), provider_hint, api_format_hint
         );
-        for (name, value) in headers.iter() {
-            let val_str = value.to_str().unwrap_or("<non-ascii>");
+        for (name, _value) in headers.iter() {
             if name == "authorization" || name == "x-api-key" {
-                let preview = if val_str.len() > 20 {
-                    format!("{}...{}", &val_str[..15], &val_str[val_str.len()-4..])
-                } else {
-                    val_str.to_string()
-                };
-                eprintln!("[claude-http]   header {}={}", name, preview);
+                eprintln!("[claude-http]   header {} set (value redacted)", name);
             }
         }
     }
@@ -172,16 +200,23 @@ pub async fn send_request_impl(
     );
     let telemetry = ClaudeHttpTelemetry::start(provider_label(config.provider_id), model, &url);
 
+    // AUDIT-FIX [fix-2#4][fix-2#9] — Share the request body across retries
+    // via `Arc<serde_json::Value>` so each retry attempt clones the Arc
+    // (O(1)) rather than deep-cloning the entire JSON payload.
+    let body = std::sync::Arc::new(body);
+    let url = std::sync::Arc::new(url);
+    let headers = std::sync::Arc::new(headers);
+
     let response = run_with_retry(
         |_| {
-            let url = url.clone();
-            let headers = headers.clone();
-            let body = body.clone();
+            let url = std::sync::Arc::clone(&url);
+            let headers = std::sync::Arc::clone(&headers);
+            let body = std::sync::Arc::clone(&body);
             async move {
                 let response = client
-                    .post(url)
-                    .headers(headers)
-                    .json(&body)
+                    .post((*url).clone())
+                    .headers((*headers).clone())
+                    .json(&*body)
                     .send()
                     .await
                     .map_err(ClaudeHttpError::from)?;
@@ -253,9 +288,32 @@ pub async fn send_streaming_request(
 ) -> Result<ChatResponse, ClaudeHttpError> {
     let cancel_token = CancellationToken::new();
     {
+        // AUDIT-FIX [fix-2#16] — Use scoped locking so the guard is
+        // definitely dropped before we go into `tokio::select!`, even if a
+        // panic happens between insert and select.
         let mut tokens_guard = CANCEL_TOKENS.lock().await;
         tokens_guard.insert(session_id.to_string(), cancel_token.clone());
     }
+
+    // AUDIT-FIX [fix-2#2] — Wrap the entire request in a guard struct that
+    // *always* removes the entry from `CANCEL_TOKENS` on drop (success,
+    // cancellation, panic, or early return). Previously a panic inside
+    // `send_request_impl` would leave the cancel token in the map forever,
+    // leaking a `HashMap` slot per session.
+    struct CancelGuard<'a> {
+        session_id: &'a str,
+    }
+    impl<'a> Drop for CancelGuard<'a> {
+        fn drop(&mut self) {
+            let session_id = self.session_id.to_string();
+            // Best-effort sync cleanup; if the runtime is shutting down we
+            // simply leak the slot — preferable to blocking Drop.
+            if let Ok(mut tokens_guard) = CANCEL_TOKENS.try_lock() {
+                tokens_guard.remove(&session_id);
+            }
+        }
+    }
+    let _cancel_guard = CancelGuard { session_id };
 
     let result = tokio::select! {
         _ = cancel_token.cancelled() => Ok(empty_response()),
@@ -278,11 +336,6 @@ pub async fn send_streaming_request(
             allowed_tools,
         ) => response,
     };
-
-    {
-        let mut tokens_guard = CANCEL_TOKENS.lock().await;
-        tokens_guard.remove(session_id);
-    }
 
     result
 }

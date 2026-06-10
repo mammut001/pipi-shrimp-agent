@@ -11,6 +11,19 @@ import {
   topoSort,
 } from '@/services/workflowDependencies';
 
+// AUDIT-FIX [fix-5#8] — LLM-authored regexes can be made to trigger
+// catastrophic backtracking (ReDoS). We block the most common offenders
+// *before* constructing the `RegExp` so an infinite regex can never get
+// compiled. This is a heuristic, not a complete ReDoS proof.
+function isReDoSSuspicious(pattern: string): boolean {
+  // Reject nested quantifiers like `(a+)+`, `(a*)*`, `(a+)*`, etc.
+  // The regex is intentionally non-greedy and limited to ASCII quantifiers.
+  return /\((?:[^()]*[*+][^()]*)\)[*+]/.test(pattern)
+    || /[*+]\)[*+]/.test(pattern)
+    || /(\.\*)+/.test(pattern)
+    || /(\.\+)+/.test(pattern);
+}
+
 function buildRouteMatcher(keyword?: string, keywordMode?: 'includes' | 'regex'): RegExp | null {
   if (!keyword || keywordMode !== 'regex') {
     return null;
@@ -20,9 +33,15 @@ function buildRouteMatcher(keyword?: string, keywordMode?: 'includes' | 'regex')
     const lastSlash = keyword.lastIndexOf('/');
     const pattern = keyword.slice(1, lastSlash);
     const flags = keyword.slice(lastSlash + 1);
+    if (isReDoSSuspicious(pattern)) {
+      return null;
+    }
     return new RegExp(pattern, flags);
   }
 
+  if (isReDoSSuspicious(keyword)) {
+    return null;
+  }
   return new RegExp(keyword, 'i');
 }
 
@@ -78,6 +97,20 @@ export function evaluateNextAgent(
       case 'always':
         matched = true;
         break;
+      // AUDIT-FIX [fix-5#9] — An unknown condition is now logged via
+      // `console.warn` (in dev) so the operator can see the typo /
+      // outdated enum value. Previously it was silently swallowed,
+      // causing routes to never match.
+      default: {
+        // eslint-disable-next-line no-console
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn(
+            `[workflow] unknown route condition '${route.condition}' on connection '${route.id}', skipping`,
+          );
+        }
+        matched = false;
+        break;
+      }
     }
 
     if (matched) {

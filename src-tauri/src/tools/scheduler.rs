@@ -28,6 +28,24 @@ struct Batch {
     requests: Vec<ToolCallRequest>,
 }
 
+/// Extract the `path` / `file_path` / `remotePath` argument from a tool
+/// call. Returns `None` if the tool doesn't take a path or the value is
+/// missing.
+///
+/// AUDIT-FIX [fix-3#14] — We need to break batches on shared paths because
+/// two concurrent `read_file` calls on the same path are not safe (one may
+/// be reading while the other is being modified) and a `read_file` /
+/// `list_dir` on the same parent can also race.
+fn extract_path_key(req: &ToolCallRequest) -> Option<String> {
+    let args: serde_json::Value = serde_json::from_str(&req.arguments).ok()?;
+    for key in ["path", "file_path", "filePath", "remotePath", "target"] {
+        if let Some(p) = args.get(key).and_then(serde_json::Value::as_str) {
+            return Some(p.to_string());
+        }
+    }
+    None
+}
+
 /// Partition tool calls into batches based on concurrency safety.
 ///
 /// This is the core scheduling algorithm. It ensures that:
@@ -35,17 +53,31 @@ struct Batch {
 /// 2. Any write/destructive tool breaks the chain and runs alone
 /// 3. Tools after a write tool also run alone (conservative: write may change state
 ///    that subsequent reads depend on)
+///
+/// AUDIT-FIX [fix-3#14] — Two read-only tools that target the *same path*
+/// must NOT be batched, because the registry may mutate state between
+/// calls (e.g. a hook re-writes the file). We break the chain on path
+/// collision only — different paths are still batched.
 fn partition_tool_calls(requests: &[ToolCallRequest], registry: &ToolRegistry) -> Vec<Batch> {
     let mut batches: Vec<Batch> = Vec::new();
 
     for req in requests {
         let is_safe = registry.is_concurrency_safe(&req.name);
+        let path = extract_path_key(req);
+        let merges_into_last = is_safe
+            && batches
+                .last()
+                .is_some_and(|b| b.is_concurrency_safe)
+            && batches.last().is_some_and(|b| {
+                path.is_none()
+                    || b.requests
+                        .iter()
+                        .all(|r| extract_path_key(r).as_deref() != path.as_deref())
+            });
 
-        if is_safe && batches.last().is_some_and(|b| b.is_concurrency_safe) {
-            // Merge into existing concurrent-safe batch
+        if merges_into_last {
             batches.last_mut().unwrap().requests.push(req.clone());
         } else {
-            // Start new batch
             batches.push(Batch {
                 is_concurrency_safe: is_safe,
                 requests: vec![req.clone()],

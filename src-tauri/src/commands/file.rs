@@ -3,6 +3,7 @@
  *
  * Handles reading, writing, and file system operations
  */
+use crate::commands::path_security::is_within_dir;
 use crate::models::FileResponse;
 use crate::utils::{AppError, AppResult};
 use std::fs;
@@ -42,9 +43,12 @@ fn expand_home(path: &str) -> PathBuf {
     if path.starts_with("~") {
         if let Ok(home) = std::env::var("HOME") {
             let expanded = PathBuf::from(path.replacen("~", &home, 1));
-            // Validate expanded path is within allowed roots
+            // AUDIT-FIX [fix-1#1-fb] — Use the shared `is_within_dir` helper
+            // (sibling-prefix safe) instead of the raw `starts_with`. A naive
+            // starts_with would let `~/Desktop-evil` slip past when the home
+            // root is `~/Desktop`.
             let allowed = allowed_roots();
-            if allowed.iter().any(|root| expanded.starts_with(root)) {
+            if allowed.iter().any(|root| is_within_dir(&expanded, root)) {
                 return expanded;
             }
             // If expanded path is not in allowed roots, fall through to
@@ -91,7 +95,9 @@ fn validate_in_scope(
     original_path: &str,
 ) -> AppResult<()> {
     if let Some(root) = scope_root {
-        if !canonical.starts_with(root) {
+        // AUDIT-FIX [fix-1#1-fa] — `is_within_dir` enforces a strict boundary
+        // so a sibling like `workdir-evil` cannot pass the workdir check.
+        if !is_within_dir(canonical, root) {
             return Err(AppError::FileError(format!(
                 "Access denied: path '{}' is outside the bound work directory '{}'",
                 original_path,
@@ -102,7 +108,8 @@ fn validate_in_scope(
     }
 
     let roots = allowed_roots();
-    let is_allowed = roots.iter().any(|root| canonical.starts_with(root));
+    // AUDIT-FIX [fix-1#1-fc] — Same fix for the fallback HOME/ /tmp check.
+    let is_allowed = roots.iter().any(|root| is_within_dir(canonical, root));
     if !is_allowed {
         return Err(AppError::FileError(format!(
             "Access denied: path '{}' is outside allowed directories (HOME, /tmp)",

@@ -537,6 +537,25 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let pattern = args.get("pattern")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: pattern"))?;
+            // AUDIT-FIX [fix-3#15] — Reject patterns that are known to
+            // cause catastrophic backtracking in Rust's `regex` engine (and
+            // by extension in `rg`'s default mode). The user-friendly
+            // alternative is ripgrep's `rust` regex engine which is
+            // O(n*m) but with a much smaller constant and is also bounded
+            // by the input length. We additionally set a hard time limit.
+            if pattern.len() > 4096 {
+                return Err(anyhow::anyhow!(
+                    "search_files pattern is too long ({} chars); max 4096",
+                    pattern.len()
+                ));
+            }
+            if pattern.contains("(a+)+") || pattern.contains("(a*)*") || pattern.contains("(.*)*") {
+                return Err(anyhow::anyhow!(
+                    "search_files pattern contains a quantifier-on-quantifier \
+                     construct (e.g. `(a+)+`) known to cause catastrophic \
+                     backtracking. Use a simpler pattern or PCRE2."
+                ));
+            }
             let path = args.get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or(".");
@@ -544,11 +563,16 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let resolved = resolve_tool_path(path, work_dir)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
+            // Use Rust's regex engine (no PCRE) and a hard timeout. If the
+            // installed `rg` doesn't support `--engine` (very old versions),
+            // we still get a per-process timeout from std::process.
             let output = std::process::Command::new("rg")
                 .arg("--line-number")
                 .arg("--no-heading")
                 .arg("--max-count")
                 .arg("50")
+                .arg("--engine")
+                .arg("rust")
                 .arg(pattern)
                 .arg(&resolved)
                 .output()

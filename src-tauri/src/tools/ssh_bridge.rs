@@ -18,7 +18,11 @@ fn shell_escape(value: &str) -> anyhow::Result<String> {
     if value.contains('\0') {
         return Err(anyhow::anyhow!("Invalid argument: contains null byte"));
     }
-    Ok(format!("'{}'", value.replace('"', "\\\"").replace('\'', "'\\''")))
+    // AUDIT-FIX [fix-3#5] — The previous version `replace('"', "\\\"")` was
+    // a no-op because we wrap in single quotes; double quotes inside
+    // single-quoted strings are literal. Drop the redundant transform so
+    // the escape intent is unambiguous.
+    Ok(format!("'{}'", value.replace('\'', "'\\''")))
 }
 
 fn shell_escape_path(path: &str) -> anyhow::Result<String> {
@@ -26,7 +30,11 @@ fn shell_escape_path(path: &str) -> anyhow::Result<String> {
         return Ok("~".to_string());
     }
     if let Some(rest) = path.strip_prefix("~/") {
-        return Ok(format!("~/{ }", shell_escape(rest)?).replace("{ }", ""));
+        // AUDIT-FIX [fix-3#6] — The previous `format!("~/{ }", ...).replace("{ }", "")`
+        // was an obfuscated way of writing `format!("~/{}", ...)`. Use the
+        // direct form so the intent is obvious and the `{ }` placeholder
+        // can't accidentally survive if `shell_escape` is changed.
+        return Ok(format!("~/{}", shell_escape(rest)?));
     }
     shell_escape(path)
 }
@@ -198,8 +206,22 @@ pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<String> {
         .and_then(Value::as_str);
 
     let full_command = build_remote_bash_command(&cfg, command)?;
-    let result = execute_bash_for_tool(&full_command, None, None, timeout_secs, execution_id, None)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    // AUDIT-FIX [fix-3#7] — Pin the local workdir to the system temp dir
+    // so the `ssh`/`sshpass` invocation is deterministic regardless of the
+    // caller's cwd. The previous `cwd=None` fell back to `"."` which the
+    // Tauri command resolves against the OS's notion of the current dir
+    // (varies across platforms and is influenced by file-association
+    // launches).
+    let pinned_workdir = Some(std::env::temp_dir().to_string_lossy().to_string());
+    let result = execute_bash_for_tool(
+        &full_command,
+        None,
+        pinned_workdir.as_deref(),
+        timeout_secs,
+        execution_id,
+        None,
+    )
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     serialize_execute_response(result)
 }
 
@@ -209,6 +231,22 @@ pub fn execute_ssh_upload(args: &Value) -> anyhow::Result<String> {
         .get("remotePath")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("Missing required parameter: remotePath"))?;
+    // AUDIT-FIX [fix-3#10] — Wrap the temporary-file path in a guard so
+    // it's always removed, even on early return / panic. Previously the
+    // temp file lived until the OS rotated the temp dir (often forever on
+    // some platforms), creating a disk leak per upload.
+    struct TempFileGuard {
+        path: Option<std::path::PathBuf>,
+    }
+    impl Drop for TempFileGuard {
+        fn drop(&mut self) {
+            if let Some(path) = self.path.take() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    let mut temp_guard = TempFileGuard { path: None };
+
     let local_path = if let Some(content) = args.get("content").and_then(Value::as_str) {
         let temp_path = std::env::temp_dir().join(format!(
             "pipi-shrimp-ssh-upload-{}.txt",
@@ -216,6 +254,7 @@ pub fn execute_ssh_upload(args: &Value) -> anyhow::Result<String> {
         ));
         std::fs::write(&temp_path, content)
             .map_err(|e| anyhow::anyhow!("Failed to write temporary upload file: {}", e))?;
+        temp_guard.path = Some(temp_path.clone());
         temp_path.to_string_lossy().to_string()
     } else {
         args.get("localPath")
@@ -225,8 +264,15 @@ pub fn execute_ssh_upload(args: &Value) -> anyhow::Result<String> {
     };
 
     let command = build_upload_command(&cfg, &local_path, remote_path)?;
-    let result = execute_bash_for_tool(&command, None, None, Some(120), None, None)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let result = execute_bash_for_tool(
+        &command,
+        None,
+        Some(std::env::temp_dir().to_string_lossy().as_ref()),
+        Some(120),
+        None,
+        None,
+    )
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     if result.exit_code != 0 {
         return Err(anyhow::anyhow!(if result.stderr.trim().is_empty() {
             format!("upload failed (exit {})", result.exit_code)
@@ -260,8 +306,15 @@ pub fn execute_ssh_read_file(args: &Value) -> anyhow::Result<String> {
         ..cfg
     };
     let command = build_remote_bash_command(&read_cfg, &remote_cmd)?;
-    let result = execute_bash_for_tool(&command, None, None, Some(30), None, None)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let result = execute_bash_for_tool(
+        &command,
+        None,
+        Some(std::env::temp_dir().to_string_lossy().as_ref()),
+        Some(30),
+        None,
+        None,
+    )
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     if result.exit_code != 0 {
         return Err(anyhow::anyhow!(if result.stderr.trim().is_empty() {
             format!("Failed to read file (exit {})", result.exit_code)

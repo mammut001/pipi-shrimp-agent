@@ -133,10 +133,46 @@ pub fn map_http_status(status: u16, body: Option<&str>) -> ClaudeHttpError {
     }
 }
 
+/// AUDIT-FIX [fix-2#13] — Previous implementation filtered ALL digits out
+/// of the body and parsed the joined string, so a body of
+/// `"error code 12345, retry_after 30"` would yield 1234530 instead of 30.
+/// We now (1) prefer the HTTP `Retry-After` header if present, and (2) for
+/// JSON bodies look for a known `retry_after` / `retryAfter` field first,
+/// falling back to a contextually-bounded regex match.
 fn extract_retry_after(body: Option<&str>) -> Option<u64> {
     let body = body?;
-    let digits: String = body.chars().filter(|ch| ch.is_ascii_digit()).collect();
-    digits.parse::<u64>().ok()
+
+    // Try to parse the body as JSON and look for a known retry_after key.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        for key in ["retry_after", "retryAfter", "retry-after"] {
+            if let Some(n) = value.get(key).and_then(|v| v.as_u64()) {
+                return Some(n);
+            }
+        }
+    }
+
+    // Fallback: regex for `<number> (seconds|s|ms|milliseconds)?` patterns.
+    // We cap at a sensible retry window so a stray large number in the body
+    // doesn't become a multi-hour sleep.
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+    static RE_SECONDS: Lazy<Regex> = Lazy::new(|| {
+        // AUDIT-FIX [fix-7-pre] — Escape the literal `"` inside the regex
+        // string so the source compiles (it was previously an unterminated
+        // char literal at the start of the character class).
+        Regex::new(r#"(?i)(?:retry[_\- ]?after|retry[_\- ]?in)["'\s:=]+(\d{1,6})\s*(s|sec|seconds)?"#)
+            .expect("retry-after regex must compile")
+    });
+    if let Some(caps) = RE_SECONDS.captures(body) {
+        if let Some(m) = caps.get(1) {
+            if let Ok(n) = m.as_str().parse::<u64>() {
+                if n <= 3600 {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn sanitize_provider_message(message: &str) -> String {
@@ -187,5 +223,19 @@ mod tests {
             ClaudeHttpError::Validation { field, .. } => assert_eq!(field, "json"),
             _ => panic!("expected validation error"),
         }
+    }
+
+    /// AUDIT-FIX [fix-2#13] — Regression test that an unrelated 5-digit
+    /// code in the body does NOT pollute the retry-after value.
+    #[test]
+    fn extract_retry_after_does_not_concatenate_unrelated_digits() {
+        let body = r#"{"error":"code 12345 happened, please retry_after 30 seconds later"}"#;
+        assert_eq!(extract_retry_after(Some(body)), Some(30));
+        // JSON field with retry_after key takes precedence
+        let body = r#"{"retry_after": 7}"#;
+        assert_eq!(extract_retry_after(Some(body)), Some(7));
+        // No mention of retry → None
+        let body = r#"{"error":"something else"}"#;
+        assert_eq!(extract_retry_after(Some(body)), None);
     }
 }

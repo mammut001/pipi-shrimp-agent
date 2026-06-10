@@ -277,6 +277,18 @@ function AutoResearchView() {
     setSetupError(null);
   }, [agentConfigError, baselineInput, direction, experimentDir, maxIter, metric, setupForm, connectionTest.status]);
 
+  // Stop the in-flight AutoResearch loop if the user navigates away from
+  // this page (e.g. back to Chat). Without this, the SSH session and the
+  // next LLM call would keep running and burning tokens in the background.
+  useEffect(() => {
+    return () => {
+      const state = useAutoResearchStore.getState();
+      if (state.loopState === 'running') {
+        stopExperimentLoop();
+      }
+    };
+  }, []);
+
   const handlePickLocalWorkDir = useCallback(async () => {
     if (setupLocked) {
       setSetupError(getLifecycleLockMessage('change the workdir'));
@@ -725,12 +737,12 @@ function AutoResearchView() {
 
   if (showRunList) {
     return (
-      <div className="flex-1 overflow-y-auto bg-[#f6f1e8] p-6">
+      <div className="flex-1 overflow-y-auto bg-gray-50 p-6">
         <div className="mx-auto max-w-5xl space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">AutoResearch</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[#2f251a]">Run History</h2>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">AutoResearch</p>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">Run History</h2>
             </div>
             <button
               onClick={() => { void handleShowSetup(); }}
@@ -751,18 +763,18 @@ function AutoResearchView() {
                   setShowRunList(false);
                 }}
                 className={`rounded-2xl border bg-white p-4 text-left shadow-sm transition-colors ${
-                  displayRun?.id === run.id ? 'border-blue-300 ring-2 ring-blue-100' : 'border-[#ebe4d9] hover:border-[#d8cfc1]'
+                  displayRun?.id === run.id ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <span className="rounded-full bg-[#dceeea] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
                     {formatRunStatusLabel(run.status)}
                   </span>
-                  <span className="font-mono text-[11px] text-[#8a7f72]">{run.currentIteration}/{run.config.iterations}</span>
+                  <span className="font-mono text-[11px] text-gray-500">{run.currentIteration}/{run.config.iterations}</span>
                 </div>
-                <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-[#2f251a]">{run.title}</h3>
-                <p className="mt-2 truncate text-xs text-[#6f665c]">{run.config.metric} · {run.config.direction}</p>
-                <p className="mt-1 truncate text-xs text-[#8a7f72]">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</p>
+                <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-gray-900">{run.title}</h3>
+                <p className="mt-2 truncate text-xs text-gray-600">{run.config.metric} · {run.config.direction}</p>
+                <p className="mt-1 truncate text-xs text-gray-500">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</p>
               </button>
             ))}
           </div>
@@ -772,7 +784,7 @@ function AutoResearchView() {
   }
 
   return (
-    <div className="flex-1 flex min-h-0 flex-col bg-[#f6f1e8]">
+    <div className="flex-1 flex min-h-0 flex-col bg-gray-50">
       {!showSetup && setupError && (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
           {setupError}
@@ -797,7 +809,7 @@ function AutoResearchView() {
             onOpen={handleOpenRunArtifact}
             onClose={() => setShowRunList(true)}
             headerActions={runControls}
-            className="min-h-[calc(100vh-2rem)] rounded-[28px] border border-[#e7ded1]"
+            className="min-h-[calc(100vh-2rem)] rounded-[28px] border border-gray-200"
           />
         </div>
       )}

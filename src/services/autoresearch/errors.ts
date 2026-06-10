@@ -19,6 +19,7 @@ export type AutoResearchFailureKind =
   | 'context_overflow'
   | 'agent_execution'
   | 'evaluation'
+  | 'infrastructure'
   | 'unknown';
 
 export interface AutoResearchAgentConfigSnapshot {
@@ -156,6 +157,24 @@ export function getToolRoundLimit(error: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/**
+ * Marker prefix that `executeTargetCommand` uses when wrapping a thrown
+ * `invoke()` error (e.g. Rust panic, plugin not loaded, network blip).
+ * Classifiers check for this to distinguish infrastructure failures
+ * (transient, possibly retryable) from real agent/eval failures.
+ *
+ * AUDIT-FIX [audit-3-ar#4]: stable string contract between runDir.ts
+ * (producer) and classifyAutoResearchFailure (consumer). Do not rename
+ * without updating the substring check in `isInfrastructureError`.
+ */
+export const INFRASTRUCTURE_ERROR_MARKER = 'AutoResearch infrastructure error';
+
+/** Detect whether an error came from the Tauri/SSH transport layer. */
+export function isInfrastructureError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes(INFRASTRUCTURE_ERROR_MARKER);
+}
+
 export function isCommandNotFoundText(value: string | null | undefined): boolean {
   if (!value) {
     return false;
@@ -174,6 +193,11 @@ export function classifyAutoResearchFailure(error: unknown): AutoResearchFailure
   const envelope = extractErrorDetails(error);
   const message = envelope.message.toLowerCase();
 
+  // Infrastructure errors (Tauri invoke failed, plugin panic, network blip)
+  // take priority — they are transient and the agent itself didn't fail.
+  if (isInfrastructureError(error)) {
+    return 'infrastructure';
+  }
   if (isRateLimitError(error)) {
     return 'rate_limit';
   }

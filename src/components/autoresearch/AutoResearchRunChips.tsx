@@ -85,7 +85,7 @@ export function AutoResearchRunChips({ run, className = '' }: AutoResearchRunChi
           key={chip.id}
           className={chip.accent
             ? 'rounded-full border border-[#c9dfd5] bg-[#e5f1ec] px-3 py-1 text-xs font-medium text-[#21685a]'
-            : 'rounded-full border border-[#e3d8cb] bg-[#f7f2eb] px-3 py-1 text-xs text-[#6b5f52] transition-colors hover:bg-white'
+            : 'rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-600 transition-colors hover:bg-white'
           }
           title={chip.label}
         >

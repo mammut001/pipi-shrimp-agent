@@ -18,8 +18,8 @@ export function BootstrapProgressRail({ currentStep, warnings = [] }: BootstrapP
   const currentIndex = STEP_LABELS.findIndex((step) => step.id === currentStep);
 
   return (
-    <aside className="rounded-[24px] border border-[#e7ded1] bg-[#fffaf2] p-5">
-      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">Bootstrap Progress</p>
+    <aside className="rounded-[24px] border border-gray-200 bg-white p-5">
+      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">Bootstrap Progress</p>
       <div className="mt-4 space-y-3">
         {STEP_LABELS.map((step, index) => {
           const status = index < currentIndex ? 'done' : index === currentIndex ? 'current' : 'todo';
@@ -29,14 +29,14 @@ export function BootstrapProgressRail({ currentStep, warnings = [] }: BootstrapP
                 status === 'done'
                   ? 'bg-[#0f766e] text-white'
                   : status === 'current'
-                    ? 'bg-[#1d4ed8] text-white'
-                    : 'bg-[#ece3d7] text-[#8f8375]'
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-gray-200 text-gray-500'
               }`}>
                 {index + 1}
               </div>
               <div>
-                <p className={`text-sm font-semibold ${status === 'todo' ? 'text-[#8f8375]' : 'text-[#2f251a]'}`}>{step.title}</p>
-                <p className="text-xs text-[#6f665c]">{step.description}</p>
+                <p className={`text-sm font-semibold ${status === 'todo' ? 'text-gray-500' : 'text-gray-900'}`}>{step.title}</p>
+                <p className="text-xs text-gray-600">{step.description}</p>
               </div>
             </div>
           );

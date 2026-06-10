@@ -155,7 +155,28 @@ export async function seedFromBootstrap(
   const seedId = createdAt ?? new Date().toISOString();
   const marker = `<!-- bootstrap-seeded:${seedId} -->`;
   const existing = await readTargetText(cfg, paths.sessionFilePath);
-  if (existing?.includes(marker)) {
+  // AUDIT-FIX [audit-3-ar#6]: Bootstrap re-apply stacks duplicate sections.
+  // Previously the marker check only matched the *current* `createdAt`,
+  // so a re-bootstrap conversation (which generates a new `createdAt`)
+  // bypassed the guard and appended a SECOND `## Success Criteria` /
+  // `## Primary Metric` block to the session file. Multiple
+  // re-bootstraps would pile up N copies, confusing both the agent and
+  // anyone reading the living doc. Now ANY prior marker in the file
+  // short-circuits the re-apply. Trade-off: a user who genuinely wants
+  // a fresh plan must clear the session first — explicit, not silent.
+  //
+  // Idempotency: skip if this exact bootstrap has already been applied OR
+  // if ANY prior bootstrap was applied to this session. Re-applying
+  // bootstrap when the user re-runs the conversation (which generates a
+  // new `createdAt`) would otherwise append a second `## Success Criteria`
+  // / `## Primary Metric` block to the session file, which is confusing
+  // for both the agent and the human reading the doc.
+  //
+  // The trade-off: if a user explicitly wants to re-bootstrap with a
+  // totally new plan, they'll need to clear the session first. That is
+  // safer than silent duplicate sections.
+  const ANY_BOOTSTRAP_MARKER = /<!-- bootstrap-seeded:[^>]+ -->/;
+  if (existing && ANY_BOOTSTRAP_MARKER.test(existing)) {
     return false;
   }
 

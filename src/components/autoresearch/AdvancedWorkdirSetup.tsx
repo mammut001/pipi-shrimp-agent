@@ -58,6 +58,18 @@ type ConnectionTestState =
   | { status: 'success'; output: string }
   | { status: 'error'; output: string };
 
+// AUDIT-FIX [audit-1-ar#7]: Strict schema validation + explicit password strip.
+// Two security/correctness concerns addressed here:
+//   1. Field-by-field type validation. The previous implementation did
+//      `return { ...fallback, ...parsed }` and trusted `parsed` to have
+//      the right types. A future build that renames `remoteWorkDir` to
+//      `workDir`, or writes `port` as a string, would silently break
+//      the SSH flow downstream with a confusing error.
+//   2. `password` is intentionally NEVER loaded. The persist effect
+//      below strips it on write, but a stolen localStorage dump from
+//      a previous build (before the strip was added) or an external
+//      injection would otherwise replay credentials. We re-assert
+//      `password: ''` here as a defense-in-depth measure.
 function loadPersistedSetup(): SshConfig {
   const defaults = getAutoResearchDefaultConfig();
   const fallback: SshConfig = {
@@ -71,15 +83,40 @@ function loadPersistedSetup(): SshConfig {
     password: '',
   };
 
+  // Strict field whitelist: if a field is missing or has the wrong type we
+  // fall back to the default value rather than letting garbage into the
+  // form. Note `password` is intentionally NOT loaded from storage — we
+  // never persist it (see the persist useEffect) and any stale value from
+  // a previous build is explicitly scrubbed here as a defense-in-depth
+  // measure.
+  const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
+  const asNumber = (value: unknown, fallbackNumber: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? value : fallbackNumber;
+  const asMode = (value: unknown): SshConfig['mode'] => (value === 'ssh' || value === 'local' ? value : 'local');
+  const asAuthMode = (value: unknown): SshConfig['authMode'] =>
+    value === 'agent' || value === 'password' || value === 'key' ? value : 'agent';
+
   try {
     const raw = localStorage.getItem(AUTORESEARCH_CONFIG_STORAGE_KEY);
     if (!raw) {
       return fallback;
     }
-    const parsed = JSON.parse(raw) as Partial<SshConfig>;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      return fallback;
+    }
+    const obj = parsed as Record<string, unknown>;
     return {
-      ...fallback,
-      ...parsed,
+      mode: asMode(obj.mode),
+      host: asString(obj.host),
+      user: asString(obj.user) || 'root',
+      keyPath: asString(obj.keyPath),
+      port: asNumber(obj.port, 22),
+      remoteWorkDir: asString(obj.remoteWorkDir) || defaults.workdir,
+      authMode: asAuthMode(obj.authMode),
+      // SECURITY: password is never persisted. If a previous build wrote it
+      // to localStorage (e.g. before the strip was added), explicitly drop
+      // it on load so a stolen localStorage dump can't replay credentials.
       password: '',
     };
   } catch {
@@ -592,12 +629,12 @@ export function AdvancedWorkdirSetup() {
 
   if (showRunList) {
     return (
-      <div className="flex-1 overflow-y-auto bg-[#f6f1e8] p-6">
+      <div className="flex-1 overflow-y-auto bg-gray-50 p-6">
         <div className="mx-auto max-w-5xl space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">AutoResearch</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[#2f251a]">Run History</h2>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">AutoResearch</p>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">Run History</h2>
             </div>
             <button
               onClick={() => { void handleShowSetup(); }}
@@ -618,18 +655,18 @@ export function AdvancedWorkdirSetup() {
                   setShowRunList(false);
                 }}
                 className={`rounded-2xl border bg-white p-4 text-left shadow-sm transition-colors ${
-                  displayRun?.id === run.id ? 'border-blue-300 ring-2 ring-blue-100' : 'border-[#ebe4d9] hover:border-[#d8cfc1]'
+                  displayRun?.id === run.id ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <span className="rounded-full bg-[#dceeea] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
                     {formatRunStatusLabel(run.status)}
                   </span>
-                  <span className="font-mono text-[11px] text-[#8a7f72]">{run.currentIteration}/{run.config.iterations}</span>
+                  <span className="font-mono text-[11px] text-gray-500">{run.currentIteration}/{run.config.iterations}</span>
                 </div>
-                <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-[#2f251a]">{run.title}</h3>
-                <p className="mt-2 truncate text-xs text-[#6f665c]">{run.config.metric} · {run.config.direction}</p>
-                <p className="mt-1 truncate text-xs text-[#8a7f72]">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</p>
+                <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-gray-900">{run.title}</h3>
+                <p className="mt-2 truncate text-xs text-gray-600">{run.config.metric} · {run.config.direction}</p>
+                <p className="mt-1 truncate text-xs text-gray-500">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</p>
               </button>
             ))}
           </div>
@@ -639,7 +676,7 @@ export function AdvancedWorkdirSetup() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#f6f1e8]">
+    <div className="flex min-h-0 flex-1 flex-col bg-gray-50">
       {statusMessage && loopState !== 'error' && (
         <div className="border-b border-yellow-200 bg-yellow-50 px-4 py-2 text-sm text-yellow-800">
           {redactSensitiveText(statusMessage)}
@@ -659,7 +696,7 @@ export function AdvancedWorkdirSetup() {
             onOpen={handleOpenRunArtifact}
             onClose={() => setShowRunList(true)}
             headerActions={runControls}
-            className="min-h-[calc(100vh-2rem)] rounded-[28px] border border-[#e7ded1]"
+            className="min-h-[calc(100vh-2rem)] rounded-[28px] border border-gray-200"
           />
         </div>
       )}

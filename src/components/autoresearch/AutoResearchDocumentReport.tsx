@@ -71,7 +71,7 @@ function StatCard({ label, value, tone = 'neutral' }: { label: string; value: Re
     ? 'border-green-100 bg-green-50/70 text-green-900'
     : tone === 'warn'
       ? 'border-amber-100 bg-amber-50/70 text-amber-900'
-      : 'border-[#ebe4d9] bg-[#fbfaf7] text-[#2f251a]';
+      : 'border-gray-200 bg-white text-gray-900';
 
   return (
     <div className={`rounded-2xl border px-4 py-3 ${toneClassName}`}>
@@ -83,7 +83,7 @@ function StatCard({ label, value, tone = 'neutral' }: { label: string; value: Re
 
 function SectionTitle({ children }: { children: ReactNode }) {
   return (
-    <h4 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">
+    <h4 className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">
       {children}
     </h4>
   );
@@ -94,8 +94,8 @@ function KeyValueList({ items }: { items: Array<[string, ReactNode]> }) {
     <div className="space-y-2 text-[12px] leading-5">
       {items.map(([label, value]) => (
         <div key={label}>
-          <p className="font-bold uppercase tracking-[0.14em] text-[#998c7e]">{label}</p>
-          <div className="mt-0.5 break-words text-[#4f463d]">{value ?? 'N/A'}</div>
+          <p className="font-bold uppercase tracking-[0.14em] text-gray-500">{label}</p>
+          <div className="mt-0.5 break-words text-gray-800">{value ?? 'N/A'}</div>
         </div>
       ))}
     </div>
@@ -114,34 +114,34 @@ function SelectedIterationDetail({
   }
 
   return (
-    <div className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
+    <div className="rounded-2xl border border-gray-200 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <SectionTitle>{summary.iteration === 0 ? 'Baseline Detail' : `Iteration ${summary.iteration}`}</SectionTitle>
-          <p className="mt-1 font-mono text-sm text-[#2f251a]">
+          <p className="mt-1 font-mono text-sm text-gray-900">
             {summary.metricName}={formatMetricValue(summary.metricValue)} · {summary.impactLabel}
           </p>
         </div>
-        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#6f665c] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08)]">
           {summary.status.replace(/_/g, ' ')}
         </span>
       </div>
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#998c7e]">Change</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#4f463d]">{redactSensitiveText(iteration?.change || summary.changeSummary)}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500">Change</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-800">{redactSensitiveText(iteration?.change || summary.changeSummary)}</p>
         </div>
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#998c7e]">Hypothesis</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#4f463d]">{redactSensitiveText(iteration?.hypothesis || summary.hypothesis || 'N/A')}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500">Hypothesis</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-800">{redactSensitiveText(iteration?.hypothesis || summary.hypothesis || 'N/A')}</p>
         </div>
       </div>
 
       {iteration?.reasoning && (
         <div className="mt-4">
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#998c7e]">Reasoning</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#4f463d]">{redactSensitiveText(iteration.reasoning)}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500">Reasoning</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-800">{redactSensitiveText(iteration.reasoning)}</p>
         </div>
       )}
 
@@ -153,19 +153,19 @@ function SelectedIterationDetail({
 
       {summary.artifactPaths && summary.artifactPaths.length > 0 && (
         <div className="mt-4">
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#998c7e]">Artifacts</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-gray-500">Artifacts</p>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             {summary.artifactPaths.slice(0, 8).map((artifactPath) => (
-              <div key={artifactPath} className="rounded-xl bg-white px-3 py-2 text-[11px] text-[#6f665c] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]" title={artifactPath}>
+              <div key={artifactPath} className="rounded-xl bg-white px-3 py-2 text-[11px] text-gray-600 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08)]" title={artifactPath}>
                 <span className="font-mono">{basename(artifactPath)}</span>
-                <p className="mt-1 truncate text-[#998c7e]">{artifactPath}</p>
+                <p className="mt-1 truncate text-gray-500">{artifactPath}</p>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <p className="mt-4 text-[11px] text-[#8a7f72]">
+      <p className="mt-4 text-[11px] text-gray-500">
         {[formatDateTime(summary.startedAt), formatDateTime(summary.endedAt)].filter((value) => value !== 'N/A').join(' → ') || 'N/A'}
       </p>
     </div>
@@ -355,8 +355,8 @@ export function AutoResearchDocumentReport({
               <SectionTitle>Artifacts</SectionTitle>
               <div className="grid gap-2 md:grid-cols-2">
                 {artifacts.slice(0, 16).map((artifactPath) => (
-                  <div key={artifactPath} className="rounded-xl border border-[#ebe4d9] bg-[#fbfaf7] px-3 py-2 text-xs text-[#6f665c]" title={artifactPath}>
-                    <p className="font-mono font-semibold text-[#2f251a]">{basename(artifactPath)}</p>
+                  <div key={artifactPath} className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600" title={artifactPath}>
+                    <p className="font-mono font-semibold text-gray-900">{basename(artifactPath)}</p>
                     <p className="mt-1 truncate">{artifactPath}</p>
                   </div>
                 ))}
@@ -372,7 +372,7 @@ export function AutoResearchDocumentReport({
                   type="button"
                   onClick={() => handleCopy(allEventLines)}
                   data-copy-target="recent-events-all"
-                  className="rounded-full border border-[#d8d0c3] bg-white px-3 py-1 text-[11px] font-semibold text-[#6f665c] transition-colors hover:bg-[#f3efe8]"
+                  className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
                 >
                   {t('autoresearch.recentEvents.copyAll')}
                 </button>
@@ -381,13 +381,13 @@ export function AutoResearchDocumentReport({
                 {run.events.slice(-10).reverse().map((event) => {
                   const metadataBadges = getAutoResearchEventMetadataBadges(event);
                   return (
-                    <div key={event.id} className="group rounded-xl border border-[#ebe4d9] bg-[#fbfaf7] px-3 py-2 text-xs text-[#6f665c]">
+                    <div key={event.id} className="group rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-semibold text-[#2f251a]">{event.phase}</span>
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-[#8a7f72]">{event.level}</span>
-                            <span className="text-[#998c7e]">{formatDateTime(event.timestamp)}</span>
+                            <span className="font-semibold text-gray-900">{event.phase}</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-500">{event.level}</span>
+                            <span className="text-gray-500">{formatDateTime(event.timestamp)}</span>
                           </div>
                           <p className="mt-1 leading-5">{redactSensitiveText(event.message)}</p>
                         </div>
@@ -395,7 +395,7 @@ export function AutoResearchDocumentReport({
                           type="button"
                           onClick={() => handleCopy(formatAutoResearchEventLine(event))}
                           data-copy-target="recent-event-line"
-                          className="rounded-full border border-[#d8d0c3] bg-white px-2 py-0.5 text-[10px] font-semibold text-[#8a7f72] opacity-0 transition-opacity hover:bg-[#f3efe8] group-hover:opacity-100"
+                          className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-500 opacity-0 transition-opacity hover:bg-gray-50 group-hover:opacity-100"
                           aria-label={t('autoresearch.recentEvents.copyOne')}
                           title={t('autoresearch.recentEvents.copyOne')}
                         >
@@ -405,7 +405,7 @@ export function AutoResearchDocumentReport({
                       {metadataBadges.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {metadataBadges.map((badge) => (
-                            <span key={`${event.id}-${badge}`} className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[#8a7f72] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+                            <span key={`${event.id}-${badge}`} className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-500 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08)]">
                               {badge}
                             </span>
                           ))}
@@ -427,7 +427,7 @@ export function AutoResearchDocumentReport({
                     type="button"
                     onClick={() => handleCopy(displayedLiveOutput)}
                     data-copy-target="live-output-copy"
-                    className="rounded-full border border-[#d8d0c3] bg-white px-3 py-1 text-[11px] font-semibold text-[#6f665c] transition-colors hover:bg-[#f3efe8]"
+                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
                   >
                     {t('autoresearch.liveOutput.copy')}
                   </button>
@@ -435,7 +435,7 @@ export function AutoResearchDocumentReport({
                     type="button"
                     onClick={handleDownload}
                     data-copy-target="live-output-download"
-                    className="rounded-full border border-[#d8d0c3] bg-white px-3 py-1 text-[11px] font-semibold text-[#6f665c] transition-colors hover:bg-[#f3efe8]"
+                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
                   >
                     {t('autoresearch.liveOutput.download')}
                   </button>
@@ -449,7 +449,7 @@ export function AutoResearchDocumentReport({
 
           <section className="space-y-3">
             <SectionTitle>Generated Run Report</SectionTitle>
-            <div className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
+            <div className="rounded-2xl border border-gray-200 bg-white p-4">
               <MarkdownDocumentPreview body={document.markdown} />
             </div>
           </section>

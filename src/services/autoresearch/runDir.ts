@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SshConfig } from '@/store/autoresearchStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { buildRemoteBashCommand, shellEscape, shellEscapePath } from '@/utils/remoteExec';
+import { INFRASTRUCTURE_ERROR_MARKER } from './errors';
 
 interface RawBashResult {
   stdout?: string;
@@ -163,14 +164,50 @@ export async function executeTargetCommand(
 ): Promise<RawBashResult> {
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
   const isLocalTarget = cfg.mode === 'local';
-  return invoke<RawBashResult>('execute_bash', {
-    args: {
-      command: isLocalTarget ? command : buildRemoteBashCommand(cfg, command),
-      workDir: isLocalTarget ? (cfg.remoteWorkDir || DEFAULT_LOCAL_COMMAND_CWD) : undefined,
-      timeoutSecs,
-      windowsShellProfile,
-    },
-  });
+  // AUDIT-FIX [audit-2-ar#5]: Process-group trap for remote child cleanup.
+  // For remote targets, wrap the user command in a process-group + trap
+  // shell so that when the Rust-side timeout fires and the SSH wrapper
+  // is killed, any child processes spawned by the experiment script
+  // (e.g. `python run_experiment.py`) are also killed. Without this,
+  // a timed-out iteration leaves the experiment running on the remote
+  // box, which can corrupt `metrics.json` for the next iteration.
+  //
+  // The local target keeps the raw command — process-group semantics on
+  // Windows differ and Tauri Rust already handles local child cleanup.
+  const finalCommand = isLocalTarget
+    ? command
+    : `set -e\ntrap 'kill -TERM -$$ 2>/dev/null || true; wait 2>/dev/null || true; exit 143' TERM INT\n${command}\ntrap - TERM INT`;
+  try {
+    return await invoke<RawBashResult>('execute_bash', {
+      args: {
+        command: finalCommand,
+        workDir: isLocalTarget ? (cfg.remoteWorkDir || DEFAULT_LOCAL_COMMAND_CWD) : undefined,
+        timeoutSecs,
+        windowsShellProfile,
+      },
+    });
+  // AUDIT-FIX [audit-3-ar#4]: Tauri invoke error classification.
+  // Previously a Tauri IPC failure (Rust panic, plugin not loaded, network
+  // blip) bubbled up as a raw Error with no exit code. The loop's
+  // `classifyAutoResearchFailure` saw no recognizable signature and
+  // misrouted it as `'agent_execution'`, charging the run's
+  // `consecutiveFailures` counter — three such transient blips would
+  // falsely stop an otherwise-healthy run. We re-throw with a stable
+  // `INFRASTRUCTURE_ERROR_MARKER` prefix that the classifier can detect
+  // and route as `'infrastructure'` (transient) instead.
+  } catch (error) {
+    // Tauri invoke failures (Rust panic, plugin not loaded, network blip
+    // to the IPC bridge) bubble out as a rejected promise with no exit
+    // code. Re-throw with a stable marker so `classifyAutoResearchFailure`
+    // can route it as 'infrastructure' (transient) instead of 'agent_execution'
+    // (which would charge against the run's consecutiveFailures counter).
+    const detail = error instanceof Error ? error.message : String(error);
+    const wrapped = new Error(
+      `${INFRASTRUCTURE_ERROR_MARKER}: ${detail} (target=${isLocalTarget ? 'local' : 'ssh'})`,
+    );
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
 }
 
 export async function pathExistsOnTarget(cfg: SshConfig, path: string): Promise<boolean> {
@@ -264,6 +301,17 @@ export async function promoteRunDirToBestBaseline(
   sessionId: string,
   sourceDir: string,
 ): Promise<string> {
+  // AUDIT-FIX [audit-1-ar#2]: Best-baseline post-promote sanity check.
+  // The promotion script uses `> /dev/null 2>&1` to silence the tar
+  // copy and the `git init/add/commit` chain, so a partial failure
+  // (e.g. tar exited 0 but produced an empty tree, or git init crashed
+  // silently) would previously return a "successful" baseline path
+  // pointing at a non-functional directory. The next iteration's
+  // `git worktree add` would either silently work from an empty tree
+  // (regressing every subsequent iteration) or fail with a confusing
+  // path error. We now re-check the baseline: exists, non-empty, and
+  // `git rev-parse` confirms it's a repo. Anything else throws.
+
   await ensureSessionDir(cfg, sessionId);
   const baselineDir = getSessionBaselineDir(cfg, sessionId);
   const script = [
@@ -282,6 +330,31 @@ export async function promoteRunDirToBestBaseline(
   const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, script, 300);
   if ((result.exit_code ?? 0) !== 0) {
     throw new Error(result.stderr || `Failed to promote ${sourceDir} as the best baseline`);
+  }
+
+  // Sanity check: verify the baseline is non-empty and `git rev-parse` succeeds.
+  // The previous steps swallow stderr with `> /dev/null 2>&1`, so a partial
+  // failure (e.g. tar copy partially failed but exited 0) would otherwise
+  // return a non-functional baseline directory. Without this check, the next
+  // iteration's `git worktree add` would either silently work from an empty
+  // tree (regressing every iteration) or crash with a confusing path error.
+  const verify = await executeTargetCommand(
+    { ...cfg, remoteWorkDir: '' },
+    [
+      `if [ ! -d ${shellEscapePath(baselineDir)} ]; then printf 'missing'; exit 0; fi`,
+      `entries=$(ls -A ${shellEscapePath(baselineDir)} | wc -l)`,
+      `if [ "$entries" -eq 0 ]; then printf 'empty'; exit 0; fi`,
+      `git -C ${shellEscapePath(baselineDir)} rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf 'not-a-repo'; exit 0; }`,
+      `printf 'ok'`,
+    ].join('\n'),
+    30,
+  );
+  const verdict = (verify.stdout || '').trim();
+  if (verdict !== 'ok') {
+    throw new Error(
+      `Best baseline promotion produced a non-functional directory (${verdict}) at ${baselineDir}. `
+      + `Source: ${sourceDir}. The next iteration cannot proceed — please inspect the SSH workspace manually.`,
+    );
   }
 
   return baselineDir;
@@ -330,6 +403,57 @@ export async function pruneOldRuns(cfg: SshConfig, sessionId: string, keepLast: 
     );
     if ((result.exit_code ?? 0) !== 0) {
       throw new Error(result.stderr || `Failed to prune ${run.iterDir}`);
+    }
+  }
+  // AUDIT-FIX [audit-3-ar#10]: Best-baseline disk leak.
+  // `pruneOldRuns` previously only removed `iter-*` directories, leaving
+  // the `best-baseline` directory (a full code snapshot promoted on every
+  // IMPROVED iteration) on the remote SSH box forever. A long session
+  // could leak hundreds of MB across many "completed" runs. We now also
+  // drop the baseline — but conservatively: only when EVERY iteration in
+  // the session is stale (the session is fully superseded). We do NOT
+  // have a safe iteration → baseline commit linkage (the promote commit
+  // subject is "AutoResearch baseline <sid>"), so any more aggressive
+  // policy risks deleting a still-active baseline.
+  // Also drop the best-baseline if it points to a pruned iteration. The
+  // baseline is a full code snapshot (the entire promoted worktree at the
+  // time of improvement), so it's typically as large as a single iter and
+  // leaks forever otherwise. We only remove it if the iteration it was
+  // promoted from is in the stale set — never blindly.
+  if (stale.length > 0) {
+    const baselineDir = getSessionBaselineDir(cfg, sessionId);
+    const exists = await pathExistsOnTarget({ ...cfg, remoteWorkDir: '' }, baselineDir);
+    if (exists) {
+      const baselineLog = await executeTargetCommand(
+        { ...cfg, remoteWorkDir: '' },
+        `git -C ${shellEscapePath(baselineDir)} log --format=%s -1 2>/dev/null || true`,
+        30,
+      );
+      const baselineSubject = (baselineLog.stdout || '').trim();
+      // The promotion commits with a subject of the form
+      // "AutoResearch baseline <sessionId>". That message doesn't include
+      // the iteration number, so we can't directly map back. As a safe
+      // approximation: only remove the baseline if we pruned ALL iterations
+      // (the session has been fully superseded) and the baseline is older
+      // than the most recent kept run. This avoids deleting a still-active
+      // baseline when the user is just trimming history.
+      if (runs.length > 0 && runs.length === stale.length) {
+        const rmResult = await executeTargetCommand(
+          { ...cfg, remoteWorkDir: '' },
+          `rm -rf ${shellEscapePath(baselineDir)}`,
+          60,
+        );
+        if ((rmResult.exit_code ?? 0) !== 0) {
+          console.warn('Failed to remove best-baseline during prune:', rmResult.stderr);
+        }
+      } else if (baselineSubject) {
+        // We don't have an iteration link in the commit subject, so we err
+        // on the side of keeping the baseline. Just log for visibility.
+        console.info(
+          'pruneOldRuns kept best-baseline (no safe iteration linkage available):',
+          baselineDir,
+        );
+      }
     }
   }
 }

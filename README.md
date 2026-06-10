@@ -110,9 +110,28 @@ pipi-shrimp-agent/
 │   ├── Cargo.toml               # Rust dependencies
 │   └── tauri.conf.json          # Tauri application config
 ├── docs/                        # Documentation
+│   ├── audits/                  # Code-audit history and anchored fix log
+│   └── ...                      # Other subsystem docs
 ├── public/                      # Static assets
 └── package.json                 # Frontend dependencies
 ```
+
+### 📚 Documentation
+
+Detailed subsystem docs live under `docs/`. The top-level entry point is
+[`docs/README.md`](./docs/README.md).
+
+| Subsystem | Document | What it covers |
+|-----------|----------|----------------|
+| AutoResearch | [`docs/audits/auto-research.md`](./docs/audits/auto-research.md) | Audit history, fix log, design rationale, regression-test backlog |
+| Full Codebase (10 rounds) | [`docs/audits/full-codebase.md`](./docs/audits/full-codebase.md) | 10-round audit summary (97 issues), fix log by P0/P1/P2/P3 priority, anchor index, backlog |
+
+Code-audit fixes are anchored in the source with `// AUDIT-FIX [audit-N-ar#M]`
+comments (the `-ar` namespace suffix keeps AutoResearch anchors distinct
+from chat-module anchors). Run
+`rg "AUDIT-FIX \[audit-\d+-ar#" src/` to list every AutoResearch fix,
+or `rg "AUDIT-FIX \[audit-" src/` to list every audit anchor in the
+project.
 
 ### Claude HTTP Architecture
 
@@ -279,9 +298,26 @@ pipi-shrimp-agent/
 │   ├── Cargo.toml               # Rust 依赖
 │   └── tauri.conf.json          # Tauri 应用配置
 ├── docs/                        # 文档
+│   ├── audits/                  # 代码审计历史与锚定修复日志
+│   └── ...                      # 其他子系统文档
 ├── public/                      # 静态资源
 └── package.json                  # 前端依赖
 ```
+
+### 📚 文档
+
+各子系统的详细文档在 `docs/` 目录下，顶层入口是
+[`docs/README.md`](./docs/README.md)。
+
+| 子系统 | 文档 | 内容 |
+|--------|------|------|
+| AutoResearch | [`docs/audits/auto-research.md`](./docs/audits/auto-research.md) | 审计历史、修复日志、设计理由、回归测试清单 |
+| 全 Codebase (10 轮) | [`docs/audits/full-codebase.md`](./docs/audits/full-codebase.md) | 10 轮审计汇总 (97 个 issue)、按 P0/P1/P2/P3 优先级整理的 fix 日志、锚点索引、待办清单 |
+
+代码审计的修复在源码中以 `// AUDIT-FIX [audit-N-ar#M]` 注释锚定
+（`-ar` 命名空间后缀用来和 chat 模块的锚点区分开）。运行
+`rg "AUDIT-FIX \[audit-\d+-ar#" src/` 列出所有 AutoResearch 修复，
+或 `rg "AUDIT-FIX \[audit-" src/` 列出项目中所有 audit 锚点。
 
 ### Claude HTTP 架构
 

@@ -7,3 +7,4 @@ export { Settings } from './Settings';
 export { Workflow } from './Workflow';
 export { Skill } from './Skill';
 export { Diagnostics } from './Diagnostics';
+export { AutoResearch } from './AutoResearch';

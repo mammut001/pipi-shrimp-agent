@@ -1,5 +1,19 @@
 #![allow(dead_code)]
 
+//! Claude IPC Module
+//!
+//! AUDIT-FIX [fix-2#19] — This module is legacy/unused; the application now
+//! talks to LLM providers directly via the `claude::http` client and does
+//! NOT spawn a Claude Code subprocess. The struct/methods below are kept
+//! for the moment so that the public `ClaudeState` type still compiles for
+//! `lib.rs`, but a follow-up cleanup PR should remove the file entirely.
+//!
+//! See `docs/audits/round-2-audit.md` for context.
+#![deprecated(
+    since = "0.0.3",
+    note = "Subprocess IPC is no longer used; see http::executor. Remove in 0.1.0."
+)]
+
 /**
  * Claude IPC Module
  *

@@ -315,6 +315,9 @@ export async function startAutoResearchRun(
     import('./loopEngine'),
   ]);
 
+  // Wire a shared AbortController so `stopExperimentLoop()` can cancel an
+  // in-flight LLM call (not just wait for the next iteration boundary).
+  const abortController = new AbortController();
   const sendMessage = createAutoResearchSendMessage(
     preflight.resolvedExperimentDir,
     runConfig.agentConfig,
@@ -324,10 +327,11 @@ export async function startAutoResearchRun(
       direction: setup.direction,
       maxIterations: setup.iterations,
       reflectionConfig: runConfig.reflectionConfig,
+      signal: abortController.signal,
     },
   );
 
-  void startExperimentLoop(sendMessage).catch((error) => {
+  void startExperimentLoop(sendMessage, { signal: abortController.signal }).catch((error) => {
     const message = logAutoResearchSetupFailure('loop-start', error, {
       sessionId,
       experimentDir: preflight.resolvedExperimentDir,
@@ -436,6 +440,22 @@ export async function resumeInterruptedAutoResearchRun(
   });
   recordProjectAdaptationEvent(preflight);
 
+  // AUDIT-FIX [audit-2-ar#1]: Resume path AbortSignal wiring.
+  // The first audit wired the AbortController in the START path; the
+  // resume path was missed because it has its own call site. Without
+  // this, clicking Stop on a resumed run only fired the top-of-loop
+  // check — the in-flight LLM call inside `sendMessage` would keep
+  // running until it returned, with no entry-side abort check (since
+  // the signal was never passed in). This controller is shared
+  // between `createAutoResearchSendMessage` and `startExperimentLoop`
+  // exactly like the start path does.
+  // Wire an AbortController that is shared between sendMessage (entry check)
+  // and startExperimentLoop (top-of-loop check). Without this, a resumed run
+  // would only honour stop signals at iteration boundaries — the in-flight LLM
+  // call inside sendMessage would keep running. Mirrors the start path at
+  // the top of this file.
+  const resumeAbortController = new AbortController();
+
   const sendMessage = createAutoResearchSendMessage(
     preflight.resolvedExperimentDir,
     runConfig.agentConfig,
@@ -445,10 +465,11 @@ export async function resumeInterruptedAutoResearchRun(
       direction: token.metricDirection || run.config.direction,
       maxIterations: token.maxIterations || run.config.iterations,
       reflectionConfig: runConfig.reflectionConfig,
+      signal: resumeAbortController.signal,
     },
   );
 
-  void startExperimentLoop(sendMessage).catch((error) => {
+  void startExperimentLoop(sendMessage, { signal: resumeAbortController.signal }).catch((error) => {
     const message = logAutoResearchSetupFailure('resume-loop-start', error, {
       sessionId: runId,
       experimentDir: preflight.resolvedExperimentDir,

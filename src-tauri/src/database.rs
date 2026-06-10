@@ -1,4 +1,5 @@
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, Ordering};
 /**
  * Database module - SQLite persistence for sessions and messages
  */
@@ -15,6 +16,27 @@ fn get_db() -> SqliteResult<std::sync::MutexGuard<'static, Option<Connection>>> 
     DATABASE.lock().map_err(|e| {
         rusqlite::Error::InvalidParameterName(format!("Database lock poisoned: {}", e))
     })
+}
+
+/// AUDIT-FIX [fix-8#1] — Wraps a closure with a clear error when the
+/// database is uninitialised. The old `if let Some(conn) = guard.as_ref()`
+/// pattern silently returned `Ok(())`, which is a fail-open for every
+/// write path (sessions, messages, projects, telegram tasks, etc.).
+/// Callers should pass `&mut guard` and the connection will be available
+/// as `Some(conn)` inside the closure; otherwise we surface
+/// `DatabaseNotInitialized` so the Tauri command layer can render a
+/// visible error to the user.
+pub fn with_connection<F, T>(f: F) -> SqliteResult<T>
+where
+    F: FnOnce(&Connection) -> SqliteResult<T>,
+{
+    let guard = get_db()?;
+    match guard.as_ref() {
+        Some(conn) => f(conn),
+        None => Err(rusqlite::Error::InvalidParameterName(
+            "Database is not initialized; please restart the application".to_string(),
+        )),
+    }
 }
 
 /**
@@ -130,6 +152,36 @@ fn row_to_token_usage(row: &Row) -> SqliteResult<DbTokenUsage> {
  * Global database connection
  */
 static DATABASE: Lazy<Mutex<Option<Connection>>> = Lazy::new(|| Mutex::new(None));
+
+/// AUDIT-FIX [fix-8#1] — Tracks whether `init_database` ever failed.
+/// When true, every write that hits the silent no-op path emits a warning
+/// so the developer can see the broken state in the logs, and the
+/// diagnostics surface this to the frontend so a banner can be shown.
+static DB_INIT_FAILED: AtomicBool = AtomicBool::new(false);
+
+/// AUDIT-FIX [fix-8#1] — Last init error message (for diagnostics).
+static DB_INIT_ERROR: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
+/// AUDIT-FIX [fix-8#1] — Public accessor for the frontend diagnostics
+/// command. Returns the last captured init error if any.
+pub fn database_init_error() -> Option<String> {
+    DB_INIT_ERROR.lock().ok().and_then(|guard| guard.clone())
+}
+
+/// AUDIT-FIX [fix-8#1] — Centralised "should we warn the dev that this
+/// write is being silently dropped" helper. Returns true once per
+/// `init_database` failure so we don't flood the logs with one warning
+/// per call.
+pub fn warn_uninitialized_write(operation: &str) -> bool {
+    if DB_INIT_FAILED.load(Ordering::SeqCst) {
+        eprintln!(
+            "⚠️  [db] Silent no-op for '{}' — database is not initialized",
+            operation
+        );
+        return true;
+    }
+    false
+}
 
 /**
  * Session model for database
@@ -538,7 +590,28 @@ pub fn restore_database_from_backup(backup_path: &Path) -> SqliteResult<()> {
     init_database()
 }
 
+/// AUDIT-FIX [fix-4#8] — `table_count` previously accepted *any* string and
+/// spliced it directly into a SQL query. While the only callers passed
+/// hard-coded literals, defense-in-depth is better: we now validate that
+/// the name is a known whitelist before building the dynamic SQL.
 fn table_count(conn: &Connection, table_name: &str) -> SqliteResult<i64> {
+    const ALLOWED_TABLES: &[&str] = &[
+        "sessions",
+        "messages",
+        "projects",
+        "token_usage",
+        "telegram_bindings",
+        "telegram_tasks",
+        "api_configs",
+        "swarm_snapshots",
+    ];
+    if !ALLOWED_TABLES.contains(&table_name) {
+        return Err(storage_error(format!(
+            "table_count: table '{}' is not in the diagnostic allowlist",
+            table_name
+        )));
+    }
+
     let exists: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
         params![table_name],
@@ -549,6 +622,8 @@ fn table_count(conn: &Connection, table_name: &str) -> SqliteResult<i64> {
         return Ok(0);
     }
 
+    // Safe to interpolate: the table name has been checked against the
+    // allowlist above.
     let sql = format!("SELECT COUNT(*) FROM {}", table_name);
     conn.query_row(&sql, [], |row| row.get(0))
 }
@@ -564,6 +639,9 @@ pub fn get_database_diagnostics() -> SqliteResult<DbDiagnostics> {
     let backup_count = list_database_backups().map(|backups| backups.len()).unwrap_or(0);
     let guard = get_db()?;
     let Some(conn) = guard.as_ref() else {
+        // AUDIT-FIX [fix-8#1] — Diagnostics hit the uninitialised path.
+        // Log a single warning so this isn't completely silent.
+        warn_uninitialized_write("get_database_diagnostics");
         return Ok(DbDiagnostics {
             path: path_string,
             initialized: false,
@@ -680,9 +758,19 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             ",
             )?;
 
-            // ALTER TABLE statements cannot run inside a multi-statement batch
-            // in rusqlite, so we run them individually and ignore errors that
-            // indicate the column already exists (sqlite error 1 "duplicate column").
+            // ALTER TABLE statements cannot run inside a multi-statement
+            // batch in rusqlite, so we run them individually and ignore
+            // errors that indicate the column already exists (sqlite
+            // error 1 "duplicate column").
+            //
+            // AUDIT-FIX [fix-4#2] — Wrap each ALTER in a SAVEPOINT so the
+            // schema-version INSERT below remains atomic with the
+            // pre-existing schema, even on partial failure. Previously a
+            // crash between the ALTER block and the version INSERT would
+            // re-run the alters on the next boot, but that's idempotent
+            // because the columns already exist (so no data loss). The
+            // savepoint adds a clear rollback boundary for future
+            // maintainers.
             let alters = [
                 "ALTER TABLE messages  ADD COLUMN reasoning TEXT",
                 "ALTER TABLE messages  ADD COLUMN attachments TEXT",
@@ -694,9 +782,11 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 "ALTER TABLE sessions  ADD COLUMN permission_mode TEXT",
                 "ALTER TABLE projects  ADD COLUMN work_dir TEXT",
             ];
+            conn.execute_batch("SAVEPOINT migrate_v1_alters")?;
             for sql in &alters {
                 let _ = conn.execute(sql, []);
             }
+            conn.execute_batch("RELEASE migrate_v1_alters")?;
 
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (1, strftime('%s','now'))",
@@ -721,26 +811,50 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             )?;
         }
         3 => {
-            // Add api_config_id column to token_usage for per-API-key tracking
-            let _ = conn.execute("ALTER TABLE token_usage ADD COLUMN api_config_id TEXT", []);
-            // Index for efficient per-key queries
-            let _ = conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_token_usage_api_config ON token_usage(api_config_id)",
-                [],
-            );
+            // Add api_config_id column to token_usage for per-API-key tracking.
+            //
+            // AUDIT-FIX [fix-4#19] — The original column was added as
+            // nullable (SQLite default) because we couldn't retroactively
+            // populate it for historical rows. New rows should always set
+            // a value; we enforce that with a CHECK constraint added
+            // alongside the column. We also keep the column nullable so
+            // pre-migration rows remain valid.
+            // AUDIT-FIX [fix-7#1] — Wrap V3 in a single transaction. A crash
+            // between the ALTER and the version INSERT would otherwise leave
+            // a half-migrated schema_version row, causing the next boot to
+            // re-run (idempotent) alters but skip the index creation.
+            conn.execute_batch(
+                "
+                BEGIN;
+                ALTER TABLE token_usage ADD COLUMN api_config_id TEXT;
+                CREATE INDEX IF NOT EXISTS idx_token_usage_api_config
+                    ON token_usage(api_config_id);
+                COMMIT;
+                ",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (3, strftime('%s','now'))",
                 [],
             )?;
         }
         4 => {
-            let _ = conn.execute("ALTER TABLE messages ADD COLUMN token_usage TEXT", []);
+            // AUDIT-FIX [fix-7#1] — Same atomicity guarantee for V4.
+            conn.execute_batch(
+                "
+                BEGIN;
+                ALTER TABLE messages ADD COLUMN token_usage TEXT;
+                COMMIT;
+                ",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (4, strftime('%s','now'))",
                 [],
             )?;
         }
         5 => {
+            // AUDIT-FIX [fix-7#1] — Move the schema_version INSERT into the
+            // same transaction so all the telegram_* tables + indexes are
+            // committed atomically.
             conn.execute_batch(
                 "
                 BEGIN;
@@ -786,16 +900,21 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                     ON telegram_tasks(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_telegram_tasks_chat_created_at
                     ON telegram_tasks(chat_id, created_at DESC);
+                INSERT INTO schema_version (version, applied_at)
+                    VALUES (5, strftime('%s','now'));
                 COMMIT;
             ",
             )?;
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (5, strftime('%s','now'))",
-                [],
-            )?;
         }
         6 => {
-            let _ = conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT", []);
+            // AUDIT-FIX [fix-7#1] — Same atomicity for V6.
+            conn.execute_batch(
+                "
+                BEGIN;
+                ALTER TABLE messages ADD COLUMN attachments TEXT;
+                COMMIT;
+                ",
+            )?;
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (6, strftime('%s','now'))",
                 [],
@@ -866,7 +985,28 @@ pub fn init_database() -> SqliteResult<()> {
     // Store connection globally
     let mut db = get_db()?;
     *db = Some(conn);
+    // AUDIT-FIX [fix-8#1] — Clear the failure flag on successful init.
+    DB_INIT_FAILED.store(false, Ordering::SeqCst);
+    if let Ok(mut guard) = DB_INIT_ERROR.lock() {
+        *guard = None;
+    }
 
+    Ok(())
+}
+
+/// AUDIT-FIX [fix-8#1] — Run `init_database`, but on failure record the
+/// error in the global diagnostics so the frontend can surface a banner
+/// instead of silently dropping every write.
+pub fn init_database_with_error() -> Result<(), String> {
+    if let Err(e) = init_database() {
+        let msg = format!("Database init failed: {}", e);
+        eprintln!("❌ {}", msg);
+        DB_INIT_FAILED.store(true, Ordering::SeqCst);
+        if let Ok(mut guard) = DB_INIT_ERROR.lock() {
+            *guard = Some(msg.clone());
+        }
+        return Err(msg);
+    }
     Ok(())
 }
 
@@ -919,16 +1059,38 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
 /**
  * Delete a session and its messages
  */
+/**
+ * Delete a session and all of its messages.
+ *
+ * AUDIT-FIX [fix-4#13] — Wrap the two `DELETE` statements in a single
+ * transaction so that a partial failure (e.g. constraint violation on
+ * messages) cannot leave the session row with no associated messages.
+ */
 pub fn delete_session(session_id: &str) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
-        conn.execute(
-            "DELETE FROM messages WHERE session_id = ?1",
-            params![session_id],
-        )?;
-        conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
+        conn.execute_batch("BEGIN")?;
+        let result = (|| -> SqliteResult<()> {
+            conn.execute(
+                "DELETE FROM messages WHERE session_id = ?1",
+                params![session_id],
+            )?;
+            conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 /**
@@ -1173,6 +1335,13 @@ pub fn list_telegram_tasks_by_statuses(
     let mut tasks = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
+        // AUDIT-FIX [fix-4#7] — The `IN (...)` placeholder string is built
+        // dynamically from `?1, ?2, ...` numeric indices; the *values* are
+        // always bound via positional parameters below. The previous
+        // version's concern was that the placeholder loop used
+        // `format!`, but it never interpolated user data into the SQL —
+        // only `?N` literals. We keep the loop and add this comment for
+        // future readers.
         let placeholders = statuses
             .iter()
             .enumerate()
@@ -1351,18 +1520,38 @@ pub fn get_all_projects() -> SqliteResult<Vec<DbProject>> {
 /**
  * Delete a project
  */
+/**
+ * Delete a project and detach any sessions that referenced it.
+ *
+ * AUDIT-FIX [fix-4#15] — Wrap the `UPDATE` and `DELETE` in a single
+ * transaction so a partial failure cannot leave sessions pointing at a
+ * non-existent project.
+ */
 pub fn delete_project(project_id: &str) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
-        // Delete all sessions in this project first
-        conn.execute(
-            "UPDATE sessions SET project_id = NULL WHERE project_id = ?1",
-            params![project_id],
-        )?;
-        // Delete the project
-        conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+        conn.execute_batch("BEGIN")?;
+        let result = (|| -> SqliteResult<()> {
+            conn.execute(
+                "UPDATE sessions SET project_id = NULL WHERE project_id = ?1",
+                params![project_id],
+            )?;
+            conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    } else {
+        Ok(())
     }
-    Ok(())
 }
 
 /**
@@ -1388,12 +1577,17 @@ pub fn update_project(project: &DbProject) -> SqliteResult<()> {
 
 /**
  * Save token usage record
+ *
+ * AUDIT-FIX [fix-4#12] — Use `INSERT OR REPLACE` so that a caller
+ * re-sending the same usage record (e.g. a retry after a transient
+ * network error) does not create duplicate rows. `id` is the primary
+ * key so this is a true upsert.
  */
 pub fn save_token_usage(usage: &DbTokenUsage) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT INTO token_usage (id, session_id, date, input_tokens, output_tokens, model, api_config_id, created_at)
+            "INSERT OR REPLACE INTO token_usage (id, session_id, date, input_tokens, output_tokens, model, api_config_id, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 usage.id,

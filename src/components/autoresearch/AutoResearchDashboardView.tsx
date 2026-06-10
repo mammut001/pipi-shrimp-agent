@@ -135,7 +135,7 @@ function getStatusToneClasses(status: string): string {
   if (status === 'running') {
     return 'border-blue-200 bg-blue-50 text-blue-700';
   }
-  return 'border-[#ded3c5] bg-[#f5efe6] text-[#6f665c]';
+  return 'border-gray-200 bg-gray-100 text-gray-600';
 }
 
 function getRecoveryToneClasses(tone: 'info' | 'warn' | 'error'): string {
@@ -151,8 +151,8 @@ function getRecoveryToneClasses(tone: 'info' | 'warn' | 'error'): string {
 function SectionHeading({ children, subtitle }: { children: ReactNode; subtitle?: ReactNode }) {
   return (
     <div>
-      <h4 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">{children}</h4>
-      {subtitle && <p className="mt-1 text-sm text-[#655a4f]">{subtitle}</p>}
+      <h4 className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">{children}</h4>
+      {subtitle && <p className="mt-1 text-sm text-gray-700">{subtitle}</p>}
     </div>
   );
 }
@@ -174,8 +174,8 @@ function KeyValueList({ items }: { items: Array<[string, ReactNode]> }) {
     <div className="space-y-2 text-[12px] leading-5">
       {items.map(([label, value]) => (
         <div key={label}>
-          <p className="font-bold uppercase tracking-[0.14em] text-[#998c7e]">{label}</p>
-          <div className="mt-0.5 break-words text-[#4f463d]">{value ?? 'N/A'}</div>
+          <p className="font-bold uppercase tracking-[0.14em] text-gray-500">{label}</p>
+          <div className="mt-0.5 break-words text-gray-800">{value ?? 'N/A'}</div>
         </div>
       ))}
     </div>
@@ -189,7 +189,7 @@ function OverviewStatCard({ label, value, tone = 'neutral' }: { label: string; v
       ? 'border-amber-200 bg-amber-50 text-amber-900'
       : tone === 'error'
         ? 'border-red-200 bg-red-50 text-red-900'
-        : 'border-[#ebe4d9] bg-[#fbfaf7] text-[#2f251a]';
+        : 'border-gray-200 bg-white text-gray-900';
 
   return (
     <div className={`rounded-2xl border px-4 py-3 ${toneClasses}`}>
@@ -206,8 +206,8 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       onClick={onClick}
       className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors ${
         active
-          ? 'bg-[#2f251a] text-white'
-          : 'bg-white text-[#6f665c] hover:bg-[#f5efe6]'
+          ? 'bg-gray-900 text-white'
+          : 'bg-white text-gray-600 hover:bg-gray-100'
       }`}
     >
       {children}
@@ -230,8 +230,8 @@ function TimelineFilterButton({
       onClick={onClick}
       className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
         active
-          ? 'border-[#2f251a] bg-[#2f251a] text-white'
-          : 'border-[#ded3c5] bg-white text-[#6f665c] hover:border-[#cbbca7] hover:text-[#2f251a]'
+          ? 'border-gray-900 bg-gray-900 text-white'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-900'
       }`}
     >
       {label}
@@ -249,11 +249,11 @@ function RawDetails({
   kind: 'thinking' | 'tool-result';
 }) {
   return (
-    <details data-event-kind={kind} className="rounded-xl border border-[#e8ded2] bg-white/80 p-3">
-      <summary className="cursor-pointer list-none text-[12px] font-medium text-[#5c5247]">
+    <details data-event-kind={kind} className="rounded-xl border border-gray-200 bg-white/80 p-3">
+      <summary className="cursor-pointer list-none text-[12px] font-medium text-gray-700">
         {title}
       </summary>
-      <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-xl bg-[#f7f3ec] p-3 text-[11px] leading-5 text-[#3d352d]">
+      <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-xl bg-gray-50 p-3 text-[11px] leading-5 text-gray-800">
         {value}
       </pre>
     </details>
@@ -274,7 +274,7 @@ function EventMetadataChips({ event }: { event: AutoResearchEvent }) {
   return (
     <div className="mt-3 flex flex-wrap gap-2">
       {metadata.map(([key, value]) => (
-        <span key={`${event.id}-${key}`} className="rounded-full bg-[#f1eadf] px-2 py-0.5 text-[10px] text-[#7c7064]">
+        <span key={`${event.id}-${key}`} className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">
           {key}={String(value)}
         </span>
       ))}
@@ -299,7 +299,7 @@ function TimelineEventCard({
       ? 'border-amber-200 bg-amber-50/90'
       : event.kind === 'metrics'
         ? 'border-emerald-200 bg-emerald-50/90'
-        : 'border-[#ebe4d9] bg-white';
+        : 'border-gray-200 bg-white';
   const detailText = typeof event.detail === 'string'
     ? event.detail
     : event.rawMessage;
@@ -313,7 +313,7 @@ function TimelineEventCard({
     <article data-event-kind={event.kind === 'provider_error' ? 'provider-error' : event.kind} className={`rounded-2xl border px-4 py-4 shadow-[0_6px_16px_rgba(15,23,42,0.04)] ${levelTone}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-[#8f8375]">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-gray-500">
             <span>{formatPhaseLabel(event.phase ?? event.rawPhase)}</span>
             <span>{event.timestamp}</span>
             {event.iteration !== null && <span>Iteration {event.iteration}</span>}
@@ -340,7 +340,7 @@ function TimelineEventCard({
               <p className="mt-1 whitespace-pre-wrap">{event.summary}</p>
             </div>
           ) : event.kind === 'file_change' ? (
-            <div className="mt-2 rounded-xl border border-[#ded3c5] bg-[#f8f4ed] px-3 py-3 text-sm text-[#2f251a]">
+            <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-900">
               <p className="font-semibold">File change</p>
               <p className="mt-1">{event.summary}</p>
             </div>
@@ -349,32 +349,32 @@ function TimelineEventCard({
               <RawDetails title="Thinking" value={detailText} kind="thinking" />
             </div>
           ) : event.kind === 'tool_result' ? (
-            <div className="mt-2 rounded-xl border border-[#ded3c5] bg-[#f8f4ed] px-3 py-3 text-sm text-[#2f251a]">
+            <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-900">
               <p className="font-semibold">Tool result</p>
-              <pre className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-[#5c5247]">{previewLines(detailText, 10)}</pre>
+              <pre className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-gray-700">{previewLines(detailText, 10)}</pre>
               <div className="mt-2">
                 <RawDetails title="Expand full output" value={detailText} kind="tool-result" />
               </div>
             </div>
           ) : event.kind === 'tool_call' ? (
-            <div className="mt-2 rounded-xl border border-[#ded3c5] bg-[#f8f4ed] px-3 py-3 text-sm text-[#2f251a]">
+            <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-900">
               <p className="font-semibold">Tool call</p>
               <p className="mt-1">{event.summary}</p>
-              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[#6f665c]">
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-600">
                 {event.toolName && <span>tool={event.toolName}</span>}
                 {typeof event.durationMs === 'number' && <span>duration={formatDurationMs(event.durationMs)}</span>}
                 {event.status && <span>status={event.status}</span>}
               </div>
             </div>
           ) : (
-            <p className="mt-2 text-sm leading-6 text-[#5c5247]">{event.summary}</p>
+            <p className="mt-2 text-sm leading-6 text-gray-700">{event.summary}</p>
           )}
         </div>
         <button
           type="button"
           onClick={() => onCopy(`[${event.timestamp}] [${event.phase ?? event.rawPhase}] ${event.rawMessage}`)}
           data-copy-target="recent-event-line"
-          className="rounded-full border border-[#ded3c5] bg-white px-2 py-0.5 text-[10px] font-medium text-[#7c7064] hover:text-[#2f251a]"
+          className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-500 hover:text-gray-900"
         >
           {t('autoresearch.recentEvents.copyOne')}
         </button>
@@ -391,7 +391,7 @@ function PhaseStepPill({ phase, state }: { phase: string; state: 'completed' | '
       ? 'border-blue-200 bg-blue-50 text-blue-700'
       : state === 'failed'
         ? 'border-red-200 bg-red-50 text-red-700'
-        : 'border-[#ded3c5] bg-[#f8f4ed] text-[#8f8375]';
+        : 'border-gray-200 bg-gray-50 text-gray-500';
 
   return <span className={`rounded-full border px-2 py-1 text-[10px] font-medium ${tone}`}>{phase}</span>;
 }
@@ -487,7 +487,7 @@ export function AutoResearchDashboardView({
             <button
               type="button"
               onClick={onOpenFullReport}
-              className="rounded-xl border border-[#e7ded1] bg-white/90 px-3 py-2 text-[12px] font-medium text-[#6f665c] transition-colors hover:border-[#d8cfc1] hover:text-[#2f251a]"
+              className="rounded-xl border border-gray-200 bg-white/90 px-3 py-2 text-[12px] font-medium text-gray-600 transition-colors hover:border-gray-300 hover:text-gray-900"
             >
               {t('autoresearch.detail.fullReport')}
             </button>
@@ -559,7 +559,7 @@ export function AutoResearchDashboardView({
             </section>
           )}
 
-          <section className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
+          <section className="rounded-2xl border border-gray-200 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <SectionHeading subtitle="Summary is the primary AutoResearch view. Raw execution details stay in Debug.">Run Detail</SectionHeading>
               <div className="flex flex-wrap gap-2">
@@ -572,7 +572,7 @@ export function AutoResearchDashboardView({
 
           {activeTab === 'summary' && (
             <>
-              <section className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
+              <section className="rounded-2xl border border-gray-200 bg-white p-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <SectionHeading subtitle="Understand the run status before reading raw execution logs.">Run Overview</SectionHeading>
                   {headerActions && <div className="flex flex-wrap gap-2">{headerActions}</div>}
@@ -604,26 +604,26 @@ export function AutoResearchDashboardView({
 
               <AutoResearchDashboardMetricCard run={run} />
 
-              <section className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
+              <section className="rounded-2xl border border-gray-200 bg-white p-4">
                 <SectionHeading subtitle="Each iteration shows the hypothesis, changes, execution result, metrics, artifacts, reflection, and recovery actions.">
                   Iterations
                 </SectionHeading>
                 {iterationCards.length === 0 ? (
-                  <p className="mt-4 text-sm text-[#8f8375]">No iterations recorded yet.</p>
+                  <p className="mt-4 text-sm text-gray-500">No iterations recorded yet.</p>
                 ) : (
                   <div className="mt-4 space-y-4">
                     {iterationCards.map((iteration) => (
-                      <article key={iteration.id} className="rounded-2xl border border-[#e7ded1] bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
+                      <article key={iteration.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-[#8f8375]">
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-gray-500">
                               <span>Iteration {iteration.iteration}</span>
                               <span className={`rounded-full border px-2 py-0.5 ${getStatusToneClasses(iteration.status)}`}>{iteration.status}</span>
                               <span className={`rounded-full border px-2 py-0.5 ${getPhaseToneClasses(iteration.phase)}`}>{iteration.phase}</span>
                             </div>
-                            <p className="mt-3 text-sm leading-6 text-[#2f251a]">{iteration.narrative}</p>
+                            <p className="mt-3 text-sm leading-6 text-gray-900">{iteration.narrative}</p>
                           </div>
-                          <div className="text-right text-[12px] text-[#6f665c]">
+                          <div className="text-right text-[12px] text-gray-600">
                             <p>{formatDurationMs(iteration.durationMs)}</p>
                             <p className="mt-1">exit={iteration.exitCode ?? 'N/A'}</p>
                           </div>
@@ -636,24 +636,24 @@ export function AutoResearchDashboardView({
                         </div>
 
                         <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                          <div className="space-y-3 text-sm text-[#4f463d]">
+                          <div className="space-y-3 text-sm text-gray-800">
                             <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#998c7e]">Hypothesis</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Hypothesis</p>
                               <p className="mt-1">{iteration.hypothesis || 'N/A'}</p>
                             </div>
                             <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#998c7e]">Code changes</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Code changes</p>
                               <p className="mt-1">{iteration.codeChangesSummary || 'N/A'}</p>
                             </div>
                             <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#998c7e]">Execution command</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Execution command</p>
                               <p className="mt-1 font-mono text-[12px] break-all">{iteration.executionCommand || 'Not recorded'}</p>
                             </div>
                           </div>
 
-                          <div className="space-y-3 text-sm text-[#4f463d]">
+                          <div className="space-y-3 text-sm text-gray-800">
                             <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#998c7e]">Parsed metrics</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Parsed metrics</p>
                               <div className="mt-2 flex flex-wrap gap-2">
                                 {Object.entries(iteration.parsedMetrics).map(([key, value]) => (
                                   <span key={`${iteration.id}-${key}`} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-800">
@@ -663,7 +663,7 @@ export function AutoResearchDashboardView({
                               </div>
                             </div>
                             <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#998c7e]">Reflection</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Reflection</p>
                               <p className="mt-1">{iteration.reflectionSummary || 'N/A'}</p>
                             </div>
                             {iteration.failureReason && (
@@ -677,26 +677,26 @@ export function AutoResearchDashboardView({
 
                         <div className="mt-4 space-y-3">
                           <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#998c7e]">Artifacts</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Artifacts</p>
                             <div className="mt-2 flex flex-wrap gap-2">
                               {iteration.artifacts.length > 0 ? iteration.artifacts.map((artifact) => (
-                                <span key={artifact} className="rounded-full border border-[#ded3c5] bg-[#f8f4ed] px-2.5 py-1 text-[11px] text-[#6f665c]">
+                                <span key={artifact} className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] text-gray-600">
                                   {basename(artifact)}
                                 </span>
-                              )) : <span className="text-sm text-[#8f8375]">No artifacts recorded.</span>}
+                              )) : <span className="text-sm text-gray-500">No artifacts recorded.</span>}
                             </div>
                           </div>
 
                           {iteration.recoveryActions.length > 0 && (
                             <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#998c7e]">Recovery actions</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Recovery actions</p>
                               <div className="mt-2 flex flex-wrap gap-2">
                                 {iteration.recoveryActions.map((action) => (
                                   <button
                                     key={`${iteration.id}-${action.type}`}
                                     type="button"
                                     onClick={() => setActiveTab('debug')}
-                                    className="rounded-full border border-[#ded3c5] bg-white px-3 py-1 text-[11px] font-medium text-[#6f665c] hover:border-[#cbbca7] hover:text-[#2f251a]"
+                                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900"
                                   >
                                     {action.label || action.type}
                                   </button>
@@ -714,7 +714,7 @@ export function AutoResearchDashboardView({
           )}
 
           {activeTab === 'timeline' && (
-            <section className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
+            <section className="rounded-2xl border border-gray-200 bg-white p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <SectionHeading subtitle="Filter the execution timeline by summary signals, tools, errors, metrics, or raw events.">Timeline</SectionHeading>
                 <div className="flex items-center gap-2">
@@ -722,11 +722,11 @@ export function AutoResearchDashboardView({
                     type="button"
                     onClick={() => handleCopy(allEventLines)}
                     data-copy-target="recent-events-all"
-                    className="rounded-full border border-[#e3d8cb] bg-white px-2.5 py-1 text-[11px] font-medium text-[#6b5f52] transition-colors hover:border-[#d4c7b8] hover:text-[#2f251a]"
+                    className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-900"
                   >
                     {t('autoresearch.recentEvents.copyAll')}
                   </button>
-                  <span className="text-[11px] uppercase tracking-[0.18em] text-[#998c7e]">{filteredEvents.length}</span>
+                  <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{filteredEvents.length}</span>
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
@@ -740,7 +740,7 @@ export function AutoResearchDashboardView({
                 ))}
               </div>
               {filteredEvents.length === 0 ? (
-                <p className="mt-6 text-sm text-[#8f8375]">No events match the current filter.</p>
+                <p className="mt-6 text-sm text-gray-500">No events match the current filter.</p>
               ) : (
                 <div className="mt-4 space-y-3">
                   {filteredEvents.map((event) => (
@@ -758,7 +758,7 @@ export function AutoResearchDashboardView({
           )}
 
           {activeTab === 'debug' && (
-            <section className="rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4">
+            <section className="rounded-2xl border border-gray-200 bg-white p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <SectionHeading subtitle="Raw terminal output and unfiltered event dump remain available for recovery and deep debugging.">Debug</SectionHeading>
@@ -768,7 +768,7 @@ export function AutoResearchDashboardView({
                     type="button"
                     onClick={() => handleCopy(displayedLiveOutput)}
                     data-copy-target="live-output-copy"
-                    className="rounded-full border border-[#e3d8cb] bg-white px-2.5 py-1 text-[11px] font-medium text-[#6b5f52] transition-colors hover:border-[#d4c7b8] hover:text-[#2f251a]"
+                    className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-900"
                   >
                     {t('autoresearch.liveOutput.copy')}
                   </button>
@@ -776,7 +776,7 @@ export function AutoResearchDashboardView({
                     type="button"
                     onClick={handleDownload}
                     data-copy-target="live-output-download"
-                    className="rounded-full border border-[#e3d8cb] bg-white px-2.5 py-1 text-[11px] font-medium text-[#6b5f52] transition-colors hover:border-[#d4c7b8] hover:text-[#2f251a]"
+                    className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-900"
                   >
                     {t('autoresearch.liveOutput.download')}
                   </button>
@@ -784,14 +784,14 @@ export function AutoResearchDashboardView({
               </div>
               <div className="mt-4 grid gap-4 xl:grid-cols-2">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8f8375]">Raw Events</p>
-                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-[#ebe4d9] bg-white p-4 text-xs leading-5 text-[#2f251a] whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(241,237,230,0.9)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Raw Events</p>
+                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-gray-200 bg-white p-4 text-xs leading-5 text-gray-900 whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
                     {allEventLines || 'No events recorded.'}
                   </pre>
                 </div>
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8f8375]">Raw Conversation</p>
-                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-[#ebe4d9] bg-white p-4 text-xs leading-5 text-[#2f251a] whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(241,237,230,0.9)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Raw Conversation</p>
+                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-gray-200 bg-white p-4 text-xs leading-5 text-gray-900 whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
                     {redactSensitiveText(displayedLiveOutput) || 'No live output recorded.'}
                   </pre>
                 </div>

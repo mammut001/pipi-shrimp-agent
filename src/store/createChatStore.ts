@@ -24,7 +24,10 @@ import { useArtifactsStore } from './artifactsStore';
 import { createChatActionMethods } from './chat/chatActions';
 import { resetTransientSessionStateForNewChat } from './chat/sessionIsolation';
 import { filterSessionsByProject, selectCurrentMessages, selectCurrentSession } from './chat/chatSelectors';
+import { resolveStreamingOwnerSessionId } from './chat/chatStreaming';
+import { safeSetItem, safeRemoveItem, safeGetItem, safeMigrateKey } from '@/utils/safeStorage';
 import {
+  clearNonCurrentSessionToolRuntime,
   clearSessionToolRuntime,
   failUnresolvedSessionTools,
   markSessionToolRunning,
@@ -34,7 +37,11 @@ import {
 } from './chat/toolRuntimeState';
 import { useUIStore } from './uiStore';
 
-const CURRENT_SESSION_ID_STORAGE_KEY = 'ai-agent-current-session-id';
+// AUDIT-FIX [fix-20#1] — Renamed from the legacy `ai-agent-*` namespace
+// to `pipi-shrimp-*` to match the current product name. We also read the
+// old key once on first load to migrate existing users.
+const CURRENT_SESSION_ID_STORAGE_KEY = 'pipi-shrimp-current-session-id';
+const LEGACY_CURRENT_SESSION_ID_STORAGE_KEY = 'ai-agent-current-session-id';
 
 type RuntimeListenerCleanup = () => void;
 type ChatSetState = (
@@ -185,6 +192,7 @@ async function ensureSessionWorkDir(sessionId: string, set: ChatSetState, get: (
 
   const maxRetries = 3;
   const baseDelayMs = 1000;
+  let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
     try {
       const defaultDir = await safeInvoke<string>('get_app_default_dir', { sessionId });
@@ -197,14 +205,30 @@ async function ensureSessionWorkDir(sessionId: string, set: ChatSetState, get: (
       }));
       return defaultDir;
     } catch (error) {
+      lastError = error;
       if (attempt === maxRetries) {
         console.error('[workDir] Failed to auto-assign default directory after retries:', error);
-        return null;
+        break;
       }
       await new Promise((resolve) => setTimeout(resolve, baseDelayMs * Math.pow(2, attempt - 1)));
     }
   }
 
+  // AUDIT-FIX [fix-6#1] — Surface the failure to the user via a toast
+  // notification. The previous behaviour silently returned `null`, leaving
+  // the user staring at a chat session that has no working directory and
+  // every tool call will subsequently fail.
+  try {
+    useUIStore.getState().addNotification(
+      'error',
+      `Failed to create session work directory: ${String(
+        lastError instanceof Error ? lastError.message : lastError ?? 'unknown error',
+      )}`,
+      sessionId,
+    );
+  } catch {
+    // UI store may not be ready; the console.error above is the fallback.
+  }
   return null;
 }
 
@@ -271,9 +295,11 @@ function resetRightPanelStateAfterSessionRemoval(
   }
 
   if (nextSessionId) {
-    localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, nextSessionId);
+    // AUDIT-FIX [fix-22#1] — Use the safe localStorage helper so a quota
+    // or private-mode error doesn't crash the persistence path.
+    safeSetItem(CURRENT_SESSION_ID_STORAGE_KEY, nextSessionId);
   } else {
-    localStorage.removeItem(CURRENT_SESSION_ID_STORAGE_KEY);
+    safeRemoveItem(CURRENT_SESSION_ID_STORAGE_KEY);
   }
 }
 
@@ -331,7 +357,18 @@ export const useChatStore = create<ChatState>()(
         );
 
         set({ sessions });
-        const savedSessionId = localStorage.getItem(CURRENT_SESSION_ID_STORAGE_KEY);
+        // AUDIT-FIX [fix-22#1] — Use the safe localStorage helper. The
+        // legacy → new key migration is now handled by `safeMigrateKey`.
+        const current = safeGetItem<string>(CURRENT_SESSION_ID_STORAGE_KEY);
+        let savedSessionId: string | null = current.value;
+        if (!savedSessionId) {
+          savedSessionId = safeMigrateKey(
+            LEGACY_CURRENT_SESSION_ID_STORAGE_KEY,
+            CURRENT_SESSION_ID_STORAGE_KEY,
+          )
+            ? safeGetItem<string>(CURRENT_SESSION_ID_STORAGE_KEY).value
+            : null;
+        }
         if (savedSessionId && sessions.some((session) => session.id === savedSessionId)) {
           set({ currentSessionId: savedSessionId });
         } else {
@@ -438,7 +475,20 @@ export const useChatStore = create<ChatState>()(
       } catch (error) {
         console.error('Failed to load sessions:', error);
         try {
-          const stored = localStorage.getItem('ai-agent-sessions');
+          // AUDIT-FIX [fix-20#1] / [fix-22#1] — Try the new key first,
+          // then fall back to the legacy `ai-agent-sessions` namespace so
+          // existing installations keep their data. Uses the safe
+          // storage helpers for quota-error tolerance.
+          let stored = safeGetItem<string>('pipi-shrimp-sessions').value;
+          if (!stored) {
+            const migrated = safeMigrateKey(
+              'ai-agent-sessions',
+              'pipi-shrimp-sessions',
+            );
+            if (migrated) {
+              stored = safeGetItem<string>('pipi-shrimp-sessions').value;
+            }
+          }
           if (stored) {
             set({ sessions: JSON.parse(stored) as Session[] });
           }
@@ -498,7 +548,7 @@ export const useChatStore = create<ChatState>()(
         },
       });
 
-      localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, newSession.id);
+      safeSetItem(CURRENT_SESSION_ID_STORAGE_KEY, newSession.id);
       set((state) => ({
         sessions: [...state.sessions, newSession],
         currentSessionId: newSession.id,
@@ -594,8 +644,22 @@ export const useChatStore = create<ChatState>()(
       if (get().streamingTimeoutId) {
         clearTimeout(get().streamingTimeoutId!);
       }
-      if (previousSessionId && previousSessionId !== sessionId && get().isStreaming) {
-        safeInvokeOrNull('stop_subprocess', { sessionId: previousSessionId });
+      // AUDIT-FIX [audit-1#4] — When switching sessions, stop the subprocess
+      // that OWNS the running stream (streamingSessionId), not just the
+      // session we're leaving. The previous check only fired when both
+      // previousSessionId was set AND isStreaming was true, but streaming
+      // state can already have been cleared by other code paths while the
+      // backend subprocess is still alive — particularly during a session
+      // change initiated from a different code path. Use the helper that
+      // falls back to streamingSessionId before currentSessionId.
+      if (previousSessionId && previousSessionId !== sessionId) {
+        const owningSessionId = resolveStreamingOwnerSessionId(
+          get().streamingSessionId,
+          get().isStreaming ? previousSessionId : null,
+        );
+        if (owningSessionId) {
+          safeInvokeOrNull('stop_subprocess', { sessionId: owningSessionId });
+        }
       }
       useUIStore.getState().clearAllPermissions();
       if (previousSessionId && previousSessionId !== sessionId) {
@@ -614,7 +678,7 @@ export const useChatStore = create<ChatState>()(
         );
         void scrubDanglingToolCalls(previousSessionId, set, get);
       }
-      localStorage.setItem(CURRENT_SESSION_ID_STORAGE_KEY, sessionId);
+      safeSetItem(CURRENT_SESSION_ID_STORAGE_KEY, sessionId);
       set({
         currentSessionId: sessionId,
         error: null,
@@ -626,6 +690,9 @@ export const useChatStore = create<ChatState>()(
         pendingToolResults: [],
         streamingSessionId: null,
       });
+      // AUDIT-FIX [audit-1#2] — Drop runtime for any session that isn't the
+      // newly-selected one, so stale tool steps don't outlive a session switch.
+      clearNonCurrentSessionToolRuntime(set, get);
       syncSessionToolRuntimeToCurrentSession(set, get);
     },
 
@@ -645,6 +712,10 @@ export const useChatStore = create<ChatState>()(
         return { sessions: newSessions, currentSessionId: nextSessionId };
       });
       clearSessionToolRuntime(sessionId, set, get);
+      // AUDIT-FIX [audit-1#2] — Drop any leftover runtime for sessions that
+      // were orphaned by the deletion (e.g. when the active session was deleted
+      // and we fell back to a different one).
+      clearNonCurrentSessionToolRuntime(set, get);
       syncSessionToolRuntimeToCurrentSession(set, get);
       resetRightPanelStateAfterSessionRemoval([sessionId], nextSessionId, previousCurrentSessionId);
       uiStore.addNotification('success', 'Conversation deleted', sessionId);
@@ -678,6 +749,9 @@ export const useChatStore = create<ChatState>()(
       for (const deletedSessionId of deletedSessionIds) {
         clearSessionToolRuntime(deletedSessionId, set, get);
       }
+      // AUDIT-FIX [audit-1#2] — Same cleanup as deleteSession: prune any other
+      // session's leftover runtime after a bulk delete.
+      clearNonCurrentSessionToolRuntime(set, get);
       syncSessionToolRuntimeToCurrentSession(set, get);
       resetRightPanelStateAfterSessionRemoval(deletedSessionIds, nextSessionId, previousCurrentSessionId);
     },

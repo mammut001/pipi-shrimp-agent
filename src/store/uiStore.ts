@@ -47,7 +47,7 @@ function safeLocalStorageSet(key: string, value: string): void {
   }
 }
 
-type CurrentView = 'chat' | 'workflow' | 'skill' | 'browser' | 'diagnostics';
+type CurrentView = 'chat' | 'workflow' | 'skill' | 'browser' | 'diagnostics' | 'autoresearch';
 
 const persistCurrentView = (view: PersistedCurrentView): void => {
   safeLocalStorageSet(CURRENT_VIEW_STORAGE_KEY, view);

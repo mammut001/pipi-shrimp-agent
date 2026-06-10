@@ -5,9 +5,6 @@
 // Sidebar components
 export { Sidebar } from './Sidebar';
 
-// Agentic components
-export { AgentPanel } from './AgentPanel';
-
 // Chat components
 export { ChatMessage } from './ChatMessage';
 export { ChatInput } from './ChatInput';
@@ -34,6 +31,9 @@ export { FileDropOverlay } from './FileDropOverlay';
 
 // Chrome connect prompt
 export { ChromeConnectPrompt } from './ChromeConnectPrompt';
+
+// Agent side panel (instructions, task progress, browser status, etc.)
+export { AgentPanel } from './AgentPanel';
 
 // Embedded Terminal
 export { TerminalPanel } from './TerminalPanel';

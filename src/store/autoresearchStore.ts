@@ -8,10 +8,13 @@
 import { create } from 'zustand';
 import type { AutoResearchAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import {
+  clipLiveOutputBuffer,
   clipLiveOutputExcerpt,
+  clipLiveOutputExcerptInMemory,
   loadPersistedAutoResearchHistory,
   persistAutoResearchHistory,
   redactAutoResearchSensitiveText,
+  setHistoryPersistListener,
   toHistoryConfigSnapshot,
   type AutoResearchIterationRecord,
   type AutoResearchRecoveryAction,
@@ -667,7 +670,16 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
 
   setError: (msg) => set((state) => {
     const endedAt = new Date().toISOString();
-    const sanitizedMessage = redactAutoResearchSensitiveText(msg);
+    // AUDIT-FIX [audit-1-ar#4]: Empty error message fallback.
+    // Callers occasionally pass `undefined` / null / empty when an
+    // upstream error had no message. Without this, the UI shows a blank
+    // error panel and the active run's `reason` is persisted as an
+    // empty string in localStorage (and silently lost on reload).
+    // Normalize the input and substitute a fixed fallback so the user
+    // always sees something actionable + the run record is recoverable.
+    const normalized = typeof msg === 'string' ? msg.trim() : '';
+    const fallback = 'AutoResearch run stopped due to an unknown error. Check the event log for details.';
+    const sanitizedMessage = redactAutoResearchSensitiveText(normalized || fallback);
     return {
       loopState: 'error',
       errorMessage: sanitizedMessage,
@@ -888,7 +900,13 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     runHistory: updateRunRecord(state.runHistory, state.id, (run) => ({
       ...run,
       updatedAt: input.timestamp ?? new Date().toISOString(),
-      events: [...run.events, createRunEvent(run.id, input)].slice(-200),
+      // AUDIT-FIX [audit-2-ar#8]: Aligned with `MAX_PERSISTED_EVENTS_PER_RUN`
+      // in history.ts so the persisted shape is always a strict subset
+      // of the in-memory shape. Previously 200 vs 100 — every persist
+      // truncated the in-memory tail to 100, then `serialized !== raw`
+      // detected the difference and triggered a write-back. Now both
+      // are 100 and persists are no-ops when nothing has changed.
+      events: [...run.events, createRunEvent(run.id, input)].slice(-100),
     })),
   })),
 
@@ -958,22 +976,31 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   setExperiments: (entries) => set({ experiments: entries }),
 
   setLiveOutput: (output) => set((state) => ({
-    liveOutput: output,
+    liveOutput: clipLiveOutputBuffer(output),
     ...withActiveRunUpdate(state, (run) => ({
       ...run,
       updatedAt: new Date().toISOString(),
-      liveOutputExcerpt: clipLiveOutputExcerpt(output),
+      // AUDIT-FIX [audit-2-ar#4]: In-memory excerpt path skips secret
+      // redaction. `clipLiveOutputExcerptInMemory` is a pure slice;
+      // redaction is paid once at persist time via
+      // `redactLiveOutputExcerptForStorage` (in `compactRunRecord`).
+      // Redacting on every token append was a CPU hotspot: 10+ regex
+      // passes × 20KB string × 100+ appends/sec = multi-MB regex work
+      // per second of streaming output.
+      liveOutputExcerpt: clipLiveOutputExcerptInMemory(output),
     })),
   })),
 
   appendLiveOutput: (chunk) => set((state) => {
-    const liveOutput = state.liveOutput + chunk;
+    const liveOutput = clipLiveOutputBuffer(state.liveOutput + chunk);
     return {
       liveOutput,
       ...withActiveRunUpdate(state, (run) => ({
         ...run,
         updatedAt: new Date().toISOString(),
-        liveOutputExcerpt: clipLiveOutputExcerpt((run.liveOutputExcerpt || '') + chunk),
+        // AUDIT-FIX [audit-2-ar#4]: No redaction per-append — see setLiveOutput
+        // above. The persisted shape is redacted at write time.
+        liveOutputExcerpt: clipLiveOutputExcerptInMemory((run.liveOutputExcerpt || '') + chunk),
       })),
     };
   }),
@@ -1069,7 +1096,9 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
           metadata: {
             pendingIteration: input.pendingIteration,
           },
-        })].slice(-200),
+          // AUDIT-FIX [audit-2-ar#8]: see `addRunEvent` above — both paths
+          // now use the same 100-event cap as `MAX_PERSISTED_EVENTS_PER_RUN`.
+        })].slice(-100),
       })),
       selectedRunId: input.runId,
       showSetupModal: false,
@@ -1079,7 +1108,128 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   setShowSetupModal: (showSetupModal) => set({ showSetupModal }),
 }));
 
+/**
+ * AUDIT-FIX [audit-1-ar#3]: Persist debounce.
+ * A single AutoResearch iteration can trigger 5-20 `set()` calls
+ * (addRunEvent, setStatusMessage, appendLiveOutput, etc.). Persisting on
+ * every change was wasteful and could stall the UI thread when
+ * `runHistory` is large — `JSON.stringify` over tens of MB is not free.
+ * Coalesce writes within a 500ms window. The actual read of the latest
+ * state happens inside the timer callback (see AUDIT-FIX [audit-3-ar#1]
+ * in `schedulePersist` below) so we never persist a stale snapshot.
+ *
+ * `beforeunload` + Tauri's `onCloseRequested` (also added in audit-2)
+ * are the synchronous flush paths that guarantee no writes are lost
+ * when the user closes the window.
+ */
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+const PERSIST_DEBOUNCE_MS = 500;
+
+// AUDIT-FIX [audit-3-ar#1]: Persist debounce closure bug.
+// `schedulePersist(state)` captured the state at subscribe-time into a
+// setTimeout closure. With multiple `set()` calls per iteration (addRunEvent,
+// setStatusMessage, appendLiveOutput, …) only the snapshot from the FIRST
+// set would be persisted; everything from the rest of the 500ms window was
+// dropped on reload. Fixed by re-reading state via `getState()` inside the
+// timer callback, so the latest authoritative state is what gets written.
+const schedulePersist = (_state: ExperimentSession): void => {
+  if (typeof window === 'undefined') return;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+  }
+  // Re-read state inside the timer callback. Subscribing captures the state
+  // at the moment the `set()` fires; between that fire and the 500ms timer
+  // expiring, additional `set()` calls (addRunEvent, setStatusMessage,
+  // appendLiveOutput, …) may have advanced runHistory/statusMessage/etc.
+  // Writing the snapshot from the first `set` would discard those updates
+  // on the next reload. Calling `getState()` at flush time captures the
+  // current authoritative state instead.
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const latest = useAutoResearchStore.getState();
+    persistAutoResearchHistory(latest.runHistory, latest.selectedRunId);
+    persistAutoResearchLastUsedConfig(latest.lastUsedConfig);
+  }, PERSIST_DEBOUNCE_MS);
+};
+
 useAutoResearchStore.subscribe((state) => {
-  persistAutoResearchHistory(state.runHistory, state.selectedRunId);
-  persistAutoResearchLastUsedConfig(state.lastUsedConfig);
+  schedulePersist(state);
 });
+
+/**
+ * Flush any pending debounced AutoResearch writes BEFORE the window
+ * actually closes.
+ *
+ * AUDIT-FIX [audit-2-ar#3]: Tauri onCloseRequested as a reliable flush
+ * trigger. The browser's `beforeunload` is unreliable in Tauri webviews
+ * (the WebView may be torn down before the JS handler finishes), so we
+ * additionally listen to Tauri's native `onCloseRequested` event. The
+ * handler performs a synchronous flush (localStorage.setItem) before
+ * letting the close proceed.
+ *
+ * Lazy-imported and wrapped in try/catch so this module remains safe to
+ * load in a non-Tauri (e.g. unit test) environment. Falls back to
+ * `beforeunload` if the Tauri API isn't available.
+ */
+if (typeof window !== 'undefined') {
+  void (async () => {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow().onCloseRequested(async (event) => {
+        if (persistTimer) {
+          clearTimeout(persistTimer);
+          persistTimer = null;
+          try {
+            const state = useAutoResearchStore.getState();
+            persistAutoResearchHistory(state.runHistory, state.selectedRunId);
+            persistAutoResearchLastUsedConfig(state.lastUsedConfig);
+          } catch (flushError) {
+            console.error('Failed to flush AutoResearch history on close:', flushError);
+          }
+        }
+        // Do NOT preventDefault — let the close proceed. The flush above is
+        // synchronous (localStorage.setItem) so the webview can tear down
+        // safely immediately after. If we ever migrate to an async store
+        // (Tauri Store plugin / Rust command), re-evaluate: the flush
+        // would need to complete before destroy.
+        void event; // explicit no-op; included for future async flush.
+      });
+    } catch (error) {
+      // Non-Tauri environment (tests, SSR) — fall back to beforeunload below.
+      // Errors here are expected and not actionable.
+      if (process.env.NODE_ENV !== 'test') {
+        console.debug('Tauri onCloseRequested unavailable, using beforeunload fallback:', error);
+      }
+    }
+  })();
+}
+
+if (typeof window !== 'undefined') {
+  // Flush any pending write when the page is being unloaded so users don't
+  // lose the last few seconds of AutoResearch progress on tab close / reload.
+  // NOTE: `beforeunload` is not 100% reliable in Tauri webviews (the
+  // webview may be torn down before the JS handler finishes). The
+  // P1#3 fix adds a `tauri://close-requested` listener as a more
+  // reliable alternative.
+  window.addEventListener('beforeunload', () => {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+      const state = useAutoResearchStore.getState();
+      persistAutoResearchHistory(state.runHistory, state.selectedRunId);
+      persistAutoResearchLastUsedConfig(state.lastUsedConfig);
+    }
+  });
+
+  // Surface localStorage quota / persist failures as a visible run event so
+  // users aren't silently losing iteration data.
+  setHistoryPersistListener((message) => {
+    const state = useAutoResearchStore.getState();
+    state.addRunEvent({
+      level: 'error',
+      phase: 'system',
+      message,
+      summary: message,
+    });
+  });
+}

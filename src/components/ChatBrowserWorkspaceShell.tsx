@@ -33,6 +33,7 @@ import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
 import { getHiddenMessageCount, getVisibleMessageWindow } from './chat/messageWindowing';
 import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
+import { safeGetJSON, safeSetJSON } from '@/utils/safeStorage';
 
 /**
  * Draggable wrapper for SwarmPanel — allows free positioning anywhere on screen.
@@ -47,18 +48,19 @@ function SwarmPanelDraggable() {
   useEffect(() => {
     const panel = containerRef.current;
     if (!panel) return;
-    try {
-      const saved = localStorage.getItem(SWARM_PANEL_POS_KEY);
-      if (saved) {
-        const { x, y } = JSON.parse(saved);
-        const maxX = window.innerWidth - panel.offsetWidth;
-        const maxY = window.innerHeight - panel.offsetHeight;
-        panel.style.left = `${Math.max(0, Math.min(x, maxX))}px`;
-        panel.style.top = `${Math.max(0, Math.min(y, maxY))}px`;
-        panel.style.right = 'auto';
-        panel.style.bottom = 'auto';
-      }
-    } catch { /* ignore */ }
+    // AUDIT-FIX [fix-22#1] — Use the safe-storage helper for the read
+    // path; quota / SecurityError fall through to the default bottom-right
+    // position which the panel already starts with.
+    const saved = safeGetJSON<{ x: number; y: number }>(SWARM_PANEL_POS_KEY);
+    if (saved.value) {
+      const { x, y } = saved.value;
+      const maxX = window.innerWidth - panel.offsetWidth;
+      const maxY = window.innerHeight - panel.offsetHeight;
+      panel.style.left = `${Math.max(0, Math.min(x, maxX))}px`;
+      panel.style.top = `${Math.max(0, Math.min(y, maxY))}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+    }
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -94,17 +96,29 @@ function SwarmPanelDraggable() {
       dragState.current = null;
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
-      // Persist final position
+      // Persist final position via the safe-storage helper so quota
+      // errors don't crash the listener teardown path.
       if (panel) {
         const rect = panel.getBoundingClientRect();
-        try {
-          localStorage.setItem(SWARM_PANEL_POS_KEY, JSON.stringify({ x: rect.left, y: rect.top }));
-        } catch { /* ignore */ }
+        safeSetJSON(SWARM_PANEL_POS_KEY, { x: rect.left, y: rect.top });
       }
     };
 
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
+  }, []);
+
+  // AUDIT-FIX [fix-19#1] — Last-line-of-defence cleanup. If the component
+  // unmounts mid-drag (e.g. the user navigates away or the panel
+  // disappears) the document listeners above would leak. We mirror the
+  // `mouseup` cleanup here as a safety net.
+  useEffect(() => {
+    return () => {
+      // We can't reference the inner onMouseUp / onMouseMove (they live in
+      // the closure above), but the drag state itself can be reset so any
+      // subsequent callback is a no-op until the user starts a new drag.
+      dragState.current = null;
+    };
   }, []);
 
   return (
@@ -425,9 +439,9 @@ export function ChatBrowserWorkspaceShell() {
   const renderChatPanel = () => (
     <div className="flex flex-col min-h-0 w-full min-w-0 flex-1">
       {/* Messages List — min-h-0 allows this to shrink when terminal panel is open */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 w-full">
         {hasMessages ? (
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-gray-100 w-full">
             {hiddenMessageCount > 0 && (
               <div className="flex justify-center bg-gray-50 px-4 py-3">
                 <button

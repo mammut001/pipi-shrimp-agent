@@ -40,6 +40,16 @@ export function classifyRisk(toolName: string, _toolArgs: string): RiskLevel {
 /** Map of pending permission promises: requestId → resolve function */
 const pendingResolvers = new Map<string, (approved: boolean) => void>();
 
+/** AUDIT-FIX [fix-5#1] — TTL for unattended permission requests. After
+ * this many milliseconds a request is auto-expired (denied) so we never
+ * leak a resolver for a request the user closed the modal for without
+ * explicitly resolving. Tuned at 60s — long enough for human review of a
+ * single tool call, short enough to bound memory. */
+const PERMISSION_REQUEST_TTL_MS = 60_000;
+
+/** Pending-request timers so we can cancel them on explicit resolution. */
+const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 /**
  * Request permission for a teammate tool use.
  * Records the request in the swarm repo and returns a promise that resolves
@@ -80,6 +90,13 @@ export function requestPermission(options: {
 
   const promise = new Promise<boolean>((resolve) => {
     pendingResolvers.set(req.requestId, resolve);
+    // AUDIT-FIX [fix-5#1] — Schedule an auto-expiry timer so unresolved
+    // requests don't accumulate. The timer is cancelled in
+    // `resolvePermission` or `expireAllPending`.
+    const timer = setTimeout(() => {
+      expirePermission(req.requestId, 'timeout');
+    }, PERMISSION_REQUEST_TTL_MS);
+    pendingTimers.set(req.requestId, timer);
   });
 
   return { requestId: req.requestId, promise };
@@ -110,6 +127,13 @@ export function resolvePermission(requestId: string, approved: boolean): void {
 
   resolver(approved);
   pendingResolvers.delete(requestId);
+  // AUDIT-FIX [fix-5#1] — Cancel the auto-expire timer so it doesn't fire
+  // after an explicit resolution.
+  const timer = pendingTimers.get(requestId);
+  if (timer) {
+    clearTimeout(timer);
+    pendingTimers.delete(requestId);
+  }
 }
 
 /**
@@ -121,6 +145,35 @@ export function expireAllPending(): void {
     resolver(false);
   }
   pendingResolvers.clear();
+  // AUDIT-FIX [fix-5#1] — Clear all pending expiry timers too.
+  for (const timer of pendingTimers.values()) {
+    clearTimeout(timer);
+  }
+  pendingTimers.clear();
+}
+
+/**
+ * AUDIT-FIX [fix-5#1] — Expire a single pending request. Used both by the
+ * auto-expiry timer and by the explicit `expirePermission` callers that
+ * need to retire a request early (e.g. the agent was cancelled).
+ */
+function expirePermission(requestId: string, reason: 'timeout' | 'cancelled'): void {
+  const resolver = pendingResolvers.get(requestId);
+  if (!resolver) return;
+  repo.resolvePermissionRequest(requestId, 'expired');
+  const req = repo.getPermissionRequest(requestId);
+  if (req) {
+    recordTranscript(req.agentId, {
+      role: 'system',
+      content: `Permission expired (${reason}): ${req.toolName}`,
+      eventType: 'permission_expired',
+      toolName: req.toolName,
+      taskId: req.taskId,
+    });
+  }
+  resolver(false);
+  pendingResolvers.delete(requestId);
+  pendingTimers.delete(requestId);
 }
 
 // =============================================================================

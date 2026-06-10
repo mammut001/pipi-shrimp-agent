@@ -49,6 +49,7 @@ export type TranslationKeys = {
   'nav.workflow': string;
   'nav.browser': string;
   'nav.skill': string;
+  'nav.autoresearch': string;
   'nav.diagnostics': string;
   'nav.settings': string;
   'nav.newChat': string;

@@ -558,8 +558,21 @@ ${output}
 
     try {
       this.workingDirectory = await this.deps.createRunDirectory(localRunId);
-    } catch {
+    } catch (error) {
+      // AUDIT-FIX [fix-5#1] — Surface the failure via the store's error
+      // channel so the user sees a clear message and the run is marked as
+      // failed. Previously the error was silently swallowed and the run
+      // continued with an empty working directory, which later caused
+      // confusing "file not found" errors deep in the agent pipeline.
+      // eslint-disable-next-line no-console
+      console.error('[workflow] createRunDirectory failed:', error);
       this.workingDirectory = '';
+      store.setError?.(
+        snapshot.instanceId,
+        `Failed to create run directory: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
 
     const run: WorkflowRun = {

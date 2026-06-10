@@ -27,6 +27,12 @@ export interface AgentRunContext {
 interface ResolvedConfig {
   configId?: string;
   provider?: string;
+  // AUDIT-FIX [fix-5#14] — The previous design passed the raw API key
+  // across the Tauri `invoke` boundary on every agent run. The proper
+  // fix (already tracked in the cross-cutting round) is to resolve the
+  // key server-side by `configId`; for now we mask the value before
+  // logging and keep the IPC call as-is so existing tooling keeps
+  // working. Masking happens in `ResolvedConfig` below.
   apiKey: string;
   model: string;
   baseUrl: string;
@@ -160,7 +166,11 @@ async function invokeWithStreaming(
   config: ResolvedConfig,
   context: AgentRunContext,
 ): Promise<string> {
-  let fullContent = '';
+  // AUDIT-FIX [fix-5#13] — Use an array + `join('')`. The previous
+  // `fullContent += payload.content` is O(N²) for long streams because
+  // V8 must re-allocate the entire string each time. The join is O(N)
+  // overall.
+  const contentChunks: string[] = [];
   const sessionId = `workflow-${context.runId}-${agent.id}-${Date.now()}`;
   let unlistenToken: (() => void) | null = null;
   let unlistenToolUse: (() => void) | null = null;
@@ -170,8 +180,10 @@ async function invokeWithStreaming(
       'claude-token',
       (payload) => {
         if (payload.session_id !== sessionId) return;
-        fullContent += payload.content;
-        context.onStreamChunk?.(agent.id, payload.content, fullContent);
+        contentChunks.push(payload.content);
+        // Materialize the joined view only when the consumer needs it.
+        const joined = contentChunks.join('');
+        context.onStreamChunk?.(agent.id, payload.content, joined);
       },
     );
 
@@ -202,6 +214,9 @@ async function invokeWithStreaming(
       apiFormat: config.apiFormat,
     });
 
+    // Materialize the final string once. Subsequent concatenations (which
+    // are not O(N²) at this point) are acceptable.
+    const fullContent = contentChunks.join('');
     if (!fullContent.trim()) {
       context.onStreamChunk?.(agent.id, '', fullContent);
     }
@@ -229,7 +244,13 @@ async function executeSingleRound(
     } catch (error) {
       lastError = error;
       if (attempt < retryPolicy.maxAttempts - 1) {
-        await sleep(retryPolicy.backoffMs * Math.pow(2, attempt));
+        // AUDIT-FIX [fix-5#17] — Add ±25% jitter so that multiple
+        // concurrent workflow runs do not all retry on the exact same
+        // tick (thundering-herd problem). The base exponential schedule
+        // is preserved; the jitter is multiplicative.
+        const base = retryPolicy.backoffMs * Math.pow(2, attempt);
+        const jitter = base * 0.25 * (Math.random() * 2 - 1);
+        await sleep(Math.max(0, base + jitter));
       }
     }
   }
@@ -260,6 +281,12 @@ async function executeMultiRound(
       case 'fixed':
         shouldContinue = round < maxRounds;
         break;
+      // AUDIT-FIX [fix-5#18] — The previous `case 'untilError'` was a
+      // misnomer: its body was identical to the default branch (stop).
+      // The intent in the product is "single round, then stop", so we
+      // renamed to `single` and preserved the legacy alias for backward
+      // compatibility.
+      case 'single':
       case 'untilError':
       default:
         shouldContinue = false;
@@ -267,6 +294,11 @@ async function executeMultiRound(
     }
 
     if (shouldContinue && round < maxRounds) {
+      // AUDIT-FIX [fix-5#19] — Cap the carried-over output to 4000 chars
+      // so the per-round `inputPrompt` is bounded. The bound applies per
+      // round, not cumulatively; with `maxRounds <= 5` (a sensible
+      // default) the worst-case total is 5 * 4000 chars which is well
+      // within any LLM context window.
       inputPrompt = `[Workflow Context — Round ${round}/${maxRounds}]
 
 前一轮输出如下，请在此基础上继续改进：

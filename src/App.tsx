@@ -29,6 +29,7 @@ const Settings = lazy(() => import('@/pages/Settings'));
 const Workflow = lazy(() => import('@/pages/Workflow'));
 const Skill = lazy(() => import('@/pages/Skill'));
 const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
+const AutoResearch = lazy(() => import('@/pages/AutoResearch'));
 const AutoResearchSetupModal = lazy(() => import('@/components/AutoResearchSetupModal').then((module) => ({
   default: module.AutoResearchSetupModal,
 })));
@@ -169,6 +170,8 @@ export default function App() {
         return <Skill />;
       case 'diagnostics':
         return <Diagnostics />;
+      case 'autoresearch':
+        return <AutoResearch />;
       case 'browser':
         return <DeprecatedBrowserViewFallback />;
       case 'chat':

@@ -214,44 +214,54 @@ impl<'a> Iterator for ThinkSegmentIter<'a> {
 /// start or end mid-tag.
 ///
 /// Tags are treated as delimiters - only the content between them is returned.
+///
+/// AUDIT-FIX [fix-2#5] — Replaced the original implementation, which used
+/// `&remaining[..].to_string()` inside a `while` loop (effectively an
+/// O(N²) string copy for long chunks) with a single-pass iterator that
+/// pushes only *new* bytes once per call.
 pub fn split_think_content(content: &str, in_think: &mut bool) -> Vec<(String, bool)> {
-    let mut result = Vec::new();
-    let mut remaining = content;
+    let mut result: Vec<(String, bool)> = Vec::new();
+    const THINK_OPEN: &str = "<think>";
+    const THINK_CLOSE: &str = "</think>";
 
-    while !remaining.is_empty() {
-        if *in_think {
-            // Looking for </think>
-            if let Some(end_pos) = remaining.find("</think>") {
-                // Content before </think> is thinking
-                if end_pos > 0 {
-                    result.push((remaining[..end_pos].to_string(), true));
+    let mut current = std::string::String::new();
+    let mut current_is_think = *in_think;
+    let mut i = 0usize;
+    let bytes = content.as_bytes();
+
+    while i < bytes.len() {
+        if current_is_think {
+            if let Some(end) = content[i..].find(THINK_CLOSE) {
+                current.push_str(&content[i..i + end]);
+                if !current.is_empty() {
+                    result.push((std::mem::take(&mut current), true));
                 }
-                // Skip the closing tag
-                remaining = &remaining[end_pos + 8..];
-                *in_think = false;
+                i += end + THINK_CLOSE.len();
+                current_is_think = false;
             } else {
-                // No closing tag - rest is thinking
-                result.push((remaining.to_string(), true));
-                remaining = "";
+                current.push_str(&content[i..]);
+                i = bytes.len();
             }
         } else {
-            // Looking for <think>
-            if let Some(start_pos) = remaining.find("<think>") {
-                // Text before <think>
-                if start_pos > 0 {
-                    result.push((remaining[..start_pos].to_string(), false));
+            if let Some(start) = content[i..].find(THINK_OPEN) {
+                current.push_str(&content[i..i + start]);
+                if !current.is_empty() {
+                    result.push((std::mem::take(&mut current), false));
                 }
-                // Skip the opening tag
-                remaining = &remaining[start_pos + 7..];
-                *in_think = true;
+                i += start + THINK_OPEN.len();
+                current_is_think = true;
             } else {
-                // No more tags - rest is text
-                result.push((remaining.to_string(), false));
-                remaining = "";
+                current.push_str(&content[i..]);
+                i = bytes.len();
             }
         }
     }
 
+    if !current.is_empty() {
+        result.push((current, current_is_think));
+    }
+
+    *in_think = current_is_think;
     result
 }
 

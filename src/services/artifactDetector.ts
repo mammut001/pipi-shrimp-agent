@@ -7,6 +7,7 @@
  */
 
 import { useArtifactsStore, type ArtifactFileType } from '@/store/artifactsStore';
+import { isWithinDir } from '@/utils/pathSecurity';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
 /** File extensions → artifact type mapping */
@@ -161,8 +162,10 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
   const allowedExtensions = ['pdf', 'svg', 'png', 'jpg', 'jpeg', 'webp', 'html'];
 
   const filteredPaths = paths.filter(p => {
-    // Must be under workDir
-    if (workDir && !p.startsWith(workDir)) {
+    // AUDIT-FIX [fix-1#1-fg] — Use `isWithinDir` to close the
+    // sibling-prefix escape that the old `startsWith` allowed
+    // (e.g. `/workdir-evil` slipping past `/workdir`).
+    if (workDir && !isWithinDir(p, workDir)) {
       return false;
     }
 

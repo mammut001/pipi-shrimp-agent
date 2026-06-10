@@ -62,11 +62,11 @@ export function AutoResearchDashboardTable({
   };
 
   return (
-    <section className={`rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4 ${className}`}>
+    <section className={`rounded-2xl border border-gray-200 bg-white p-4 ${className}`}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8f8375]">{t('autoresearch.detail.iterationsTitle')}</p>
-          <p className="mt-2 text-sm text-[#655a4f]">{t('autoresearch.detail.iterationsSubtitle')}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">{t('autoresearch.detail.iterationsTitle')}</p>
+          <p className="mt-2 text-sm text-gray-700">{t('autoresearch.detail.iterationsSubtitle')}</p>
         </div>
       </div>
 
@@ -75,7 +75,7 @@ export function AutoResearchDashboardTable({
           {renderError}
         </div>
       ) : summaries.length === 0 ? (
-        <div className="mt-4 rounded-2xl border border-dashed border-[#ddd2c5] bg-white/70 px-4 py-6 text-sm text-[#8a7f72]">
+        <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-white/70 px-4 py-6 text-sm text-gray-500">
           {t('autoresearch.detail.noIterations')}
         </div>
       ) : (

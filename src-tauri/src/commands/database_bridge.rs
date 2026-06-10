@@ -24,8 +24,43 @@ pub fn export_database_backup(
     path: String,
     backup_path: Option<String>,
 ) -> Result<String, String> {
+    // AUDIT-FIX [fix-2#1] — Validate the destination path is inside one of
+    // the user-writable roots (app data dir, $HOME, /tmp) before writing.
+    // Previously the caller could pass any absolute path and the Tauri
+    // command would happily overwrite it.
+    let dest = Path::new(&path);
+    let mut allowed: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        allowed.push(home);
+    }
+    if let Ok(tmp) = std::env::var("TMPDIR").or_else(|_| std::env::var("TEMP")) {
+        let p = std::path::PathBuf::from(tmp);
+        if !p.as_os_str().is_empty() {
+            allowed.push(p);
+        }
+    } else {
+        allowed.push(std::path::PathBuf::from("/tmp"));
+    }
+    if let Ok(data_dir) = std::env::var("PIPI_SHRIMP_DATA_DIR") {
+        allowed.push(std::path::PathBuf::from(data_dir));
+    } else if let Some(dir) = dirs::data_dir() {
+        allowed.push(dir.join("PiPi-Shrimp"));
+    }
+
+    let allowed_refs: Vec<&Path> = allowed.iter().map(|p| p.as_path()).collect();
+    crate::commands::path_security::validate_destination_path(
+        dest.to_str().unwrap_or(""),
+        &allowed_refs,
+    )
+    .map_err(|e| {
+        format!(
+            "Refusing to export database to '{}': {}",
+            dest.display(),
+            e.message
+        )
+    })?;
     export_database_backup_file(
-        Path::new(&path),
+        dest,
         backup_path.as_deref().map(Path::new),
     )
     .map(|exported_path| exported_path.display().to_string())

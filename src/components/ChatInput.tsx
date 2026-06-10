@@ -29,6 +29,11 @@ import { t } from '@/i18n';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 import type { ImageAttachment } from '@/types/vision';
 
+// AUDIT-FIX [audit-1#6] — Debounce window for localStorage writes. 300ms is
+// short enough that a navigation away from the tab will still flush the
+// last keystroke before unmount, and long enough to coalesce typical typing.
+const DRAFT_PERSIST_DEBOUNCE_MS = 300;
+
 // Check if running inside Tauri
 const isTauri = !!(window as any).__TAURI__;
 
@@ -50,27 +55,38 @@ function cleanupOldDrafts(): void {
     // Mark cleanup time
     localStorage.setItem(cleanupKey, now.toString());
 
-    // Find and remove old drafts
+    // Find and remove old drafts. We iterate the raw localStorage keys so we
+    // can also delete the matching `<key>__ts` timestamp entry.
     const draftPrefix = 'chat_draft_';
+    const timestampSuffix = '__ts';
     const keysToRemove: string[] = [];
+    const timestampsToRemove: string[] = [];
 
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.startsWith(draftPrefix)) {
-        // Check if draft is older than maxAge (use item timestamp as proxy)
-        const value = localStorage.getItem(key);
-        if (value && value.length > 0) {
-          // For drafts without timestamp, we use a heuristic:
-          // If the draft content looks stale (> 30KB, likely forgotten), remove it
-          // This handles the case where user typed a lot but never sent
-          if (isStaleChatDraftValue(value)) {
-            keysToRemove.push(key);
-          }
-        }
+      if (!key || !key.startsWith(draftPrefix) || key.endsWith(timestampSuffix)) {
+        continue;
+      }
+      const value = localStorage.getItem(key);
+      if (!value || value.length === 0) {
+        keysToRemove.push(key);
+        continue;
+      }
+
+      const tsRaw = localStorage.getItem(`${key}${timestampSuffix}`);
+      const lastTouchedAt = tsRaw ? Number.parseInt(tsRaw, 10) : null;
+
+      // AUDIT-FIX [audit-1#6] — isStaleChatDraftValue now consults the
+      // timestamp when present, so a large but recently-touched prompt is
+      // preserved. Only the size+age combination triggers removal.
+      if (isStaleChatDraftValue(value, Number.isFinite(lastTouchedAt) ? lastTouchedAt : null)) {
+        keysToRemove.push(key);
+        timestampsToRemove.push(`${key}${timestampSuffix}`);
       }
     }
 
-    keysToRemove.forEach(key => localStorage.removeItem(key));
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+    timestampsToRemove.forEach((key) => localStorage.removeItem(key));
     if (keysToRemove.length > 0) {
       console.log(`[ChatInput] Cleaned up ${keysToRemove.length} old drafts`);
     }
@@ -171,13 +187,28 @@ export function ChatInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftStorageKey]);
 
-  // Persist draft to localStorage whenever input changes
+  // AUDIT-FIX [audit-1#6] — Persist the draft with a short debounce so
+  // every keystroke (especially for large copy-pasted prompts) doesn't
+  // trigger a synchronous localStorage.setItem on the main thread. We also
+  // store a `lastTouchedAt` timestamp alongside the value so the staleness
+  // heuristic can make an actual time-based decision instead of guessing
+  // from content length (see MAX_CHAT_DRAFT_STALE_MS).
   useEffect(() => {
-    if (input) {
-      localStorage.setItem(draftStorageKey, input);
-    } else {
-      localStorage.removeItem(draftStorageKey);
-    }
+    const handle = window.setTimeout(() => {
+      if (input) {
+        try {
+          localStorage.setItem(draftStorageKey, input);
+          localStorage.setItem(`${draftStorageKey}__ts`, String(Date.now()));
+        } catch (error) {
+          // localStorage may be full / disabled; degrade silently.
+          console.warn('[ChatInput] failed to persist draft:', error);
+        }
+      } else {
+        localStorage.removeItem(draftStorageKey);
+        localStorage.removeItem(`${draftStorageKey}__ts`);
+      }
+    }, DRAFT_PERSIST_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
   }, [input, draftStorageKey]);
 
   useEffect(() => {
@@ -398,7 +429,7 @@ export function ChatInput({
 
   return (
     <div className={rootClassName}>
-      <div className="max-w-3xl mx-auto relative">
+      <div className="max-w-4xl relative">
         {/* MCP server dropdown — positioned relative to this container */}
         <MCPDropdown
           onOpenSettings={() => {

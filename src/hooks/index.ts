@@ -9,3 +9,6 @@ export { useSearch } from './useSearch';
 export type { UseSearchOptions, UseSearchReturn } from './useSearch';
 
 export { usePolling } from './usePolling';
+
+export { useResponsiveLayout } from './useResponsiveLayout';
+export type { ResponsiveLayout, LayoutTier } from './useResponsiveLayout';

@@ -7,6 +7,7 @@
  * - Computing the next dated output folder (e.g. 2025-01-15-2)
  * - Listing the index of all previously generated output folders
  */
+use crate::commands::path_security::is_within_dir;
 use crate::utils::{AppError, AppResult};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -253,7 +254,9 @@ pub fn delete_workflow_run_directory(path: String) -> AppResult<()> {
 
     let canonical_root = workflows_root.canonicalize().unwrap_or(workflows_root);
 
-    if !canonical_target.starts_with(&canonical_root) {
+    // AUDIT-FIX [fix-1#1-fd] — Use `is_within_dir` so a sibling like
+    // `workflows-evil` cannot pass the workflow-root check.
+    if !is_within_dir(&canonical_target, &canonical_root) {
         return Err(AppError::FileError(format!(
             "Refusing to delete directory outside managed workflow root: {}",
             canonical_target.to_string_lossy()
@@ -451,7 +454,8 @@ pub fn delete_session_work_dir(path: String) -> AppResult<bool> {
 
     let canonical_root = managed_root.canonicalize().unwrap_or(managed_root);
 
-    if !canonical_target.starts_with(&canonical_root) {
+    // AUDIT-FIX [fix-1#1-fe] — Same fix for the session-directory check.
+    if !is_within_dir(&canonical_target, &canonical_root) {
         return Err(AppError::FileError(format!(
             "Refusing to delete non-managed session directory: {}",
             canonical_target.to_string_lossy()

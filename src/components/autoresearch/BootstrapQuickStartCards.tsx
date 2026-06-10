@@ -12,10 +12,10 @@ export function BootstrapQuickStartCards({ onSelect }: BootstrapQuickStartCardsP
           key={option.id}
           type="button"
           onClick={() => onSelect(option.id)}
-          className="rounded-2xl border border-[#d8cfc1] bg-white p-4 text-left shadow-sm transition hover:border-[#0f766e] hover:shadow-md"
+          className="rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:border-emerald-600 hover:shadow-md"
         >
-          <p className="text-sm font-semibold text-[#2f251a]">{option.title}</p>
-          <p className="mt-2 text-sm leading-6 text-[#6f665c]">{option.opener}</p>
+          <p className="text-sm font-semibold text-gray-900">{option.title}</p>
+          <p className="mt-2 text-sm leading-6 text-gray-600">{option.opener}</p>
         </button>
       ))}
     </div>

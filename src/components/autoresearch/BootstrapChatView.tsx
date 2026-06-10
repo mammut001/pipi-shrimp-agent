@@ -255,25 +255,25 @@ export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
 
   return (
     <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-      <div className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-[#e7ded1] bg-white shadow-sm">
-        <div className="border-b border-[#efe7dc] px-5 py-4">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">Conversational Bootstrap</p>
-          <h2 className="mt-1 text-xl font-semibold text-[#2f251a]">Bootstrap AutoResearch from a conversation</h2>
-          <p className="mt-2 max-w-2xl text-sm text-[#6f665c]">
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-100 px-5 py-4">
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">Conversational Bootstrap</p>
+          <h2 className="mt-1 text-xl font-semibold text-gray-900">Bootstrap AutoResearch from a conversation</h2>
+          <p className="mt-2 max-w-2xl text-sm text-gray-600">
             Clarify the goal, gather papers, lock baselines, scaffold the workdir, then hand off into the existing AutoResearch loop.
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#fcfaf6] px-5 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-gray-50 px-5 py-5">
           {messages.length === 0 ? (
             <div className="space-y-5">
-              <div className="rounded-[24px] border border-dashed border-[#d8cfc1] bg-white px-5 py-6 text-sm text-[#6f665c]">
+              <div className="rounded-[24px] border border-dashed border-gray-300 bg-white px-5 py-6 text-sm text-gray-600">
                 Start with a natural-language goal or pick a quick-start opener.
               </div>
               <BootstrapQuickStartCards onSelect={handleQuickStart} />
             </div>
           ) : (
-            <div className="space-y-0 overflow-hidden rounded-[24px] border border-[#e7ded1] bg-white">
+            <div className="space-y-0 overflow-hidden rounded-[24px] border border-gray-200 bg-white">
               {messages.map((message, index) => (
                 <ChatMessage
                   key={message.id}
@@ -286,7 +286,7 @@ export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
           )}
         </div>
 
-        <div className="border-t border-[#efe7dc] bg-white px-4 py-4">
+        <div className="border-t border-gray-100 bg-white px-4 py-4">
           <div className="space-y-3">
             {summaryCard}
             {handoffSummary && (

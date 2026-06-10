@@ -3,19 +3,14 @@ export type ChatInputSubmissionDecision =
   | { type: 'confirm-browser'; message: string }
   | { type: 'send-regular'; message: string };
 
-/**
- * Maximum character length for chat draft content before it's considered "stale".
- *
- * Heuristic rationale: A user typing continuously for many messages will rarely
- * exceed 30KB of text. Drafts larger than this (without a timestamp indicating
- * recent activity) likely represent abandoned or forgotten input that can be
- * safely cleaned up to prevent unbounded localStorage growth.
- *
- * IMPORTANT: This is a content-based heuristic only. For proper staleness
- * detection, drafts should include timestamp metadata. This approach is a
- * fallback for drafts stored without timestamps.
- */
+// AUDIT-FIX [audit-1#6] — Two limits, both enforced. The size cap protects
+// localStorage from runaway copy-paste; the staleness window protects users
+// from accidentally losing freshly-typed long prompts. A draft is "stale"
+// only if BOTH conditions hold: it's very large AND it hasn't been touched
+// in the configured window. Drafts written before this code shipped have no
+// timestamp, so we still apply the size cap as a fallback for them.
 export const MAX_CHAT_DRAFT_CHARS = 30_000;
+export const MAX_CHAT_DRAFT_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 interface DecideChatInputSubmissionArgs {
   input: string;
@@ -68,6 +63,25 @@ export function shouldClearDraftAfterBrowserWorkflow(handled: boolean): boolean 
   return handled;
 }
 
-export function isStaleChatDraftValue(value: string): boolean {
-  return value.length > MAX_CHAT_DRAFT_CHARS;
+/**
+ * AUDIT-FIX [audit-1#6] — Determines whether a draft is safe to garbage
+ * collect. We now consider time (when available) in addition to size. A
+ * freshly-touched large prompt is left alone; only an old + huge draft is
+ * pruned.
+ *
+ * @param value Draft content.
+ * @param lastTouchedAt Optional epoch-ms timestamp of the last write.
+ */
+export function isStaleChatDraftValue(value: string, lastTouchedAt?: number | null): boolean {
+  if (value.length <= MAX_CHAT_DRAFT_CHARS) {
+    return false;
+  }
+
+  if (typeof lastTouchedAt === 'number' && lastTouchedAt > 0) {
+    return Date.now() - lastTouchedAt >= MAX_CHAT_DRAFT_STALE_MS;
+  }
+
+  // No timestamp available (draft written by an older build): fall back to
+  // the previous size-only rule so we still bound localStorage growth.
+  return true;
 }

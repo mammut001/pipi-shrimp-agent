@@ -88,7 +88,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
   return (
     <div className={`group/msg py-4 px-4 max-w-full overflow-hidden ${isUser ? 'bg-gray-50' : 'bg-white'}`}
     >
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-4xl">
         <div className="flex gap-4">
           {/* Avatar */}
           <div

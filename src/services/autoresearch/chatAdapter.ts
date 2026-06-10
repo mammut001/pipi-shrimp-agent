@@ -69,6 +69,12 @@ export interface AutoResearchSendMessageOptions {
   direction?: 'higher' | 'lower';
   maxIterations?: number;
   reflectionConfig?: ResolvedAgentConfig | null;
+  /**
+   * When provided, the LLM call will be interrupted between tool iterations
+   * and on the next await boundary if the signal fires. Use this to
+   * cancel an in-flight AutoResearch run from the UI (e.g. on page unmount).
+   */
+  signal?: AbortSignal;
 }
 
 export interface AutoResearchRetryConstraintState {
@@ -560,7 +566,17 @@ export function createAutoResearchSendMessage(
   fixedAgentConfig?: ResolvedAgentConfig | null,
   options: AutoResearchSendMessageOptions = {},
 ): (systemPrompt: string, userMessage: string) => Promise<string> {
+  const signal = options.signal;
   return async (systemPrompt: string, userMessage: string): Promise<string> => {
+    // Honor abort immediately: don't even resolve the agent config or write
+    // transcript headers if the user already closed the AutoResearch page.
+    // We can't import the loopEngine AbortError class (would create a cycle),
+    // so use a duck-typed throw that the loop catches by name.
+    if (signal?.aborted) {
+      const err = new Error('sendMessage called after abort signal.') as Error & { name: string };
+      err.name = 'AutoResearchAbortedError';
+      throw err;
+    }
     const agentConfig = fixedAgentConfig ?? resolveActiveAgentConfig();
     const reflectionConfig = options.reflectionConfig ?? agentConfig;
     const validationIssues = validateResolvedAgentConfig(agentConfig);

@@ -78,7 +78,38 @@ export interface ChatActionFactoryDeps {
   runSMCompactAfterStreaming: (sessionId: string, set: ChatSetState, get: () => ChatState) => Promise<void>;
 }
 
-let activeChatDiagnosticsTaskId: string | null = null;
+// AUDIT-FIX [audit-1#2] — `activeChatDiagnosticsTaskId` was a single module-
+// level slot that the most recent sendMessage would overwrite. When two
+// sessions were streaming concurrently (or one was about to be cancelled
+// while another was starting), stopGeneration() would update the wrong task
+// in the diagnostics panel. Track task id per session so we always cancel
+// the task that belongs to the session being stopped.
+const activeChatDiagnosticsTaskIds = new Map<string, string>();
+
+function setActiveChatDiagnosticsTaskId(sessionId: string | null, taskId: string | null): void {
+  if (!sessionId) return;
+  if (taskId === null) {
+    activeChatDiagnosticsTaskIds.delete(sessionId);
+  } else {
+    activeChatDiagnosticsTaskIds.set(sessionId, taskId);
+  }
+}
+
+function getActiveChatDiagnosticsTaskId(sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  return activeChatDiagnosticsTaskIds.get(sessionId) ?? null;
+}
+
+function getAnyActiveChatDiagnosticsTaskId(): string | null {
+  // Fallback: if the caller doesn't know the session, return whichever task
+  // was most recently set. Used by stopGeneration when the owning session
+  // can't be resolved.
+  const it = activeChatDiagnosticsTaskIds.values();
+  let last: string | null = null;
+  for (const id of it) last = id;
+  return last;
+}
+
 const cancellationRequestedSessions = new Set<string>();
 
 class ChatGenerationCancelledError extends Error {
@@ -145,6 +176,12 @@ export function createChatActionMethods({
         return;
       }
 
+      // AUDIT-FIX [audit-1#1] — Local timeout kept on purpose. Unlike sendMessage
+      // (which goes through the store's setStreaming(true) timer), this path
+      // bypasses the engine and calls `send_claude_sdk_chat_streaming` directly,
+      // so it does NOT trigger the store-level streamingTimeoutId. The local
+      // timer mirrors that store-level behavior for parity (same
+      // STREAMING_TIMEOUT_MS, same cancel + cleanup on success / error).
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
       try {
@@ -278,7 +315,7 @@ export function createChatActionMethods({
       const isPlanMode = sessionSnapshot?.permissionMode === 'plan-only';
 
       const diagnosticsTaskId = `chat:${activeSessionId}:${Date.now()}`;
-      activeChatDiagnosticsTaskId = diagnosticsTaskId;
+      setActiveChatDiagnosticsTaskId(activeSessionId, diagnosticsTaskId);
       registerDiagnosticsTask({
         id: diagnosticsTaskId,
         kind: 'chat',
@@ -302,7 +339,11 @@ export function createChatActionMethods({
         return;
       }
 
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      // AUDIT-FIX [audit-1#1] — Streaming timeout is owned by setStreaming(true) via the
+      // store-level `streamingTimeoutId`. Previously sendMessage also armed a private
+      // timeout here, which would race with the store timer (each clearTimeout only
+      // cleared its own handle). We no longer start a local timer; on completion or
+      // cancellation we rely on setStreaming(false) / store cancel logic to clear it.
       let streamState = createStreamingAccumulator();
       let sessionWorkDir: string | undefined;
       let turnHadError = false;
@@ -359,15 +400,6 @@ export function createChatActionMethods({
           cancelable: true,
           detail: content.trim().slice(0, 240),
         });
-
-        timeoutId = setTimeout(() => {
-          if (get().isStreaming) {
-            setStreaming(false);
-            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-            setError(`Response timeout (${STREAMING_TIMEOUT_MS / 1000}s exceeded). Please try again.`);
-            safeInvokeOrNull('stop_subprocess', { sessionId: activeSessionId });
-          }
-        }, STREAMING_TIMEOUT_MS);
 
         const messages = buildApiMessages(currentMessages());
         if (messages.length === 0) {
@@ -499,11 +531,6 @@ export function createChatActionMethods({
           throw new ChatGenerationCancelledError(activeSessionId);
         }
 
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-
         const streamed = flushBuffer(streamState);
         const finalContent = get().streamingContent || streamed.content;
         const parsed = parseThinkContent(finalContent);
@@ -547,7 +574,7 @@ export function createChatActionMethods({
           cancelable: false,
           detail: parsed.content.slice(0, 240),
         });
-        activeChatDiagnosticsTaskId = null;
+        setActiveChatDiagnosticsTaskId(activeSessionId, null);
         useUIStore.getState().setActiveSkill(null);
 
         if (
@@ -619,11 +646,6 @@ export function createChatActionMethods({
         });
       } catch (error) {
         if (isChatGenerationCancelledError(error)) {
-          if (timeoutId) {
-            clearTimeout(timeoutId);
-            timeoutId = null;
-          }
-
           clearChatGenerationCancel(activeSessionId);
           setStreaming(false);
           set({
@@ -637,7 +659,7 @@ export function createChatActionMethods({
             state: 'cancelled',
             cancelable: false,
           });
-          activeChatDiagnosticsTaskId = null;
+          setActiveChatDiagnosticsTaskId(activeSessionId, null);
           useUIStore.getState().setActiveSkill(null);
 
           set((state) => ({
@@ -657,11 +679,6 @@ export function createChatActionMethods({
         }
 
         turnHadError = true;
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-
         const errorMsg = normalizeCaughtErrorMessage(error, CHAT_ERROR_MESSAGES.sendFailed);
         setError(errorMsg);
 
@@ -681,7 +698,7 @@ export function createChatActionMethods({
           cancelable: false,
           error: errorMsg,
         });
-        activeChatDiagnosticsTaskId = null;
+        setActiveChatDiagnosticsTaskId(activeSessionId, null);
         useUIStore.getState().setActiveSkill(null);
 
         set((state) => ({
@@ -708,6 +725,7 @@ export function createChatActionMethods({
         streamingReasoning,
         setStreaming,
         currentSessionId,
+        streamingSessionId,
         setError,
         pendingToolCalls,
         pendingToolResults,
@@ -716,10 +734,19 @@ export function createChatActionMethods({
         return;
       }
 
-      requestChatGenerationCancel(currentSessionId);
-      if (currentSessionId) {
+      // AUDIT-FIX [audit-1#4] — Stop the session that OWNS the running
+      // subprocess, not necessarily the session that's currently selected.
+      // If the user switched sessions while a stream was active, the backend
+      // subprocess is still tied to streamingSessionId, and currentSessionId
+      // would point at a different (or null) session — stopping that one
+      // would be a no-op and the orphan subprocess would keep consuming
+      // tokens until its own timeout fires.
+      const owningSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
+
+      requestChatGenerationCancel(owningSessionId);
+      if (owningSessionId) {
         failUnresolvedSessionTools(
-          currentSessionId,
+          owningSessionId,
           set,
           get,
           (_toolCallId, label) => `Error: ${label} cancelled by user`,
@@ -727,7 +754,7 @@ export function createChatActionMethods({
       }
 
       try {
-        await safeInvoke('stop_subprocess', { sessionId: currentSessionId }, { silent: true });
+        await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
       } catch (error) {
         console.error('Failed to stop subprocess:', error);
         setError(`Failed to stop generation: ${formatError(error)}`);
@@ -740,18 +767,23 @@ export function createChatActionMethods({
       });
       set({ streamingContent: '', streamingReasoning: '' });
 
-      if (currentSessionId && (flushed.content || flushed.reasoning)) {
+      if (owningSessionId && (flushed.content || flushed.reasoning)) {
         await get().updateLastMessage(flushed.content, undefined, flushed.reasoning);
       }
 
       setStreaming(false);
       set({ pendingToolCalls: 0, pendingToolResults: [] });
-      if (activeChatDiagnosticsTaskId) {
-        updateDiagnosticsTask(activeChatDiagnosticsTaskId, {
+      // AUDIT-FIX [audit-1#2] — Look up the task id for the session that
+      // actually owns this stream (the one we just stopped). Fall back to
+      // any still-active task id if we somehow lost the session context.
+      const cancelledTaskId =
+        getActiveChatDiagnosticsTaskId(owningSessionId) ?? getAnyActiveChatDiagnosticsTaskId();
+      if (cancelledTaskId) {
+        updateDiagnosticsTask(cancelledTaskId, {
           state: 'cancelled',
           cancelable: false,
         });
-        activeChatDiagnosticsTaskId = null;
+        setActiveChatDiagnosticsTaskId(owningSessionId, null);
       }
     },
 

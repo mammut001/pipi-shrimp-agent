@@ -98,6 +98,46 @@ export async function applyBootstrapIfPresent(cfg: SshConfig, sessionId: string)
     return false;
   }
 
+  // CRITICAL: Write the receipt BEFORE mutating the store.
+  //
+  // AUDIT-FIX [audit-2-ar#6]: Bootstrap idempotency relies on the receipt
+  // file being durable before any store mutation lands. The previous
+  // order was store-mutate → seed/initFromBootstrap → writeTargetText
+  // (receipt). If `writeTargetText` failed (network blip, SSH timeout,
+  // full disk), the store had already been updated with the bootstrap's
+  // successCriteria/primaryMetric but the receipt was missing. On next
+  // launch the existingReceipt check would re-fire and overwrite any
+  // user-edited values with the bootstrap defaults.
+  //
+  // The previous order was store-mutate → seed/initFromBootstrap →
+  // writeTargetText(receipt). If `writeTargetText` failed (network
+  // blip, SSH timeout, full disk), the store had already been
+  // updated with the bootstrap's successCriteria/primaryMetric but
+  // the receipt was missing. On next launch the existingReceipt
+  // check would re-fire and overwrite any user-edited values with
+  // the bootstrap defaults.
+  //
+  // New order:
+  //   1. seedFromBootstrap / initFromBootstrap  (remote artifacts)
+  //   2. writeTargetText(receipt)               ← idempotency marker FIRST
+  //   3. mutate store                           ← only after marker is durable
+  // If step 2 fails, the bootstrap will be re-applied on next launch
+  // but seed/init are themselves idempotent (they're no-ops when the
+  // session file / metrics already exist for this createdAt), so
+  // re-applying is safe.
+  await seedFromBootstrap(cfg, sessionId, parsed.data.plan, parsed.data.createdAt);
+  await initFromBootstrap(cfg, sessionId, parsed.data.plan, parsed.data.createdAt);
+
+  await writeTargetText({ ...cfg, remoteWorkDir: '' }, receiptPath, `${JSON.stringify({
+    schemaVersion: 1,
+    sessionId,
+    bootstrapCreatedAt: parsed.data.createdAt,
+    bootstrapPath,
+    appliedAt: new Date().toISOString(),
+  } satisfies BootstrapApplyReceipt, null, 2)}\n`);
+
+  // Store mutations are now safe — the receipt is durable so the
+  // existingReceipt check will skip this bootstrap on subsequent runs.
   const store = useAutoResearchStore.getState();
   store.setSuccessCriteria(parsed.data.plan.successCriteria);
   store.setPrimaryMetric(parsed.data.plan.primaryMetric);
@@ -108,22 +148,11 @@ export async function applyBootstrapIfPresent(cfg: SshConfig, sessionId: string)
     store.setBestMetric(baseline);
   }
 
-  await seedFromBootstrap(cfg, sessionId, parsed.data.plan, parsed.data.createdAt);
-  await initFromBootstrap(cfg, sessionId, parsed.data.plan, parsed.data.createdAt);
-
   const sessionPaths = getSessionRunPaths(cfg, sessionId);
   store.updateRunPaths({
     sessionFilePath: sessionPaths.sessionFilePath,
     livingDocPath: sessionPaths.livingDocPath,
   });
-
-  await writeTargetText({ ...cfg, remoteWorkDir: '' }, receiptPath, `${JSON.stringify({
-    schemaVersion: 1,
-    sessionId,
-    bootstrapCreatedAt: parsed.data.createdAt,
-    bootstrapPath,
-    appliedAt: new Date().toISOString(),
-  } satisfies BootstrapApplyReceipt, null, 2)}\n`);
 
   return true;
 }

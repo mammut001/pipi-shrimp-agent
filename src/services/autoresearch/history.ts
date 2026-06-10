@@ -186,6 +186,10 @@ const MAX_ERROR_CHARS = 1_000;
 const MAX_PATH_CHARS = 600;
 const MAX_CONFIG_VALUE_CHARS = 600;
 const MAX_LIVE_OUTPUT_EXCERPT_CHARS = 20_000;
+// Full live output buffer cap (10x the excerpt) — anything beyond is sliced
+// off the front so the store never grows unbounded during long-running
+// AutoResearch loops.
+const MAX_LIVE_OUTPUT_BUFFER_CHARS = 200_000;
 const MAX_REASON_CHARS = 1_000;
 const MAX_NARRATIVE_CHARS = 2_000;
 const MAX_EVENT_SUMMARY_CHARS = 400;
@@ -550,6 +554,55 @@ export function clipLiveOutputExcerpt(value: string): string {
   return redactAutoResearchSensitiveText(value).slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS);
 }
 
+/**
+ * In-memory excerpt cap without secret redaction. Use this for the
+ * streaming `appendLiveOutput` path — redaction is expensive (10+
+ * chained regex passes) and running it on every token was a CPU hotspot
+ * for long runs. The persisted excerpt is redacted at write time via
+ * {@link redactLiveOutputExcerptForStorage} instead.
+ */
+export function clipLiveOutputExcerptInMemory(value: string): string {
+  if (value.length <= MAX_LIVE_OUTPUT_EXCERPT_CHARS) {
+    return value;
+  }
+  return value.slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS);
+}
+
+/**
+ * Cap the full live output buffer at {@link MAX_LIVE_OUTPUT_BUFFER_CHARS}.
+ *
+ * The in-memory buffer drives the streaming terminal panel so the cap is
+ * deliberately much larger than the persisted excerpt; we slice from the
+ * front so the *latest* output is always preserved.
+ *
+ * AUDIT-FIX [audit-1-ar#5]: appendLiveOutput unbounded growth.
+ * Previously the buffer was appended to indefinitely. A long-running
+ * AutoResearch loop streamed output through `appendLiveOutput` for the
+ * entire session; after a few hours the state object held tens of MB of
+ * plain text, which (a) ballooned React re-render cost on every
+ * append, (b) tripped the localStorage quota on the next persist, and
+ * (c) risked OOM on low-end machines. The 200KB cap (10x the
+ * persisted excerpt) keeps the UI responsive while still preserving
+ * recent context.
+ */
+export function clipLiveOutputBuffer(value: string): string {
+  if (value.length <= MAX_LIVE_OUTPUT_BUFFER_CHARS) {
+    return value;
+  }
+  return value.slice(-MAX_LIVE_OUTPUT_BUFFER_CHARS);
+}
+
+/**
+ * Apply secret redaction on the live output excerpt just before it is
+ * written to localStorage. The in-memory `liveOutput` and
+ * `liveOutputExcerpt` deliberately skip redaction (P2#4 — doing it on
+ * every streaming append was a CPU hotspot). The cost is paid once
+ * per persist call instead of once per token.
+ */
+export function redactLiveOutputExcerptForStorage(value: string): string {
+  return redactAutoResearchSensitiveText(value);
+}
+
 export function toHistoryConfigSnapshot(snapshot?: AutoResearchAgentConfigSnapshot): AutoResearchConfigSnapshot {
   if (!snapshot) {
     return {
@@ -617,7 +670,9 @@ function compactRunRecord(record: AutoResearchRunRecord): AutoResearchRunRecord 
     events: [],
     summary: record.summary ? truncateString(record.summary, MAX_SUMMARY_CHARS) : undefined,
     reason: record.reason ? truncateString(record.reason, MAX_REASON_CHARS) : undefined,
-    liveOutputExcerpt: record.liveOutputExcerpt ? clipLiveOutputExcerpt(record.liveOutputExcerpt) : undefined,
+    liveOutputExcerpt: record.liveOutputExcerpt
+      ? redactLiveOutputExcerptForStorage(record.liveOutputExcerpt).slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS)
+      : undefined,
     resumeToken: record.resumeToken ? {
       ...record.resumeToken,
       sshConfig: {
@@ -719,19 +774,176 @@ export function loadPersistedAutoResearchHistory(now = new Date().toISOString())
   }
 }
 
+/**
+ * Best-effort persist. The browser/Tauri webview's localStorage is typically
+ * capped at 5MB. A long AutoResearch run can easily blow past that with
+ * `liveOutputExcerpt` + `events` per run. We degrade gracefully: strip the
+ * bulk field, then drop the oldest run, then drop all excerpts, then drop
+ * the transcript/living doc snapshot fields. If we still fail, surface a
+ * single error event on the active run so the user knows their last
+ * iteration wasn't saved.
+ *
+ * AUDIT-FIX [audit-2-ar#2]: Quota-exhausted graceful degradation.
+ * Previously a single `console.error` was the only signal of a quota
+ * failure, and the user would silently lose iteration data. The
+ * 3-step prune ladder is layered on top, with a `setHistoryPersistListener`
+ * (registered in the autoresearch store) firing `addRunEvent` so the
+ * failure is visible in the UI's run event log.
+ *
+ * AUDIT-FIX [audit-3-ar#5] further refines this to short-circuit when
+ * storage is fundamentally unusable (probe write fails immediately)
+ * rather than walking the 3-step ladder to no effect.
+ */
 export function persistAutoResearchHistory(runs: AutoResearchRunRecord[], selectedRunId: string | null): void {
   const storage = safeLocalStorage();
   if (!storage) {
     return;
   }
 
+  const sorted = sortRuns(runs);
+  const tryWrite = (overrides: Partial<AutoResearchRunRecord> = {}): Error | null => {
+    try {
+      const payload = compactHistory({
+        version: 1,
+        selectedRunId,
+        runs: overrides.liveOutputExcerpt !== undefined
+          ? sorted.map((run) => ({ ...run, ...overrides }))
+          : sorted,
+      } satisfies PersistedAutoResearchHistory);
+      const serialized = JSON.stringify(payload);
+      storage.setItem(AUTORESEARCH_HISTORY_STORAGE_KEY, serialized);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  };
+
+  const isQuotaError = (error: Error): boolean => {
+    if (error.name === 'QuotaExceededError') return true;
+    // Tauri webview (WebView2/WKWebView) may surface the quota as a
+    // generic DOMException with code 22.
+    if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
+      return error.code === 22 || error.name === 'QuotaExceededError';
+    }
+    return false;
+  };
+
+  // AUDIT-FIX [audit-3-ar#5]: Storage-broken vs quota-exhausted distinction.
+  // Previously any `setItem` failure was treated as a quota issue, then
+  // walked through a 3-step prune ladder — which on a storage-broken
+  // webview (SecurityError, storage disabled, private mode) generated the
+  // same error 3 more times and then reported a misleading "history
+  // cleared" to the user. We now write a tiny 1-byte probe first; if THAT
+  // fails, storage is fundamentally unavailable and we short-circuit
+  // with an honest "memory-only this session" notification.
+  // Probe: can we even write a minimal payload? If a 1-key object fails,
+  // localStorage is broken (SecurityError, storage disabled by user/admin,
+  // private-browsing mode in some browsers). In that case the 3-step
+  // prune ladder would just generate the same error 3 more times before
+  // we give up — wasted work and misleading 'cleared' notification.
+  const probeKey = `${AUTORESEARCH_HISTORY_STORAGE_KEY}::__probe__`;
+  let storageIsBroken = false;
   try {
-    storage.setItem(AUTORESEARCH_HISTORY_STORAGE_KEY, JSON.stringify(compactHistory({
-      version: 1,
-      selectedRunId,
-      runs: sortRuns(runs),
-    } satisfies PersistedAutoResearchHistory)));
-  } catch (error) {
+    storage.setItem(probeKey, '1');
+    storage.removeItem(probeKey);
+  } catch (probeError) {
+    storageIsBroken = true;
+    const detail = probeError instanceof Error ? probeError.message : String(probeError);
+    console.error('AutoResearch localStorage is unusable:', probeError);
+    notifyHistoryPersistFailure(
+      `AutoResearch localStorage is unavailable (${detail}). `
+      + 'Run history will only be kept in memory this session and lost on restart.',
+    );
+    return;
+  }
+
+  // First attempt: write everything as-is.
+  let error: Error | null = tryWrite();
+  if (!error) return;
+
+  if (!isQuotaError(error)) {
     console.error('Failed to persist AutoResearch history:', error);
+    notifyHistoryPersistFailure(`AutoResearch history write failed: ${error.message}`);
+    return;
+  }
+
+  // Quota exhausted. Try a series of progressively more aggressive prunes.
+  const steps: Array<{ label: string; transform: () => void }> = [
+    {
+      label: 'strip liveOutputExcerpt',
+      transform: () => {
+        // Mutate `sorted` in place via the override branch above.
+        for (let i = 0; i < sorted.length; i += 1) {
+          const run = sorted[i];
+          sorted[i] = { ...run, liveOutputExcerpt: '' };
+        }
+      },
+    },
+    {
+      label: 'drop oldest runs',
+      transform: () => {
+        // Keep the most recent half of runs.
+        const keep = Math.max(1, Math.floor(sorted.length / 2));
+        sorted.splice(0, sorted.length - keep);
+      },
+    },
+    {
+      label: 'drop events for old runs',
+      transform: () => {
+        for (let i = 0; i < sorted.length - 1; i += 1) {
+          sorted[i] = { ...sorted[i], events: [] };
+        }
+      },
+    },
+  ];
+
+  for (const step of steps) {
+    step.transform();
+    error = tryWrite();
+    if (!error) {
+      // Successfully recovered — notify so the user knows data was truncated.
+      notifyHistoryPersistFailure(
+        `AutoResearch localStorage quota hit. Auto-recovered by: ${step.label}. `
+        + 'Older run data has been discarded to make room.',
+      );
+      return;
+    }
+    if (!isQuotaError(error)) {
+      console.error('Failed to persist AutoResearch history (non-quota error):', error);
+      notifyHistoryPersistFailure(`AutoResearch history write failed: ${error.message}`);
+      return;
+    }
+  }
+
+  // All fallbacks exhausted. Drop the entire history and surface a hard error.
+  try {
+    storage.removeItem(AUTORESEARCH_HISTORY_STORAGE_KEY);
+  } catch (removeError) {
+    console.error('Failed to clear AutoResearch history storage:', removeError);
+  }
+  console.error('AutoResearch history persistence completely failed (quota exhausted):', error);
+  notifyHistoryPersistFailure(
+    'AutoResearch localStorage is full. Run history has been cleared. '
+    + 'Future iterations will not be saved until you free disk space.',
+  );
+}
+
+let historyPersistFailureListener: ((message: string) => void) | null = null;
+
+/**
+ * Lets the AutoResearch store subscribe to persist failures so it can surface
+ * them as a run event / status message. Wired in `setHistoryPersistListener`.
+ */
+export function setHistoryPersistListener(listener: ((message: string) => void) | null): void {
+  historyPersistFailureListener = listener;
+}
+
+function notifyHistoryPersistFailure(message: string): void {
+  if (historyPersistFailureListener) {
+    try {
+      historyPersistFailureListener(message);
+    } catch (listenerError) {
+      console.error('History persist listener threw:', listenerError);
+    }
   }
 }

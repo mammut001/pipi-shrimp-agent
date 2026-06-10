@@ -162,6 +162,23 @@ export function disbandTeam(teamId: string): boolean {
     }
   }
 
+  // AUDIT-FIX [fix-4#1] — Stop the inbox poller for every agent that was
+  // registered when the team was active. Without this the 2-second polling
+  // loop keeps spinning on dead agents, leaking timers and emitting phantom
+  // transcript entries long after the team is gone.
+  try {
+    const { stopInboxPolling } = require('./messageService');
+    for (const agent of teamAgents) {
+      try {
+        stopInboxPolling(agent.id);
+      } catch {
+        // Poller may not have been started; ignore.
+      }
+    }
+  } catch {
+    // messageService import failure shouldn't fail the disband.
+  }
+
   repo.updateTeam(teamId, { status: 'disbanded' });
   return true;
 }

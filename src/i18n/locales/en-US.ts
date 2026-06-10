@@ -209,6 +209,7 @@ const enUS: TranslationKeys = {
   'nav.workflow': 'Workflow',
   'nav.browser': 'Browser',
   'nav.skill': 'Skill',
+  'nav.autoresearch': 'AutoResearch',
   'nav.diagnostics': 'Diagnostics',
   'nav.settings': 'Settings',
   'nav.newChat': 'New Chat',

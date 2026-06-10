@@ -1,16 +1,29 @@
 /**
  * MainLayout - Primary application layout component
  *
- * Three-column layout:
- * - Left: Sidebar (300px, fixed)
- * - Center: Main content (flex-grow, white background)
- * - Right: Optional Artifact preview (future feature)
+ * Three-column responsive layout:
+ * - Left: Sidebar (300px expanded, 68px collapsed). On viewports < 720px the
+ *         sidebar is forced to the 68px rail form via `useResponsiveLayout`.
+ * - Center: Main content (flex-grow, white background) with an optional
+ *           right-panel toggle handle (rendered only when the page provides
+ *           right-panel content and the viewport is wide enough).
+ * - Right: Optional right pane. The default content is the global `AgentPanel`
+ *          (agent instructions, task progress, browser status, etc.), so pages
+ *          that don't need anything page-specific still get a useful side
+ *          panel. Pages can override it by passing their own `rightPanelContent`
+ *          (e.g. Workflow's `FilePreviewPanel`, AutoResearch's
+ *          `ExperimentDetailPanel`). Pass `rightPanelContent={null}` to opt out
+ *          entirely. The panel's visibility otherwise tracks
+ *          `uiStore.rightPanelVisible` and can be toggled via the handle in
+ *          <main>. On viewports < 1180px the panel is auto-hidden to keep the
+ *          main column usable.
  */
 
 import React, { lazy, Suspense } from 'react';
 import { useUIStore } from '@/store';
 import { useArtifactsStore } from '@/store/artifactsStore';
-import { Sidebar, AgentPanel, NotificationToast, FileDropOverlay } from '@/components';
+import { useResponsiveLayout } from '@/hooks';
+import { Sidebar, NotificationToast, FileDropOverlay, AgentPanel } from '@/components';
 import { AppModeRail } from '@/components/AppModeRail';
 
 // Lazy-loaded — rarely visible on first render
@@ -27,8 +40,18 @@ interface MainLayoutProps {
   showSidebar?: boolean;
   /** Override whether the right panel should render */
   showRightPanel?: boolean;
-  /** Optional custom content for the right panel */
-  rightPanelContent?: React.ReactNode;
+  /**
+   * Custom content for the right panel. When omitted, the global `AgentPanel`
+   * is used as the default so every page has a useful side panel out of the
+   * box. Pass `null` to disable the right panel entirely.
+   */
+  rightPanelContent?: React.ReactNode | null;
+  /**
+   * Default right-panel content used when the page doesn't supply
+   * `rightPanelContent`. Defaults to `<AgentPanel />`; pages rarely need to
+   * override this — supply `rightPanelContent` instead.
+   */
+  defaultRightPanelContent?: React.ReactNode;
   /** Optional custom width for the right panel */
   rightPanelWidthClassName?: string;
 }
@@ -41,12 +64,27 @@ export function MainLayout({
   showSidebar = true,
   showRightPanel,
   rightPanelContent,
+  defaultRightPanelContent = <AgentPanel />,
   rightPanelWidthClassName = 'w-[320px]',
 }: MainLayoutProps) {
-  const { sidebarVisible, rightPanelVisible, toggleSidebar } = useUIStore();
+  const { sidebarVisible, rightPanelVisible, toggleSidebar, toggleRightPanel } = useUIStore();
   const artifactsPanelOpen = useArtifactsStore((s) => s.panelOpen);
-  const sidebarExpanded = showSidebar && sidebarVisible;
-  const shouldShowRightPanel = showRightPanel ?? rightPanelVisible;
+  const { forceHideRightPanel, forceCollapseSidebar } = useResponsiveLayout();
+  // On very narrow viewports the expanded sidebar (300px) would consume most
+  // of the screen, so we force-collapse it to the 68px rail regardless of the
+  // persisted `sidebarVisible` preference.
+  const sidebarExpanded = showSidebar && sidebarVisible && !forceCollapseSidebar;
+  // Resolve the actual right-panel content. An explicit `rightPanelContent` (incl.
+  // `null`) wins; otherwise we fall back to the page's default (the AgentPanel).
+  // The sentinel `undefined` is what we use to mean "no override", and `null` is
+  // a valid override meaning "render no panel at all".
+  const effectiveRightPanelContent = rightPanelContent === undefined
+    ? defaultRightPanelContent
+    : rightPanelContent;
+  // Right panel hides itself when the viewport can't fit sidebar + main +
+  // panel without crushing the main column, unless the page explicitly opts
+  // in (e.g. Workflow, AutoResearch) via `showRightPanel === true`.
+  const shouldShowRightPanel = (showRightPanel ?? rightPanelVisible) && !forceHideRightPanel;
   const sidebarShellWidth = sidebarExpanded ? 300 : 68;
 
   return (
@@ -73,7 +111,7 @@ export function MainLayout({
       >
         <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-white/70" />
 
-        {showSidebar && (
+        {showSidebar && !forceCollapseSidebar && (
           <button
             type="button"
             onClick={toggleSidebar}
@@ -114,9 +152,34 @@ export function MainLayout({
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 bg-white">
+      {/* Main Content Area — hosts the optional right-panel toggle at its right edge.
+          The toggle is positioned relative to this <main> so it always sits at the
+          main/right-panel boundary (or screen edge when the panel is hidden), and
+          works regardless of the right panel's width. On very narrow viewports
+          (`xs`) the toggle is hidden because the right panel would crowd the main
+          column to the point of being unusable. */}
+      <main className="relative flex-1 flex flex-col min-w-0 bg-white">
         {children}
+
+        {effectiveRightPanelContent && !forceCollapseSidebar && (
+          <button
+            type="button"
+            onClick={toggleRightPanel}
+            className="absolute right-3 top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[#e7e5e1] bg-white/95 text-[#6f6e69] shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-[background-color,color,box-shadow,transform,border-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-px hover:border-[#ddd8d0] hover:bg-white hover:text-[#37352f] hover:shadow-[0_12px_24px_rgba(15,23,42,0.12)] active:translate-y-0"
+            title={shouldShowRightPanel ? 'Hide right panel' : 'Show right panel'}
+            aria-label={shouldShowRightPanel ? 'Hide right panel' : 'Show right panel'}
+          >
+            <svg
+              className={`h-4 w-4 transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${shouldShowRightPanel ? 'rotate-180' : ''}`}
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12.5 4.5L7 10l5.5 5.5" />
+            </svg>
+          </button>
+        )}
       </main>
 
       {/* Right Panel — Artifacts panel takes priority when open */}
@@ -127,9 +190,9 @@ export function MainLayout({
           </aside>
         </Suspense>
       )}
-      {!artifactsPanelOpen && shouldShowRightPanel && (
-        <aside className={`${rightPanelWidthClassName} flex-shrink-0 overflow-y-auto border-l border-[#e9e9e7] bg-[#f7f6f3] shadow-[inset_1px_0_0_rgba(255,255,255,0.55)]`}>
-          {rightPanelContent ?? <AgentPanel />}
+      {!artifactsPanelOpen && shouldShowRightPanel && effectiveRightPanelContent && (
+        <aside className={`${rightPanelWidthClassName} flex-shrink-0 overflow-y-auto border-l border-gray-200 bg-white`}>
+          {effectiveRightPanelContent}
         </aside>
       )}
     </div>

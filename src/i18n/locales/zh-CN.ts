@@ -209,6 +209,7 @@ const zhCN: TranslationKeys = {
   'nav.workflow': '工作流',
   'nav.browser': '浏览器',
   'nav.skill': '技能',
+  'nav.autoresearch': '自动研究',
   'nav.diagnostics': '诊断',
   'nav.settings': '设置',
   'nav.newChat': '新建对话',

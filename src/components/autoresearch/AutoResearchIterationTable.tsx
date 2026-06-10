@@ -169,13 +169,13 @@ export function AutoResearchIterationTable({
   }
 
   return (
-    <div className={`overflow-hidden rounded-2xl border border-[#ebe4d9] bg-white ${className}`}>
-      <div className="border-b border-[#f1ede6] px-4 py-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#8f8375]">Iteration Summary</p>
+    <div className={`overflow-hidden rounded-2xl border border-gray-200 bg-white ${className}`}>
+      <div className="border-b border-gray-100 px-4 py-3">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500">Iteration Summary</p>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
-          <thead className="bg-[#fbfaf7] text-[11px] uppercase tracking-[0.14em] text-[#8f8375]">
+          <thead className="bg-gray-50 text-[11px] uppercase tracking-[0.14em] text-gray-500">
             <tr>
               <th className="px-4 py-2 font-semibold">Run</th>
               <th className="px-4 py-2 font-semibold">Commit/Artifact</th>
@@ -184,10 +184,10 @@ export function AutoResearchIterationTable({
               <th className="px-4 py-2 text-right font-semibold">Impact</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#f1ede6]">
+          <tbody className="divide-y divide-gray-100">
             {summaries.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-center text-sm text-[#8a7f72]" colSpan={5}>No iterations recorded yet.</td>
+                <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={5}>No iterations recorded yet.</td>
               </tr>
             ) : summaries.map((summary) => {
               const selected = selectedIteration === summary.iteration;
@@ -202,24 +202,24 @@ export function AutoResearchIterationTable({
                       onSelectIteration?.(summary.iteration);
                     }
                   }}
-                  className={`${onSelectIteration ? 'cursor-pointer' : ''} ${selected ? 'bg-[#f1eadf]/80' : 'hover:bg-[#fbfaf7]'}`}
+                  className={`${onSelectIteration ? 'cursor-pointer' : ''} ${selected ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
                 >
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#6f665c]">
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-gray-600">
                     {summary.iteration === 0 ? 'Baseline' : `#${summary.iteration}`}
                   </td>
-                  <td className="max-w-[180px] truncate px-4 py-3 font-mono text-xs text-[#8a7f72]" title={commitOrArtifactLabel(summary)}>
+                  <td className="max-w-[180px] truncate px-4 py-3 font-mono text-xs text-gray-500" title={commitOrArtifactLabel(summary)}>
                     {commitOrArtifactLabel(summary)}
                   </td>
                   <td className="px-4 py-3">
                     <AutoResearchDecisionBadge status={summary.status} />
                   </td>
-                  <td className="max-w-[360px] px-4 py-3 text-[#4f463d]">
+                  <td className="max-w-[360px] px-4 py-3 text-gray-800">
                     <span className="line-clamp-2">{summary.changeSummary}</span>
-                    <span className="mt-1 block text-[11px] font-mono text-[#8a7f72]">
+                    <span className="mt-1 block text-[11px] font-mono text-gray-500">
                       {summary.metricName}={formatMetricValue(summary.metricValue)}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs text-[#2f251a]">
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs text-gray-900">
                     {summary.impactLabel}
                   </td>
                 </tr>

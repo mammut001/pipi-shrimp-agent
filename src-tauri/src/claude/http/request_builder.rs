@@ -374,16 +374,15 @@ pub fn build_anthropic_headers(
     thinking_enabled: bool,
 ) -> Result<reqwest::header::HeaderMap, ClaudeHttpError> {
     let mut headers = reqwest::header::HeaderMap::new();
-    let trimmed = api_key.trim();
-    let trimmed = if trimmed.to_lowercase().starts_with("bearer ") {
-        trimmed[7..].trim()
-    } else {
-        trimmed
-    };
-    let clean_key: String = trimmed
-        .chars()
-        .filter(|c| c.is_ascii() && !c.is_control() && !c.is_whitespace())
-        .collect();
+    // AUDIT-FIX [fix-2#18] — `clean_key` was filtering out *all* non-ASCII
+    // characters. The HTTP header parser (`reqwest::header`) already rejects
+    // control characters and whitespace, and Bearer headers (RFC 6750)
+    // allow any printable ASCII (or even BASE64URL with extended charset in
+    // some cases). We now keep printable non-control non-whitespace
+    // characters and only strip CR/LF/TAB/null, which is what the header
+    // parser would have rejected anyway. This means non-ASCII provider keys
+    // (some regional providers use them) are no longer silently truncated.
+    let clean_key: String = sanitize_header_value(api_key);
 
     headers.insert(
         "x-api-key",
@@ -402,16 +401,8 @@ pub fn build_anthropic_headers(
 
 pub fn build_openai_headers(api_key: &str) -> Result<reqwest::header::HeaderMap, ClaudeHttpError> {
     let mut headers = reqwest::header::HeaderMap::new();
-    let trimmed = api_key.trim();
-    let trimmed = if trimmed.to_lowercase().starts_with("bearer ") {
-        trimmed[7..].trim()
-    } else {
-        trimmed
-    };
-    let clean_key: String = trimmed
-        .chars()
-        .filter(|c| c.is_ascii() && !c.is_control() && !c.is_whitespace())
-        .collect();
+    // See [fix-2#18] above.
+    let clean_key: String = sanitize_header_value(api_key);
 
     let bearer = format!("Bearer {}", clean_key);
     headers.insert(
@@ -423,6 +414,23 @@ pub fn build_openai_headers(api_key: &str) -> Result<reqwest::header::HeaderMap,
     );
     headers.insert("content-type", "application/json".parse().unwrap());
     Ok(headers)
+}
+
+/// Strip only the characters that HTTP header values explicitly forbid
+/// (CR, LF, NUL) plus leading/trailing whitespace and a `Bearer ` prefix.
+/// Other characters — including non-ASCII — are preserved so international
+/// providers are not silently broken.
+fn sanitize_header_value(api_key: &str) -> String {
+    let trimmed = api_key.trim();
+    let trimmed = if trimmed.to_lowercase().starts_with("bearer ") {
+        trimmed[7..].trim()
+    } else {
+        trimmed
+    };
+    trimmed
+        .chars()
+        .filter(|c| !matches!(*c, '\r' | '\n' | '\t' | '\0'))
+        .collect()
 }
 
 pub fn build_anthropic_body(

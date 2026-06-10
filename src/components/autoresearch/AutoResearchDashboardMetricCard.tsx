@@ -27,11 +27,11 @@ export function AutoResearchDashboardMetricCard({
   }
 
   return (
-    <section className={`rounded-2xl border border-[#ebe4d9] bg-[#fbfaf7] p-4 ${className}`}>
+    <section className={`rounded-2xl border border-gray-200 bg-white p-4 ${className}`}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8f8375]">{t('autoresearch.detail.metricHistory')}</p>
-          <p className="mt-2 text-sm text-[#655a4f]">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">{t('autoresearch.detail.metricHistory')}</p>
+          <p className="mt-2 text-sm text-gray-700">
             {run.config.metric || 'metric'} · {run.config.direction === 'lower' ? t('autoresearch.lowerIsBetter') : t('autoresearch.higherIsBetter')}
           </p>
         </div>

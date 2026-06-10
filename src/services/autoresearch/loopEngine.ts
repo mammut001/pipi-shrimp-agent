@@ -92,6 +92,42 @@ interface StartupContext {
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
 const MAX_CONSECUTIVE_RATE_LIMITS = 3;
 
+/**
+ * AUDIT-FIX [audit-1-ar#1]: Module-level AbortController for the running loop.
+ * Created by `startExperimentLoop` (and threaded through by `setupFlow`),
+ * fired by `stopExperimentLoop()` or the AutoResearch page's unmount
+ * effect. The loop checks `signal.aborted` at the top of each iteration
+ * and inside `sendMessage`'s entry to bail out cleanly instead of
+ * keeping the SSH session and the next LLM call alive in the background.
+ * Only one loop runs at a time so a single module-level handle suffices.
+ */
+let activeLoopAbortController: AbortController | null = null;
+
+/**
+ * Module-level handle to the currently running loop. Exposed so the AutoResearch
+ * page can abort an in-flight run on unmount (e.g. user navigates back to Chat)
+ * without waiting for the next iteration boundary. Only one loop runs at a
+ * time so a single controller is sufficient.
+ */
+let activeLoopAbortController: AbortController | null = null;
+
+export class AutoResearchAbortedError extends Error {
+  constructor(message = 'AutoResearch loop was aborted by the user.') {
+    super(message);
+    this.name = 'AutoResearchAbortedError';
+  }
+}
+
+/**
+ * Thrown by `sendMessage` wrappers if the loop's `AbortSignal` fires mid-turn.
+ * The loop engine catches this at iteration boundaries and exits cleanly.
+ */
+function throwIfAborted(signal: AbortSignal | undefined, context: string): void {
+  if (signal?.aborted) {
+    throw new AutoResearchAbortedError(`${context} aborted by user.`);
+  }
+}
+
 // AUDIT-016 FIX: Budget reserve is now calculated dynamically based on remaining iterations.
 // This ensures the reserve is meaningful even when maxIterations is small (e.g., 1).
 function calculateBudgetReserve(maxIterations: number): number {
@@ -99,8 +135,35 @@ function calculateBudgetReserve(maxIterations: number): number {
   return Math.max(1, Math.min(2, Math.floor(maxIterations * 0.25)));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Sleep that can be interrupted by an AbortSignal. Used for rate-limit
+ * cooldowns so the user can stop a run immediately instead of waiting
+ * out a 60+ second sleep.
+ *
+ * AUDIT-FIX [audit-3-ar#9]: Prior implementation was a bare
+ * `setTimeout(resolve, ms)`. The user clicking Stop during a 60s+ rate
+ * limit cooldown would update the UI to "stopped" via
+ * `stopExperimentLoop()`, but the loop body would still sleep the full
+ * duration before checking the abort flag on the next iteration
+ * boundary — blocking async cleanup and wasting backend resources.
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new AutoResearchAbortedError('sleep aborted before start'));
+      return;
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new AutoResearchAbortedError('sleep aborted mid-wait'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function buildSystemPrompt({
@@ -794,11 +857,36 @@ async function assertRemoteLinux(cfg: SshConfig): Promise<void> {
 
 export async function startExperimentLoop(
   sendMessage: (systemPrompt: string, userMessage: string) => Promise<string>,
+  options: { signal?: AbortSignal } = {},
 ): Promise<void> {
+  // The AbortController is shared between the loop body, the sendMessage
+  // wrapper, and `stopExperimentLoop()`. setupFlow creates it and threads
+  // the signal into both sendMessage options and `options.signal` here.
+  // If no external signal is provided, we synthesize one so the catch
+  // block always has something to unlink.
+  const externalSignal = options.signal;
+  const abortController = new AbortController();
+  activeLoopAbortController = abortController;
+  const signal: AbortSignal = externalSignal ?? abortController.signal;
+
+  // If an external signal fires, abort our controller too (so our own
+  // `activeLoopAbortController` becomes the single source of truth that
+  // `stopExperimentLoop()` references).
+  let externalAbortListener: (() => void) | null = null;
+  if (externalSignal && externalSignal !== abortController.signal) {
+    if (externalSignal.aborted) {
+      abortController.abort();
+    } else {
+      externalAbortListener = () => abortController.abort();
+      externalSignal.addEventListener('abort', externalAbortListener, { once: true });
+    }
+  }
+
   const store = useAutoResearchStore.getState();
 
   if (!store.sshConfig) {
     useAutoResearchStore.getState().setError('SSH config not set');
+    activeLoopAbortController = null;
     return;
   }
 
@@ -921,7 +1009,27 @@ export async function startExperimentLoop(
   let consecutiveRateLimitCount = 0;
   let bestSnapshotDir = startup.experimentDir;
 
+  try {
   while (true) {
+    // Honor external abort (e.g. AutoResearch page unmount) before doing any
+    // expensive work this iteration. Without this, closing the page mid-iteration
+    // would keep the SSH session and the next LLM request alive.
+    if (signal?.aborted) {
+      useAutoResearchStore.getState().setRunStatus('stopped', {
+        summary: 'Aborted by user (UI unmount or stop signal).',
+        endedAt: new Date().toISOString(),
+      });
+      useAutoResearchStore.getState().setLoopState('stopped');
+      emitAutoResearchRuntimeEvent({
+        level: 'warn',
+        phase: 'DONE',
+        type: 'run_status_changed',
+        message: 'AutoResearch loop aborted by user signal.',
+        summary: 'Aborted.',
+      });
+      break;
+    }
+
     const state = useAutoResearchStore.getState();
     const activeRun = state.runHistory.find((run) => run.id === state.id);
 
@@ -1041,6 +1149,9 @@ export async function startExperimentLoop(
         iteration,
         summary: `Iteration ${iteration} is planning the next hypothesis.`,
       });
+      // Re-check abort right before dispatching the LLM — the in-flight sendMessage
+      // itself is wrapped in chatAdapter to honor `signal`.
+      throwIfAborted(signal, `Iteration ${iteration} LLM dispatch`);
       const agentOutput = await sendMessage(systemPrompt, userMessage);
       consecutiveRateLimitCount = 0;
       const budgetExhausted = isBudgetExhaustedIterationSignal(agentOutput);
@@ -1502,7 +1613,19 @@ export async function startExperimentLoop(
           useAutoResearchStore.getState().setLoopState('stopped');
           break;
         }
-        await sleep(cooldownSeconds * 1000);
+        // Sleep is interruptible: if the user stops mid-cooldown, the
+        // signal aborts the sleep and we surface AutoResearchAbortedError
+        // which the outer try/catch (added in the #1 abort fix) handles
+        // as a clean exit instead of waiting out the full cooldown.
+        try {
+          await sleep(cooldownSeconds * 1000, signal);
+        } catch (sleepError) {
+          if (sleepError instanceof AutoResearchAbortedError
+              || (sleepError instanceof Error && sleepError.name === 'AutoResearchAbortedError')) {
+            break;
+          }
+          throw sleepError;
+        }
         continue;
       }
 
@@ -1638,9 +1761,43 @@ export async function startExperimentLoop(
       clearCurrentRunDir();
     }
   }
+  } catch (error) {
+    // Aborts are expected; the iteration boundary has already transitioned
+    // the run into `stopped`. Don't surface them as runtime errors.
+    // Match both the loopEngine class and the duck-typed Error from
+    // chatAdapter (which can't import the class without a cycle).
+    const isAbort = error instanceof AutoResearchAbortedError
+      || (error instanceof Error && error.name === 'AutoResearchAbortedError');
+    if (isAbort) {
+      // Mark the run as stopped if it wasn't already so persistence is consistent.
+      const latest = useAutoResearchStore.getState();
+      if (latest.loopState !== 'stopped') {
+        useAutoResearchStore.getState().setRunStatus('stopped', {
+          summary: 'Aborted by user.',
+          endedAt: new Date().toISOString(),
+        });
+        useAutoResearchStore.getState().setLoopState('stopped');
+      }
+    } else {
+      throw error;
+    }
+  } finally {
+    if (externalAbortListener && externalSignal) {
+      externalSignal.removeEventListener('abort', externalAbortListener);
+    }
+    if (activeLoopAbortController === abortController) {
+      activeLoopAbortController = null;
+    }
+  }
 }
 
 export function stopExperimentLoop(): void {
+  // Fire the in-flight abort first so any active LLM call can be cancelled
+  // before we even set the run status. The loop will pick this up on its
+  // next iteration boundary and exit cleanly via the catch above.
+  if (activeLoopAbortController) {
+    activeLoopAbortController.abort();
+  }
   useAutoResearchStore.getState().setRunStatus('stopped', {
     summary: 'Stopped by user.',
     endedAt: new Date().toISOString(),

@@ -9,16 +9,16 @@ export function AutoResearchTabs() {
   const [activeTab, setActiveTab] = useState<AutoResearchTabId>('conversational');
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#f6f1e8]">
-      <div className="border-b border-[#e7ded1] bg-[#fbf7f0] px-4 py-3">
-        <div className="inline-flex rounded-2xl border border-[#ded3c5] bg-white p-1 shadow-sm">
+    <div className="flex min-h-0 flex-1 flex-col bg-gray-50">
+      <div className="border-b border-gray-200 bg-white px-4 py-3">
+        <div className="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
           <button
             type="button"
             onClick={() => setActiveTab('conversational')}
             className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
               activeTab === 'conversational'
-                ? 'bg-[#1d4ed8] text-white'
-                : 'text-[#6f665c] hover:bg-[#f5efe6]'
+                ? 'bg-gray-900 text-white'
+                : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
             {t('autoresearch.tabs.conversational')}
@@ -28,8 +28,8 @@ export function AutoResearchTabs() {
             onClick={() => setActiveTab('advanced')}
             className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
               activeTab === 'advanced'
-                ? 'bg-[#1d4ed8] text-white'
-                : 'text-[#6f665c] hover:bg-[#f5efe6]'
+                ? 'bg-gray-900 text-white'
+                : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
             {t('autoresearch.tabs.advanced')}

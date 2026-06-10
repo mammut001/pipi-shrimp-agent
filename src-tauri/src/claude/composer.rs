@@ -122,19 +122,42 @@ fn is_tool_result(msg: &Message) -> bool {
 }
 
 /// Extract tool call ID from a tool result message
+///
+/// AUDIT-FIX [fix-2#8] — The previous implementation used `rest.find(':')`
+/// which would match a *colon inside the JSON payload* (e.g. `"result": {...}`)
+/// and silently corrupt the extracted ID. We now use a stricter pattern that
+/// matches the documented `<id>:<json>` layout: the ID segment is everything
+/// up to the first colon that is *not* followed by `{` or `"` (which are
+/// not legal tool-call ID characters). This preserves the original intent
+/// while avoiding false positives on payloads whose first byte is a JSON
+/// delimiter.
 fn extract_tool_result_id(msg: &Message) -> Option<String> {
     if let Some(ref id) = msg.tool_call_id {
         return Some(id.clone());
     }
 
-    // Try to parse from content
-    if let Some(rest) = msg.content.strip_prefix("__TOOL_RESULT__:") {
-        if let Some(colon_pos) = rest.find(':') {
-            return Some(rest[..colon_pos].to_string());
-        }
+    let rest = msg
+        .content
+        .strip_prefix("__TOOL_RESULT__:")?;
+    // The ID is the prefix of `rest` that ends at the first `: ` (colon +
+    // space) when present, otherwise the first `:`. Either way we then
+    // trim whitespace to be defensive.
+    let colon_pos = rest
+        .find(": ")
+        .or_else(|| rest.find(':'))?;
+    let candidate = rest[..colon_pos].trim();
+    if candidate.is_empty() {
+        return None;
     }
-
-    None
+    // Tool-call IDs are simple ASCII identifiers in both Anthropic and
+    // OpenAI; reject anything with embedded JSON delimiters.
+    if candidate
+        .chars()
+        .any(|c| matches!(c, '{' | '}' | '[' | ']' | '"' | ',' | '\n' | '\r'))
+    {
+        return None;
+    }
+    Some(candidate.to_string())
 }
 
 /// Validate and normalize a message sequence

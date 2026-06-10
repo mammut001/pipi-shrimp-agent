@@ -570,6 +570,22 @@ export function Sidebar() {
           {t('nav.skill')}
         </button>
 
+        {/* AutoResearch Button */}
+        <button
+          onClick={() => setCurrentView('autoresearch')}
+          className="w-full px-4 py-2 mt-2 bg-gray-900 hover:bg-gray-800 text-white rounded-xl transition-all flex items-center justify-center gap-2 font-medium shadow-sm active:scale-[0.98]"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-5 w-5"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3zM3.31 9.397L5 10.12v4.102a8.969 8.969 0 00-1.05-.174 1 1 0 01-.89-.89 11.115 11.115 0 01.25-3.762zM9.3 16.573A9.026 9.026 0 007 14.935v-3.773l1.657.71a3 3 0 002.686 0l1.657-.71v3.772a8.972 8.972 0 00-2.3 1.638 1 1 0 01-1.4 0zM15 14.935a9.025 9.025 0 00-2.3 1.638 1 1 0 01-1.4 0 8.972 8.972 0 00-2.3-1.638v-3.772l1.657.71a3 3 0 002.686 0L15 11.162v3.773z" />
+          </svg>
+          {t('nav.autoresearch')}
+        </button>
+
         {/* View Toggle - Modern Pill Style with Better Spacing */}
         <div className="flex items-center gap-2 p-1 bg-gray-100 rounded-xl mt-2 mb-4">
           <button

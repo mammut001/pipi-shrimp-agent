@@ -333,9 +333,22 @@ export async function* runChatTurn(
     for (const result of toolResults) {
       currentMessages.push({
         role: 'user',
-        // The __TOOL_RESULT__ syntax is specific to this project's Rust adapter mapping
+        // AUDIT-FIX [audit-1#3] — The __TOOL_RESULT__ sentinel is a transport-
+        // only token used by this project's Rust adapter to pair tool results
+        // with their originating tool_call_id. It lives in the in-memory
+        // `currentMessages` context that gets sent to the model and is NEVER
+        // persisted to the DB or rendered in the UI. Two consumer invariants
+        // depend on this:
+        //   1. chatHelpers.parseThinkContent must skip these lines so a tool
+        //      result containing literal "<think>..." text isn't misclassified.
+        //   2. UI filtering (Chat.tsx / ChatBrowserWorkspaceShell.tsx) detects
+        //      the prefix as a safety belt in case anything leaks through.
+        // If you ever start persisting these into the message store, you MUST
+        // move the result into `message.metadata.toolResult` instead.
         content: `__TOOL_RESULT__:${result.id}:${result.content}`,
-        tool_call_id: result.id
+        tool_call_id: result.id,
+        // Skip persistence + display via the established filter paths.
+        metadata: { toolResult: true, hidden: true },
       });
     }
   }
