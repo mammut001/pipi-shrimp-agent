@@ -1,7 +1,6 @@
 import { promises as fs } from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
 const mockInvoke = jest.fn();
 const mockLogExperiment = jest.fn().mockResolvedValue(undefined);
@@ -69,6 +68,12 @@ async function ensureExperimentFixture(experimentDir: string): Promise<void> {
 
 jest.setTimeout(30000);
 
+const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+
+function projectTmpDir(): string {
+  return PROJECT_TMP_DIR;
+}
+
 describe('local AutoResearch smoke', () => {
   let tempRoot: string | null;
 
@@ -86,13 +91,25 @@ describe('local AutoResearch smoke', () => {
   afterEach(async () => {
     useAutoResearchStore.getState().resetSession();
     if (tempRoot) {
-      await fs.rm(tempRoot, { recursive: true, force: true });
+      try {
+        await fs.rm(tempRoot, { recursive: true, force: true });
+      } catch {
+        // Best-effort: never let cleanup mask the actual test failure.
+      }
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await fs.rm(PROJECT_TMP_DIR, { recursive: true, force: true });
+    } catch {
+      // Best-effort sweep; failures here are non-fatal.
     }
   });
 
   it('runs a minimal local iteration and writes smoke artifacts', async () => {
     const smokeRoot = process.env.AUTORESEARCH_SMOKE_ROOT
-      || await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-local-smoke-'));
+      || await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-local-smoke-'));
     const experimentDir = process.env.AUTORESEARCH_SMOKE_EXPERIMENT_DIR
       || path.join(smokeRoot, 'experiment');
     const workDir = process.env.AUTORESEARCH_SMOKE_WORKDIR

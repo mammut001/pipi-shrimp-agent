@@ -1,6 +1,11 @@
 import { promises as fs } from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
+
+const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+
+function projectTmpDir(): string {
+  return PROJECT_TMP_DIR;
+}
 
 const mockInvoke = jest.fn();
 
@@ -17,7 +22,7 @@ describe('metricsStore', () => {
   let workDir: string;
 
   beforeEach(async () => {
-    workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-metrics-'));
+    workDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-metrics-'));
     installLocalInvokeMock(mockInvoke);
     await initGitRepo(workDir);
   });
@@ -25,7 +30,19 @@ describe('metricsStore', () => {
   afterEach(async () => {
     clearCurrentRunDir();
     mockInvoke.mockReset();
-    await fs.rm(workDir, { recursive: true, force: true });
+    try {
+      await fs.rm(workDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort: never let cleanup mask the actual test failure.
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await fs.rm(PROJECT_TMP_DIR, { recursive: true, force: true });
+    } catch {
+      // Best-effort sweep; failures here are non-fatal.
+    }
   });
 
   it('round-trips append/read and writes the iteration metrics file for the active run', async () => {

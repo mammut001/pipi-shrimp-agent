@@ -80,6 +80,12 @@ import { installDynamicTranscriptFixture } from './transcriptHarness';
 
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
 
+const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+
+function projectTmpDir(): string {
+  return PROJECT_TMP_DIR;
+}
+
 const activeConfig: ResolvedAgentConfig = {
   configId: 'cfg-deepseek',
   name: 'DeepSeek Default',
@@ -119,7 +125,7 @@ describe('loopEngine integration', () => {
   const extraCleanupDirs = new Set<string>();
 
   beforeEach(async () => {
-    workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-loop-'));
+    workDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-loop-'));
     sessionFilePath = path.join(workDir, 'session.md');
     installLocalInvokeMock(mockInvoke);
     mockRunHeadlessAgentTurn.mockReset();
@@ -189,10 +195,28 @@ describe('loopEngine integration', () => {
     mockNotifier.onExperimentComplete.mockClear();
     mockNotifier.onLoopStopped.mockClear();
     mockNotifier.onTrendReport.mockClear();
-    await fs.rm(workDir, { recursive: true, force: true });
-    await Promise.all([...extraCleanupDirs].map((dir) => fs.rm(dir, { recursive: true, force: true })));
+    try {
+      await fs.rm(workDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort: never let cleanup mask the actual test failure.
+    }
+    try {
+      await Promise.all(
+        [...extraCleanupDirs].map((dir) => fs.rm(dir, { recursive: true, force: true })),
+      );
+    } catch {
+      // Same as above.
+    }
     extraCleanupDirs.clear();
     useAutoResearchStore.getState().resetSession();
+  });
+
+  afterAll(async () => {
+    try {
+      await fs.rm(PROJECT_TMP_DIR, { recursive: true, force: true });
+    } catch {
+      // Best-effort sweep; failures here are non-fatal.
+    }
   });
 
   it('records iterations, rebuilds autoresearch.md, and stops after three consecutive failures', async () => {
@@ -276,7 +300,7 @@ describe('loopEngine integration', () => {
     extraCleanupDirs.add(startupWorkDir);
     await fs.rm(startupWorkDir, { recursive: true, force: true });
 
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-experiment-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-experiment-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'train.py': 'print("train")\n',
@@ -402,7 +426,7 @@ describe('loopEngine integration', () => {
 
   it('carries forward improved code into the next iteration and rolls back not-improved workspaces', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-carry-forward-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-carry-forward-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("run")\n',
@@ -503,7 +527,7 @@ describe('loopEngine integration', () => {
 
   it('completes two local cv_accuracy iterations and records iter-002 metrics', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-cv-accuracy-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-cv-accuracy-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("run")\n',
@@ -559,7 +583,7 @@ describe('loopEngine integration', () => {
 
   it('replays the mixed DeepSeek failure transcript through chatAdapter and loopEngine end-to-end', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-chat-adapter-e2e-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-chat-adapter-e2e-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("run")\n',
@@ -641,7 +665,7 @@ describe('loopEngine integration', () => {
 
   it('keeps using metrics.json after budget exhaustion when the transcript already wrote the artifact', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-metrics-fixture-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-budget-metrics-fixture-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("run")\n',
@@ -708,7 +732,7 @@ describe('loopEngine integration', () => {
 
   it('marks the iteration as FAILED after three consecutive provider API request failures', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-api-failures-fixture-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-api-failures-fixture-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("run")\n',
@@ -756,7 +780,7 @@ describe('loopEngine integration', () => {
 
   it('stores structured iteration facts from metrics.json into the run record', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-structured-facts-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-structured-facts-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("run")\n',
@@ -918,7 +942,7 @@ describe('loopEngine integration', () => {
 
   it('completes an iteration from metrics.json after tool budget exhaustion without entering reflection_failed', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-metrics-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-budget-metrics-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("baseline")\n',
@@ -978,7 +1002,7 @@ describe('loopEngine integration', () => {
 
   it('fails a budget-exhausted iteration, rolls back its workspace, and continues the run', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-continue-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-budget-continue-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("baseline")\n',
@@ -1058,7 +1082,7 @@ describe('loopEngine integration', () => {
 
   it('stops after three consecutive budget-exhausted failures', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-budget-threshold-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-budget-threshold-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("baseline")\n',
@@ -1097,9 +1121,9 @@ describe('loopEngine integration', () => {
   });
 
   it('captures diffs from the iteration workspace without mutating the source experiment repo', async () => {
-    const worktreeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-iter-workspace-'));
+    const worktreeRoot = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-iter-workspace-'));
     extraCleanupDirs.add(worktreeRoot);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-source-experiment-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-source-experiment-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("original")\n',
@@ -1152,9 +1176,9 @@ describe('loopEngine integration', () => {
   });
 
   it('refuses to start when the source experiment repo is already dirty', async () => {
-    const worktreeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-dirty-workspace-'));
+    const worktreeRoot = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-dirty-workspace-'));
     extraCleanupDirs.add(worktreeRoot);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-dirty-source-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-dirty-source-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("baseline")\n',
@@ -1214,7 +1238,7 @@ describe('loopEngine integration', () => {
 
   it('marks the run failed when environment inspection throws after run_started', async () => {
     const cfg = createLocalSshConfig(workDir);
-    const experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-inspect-failure-'));
+    const experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-inspect-failure-'));
     extraCleanupDirs.add(experimentDir);
     await initGitRepo(experimentDir, {
       'run_experiment.py': 'print("run")\n',

@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef, lazy, Suspense, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
@@ -42,36 +43,38 @@ const BootstrapChatView = lazy(() => import('@/components/autoresearch/Bootstrap
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-gray-200/80 bg-white p-4 space-y-4">
-      <h4 className="text-xs font-bold text-gray-800">{title}</h4>
-      {children}
-    </div>
+    <section className="space-y-3 rounded-2xl border border-gray-200/80 bg-white p-4 shadow-sm">
+      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">{title}</p>
+      <div className="space-y-3">{children}</div>
+    </section>
   );
 }
 
 function FieldLabel({ label, required }: { label: string; required?: boolean }) {
   return (
-    <label className="flex items-center gap-1 text-[11px] font-semibold text-gray-600">
+    <label className="flex items-center gap-1 text-[12px] font-semibold text-gray-700">
       {label}
-      {required && <span className="text-red-400 text-[10px]">*</span>}
+      {required && <span className="text-rose-400 text-[10px]">*</span>}
     </label>
   );
 }
 
 function InlineHint({ children }: { children: React.ReactNode }) {
-  return <p className="text-[10px] text-gray-400 leading-snug">{children}</p>;
+  return <p className="text-[11px] leading-snug text-gray-500">{children}</p>;
 }
 
 function ReadinessRow({ label, status, action }: { label: string; status: 'ok' | 'warn' | 'error'; action?: React.ReactNode }) {
-  const colors = { ok: 'text-emerald-600', warn: 'text-amber-600', error: 'text-red-500' };
+  const colors = { ok: 'text-emerald-700', warn: 'text-amber-700', error: 'text-rose-600' };
+  const bgColors = { ok: 'bg-emerald-50', warn: 'bg-amber-50', error: 'bg-rose-50' };
   const icons = { ok: '✓', warn: '⚠', error: '✗' };
   const statusLabel = { ok: t('autoresearch.readiness.filled'), warn: t('autoresearch.readiness.check'), error: t('autoresearch.readiness.missing') };
   return (
-    <div className="flex items-center justify-between gap-3 text-[11px]">
-      <span className="min-w-0 text-gray-600">{label}</span>
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-2 text-[12px]">
+      <span className="min-w-0 text-gray-700">{label}</span>
       <div className="flex shrink-0 items-center gap-2">
-        <span className={`font-semibold ${colors[status]}`}>
-          {icons[status]} {statusLabel[status]}
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${colors[status]} ${bgColors[status]}`}>
+          <span aria-hidden="true">{icons[status]}</span>
+          {statusLabel[status]}
         </span>
         {action}
       </div>
@@ -81,9 +84,61 @@ function ReadinessRow({ label, status, action }: { label: string; status: 'ok' |
 
 function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-baseline gap-2 text-[11px]">
-      <span className="text-gray-400 shrink-0">{label}</span>
-      <span className="font-medium text-gray-700 truncate">{value}</span>
+    <div className="flex items-baseline gap-2 text-[12px]">
+      <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.16em] text-gray-400">{label}</span>
+      <span className="truncate font-medium text-gray-800">{value}</span>
+    </div>
+  );
+}
+
+function PathInputRow({
+  value,
+  onChange,
+  onKeyDown,
+  placeholder,
+  ariaLabel,
+  onPick,
+  pickLabel,
+  disabled,
+  invalid,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+  placeholder: string;
+  ariaLabel: string;
+  onPick?: () => void;
+  pickLabel: string;
+  disabled?: boolean;
+  invalid?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={`flex items-stretch gap-2 ${className ?? ''}`}>
+      <input
+        className={`flex-1 rounded-xl border bg-white px-3 py-2 font-mono text-[12px] text-gray-800 shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${
+          invalid
+            ? 'border-rose-300 focus:border-rose-400'
+            : 'border-gray-200 focus:border-indigo-400'
+        }`}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={onKeyDown}
+        disabled={disabled}
+      />
+      {onPick && (
+        <button
+          type="button"
+          onClick={onPick}
+          disabled={disabled}
+          className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+        >
+          {pickLabel}
+        </button>
+      )}
     </div>
   );
 }
@@ -252,6 +307,25 @@ export function AutoResearchSetupModal() {
     }));
   }, [lockMessage, setupLocked]);
 
+  const handlePickWorkDir = useCallback(async () => {
+    if (setupLocked) {
+      return;
+    }
+    try {
+      const selection = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: form.remoteWorkDir || undefined,
+      });
+      if (typeof selection === 'string' && selection.length > 0) {
+        setForm((current) => ({ ...current, remoteWorkDir: selection }));
+      }
+    } catch {
+      // User cancelled the dialog or the platform doesn't support it;
+      // fall back to manual text input.
+    }
+  }, [form.remoteWorkDir, setupLocked]);
+
   const handleExperimentDirChange = useCallback((value: string) => {
     if (setupLocked) {
       setSubmitError(lockMessage);
@@ -260,6 +334,25 @@ export function AutoResearchSetupModal() {
 
     setExperimentDir(sanitizePathInput(value));
   }, [lockMessage, setupLocked]);
+
+  const handlePickExperimentDir = useCallback(async () => {
+    if (setupLocked) {
+      return;
+    }
+    try {
+      const selection = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: experimentDir || undefined,
+      });
+      if (typeof selection === 'string' && selection.length > 0) {
+        setExperimentDir(selection);
+      }
+    } catch {
+      // User cancelled the dialog or the platform doesn't support it;
+      // fall back to manual text input.
+    }
+  }, [experimentDir, setupLocked]);
 
   const handleResetToDefaults = useCallback(() => {
     if (setupLocked) {
@@ -343,46 +436,47 @@ export function AutoResearchSetupModal() {
   if (!showSetupModal) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-150" role="presentation">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#1c1917]/40 backdrop-blur-sm animate-in fade-in duration-150" role="presentation">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="autoresearch-setup-modal-title"
-        className="flex w-[860px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-2xl border border-gray-200/60 bg-white shadow-2xl animate-in zoom-in-95 duration-200"
+        className="flex w-[860px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[28px] border border-gray-200/80 bg-white shadow-[0_24px_60px_-24px_rgba(28,25,23,0.35)] animate-in zoom-in-95 duration-200"
         style={{ height: 'min(760px, calc(100vh - 48px))' }}
       >
         {/* Header */}
-        <div className="flex-shrink-0 px-5 pt-5 pb-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 bg-indigo-50 rounded-lg">
-                <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+        <div className="flex-shrink-0 px-6 pt-6 pb-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="rounded-2xl bg-indigo-50 p-2.5">
+                <svg className="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
               </div>
               <div>
-                <h3 id="autoresearch-setup-modal-title" className="text-sm font-bold text-gray-900">AutoResearch</h3>
-                <p className="text-[10px] text-gray-400 mt-0.5">{t('autoresearch.headerSubtitle')}</p>
+                <h3 id="autoresearch-setup-modal-title" className="text-base font-semibold text-gray-900">
+                  AutoResearch<span className="text-gray-400"> · {t('autoresearch.headerSubtitle')}</span>
+                </h3>
               </div>
             </div>
             <button
               onClick={() => setShowSetupModal(false)}
               aria-label="Close setup modal"
-              className="p-1 rounded-lg hover:bg-gray-100 transition-colors"
+              className="rounded-xl p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
             >
-              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
           {lockMessage && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
               {lockMessage}
             </div>
           )}
           {/* Tab bar */}
-          <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+          <div className="mt-5 flex gap-1 rounded-2xl bg-gray-100/80 p-1">
             <button
               type="button"
               id="autoresearch-setup-tab-btn-guided"
@@ -391,7 +485,7 @@ export function AutoResearchSetupModal() {
               role="tab"
               aria-selected={activeTab === 'conversational'}
               aria-controls="autoresearch-setup-tab-guided"
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'conversational' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+              className={`flex-1 rounded-xl py-1.5 text-[12px] font-semibold transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'conversational' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
               {t('autoresearch.tabs.guided')}
             </button>
@@ -403,12 +497,12 @@ export function AutoResearchSetupModal() {
               role="tab"
               aria-selected={activeTab === 'advanced'}
               aria-controls="autoresearch-setup-tab-manual"
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'advanced' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+              className={`flex-1 rounded-xl py-1.5 text-[12px] font-semibold transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${activeTab === 'advanced' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
               {t('autoresearch.tabs.manual')}
             </button>
           </div>
-          <p className="text-[10px] text-gray-400 mt-1.5 px-1">
+          <p className="mt-2 px-1 text-[12px] text-gray-500">
             {activeTab === 'conversational'
               ? t('autoresearch.tabs.guidedSubtitle')
               : t('autoresearch.tabs.manualSubtitle')}
@@ -433,38 +527,38 @@ export function AutoResearchSetupModal() {
             )}
           </div>
         ) : (
-        <form id="autoresearch-setup-tab-manual" role="tabpanel" aria-labelledby="autoresearch-setup-tab-btn-manual" className="min-h-0 flex-1 overflow-y-auto px-5 pb-5" onSubmit={handleSubmit}>
+        <form id="autoresearch-setup-tab-manual" role="tabpanel" aria-labelledby="autoresearch-setup-tab-btn-manual" className="min-h-0 flex-1 overflow-y-auto px-6 pb-6" onSubmit={handleSubmit}>
           <fieldset className="space-y-4" disabled={setupLocked || isStarting}>
 
           {/* Card 1: Run Target */}
           <SectionCard title={t('autoresearch.card.runTarget')}>
             {/* Mode toggle */}
-            <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+            <div className="flex gap-1 rounded-2xl bg-gray-100/80 p-1">
               <button
                 type="button"
                 onClick={() => setForm(f => ({ ...f, mode: 'local' }))}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'local' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex-1 rounded-xl py-1.5 text-[12px] font-semibold transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'local' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >{t('autoresearch.mode.local')}</button>
               <button
                 type="button"
                 onClick={() => setForm(f => ({ ...f, mode: 'ssh' }))}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'ssh' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex-1 rounded-xl py-1.5 text-[12px] font-semibold transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${form.mode === 'ssh' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >{t('autoresearch.mode.ssh')}</button>
             </div>
 
             {form.mode === 'ssh' && (
               <>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <FieldLabel label={t('autoresearch.field.host')} required />
                   <div className="flex gap-2">
                     <input
-                      className={`flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.host ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                      className={`flex-1 rounded-xl border bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.host ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-indigo-400'}`}
                       placeholder={t('autoresearch.hostPlaceholder')}
                       value={form.host}
                       onChange={e => setForm(f => ({ ...f, host: e.target.value }))}
                     />
                     <input
-                      className="w-16 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
+                      className="w-20 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none focus:border-indigo-400 disabled:bg-gray-50 disabled:text-gray-400"
                       placeholder={t('autoresearch.portPlaceholder')}
                       type="number"
                       value={form.port}
@@ -473,17 +567,17 @@ export function AutoResearchSetupModal() {
                   </div>
                   {fieldHints.host && <InlineHint>{fieldHints.host}</InlineHint>}
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <FieldLabel label={t('autoresearch.field.userAuth')} required />
                   <div className="flex gap-2">
                     <input
-                      className={`w-24 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.user ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                      className={`w-28 rounded-xl border bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.user ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-indigo-400'}`}
                       placeholder={t('autoresearch.userPlaceholder')}
                       value={form.user}
                       onChange={e => setForm(f => ({ ...f, user: e.target.value }))}
                     />
                     <select
-                      className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                      className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none focus:border-indigo-400 disabled:bg-gray-50 disabled:text-gray-400"
                       value={form.authMode}
                       onChange={e => setForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
                     >
@@ -495,10 +589,10 @@ export function AutoResearchSetupModal() {
                   {fieldHints.user && <InlineHint>{fieldHints.user}</InlineHint>}
                 </div>
                 {form.authMode === 'password' && (
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     <FieldLabel label={t('autoresearch.field.password')} required />
                     <input
-                      className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.password ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                      className={`w-full rounded-xl border bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.password ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-indigo-400'}`}
                       placeholder={t('autoresearch.passwordPlaceholder')}
                       type="password"
                       autoComplete="off"
@@ -506,17 +600,17 @@ export function AutoResearchSetupModal() {
                       onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                     />
                     {fieldHints.password && <InlineHint>{fieldHints.password}</InlineHint>}
-                    <p className="text-[10px] text-gray-400 leading-snug">
-                      {t('autoresearch.passwordHintBefore')}<code className="px-1 py-0.5 bg-gray-100 rounded">sshpass</code>:<br/>
-                      <code className="px-1 py-0.5 bg-gray-100 rounded">{t('autoresearch.sshpassHintCommand')}</code>
+                    <p className="text-[11px] leading-relaxed text-gray-500">
+                      {t('autoresearch.passwordHintBefore')}<code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">sshpass</code>:<br/>
+                      <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">{t('autoresearch.sshpassHintCommand')}</code>
                     </p>
                   </div>
                 )}
                 {form.authMode === 'key' && (
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     <FieldLabel label={t('autoresearch.field.keyPath')} required />
                     <input
-                      className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.keyPath ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                      className={`w-full rounded-xl border bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.keyPath ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-indigo-400'}`}
                       placeholder={t('autoresearch.keyPathPlaceholder')}
                       value={form.keyPath}
                       onChange={e => setForm(f => ({ ...f, keyPath: e.target.value }))}
@@ -527,17 +621,20 @@ export function AutoResearchSetupModal() {
               </>
             )}
 
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <FieldLabel label={form.mode === 'local' ? t('autoresearch.field.localWorkDir') : t('autoresearch.field.remoteWorkDir')} required />
-              <input
-                className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.workdir ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+              <PathInputRow
+                value={form.remoteWorkDir}
+                onChange={handleWorkDirChange}
+                onKeyDown={handlePathInputKeyDown}
                 placeholder={form.mode === 'local'
                   ? t('autoresearch.localWorkDirPlaceholder')
                   : t('autoresearch.remoteWorkDirPlaceholder')}
-                aria-label="AutoResearch workdir"
-                value={form.remoteWorkDir}
-                onChange={e => handleWorkDirChange(e.target.value)}
-                onKeyDown={handlePathInputKeyDown}
+                ariaLabel="AutoResearch workdir"
+                invalid={!!fieldHints.workdir}
+                disabled={setupLocked || isStarting}
+                onPick={form.mode === 'local' ? handlePickWorkDir : undefined}
+                pickLabel={t('autoresearch.chooseDirectory')}
               />
               <InlineHint>{t('autoresearch.workdirHelper')}</InlineHint>
             </div>
@@ -545,7 +642,7 @@ export function AutoResearchSetupModal() {
 
           {/* Card 2: Experiment Goal */}
           <SectionCard title={t('autoresearch.card.experimentGoal')}>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-2.5 py-2 text-[10px] text-indigo-700">
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-[12px] text-indigo-700">
               <span>
                 {prefillSource === 'last-used'
                   ? t('autoresearch.prefillLastUsed')
@@ -554,34 +651,37 @@ export function AutoResearchSetupModal() {
               <button
                 type="button"
                 onClick={handleResetToDefaults}
-                className="font-semibold text-indigo-700 transition-colors hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-400"
+                className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-indigo-700 transition-colors hover:bg-white/70 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-400"
               >
                 {t('autoresearch.resetToDefaults')}
               </button>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <FieldLabel label={t('autoresearch.field.experimentDir')} required />
-              <input
-                className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors font-mono disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.experimentDir ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
-                placeholder={t('autoresearch.experimentDirPlaceholder')}
-                aria-label="Experiment path"
+              <PathInputRow
                 value={experimentDir}
-                onChange={e => handleExperimentDirChange(e.target.value)}
+                onChange={handleExperimentDirChange}
                 onKeyDown={handlePathInputKeyDown}
+                placeholder={t('autoresearch.experimentDirPlaceholder')}
+                ariaLabel="Experiment path"
+                invalid={!!fieldHints.experimentDir}
+                disabled={setupLocked || isStarting}
+                onPick={handlePickExperimentDir}
+                pickLabel={t('autoresearch.chooseDirectory')}
               />
               <InlineHint>{t('autoresearch.experimentDirHelper')}</InlineHint>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <FieldLabel label={t('autoresearch.field.metricName')} required />
               <div className="flex gap-2">
                 <input
-                  className={`flex-1 px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.metric ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                  className={`flex-1 rounded-xl border bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${fieldHints.metric ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-indigo-400'}`}
                   placeholder={t('autoresearch.metricNamePlaceholder')}
                   value={metric}
                   onChange={e => setMetric(e.target.value)}
                 />
                 <select
-                  className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                  className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none focus:border-indigo-400 disabled:bg-gray-50 disabled:text-gray-400"
                   value={direction}
                   onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
                 >
@@ -591,20 +691,20 @@ export function AutoResearchSetupModal() {
               </div>
               <InlineHint>{t('autoresearch.metricHelper')}</InlineHint>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <FieldLabel label={t('autoresearch.field.maxIterations')} />
               <input
-                className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 transition-colors"
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none focus:border-indigo-400"
                 placeholder={t('autoresearch.maxIterationsPlaceholder')}
                 type="number"
                 value={maxIter}
                 onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <FieldLabel label={t('autoresearch.field.baselineOptional')} />
               <input
-                className={`w-full px-2.5 py-1.5 border rounded-lg text-xs focus:outline-none transition-colors ${fieldHints.baseline ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-indigo-400'}`}
+                className={`w-full rounded-xl border bg-white px-3 py-2 text-[12px] shadow-sm transition-colors focus:outline-none ${fieldHints.baseline ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-indigo-400'}`}
                 placeholder={t('autoresearch.baselinePlaceholder')}
                 value={baselineInput}
                 onChange={e => setBaselineInput(e.target.value)}
@@ -617,7 +717,7 @@ export function AutoResearchSetupModal() {
           {/* Card 3: Readiness & Start */}
           <SectionCard title={t('autoresearch.card.setupChecklist')}>
             {/* Readiness checklist */}
-            <div className="space-y-2 rounded-lg bg-gray-50 p-3">
+            <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50/60 p-3">
               <ReadinessRow
                 label={t('autoresearch.check.provider')}
                 status={providerReady ? 'ok' : 'error'}
@@ -625,7 +725,7 @@ export function AutoResearchSetupModal() {
                   <button
                     type="button"
                     onClick={toggleSettings}
-                    className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
+                    className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-indigo-700 transition-colors hover:bg-white"
                   >
                     {t('autoresearch.action.openSettings')}
                   </button>
@@ -637,13 +737,13 @@ export function AutoResearchSetupModal() {
               {form.mode === 'ssh' && (
                 <ReadinessRow label={t('autoresearch.check.sshConnection')} status={sshReady ? 'ok' : 'warn'} />
               )}
-              <p className="text-[10px] text-gray-400 pt-1">{t('autoresearch.readiness.helper')}</p>
+              <p className="pt-1 text-[11px] text-gray-500">{t('autoresearch.readiness.helper')}</p>
             </div>
 
             {/* Summary strip */}
-            <div className="space-y-2 rounded-lg border border-gray-200 p-3">
-              <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{t('autoresearch.summaryTitle')}</h5>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+            <div className="space-y-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+              <h5 className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500">{t('autoresearch.summaryTitle')}</h5>
+              <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
                 <SummaryItem label={t('autoresearch.summaryTarget')} value={form.mode === 'local' ? 'Local' : `SSH ${form.user}@${form.host || '...'}`} />
                 <SummaryItem label={t('autoresearch.summaryWorkdir')} value={form.remoteWorkDir || '—'} />
                 <SummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
@@ -654,7 +754,7 @@ export function AutoResearchSetupModal() {
 
             {/* Submit error */}
             {submitError && (
-              <div className="whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+              <div className="whitespace-pre-wrap rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700" role="alert">
                 {submitError}
               </div>
             )}
@@ -662,7 +762,7 @@ export function AutoResearchSetupModal() {
             {/* Start button */}
             <button
               type="submit"
-              className="w-full py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-40 transition-all"
+              className="w-full rounded-2xl bg-indigo-600 py-2.5 text-[13px] font-semibold text-white shadow-sm transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
               disabled={isStarting || setupLocked}
               aria-busy={isStarting}
             >
@@ -671,12 +771,12 @@ export function AutoResearchSetupModal() {
 
             {/* Preparing state */}
             {isStarting && (
-              <div className="space-y-1 text-[11px] text-gray-500">
+              <div className="space-y-1 text-[12px] text-gray-500">
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
                   <span>{t('autoresearch.preparing')}</span>
                 </div>
-                <div className="pl-5 space-y-0.5 text-[10px] text-gray-400">
+                <div className="space-y-0.5 pl-5 text-[11px] text-gray-400">
                   <div>• {t('autoresearch.preparingStepValidating')}</div>
                   <div>• {t('autoresearch.preparingStepChecking')}</div>
                   <div>• {t('autoresearch.preparingStepPreparing')}</div>

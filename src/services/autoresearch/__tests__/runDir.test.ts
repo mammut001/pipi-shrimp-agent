@@ -1,9 +1,8 @@
 import { promises as fs } from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { useSettingsStore } from '@/store/settingsStore';
 
 const mockInvoke = jest.fn();
@@ -19,13 +18,19 @@ const execFileAsync = promisify(execFile);
 
 jest.setTimeout(30000);
 
+const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+
+function projectTmpDir(): string {
+  return PROJECT_TMP_DIR;
+}
+
 describe('runDir', () => {
   let workDir: string;
   let experimentDir: string;
 
   beforeEach(async () => {
-    workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-rundir-'));
-    experimentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'autoresearch-rundir-exp-'));
+    workDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-rundir-'));
+    experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-rundir-exp-'));
     installLocalInvokeMock(mockInvoke);
     useSettingsStore.setState({ windowsShellProfile: 'auto' });
     await initGitRepo(workDir);
@@ -37,8 +42,24 @@ describe('runDir', () => {
 
   afterEach(async () => {
     mockInvoke.mockReset();
-    await fs.rm(workDir, { recursive: true, force: true });
-    await fs.rm(experimentDir, { recursive: true, force: true });
+    try {
+      await fs.rm(workDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort: never let cleanup mask the actual test failure.
+    }
+    try {
+      await fs.rm(experimentDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort: never let cleanup mask the actual test failure.
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await fs.rm(PROJECT_TMP_DIR, { recursive: true, force: true });
+    } catch {
+      // Best-effort sweep; failures here are non-fatal.
+    }
   });
 
   it('creates ordered per-iteration directories with logs and snapshots', async () => {

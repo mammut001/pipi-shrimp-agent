@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, describe, expect, it } from '@jest/globals';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import {
   escapeTypstContent,
@@ -12,8 +11,14 @@ import {
 
 const tempDirs: string[] = [];
 
+const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/skills/resume/__tests__/.tmp');
+
+function projectTmpDir(): string {
+  return PROJECT_TMP_DIR;
+}
+
 function createWorkDir(prefix: string): string {
-  const workDir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  const workDir = mkdtempSync(path.join(projectTmpDir(), prefix));
   tempDirs.push(workDir);
   return workDir;
 }
@@ -34,8 +39,20 @@ afterEach(() => {
   while (tempDirs.length > 0) {
     const workDir = tempDirs.pop();
     if (workDir) {
-      rmSync(workDir, { recursive: true, force: true });
+      try {
+        rmSync(workDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort: never let cleanup mask the actual test failure.
+      }
     }
+  }
+});
+
+afterAll(() => {
+  try {
+    rmSync(PROJECT_TMP_DIR, { recursive: true, force: true });
+  } catch {
+    // Best-effort sweep; failures here are non-fatal.
   }
 });
 

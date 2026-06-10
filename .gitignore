@@ -68,3 +68,7 @@ TESTING.md
 /F*autoresearch-metrics-*
 /F*autoresearch-project-adapter-*
 /F*session.md
+
+# Project-local test temp dirs (created by jest integration tests)
+/src/services/autoresearch/__tests__/.tmp/
+/src/skills/resume/__tests__/.tmp/

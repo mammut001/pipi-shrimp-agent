@@ -305,6 +305,27 @@ function AutoResearchView() {
     }
   }, [getLifecycleLockMessage, setupForm.remoteWorkDir, setupLocked]);
 
+  const handlePickExperimentDir = useCallback(async () => {
+    if (setupLocked) {
+      setSetupError(getLifecycleLockMessage('change the experiment dir'));
+      return;
+    }
+
+    try {
+      const selection = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: experimentDir || undefined,
+      });
+      if (typeof selection === 'string' && selection.length > 0) {
+        setExperimentDir(selection);
+      }
+    } catch {
+      // User cancelled the dialog or the platform doesn't support it;
+      // fall back to manual text input.
+    }
+  }, [experimentDir, getLifecycleLockMessage, setupLocked]);
+
   const handleShowSetup = useCallback(async () => {
     if (lifecycleLock.locked) {
       setSetupError(getLifecycleLockMessage('open the setup form'));
@@ -497,20 +518,23 @@ function AutoResearchView() {
   if (showSetup) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md space-y-4">
-          <h2 className="text-xl font-bold text-gray-800">{t('autoresearch.setupTitle')}</h2>
-          <p className="text-sm text-gray-500">
-            {t('autoresearch.setupDescription')}
-          </p>
+        <div className="w-full max-w-md space-y-4 rounded-[28px] border border-gray-200/70 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(28,25,23,0.25)]">
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-gray-400">AutoResearch</p>
+            <h2 className="text-xl font-semibold text-gray-900">{t('autoresearch.setupTitle')}</h2>
+            <p className="text-sm text-gray-500">
+              {t('autoresearch.setupDescription')}
+            </p>
+          </div>
 
           <form className="space-y-3" onSubmit={handleSetupSubmit}>
             <fieldset className="space-y-3" disabled={setupLocked || isStarting}>
               {setupLocked && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   {getLifecycleLockMessage('change the setup')}
                 </div>
               )}
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50/70 px-3 py-2 text-xs text-neutral-700">
                 <span>
                   {prefillSource === 'last-used'
                     ? t('autoresearch.prefillLastUsed')
@@ -518,43 +542,43 @@ function AutoResearchView() {
                 </span>
                 <button
                   type="button"
-                  className="font-semibold hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-400"
+                  className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-neutral-700 transition-colors hover:bg-white/70 hover:text-neutral-900 disabled:cursor-not-allowed disabled:text-neutral-400"
                   onClick={handleResetToDefaults}
                 >
                   {t('autoresearch.resetToDefaults')}
                 </button>
               </div>
               {/* Mode toggle */}
-              <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+              <div className="flex gap-1 rounded-2xl bg-gray-100/80 p-1">
                 <button
                   type="button"
                   onClick={() => setSetupForm(f => ({ ...f, mode: 'ssh' }))}
-                  className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${setupForm.mode === 'ssh' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`flex-1 rounded-xl py-1.5 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${setupForm.mode === 'ssh' ? 'bg-white text-neutral-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                 >{t('autoresearch.modeRemote')}</button>
                 <button
                   type="button"
                   onClick={() => setSetupForm(f => ({ ...f, mode: 'local' }))}
-                  className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${setupForm.mode === 'local' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`flex-1 rounded-xl py-1.5 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:text-gray-400 ${setupForm.mode === 'local' ? 'bg-white text-neutral-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                 >{t('autoresearch.modeLocal')}</button>
               </div>
 
               {setupForm.mode === 'ssh' && (
                 <>
                   <input
-                    className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                     placeholder={t('autoresearch.hostPlaceholder')}
                     value={setupForm.host}
                     onChange={e => setSetupForm(f => ({ ...f, host: e.target.value }))}
                   />
                   <div className="flex gap-2">
                     <input
-                      className="flex-1 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                       placeholder={t('autoresearch.userPlaceholder')}
                       value={setupForm.user}
                       onChange={e => setSetupForm(f => ({ ...f, user: e.target.value }))}
                     />
                     <input
-                      className="w-20 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      className="w-20 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                       placeholder={t('autoresearch.portPlaceholder')}
                       type="number"
                       value={setupForm.port}
@@ -562,7 +586,7 @@ function AutoResearchView() {
                     />
                   </div>
                   <select
-                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                     value={setupForm.authMode}
                     onChange={e => setSetupForm(f => ({ ...f, authMode: e.target.value as SshConfig['authMode'] }))}
                   >
@@ -572,7 +596,7 @@ function AutoResearchView() {
                   </select>
                   {setupForm.authMode === 'password' && (
                     <input
-                      className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                       placeholder={t('autoresearch.passwordPlaceholder')}
                       type="password"
                       autoComplete="off"
@@ -582,7 +606,7 @@ function AutoResearchView() {
                   )}
                   {setupForm.authMode === 'key' && (
                     <input
-                      className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                       placeholder={t('autoresearch.sshKeyPathPlaceholder')}
                       value={setupForm.keyPath}
                       onChange={e => setSetupForm(f => ({ ...f, keyPath: e.target.value }))}
@@ -593,14 +617,14 @@ function AutoResearchView() {
               {setupForm.mode === 'local' ? (
                 <div className="flex gap-2">
                   <input
-                    className="flex-1 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                    className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                     placeholder={t('autoresearch.localWorkDirPlaceholder')}
                     value={setupForm.remoteWorkDir}
                     onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
                   />
                   <button
                     type="button"
-                    className="px-3 py-2 border rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                    className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
                     onClick={handlePickLocalWorkDir}
                   >
                     {t('autoresearch.chooseDirectory')}
@@ -608,23 +632,33 @@ function AutoResearchView() {
                 </div>
               ) : (
                 <input
-                  className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                   placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
                   value={setupForm.remoteWorkDir}
                   onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
                 />
               )}
 
-              <input
-                className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
-                placeholder={t('autoresearch.experimentDirPlaceholder')}
-                value={experimentDir}
-                onChange={e => setExperimentDir(sanitizePathInput(e.target.value))}
-              />
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+                  placeholder={t('autoresearch.experimentDirPlaceholder')}
+                  value={experimentDir}
+                  onChange={e => setExperimentDir(sanitizePathInput(e.target.value))}
+                />
+                <button
+                  type="button"
+                  className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                  onClick={handlePickExperimentDir}
+                  aria-label={t('autoresearch.chooseDirectory')}
+                >
+                  {t('autoresearch.chooseDirectory')}
+                </button>
+              </div>
 
               <button
                 type="button"
-                className="w-full py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="w-full rounded-2xl border border-gray-200 bg-white py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50"
                 disabled={
                   setupLocked
                     || (setupForm.mode === 'ssh'
@@ -645,11 +679,11 @@ function AutoResearchView() {
               </button>
 
             {connectionTest.output && (
-              <div className={`rounded-lg border px-3 py-2 text-xs whitespace-pre-wrap ${
+              <div className={`rounded-2xl border px-3 py-2 text-xs whitespace-pre-wrap ${
                 connectionTest.status === 'success'
-                  ? 'border-green-200 bg-green-50 text-green-700'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                   : connectionTest.status === 'error'
-                    ? 'border-red-200 bg-red-50 text-red-700'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700'
                     : 'border-gray-200 bg-gray-50 text-gray-600'
               }`}>
                 {connectionTest.output}
@@ -660,13 +694,13 @@ function AutoResearchView() {
 
               <div className="flex gap-2">
                 <input
-                  className="flex-1 px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                  className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                   placeholder={t('autoresearch.metricNamePlaceholder')}
                   value={metric}
                   onChange={e => setMetric(e.target.value)}
                 />
                 <select
-                  className="px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                  className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                   value={direction}
                   onChange={e => setDirection(e.target.value as 'lower' | 'higher')}
                 >
@@ -675,36 +709,36 @@ function AutoResearchView() {
                 </select>
               </div>
               <input
-                className={`w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400 ${baselineInvalid ? 'border-red-300' : ''}`}
+                className={`w-full rounded-xl border bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${baselineInvalid ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-neutral-400'}`}
                 placeholder="Baseline (optional, e.g. 0.963284)"
                 value={baselineInput}
                 onChange={e => setBaselineInput(e.target.value)}
               />
               {baselineInvalid && (
-                <div className="text-xs text-red-500">{t('autoresearch.validationBaselineNumber')}</div>
+                <div className="text-xs text-rose-500">{t('autoresearch.validationBaselineNumber')}</div>
               )}
               <input
-                className="w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                 placeholder={t('autoresearch.maxIterationsPlaceholder')}
                 type="number"
                 value={maxIter}
                 onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
               />
               {setupError && setupError !== agentConfigError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
                   {setupError}
                 </div>
               )}
               <button
                 type="submit"
-                className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                className="w-full rounded-2xl bg-neutral-900 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-neutral-800 disabled:opacity-50"
                 disabled={isStarting || setupLocked}
                 aria-busy={isStarting}
               >
                 {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
               </button>
               {agentConfigError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                   {agentConfigError}
                 </div>
               )}
@@ -718,7 +752,7 @@ function AutoResearchView() {
   if (!displayRun && sortedRuns.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <div className="mb-4 rounded-2xl bg-indigo-50 p-4 text-indigo-500">
+        <div className="mb-4 rounded-2xl bg-neutral-100 p-4 text-neutral-500">
           <svg className="h-9 w-9" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
           </svg>
@@ -727,7 +761,7 @@ function AutoResearchView() {
         <p className="mt-2 max-w-md text-sm text-gray-500">{t('autoresearch.emptyIdle')}</p>
         <button
           onClick={() => { void handleShowSetup(); }}
-          className="mt-5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          className="mt-5 rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
         >
           {t('autoresearch.setupAndStart')}
         </button>
@@ -746,7 +780,7 @@ function AutoResearchView() {
             </div>
             <button
               onClick={() => { void handleShowSetup(); }}
-              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
             >
               New Run
             </button>
@@ -763,7 +797,7 @@ function AutoResearchView() {
                   setShowRunList(false);
                 }}
                 className={`rounded-2xl border bg-white p-4 text-left shadow-sm transition-colors ${
-                  displayRun?.id === run.id ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'
+                  displayRun?.id === run.id ? 'border-neutral-400 ring-2 ring-neutral-100' : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
@@ -819,7 +853,7 @@ function AutoResearchView() {
             <span className="font-medium text-gray-700">{t('autoresearch.terminalTitle')}</span>
             <button
               type="button"
-              className="text-blue-600 hover:text-blue-700"
+              className="text-neutral-700 hover:text-neutral-900"
               onClick={() => setTerminalVisible(!terminalVisible)}
             >
               {terminalVisible ? t('autoresearch.hideTerminal') : t('autoresearch.showTerminal')}
