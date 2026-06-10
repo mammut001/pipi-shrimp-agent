@@ -103,14 +103,6 @@ const MAX_CONSECUTIVE_RATE_LIMITS = 3;
  */
 let activeLoopAbortController: AbortController | null = null;
 
-/**
- * Module-level handle to the currently running loop. Exposed so the AutoResearch
- * page can abort an in-flight run on unmount (e.g. user navigates back to Chat)
- * without waiting for the next iteration boundary. Only one loop runs at a
- * time so a single controller is sufficient.
- */
-let activeLoopAbortController: AbortController | null = null;
-
 export class AutoResearchAbortedError extends Error {
   constructor(message = 'AutoResearch loop was aborted by the user.') {
     super(message);
@@ -147,7 +139,6 @@ function calculateBudgetReserve(maxIterations: number): number {
  * duration before checking the abort flag on the next iteration
  * boundary — blocking async cleanup and wasting backend resources.
  */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
