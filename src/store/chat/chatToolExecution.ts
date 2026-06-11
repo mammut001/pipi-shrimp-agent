@@ -193,6 +193,7 @@ async function executeConcurrentTools(
   normalizedToolArgsById: Map<string, string>,
   activeSessionId: string,
   permissionMode: PermissionMode,
+  executionModeId: string | undefined,
   workDir: string | null,
   get: () => ChatState,
   set: ChatSetState,
@@ -212,6 +213,7 @@ async function executeConcurrentTools(
       toolArgs: normalizedToolArgsById.get(req.id) ?? JSON.stringify(req.arguments),
       workDir: workDir ?? undefined,
       permissionMode,
+      executionMode: executionModeId,
       sessionId: activeSessionId,
     });
 
@@ -277,6 +279,7 @@ async function executeConcurrentTools(
       workDir: workDir ?? undefined,
       source: 'assistant_tool_call',
       permissionMode,
+      executionMode: executionModeId,
       requestPermission: async (request) => {
         uiStore.updateTaskStep(request.id, 'awaiting_confirmation');
         markSessionToolStatus(activeSessionId, request.id, request.name, 'awaiting_confirmation', set, get);
@@ -603,6 +606,7 @@ async function executeSerialTool(
   normalizedToolArgs: string,
   activeSessionId: string,
   permissionMode: PermissionMode,
+  executionModeId: string | undefined,
   workDir: string | null,
   get: () => ChatState,
   set: ChatSetState,
@@ -645,6 +649,7 @@ async function executeSerialTool(
     toolArgs: normalizedToolArgs,
     workDir: workDir ?? undefined,
     permissionMode,
+    executionMode: executionModeId,
     sessionId: activeSessionId,
   });
 
@@ -817,6 +822,11 @@ export async function handleToolBatchRequest(
   let currentSession = get().sessions.find((session) => session.id === activeSessionId);
   let workDir = currentSession?.workDir ?? null;
   const permissionMode = currentSession?.permissionMode || 'standard';
+  // Mirror the 6-mode execution mode id into the hook context so the
+  // preToolUseHooks.executionModeGuardCheck can enforce mode-specific
+  // policy. Falls back to 'standard' PermissionMode behavior when the
+  // session was created before the 6-mode system shipped.
+  const executionModeId = currentSession?.executionMode;
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
 
   if (!workDir) {
@@ -880,6 +890,7 @@ export async function handleToolBatchRequest(
       normalizedToolArgsById,
       activeSessionId,
       permissionMode,
+      executionModeId,
       workDir,
       get,
       set,
@@ -897,6 +908,7 @@ export async function handleToolBatchRequest(
         normalizedToolArgsById.get(tool.id) ?? tool.arguments,
         activeSessionId,
         permissionMode,
+        executionModeId,
         workDir,
         get,
         set,

@@ -67,6 +67,12 @@ export interface ToolExecutionOptions {
   workDir?: string;
   source?: ToolExecutionSource;
   permissionMode?: PermissionMode;
+  /**
+   * Optional 6-mode execution mode id. When provided, the preToolUseHooks
+   * executionModeGuardCheck enforces the 6-mode registry policy on top of
+   * the 4-mode PermissionMode.
+   */
+  executionMode?: string;
   allowedTools?: string[];
   requestPermission?: (request: {
     id: string;
@@ -295,6 +301,7 @@ export class StreamingToolExecutor {
       sessionId,
       source = DEFAULT_TOOL_EXECUTION_SOURCE,
       permissionMode = 'standard',
+      executionMode,
       allowedTools,
       requestPermission,
     } = options;
@@ -339,6 +346,7 @@ export class StreamingToolExecutor {
         toolArgs: rawArgs,
         workDir,
         permissionMode,
+        executionMode,
         sessionId,
       });
 

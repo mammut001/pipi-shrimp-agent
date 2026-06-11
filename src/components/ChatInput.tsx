@@ -18,6 +18,8 @@ import { useUIStore } from '@/store';
 import { useMCPStore } from '@/store/mcpStore';
 import { MCPChatButton, MCPDropdown } from '@/components/mcp';
 import { BrowserIntentConfirm } from './BrowserIntentConfirm';
+import { ExecutionModeDropdown } from './chatInput/ExecutionModeDropdown';
+import { ExecutionModeDropdownErrorBoundary } from './chatInput/ExecutionModeDropdownErrorBoundary';
 import {
   decideChatInputSubmission,
   isStaleChatDraftValue,
@@ -26,6 +28,7 @@ import {
   shouldDismissBrowserIntentConfirm,
 } from './chatInputFlow';
 import { t } from '@/i18n';
+import { getDefaultExecutionMode, isExecutionModeId, type ExecutionModeId } from '@/services/executionMode';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 import type { ImageAttachment } from '@/types/vision';
 
@@ -170,7 +173,7 @@ export function ChatInput({
   }, []);
   // ────────────────────────────────────────────────────────────────────────────
 
-  const { isStreaming, sendMessage, stopGeneration, currentSessionId, sessions, setSessionWorkDir, clearSessionWorkDir } = useChatStore();
+  const { isStreaming, sendMessage, stopGeneration, currentSessionId, sessions, setSessionWorkDir, clearSessionWorkDir, updateSessionExecutionMode } = useChatStore();
   const { toggleSettings, addNotification } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
@@ -179,6 +182,18 @@ export function ChatInput({
   // Get current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
   const workDir = currentSession?.workDir;
+
+  // Selected 6-mode execution mode. Fall back to default if missing/invalid.
+  const selectedExecutionModeId: ExecutionModeId = isExecutionModeId(currentSession?.executionMode)
+    ? (currentSession!.executionMode as ExecutionModeId)
+    : getDefaultExecutionMode().id;
+  const handleExecutionModeSelect = useCallback(
+    (modeId: ExecutionModeId) => {
+      if (!currentSessionId) return;
+      void updateSessionExecutionMode(currentSessionId, modeId);
+    },
+    [currentSessionId, updateSessionExecutionMode],
+  );
 
   // Restore draft from localStorage on mount
   useEffect(() => {
@@ -684,6 +699,15 @@ export function ChatInput({
               className="hidden"
               onChange={(e) => { void handleFileSelection(e); }}
             />
+
+            {/* Execution mode dropdown (Ask / Plan / Debug / Agent / Multitask / Bypass) */}
+            <ExecutionModeDropdownErrorBoundary>
+              <ExecutionModeDropdown
+                selectedModeId={selectedExecutionModeId}
+                onSelect={handleExecutionModeSelect}
+                disabled={isDisabled}
+              />
+            </ExecutionModeDropdownErrorBoundary>
 
             {/* MCP toggle button */}
             <MCPChatButton />

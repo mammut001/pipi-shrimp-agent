@@ -21,6 +21,7 @@ import {
   isHighRiskToolName,
   type PermissionMode,
 } from './toolExecutionPolicy';
+import { isToolAllowedForMode } from '../executionMode';
 import { defaultClassifier, type PermissionRequest } from '../../utils/permissions/classifierDecision';
 import { classifyBashCommand } from '../../utils/permissions/bashClassifier';
 import { defaultTelemetry } from '../../utils/permissions/permissionLogging';
@@ -31,6 +32,14 @@ export interface HookContext {
   toolArgs: string;
   workDir?: string;
   permissionMode: PermissionMode;
+  /**
+   * Optional 6-mode execution mode id. When set, outer guards in
+   * preToolUseHooks can enforce mode-specific tool policies that the
+   * 4-mode PermissionMode alone cannot express (e.g. Ask mode forcing
+   * every tool call to require confirmation, Plan mode blocking all
+   * tools, Debug mode restricting writes).
+   */
+  executionMode?: string;
   sessionId: string;
   conversationHistory?: string[];
   previousToolCalls?: Array<{ toolName: string; approved: boolean }>;
@@ -59,6 +68,95 @@ export async function dangerousCommandCheck(ctx: HookContext): Promise<HookResul
       severity: match.severity,
     };
   }
+  return { approved: true };
+}
+
+/**
+ * Hook 1b: Execution-mode outer guard.
+ *
+ * Enforces the 6-mode execution mode policy for tools that the
+ * 4-mode PermissionMode cannot express on its own. Runs after the
+ * dangerous-command check so it can never be used to bypass hard
+ * safety constraints.
+ *
+ * Behavior:
+ *  - Plan mode: blocks all tools (the existing plan-only hook handles
+ *    the 4-mode mapping; this also covers the 6-mode 'plan' id which
+ *    may be present alongside a non-plan permissionMode in some flows).
+ *  - Ask / Plan / Debug / Multitask with `none` or `read-only` policy:
+ *    blocks tools that are not allowed under the active mode.
+ *
+ * This is the runtime enforcement of the 6-mode registry. It is
+ * deliberately conservative: when in doubt, it blocks and lets the UI
+ * surface a clear error to the user.
+ */
+export async function executionModeGuardCheck(ctx: HookContext): Promise<HookResult> {
+  if (!ctx.executionMode) {
+    return { approved: true };
+  }
+
+  // Plan mode short-circuit: blocks all tool execution regardless of
+  // the underlying 4-mode permissionMode field. Plan is meant to be
+  // read-only and produce a plan/checklist only.
+  if (ctx.executionMode === 'plan') {
+    return {
+      approved: false,
+      error: 'Tool execution is not allowed in Plan mode. Switch to Ask, Agent, or Bypass to run tools.',
+      blockedBy: 'permission-mode',
+    };
+  }
+
+  if (ctx.executionMode === 'ask') {
+    // Ask mode: tools are allowed only if the registry says so AND the
+    // user explicitly confirms. The 4-mode mapping is 'standard' which
+    // already requires confirmation for every tool; here we additionally
+    // surface a soft "requires confirmation" hint even for read-only
+    // tools so the user always sees the active mode in the consent UI.
+    if (!isToolAllowedForMode('ask', ctx.toolName)) {
+      return {
+        approved: false,
+        error: 'This tool is not allowed in Ask mode. Switch to Agent or Bypass to run it.',
+        blockedBy: 'permission-mode',
+      };
+    }
+    return { approved: true, requiresConfirmation: true };
+  }
+
+  if (ctx.executionMode === 'debug') {
+    if (!isToolAllowedForMode('debug', ctx.toolName)) {
+      return {
+        approved: false,
+        error: 'This tool is not allowed in Debug mode (read + small writes only).',
+        blockedBy: 'permission-mode',
+      };
+    }
+    return { approved: true };
+  }
+
+  if (ctx.executionMode === 'multitask') {
+    if (!isToolAllowedForMode('multitask', ctx.toolName)) {
+      return {
+        approved: false,
+        error: 'This tool is not allowed in Multitask mode for the current policy.',
+        blockedBy: 'permission-mode',
+      };
+    }
+    return { approved: true };
+  }
+
+  if (ctx.executionMode === 'agent') {
+    if (!isToolAllowedForMode('agent', ctx.toolName)) {
+      return {
+        approved: false,
+        error: 'This tool is not allowed in Agent mode for the current policy.',
+        blockedBy: 'permission-mode',
+      };
+    }
+    return { approved: true };
+  }
+
+  // Bypass: no outer restriction; per-tool approval policy still applies
+  // through the existing 4-mode hooks.
   return { approved: true };
 }
 
@@ -312,6 +410,7 @@ export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult>
 export async function runPreToolUseHooks(ctx: HookContext): Promise<HookResult> {
   const hooks = [
     dangerousCommandCheck,
+    executionModeGuardCheck,
     pathValidationCheck,
     typstRenderGuardCheck,
     permissionModeCheck,

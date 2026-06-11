@@ -3,6 +3,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 
 import { triggerLegacyCompact } from '../services/compact/compact';
+import { resolvePermissionMode, getExecutionMode } from '../services/executionMode';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
 import { runMicrocompactCheck } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
@@ -611,6 +612,44 @@ export const useChatStore = create<ChatState>()(
       useUIStore.getState().clearAllPermissions();
       for (const request of pendingPermissions) {
         request._resolve?.(permissionMode === 'bypass' || permissionMode === 'auto-edits');
+      }
+    },
+
+    /**
+     * Update the 6-mode execution mode for a session and derive the
+     * 4-mode PermissionMode in lockstep so existing preToolUseHooks keep
+     * working. Persisted via db_save_session so the choice survives reload.
+     */
+    updateSessionExecutionMode: async (sessionId: string, executionMode) => {
+      const session = get().sessions.find((candidate) => candidate.id === sessionId);
+      if (!session) {
+        return;
+      }
+      const profile = getExecutionMode(executionMode);
+      const derivedPermissionMode = resolvePermissionMode(executionMode);
+      const updatedSession = {
+        ...session,
+        executionMode: profile.id,
+        permissionMode: derivedPermissionMode,
+        updatedAt: Date.now(),
+      };
+      set((state) => ({
+        sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updatedSession : candidate)),
+      }));
+      await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
+
+      // Mirror behavior of updateSessionPermissionMode: if the new mode
+      // auto-approves safe tools, resolve any pending permission requests.
+      if (profile.permissionMode === 'bypass' || profile.permissionMode === 'auto-edits') {
+        const pendingPermissions = get().currentSessionId === sessionId
+          ? [...useUIStore.getState().permissionQueue]
+          : [];
+        if (pendingPermissions.length > 0) {
+          useUIStore.getState().clearAllPermissions();
+          for (const request of pendingPermissions) {
+            request._resolve?.(true);
+          }
+        }
       }
     },
 

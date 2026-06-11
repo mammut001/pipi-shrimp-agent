@@ -631,4 +631,74 @@ describe('chatToolExecution', () => {
       content: '{"status":"cancelled","stdout":"","stderr":""}',
     }));
   });
+
+  describe('6-mode execution mode plumbing', () => {
+    it('forwards the session executionMode id into the preToolUseHook context', async () => {
+      const resolved = jest.fn();
+      const runPreToolUseHooks = jest.fn(async () => ({ approved: true }));
+      const deps = createDeps({
+        runPreToolUseHooks,
+      });
+      const state = createChatState();
+      // The session was switched to the 6-mode 'plan' (Plan) mode.
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'plan';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-plan-1',
+          name: 'read_file',
+          arguments: '{"path":"src/index.ts"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      expect(runPreToolUseHooks).toHaveBeenCalledTimes(1);
+      const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string } | undefined;
+      expect(ctxArg?.executionMode).toBe('plan');
+    });
+
+    it('omits executionMode from the hook context when the session has none (legacy 4-mode session)', async () => {
+      const resolved = jest.fn();
+      const runPreToolUseHooks = jest.fn(async () => ({ approved: true }));
+      const deps = createDeps({
+        runPreToolUseHooks,
+      });
+      const state = createChatState();
+      // No executionMode on the session — only the 4-mode permissionMode.
+      state.sessions[0].permissionMode = 'auto-edits';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-legacy-1',
+          name: 'read_file',
+          arguments: '{"path":"src/index.ts"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string } | undefined;
+      // Legacy sessions still flow through the 4-mode path; the new guard
+      // hook is a no-op when executionMode is undefined, preserving the
+      // existing tool-execution behavior bit-for-bit.
+      expect(ctxArg?.executionMode).toBeUndefined();
+    });
+  });
 });
