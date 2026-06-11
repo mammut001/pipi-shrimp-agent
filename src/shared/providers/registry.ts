@@ -76,6 +76,8 @@ const anthropicProvider: ProviderDef = {
   showBaseUrl: false,
   requiresBaseUrl: false,
   defaultModels: [
+    { id: 'claude-fable-5', name: 'Claude Fable 5' },
+    { id: 'claude-opus-4-8', name: 'Claude Opus 4.8' },
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
     { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5 (Sept 2025)' },
     { id: 'claude-sonnet-4-latest', name: 'Claude Sonnet 4 Latest' },
@@ -85,10 +87,18 @@ const anthropicProvider: ProviderDef = {
     { id: 'claude-sonnet-4-20250508', name: 'Claude Sonnet 4 (May 8 2025)' },
     { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Oct 2024)' },
     { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Oct 2024)' },
-    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', deprecating: true },
-    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', deprecating: true },
   ],
   defaultPricing: {
+    'claude-fable-5': {
+      inputPrice: 10, outputPrice: 50,
+      cacheReadPrice: 1.0, cacheWritePrice: 12.5,
+      contextWindow: 1000000,
+    },
+    'claude-opus-4-8': {
+      inputPrice: 15, outputPrice: 75,
+      cacheReadPrice: 1.5, cacheWritePrice: 18.75,
+      contextWindow: 200000,
+    },
     'claude-sonnet-4-5': {
       inputPrice: 3, outputPrice: 15,
       cacheReadPrice: 0.3, cacheWritePrice: 3.75,
@@ -134,15 +144,6 @@ const anthropicProvider: ProviderDef = {
       cacheReadPrice: 0.03, cacheWritePrice: 0.03,
       contextWindow: 200000,
     },
-    'claude-3-opus-20240229': {
-      inputPrice: 15, outputPrice: 75,
-      cacheReadPrice: 1.5, cacheWritePrice: 18.75,
-      contextWindow: 200000,
-    },
-    'claude-3-haiku-20240307': {
-      inputPrice: 0.25, outputPrice: 1.25,
-      contextWindow: 200000,
-    },
   },
 };
 
@@ -157,30 +158,42 @@ const openaiProvider: ProviderDef = {
   showBaseUrl: false,
   requiresBaseUrl: false,
   defaultModels: [
-    { id: 'gpt-4.1', name: 'GPT-4.1' },
-    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
-    { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano' },
+    { id: 'gpt-5.5', name: 'GPT-5.5', supportsImage: true },
+    { id: 'gpt-5.5-pro', name: 'GPT-5.5 Pro', supportsImage: true },
+    { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true },
+    { id: 'gpt-5.4-pro', name: 'GPT-5.4 Pro', supportsImage: true },
+    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', supportsImage: true },
+    { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', supportsImage: true },
     { id: 'gpt-4.5', name: 'GPT-4.5', supportsImage: true },
     { id: 'gpt-4o', name: 'GPT-4o', supportsImage: true },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', supportsImage: true },
     { id: 'o3', name: 'o3' },
     { id: 'o4-mini', name: 'o4 Mini' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', deprecating: true },
-    { id: 'gpt-4', name: 'GPT-4', deprecating: true },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', deprecating: true },
   ],
   defaultPricing: {
-    'gpt-4.1': {
+    'gpt-5.5': {
+      inputPrice: 10, outputPrice: 40,
+      contextWindow: 1000000,
+    },
+    'gpt-5.5-pro': {
+      inputPrice: 15, outputPrice: 60,
+      contextWindow: 1000000,
+    },
+    'gpt-5.4': {
       inputPrice: 2, outputPrice: 8,
-      contextWindow: 1047576,
+      contextWindow: 1000000,
     },
-    'gpt-4.1-mini': {
-      inputPrice: 0.4, outputPrice: 1.6,
-      contextWindow: 1047576,
+    'gpt-5.4-pro': {
+      inputPrice: 4, outputPrice: 16,
+      contextWindow: 1000000,
     },
-    'gpt-4.1-nano': {
-      inputPrice: 0.1, outputPrice: 0.4,
-      contextWindow: 1047576,
+    'gpt-5.4-mini': {
+      inputPrice: 0.15, outputPrice: 0.6,
+      contextWindow: 1000000,
+    },
+    'gpt-5.4-nano': {
+      inputPrice: 0.05, outputPrice: 0.2,
+      contextWindow: 1000000,
     },
     'gpt-4.5': {
       inputPrice: 75, outputPrice: 150,
@@ -202,18 +215,6 @@ const openaiProvider: ProviderDef = {
       inputPrice: 1.10, outputPrice: 4.40,
       contextWindow: 200000,
     },
-    'gpt-4-turbo': {
-      inputPrice: 10, outputPrice: 30,
-      contextWindow: 128000,
-    },
-    'gpt-4': {
-      inputPrice: 30, outputPrice: 60,
-      contextWindow: 128000,
-    },
-    'gpt-3.5-turbo': {
-      inputPrice: 0.5, outputPrice: 1.5,
-      contextWindow: 16385,
-    },
   },
 };
 
@@ -230,18 +231,12 @@ const minimaxProvider: ProviderDef = {
   baseUrlPlaceholder: 'https://api.minimaxi.com/v1',
   baseUrlHelp: 'MiniMax uses OpenAI-compatible /chat/completions format.',
   defaultModels: [
+    { id: 'MiniMax-M3', name: 'MiniMax M3', supportsImage: true },
     { id: 'MiniMax-M2.7', name: 'MiniMax M2.7' },
-    { id: 'MiniMax-M2.1', name: 'MiniMax M2.1' },
-    { id: 'MiniMax-M2.7-highspeed', name: 'MiniMax M2.7 Highspeed' },
-    { id: 'MiniMax-M2.1-highspeed', name: 'MiniMax M2.1 Highspeed' },
-    { id: 'MiniMax-M2', name: 'MiniMax M2' },
   ],
   defaultPricing: {
+    'MiniMax-M3': { inputPrice: 0, outputPrice: 0, contextWindow: 1000000 },
     'MiniMax-M2.7': { inputPrice: 0, outputPrice: 0, contextWindow: 1000000 },
-    'MiniMax-M2.1': { inputPrice: 0, outputPrice: 0, contextWindow: 1000000 },
-    'MiniMax-M2.7-highspeed': { inputPrice: 0, outputPrice: 0, contextWindow: 1000000 },
-    'MiniMax-M2.1-highspeed': { inputPrice: 0, outputPrice: 0, contextWindow: 1000000 },
-    'MiniMax-M2': { inputPrice: 0, outputPrice: 0, contextWindow: 1000000 },
   },
 };
 
@@ -257,14 +252,14 @@ const geminiProvider: ProviderDef = {
   baseUrlPlaceholder: 'https://generativelanguage.googleapis.com/v1beta/openai',
   baseUrlHelp: 'Gemini uses the Google OpenAI-compatible endpoint for chat completions.',
   defaultModels: [
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', supportsImage: true },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', supportsImage: true },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', supportsImage: true },
+    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', supportsImage: true },
+    { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro', supportsImage: true },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', supportsImage: true },
   ],
   defaultPricing: {
-    'gemini-2.5-pro': { inputPrice: 0, outputPrice: 0, contextWindow: 1_000_000 },
-    'gemini-2.5-flash': { inputPrice: 0, outputPrice: 0, contextWindow: 1_000_000 },
-    'gemini-2.0-flash': { inputPrice: 0, outputPrice: 0, contextWindow: 1_000_000 },
+    'gemini-3.5-flash': { inputPrice: 0.075, outputPrice: 0.3, contextWindow: 1000000 },
+    'gemini-3.1-pro': { inputPrice: 1.25, outputPrice: 5.0, contextWindow: 2000000 },
+    'gemini-3.1-flash-lite': { inputPrice: 0.0375, outputPrice: 0.15, contextWindow: 1000000 },
   },
 };
 

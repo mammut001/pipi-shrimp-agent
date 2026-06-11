@@ -242,18 +242,16 @@ pub fn split_think_content(content: &str, in_think: &mut bool) -> Vec<(String, b
                 current.push_str(&content[i..]);
                 i = bytes.len();
             }
-        } else {
-            if let Some(start) = content[i..].find(THINK_OPEN) {
-                current.push_str(&content[i..i + start]);
-                if !current.is_empty() {
-                    result.push((std::mem::take(&mut current), false));
-                }
-                i += start + THINK_OPEN.len();
-                current_is_think = true;
-            } else {
-                current.push_str(&content[i..]);
-                i = bytes.len();
+        } else if let Some(start) = content[i..].find(THINK_OPEN) {
+            current.push_str(&content[i..i + start]);
+            if !current.is_empty() {
+                result.push((std::mem::take(&mut current), false));
             }
+            i += start + THINK_OPEN.len();
+            current_is_think = true;
+        } else {
+            current.push_str(&content[i..]);
+            i = bytes.len();
         }
     }
 

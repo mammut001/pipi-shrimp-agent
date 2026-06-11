@@ -109,6 +109,7 @@ export type TranscriptEventType =
   | 'tool_result'
   | 'permission_requested'
   | 'permission_resolved'
+  | 'permission_expired'
   | 'agent_completed'
   | 'agent_failed';
 

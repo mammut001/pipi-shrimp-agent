@@ -212,7 +212,10 @@ pub async fn update_session_title_service(session_id: String, title: String) -> 
     let sessions = database::get_all_sessions()
         .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
 
-    if let Some(mut session) = sessions.into_iter().find(|session| session.id == session_id) {
+    if let Some(mut session) = sessions
+        .into_iter()
+        .find(|session| session.id == session_id)
+    {
         session.title = title;
         session.updated_at = get_timestamp() as i64;
         database::save_session(&session)
@@ -226,7 +229,10 @@ pub async fn update_session_cwd_service(session_id: String, cwd: String) -> AppR
     let sessions = database::get_all_sessions()
         .map_err(|e| AppError::InternalError(format!("Failed to get sessions: {}", e)))?;
 
-    if let Some(mut session) = sessions.into_iter().find(|session| session.id == session_id) {
+    if let Some(mut session) = sessions
+        .into_iter()
+        .find(|session| session.id == session_id)
+    {
         session.work_dir = Some(cwd);
         session.updated_at = get_timestamp() as i64;
         database::save_session(&session)

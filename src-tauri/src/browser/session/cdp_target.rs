@@ -33,10 +33,7 @@ impl BrowserSessionManager {
         })
     }
 
-    pub(super) async fn select_attach_page(
-        &self,
-        browser: &mut Browser,
-    ) -> Result<Page, CdpError> {
+    pub(super) async fn select_attach_page(&self, browser: &mut Browser) -> Result<Page, CdpError> {
         select_attach_page_with_client(&self.client, browser).await
     }
 

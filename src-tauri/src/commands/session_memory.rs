@@ -297,7 +297,10 @@ pub fn update_session_memory_section(
     body: String,
     work_dir: Option<String>,
 ) -> Result<String, String> {
-    if !ALLOWED_SECTIONS.iter().any(|s| s.eq_ignore_ascii_case(&section)) {
+    if !ALLOWED_SECTIONS
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(&section))
+    {
         return Err(format!("Section '{}' is not in the allow-list", section));
     }
     const MAX_BODY_BYTES: usize = 32 * 1024;
@@ -326,9 +329,10 @@ pub fn update_session_memory_section(
     let mut current_section: Option<String> = None;
     for line in original.lines() {
         let trimmed = line.trim_start_matches('#').trim();
-        let matched_heading = heading_targets
-            .iter()
-            .any(|h| line.trim_start().eq_ignore_ascii_case(h.trim_start_matches('#').trim()));
+        let matched_heading = heading_targets.iter().any(|h| {
+            line.trim_start()
+                .eq_ignore_ascii_case(h.trim_start_matches('#').trim())
+        });
 
         if matched_heading {
             current_section = Some(trimmed.to_string());

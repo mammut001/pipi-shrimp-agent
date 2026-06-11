@@ -1,8 +1,9 @@
-pub use super::adapters::{
-    get_adapter, get_adapter_for_config, ProviderAdapter,
-    StreamContext, StreamEvent,
+pub use super::super::provider::{
+    ApiFormat, ProviderCapabilities, ProviderId, ResolvedProviderConfig,
 };
-pub use super::super::provider::{ApiFormat, ProviderCapabilities, ProviderId, ResolvedProviderConfig};
+pub use super::adapters::{
+    get_adapter, get_adapter_for_config, ProviderAdapter, StreamContext, StreamEvent,
+};
 
 fn parse_api_format_hint(hint: Option<&str>) -> Option<ApiFormat> {
     match hint {
@@ -53,8 +54,8 @@ pub fn resolve_provider_config(
     api_format_hint: Option<&str>,
     capability_hint: Option<ProviderCapabilities>,
 ) -> ResolvedProviderConfig {
-    let resolved_provider_hint = parse_provider_hint(provider_hint)
-        .or_else(|| parse_provider_hint(api_format_hint));
+    let resolved_provider_hint =
+        parse_provider_hint(provider_hint).or_else(|| parse_provider_hint(api_format_hint));
     let resolved_api_format_hint = parse_api_format_hint(api_format_hint);
 
     ResolvedProviderConfig::resolve_with_hints(

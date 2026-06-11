@@ -851,13 +851,13 @@ Languages: Python, TypeScript, Go
         fs::remove_dir_all(&tmp).ok();
     }
 
-        #[test]
-        fn test_compile_fallback_resume_inline_example_chinese() {
-                let tmp = std::env::temp_dir().join("typst_test_resume_fallback_chinese");
-                let _ = fs::remove_dir_all(&tmp);
-                fs::create_dir_all(&tmp).unwrap();
+    #[test]
+    fn test_compile_fallback_resume_inline_example_chinese() {
+        let tmp = std::env::temp_dir().join("typst_test_resume_fallback_chinese");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
 
-                fs::write(
+        fs::write(
                         tmp.join("resume.typ"),
                         r##"#set page(paper: "a4", margin: (x: 1.8cm, y: 1.5cm))
 #set text(font: ("Times New Roman", "Source Han Serif SC", "Noto Serif CJK SC", "serif"), size: 10pt)
@@ -922,40 +922,40 @@ Python, TypeScript, Rust, PostgreSQL
                 )
                 .unwrap();
 
-                let font_db = init_font_database();
-                let prebuilt = build_fonts(&font_db);
+        let font_db = init_font_database();
+        let prebuilt = build_fonts(&font_db);
 
-                let result = compile_typst_file(&tmp.join("resume.typ"), &prebuilt, None);
-                assert!(
-                        result.is_ok(),
-                        "fallback chinese inline example failed: {:?}",
-                        result.err()
-                );
+        let result = compile_typst_file(&tmp.join("resume.typ"), &prebuilt, None);
+        assert!(
+            result.is_ok(),
+            "fallback chinese inline example failed: {:?}",
+            result.err()
+        );
 
-                let (svg, pdf) = result.unwrap();
-                assert!(svg.contains("<svg"), "SVG should contain <svg tag");
-                assert!(!pdf.is_empty(), "PDF should not be empty");
+        let (svg, pdf) = result.unwrap();
+        assert!(svg.contains("<svg"), "SVG should contain <svg tag");
+        assert!(!pdf.is_empty(), "PDF should not be empty");
 
-                fs::remove_dir_all(&tmp).ok();
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    #[ignore = "local Typst smoke for nabcv; requires bundled templates and local font installation"]
+    fn test_compile_nabcv_inline_example_local() {
+        let templates_dir = find_templates_dir();
+        if templates_dir.is_none() {
+            println!("Skipping: templates dir not found");
+            return;
         }
+        let templates_dir = templates_dir.unwrap();
 
-        #[test]
-        #[ignore = "local Typst smoke for nabcv; requires bundled templates and local font installation"]
-        fn test_compile_nabcv_inline_example_local() {
-                let templates_dir = find_templates_dir();
-                if templates_dir.is_none() {
-                        println!("Skipping: templates dir not found");
-                        return;
-                }
-                let templates_dir = templates_dir.unwrap();
+        let tmp = std::env::temp_dir().join("typst_test_nabcv_local");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
 
-                let tmp = std::env::temp_dir().join("typst_test_nabcv_local");
-                let _ = fs::remove_dir_all(&tmp);
-                fs::create_dir_all(&tmp).unwrap();
-
-                fs::write(
-                        tmp.join("cv.toml"),
-                        r##"[cv]
+        fs::write(
+            tmp.join("cv.toml"),
+            r##"[cv]
 name = "Test User"
 headline = "Software Engineer"
 location = "Beijing, China"
@@ -984,12 +984,12 @@ start_date = "2023-07"
 end_date = "present"
 highlights = ["Built X feature", "Reduced latency by 20%"]
 "##,
-                )
-                .unwrap();
+        )
+        .unwrap();
 
-                fs::write(
-                        tmp.join("resume.typ"),
-                        r##"#import "@preview/nabcv:0.1.0": cv
+        fs::write(
+            tmp.join("resume.typ"),
+            r##"#import "@preview/nabcv:0.1.0": cv
 
 #let cd = toml("cv.toml").cv
 
@@ -1006,23 +1006,23 @@ highlights = ["Built X feature", "Reduced latency by 20%"]
     skills: cd.at("skills", default: none),
 )
 "##,
-                )
-                .unwrap();
+        )
+        .unwrap();
 
-                let font_db = init_font_database();
-                let prebuilt = build_fonts(&font_db);
+        let font_db = init_font_database();
+        let prebuilt = build_fonts(&font_db);
 
-                let result = compile_typst_file(&tmp.join("resume.typ"), &prebuilt, Some(&templates_dir));
-                assert!(
-                        result.is_ok(),
-                        "nabcv local inline example failed: {:?}",
-                        result.err()
-                );
+        let result = compile_typst_file(&tmp.join("resume.typ"), &prebuilt, Some(&templates_dir));
+        assert!(
+            result.is_ok(),
+            "nabcv local inline example failed: {:?}",
+            result.err()
+        );
 
-                let (svg, pdf) = result.unwrap();
-                assert!(svg.contains("<svg"), "SVG should contain <svg tag");
-                assert!(!pdf.is_empty(), "PDF should not be empty");
+        let (svg, pdf) = result.unwrap();
+        assert!(svg.contains("<svg"), "SVG should contain <svg tag");
+        assert!(!pdf.is_empty(), "PDF should not be empty");
 
-                fs::remove_dir_all(&tmp).ok();
-        }
+        fs::remove_dir_all(&tmp).ok();
+    }
 }

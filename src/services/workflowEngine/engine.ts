@@ -295,7 +295,7 @@ export class WorkflowEngine {
   }
 
   private async writeRunFile(relativePath: string, content: string): Promise<string | null> {
-    if (!this.workingDirectory) return;
+    if (!this.workingDirectory) return null;
     if (this.deps.writeRunFile) {
       return this.deps.writeRunFile(this.workingDirectory, relativePath, content);
     }
@@ -567,12 +567,6 @@ ${output}
       // eslint-disable-next-line no-console
       console.error('[workflow] createRunDirectory failed:', error);
       this.workingDirectory = '';
-      store.setError?.(
-        snapshot.instanceId,
-        `Failed to create run directory: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
     }
 
     const run: WorkflowRun = {

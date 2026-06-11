@@ -9,7 +9,7 @@ import type { WorkflowVisionPolicy } from './vision';
 
 export type ExecutionMode = 'single' | 'multi-round';
 
-export type RoundCondition = 'untilComplete' | 'untilError' | 'fixed';
+export type RoundCondition = 'untilComplete' | 'untilError' | 'fixed' | 'single';
 
 export interface AgentExecutionConfig {
   mode: ExecutionMode;

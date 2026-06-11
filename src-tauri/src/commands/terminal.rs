@@ -82,7 +82,8 @@ pub async fn terminal_create(
         })
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-    let terminal_plan = resolve_terminal_shell(shell_profile, cwd.as_deref()).map_err(|e| e.to_string())?;
+    let terminal_plan =
+        resolve_terminal_shell(shell_profile, cwd.as_deref()).map_err(|e| e.to_string())?;
     let mut cmd = if let Some(plan) = terminal_plan {
         let mut builder = CommandBuilder::new(plan.program);
         for arg in plan.args {

@@ -45,18 +45,16 @@ export const AgentPanel: React.FC = () => {
     currentArtifactId,
   } = useUIStore();
   const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
-  const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile, updateSessionPermissionMode, isStreaming, pendingToolCalls } = useChatStore();
+  const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile } = useChatStore();
   const { status: browserStatus } = useBrowserAgentStore();
   const cdpStatus = useCdpStore(s => s.status);
   const cdpConnectionState = useCdpStore(s => s.connectionState);
   const setupCdpConnectionMonitor = useCdpStore(s => s.setupConnectionMonitor);
   const [showCdpModal, setShowCdpModal] = useState(false);
 
-  // Get session-level working files and permissionMode for current session
+  // Get session-level working files for current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
   const sessionWorkingFiles = currentSession?.workingFiles ?? [];
-  // Get permissionMode from current session (defaults to 'standard')
-  const permissionMode = currentSession?.permissionMode || 'standard';
 
   // Combine session files and global files (deduplicated by path) - memoized
   const allWorkingFiles = useMemo(() => [
@@ -64,11 +62,8 @@ export const AgentPanel: React.FC = () => {
     ...globalImportedFiles.filter(f => !sessionWorkingFiles.some(sf => sf.path === f.path))
   ], [sessionWorkingFiles, globalImportedFiles]);
 
-  const [showBypassConfirm, setShowBypassConfirm] = useState(false);
-  const [showPermissionWarning, setShowPermissionWarning] = useState(false);
   const [localInstructions, setLocalInstructions] = useState(agentInstructions);
   const [isSaving, setIsSaving] = useState(false);
-  const [pendingModeChange, setPendingModeChange] = useState<string | null>(null);
 
   // Synchronized workspace files
   const [syncedFiles, setSyncedFiles] = useState<SyncedWorkspaceEntry[]>([]);
@@ -184,32 +179,6 @@ export const AgentPanel: React.FC = () => {
     setLocalInstructions(agentInstructions);
   }, [agentInstructions]);
 
-  const handleModeChange = (mode: string) => {
-    // Check if there are pending tool operations
-    if (isStreaming || pendingToolCalls > 0) {
-      setPendingModeChange(mode);
-      setShowPermissionWarning(true);
-      return;
-    }
-
-    if (mode === 'bypass' && permissionMode !== 'bypass') {
-      setShowBypassConfirm(true);
-    } else {
-      if (currentSessionId) {
-        updateSessionPermissionMode(currentSessionId, mode as 'standard' | 'auto-edits' | 'bypass' | 'plan-only');
-      }
-      setShowBypassConfirm(false);
-    }
-  };
-
-  const confirmPermissionSwitch = () => {
-    if (currentSessionId && pendingModeChange) {
-      updateSessionPermissionMode(currentSessionId, pendingModeChange as 'standard' | 'auto-edits' | 'bypass' | 'plan-only');
-    }
-    setShowPermissionWarning(false);
-    setPendingModeChange(null);
-  };
-
   const cdpHealthLabel = (cdpConnectionState?.health_status ?? cdpStatus)
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
@@ -219,13 +188,6 @@ export const AgentPanel: React.FC = () => {
     : cdpConnectionState?.launch_mode === 'attach'
       ? 'Attached to Existing Chrome'
       : null;
-
-  const confirmBypass = () => {
-    if (currentSessionId) {
-      updateSessionPermissionMode(currentSessionId, 'bypass');
-    }
-    setShowBypassConfirm(false);
-  };
 
   const handleSaveSoul = async () => {
     if (isSaving) return;
@@ -370,79 +332,7 @@ export const AgentPanel: React.FC = () => {
       {/* Tab content: Main (original AgentPanel) */}
       {activeTab === 'main' && (
         <>
-          {/* Header / Mode Control */}
-          <div className="p-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold text-gray-400 tracking-widest uppercase">Execution Mode</span>
-            <div className={`h-1.5 w-1.5 rounded-full ${permissionMode === 'bypass' ? 'bg-red-500 animate-pulse' :
-              permissionMode === 'standard' ? 'bg-blue-500' :
-                permissionMode === 'auto-edits' ? 'bg-indigo-500' :
-                  'bg-green-500'
-              }`} />
-            {permissionMode === 'bypass' && (
-              <span className="text-[9px] text-red-600 font-bold uppercase tracking-tight ml-auto">Bypass Active</span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex p-1 bg-gray-200/50 rounded-xl">
-          {[
-            { id: 'standard', label: 'Ask' },
-            { id: 'auto-edits', label: 'Auto' },
-            { id: 'bypass', label: 'Bypass' },
-            { id: 'plan-only', label: 'Plan' },
-          ].map((mode) => (
-            <button
-              key={mode.id}
-              onClick={() => handleModeChange(mode.id)}
-              className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all uppercase ${permissionMode === mode.id
-                ? 'bg-white shadow-sm text-gray-900'
-                : 'text-gray-400 hover:text-gray-600'
-                }`}
-            >
-              {mode.label}
-            </button>
-          ))}
-        </div>
-
-        {showBypassConfirm && (
-          <div className="p-3 bg-red-50 border border-red-100 rounded-xl animate-in slide-in-from-top-2">
-            <p className="text-[10px] text-red-700 font-bold mb-2 uppercase leading-snug">Caution: AI will execute commands without approval.</p>
-            <div className="flex gap-2">
-              <button onClick={confirmBypass} className="flex-1 py-1.5 bg-red-600 text-white text-[9px] font-bold rounded-lg uppercase">Confirm</button>
-              <button onClick={() => setShowBypassConfirm(false)} className="flex-1 py-1.5 bg-white text-gray-600 text-[9px] font-bold rounded-lg border border-gray-200 uppercase">Cancel</button>
-            </div>
-          </div>
-        )}
-
-        {/* Permission Switch Warning - when there are pending tool calls */}
-        {showPermissionWarning && (
-          <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl animate-in slide-in-from-top-2">
-            <div className="flex items-start gap-2 mb-2">
-              <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <div>
-                <p className="text-[10px] text-amber-800 font-bold uppercase leading-snug">Cannot switch permissions now</p>
-                <p className="text-[9px] text-amber-700 mt-1 leading-relaxed">
-                  {isStreaming && 'AI is still generating a response. '}
-                  {pendingToolCalls > 0 && `There ${pendingToolCalls === 1 ? 'is' : 'are'} ${pendingToolCalls} pending tool call${pendingToolCalls === 1 ? '' : 's'} waiting for results.`}
-                </p>
-                <p className="text-[9px] text-amber-600 mt-1 leading-relaxed">
-                  Switching permissions now may cause API errors with in-progress tool calls.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={confirmPermissionSwitch} className="flex-1 py-1.5 bg-amber-600 text-white text-[9px] font-bold rounded-lg uppercase">Switch Anyway</button>
-              <button onClick={() => { setShowPermissionWarning(false); setPendingModeChange(null); }} className="flex-1 py-1.5 bg-white text-gray-600 text-[9px] font-bold rounded-lg border border-gray-200 uppercase">Wait</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto pb-6 scrollbar-hide hover:scrollbar-default transition-all">
+      <div className="flex-1 overflow-y-auto pb-6 scrollbar-hide hover:scrollbar-default transition-all pt-4">
 
         {/* Progress Section */}
         <Section

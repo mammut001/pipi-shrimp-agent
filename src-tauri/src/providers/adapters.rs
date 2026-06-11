@@ -78,8 +78,12 @@ pub async fn fetch_openai_models(
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key))
-            .map_err(|e| format!("Invalid API key format (contains illegal characters): {}", e))?,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(|e| {
+            format!(
+                "Invalid API key format (contains illegal characters): {}",
+                e
+            )
+        })?,
     );
 
     match client.get(&endpoint).headers(headers).send().await {
@@ -153,8 +157,12 @@ pub async fn fetch_anthropic_models(
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         "x-api-key",
-        HeaderValue::from_str(&api_key)
-            .map_err(|e| format!("Invalid API key format (contains illegal characters): {}", e))?,
+        HeaderValue::from_str(&api_key).map_err(|e| {
+            format!(
+                "Invalid API key format (contains illegal characters): {}",
+                e
+            )
+        })?,
     );
     headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 

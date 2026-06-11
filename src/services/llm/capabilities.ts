@@ -48,7 +48,7 @@ const UNKNOWN_PROVIDER_CAPABILITY: ProviderCapability = {
   recommendedFor: [],
 };
 
-const ANTHROPIC_THINKING_MODEL_PATTERN = /claude-3-7|claude-opus-4|claude-sonnet-4|claude-haiku-4/i;
+const ANTHROPIC_THINKING_MODEL_PATTERN = /claude-3-7|claude-opus-4|claude-sonnet-4|claude-haiku-4|claude-5|claude-fable|claude-mythos/i;
 
 function isDeepSeekReasoningModel(modelLower: string): boolean {
   return /reasoner|reasoning|(^|[-_.\s/])r1($|[-_.\s/])|v4/i.test(modelLower);
@@ -84,9 +84,9 @@ const PROVIDER_CAPABILITIES: Record<ProviderCapabilityId, ProviderCapability> = 
     toolCalls: 'openai',
     jsonMode: true,
     jsonSchema: false,
-    vision: false,
+    vision: true,
     maxContextTokens: 1_000_000,
-    recommendedFor: ['reflection', 'agent', 'chat'],
+    recommendedFor: ['reflection', 'agent', 'chat', 'vision'],
   },
   deepseek: {
     id: 'deepseek',
@@ -267,7 +267,7 @@ export function buildProviderExecutionCapabilities(input: {
         supportsJsonMode: true,
         acceptsResponseFormat: true,
         acceptsReasoningParam: false,
-        supportsVision: false,
+        supportsVision: true,
         usesResponsesApi: false,
         requiresToolOrdering: false,
       };

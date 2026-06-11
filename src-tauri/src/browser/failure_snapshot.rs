@@ -76,7 +76,8 @@ pub fn list_failure_snapshots() -> Result<Vec<BrowserFailureSnapshot>, String> {
     for entry in fs::read_dir(&directory)
         .map_err(|error| format!("Failed to read browser failure directory: {}", error))?
     {
-        let entry = entry.map_err(|error| format!("Failed to read browser failure entry: {}", error))?;
+        let entry =
+            entry.map_err(|error| format!("Failed to read browser failure entry: {}", error))?;
         let path = entry.path();
         if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;

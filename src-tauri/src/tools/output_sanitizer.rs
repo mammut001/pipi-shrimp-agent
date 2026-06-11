@@ -6,12 +6,10 @@ const MAX_OUTPUT_CHARS: usize = 12_000;
 
 static ANSI_ESCAPE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").expect("valid ansi regex"));
-static AUTH_HEADER_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?im)(authorization\s*:\s*)([^\r\n]+)").expect("valid auth regex")
-});
-static BEARER_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bbearer\s+[a-z0-9._-]{8,}").expect("valid bearer regex")
-});
+static AUTH_HEADER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?im)(authorization\s*:\s*)([^\r\n]+)").expect("valid auth regex"));
+static BEARER_TOKEN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\bbearer\s+[a-z0-9._-]{8,}").expect("valid bearer regex"));
 static SECRET_ASSIGNMENT_RE: Lazy<Regex> = Lazy::new(|| {
     // AUDIT-FIX [fix-3#13] — The previous pattern matched anything
     // ending in `TOKEN=`/`SECRET=`/`PASSWORD=`/`API_KEY=`, including benign
@@ -25,11 +23,11 @@ static API_KEY_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\b(sk-[A-Za-z0-9_-]{8,}|sk-ant-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{8,})\b")
         .expect("valid api key regex")
 });
-static URL_CREDENTIAL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\bhttps?://[^/\s:@]+:[^/\s@]+@").expect("valid url credential regex"));
+static URL_CREDENTIAL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\bhttps?://[^/\s:@]+:[^/\s@]+@").expect("valid url credential regex")
+});
 static URL_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"([?&](token|key|api_key|access_token)=)([^&#\s]+)")
-        .expect("valid url token regex")
+    Regex::new(r"([?&](token|key|api_key|access_token)=)([^&#\s]+)").expect("valid url token regex")
 });
 static WINDOWS_HOME_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[A-Z]:\\Users\\[^\\/\s]+").expect("valid windows home regex"));
@@ -71,14 +69,22 @@ pub fn sanitize_execute_code_output(
 fn sanitize_text(input: &str) -> String {
     let mut sanitized = ANSI_ESCAPE_RE.replace_all(input, "").to_string();
     sanitized = CONTROL_CHAR_RE.replace_all(&sanitized, "").to_string();
-    sanitized = AUTH_HEADER_RE.replace_all(&sanitized, "$1[redacted]").to_string();
-    sanitized = BEARER_TOKEN_RE.replace_all(&sanitized, "Bearer [redacted]").to_string();
-    sanitized = SECRET_ASSIGNMENT_RE.replace_all(&sanitized, "$1[redacted]").to_string();
+    sanitized = AUTH_HEADER_RE
+        .replace_all(&sanitized, "$1[redacted]")
+        .to_string();
+    sanitized = BEARER_TOKEN_RE
+        .replace_all(&sanitized, "Bearer [redacted]")
+        .to_string();
+    sanitized = SECRET_ASSIGNMENT_RE
+        .replace_all(&sanitized, "$1[redacted]")
+        .to_string();
     sanitized = API_KEY_RE.replace_all(&sanitized, "[redacted]").to_string();
     sanitized = URL_CREDENTIAL_RE
         .replace_all(&sanitized, "https://[redacted]@")
         .to_string();
-    sanitized = URL_TOKEN_RE.replace_all(&sanitized, "$1[redacted]").to_string();
+    sanitized = URL_TOKEN_RE
+        .replace_all(&sanitized, "$1[redacted]")
+        .to_string();
     sanitized = WINDOWS_HOME_RE.replace_all(&sanitized, "~").to_string();
 
     // AUDIT-FIX [fix-3#11] — Use `dirs::home_dir()` (process-cached) and
@@ -92,7 +98,7 @@ fn sanitize_text(input: &str) -> String {
             // substring. The regex is built lazily and cached per-thread.
             thread_local! {
                 static HOME_RE_CACHE: std::cell::RefCell<Option<(String, regex::Regex)>> =
-                    std::cell::RefCell::new(None);
+                    const { std::cell::RefCell::new(None) };
             }
             HOME_RE_CACHE.with(|cell| {
                 let mut cache = cell.borrow_mut();
@@ -179,7 +185,9 @@ mod tests {
             ToolExecutionStatus::Succeeded,
         );
 
-        assert!(result.stdout.contains("https://[redacted]@example.com/path?token=[redacted]"));
+        assert!(result
+            .stdout
+            .contains("https://[redacted]@example.com/path?token=[redacted]"));
         assert!(result.stdout.contains("~\\project"));
         assert!(!result.stdout.contains('\u{7}'));
     }

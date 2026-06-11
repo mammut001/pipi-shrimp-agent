@@ -335,16 +335,16 @@ pub fn open_file_with_app(path: String, app_name: String) -> AppResult<()> {
             .args(["-a", &app_name, &path])
             .spawn()
             .map_err(|e| AppError::FileError(format!("Failed to open with app: {}", e)))?;
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        return Err(AppError::FileError(
+        let _ = (path, app_name);
+        Err(AppError::FileError(
             "open_file_with_app is only supported on macOS".to_string(),
-        ));
+        ))
     }
-
-    Ok(())
 }
 
 /// Return a per-session default output directory under `~/Documents/PiPi-Shrimp/chats/{session_id}/`.

@@ -1,5 +1,5 @@
-pub mod cleanup;
 pub mod cdp_target;
+pub mod cleanup;
 pub mod events;
 pub mod health;
 pub mod lifecycle;

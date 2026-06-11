@@ -82,12 +82,12 @@ async fn complete_checkout_flow_from_page_state(
     typed_value: &str,
 ) -> Result<String> {
     let navigation_id = page_state.navigation_id.clone();
-    let iframe_input = find_live_element(&page_state, "iframe input element", |element| {
+    let iframe_input = find_live_element(page_state, "iframe input element", |element| {
         element.frame_id != "root"
             && element.is_editable
             && element.selector_hint.as_deref() == Some(input_selector_hint)
     })?;
-    let iframe_button = find_live_element(&page_state, "iframe confirmation button", |element| {
+    let iframe_button = find_live_element(page_state, "iframe confirmation button", |element| {
         element.frame_id != "root"
             && element.is_clickable
             && element.tag_name.as_deref() == Some("button")

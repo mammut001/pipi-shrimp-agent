@@ -21,7 +21,11 @@ pub struct ClaudeHttpTelemetryOutcome {
 }
 
 impl ClaudeHttpTelemetry {
-    pub fn start(provider: impl Into<String>, model: impl Into<String>, endpoint: impl AsRef<str>) -> Self {
+    pub fn start(
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        endpoint: impl AsRef<str>,
+    ) -> Self {
         Self {
             provider: provider.into(),
             model: model.into(),
@@ -79,7 +83,11 @@ mod tests {
 
     #[test]
     fn captures_success_and_error_outcomes() {
-        let telemetry = ClaudeHttpTelemetry::start("anthropic", "claude", "https://api.example.com/v1/messages");
+        let telemetry = ClaudeHttpTelemetry::start(
+            "anthropic",
+            "claude",
+            "https://api.example.com/v1/messages",
+        );
         let success = telemetry.finish_success();
         assert_eq!(success.status, "success");
 

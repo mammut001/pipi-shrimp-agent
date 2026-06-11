@@ -232,7 +232,9 @@ pub async fn execute_tool(
     #[allow(non_snake_case)] baseUrl: Option<String>,
     provider: Option<String>,
     #[allow(non_snake_case)] apiFormat: Option<String>,
-    #[allow(non_snake_case)] providerCapabilities: Option<crate::claude::provider::ProviderCapabilities>,
+    #[allow(non_snake_case)] providerCapabilities: Option<
+        crate::claude::provider::ProviderCapabilities,
+    >,
 ) -> AppResult<String> {
     println!("🔧 Executing tool: {} with args: {}", tool_name, arguments);
 

@@ -18,7 +18,7 @@ export function MCPDropdown({ onOpenSettings }: MCPDropdownProps) {
     runtimes.find(r => r.id === serverId);
 
   return (
-    <div className="absolute bottom-full mb-2 left-0 w-72 bg-white border border-gray-200 rounded-xl shadow-lg z-50">
+    <div className="absolute bottom-full mb-2 right-0 w-72 bg-white border border-gray-200 rounded-xl shadow-lg z-50 max-w-none">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
         <span className="text-sm font-semibold text-gray-800">MCP Servers</span>

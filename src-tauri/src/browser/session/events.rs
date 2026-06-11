@@ -68,7 +68,11 @@ impl BrowserSessionManager {
         self.record_navigation_event(current_url, title);
     }
 
-    pub(super) fn record_navigation_event(&self, current_url: Option<String>, title: Option<String>) {
+    pub(super) fn record_navigation_event(
+        &self,
+        current_url: Option<String>,
+        title: Option<String>,
+    ) {
         let detail = current_url.clone();
         let title = title
             .filter(|value| !value.trim().is_empty())
@@ -102,14 +106,7 @@ mod tests {
         ));
 
         manager.record_action_started("click", Some("index=3".to_string()));
-        manager.record_action_finished(
-            "click",
-            Some("index=3".to_string()),
-            120,
-            true,
-            None,
-            None,
-        );
+        manager.record_action_finished("click", Some("index=3".to_string()), 120, true, None, None);
 
         let snapshot = manager.observability_snapshot();
         assert_eq!(snapshot.recent_events.len(), 2);

@@ -136,15 +136,11 @@ fn extract_tool_result_id(msg: &Message) -> Option<String> {
         return Some(id.clone());
     }
 
-    let rest = msg
-        .content
-        .strip_prefix("__TOOL_RESULT__:")?;
+    let rest = msg.content.strip_prefix("__TOOL_RESULT__:")?;
     // The ID is the prefix of `rest` that ends at the first `: ` (colon +
     // space) when present, otherwise the first `:`. Either way we then
     // trim whitespace to be defensive.
-    let colon_pos = rest
-        .find(": ")
-        .or_else(|| rest.find(':'))?;
+    let colon_pos = rest.find(": ").or_else(|| rest.find(':'))?;
     let candidate = rest[..colon_pos].trim();
     if candidate.is_empty() {
         return None;

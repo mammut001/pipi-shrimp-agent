@@ -220,7 +220,10 @@ pub(crate) trait BrowserChatRuntime {
     }
 }
 
-pub(crate) async fn execute_browser_chat_tool_call<R>(call: BrowserChatToolCall, runtime: &R) -> String
+pub(crate) async fn execute_browser_chat_tool_call<R>(
+    call: BrowserChatToolCall,
+    runtime: &R,
+) -> String
 where
     R: BrowserChatRuntime + Sync,
 {

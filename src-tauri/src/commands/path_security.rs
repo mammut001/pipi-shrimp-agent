@@ -54,10 +54,10 @@ const WINDOWS_BLOCKED_PREFIXES: &[&str] = &[
 /// (e.g. `~/.ssh` is blocked in addition to `~/.ssh/anything`), preventing
 /// access to the directory's own metadata or hidden files.
 const HOME_BLOCKED_SUFFIXES: &[(&str, &str)] = &[
-    ("/.ssh",     "SSH credentials"),
-    ("/.gnupg",   "GPG keyring"),
-    ("/.aws",     "AWS credentials"),
-    ("/.kube",    "Kubernetes credentials"),
+    ("/.ssh", "SSH credentials"),
+    ("/.gnupg", "GPG keyring"),
+    ("/.aws", "AWS credentials"),
+    ("/.kube", "Kubernetes credentials"),
     ("/.config/gcloud", "Google Cloud SDK credentials"),
     ("/Library/Keychains", "macOS Keychain"),
 ];
@@ -103,11 +103,11 @@ fn resolve_path(path: &str, work_dir: Option<&str>) -> Result<String, PathSecuri
     // Canonicalize the absolute path FIRST (before any security checks).
     // This prevents TOCTOU race conditions where symlinks could be changed
     // between traversal checks and canonicalization.
-    let canonical = Path::new(&abs_path).canonicalize().map_err(|e| {
-        PathSecurityError {
+    let canonical = Path::new(&abs_path)
+        .canonicalize()
+        .map_err(|e| PathSecurityError {
             message: format!("Cannot resolve path '{}': {}", path, e),
-        }
-    })?;
+        })?;
 
     Ok(canonical.to_string_lossy().to_string())
 }
@@ -143,7 +143,9 @@ pub fn is_within_dir(child: &Path, parent: &Path) -> bool {
     }
     // Canonicalize both sides if possible; fall back to the raw (lexical) form
     // for the parts of the tree that don't yet exist on disk.
-    let child_canon = child.canonicalize().unwrap_or_else(|_| normalize_path(child));
+    let child_canon = child
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_path(child));
     let parent_canon = parent
         .canonicalize()
         .unwrap_or_else(|_| normalize_path(parent));
@@ -258,14 +260,18 @@ pub fn validate_destination_path(
         .or_else(|_| {
             // The destination may not exist yet; canonicalize the parent and
             // re-attach the leaf so we still get a strict comparison.
-            let parent = path_obj.parent().ok_or_else(|| std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "destination has no parent",
-            ))?;
-            let leaf = path_obj.file_name().ok_or_else(|| std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "destination has no file name",
-            ))?;
+            let parent = path_obj.parent().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "destination has no parent",
+                )
+            })?;
+            let leaf = path_obj.file_name().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "destination has no file name",
+                )
+            })?;
             let parent_canon = parent.canonicalize()?;
             Ok::<_, std::io::Error>(parent_canon.join(leaf))
         })
@@ -339,11 +345,12 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
     // trailing separator boundary for the work_dir check (fix-1#6).
     if let Some(wd) = work_dir {
         let wd_expanded_str = expand_home(wd);
-        let wd_canonical = Path::new(&wd_expanded_str).canonicalize().map_err(|e| {
-            PathSecurityError {
-                message: format!("Cannot resolve work directory '{}': {}", wd, e),
-            }
-        })?;
+        let wd_canonical =
+            Path::new(&wd_expanded_str)
+                .canonicalize()
+                .map_err(|e| PathSecurityError {
+                    message: format!("Cannot resolve work directory '{}': {}", wd, e),
+                })?;
         let child = Path::new(&canonical_str);
         if !is_within_dir(child, &wd_canonical) {
             return Err(PathSecurityError {
@@ -369,11 +376,7 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
                     .or_else(|| {
                         WINDOWS_BLOCKED_PREFIXES
                             .iter()
-                            .find(|p| {
-                                canonical_str
-                                    .to_lowercase()
-                                    .starts_with(&p.to_lowercase())
-                            })
+                            .find(|p| canonical_str.to_lowercase().starts_with(&p.to_lowercase()))
                             .copied()
                     })
                     .unwrap_or("(matched)")
@@ -544,7 +547,8 @@ mod tests {
         fs::create_dir_all(&project).expect("project dir should exist");
         fs::write(&outside, "outside").expect("outside file should exist");
 
-        let work_dir = Some(project.to_string_lossy().as_ref());
+        let project_path = project.to_string_lossy();
+        let work_dir = Some(project_path.as_ref());
         assert!(validate_path("../outside.txt", work_dir).is_err());
         assert!(validate_path(outside.to_string_lossy().as_ref(), work_dir).is_err());
 
@@ -561,7 +565,8 @@ mod tests {
         fs::write(&file_path, "hello").expect("file should exist");
         fs::write(&nested_file, "fn main() {}\n").expect("nested file should exist");
 
-        let work_dir = Some(root.to_string_lossy().as_ref());
+        let root_path = root.to_string_lossy();
+        let work_dir = Some(root_path.as_ref());
         assert!(validate_path("file.txt", work_dir).is_ok());
         assert!(validate_path("src/main.rs", work_dir).is_ok());
         assert!(validate_path(file_path.to_string_lossy().as_ref(), work_dir).is_ok());

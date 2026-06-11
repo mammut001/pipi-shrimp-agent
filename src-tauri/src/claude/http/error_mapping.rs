@@ -2,19 +2,37 @@ use crate::utils::AppError;
 
 #[derive(Debug)]
 pub enum ClaudeHttpError {
-    Network { retryable: bool },
-    Timeout { retryable: bool },
-    Auth { provider_message: Option<String> },
-    RateLimit { retry_after: Option<u64> },
-    Validation { field: String, message: String },
-    Provider { provider: String, message: String },
-    Unknown { source: Box<dyn std::error::Error + Send + Sync> },
+    Network {
+        retryable: bool,
+    },
+    Timeout {
+        retryable: bool,
+    },
+    Auth {
+        provider_message: Option<String>,
+    },
+    RateLimit {
+        retry_after: Option<u64>,
+    },
+    Validation {
+        field: String,
+        message: String,
+    },
+    Provider {
+        provider: String,
+        message: String,
+    },
+    Unknown {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl ClaudeHttpError {
     pub fn retryable(&self) -> bool {
         match self {
-            ClaudeHttpError::Network { retryable } | ClaudeHttpError::Timeout { retryable } => *retryable,
+            ClaudeHttpError::Network { retryable } | ClaudeHttpError::Timeout { retryable } => {
+                *retryable
+            }
             ClaudeHttpError::RateLimit { .. } => true,
             ClaudeHttpError::Auth { .. }
             | ClaudeHttpError::Validation { .. }
@@ -25,21 +43,31 @@ impl ClaudeHttpError {
 
     pub fn to_app_error(&self) -> AppError {
         match self {
-            ClaudeHttpError::Network { .. } => AppError::ProcessError("HTTP network error".to_string()),
-            ClaudeHttpError::Timeout { .. } => AppError::ProcessError("HTTP request timed out".to_string()),
+            ClaudeHttpError::Network { .. } => {
+                AppError::ProcessError("HTTP network error".to_string())
+            }
+            ClaudeHttpError::Timeout { .. } => {
+                AppError::ProcessError("HTTP request timed out".to_string())
+            }
             ClaudeHttpError::Auth { provider_message } => AppError::ConfigError(
-                provider_message.clone().unwrap_or_else(|| "Authentication failed".to_string()),
+                provider_message
+                    .clone()
+                    .unwrap_or_else(|| "Authentication failed".to_string()),
             ),
-            ClaudeHttpError::RateLimit { retry_after } => AppError::ProcessError(match retry_after {
-                Some(seconds) => format!("Rate limited. Retry after {}s", seconds),
-                None => "Rate limited by provider".to_string(),
-            }),
+            ClaudeHttpError::RateLimit { retry_after } => {
+                AppError::ProcessError(match retry_after {
+                    Some(seconds) => format!("Rate limited. Retry after {}s", seconds),
+                    None => "Rate limited by provider".to_string(),
+                })
+            }
             ClaudeHttpError::Validation { field, message } => {
                 AppError::InvalidInput(format!("{}: {}", field, sanitize_provider_message(message)))
             }
-            ClaudeHttpError::Provider { provider, message } => {
-                AppError::ProcessError(format!("{}: {}", provider, sanitize_provider_message(message)))
-            }
+            ClaudeHttpError::Provider { provider, message } => AppError::ProcessError(format!(
+                "{}: {}",
+                provider,
+                sanitize_provider_message(message)
+            )),
             ClaudeHttpError::Unknown { source } => {
                 AppError::InternalError(sanitize_provider_message(&source.to_string()))
             }
@@ -57,7 +85,11 @@ impl std::fmt::Display for ClaudeHttpError {
                 write!(f, "timeout error (retryable={})", retryable)
             }
             ClaudeHttpError::Auth { provider_message } => {
-                write!(f, "auth error: {}", provider_message.as_deref().unwrap_or("unauthorized"))
+                write!(
+                    f,
+                    "auth error: {}",
+                    provider_message.as_deref().unwrap_or("unauthorized")
+                )
             }
             ClaudeHttpError::RateLimit { retry_after } => {
                 write!(f, "rate limited (retry_after={:?})", retry_after)
@@ -123,9 +155,7 @@ pub fn map_http_status(status: u16, body: Option<&str>) -> ClaudeHttpError {
         429 => ClaudeHttpError::RateLimit {
             retry_after: extract_retry_after(body),
         },
-        500..=599 => ClaudeHttpError::Network {
-            retryable: true,
-        },
+        500..=599 => ClaudeHttpError::Network { retryable: true },
         _ => ClaudeHttpError::Provider {
             provider: "http".to_string(),
             message: sanitized.unwrap_or_else(|| format!("HTTP {}", status)),
@@ -160,8 +190,10 @@ fn extract_retry_after(body: Option<&str>) -> Option<u64> {
         // AUDIT-FIX [fix-7-pre] — Escape the literal `"` inside the regex
         // string so the source compiles (it was previously an unterminated
         // char literal at the start of the character class).
-        Regex::new(r#"(?i)(?:retry[_\- ]?after|retry[_\- ]?in)["'\s:=]+(\d{1,6})\s*(s|sec|seconds)?"#)
-            .expect("retry-after regex must compile")
+        Regex::new(
+            r#"(?i)(?:retry[_\- ]?after|retry[_\- ]?in)["'\s:=]+(\d{1,6})\s*(s|sec|seconds)?"#,
+        )
+        .expect("retry-after regex must compile")
     });
     if let Some(caps) = RE_SECONDS.captures(body) {
         if let Some(m) = caps.get(1) {
@@ -205,8 +237,14 @@ mod tests {
             ClaudeHttpError::RateLimit { retry_after } => assert_eq!(retry_after, Some(12)),
             _ => panic!("expected rate limit"),
         }
-        assert!(matches!(map_http_status(401, Some("bad key")), ClaudeHttpError::Auth { .. }));
-        assert!(matches!(map_http_status(400, Some("invalid json")), ClaudeHttpError::Validation { .. }));
+        assert!(matches!(
+            map_http_status(401, Some("bad key")),
+            ClaudeHttpError::Auth { .. }
+        ));
+        assert!(matches!(
+            map_http_status(400, Some("invalid json")),
+            ClaudeHttpError::Validation { .. }
+        ));
     }
 
     #[test]

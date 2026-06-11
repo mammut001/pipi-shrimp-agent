@@ -147,11 +147,16 @@ fn is_read_tool(name: &str) -> bool {
 }
 
 fn is_write_tool(name: &str) -> bool {
-    WRITE_TOOLS.contains(&name) || matches!(name, "ssh_upload_file") || is_browser_mutation_tool(name)
+    WRITE_TOOLS.contains(&name)
+        || matches!(name, "ssh_upload_file")
+        || is_browser_mutation_tool(name)
 }
 
 fn is_command_tool(name: &str) -> bool {
-    matches!(name, "execute_command" | "ssh_exec" | "run_in_terminal" | "agent_tool")
+    matches!(
+        name,
+        "execute_command" | "ssh_exec" | "run_in_terminal" | "agent_tool"
+    )
 }
 
 fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
@@ -294,7 +299,9 @@ fn evaluate_request_policy(
 
     if is_mcp_tool(&req.name) {
         return Ok(match req.source {
-            ToolExecutionSource::Unknown => reject("Unknown execution source cannot run MCP tools."),
+            ToolExecutionSource::Unknown => {
+                reject("Unknown execution source cannot run MCP tools.")
+            }
             _ => require_confirmation("MCP tool execution requires explicit approval."),
         });
     }
@@ -377,9 +384,13 @@ fn evaluate_command_policy(
     let decision = match req.source {
         ToolExecutionSource::AssistantToolCall => {
             if uses_network {
-                require_confirmation("Assistant tool calls need approval for network or package-install commands.")
+                require_confirmation(
+                    "Assistant tool calls need approval for network or package-install commands.",
+                )
             } else if long_running {
-                require_confirmation("Assistant tool calls need approval for long-running commands.")
+                require_confirmation(
+                    "Assistant tool calls need approval for long-running commands.",
+                )
             } else {
                 allow(None)
             }
@@ -457,7 +468,11 @@ fn normalize_remote_path(path: &str, remote_work_dir: &str) -> Option<String> {
     Some(format!("/{}", parts.join("/")))
 }
 
-fn validate_remote_path(args: &serde_json::Value, path_key: &str, tool_name: &str) -> AppResult<()> {
+fn validate_remote_path(
+    args: &serde_json::Value,
+    path_key: &str,
+    tool_name: &str,
+) -> AppResult<()> {
     let remote_work_dir = require_remote_work_dir(args, tool_name)?;
     let remote_path = args
         .get(path_key)
@@ -486,7 +501,10 @@ fn validate_remote_path(args: &serde_json::Value, path_key: &str, tool_name: &st
     Ok(())
 }
 
-fn evaluate_ssh_exec_policy(req: &ToolCallRequest, args: &serde_json::Value) -> AppResult<PolicyDecision> {
+fn evaluate_ssh_exec_policy(
+    req: &ToolCallRequest,
+    args: &serde_json::Value,
+) -> AppResult<PolicyDecision> {
     require_remote_work_dir(args, &req.name)?;
     let command = args
         .get("command")
@@ -508,7 +526,10 @@ fn evaluate_ssh_exec_policy(req: &ToolCallRequest, args: &serde_json::Value) -> 
     })
 }
 
-fn evaluate_ssh_upload_policy(req: &ToolCallRequest, args: &serde_json::Value) -> AppResult<PolicyDecision> {
+fn evaluate_ssh_upload_policy(
+    req: &ToolCallRequest,
+    args: &serde_json::Value,
+) -> AppResult<PolicyDecision> {
     validate_remote_path(args, "remotePath", &req.name)?;
     Ok(match req.source {
         ToolExecutionSource::AssistantToolCall
@@ -523,7 +544,10 @@ fn evaluate_ssh_upload_policy(req: &ToolCallRequest, args: &serde_json::Value) -
     })
 }
 
-fn evaluate_ssh_read_policy(req: &ToolCallRequest, args: &serde_json::Value) -> AppResult<PolicyDecision> {
+fn evaluate_ssh_read_policy(
+    req: &ToolCallRequest,
+    args: &serde_json::Value,
+) -> AppResult<PolicyDecision> {
     validate_remote_path(args, "remotePath", &req.name)?;
     Ok(match req.source {
         ToolExecutionSource::Unknown => reject("Unknown execution source cannot read over SSH."),
@@ -565,16 +589,23 @@ pub fn enforce_request_policy(
     let decision = evaluate_request_policy(req, args)?;
     match decision.action {
         PolicyAction::Allow => Ok(()),
-        PolicyAction::Reject => Err(AppError::SecurityError(
-            decision.reason.unwrap_or_else(|| "Tool execution rejected by policy.".to_string()),
-        )),
+        PolicyAction::Reject => {
+            Err(AppError::SecurityError(decision.reason.unwrap_or_else(
+                || "Tool execution rejected by policy.".to_string(),
+            )))
+        }
         PolicyAction::RequireConfirmation => {
             if consume_matching_approval(req, session_id) {
                 Ok(())
             } else {
-                Err(AppError::SecurityError(decision.reason.unwrap_or_else(|| {
-                    format!("Tool '{}' requires explicit confirmation before execution.", req.name)
-                })))
+                Err(AppError::SecurityError(decision.reason.unwrap_or_else(
+                    || {
+                        format!(
+                            "Tool '{}' requires explicit confirmation before execution.",
+                            req.name
+                        )
+                    },
+                )))
             }
         }
     }
@@ -622,8 +653,7 @@ fn command_uses_network(command: &str) -> bool {
             .map(|t| regex::escape(t))
             .collect::<Vec<_>>()
             .join("|");
-        Regex::new(&format!(r"(?i)\b(?:{})\b", escaped))
-            .expect("network-token regex must compile")
+        Regex::new(&format!(r"(?i)\b(?:{})\b", escaped)).expect("network-token regex must compile")
     });
 
     for segment in SEGMENT_RE.find_iter(command) {
@@ -678,8 +708,12 @@ mod tests {
         let mut request = make_request("read_file");
         request.allowed_tools = Some(vec!["write_file".to_string()]);
 
-        let error = enforce_request_policy(&request, &serde_json::json!({ "path": "README.md" }), Some("session-1"))
-            .expect_err("expected allowlist rejection");
+        let error = enforce_request_policy(
+            &request,
+            &serde_json::json!({ "path": "README.md" }),
+            Some("session-1"),
+        )
+        .expect_err("expected allowlist rejection");
 
         assert!(error.to_string().contains("not allowed"));
     }

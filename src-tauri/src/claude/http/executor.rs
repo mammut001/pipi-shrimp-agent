@@ -11,9 +11,9 @@ use crate::claude::message::{ChatResponse, Message, UsageInfo};
 use crate::utils::{AppError, AppResult};
 
 use super::{
-    estimate_request_input_tokens, get_adapter_for_config, map_http_status, parse_plain_response,
-    resolve_provider_config, run_with_retry, stream_response, apply_allowed_tools_to_body, ClaudeHttpError,
-    ClaudeHttpTelemetry, ProviderId, DEFAULT_RETRY_POLICY,
+    apply_allowed_tools_to_body, estimate_request_input_tokens, get_adapter_for_config,
+    map_http_status, parse_plain_response, resolve_provider_config, run_with_retry,
+    stream_response, ClaudeHttpError, ClaudeHttpTelemetry, ProviderId, DEFAULT_RETRY_POLICY,
 };
 
 static CANCEL_TOKENS: Lazy<Mutex<HashMap<String, CancellationToken>>> =
@@ -132,7 +132,8 @@ pub async fn send_request_impl(
     }
     if body.get("tools").is_some() {
         if !config.capabilities.supports_tool_calls
-            || (config.api_format == super::ApiFormat::OpenAI && !config.capabilities.supports_tool_openai)
+            || (config.api_format == super::ApiFormat::OpenAI
+                && !config.capabilities.supports_tool_openai)
         {
             if let Some(record) = body.as_object_mut() {
                 record.remove("tools");
@@ -154,7 +155,8 @@ pub async fn send_request_impl(
             }
         }
     }
-    if config.api_format == super::ApiFormat::OpenAI && config.capabilities.accepts_response_format {
+    if config.api_format == super::ApiFormat::OpenAI && config.capabilities.accepts_response_format
+    {
         if let Some(response_format) = response_format {
             body["response_format"] = response_format;
         }
@@ -373,7 +375,10 @@ pub fn validate_messages(messages: Vec<Message>, surface: &str) -> AppResult<Vec
     }
 
     if !validation.warnings.is_empty() {
-        eprintln!("[{}] Validation warnings: {:?}", surface, validation.warnings);
+        eprintln!(
+            "[{}] Validation warnings: {:?}",
+            surface, validation.warnings
+        );
     }
 
     Ok(normalized)
@@ -412,10 +417,12 @@ fn map_app_error(provider: &str, error: AppError) -> ClaudeHttpError {
             field: "request".to_string(),
             message: error.message,
         },
-        "process_error" | "file_error" | "internal_error" | "not_found" | "security_error" => ClaudeHttpError::Provider {
-            provider: provider.to_string(),
-            message: error.message,
-        },
+        "process_error" | "file_error" | "internal_error" | "not_found" | "security_error" => {
+            ClaudeHttpError::Provider {
+                provider: provider.to_string(),
+                message: error.message,
+            }
+        }
         _ => ClaudeHttpError::Provider {
             provider: provider.to_string(),
             message: error.message,

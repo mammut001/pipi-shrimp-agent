@@ -330,7 +330,12 @@ fn optional_string_array_arg(args: &Value, key: &str) -> AppResult<Vec<String>> 
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToString::to_string)
-                    .ok_or_else(|| AppError::InvalidInput(format!("{} must be an array of non-empty strings", key)))
+                    .ok_or_else(|| {
+                        AppError::InvalidInput(format!(
+                            "{} must be an array of non-empty strings",
+                            key
+                        ))
+                    })
             })
             .collect(),
         Some(_) => Err(AppError::InvalidInput(format!("{} must be an array", key))),
@@ -342,7 +347,9 @@ fn resolve_target_path(path: &str, context: &BootstrapExecutionContext) -> AppRe
     resolve_path(path, context.work_dir.as_deref())
 }
 
-fn require_provider_context(context: &BootstrapExecutionContext) -> AppResult<&BootstrapProviderContext> {
+fn require_provider_context(
+    context: &BootstrapExecutionContext,
+) -> AppResult<&BootstrapProviderContext> {
     context.provider.as_ref().ok_or_else(|| {
         AppError::InvalidInput(
             "AutoResearch bootstrap inference requires active provider context (apiKey/model/provider)."
@@ -366,8 +373,9 @@ fn metric_appears_in_source(value: f64, source_text: &str) -> bool {
 }
 
 fn parse_json(raw: &str) -> AppResult<Value> {
-    serde_json::from_str(raw.trim())
-        .map_err(|error| AppError::InvalidInput(format!("Invalid JSON-only bootstrap response: {error}")))
+    serde_json::from_str(raw.trim()).map_err(|error| {
+        AppError::InvalidInput(format!("Invalid JSON-only bootstrap response: {error}"))
+    })
 }
 
 async fn run_json_bootstrap_inference(
@@ -417,14 +425,14 @@ async fn run_json_bootstrap_inference(
 
 async fn write_text_file(path: &Path, content: &str) -> AppResult<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(|error| AppError::FileError(format!("Failed to create '{}': {error}", parent.display())))?;
+        fs::create_dir_all(parent).await.map_err(|error| {
+            AppError::FileError(format!("Failed to create '{}': {error}", parent.display()))
+        })?;
     }
 
-    fs::write(path, content)
-        .await
-        .map_err(|error| AppError::FileError(format!("Failed to write '{}': {error}", path.display())))
+    fs::write(path, content).await.map_err(|error| {
+        AppError::FileError(format!("Failed to write '{}': {error}", path.display()))
+    })
 }
 
 async fn run_command(program: &str, args: &[&str], cwd: &Path) -> AppResult<std::process::Output> {
@@ -454,7 +462,9 @@ fn template_definition(template_id: &str) -> AppResult<&'static TemplateDefiniti
     match normalize_template_id(template_id)? {
         "python-ml-baseline" => Ok(&PYTHON_TEMPLATE),
         "node-eval-harness" => Ok(&NODE_TEMPLATE),
-        _ => Err(AppError::InvalidInput("Unsupported scaffold template".to_string())),
+        _ => Err(AppError::InvalidInput(
+            "Unsupported scaffold template".to_string(),
+        )),
     }
 }
 
@@ -464,7 +474,11 @@ fn normalize_project_name(value: &str) -> String {
     let mut last_was_dash = false;
 
     for ch in trimmed.chars() {
-        let keep = if ch.is_ascii_alphanumeric() { Some(ch) } else { Some('-') };
+        let keep = if ch.is_ascii_alphanumeric() {
+            Some(ch)
+        } else {
+            Some('-')
+        };
         if let Some(next) = keep {
             if next == '-' {
                 if last_was_dash {
@@ -499,8 +513,9 @@ fn normalize_scaffold_vars(args: &Value) -> Map<String, Value> {
     vars.insert(
         "success_criteria".to_string(),
         Value::String(
-            optional_string_arg(args, &["successCriteria", "success_criteria"])
-                .unwrap_or_else(|| "Improve the primary metric over the selected baseline.".to_string()),
+            optional_string_arg(args, &["successCriteria", "success_criteria"]).unwrap_or_else(
+                || "Improve the primary metric over the selected baseline.".to_string(),
+            ),
         ),
     );
     vars.insert(
@@ -540,7 +555,10 @@ fn normalize_scaffold_vars(args: &Value) -> Map<String, Value> {
     );
     vars.insert(
         "requirements_extra".to_string(),
-        Value::String(optional_string_arg(args, &["requirementsExtra", "requirements_extra"]).unwrap_or_default()),
+        Value::String(
+            optional_string_arg(args, &["requirementsExtra", "requirements_extra"])
+                .unwrap_or_default(),
+        ),
     );
     vars.insert(
         "node_eval_command".to_string(),
@@ -564,12 +582,16 @@ fn render_value(value: Option<&Value>) -> String {
 }
 
 fn render_template_string(template: &str, vars: &Map<String, Value>) -> AppResult<String> {
-    let pattern = Regex::new(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
-        .map_err(|error| AppError::InternalError(format!("Invalid scaffold placeholder regex: {error}")))?;
+    let pattern = Regex::new(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}").map_err(|error| {
+        AppError::InternalError(format!("Invalid scaffold placeholder regex: {error}"))
+    })?;
 
     let mut missing = Vec::new();
     let rendered = pattern.replace_all(template, |captures: &regex::Captures<'_>| {
-        let name = captures.get(1).map(|capture| capture.as_str()).unwrap_or_default();
+        let name = captures
+            .get(1)
+            .map(|capture| capture.as_str())
+            .unwrap_or_default();
         match vars.get(name) {
             Some(value) => render_value(Some(value)),
             None => {
@@ -683,18 +705,29 @@ fn parse_arxiv_atom_feed(feed: &str) -> AppResult<Vec<PaperReference>> {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "Untitled arXiv paper".to_string());
             let abstract_text = extract_arxiv_tag(entry, "summary");
-            let year = extract_arxiv_tag(entry, "published")
-                .and_then(|published| published.get(0..4).and_then(|year| year.parse::<i64>().ok()));
+            let year = extract_arxiv_tag(entry, "published").and_then(|published| {
+                published
+                    .get(0..4)
+                    .and_then(|year| year.parse::<i64>().ok())
+            });
             let authors: Vec<String> = author_regex
                 .captures_iter(entry)
-                .filter_map(|captures| captures.get(1).map(|author| author.as_str().trim().to_string()))
+                .filter_map(|captures| {
+                    captures
+                        .get(1)
+                        .map(|author| author.as_str().trim().to_string())
+                })
                 .filter(|author| !author.is_empty())
                 .collect();
 
             PaperReference {
                 source: "arxiv".to_string(),
                 title,
-                authors: if authors.is_empty() { None } else { Some(authors) },
+                authors: if authors.is_empty() {
+                    None
+                } else {
+                    Some(authors)
+                },
                 year,
                 venue: None,
                 file_path: None,
@@ -706,12 +739,20 @@ fn parse_arxiv_atom_feed(feed: &str) -> AppResult<Vec<PaperReference>> {
         .collect())
 }
 
-async fn execute_pdf_read_tool(args: &Value, context: &BootstrapExecutionContext) -> AppResult<String> {
+async fn execute_pdf_read_tool(
+    args: &Value,
+    context: &BootstrapExecutionContext,
+) -> AppResult<String> {
     let path = require_string_arg(args, &["path", "filePath"], "pdf_read requires path")?;
     let resolved_path = resolve_target_path(&path, context)?;
     let output = run_command(
         "pdftotext",
-        &["-layout", "-nopgbrk", resolved_path.to_string_lossy().as_ref(), "-"],
+        &[
+            "-layout",
+            "-nopgbrk",
+            resolved_path.to_string_lossy().as_ref(),
+            "-",
+        ],
         resolved_path.parent().unwrap_or_else(|| Path::new("/")),
     )
     .await?;
@@ -738,7 +779,11 @@ async fn execute_paper_extract_meta_tool(
     args: &Value,
     context: &BootstrapExecutionContext,
 ) -> AppResult<String> {
-    let source_text = require_string_arg(args, &["text", "sourceText"], "paper_extract_meta requires text")?;
+    let source_text = require_string_arg(
+        args,
+        &["text", "sourceText"],
+        "paper_extract_meta requires text",
+    )?;
     let provider = require_provider_context(context)?;
     let raw = run_json_bootstrap_inference(
         provider,
@@ -751,20 +796,24 @@ async fn execute_paper_extract_meta_tool(
         Value::Object(mut object) => object.remove("paper").unwrap_or(Value::Object(object)),
         other => other,
     };
-    let paper: PaperReference = serde_json::from_value(candidate)
-        .map_err(|error| AppError::InvalidInput(format!("paper_extract_meta returned invalid JSON: {error}")))?;
-    Ok(serde_json::to_string(&paper)
-        .map_err(|error| AppError::InternalError(format!("Failed to serialize paper metadata: {error}")))?)
+    let paper: PaperReference = serde_json::from_value(candidate).map_err(|error| {
+        AppError::InvalidInput(format!("paper_extract_meta returned invalid JSON: {error}"))
+    })?;
+    serde_json::to_string(&paper).map_err(|error| {
+        AppError::InternalError(format!("Failed to serialize paper metadata: {error}"))
+    })
 }
 
 fn parse_baseline_envelope(raw: &str) -> AppResult<Vec<ExtractedBaseline>> {
     let parsed = parse_json(raw)?;
     match parsed {
-        Value::Array(_) => serde_json::from_value(parsed)
-            .map_err(|error| AppError::InvalidInput(format!("Invalid baseline JSON response: {error}"))),
+        Value::Array(_) => serde_json::from_value(parsed).map_err(|error| {
+            AppError::InvalidInput(format!("Invalid baseline JSON response: {error}"))
+        }),
         Value::Object(object) => match object.get("baselines") {
-            Some(value) => serde_json::from_value(value.clone())
-                .map_err(|error| AppError::InvalidInput(format!("Invalid baseline JSON response: {error}"))),
+            Some(value) => serde_json::from_value(value.clone()).map_err(|error| {
+                AppError::InvalidInput(format!("Invalid baseline JSON response: {error}"))
+            }),
             None => Err(AppError::InvalidInput(
                 "Invalid baseline JSON response: missing baselines field".to_string(),
             )),
@@ -779,7 +828,11 @@ async fn execute_baseline_extract_tool(
     args: &Value,
     context: &BootstrapExecutionContext,
 ) -> AppResult<String> {
-    let source_text = require_string_arg(args, &["text", "sourceText"], "baseline_extract requires text")?;
+    let source_text = require_string_arg(
+        args,
+        &["text", "sourceText"],
+        "baseline_extract requires text",
+    )?;
     let provider = require_provider_context(context)?;
     let raw = run_json_bootstrap_inference(
         provider,
@@ -822,9 +875,8 @@ async fn execute_baseline_extract_tool(
     }
 
     if parsed.is_empty() {
-        unresolved_questions.push(
-            "No baselines were extracted. Ask the user to confirm one manually.".to_string(),
-        );
+        unresolved_questions
+            .push("No baselines were extracted. Ask the user to confirm one manually.".to_string());
     }
 
     Ok(json!({
@@ -837,7 +889,11 @@ async fn execute_baseline_extract_tool(
 
 async fn execute_arxiv_search_tool(args: &Value) -> AppResult<String> {
     let query = require_string_arg(args, &["query"], "arxiv_search requires query")?;
-    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(5).clamp(1, 20);
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(5)
+        .clamp(1, 20);
     let url = format!(
         "https://export.arxiv.org/api/query?search_query=all:{}&start=0&max_results={}",
         urlencoding::encode(&query),
@@ -852,10 +908,9 @@ async fn execute_arxiv_search_tool(args: &Value) -> AppResult<String> {
             response.status()
         )));
     }
-    let feed = response
-        .text()
-        .await
-        .map_err(|error| AppError::ProcessError(format!("Failed to read arXiv response: {error}")))?;
+    let feed = response.text().await.map_err(|error| {
+        AppError::ProcessError(format!("Failed to read arXiv response: {error}"))
+    })?;
     let papers = parse_arxiv_atom_feed(&feed)?;
     Ok(json!({ "papers": papers }).to_string())
 }
@@ -864,27 +919,34 @@ async fn execute_scaffold_generate_tool(
     args: &Value,
     context: &BootstrapExecutionContext,
 ) -> AppResult<String> {
-    let template_id = require_string_arg(args, &["templateId"], "scaffold_generate requires templateId")?;
+    let template_id = require_string_arg(
+        args,
+        &["templateId"],
+        "scaffold_generate requires templateId",
+    )?;
     let target_dir = require_string_arg(args, &["workDir"], "scaffold_generate requires workDir")?;
     let resolved_work_dir = resolve_target_path(&target_dir, context)?;
     let vars = normalize_scaffold_vars(args);
-    let rendered = render_known_scaffold_template(
-        &template_id,
-        &resolved_work_dir.to_string_lossy(),
-        &vars,
-    )?;
+    let rendered =
+        render_known_scaffold_template(&template_id, &resolved_work_dir.to_string_lossy(), &vars)?;
 
     fs::create_dir_all(&resolved_work_dir)
         .await
-        .map_err(|error| AppError::FileError(format!("Failed to create workDir '{}': {error}", resolved_work_dir.display())))?;
+        .map_err(|error| {
+            AppError::FileError(format!(
+                "Failed to create workDir '{}': {error}",
+                resolved_work_dir.display()
+            ))
+        })?;
 
     for file in &rendered.rendered_files {
         let path = resolved_work_dir.join(&file.path);
         write_text_file(&path, &file.content).await?;
     }
 
-    Ok(serde_json::to_string(&rendered.scaffold)
-        .map_err(|error| AppError::InternalError(format!("Failed to serialize scaffold plan: {error}")))?)
+    serde_json::to_string(&rendered.scaffold).map_err(|error| {
+        AppError::InternalError(format!("Failed to serialize scaffold plan: {error}"))
+    })
 }
 
 async fn execute_git_init_workdir_tool(
@@ -895,7 +957,12 @@ async fn execute_git_init_workdir_tool(
     let resolved_work_dir = resolve_target_path(&target_dir, context)?;
     fs::create_dir_all(&resolved_work_dir)
         .await
-        .map_err(|error| AppError::FileError(format!("Failed to create workDir '{}': {error}", resolved_work_dir.display())))?;
+        .map_err(|error| {
+            AppError::FileError(format!(
+                "Failed to create workDir '{}': {error}",
+                resolved_work_dir.display()
+            ))
+        })?;
 
     let work_dir_path = resolved_work_dir.as_path();
     let steps = [
@@ -905,7 +972,12 @@ async fn execute_git_init_workdir_tool(
         ("git", vec!["add", "-A"]),
         (
             "git",
-            vec!["commit", "--allow-empty", "-m", "Initial bootstrap scaffold"],
+            vec![
+                "commit",
+                "--allow-empty",
+                "-m",
+                "Initial bootstrap scaffold",
+            ],
         ),
     ];
 
@@ -937,7 +1009,9 @@ async fn execute_git_init_workdir_tool(
 }
 
 fn get_bootstrap_result_path(work_dir: &Path) -> PathBuf {
-    work_dir.join(".pipi-shrimp").join("autoresearch.bootstrap.json")
+    work_dir
+        .join(".pipi-shrimp")
+        .join("autoresearch.bootstrap.json")
 }
 
 fn validate_scaffold(scaffold: &ScaffoldPlan) -> AppResult<()> {
@@ -948,10 +1022,14 @@ fn validate_scaffold(scaffold: &ScaffoldPlan) -> AppResult<()> {
         )));
     }
     if scaffold.work_dir.trim().is_empty() {
-        return Err(AppError::InvalidInput("scaffold.workDir is required".to_string()));
+        return Err(AppError::InvalidInput(
+            "scaffold.workDir is required".to_string(),
+        ));
     }
     if scaffold.entry_command.trim().is_empty() {
-        return Err(AppError::InvalidInput("scaffold.entryCommand is required".to_string()));
+        return Err(AppError::InvalidInput(
+            "scaffold.entryCommand is required".to_string(),
+        ));
     }
     Ok(())
 }
@@ -960,24 +1038,46 @@ async fn execute_bootstrap_finalize_tool(
     args: &Value,
     context: &BootstrapExecutionContext,
 ) -> AppResult<String> {
-    let research_goal = require_string_arg(args, &["researchGoal"], "bootstrap_finalize requires researchGoal")?;
-    let success_criteria = require_string_arg(args, &["successCriteria"], "bootstrap_finalize requires successCriteria")?;
-    let primary_metric = require_string_arg(args, &["primaryMetric"], "bootstrap_finalize requires primaryMetric")?;
-    let papers: Vec<PaperReference> = serde_json::from_value(
-        args.get("papers").cloned().ok_or_else(|| AppError::InvalidInput("bootstrap_finalize requires papers".to_string()))?,
-    )
-    .map_err(|error| AppError::InvalidInput(format!("bootstrap_finalize papers are invalid: {error}")))?;
-    let baselines: Vec<ExtractedBaseline> = serde_json::from_value(
-        args.get("baselines").cloned().ok_or_else(|| AppError::InvalidInput("bootstrap_finalize requires baselines".to_string()))?,
-    )
-    .map_err(|error| AppError::InvalidInput(format!("bootstrap_finalize baselines are invalid: {error}")))?;
-    let scaffold: ScaffoldPlan = serde_json::from_value(
-        args.get("scaffold").cloned().ok_or_else(|| AppError::InvalidInput("bootstrap_finalize requires scaffold".to_string()))?,
-    )
-    .map_err(|error| AppError::InvalidInput(format!("bootstrap_finalize scaffold is invalid: {error}")))?;
+    let research_goal = require_string_arg(
+        args,
+        &["researchGoal"],
+        "bootstrap_finalize requires researchGoal",
+    )?;
+    let success_criteria = require_string_arg(
+        args,
+        &["successCriteria"],
+        "bootstrap_finalize requires successCriteria",
+    )?;
+    let primary_metric = require_string_arg(
+        args,
+        &["primaryMetric"],
+        "bootstrap_finalize requires primaryMetric",
+    )?;
+    let papers: Vec<PaperReference> =
+        serde_json::from_value(args.get("papers").cloned().ok_or_else(|| {
+            AppError::InvalidInput("bootstrap_finalize requires papers".to_string())
+        })?)
+        .map_err(|error| {
+            AppError::InvalidInput(format!("bootstrap_finalize papers are invalid: {error}"))
+        })?;
+    let baselines: Vec<ExtractedBaseline> =
+        serde_json::from_value(args.get("baselines").cloned().ok_or_else(|| {
+            AppError::InvalidInput("bootstrap_finalize requires baselines".to_string())
+        })?)
+        .map_err(|error| {
+            AppError::InvalidInput(format!("bootstrap_finalize baselines are invalid: {error}"))
+        })?;
+    let scaffold: ScaffoldPlan =
+        serde_json::from_value(args.get("scaffold").cloned().ok_or_else(|| {
+            AppError::InvalidInput("bootstrap_finalize requires scaffold".to_string())
+        })?)
+        .map_err(|error| {
+            AppError::InvalidInput(format!("bootstrap_finalize scaffold is invalid: {error}"))
+        })?;
     validate_scaffold(&scaffold)?;
-    let git_initialized = optional_bool_arg(args, "gitInitialized")
-        .ok_or_else(|| AppError::InvalidInput("bootstrap_finalize requires gitInitialized".to_string()))?;
+    let git_initialized = optional_bool_arg(args, "gitInitialized").ok_or_else(|| {
+        AppError::InvalidInput("bootstrap_finalize requires gitInitialized".to_string())
+    })?;
     let conversational_template_id = require_string_arg(
         args,
         &["conversationalTemplateId"],
@@ -989,7 +1089,8 @@ async fn execute_bootstrap_finalize_tool(
     let mut unresolved_questions = Vec::new();
     let mut warnings = Vec::new();
     if baselines.is_empty() {
-        unresolved_questions.push("Keep at least one baseline before starting AutoResearch.".to_string());
+        unresolved_questions
+            .push("Keep at least one baseline before starting AutoResearch.".to_string());
     }
     if success_criteria.trim().len() < 10 {
         unresolved_questions.push(
@@ -998,7 +1099,8 @@ async fn execute_bootstrap_finalize_tool(
     }
     if !git_initialized {
         warnings.push(
-            "Git initialization did not complete. The bootstrap can continue without it.".to_string(),
+            "Git initialization did not complete. The bootstrap can continue without it."
+                .to_string(),
         );
     }
 
@@ -1033,18 +1135,22 @@ async fn execute_bootstrap_finalize_tool(
     let bootstrap_work_dir = resolve_target_path(&scaffold.work_dir, context)?;
     let bootstrap_file_path = get_bootstrap_result_path(&bootstrap_work_dir);
     let bootstrap_temp_path = bootstrap_file_path.with_extension("json.tmp");
-    let pretty = serde_json::to_string_pretty(&result)
-        .map_err(|error| AppError::InternalError(format!("Failed to encode bootstrap result: {error}")))?;
+    let pretty = serde_json::to_string_pretty(&result).map_err(|error| {
+        AppError::InternalError(format!("Failed to encode bootstrap result: {error}"))
+    })?;
     write_text_file(&bootstrap_temp_path, &format!("{pretty}\n")).await?;
     fs::rename(&bootstrap_temp_path, &bootstrap_file_path)
         .await
-        .map_err(|error| AppError::InternalError(format!(
-            "Failed to finalize bootstrap result file {}: {error}",
-            bootstrap_file_path.display()
-        )))?;
+        .map_err(|error| {
+            AppError::InternalError(format!(
+                "Failed to finalize bootstrap result file {}: {error}",
+                bootstrap_file_path.display()
+            ))
+        })?;
 
-    Ok(serde_json::to_string(&result)
-        .map_err(|error| AppError::InternalError(format!("Failed to encode bootstrap result: {error}")))?)
+    serde_json::to_string(&result).map_err(|error| {
+        AppError::InternalError(format!("Failed to encode bootstrap result: {error}"))
+    })
 }
 
 trait IfEmptyThen {
@@ -1091,12 +1197,9 @@ mod tests {
             "requirementsExtra": "torch",
         }));
 
-        let rendered = render_known_scaffold_template(
-            "python-ml-baseline",
-            "/tmp/test-project",
-            &vars,
-        )
-        .expect("render should succeed");
+        let rendered =
+            render_known_scaffold_template("python-ml-baseline", "/tmp/test-project", &vars)
+                .expect("render should succeed");
 
         assert!(rendered
             .rendered_files

@@ -21,7 +21,10 @@ pub enum StreamEvent {
         name: String,
         arguments: String,
     },
-    ToolCallComplete { id: String, name: String },
+    ToolCallComplete {
+        id: String,
+        name: String,
+    },
     Artifact(Artifact),
     Usage {
         input_tokens: i32,
@@ -279,8 +282,17 @@ mod tests {
 
     #[test]
     fn resolves_known_adapter_variants() {
-        assert_eq!(get_adapter(ProviderId::Anthropic).provider_id(), ProviderId::Anthropic);
-        assert_eq!(get_adapter(ProviderId::MiniMax).provider_id(), ProviderId::MiniMax);
-        assert_eq!(get_adapter(ProviderId::OpenAI).provider_id(), ProviderId::OpenAI);
+        assert_eq!(
+            get_adapter(ProviderId::Anthropic).provider_id(),
+            ProviderId::Anthropic
+        );
+        assert_eq!(
+            get_adapter(ProviderId::MiniMax).provider_id(),
+            ProviderId::MiniMax
+        );
+        assert_eq!(
+            get_adapter(ProviderId::OpenAI).provider_id(),
+            ProviderId::OpenAI
+        );
     }
 }

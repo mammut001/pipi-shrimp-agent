@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
+import type { BrowserFailureSnapshot } from '@/types/browser';
 import type {
-  BrowserFailureSnapshot,
   BrowserActionTrace,
   BrowserCommandTrace,
   BrowserDebugEvent,

@@ -102,7 +102,9 @@ fn resolve_windows_command_cwd(cwd: &str, work_dir: Option<&str>) -> AppResult<S
         return work_dir
             .map(normalize_wsl_style_path)
             .transpose()?
-            .ok_or_else(|| AppError::ProcessError("Relative working directory requires work_dir".to_string()));
+            .ok_or_else(|| {
+                AppError::ProcessError("Relative working directory requires work_dir".to_string())
+            });
     }
 
     match detect_path_kind(Some(cwd)) {
@@ -231,14 +233,29 @@ fn check_command_safety(command: &str) -> AppResult<()> {
 
     static SAFETY_RULES: Lazy<Vec<SafetyRule>> = Lazy::new(|| {
         let raw: &[(&str, &str)] = &[
-            (r"(?i)\brm\s+(-rf?)\s+/\s*$", "Attempting to delete root filesystem"),
-            (r"(?i)\brm\s+(-rf?)\s+~\s*$", "Attempting to delete home directory"),
+            (
+                r"(?i)\brm\s+(-rf?)\s+/\s*$",
+                "Attempting to delete root filesystem",
+            ),
+            (
+                r"(?i)\brm\s+(-rf?)\s+~\s*$",
+                "Attempting to delete home directory",
+            ),
             (r"(?i)\bmkfs\b", "Filesystem creation command"),
             (r"(?i)\bdd\s+if=\S+\s+of=/dev", "Writing to block device"),
             (r":\(\)\s*:\s*\|\s*:\s*&", "Fork bomb"),
-            (r"(?i)\bchmod\s+(-R\s+)?777\s+/\s*$", "Making root filesystem world-writable"),
-            (r"(?i)\bchmod\s+(-R\s+)?777\s+~\s*$", "Making home directory world-writable"),
-            (r"(?i)\bchown\s+(-R\s+)?\S+:\S+\s+/\s*$", "Changing root ownership"),
+            (
+                r"(?i)\bchmod\s+(-R\s+)?777\s+/\s*$",
+                "Making root filesystem world-writable",
+            ),
+            (
+                r"(?i)\bchmod\s+(-R\s+)?777\s+~\s*$",
+                "Making home directory world-writable",
+            ),
+            (
+                r"(?i)\bchown\s+(-R\s+)?\S+:\S+\s+/\s*$",
+                "Changing root ownership",
+            ),
             (r"(?i)\bshutdown\b", "System shutdown command"),
             (r"(?i)\breboot\b", "System reboot command"),
             (r"(?i)\bhalt\b", "System halt command"),
@@ -280,11 +297,15 @@ pub fn execute_bash_for_tool(
     // checked exactly once.
     check_command_safety(command)?;
 
-    let shell_plan = resolve_command_shell(windows_shell_profile, Some(resolved_cwd.as_str()), command)?;
+    let shell_plan =
+        resolve_command_shell(windows_shell_profile, Some(resolved_cwd.as_str()), command)?;
     if let Some(message) = shell_plan.blocking_message.as_deref() {
         return Ok(build_failed_command_response(
             message,
-            shell_plan.display_cwd.as_deref().or(Some(resolved_cwd.as_str())),
+            shell_plan
+                .display_cwd
+                .as_deref()
+                .or(Some(resolved_cwd.as_str())),
             requested_execution_id,
         ));
     }
@@ -295,7 +316,10 @@ pub fn execute_bash_for_tool(
                 "The selected shell '{}' is not available on this system.",
                 shell_plan.program
             ),
-            shell_plan.display_cwd.as_deref().or(Some(resolved_cwd.as_str())),
+            shell_plan
+                .display_cwd
+                .as_deref()
+                .or(Some(resolved_cwd.as_str())),
             requested_execution_id,
         ));
     }
@@ -318,7 +342,10 @@ pub fn execute_bash_for_tool(
     if timed_out {
         append_warning(
             &mut stderr,
-            &format!("Command timed out after {} seconds", timeout_secs.unwrap_or(300)),
+            &format!(
+                "Command timed out after {} seconds",
+                timeout_secs.unwrap_or(300)
+            ),
         );
     }
 
@@ -439,8 +466,7 @@ fn run_with_timeout(
     });
 
     // Wrap child so the timeout path can call .kill() cross-platform.
-    let child_arc: Arc<Mutex<Option<std::process::Child>>> =
-        Arc::new(Mutex::new(Some(child)));
+    let child_arc: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(Some(child)));
     let child_arc_c = child_arc.clone();
 
     // Wait with timeout
@@ -494,9 +520,9 @@ fn run_with_timeout(
             let stderr = stderr_buf.lock().unwrap().clone();
             Ok((Vec::new(), stderr, -1, true))
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err(AppError::ProcessError("Process channel disconnected".to_string()))
-        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(AppError::ProcessError(
+            "Process channel disconnected".to_string(),
+        )),
     }
 }
 
@@ -974,7 +1000,10 @@ mod tests {
         assert_eq!(result.execution_id, "smoke-command-json");
         assert_eq!(result.status, ToolExecutionStatus::Succeeded);
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.cwd.as_deref(), Some(work_dir.to_string_lossy().as_ref()));
+        assert_eq!(
+            result.cwd.as_deref(),
+            Some(work_dir.to_string_lossy().as_ref())
+        );
         assert!(result.sanitized);
         assert!(result.stdout.contains("Authorization: [redacted]"));
         assert!(result.stdout.contains("OPENAI_API_KEY=[redacted]"));
@@ -1091,7 +1120,11 @@ mod tests {
         .await
         .expect("first call should succeed");
         assert_eq!(r1.status, ToolExecutionStatus::Succeeded);
-        assert!(r1.stdout.contains("first"), "Expected 'first', got: {}", r1.stdout);
+        assert!(
+            r1.stdout.contains("first"),
+            "Expected 'first', got: {}",
+            r1.stdout
+        );
 
         let r2 = execute_python_session(
             "print('second')".to_string(),
@@ -1254,8 +1287,8 @@ print("done")
     }
 
     /// Test 5: execute_python infinite loop returns timed_out.
-    #[test]
-    fn execute_python_infinite_loop_returns_timed_out() {
+    #[tokio::test]
+    async fn execute_python_infinite_loop_returns_timed_out() {
         let work_dir = std::env::temp_dir().join(format!("pipi-code-pyto-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
 
@@ -1264,6 +1297,7 @@ print("done")
             None,
             Some(work_dir.to_string_lossy().to_string()),
         )
+        .await
         .expect("should return a response, not hang");
 
         assert!(result.timed_out);
@@ -1275,8 +1309,8 @@ print("done")
     }
 
     /// Test 6: execute_node long-running interval returns timed_out.
-    #[test]
-    fn execute_node_long_running_returns_timed_out() {
+    #[tokio::test]
+    async fn execute_node_long_running_returns_timed_out() {
         let work_dir = std::env::temp_dir().join(format!("pipi-code-nodeto-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
 
@@ -1285,6 +1319,7 @@ print("done")
             None,
             Some(work_dir.to_string_lossy().to_string()),
         )
+        .await
         .expect("should return a response, not hang");
 
         assert!(result.timed_out);

@@ -1,5 +1,4 @@
 use once_cell::sync::Lazy;
-use std::sync::atomic::{AtomicBool, Ordering};
 /**
  * Database module - SQLite persistence for sessions and messages
  */
@@ -7,6 +6,7 @@ use rusqlite::{params, types::ToSql, Connection, OptionalExtension, Result as Sq
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 /// Acquire the global database mutex, mapping a poisoned lock to a Sqlite error
@@ -340,7 +340,8 @@ fn get_db_path() -> PathBuf {
 
 pub fn get_backup_directory() -> SqliteResult<PathBuf> {
     let backup_dir = get_data_directory().join("backups");
-    fs::create_dir_all(&backup_dir).map_err(|e| storage_error(format!("Failed to create backup directory: {}", e)))?;
+    fs::create_dir_all(&backup_dir)
+        .map_err(|e| storage_error(format!("Failed to create backup directory: {}", e)))?;
     Ok(backup_dir)
 }
 
@@ -398,7 +399,8 @@ pub fn list_database_backups() -> SqliteResult<Vec<DbBackupEntry>> {
     for entry in fs::read_dir(&backup_dir)
         .map_err(|e| storage_error(format!("Failed to read backup directory: {}", e)))?
     {
-        let entry = entry.map_err(|e| storage_error(format!("Failed to read backup entry: {}", e)))?;
+        let entry =
+            entry.map_err(|e| storage_error(format!("Failed to read backup entry: {}", e)))?;
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -442,7 +444,11 @@ fn rotate_backups(backup_dir: &Path, keep: usize) -> SqliteResult<()> {
         let backup_path = backup_dir.join(&backup.name);
         if backup_path.exists() {
             fs::remove_file(&backup_path).map_err(|e| {
-                storage_error(format!("Failed to remove old backup {}: {}", backup_path.display(), e))
+                storage_error(format!(
+                    "Failed to remove old backup {}: {}",
+                    backup_path.display(),
+                    e
+                ))
             })?;
         }
     }
@@ -486,9 +492,9 @@ fn validate_backup_path(backup_path: &Path) -> SqliteResult<PathBuf> {
             e
         ))
     })?;
-    let backup_dir = get_backup_directory()?.canonicalize().map_err(|e| {
-        storage_error(format!("Failed to access backup directory: {}", e))
-    })?;
+    let backup_dir = get_backup_directory()?
+        .canonicalize()
+        .map_err(|e| storage_error(format!("Failed to access backup directory: {}", e)))?;
 
     if !canonical_backup_path.starts_with(&backup_dir) {
         return Err(storage_error(format!(
@@ -561,7 +567,12 @@ pub fn restore_database_from_backup(backup_path: &Path) -> SqliteResult<()> {
         }
     };
 
-    if db_path.exists() && fs::metadata(&db_path).map(|metadata| metadata.len()).unwrap_or(0) > 0 {
+    if db_path.exists()
+        && fs::metadata(&db_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+            > 0
+    {
         backup_before_migration(&db_path, existing_schema_version)?;
     }
 
@@ -572,17 +583,29 @@ pub fn restore_database_from_backup(backup_path: &Path) -> SqliteResult<()> {
 
     if wal_path.exists() {
         fs::remove_file(&wal_path).map_err(|e| {
-            storage_error(format!("Failed to remove WAL file {}: {}", wal_path.display(), e))
+            storage_error(format!(
+                "Failed to remove WAL file {}: {}",
+                wal_path.display(),
+                e
+            ))
         })?;
     }
     if shm_path.exists() {
         fs::remove_file(&shm_path).map_err(|e| {
-            storage_error(format!("Failed to remove SHM file {}: {}", shm_path.display(), e))
+            storage_error(format!(
+                "Failed to remove SHM file {}: {}",
+                shm_path.display(),
+                e
+            ))
         })?;
     }
     if db_path.exists() {
         fs::remove_file(&db_path).map_err(|e| {
-            storage_error(format!("Failed to replace database {}: {}", db_path.display(), e))
+            storage_error(format!(
+                "Failed to replace database {}: {}",
+                db_path.display(),
+                e
+            ))
         })?;
     }
 
@@ -632,11 +655,15 @@ pub fn get_database_diagnostics() -> SqliteResult<DbDiagnostics> {
     let path = get_db_path();
     let wal_path = path_with_suffix(&path, "-wal");
     let path_string = path.display().to_string();
-    let file_size_bytes = fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+    let file_size_bytes = fs::metadata(&path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
     let wal_size_bytes = fs::metadata(&wal_path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let backup_count = list_database_backups().map(|backups| backups.len()).unwrap_or(0);
+    let backup_count = list_database_backups()
+        .map(|backups| backups.len())
+        .unwrap_or(0);
     let guard = get_db()?;
     let Some(conn) = guard.as_ref() else {
         // AUDIT-FIX [fix-8#1] — Diagnostics hit the uninitialised path.
@@ -1941,10 +1968,8 @@ mod tests {
 
     fn with_temp_data_dir(test_fn: impl FnOnce(&Path)) {
         let _guard = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
-        let temp_dir = std::env::temp_dir().join(format!(
-            "pipi-shrimp-db-tests-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("pipi-shrimp-db-tests-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir).expect("create temp data dir");
         std::env::set_var("PIPI_SHRIMP_DATA_DIR", &temp_dir);
 
@@ -1969,7 +1994,10 @@ mod tests {
             assert!(backup_path.exists());
             assert!(backup_name.starts_with("db-"));
             assert!(backup_name.ends_with("-v7.sqlite"));
-            assert_eq!(fs::read(&backup_path).expect("read backup"), b"sqlite-backup-test");
+            assert_eq!(
+                fs::read(&backup_path).expect("read backup"),
+                b"sqlite-backup-test"
+            );
         });
     }
 
@@ -1988,8 +2016,12 @@ mod tests {
 
             let backups = list_database_backups().expect("list backups");
             assert_eq!(backups.len(), 10);
-            assert!(backups.iter().all(|backup| !backup.name.ends_with("-v0.sqlite")));
-            assert!(backups.iter().all(|backup| !backup.name.ends_with("-v1.sqlite")));
+            assert!(backups
+                .iter()
+                .all(|backup| !backup.name.ends_with("-v0.sqlite")));
+            assert!(backups
+                .iter()
+                .all(|backup| !backup.name.ends_with("-v1.sqlite")));
         });
     }
 }

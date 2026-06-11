@@ -1,11 +1,11 @@
 use std::time::Instant;
 
+use crate::browser::cdp::CdpError;
 use crate::browser::dom::PageStateCacheMetadata;
 use crate::browser::dom::{self as dom, InteractiveElement, PageState};
 use crate::browser::observability::{
     sample_process_memory_bytes, BrowserBenchmarkKind, BrowserEventKind, BrowserEventLevel,
 };
-use crate::browser::cdp::CdpError;
 
 use super::manager::{duration_as_ms, runtime_invalidation_reason_label, BrowserSessionManager};
 use super::snapshot_cache::{SnapshotCacheEntry, SnapshotCacheKey};
@@ -15,10 +15,7 @@ impl BrowserSessionManager {
         self.snapshot_cache.invalidate_active("manual_invalidation");
     }
 
-    pub(super) fn invalidate_page_state_for_runtime_event(
-        &mut self,
-        reason: &'static str,
-    ) -> bool {
+    pub(super) fn invalidate_page_state_for_runtime_event(&mut self, reason: &'static str) -> bool {
         self.touch_activity();
         let invalidated = self.snapshot_cache.invalidate_active(reason);
         if let Some(entry) = invalidated.as_ref() {

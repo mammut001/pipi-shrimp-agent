@@ -20,7 +20,9 @@ pub const DEFAULT_RETRY_POLICY: RetryPolicy = RetryPolicy {
 
 pub fn next_retry_delay(attempt: usize, policy: RetryPolicy) -> Duration {
     let multiplier = 2_u64.saturating_pow(attempt.saturating_sub(1) as u32);
-    Duration::from_millis((policy.base_delay_ms.saturating_mul(multiplier)).min(policy.max_delay_ms))
+    Duration::from_millis(
+        (policy.base_delay_ms.saturating_mul(multiplier)).min(policy.max_delay_ms),
+    )
 }
 
 pub fn should_retry(error: &ClaudeHttpError) -> bool {

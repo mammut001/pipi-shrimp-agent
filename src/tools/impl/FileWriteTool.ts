@@ -27,16 +27,11 @@ export class FileWriteTool extends BaseTool<FileWriteInput, FileWriteOutput> {
 
       // AUDIT-FIX: For updates, require explicit confirmation via force flag
       // or check if sandbox permission mode allows destructive operations
-      if (isUpdate && context.settings.permissionMode !== 'bypass') {
-        // Check if the caller explicitly wants to overwrite
-        if (input.force !== true) {
-          // Return error asking for explicit overwrite confirmation
-          return {
-            success: false,
-            error: `File '${input.file_path}' already exists. Use force=true to overwrite.`,
-            requiresConfirmation: true
-          };
-        }
+      if (isUpdate && input.force !== true) {
+        return {
+          success: false,
+          error: `File '${input.file_path}' already exists. Use force=true to overwrite.`,
+        };
       }
 
       // Write file via Rust (returns success string)

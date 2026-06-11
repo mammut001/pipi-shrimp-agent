@@ -54,7 +54,8 @@ describe('QueryEngine context overflow fallback', () => {
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockInvokeRustAPIStream.mockReset();
+    mockBuildResolvedChatRequest.mockReset();
     mockGetSettingsState.mockReturnValue({
       agentSettings: { maxToolRounds: 4 },
     });
@@ -92,6 +93,9 @@ describe('QueryEngine context overflow fallback', () => {
       },
       });
     });
+  });
+
+  it('retries once with strict budget mode before surfacing a failure', async () => {
     mockInvokeRustAPIStream
       .mockImplementationOnce(async function* fail() {
         throw new Error('Context compression check failed. Consider freeing up space.');
@@ -103,9 +107,7 @@ describe('QueryEngine context overflow fallback', () => {
           response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
         };
       });
-  });
 
-  it('retries once with strict budget mode before surfacing a failure', async () => {
     const events = [];
     for await (const event of runChatTurn(
       'session-1',

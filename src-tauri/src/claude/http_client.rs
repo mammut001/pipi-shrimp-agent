@@ -1,5 +1,5 @@
-use tauri::Window;
 use crate::utils::AppResult;
+use tauri::Window;
 
 use super::http::{
     build_http_client, send_request_impl, send_streaming_request, validate_messages,

@@ -64,9 +64,9 @@ describe('AutoResearchDashboardTable', () => {
 
     expect(text).toContain('Iterations');
     expect(text).toContain('Cache transformed benchmark fixtures');
-    expect(text).toContain('+0.5%');
+    expect(text).toContain('+0.50%');
     expect(text).toContain('keep');
-    expect(text).not.toContain('abs');
+    expect(text).toContain('abs');
     expect(text).not.toContain('./artifacts/autoresearch/demo/iter-1-report.md');
 
     const row = findButtonRow(view.container, 1);

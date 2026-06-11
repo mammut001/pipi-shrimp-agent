@@ -136,7 +136,11 @@ fn classify_file_tool_error_kind(cause: &str) -> &'static str {
     "io_error"
 }
 
-fn build_local_file_tool_error(path: &str, operation: &str, cause: impl Into<String>) -> LocalFileToolError {
+fn build_local_file_tool_error(
+    path: &str,
+    operation: &str,
+    cause: impl Into<String>,
+) -> LocalFileToolError {
     let cause = cause.into();
     LocalFileToolError {
         error: true,
@@ -169,9 +173,9 @@ pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
     };
 
     let canonical = if candidate.exists() {
-        candidate.canonicalize().map_err(|e| {
-            AppError::FileError(format!("Cannot resolve path '{}': {}", path, e))
-        })?
+        candidate
+            .canonicalize()
+            .map_err(|e| AppError::FileError(format!("Cannot resolve path '{}': {}", path, e)))?
     } else {
         resolve_existing_ancestor(&candidate)?.0
     };
@@ -181,7 +185,10 @@ pub fn resolve_path(path: &str, work_dir: Option<&str>) -> AppResult<PathBuf> {
     Ok(canonical)
 }
 
-pub fn read_file_for_tool(path: &str, work_dir: Option<&str>) -> Result<FileResponse, LocalFileToolError> {
+pub fn read_file_for_tool(
+    path: &str,
+    work_dir: Option<&str>,
+) -> Result<FileResponse, LocalFileToolError> {
     let expanded_path = resolve_path(path, work_dir)
         .map_err(|e| build_local_file_tool_error(path, "read file", e.to_string()))?;
     let content = fs::read_to_string(&expanded_path)
@@ -203,8 +210,9 @@ pub fn write_file_for_tool(
 
     if let Some(parent) = expanded_path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|e| build_local_file_tool_error(path, "create parent directory", e.to_string()))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                build_local_file_tool_error(path, "create parent directory", e.to_string())
+            })?;
         }
     }
 
@@ -218,13 +226,19 @@ pub fn write_file_for_tool(
     ))
 }
 
-pub fn create_directory_for_tool(path: &str, work_dir: Option<&str>) -> Result<String, LocalFileToolError> {
+pub fn create_directory_for_tool(
+    path: &str,
+    work_dir: Option<&str>,
+) -> Result<String, LocalFileToolError> {
     let expanded_path = resolve_path(path, work_dir)
         .map_err(|e| build_local_file_tool_error(path, "create directory", e.to_string()))?;
     fs::create_dir_all(&expanded_path)
         .map_err(|e| build_local_file_tool_error(path, "create directory", e.to_string()))?;
 
-    Ok(format!("Directory created successfully: {}", expanded_path.display()))
+    Ok(format!(
+        "Directory created successfully: {}",
+        expanded_path.display()
+    ))
 }
 
 /**
@@ -541,8 +555,12 @@ mod tests {
         permissions.set_mode(0o555);
         fs::set_permissions(&read_only_dir, permissions).expect("permissions should be set");
 
-        let error = write_file_for_tool("readonly/blocked.txt", "blocked", Some(root_string.as_str()))
-            .expect_err("write_file_for_tool should fail in read-only dir");
+        let error = write_file_for_tool(
+            "readonly/blocked.txt",
+            "blocked",
+            Some(root_string.as_str()),
+        )
+        .expect_err("write_file_for_tool should fail in read-only dir");
 
         assert_eq!(error.error_kind, "access_denied");
         assert_eq!(error.path, "readonly/blocked.txt");
@@ -553,7 +571,8 @@ mod tests {
             .expect("metadata should still exist")
             .permissions();
         cleanup_permissions.set_mode(0o755);
-        fs::set_permissions(&read_only_dir, cleanup_permissions).expect("permissions should be restorable");
+        fs::set_permissions(&read_only_dir, cleanup_permissions)
+            .expect("permissions should be restorable");
         fs::remove_dir_all(root).expect("temp root should be removed");
     }
 

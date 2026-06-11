@@ -58,11 +58,17 @@ pub fn detect_path_kind(path: Option<&str>) -> ShellPathKind {
     if value.starts_with('/') {
         return ShellPathKind::Wsl;
     }
-    if value.len() >= 3 && value.as_bytes()[1] == b':' && is_path_separator(value.as_bytes()[2] as char) {
+    if value.len() >= 3
+        && value.as_bytes()[1] == b':'
+        && is_path_separator(value.as_bytes()[2] as char)
+    {
         return ShellPathKind::Windows;
     }
     if let Some(rest) = value.strip_prefix("\\\\?\\") {
-        if rest.len() >= 3 && rest.as_bytes()[1] == b':' && is_path_separator(rest.as_bytes()[2] as char) {
+        if rest.len() >= 3
+            && rest.as_bytes()[1] == b':'
+            && is_path_separator(rest.as_bytes()[2] as char)
+        {
             return ShellPathKind::Windows;
         }
     }
@@ -463,7 +469,10 @@ mod tests {
 
         assert_eq!(plan.resolved_profile, ResolvedShellKind::Wsl);
         assert_eq!(plan.program, "wsl.exe");
-        assert_eq!(plan.display_cwd.as_deref(), Some("/mnt/c/Users/Payton/project"));
+        assert_eq!(
+            plan.display_cwd.as_deref(),
+            Some("/mnt/c/Users/Payton/project")
+        );
         assert!(plan.warning.is_some());
     }
 
@@ -562,6 +571,10 @@ mod tests {
 
         assert_eq!(plan.resolved_profile, ResolvedShellKind::Wsl);
         assert!(plan.blocking_message.is_none());
-        assert!(plan.warning.as_deref().unwrap_or_default().contains("PowerShell"));
+        assert!(plan
+            .warning
+            .as_deref()
+            .unwrap_or_default()
+            .contains("PowerShell"));
     }
 }

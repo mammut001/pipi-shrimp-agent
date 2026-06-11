@@ -1,4 +1,6 @@
-pub use super::super::stream_parser::{parse_plain_response, parse_sse_data_line, stream_response, ThinkSegmentIter};
+pub use super::super::stream_parser::{
+    parse_plain_response, parse_sse_data_line, stream_response, ThinkSegmentIter,
+};
 
 pub fn collect_sse_data_lines(buffer: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
     let mut lines = Vec::new();

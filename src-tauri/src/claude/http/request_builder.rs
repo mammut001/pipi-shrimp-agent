@@ -155,7 +155,9 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<Value> {
     let mut formatted = Vec::new();
 
     for message in messages {
-        if message.role == "user" && (message.content.starts_with("__TOOL_RESULT__:") || message.tool_call_id.is_some()) {
+        if message.role == "user"
+            && (message.content.starts_with("__TOOL_RESULT__:") || message.tool_call_id.is_some())
+        {
             let (tool_call_id, content) = extract_tool_result(message);
             if let Some((tool_call_id, content)) = tool_call_id.zip(content) {
                 formatted.push(serde_json::json!({
@@ -176,7 +178,8 @@ pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<Value> {
                 content.push(serde_json::json!({ "type": "text", "text": message.content }));
             }
             for tool_call in tool_calls {
-                let input: Value = serde_json::from_str(&tool_call.arguments).unwrap_or_else(|_| serde_json::json!({}));
+                let input: Value = serde_json::from_str(&tool_call.arguments)
+                    .unwrap_or_else(|_| serde_json::json!({}));
                 content.push(serde_json::json!({
                     "type": "tool_use",
                     "id": tool_call.tool_call_id,
@@ -205,7 +208,9 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<Value> {
     let mut formatted = Vec::new();
 
     for message in messages {
-        if message.role == "user" && (message.content.starts_with("__TOOL_RESULT__:") || message.tool_call_id.is_some()) {
+        if message.role == "user"
+            && (message.content.starts_with("__TOOL_RESULT__:") || message.tool_call_id.is_some())
+        {
             let (tool_call_id, content) = extract_tool_result(message);
             if let Some((tool_call_id, content)) = tool_call_id.zip(content) {
                 formatted.push(serde_json::json!({
@@ -245,7 +250,10 @@ fn sanitize_openai_history_messages(messages: &mut [Value], capabilities: &Provi
             continue;
         };
 
-        let role = record.get("role").and_then(|value| value.as_str()).unwrap_or_default();
+        let role = record
+            .get("role")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
         if role == "assistant" {
             let sanitized = sanitize_assistant_message_for_openai_record(record, capabilities);
             *record = sanitized;
@@ -394,7 +402,10 @@ pub fn build_anthropic_headers(
     headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
     headers.insert("content-type", "application/json".parse().unwrap());
     if thinking_enabled {
-        headers.insert("anthropic-beta", "interleaved-thinking-2025-05-14".parse().unwrap());
+        headers.insert(
+            "anthropic-beta",
+            "interleaved-thinking-2025-05-14".parse().unwrap(),
+        );
     }
     Ok(headers)
 }
@@ -473,7 +484,8 @@ pub fn build_openai_body(
     no_tools: bool,
     streaming: bool,
 ) -> Value {
-    let system_content = build_openai_system_prompt(config, system_prompt, allow_browser_tools, no_tools);
+    let system_content =
+        build_openai_system_prompt(config, system_prompt, allow_browser_tools, no_tools);
     let mut openai_messages = format_messages_for_openai(messages);
     openai_messages.insert(
         0,
@@ -492,7 +504,9 @@ pub fn build_openai_body(
     });
 
     if !no_tools {
-        body["tools"] = serde_json::json!(convert_tools_to_openai_format(&get_tools(allow_browser_tools)));
+        body["tools"] = serde_json::json!(convert_tools_to_openai_format(&get_tools(
+            allow_browser_tools
+        )));
         body["tool_choice"] = serde_json::json!("auto");
     }
 
@@ -508,7 +522,8 @@ pub fn estimate_request_input_tokens(
     match provider_id {
         ProviderId::Anthropic => {
             let formatted = format_messages_for_anthropic(messages);
-            estimate_messages_tokens(&formatted) + estimate_tokens(&merge_system_prompt(system_prompt, allow_browser_tools))
+            estimate_messages_tokens(&formatted)
+                + estimate_tokens(&merge_system_prompt(system_prompt, allow_browser_tools))
         }
         _ => {
             let mut formatted = format_messages_for_openai(messages);
@@ -540,8 +555,14 @@ mod tests {
 
     #[test]
     fn detects_artifacts_from_code_html_and_mermaid() {
-        assert_eq!(detect_artifacts("```mermaid\nA-->B\n```")[0].artifact_type, "mermaid");
-        assert_eq!(detect_artifacts("<!DOCTYPE html><html><body>ok</body></html>")[0].artifact_type, "html");
+        assert_eq!(
+            detect_artifacts("```mermaid\nA-->B\n```")[0].artifact_type,
+            "mermaid"
+        );
+        assert_eq!(
+            detect_artifacts("<!DOCTYPE html><html><body>ok</body></html>")[0].artifact_type,
+            "html"
+        );
         let large_code = format!("```rust\n{}\n```", "x".repeat(240));
         assert_eq!(detect_artifacts(&large_code)[0].artifact_type, "code");
     }
@@ -599,10 +620,21 @@ mod tests {
 
     #[test]
     fn builds_provider_specific_urls_and_headers() {
-        let config = ResolvedProviderConfig::resolve("gpt-4o", "token", Some("https://api.example.com/v1"), None);
-        assert_eq!(build_openai_url(&config), "https://api.example.com/v1/chat/completions");
+        let config = ResolvedProviderConfig::resolve(
+            "gpt-4o",
+            "token",
+            Some("https://api.example.com/v1"),
+            None,
+        );
+        assert_eq!(
+            build_openai_url(&config),
+            "https://api.example.com/v1/chat/completions"
+        );
         assert!(build_openai_headers("token").is_ok());
-        assert_eq!(build_anthropic_url("https://api.anthropic.com/"), "https://api.anthropic.com/v1/messages");
+        assert_eq!(
+            build_anthropic_url("https://api.anthropic.com/"),
+            "https://api.anthropic.com/v1/messages"
+        );
         assert!(build_anthropic_headers("sk-ant-test", true).is_ok());
     }
 
@@ -626,24 +658,27 @@ mod tests {
             }]
         })];
 
-        sanitize_openai_history_messages(&mut messages, &ProviderCapabilities {
-            supports_thinking: false,
-            supports_reasoning: false,
-            supports_reasoning_stream: false,
-            supports_tool_calls: true,
-            supports_tool_openai: true,
-            supports_streaming: true,
-            supports_response_format: false,
-            supports_response_format_json_schema: false,
-            supports_json_mode: false,
-            accepts_response_format: false,
-            accepts_reasoning_param: false,
-            supports_vision: false,
-            uses_responses_api: false,
-            requires_tool_ordering: false,
-            thinking_budget: None,
-            max_output_tokens: Some(8192),
-        });
+        sanitize_openai_history_messages(
+            &mut messages,
+            &ProviderCapabilities {
+                supports_thinking: false,
+                supports_reasoning: false,
+                supports_reasoning_stream: false,
+                supports_tool_calls: true,
+                supports_tool_openai: true,
+                supports_streaming: true,
+                supports_response_format: false,
+                supports_response_format_json_schema: false,
+                supports_json_mode: false,
+                accepts_response_format: false,
+                accepts_reasoning_param: false,
+                supports_vision: false,
+                uses_responses_api: false,
+                requires_tool_ordering: false,
+                thinking_budget: None,
+                max_output_tokens: Some(8192),
+            },
+        );
 
         assert_eq!(messages[0].get("reasoning_content"), None);
         assert_eq!(messages[0].get("reasoning"), None);
@@ -651,7 +686,10 @@ mod tests {
         assert_eq!(messages[0].get("thinking"), None);
         assert_eq!(messages[0].get("reasoning_trace"), None);
         assert_eq!(messages[0]["content"], "visible answer");
-        assert_eq!(messages[0]["tool_calls"][0]["function"]["name"], "execute_command");
+        assert_eq!(
+            messages[0]["tool_calls"][0]["function"]["name"],
+            "execute_command"
+        );
     }
 
     #[test]
@@ -692,7 +730,9 @@ mod tests {
         );
 
         assert_eq!(body["tool_choice"], "auto");
-        assert!(body["tools"].as_array().is_some_and(|tools| !tools.is_empty()));
+        assert!(body["tools"]
+            .as_array()
+            .is_some_and(|tools| !tools.is_empty()));
         let system_text = body["messages"][0]["content"].as_str().unwrap_or_default();
         assert!(system_text.contains("OpenAI function-calling channel named tool_calls"));
     }

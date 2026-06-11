@@ -251,7 +251,10 @@ mod tests {
     #[test]
     fn normalize_browser_url_adds_https_when_missing() {
         assert_eq!(normalize_browser_url("example.com"), "https://example.com");
-        assert_eq!(normalize_browser_url("https://example.com"), "https://example.com");
+        assert_eq!(
+            normalize_browser_url("https://example.com"),
+            "https://example.com"
+        );
     }
 
     #[test]

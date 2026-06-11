@@ -17,7 +17,10 @@ pub fn get_project_root() -> Result<String, String> {
 
 /// Read a file relative to a base directory (or project root if None).
 #[tauri::command]
-pub fn read_project_file(relative_path: String, base_dir: Option<String>) -> Result<String, String> {
+pub fn read_project_file(
+    relative_path: String,
+    base_dir: Option<String>,
+) -> Result<String, String> {
     let root = match base_dir {
         Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
         _ => project_root(),

@@ -586,7 +586,7 @@ export function createAutoResearchSendMessage(
 
     const turnMessages = [
       {
-        role: 'user',
+        role: 'user' as const,
         content: userMessage,
       },
     ];
@@ -748,7 +748,7 @@ export function createAutoResearchSendMessage(
                 level: 'info',
                 phase: 'RUN_EXPERIMENT',
                 type: 'experiment_command_started',
-                message: command,
+                message: command ?? '',
                 summary: parameterSummary,
                 metadata: {
                   toolName: call.name,

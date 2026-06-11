@@ -8,10 +8,10 @@ use crate::browser::actions::{
     self, ActionContext, ClickInput, ElementReference, ExtractContentInput, GetTextContentInput,
     NavigateInput, PressKeyInput, ScrollInput, TypeTextInput, WaitInput,
 };
+use crate::browser::dom::PageState;
 use crate::browser::failure_snapshot::{
     get_failure_snapshot, list_failure_snapshots, BrowserFailureSnapshot,
 };
-use crate::browser::dom::PageState;
 use crate::browser::observability::BrowserObservabilitySnapshot;
 use crate::browser::session::{BrowserConnectionState, BrowserSessionManager};
 use crate::utils::AppResult;
@@ -572,7 +572,9 @@ pub async fn get_browser_observability_snapshot(
 }
 
 #[tauri::command]
-pub async fn get_browser_failure(task_id: String) -> Result<Option<BrowserFailureSnapshot>, String> {
+pub async fn get_browser_failure(
+    task_id: String,
+) -> Result<Option<BrowserFailureSnapshot>, String> {
     get_failure_snapshot(&task_id)
 }
 

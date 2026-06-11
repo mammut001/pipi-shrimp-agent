@@ -1,16 +1,15 @@
 use crate::database::{
     clear_swarm_snapshots, delete_message, delete_project, delete_session,
-    export_database_backup_file, find_telegram_task_by_source, get_all_projects,
-    get_all_sessions, get_daily_token_stats, get_data_directory, get_database_diagnostics,
-    get_messages_for_session, get_model_token_stats, get_monthly_token_stats,
-    get_telegram_binding, get_telegram_runtime_state, get_telegram_task,
-    get_total_token_stats, list_database_backups, list_telegram_bindings,
-    list_telegram_tasks_by_statuses, list_telegram_tasks_for_chat, load_swarm_snapshot,
-    restore_database_from_backup, save_message, save_project, save_session,
+    export_database_backup_file, find_telegram_task_by_source, get_all_projects, get_all_sessions,
+    get_daily_token_stats, get_data_directory, get_database_diagnostics, get_messages_for_session,
+    get_model_token_stats, get_monthly_token_stats, get_telegram_binding,
+    get_telegram_runtime_state, get_telegram_task, get_total_token_stats, list_database_backups,
+    list_telegram_bindings, list_telegram_tasks_by_statuses, list_telegram_tasks_for_chat,
+    load_swarm_snapshot, restore_database_from_backup, save_message, save_project, save_session,
     save_swarm_snapshot, save_telegram_binding, save_telegram_task, save_token_usage,
-    set_telegram_runtime_state, update_project, DailyTokenStats, DbBackupEntry,
-    DbDiagnostics, DbMessage, DbProject, DbSession, DbTelegramBinding, DbTelegramTask,
-    DbTokenUsage, ModelTokenStats,
+    set_telegram_runtime_state, update_project, DailyTokenStats, DbBackupEntry, DbDiagnostics,
+    DbMessage, DbProject, DbSession, DbTelegramBinding, DbTelegramTask, DbTokenUsage,
+    ModelTokenStats,
 };
 use std::path::Path;
 
@@ -20,10 +19,7 @@ pub fn db_get_diagnostics() -> Result<DbDiagnostics, String> {
 }
 
 #[tauri::command]
-pub fn export_database_backup(
-    path: String,
-    backup_path: Option<String>,
-) -> Result<String, String> {
+pub fn export_database_backup(path: String, backup_path: Option<String>) -> Result<String, String> {
     // AUDIT-FIX [fix-2#1] — Validate the destination path is inside one of
     // the user-writable roots (app data dir, $HOME, /tmp) before writing.
     // Previously the caller could pass any absolute path and the Tauri
@@ -59,12 +55,9 @@ pub fn export_database_backup(
             e.message
         )
     })?;
-    export_database_backup_file(
-        dest,
-        backup_path.as_deref().map(Path::new),
-    )
-    .map(|exported_path| exported_path.display().to_string())
-    .map_err(|e| e.to_string())
+    export_database_backup_file(dest, backup_path.as_deref().map(Path::new))
+        .map(|exported_path| exported_path.display().to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -259,7 +252,9 @@ pub fn db_get_monthly_token_stats(
 }
 
 #[tauri::command]
-pub fn db_get_model_token_stats(api_config_id: Option<String>) -> Result<Vec<ModelTokenStats>, String> {
+pub fn db_get_model_token_stats(
+    api_config_id: Option<String>,
+) -> Result<Vec<ModelTokenStats>, String> {
     get_model_token_stats(api_config_id.as_deref()).map_err(|e| e.to_string())
 }
 
@@ -294,5 +289,11 @@ pub fn swarm_clear_snapshot() -> Result<(), String> {
 }
 
 fn normalize_positive_limit(limit: Option<i64>) -> Option<usize> {
-    limit.and_then(|value| if value > 0 { Some(value as usize) } else { None })
+    limit.and_then(|value| {
+        if value > 0 {
+            Some(value as usize)
+        } else {
+            None
+        }
+    })
 }

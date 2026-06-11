@@ -164,9 +164,13 @@ export async function testWorkflowDelete(): Promise<WorkflowValidation> {
       id: testId,
       title: testTitle,
       projectGoal: 'Test goal',
+      successCriteria: 'Test success criteria',
       status: 'idle',
       startTime: Date.now(),
       agents: [],
+      currentIteration: 0,
+      goalEvaluations: [],
+      reachedGoal: false,
     });
 
     const createdInstance = store.getCurrentInstance();

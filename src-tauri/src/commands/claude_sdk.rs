@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tauri::Window;
 use tokio::sync::Mutex;
 
-use crate::claude::{self, ChatResponse, ClaudeClient, Message};
 use crate::claude::provider::ProviderCapabilities;
+use crate::claude::{self, ChatResponse, ClaudeClient, Message};
 
 /// State for the Claude-compatible SDK client.
 pub struct ClaudeState {
@@ -57,8 +57,7 @@ pub async fn send_claude_sdk_chat_streaming(
     #[allow(non_snake_case)] allowBrowserTools: Option<bool>,
     #[allow(non_snake_case)] sessionId: String,
     provider: Option<String>,
-    #[allow(non_snake_case)]
-    apiFormat: Option<String>,
+    #[allow(non_snake_case)] apiFormat: Option<String>,
     #[allow(non_snake_case)] providerCapabilities: Option<ProviderCapabilities>,
     #[allow(non_snake_case)] responseFormat: Option<serde_json::Value>,
     #[allow(non_snake_case)] allowedTools: Option<Vec<String>>,
@@ -125,7 +124,10 @@ pub async fn test_connection(
         state.client.clone()
     };
 
-    match client.chat(messages, apiKey, model, base_url, None, None, false).await {
+    match client
+        .chat(messages, apiKey, model, base_url, None, None, false)
+        .await
+    {
         Ok(_) => Ok(true),
         Err(e) => Err(e.to_string()),
     }

@@ -99,8 +99,8 @@ mod tests {
 
     #[test]
     fn internal_error_can_attach_details() {
-        let error = AppError::InternalError("boom")
-            .with_details(serde_json::json!({ "source": "test" }));
+        let error =
+            AppError::InternalError("boom").with_details(serde_json::json!({ "source": "test" }));
 
         assert_eq!(error.details, Some(serde_json::json!({ "source": "test" })));
     }

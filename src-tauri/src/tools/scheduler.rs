@@ -65,9 +65,7 @@ fn partition_tool_calls(requests: &[ToolCallRequest], registry: &ToolRegistry) -
         let is_safe = registry.is_concurrency_safe(&req.name);
         let path = extract_path_key(req);
         let merges_into_last = is_safe
-            && batches
-                .last()
-                .is_some_and(|b| b.is_concurrency_safe)
+            && batches.last().is_some_and(|b| b.is_concurrency_safe)
             && batches.last().is_some_and(|b| {
                 path.is_none()
                     || b.requests
@@ -397,6 +395,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
             ToolCallRequest {
                 id: "2".into(),
@@ -411,6 +410,7 @@ mod tests {
                 provider: None,
                 api_format: None,
                 provider_capabilities: None,
+                approval_token: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);

@@ -44,8 +44,14 @@ mod tests {
 
     #[test]
     fn maps_cleanup_reasons_to_runtime_labels() {
-        assert_eq!(CleanupReason::UserClosed.as_reason_key(), "manual_disconnect");
-        assert_eq!(CleanupReason::TaskCompleted.as_reason_key(), "task_completed");
+        assert_eq!(
+            CleanupReason::UserClosed.as_reason_key(),
+            "manual_disconnect"
+        );
+        assert_eq!(
+            CleanupReason::TaskCompleted.as_reason_key(),
+            "task_completed"
+        );
         assert_eq!(CleanupReason::TaskFailed.as_reason_key(), "task_failed");
         assert_eq!(CleanupReason::Timeout.as_reason_key(), "idle_timeout");
         assert_eq!(CleanupReason::AppExiting.as_reason_key(), "app_exit");

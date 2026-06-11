@@ -1,4 +1,4 @@
-import { BootstrapPlanSchema, ScaffoldTemplateManifestSchema } from '@/services/autoresearch/bootstrap/schema';
+import { ScaffoldPlanSchema, ScaffoldTemplateManifestSchema } from '@/services/autoresearch/bootstrap/schema';
 import type {
   BootstrapPlan,
   ScaffoldPlan,
@@ -146,7 +146,7 @@ export function renderScaffoldFiles(input: {
   } satisfies ScaffoldPlan;
 
   return {
-    scaffold: BootstrapPlanSchema.shape.scaffold.parse(scaffold),
+    scaffold: ScaffoldPlanSchema.parse(scaffold),
     renderedFiles,
   };
 }

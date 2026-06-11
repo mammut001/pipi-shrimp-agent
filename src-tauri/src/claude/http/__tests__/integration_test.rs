@@ -9,9 +9,10 @@ use wiremock::{
     Match, Mock, MockServer, Request, Respond, ResponseTemplate,
 };
 
-use super::super::super::http::ClaudeHttpError;
-use super::super::super::http_client::send_request;
-use super::super::super::message::Message;
+use crate::claude::http::ClaudeHttpError;
+use crate::claude::http_client::send_request;
+use crate::claude::message::Message;
+use crate::claude::provider;
 
 struct ResponseFormatMatcher;
 
@@ -295,7 +296,7 @@ async fn send_request_uses_explicit_capability_hints_for_anthropic() {
         None,
         Some("anthropic"),
         Some("anthropic"),
-        Some(super::super::super::provider::ProviderCapabilities {
+        Some(provider::ProviderCapabilities {
             supports_thinking: false,
             supports_reasoning: false,
             supports_reasoning_stream: false,
@@ -319,89 +320,89 @@ async fn send_request_uses_explicit_capability_hints_for_anthropic() {
     .await
     .expect("request should honor explicit provider capabilities");
 
-
-    #[tokio::test]
-    async fn send_request_filters_deepseek_tools_and_omits_unsupported_fields() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .and(DeepSeekFilteredToolsMatcher {
-                expected_names: vec![
-                    "read_file",
-                    "write_file",
-                    "execute_command",
-                    "get_current_workspace",
-                ],
-            })
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": "chatcmpl-deepseek-1",
-                "model": "deepseek-v4-pro",
-                "choices": [{
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": "structured tools preserved"
-                    },
-                    "finish_reason": "stop"
-                }],
-                "usage": {
-                    "prompt_tokens": 7,
-                    "completion_tokens": 3,
-                    "total_tokens": 10
-                }
-            })))
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
-        let allowed_tools = vec![
-            "get_current_workspace".to_string(),
-            "execute_command".to_string(),
-            "read_file".to_string(),
-            "write_file".to_string(),
-        ];
-
-        let response = send_request(
-            &client,
-            &sample_messages(),
-            "test-token",
-            "deepseek-v4-pro",
-            Some(&server.uri()),
-            Some("system"),
-            false,
-            false,
-            None,
-            false,
-            None,
-            Some("deepseek"),
-            Some("openai"),
-            Some(super::super::super::provider::ProviderCapabilities {
-                supports_thinking: false,
-                supports_reasoning: true,
-                supports_reasoning_stream: true,
-                supports_tool_calls: true,
-                supports_tool_openai: true,
-                supports_streaming: true,
-                supports_response_format: false,
-                supports_response_format_json_schema: false,
-                supports_json_mode: true,
-                accepts_response_format: false,
-                accepts_reasoning_param: false,
-                supports_vision: false,
-                uses_responses_api: false,
-                requires_tool_ordering: false,
-                thinking_budget: None,
-                max_output_tokens: Some(8192),
-            }),
-            Some(json!({ "type": "json_object" })),
-            Some(&allowed_tools),
-        )
-        .await
-        .expect("deepseek request should preserve filtered tools");
-
-        assert_eq!(response.content, "structured tools preserved");
-    }
     assert_eq!(response.content, "thinking disabled");
+}
+
+#[tokio::test]
+async fn send_request_filters_deepseek_tools_and_omits_unsupported_fields() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(DeepSeekFilteredToolsMatcher {
+            expected_names: vec![
+                "read_file",
+                "write_file",
+                "execute_command",
+                "get_current_workspace",
+            ],
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-deepseek-1",
+            "model": "deepseek-v4-pro",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "structured tools preserved"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 3,
+                "total_tokens": 10
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::new();
+    let allowed_tools = vec![
+        "get_current_workspace".to_string(),
+        "execute_command".to_string(),
+        "read_file".to_string(),
+        "write_file".to_string(),
+    ];
+
+    let response = send_request(
+        &client,
+        &sample_messages(),
+        "test-token",
+        "deepseek-v4-pro",
+        Some(&server.uri()),
+        Some("system"),
+        false,
+        false,
+        None,
+        false,
+        None,
+        Some("deepseek"),
+        Some("openai"),
+        Some(provider::ProviderCapabilities {
+            supports_thinking: false,
+            supports_reasoning: true,
+            supports_reasoning_stream: true,
+            supports_tool_calls: true,
+            supports_tool_openai: true,
+            supports_streaming: true,
+            supports_response_format: false,
+            supports_response_format_json_schema: false,
+            supports_json_mode: true,
+            accepts_response_format: false,
+            accepts_reasoning_param: false,
+            supports_vision: false,
+            uses_responses_api: false,
+            requires_tool_ordering: false,
+            thinking_budget: None,
+            max_output_tokens: Some(8192),
+        }),
+        Some(json!({ "type": "json_object" })),
+        Some(&allowed_tools),
+    )
+    .await
+    .expect("deepseek request should preserve filtered tools");
+
+    assert_eq!(response.content, "structured tools preserved");
 }
 
 #[tokio::test]
@@ -590,14 +591,19 @@ async fn send_request_skips_response_format_when_capability_disables_it() {
         None,
         Some("deepseek"),
         Some("openai"),
-        Some(super::super::super::provider::ProviderCapabilities {
+        Some(provider::ProviderCapabilities {
             supports_thinking: false,
             supports_reasoning: false,
+            supports_reasoning_stream: false,
             supports_tool_calls: true,
             supports_tool_openai: true,
             supports_streaming: true,
             supports_response_format: false,
+            supports_response_format_json_schema: false,
             supports_json_mode: false,
+            accepts_response_format: false,
+            accepts_reasoning_param: false,
+            supports_vision: false,
             uses_responses_api: false,
             requires_tool_ordering: false,
             thinking_budget: None,

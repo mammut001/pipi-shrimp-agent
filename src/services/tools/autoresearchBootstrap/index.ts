@@ -78,7 +78,7 @@ async function runJsonBootstrapInference(systemPrompt: string, userPrompt: strin
     throw new Error(formatAgentConfigValidationError(config, issues));
   }
 
-  const request = buildResolvedChatRequest(config, {
+  const request = buildResolvedChatRequest(config!, {
     messages: [{ role: 'user', content: userPrompt }],
     systemPrompt,
     sessionId: `bootstrap-tool-${Date.now()}`,

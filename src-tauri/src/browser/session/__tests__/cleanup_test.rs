@@ -1,4 +1,7 @@
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 use tokio::sync::watch;
 
@@ -69,8 +72,14 @@ async fn cleanup_session_releases_workers_and_snapshot_cache_across_repeated_cyc
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         manager.worker_shutdown = Some(shutdown_tx);
-        manager.health_worker = Some(spawn_shutdown_task(drop_counter.clone(), shutdown_rx.clone()));
-        manager.idle_worker = Some(spawn_shutdown_task(drop_counter.clone(), shutdown_rx.clone()));
+        manager.health_worker = Some(spawn_shutdown_task(
+            drop_counter.clone(),
+            shutdown_rx.clone(),
+        ));
+        manager.idle_worker = Some(spawn_shutdown_task(
+            drop_counter.clone(),
+            shutdown_rx.clone(),
+        ));
         manager.runtime_event_worker = Some(spawn_shutdown_task(drop_counter.clone(), shutdown_rx));
         manager.reconnect_worker = Some(spawn_abortable_task(drop_counter.clone()));
         manager.handler = Some(spawn_abortable_task(drop_counter.clone()));

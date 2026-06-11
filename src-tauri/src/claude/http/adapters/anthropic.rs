@@ -2,8 +2,8 @@ use crate::claude::message::{ChatResponse, ErrorResponse, Message, ToolCall, Usa
 use crate::claude::provider::{ApiFormat, ProviderId, ResolvedProviderConfig};
 use crate::utils::{AppError, AppResult};
 
-use super::{detect_artifacts, ProviderAdapter, StreamContext, StreamEvent};
 use super::super::request_builder;
+use super::{detect_artifacts, ProviderAdapter, StreamContext, StreamEvent};
 
 pub struct AnthropicAdapter;
 
@@ -130,14 +130,21 @@ impl ProviderAdapter for AnthropicAdapter {
         let json: serde_json::Value = serde_json::from_str(data)
             .map_err(|error| AppError::InternalError(format!("Parse error: {}", error)))?;
 
-        let event_type = json.get("type").and_then(|value| value.as_str()).unwrap_or("");
+        let event_type = json
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
 
         #[allow(unreachable_patterns)]
         match event_type {
             "content_block_delta" => {
                 if let Some(delta) = json.get("delta") {
-                    if delta.get("type").and_then(|value| value.as_str()) == Some("input_json_delta") {
-                        if let Some(arg_text) = delta.get("partial_json").and_then(|value| value.as_str()) {
+                    if delta.get("type").and_then(|value| value.as_str())
+                        == Some("input_json_delta")
+                    {
+                        if let Some(arg_text) =
+                            delta.get("partial_json").and_then(|value| value.as_str())
+                        {
                             if let Some(last) = ctx.tool_calls.last_mut() {
                                 last.arguments.push_str(arg_text);
                             }
@@ -149,7 +156,9 @@ impl ProviderAdapter for AnthropicAdapter {
                             events.push(StreamEvent::Token(text.to_string()));
                         }
 
-                        if let Some(thinking) = delta.get("thinking").and_then(|value| value.as_str()) {
+                        if let Some(thinking) =
+                            delta.get("thinking").and_then(|value| value.as_str())
+                        {
                             ctx.reasoning.push_str(thinking);
                             ctx.emit_reasoning(thinking);
                             events.push(StreamEvent::Reasoning(thinking.to_string()));

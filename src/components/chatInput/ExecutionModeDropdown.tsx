@@ -190,7 +190,7 @@ export function ExecutionModeDropdown({
           tabIndex={-1}
           onKeyDown={handleMenuKeyDown}
           data-testid={`${testId}-menu`}
-          className="absolute bottom-full left-0 mb-2 w-72 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg ring-1 ring-black/5 focus:outline-none z-50"
+          className="absolute bottom-full left-0 mb-2 w-72 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg ring-1 ring-black/5 focus:outline-none z-50 max-w-none"
         >
           {VISIBLE_MODES.map((profile, index) => {
             const isSelected = profile.id === selected.id;

@@ -2,8 +2,8 @@ use crate::claude::message::{ChatResponse, Message, ToolCall, UsageInfo};
 use crate::claude::provider::{ApiFormat, ProviderId, ResolvedProviderConfig};
 use crate::utils::{AppError, AppResult};
 
-use super::{detect_artifacts, ProviderAdapter, StreamContext, StreamEvent};
 use super::super::{request_builder, stream::split_think_content};
+use super::{detect_artifacts, ProviderAdapter, StreamContext, StreamEvent};
 
 pub struct OpenAIAdapter {
     #[allow(dead_code)]
@@ -142,7 +142,10 @@ impl ProviderAdapter for OpenAIAdapter {
         let mut tool_calls = Vec::new();
         if let Some(choices) = body.get("choices").and_then(|value| value.as_array()) {
             for choice in choices {
-                if let Some(tool_call) = choice.get("message").and_then(|message| message.get("tool_calls")) {
+                if let Some(tool_call) = choice
+                    .get("message")
+                    .and_then(|message| message.get("tool_calls"))
+                {
                     if let Some(calls) = tool_call.as_array() {
                         for call in calls {
                             tool_calls.push(ToolCall {
@@ -201,7 +204,9 @@ impl ProviderAdapter for OpenAIAdapter {
             for choice in choices {
                 if let Some(delta) = choice.get("delta") {
                     if let Some(text) = delta.get("content").and_then(|value| value.as_str()) {
-                        for (segment, is_reasoning) in split_think_content(text, &mut ctx.in_think_tag) {
+                        for (segment, is_reasoning) in
+                            split_think_content(text, &mut ctx.in_think_tag)
+                        {
                             if segment.is_empty() {
                                 continue;
                             }
@@ -221,18 +226,30 @@ impl ProviderAdapter for OpenAIAdapter {
                     if let Some(thinking) = delta
                         .get("thinking")
                         .and_then(|value| value.as_str())
-                        .or_else(|| delta.get("reasoning_content").and_then(|value| value.as_str()))
+                        .or_else(|| {
+                            delta
+                                .get("reasoning_content")
+                                .and_then(|value| value.as_str())
+                        })
                     {
                         ctx.reasoning.push_str(thinking);
                         ctx.emit_reasoning(thinking);
                         events.push(StreamEvent::Reasoning(thinking.to_string()));
                     }
 
-                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array()) {
+                    if let Some(tool_calls) =
+                        delta.get("tool_calls").and_then(|value| value.as_array())
+                    {
                         for tool_call in tool_calls {
-                            let index = tool_call.get("index").and_then(|value| value.as_u64()).map(|value| value as usize);
+                            let index = tool_call
+                                .get("index")
+                                .and_then(|value| value.as_u64())
+                                .map(|value| value as usize);
                             let id = tool_call["id"].as_str().unwrap_or("").to_string();
-                            let name = tool_call["function"]["name"].as_str().unwrap_or("").to_string();
+                            let name = tool_call["function"]["name"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string();
                             let args = tool_call["function"]["arguments"]
                                 .as_str()
                                 .unwrap_or("{}")
@@ -291,7 +308,9 @@ impl ProviderAdapter for OpenAIAdapter {
                     }
                 }
 
-                if let Some(finish_reason) = choice.get("finish_reason").and_then(|value| value.as_str()) {
+                if let Some(finish_reason) =
+                    choice.get("finish_reason").and_then(|value| value.as_str())
+                {
                     if finish_reason == "tool_calls" {
                         events.extend(ctx.emit_pending_tool_calls()?);
                     }
@@ -423,7 +442,9 @@ mod tests {
         let first_events = adapter
             .parse_stream_chunk(&first_chunk.to_string(), &mut ctx)
             .expect("first chunk should parse");
-        assert!(matches!(first_events[0], StreamEvent::Reasoning(ref chunk) if chunk == "internal reasoning "));
+        assert!(
+            matches!(first_events[0], StreamEvent::Reasoning(ref chunk) if chunk == "internal reasoning ")
+        );
         assert!(matches!(first_events[1], StreamEvent::Token(ref chunk) if chunk == "visible "));
 
         let second_events = adapter
@@ -434,7 +455,9 @@ mod tests {
         let third_events = adapter
             .parse_stream_chunk(&third_chunk.to_string(), &mut ctx)
             .expect("third chunk should parse");
-        assert!(third_events.iter().any(|event| matches!(event, StreamEvent::Token(chunk) if chunk == "answer")));
+        assert!(third_events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Token(chunk) if chunk == "answer")));
         assert!(third_events.iter().any(|event| matches!(event, StreamEvent::ToolCall { id, name, arguments } if id == "call_1" && name == "execute_command" && arguments == "{\"command\":\"ls -la\"}")));
 
         let response = adapter
@@ -632,7 +655,9 @@ mod tests {
             .expect_err("malformed JSON arguments should fail before execution");
 
         assert!(error.to_string().contains("malformed_tool_call"));
-        assert!(error.to_string().contains("Incomplete or invalid JSON arguments"));
+        assert!(error
+            .to_string()
+            .contains("Incomplete or invalid JSON arguments"));
     }
 
     #[test]

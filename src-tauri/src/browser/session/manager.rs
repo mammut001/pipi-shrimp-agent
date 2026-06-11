@@ -8,14 +8,10 @@ use chrono::Utc;
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::browser::cdp::{
-    CdpConfig, CdpError, CdpHealthSnapshot, ChromiumoxideCdpClient,
-};
+use crate::browser::cdp::{CdpConfig, CdpError, CdpHealthSnapshot, ChromiumoxideCdpClient};
 use crate::browser::dom::PageState;
 
-use crate::browser::observability::{
-    BrowserEventBus, BrowserObservabilitySnapshot,
-};
+use crate::browser::observability::{BrowserEventBus, BrowserObservabilitySnapshot};
 use crate::browser::session::snapshot_cache::SnapshotCache;
 
 use super::cleanup::{CleanupReason, SessionCleanup};
@@ -107,8 +103,10 @@ impl BrowserSessionManager {
     }
 
     pub(crate) fn set_cached_page_state_for_test(&mut self, page_state: PageState) {
-        let cache_metadata =
-            crate::browser::dom::PageStateCacheMetadata::from_page_state(&page_state, "viewport:test");
+        let cache_metadata = crate::browser::dom::PageStateCacheMetadata::from_page_state(
+            &page_state,
+            "viewport:test",
+        );
         let cache_key = self.build_snapshot_cache_key(&page_state, &cache_metadata);
         self.store_page_state_in_cache(cache_key, &page_state);
     }
@@ -210,7 +208,11 @@ impl BrowserSessionManager {
             .session
             .as_ref()
             .and_then(|session| session.session_id.clone())
-            .or_else(|| self.session.as_ref().and_then(|session| session.target_id.clone()))
+            .or_else(|| {
+                self.session
+                    .as_ref()
+                    .and_then(|session| session.target_id.clone())
+            })
             .unwrap_or_else(|| "browser-session".to_string());
 
         let _ = self
@@ -233,7 +235,6 @@ impl BrowserSessionManager {
     pub(super) fn idle_elapsed_ms(&self) -> u64 {
         duration_as_ms(self.last_activity.elapsed())
     }
-
 }
 
 #[async_trait::async_trait]

@@ -190,7 +190,11 @@ pub fn wait_for_managed_process(
                     let output = process
                         .child
                         .take()
-                        .ok_or_else(|| AppError::ProcessError("Managed process handle lost its child process".to_string()))?
+                        .ok_or_else(|| {
+                            AppError::ProcessError(
+                                "Managed process handle lost its child process".to_string(),
+                            )
+                        })?
                         .wait_with_output()
                         .map_err(|e| AppError::ProcessError(e.to_string()))?;
                     let status = if process.cancel_requested {
@@ -211,7 +215,11 @@ pub fn wait_for_managed_process(
                         let output = process
                             .child
                             .take()
-                            .ok_or_else(|| AppError::ProcessError("Managed process handle lost its child process".to_string()))?
+                            .ok_or_else(|| {
+                                AppError::ProcessError(
+                                    "Managed process handle lost its child process".to_string(),
+                                )
+                            })?
                             .wait_with_output()
                             .map_err(|e| AppError::ProcessError(e.to_string()))?;
                         Some((output, ToolExecutionStatus::TimedOut))
@@ -255,7 +263,8 @@ pub fn cancel_execution(execution_id: &str) -> AppResult<CancelToolExecutionResp
                 execution_id: execution_id.to_string(),
                 cancelled: false,
                 status: "already_finished".to_string(),
-                message: "Execution already finished before cancellation was requested.".to_string(),
+                message: "Execution already finished before cancellation was requested."
+                    .to_string(),
             });
         }
     };
@@ -288,7 +297,11 @@ mod tests {
 
     fn unique_temp_file(label: &str) -> String {
         std::env::temp_dir()
-            .join(format!("pipi-shrimp-process-manager-{}-{}", label, uuid::Uuid::new_v4()))
+            .join(format!(
+                "pipi-shrimp-process-manager-{}-{}",
+                label,
+                uuid::Uuid::new_v4()
+            ))
             .to_string_lossy()
             .to_string()
     }
@@ -318,7 +331,10 @@ mod tests {
         assert_eq!(output.status, ToolExecutionStatus::Cancelled);
 
         std::thread::sleep(Duration::from_millis(1300));
-        assert!(fs::metadata(&marker_path).is_err(), "background child should be terminated");
+        assert!(
+            fs::metadata(&marker_path).is_err(),
+            "background child should be terminated"
+        );
     }
 
     #[test]
@@ -332,6 +348,9 @@ mod tests {
         assert_eq!(output.status, ToolExecutionStatus::TimedOut);
 
         std::thread::sleep(Duration::from_millis(2200));
-        assert!(fs::metadata(&marker_path).is_err(), "timed out child should be terminated with its process group");
+        assert!(
+            fs::metadata(&marker_path).is_err(),
+            "timed out child should be terminated with its process group"
+        );
     }
 }

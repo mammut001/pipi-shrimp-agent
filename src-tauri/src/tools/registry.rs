@@ -201,7 +201,9 @@ impl ToolRegistry {
 
         if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
             let provider_context = match (&req.api_key, &req.model) {
-                (Some(api_key), Some(model)) if !api_key.trim().is_empty() && !model.trim().is_empty() => {
+                (Some(api_key), Some(model))
+                    if !api_key.trim().is_empty() && !model.trim().is_empty() =>
+                {
                     Some(BootstrapProviderContext {
                         api_key: api_key.clone(),
                         model: model.clone(),
@@ -915,6 +917,7 @@ mod tests {
             provider: None,
             api_format: None,
             provider_capabilities: None,
+            approval_token: None,
         }
     }
 
@@ -924,10 +927,13 @@ mod tests {
         register_builtin_tools(&mut registry);
 
         let result = registry
-            .execute_with_context(&make_request(
-                "paper_extract_meta",
-                serde_json::json!({ "text": "A paper about strong baselines." }),
-            ))
+            .execute_with_context(
+                &make_request(
+                    "paper_extract_meta",
+                    serde_json::json!({ "text": "A paper about strong baselines." }),
+                ),
+                None,
+            )
             .await
             .expect("execution should return structured result");
 
@@ -941,10 +947,8 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_builtin_tools(&mut registry);
 
-        let work_dir = std::env::temp_dir().join(format!(
-            "pipi-bootstrap-registry-{}",
-            Uuid::new_v4()
-        ));
+        let work_dir =
+            std::env::temp_dir().join(format!("pipi-bootstrap-registry-{}", Uuid::new_v4()));
         let request = make_request(
             "scaffold_generate",
             serde_json::json!({
@@ -960,7 +964,7 @@ mod tests {
         );
 
         let result = registry
-            .execute_with_context(&request)
+            .execute_with_context(&request, None)
             .await
             .expect("execution should succeed");
 
@@ -977,10 +981,7 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_builtin_tools(&mut registry);
 
-        let work_dir = std::env::temp_dir().join(format!(
-            "pipi-registry-write-{}",
-            Uuid::new_v4()
-        ));
+        let work_dir = std::env::temp_dir().join(format!("pipi-registry-write-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&work_dir).expect("temp dir should be created");
 
         let mut request = make_request(
@@ -994,7 +995,7 @@ mod tests {
         request.source = super::super::ToolExecutionSource::AssistantToolCall;
 
         let result = registry
-            .execute_with_context(&request)
+            .execute_with_context(&request, None)
             .await
             .expect("execution should succeed");
 

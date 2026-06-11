@@ -117,10 +117,14 @@ const AgentMetricsArtifactObjectSchema = MetricsArtifactBaseObjectSchema.extend(
   generator: z.literal('agent'),
 }).strict();
 
-function validateAgentMetricsArtifact(
-  value: z.infer<typeof AgentMetricsArtifactObjectSchema>,
-  ctx: z.RefinementCtx,
-): void {
+type MetricsRunIdentity = {
+  runId: string;
+  sessionId: string;
+  primaryMetric: string;
+  metricName: string;
+};
+
+function validateMetricsRunIdentity(value: MetricsRunIdentity, ctx: z.RefinementCtx): void {
   if (value.runId !== value.sessionId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -137,11 +141,25 @@ function validateAgentMetricsArtifact(
   }
 }
 
+function validateAgentMetricsArtifact(
+  value: z.infer<typeof AgentMetricsArtifactObjectSchema>,
+  ctx: z.RefinementCtx,
+): void {
+  validateMetricsRunIdentity(value, ctx);
+}
+
 const AgentMetricsArtifactSchema = AgentMetricsArtifactObjectSchema
   .superRefine(validateBaseMetricsArtifact)
   .superRefine(validateAgentMetricsArtifact);
 
-const PersistedIterationMetricsSchema = AgentMetricsArtifactObjectSchema.extend({
+const PersistedIterationMetricsObjectSchema = MetricsArtifactBaseObjectSchema.extend({
+  schemaVersion: z.literal(1),
+  sessionId: z.string().min(1),
+  runId: z.string().min(1),
+  iteration: z.number().int().positive(),
+  primaryMetric: z.string().min(1),
+  direction: DirectionSchema,
+  timestamp: z.string().datetime(),
   generator: z.enum(['loop_engine', 'bootstrap']),
   durationMs: z.number().nonnegative(),
   startedAt: z.string().datetime(),
@@ -152,8 +170,11 @@ const PersistedIterationMetricsSchema = AgentMetricsArtifactObjectSchema.extend(
     retryCount: z.number().int().nonnegative().optional(),
     reason: z.string().min(1).optional(),
   }).strict().optional(),
-}).strict().superRefine(validateBaseMetricsArtifact)
-  .superRefine(validateAgentMetricsArtifact)
+}).strict();
+
+const PersistedIterationMetricsSchema = PersistedIterationMetricsObjectSchema
+  .superRefine(validateBaseMetricsArtifact)
+  .superRefine(validateMetricsRunIdentity)
   .superRefine((value, ctx) => {
   if (value.timestamp !== value.finishedAt) {
     ctx.addIssue({
@@ -215,7 +236,7 @@ function validateExpectedFields(
 }
 
 function hasSchemaFields(value: unknown): value is Record<string, unknown> {
-  return Boolean(value)
+  return value != null
     && typeof value === 'object'
     && (
       'schemaVersion' in value

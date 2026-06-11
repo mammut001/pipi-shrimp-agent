@@ -219,7 +219,8 @@ impl ResolvedProviderConfig {
         let base_url = Self::resolve_base_url(provider_id, base_url);
 
         // Resolve capabilities
-        let capabilities = capability_hint.unwrap_or_else(|| Self::resolve_capabilities(provider_id, model));
+        let capabilities =
+            capability_hint.unwrap_or_else(|| Self::resolve_capabilities(provider_id, model));
 
         Self {
             provider_id,
@@ -257,7 +258,10 @@ impl ResolvedProviderConfig {
                 let supports_thinking = model_lower.contains("claude-3-7")
                     || model_lower.contains("claude-opus-4")
                     || model_lower.contains("claude-sonnet-4")
-                    || model_lower.contains("claude-haiku-4");
+                    || model_lower.contains("claude-haiku-4")
+                    || model_lower.contains("claude-5")
+                    || model_lower.contains("claude-fable")
+                    || model_lower.contains("claude-mythos");
 
                 ProviderCapabilities {
                     supports_thinking,
@@ -316,7 +320,7 @@ impl ResolvedProviderConfig {
                     supports_json_mode: true,
                     accepts_response_format: true,
                     accepts_reasoning_param: false,
-                    supports_vision: false,
+                    supports_vision: true,
                     uses_responses_api: false,
                     requires_tool_ordering: false,
                     thinking_budget: None,
@@ -408,6 +412,9 @@ pub fn supports_thinking(model: &str) -> bool {
         || model_lower.contains("claude-opus-4")
         || model_lower.contains("claude-sonnet-4")
         || model_lower.contains("claude-haiku-4")
+        || model_lower.contains("claude-5")
+        || model_lower.contains("claude-fable")
+        || model_lower.contains("claude-mythos")
 }
 
 /// Get default thinking budget for models that support it

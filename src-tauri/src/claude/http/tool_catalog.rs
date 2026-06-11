@@ -557,7 +557,10 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
     tools
 }
 
-pub fn filter_tools_by_allowed_names(tools: &[Value], allowed_tools: Option<&[String]>) -> Vec<Value> {
+pub fn filter_tools_by_allowed_names(
+    tools: &[Value],
+    allowed_tools: Option<&[String]>,
+) -> Vec<Value> {
     let Some(allowed_tools) = allowed_tools else {
         return tools.to_vec();
     };
@@ -568,7 +571,11 @@ pub fn filter_tools_by_allowed_names(tools: &[Value], allowed_tools: Option<&[St
         .filter(|tool| {
             tool.get("name")
                 .and_then(|value| value.as_str())
-                .or_else(|| tool.get("function").and_then(|value| value.get("name")).and_then(|value| value.as_str()))
+                .or_else(|| {
+                    tool.get("function")
+                        .and_then(|value| value.get("name"))
+                        .and_then(|value| value.as_str())
+                })
                 .map(|name| allowed.contains(name))
                 .unwrap_or(false)
         })

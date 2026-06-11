@@ -27,7 +27,7 @@ const minimaxConfig = {
   configId: 'cfg-minimax',
   name: 'MiniMax Global',
   provider: 'minimax' as const,
-  model: 'MiniMax-M2.7',
+  model: 'MiniMax-M3',
   baseUrl: 'https://api.minimaxi.com/v1/',
   apiFormat: 'openai' as const,
   hasApiKey: true,
@@ -95,7 +95,7 @@ describe('resolvedChatRequest', () => {
       name: 'MiniMax Global',
       provider: 'minimax',
       apiKey: '  Bearer secret-key \n',
-      model: 'MiniMax-M2.7',
+      model: 'MiniMax-M3',
       baseUrl: '',
       modelProviderId: 'minimax',
     });
@@ -124,7 +124,7 @@ describe('resolvedChatRequest', () => {
       supportsJsonMode: true,
       acceptsResponseFormat: true,
       acceptsReasoningParam: false,
-      supportsVision: false,
+      supportsVision: true,
       usesResponsesApi: false,
     });
   });

@@ -593,7 +593,8 @@ export function createChatActionMethods({
               let planWorkDir = latestSession?.workDir ?? sessionWorkDir;
 
               if (!planWorkDir) {
-                planWorkDir = await ensureSessionWorkDir(activeSessionId, set, get);
+                const resolved = await ensureSessionWorkDir(activeSessionId, set, get);
+                planWorkDir = resolved ?? undefined;
               }
 
               if (planWorkDir) {

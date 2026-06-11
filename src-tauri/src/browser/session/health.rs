@@ -1,7 +1,5 @@
 use crate::browser::cdp::health::CdpHealthStatus;
-use crate::browser::observability::{
-    BrowserBenchmarkKind, BrowserEventKind, BrowserEventLevel,
-};
+use crate::browser::observability::{BrowserBenchmarkKind, BrowserEventKind, BrowserEventLevel};
 
 use super::manager::BrowserSessionManager;
 use super::state::BrowserLaunchMode;
@@ -108,9 +106,7 @@ impl BrowserSessionManager {
         let level = match self.health.status {
             CdpHealthStatus::Healthy => BrowserEventLevel::Success,
             CdpHealthStatus::Failed => BrowserEventLevel::Error,
-            CdpHealthStatus::Degraded | CdpHealthStatus::Reconnecting => {
-                BrowserEventLevel::Warning
-            }
+            CdpHealthStatus::Degraded | CdpHealthStatus::Reconnecting => BrowserEventLevel::Warning,
             _ => BrowserEventLevel::Info,
         };
 
@@ -127,7 +123,7 @@ impl BrowserSessionManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::browser::cdp::{CdpConfig, health::CdpHealthStatus};
+    use crate::browser::cdp::{health::CdpHealthStatus, CdpConfig};
 
     use super::*;
     use crate::browser::session::state::{BrowserLaunchMode, BrowserSession};

@@ -225,6 +225,35 @@ export function ChatBrowserWorkspaceShell() {
     ensureSessionWorkDir,
   } = useChatStore();
 
+  const [sessionGoal, setSessionGoal] = useState<string>('');
+
+  // Load goal on session switch or when localStorage changes
+  useEffect(() => {
+    if (!currentSessionId) {
+      setSessionGoal('');
+      return;
+    }
+    const loadGoal = () => {
+      try {
+        const goals = JSON.parse(localStorage.getItem('pipi-shrimp-session-goals') || '{}');
+        setSessionGoal(goals[currentSessionId] || '');
+      } catch {
+        setSessionGoal('');
+      }
+    };
+    loadGoal();
+    
+    // Listen for custom storage changes (e.g. from ChatInput)
+    window.addEventListener('storage', loadGoal);
+    // Also poll/check on interval to sync immediately within the same window
+    const interval = setInterval(loadGoal, 500);
+    
+    return () => {
+      window.removeEventListener('storage', loadGoal);
+      clearInterval(interval);
+    };
+  }, [currentSessionId]);
+
   // Memoized token usage
   const currentSessionData = currentSession();
   const terminalCwd = currentSessionData?.workDir || fallbackTerminalCwd;
@@ -438,6 +467,22 @@ export function ChatBrowserWorkspaceShell() {
   // Render the chat panel content
   const renderChatPanel = () => (
     <div className="flex flex-col min-h-0 w-full min-w-0 flex-1">
+      {/* Active Goal Banner */}
+      {sessionGoal && (
+        <div className="bg-emerald-50/50 border-b border-emerald-100/50 px-4 py-2 flex items-center justify-between gap-3 flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="flex-shrink-0 bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-md font-semibold flex items-center gap-1">
+              <svg className="h-3 w-3 text-emerald-700" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 2a6 6 0 016 6h-2a4 4 0 00-4-4V4z" />
+              </svg>
+              {t('goal.label')}
+            </span>
+            <span className="text-xs text-gray-700 truncate font-medium" title={sessionGoal}>
+              {sessionGoal}
+            </span>
+          </div>
+        </div>
+      )}
       {/* Messages List — min-h-0 allows this to shrink when terminal panel is open */}
       <div className="flex-1 overflow-y-auto min-h-0 w-full">
         {hasMessages ? (

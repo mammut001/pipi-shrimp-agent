@@ -70,7 +70,9 @@ pub async fn execute_single_tool(
     #[allow(non_snake_case)] baseUrl: Option<String>,
     provider: Option<String>,
     #[allow(non_snake_case)] apiFormat: Option<String>,
-    #[allow(non_snake_case)] providerCapabilities: Option<crate::claude::provider::ProviderCapabilities>,
+    #[allow(non_snake_case)] providerCapabilities: Option<
+        crate::claude::provider::ProviderCapabilities,
+    >,
     #[allow(non_snake_case)] approvalToken: Option<String>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<ToolCallResult, String> {
@@ -120,10 +122,12 @@ pub async fn get_available_tools(
 pub async fn cancel_tool_execution(
     #[allow(non_snake_case)] executionId: String,
 ) -> Result<CancelToolExecutionResponse, String> {
-    process_manager::cancel_execution(&executionId).map_err(|e| e.to_string()).map(|result| CancelToolExecutionResponse {
-        execution_id: result.execution_id,
-        cancelled: result.cancelled,
-        status: result.status,
-        message: result.message,
-    })
+    process_manager::cancel_execution(&executionId)
+        .map_err(|e| e.to_string())
+        .map(|result| CancelToolExecutionResponse {
+            execution_id: result.execution_id,
+            cancelled: result.cancelled,
+            status: result.status,
+            message: result.message,
+        })
 }

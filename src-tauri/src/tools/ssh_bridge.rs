@@ -55,10 +55,7 @@ fn parse_ssh_config(args: &Value) -> anyhow::Result<SshConfig> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let port = args
-        .get("port")
-        .and_then(Value::as_u64)
-        .unwrap_or(22) as u16;
+    let port = args.get("port").and_then(Value::as_u64).unwrap_or(22) as u16;
     let auth_mode = args
         .get("authMode")
         .or_else(|| args.get("auth_mode"))
@@ -94,7 +91,9 @@ fn parse_ssh_config(args: &Value) -> anyhow::Result<SshConfig> {
             return Err(anyhow::anyhow!("keyPath is required for authMode=key"));
         }
         if auth_mode == "password" && password.trim().is_empty() {
-            return Err(anyhow::anyhow!("password is required for authMode=password"));
+            return Err(anyhow::anyhow!(
+                "password is required for authMode=password"
+            ));
         }
     }
 
@@ -164,7 +163,11 @@ fn build_remote_bash_command(cfg: &SshConfig, remote_cmd: &str) -> anyhow::Resul
     ))
 }
 
-fn build_upload_command(cfg: &SshConfig, local_path: &str, remote_path: &str) -> anyhow::Result<String> {
+fn build_upload_command(
+    cfg: &SshConfig,
+    local_path: &str,
+    remote_path: &str,
+) -> anyhow::Result<String> {
     if cfg.mode == "local" {
         return Ok(format!(
             "cp -f {} {}",
@@ -296,7 +299,11 @@ pub fn execute_ssh_read_file(args: &Value) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("Missing required parameter: remotePath"))?;
     let max_lines = args.get("maxLines").and_then(Value::as_u64);
     let remote_cmd = if let Some(lines) = max_lines {
-        format!("head -n {} {}", lines.max(1), shell_escape_path(remote_path)?)
+        format!(
+            "head -n {} {}",
+            lines.max(1),
+            shell_escape_path(remote_path)?
+        )
     } else {
         format!("cat {}", shell_escape_path(remote_path)?)
     };
