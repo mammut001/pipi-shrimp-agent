@@ -75,7 +75,7 @@ jobs:
           node-version: 20
 
       - name: Check repository hygiene
-        run: node scripts/check-repo-hygiene.mjs
+        run: node tools/check-repo-hygiene.mjs
 
   i18n-check:
     name: i18n Key Check
@@ -88,7 +88,7 @@ jobs:
           node-version: 20
 
       - name: Check locale key consistency
-        run: node scripts/check-i18n-keys.mjs
+        run: node tools/check-i18n-keys.mjs
 
   website:
     name: Website Lint & Build

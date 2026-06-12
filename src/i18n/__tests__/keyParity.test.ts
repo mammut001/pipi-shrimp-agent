@@ -83,7 +83,7 @@ describe('i18n key parity', () => {
     // AUDIT-FIX — These keys are explicitly retired. If a future refactor
     // accidentally resurrects them, the test will fail loudly. The keys
     // are also not referenced anywhere in `src/` (see
-    // `scripts/find-unused-i18n-keys.mjs`).
+    // `tools/find-unused-i18n-keys.mjs`).
     const retiredKeys: Keys[] = [
       // Renamed/restructured
       'chat.bindWorkFolder',

@@ -30,7 +30,7 @@ const rootOnlyPatterns = [
 ];
 
 async function loadAllowlist() {
-  const allowlistPath = path.join(repoRoot, 'scripts', 'repo-hygiene.allowlist.json');
+  const allowlistPath = path.join(repoRoot, 'tools', 'repo-hygiene.allowlist.json');
   try {
     const raw = await readFile(allowlistPath, 'utf8');
     const parsed = JSON.parse(raw);

@@ -5,7 +5,7 @@
  * anywhere in `src/` via `t('...')` / `t("...")` / `t(`...`)` and prints
  * them. Intended for one-off cleanup passes; it is not a permanent test.
  *
- * Usage:  node scripts/find-unused-i18n-keys.mjs
+ * Usage:  node tools/find-unused-i18n-keys.mjs
  */
 
 import { readdir, readFile, stat } from 'node:fs/promises';

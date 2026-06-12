@@ -527,7 +527,7 @@ mod tests {
             true,
             WindowsShellProfile::Auto,
             Some(r"C:\Users\Payton\project"),
-            "bash scripts/smoke-autoresearch-local.sh",
+            "bash tools/smoke-autoresearch-local.sh",
             true,
         )
         .expect("plan");
