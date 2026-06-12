@@ -11,7 +11,9 @@ interface ReadFileResult {
 }
 
 export interface BuildHeadlessSystemPromptInput {
+  /** Workspace Folder for the headless run. */
   workDir?: string;
+  /** Context Files attached to the headless run as references. */
   workingFiles?: ImportedFile[];
   originalQuery: string;
 }
@@ -50,6 +52,9 @@ export async function buildHeadlessSystemPrompt(
     }
   }
 
+  // `workingFilesList` is rendered into the "Context Files" section of the
+  // default template. The variable name is kept for backwards compatibility
+  // with custom prompt templates that still reference `{{workingFilesList}}`.
   const workingFilesList = workingFiles.length > 0
     ? workingFiles.map((file) => `- ${file.name}: ${file.path}`).join('\n')
     : '';

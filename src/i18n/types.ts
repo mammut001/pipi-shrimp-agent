@@ -169,8 +169,16 @@ export type TranslationKeys = {
   'chat.openOutputFolder': string;
   'chat.changeWorkDirectory': string;
   'chat.removeWorkDirectory': string;
-  'chat.bindWorkFolder': string;
   'chat.binding': string;
+  'chat.workspaceFolder': string;
+  'chat.workspaceFolderTooltip': string;
+  'chat.setWorkspaceFolder': string;
+  'chat.noWorkspaceHint': string;
+  'chat.contextFiles': string;
+  'chat.contextFileExternal': string;
+  'chat.contextFileInsideWorkspace': string;
+  'chat.contextFileSetAsWorkspace': string;
+  'chat.useAsWorkspace': string;
   'chat.addImage': string;
   'chat.imageAttachment': string;
   'chat.imagesAdded': string;
@@ -712,14 +720,10 @@ export type TranslationKeys = {
   'permission.deniedMessage': string;
 
   // Chat Input
-  'chat.input.dropFiles': string;
-  'chat.input.attachFile': string;
   'chat.input.filesAddedToSession': string;
   'chat.input.filesImported': string;
-  'chat.input.filesSelected': string;
   'chat.input.filesCount': string;
   'chat.input.dragFilesHere': string;
-  'chat.input.filesWillBeAddedToList': string;
   'chat.input.removeFile': string;
   'chat.input.confirmImportFiles': string;
   'chat.input.clearList': string;
@@ -727,6 +731,9 @@ export type TranslationKeys = {
   'chat.input.selectFiles': string;
   'chat.input.pressEscToCancel': string;
   'chat.input.cancel': string;
+  'chat.input.contextFilesHeader': string;
+  'chat.input.contextFilesSubtitle': string;
+  'chat.input.contextFilesNotWorkspace': string;
 
   // Browser Intent
   'browserIntent.confirmTitle': string;

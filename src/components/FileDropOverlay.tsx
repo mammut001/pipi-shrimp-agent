@@ -4,6 +4,12 @@
  * Shows a full-screen frosted glass overlay whenever the user drags files
  * into the app window. The rest of the UI blurs out behind it.
  *
+ * Files dropped here are added to the current chat's `workingFiles` list
+ * as **Context Files** — they are references for the conversation, not
+ * the session's Workspace Folder. The wording and "external reference"
+ * badge are deliberately distinct from the Workdir chip in `ChatInput`
+ * so users don't conflate the two concepts.
+ *
  * Features:
  * - Listens to global window drag events
  * - Frosted glass backdrop (backdrop-blur + semi-transparent)
@@ -13,10 +19,15 @@
  * - Counter-based dragenter/dragleave to handle nested DOM elements correctly
  */
 
-import { useCallback, useEffect, useState, useRef, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef, type ChangeEvent } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useSettingsStore, useUIStore, useChatStore } from '@/store';
 import { t } from '@/i18n';
+import {
+  formatContextFilePath,
+  getParentDirectory,
+  isContextFileInsideWorkspace,
+} from '@/services/workspace/sessionWorkspaceLabels';
 
 interface PendingFile {
   name: string;
@@ -66,7 +77,12 @@ export function FileDropOverlay() {
 
   const { addImportedFiles } = useSettingsStore();
   const { addNotification } = useUIStore();
-  const { currentSessionId, addSessionWorkingFiles } = useChatStore();
+  const { currentSessionId, addSessionWorkingFiles, sessions, setSessionWorkDirFromPath } = useChatStore();
+
+  const currentSessionWorkDir = useMemo(
+    () => sessions.find((session) => session.id === currentSessionId)?.workDir,
+    [sessions, currentSessionId],
+  );
 
   /** Add files to pending list (don't import yet) */
   const addToPending = useCallback((files: FileList) => {
@@ -106,7 +122,9 @@ export function FileDropOverlay() {
 
     const fileData = pendingFiles.map(({ name, path, id }) => ({ id, name, path, addedAt: Date.now() }));
 
-    // Add to current session's working files if session exists
+    // Add to current session's working files if session exists. These are
+    // explicitly **Context Files** for the chat, not the session's
+    // workspace folder.
     if (currentSessionId) {
       addSessionWorkingFiles(currentSessionId, fileData);
       addNotification('success', t('chat.input.filesAddedToSession').replace('{count}', String(fileData.length)));
@@ -116,10 +134,48 @@ export function FileDropOverlay() {
       addNotification('success', t('chat.input.filesImported').replace('{count}', String(fileData.length)));
     }
 
+    // AUDIT-FIX — When the user has no workspace yet, surface the
+    // "Set parent as workspace?" affordance only for the first *external*
+    // dropped file. We pick the first file that has a parent directory
+    // (always true on Tauri drops; the browser path-only fallback may not
+    // have one). Showing this only when workDir is empty avoids noisy
+    // suggestions during the normal "add context files" flow.
+    if (!currentSessionWorkDir && pendingFiles.length > 0 && currentSessionId) {
+      const candidate = pendingFiles.find((file) => Boolean(getParentDirectory(file.path)));
+      const candidateParent = candidate ? getParentDirectory(candidate.path) : '';
+      if (candidateParent) {
+        addNotification(
+          'info',
+          `${t('chat.contextFileSetAsWorkspace')} (${candidateParent})`,
+          currentSessionId,
+          {
+            label: t('chat.useAsWorkspace'),
+            onClick: () => {
+              // Fire-and-forget; the toast is already dismissed by the
+              // `NotificationToast` component once the action handler
+              // returns. We surface a separate success toast only if the
+              // bind actually persisted a path.
+              void setSessionWorkDirFromPath(currentSessionId, candidateParent).then(
+                (boundPath) => {
+                  if (boundPath) {
+                    addNotification(
+                      'success',
+                      `${t('chat.workspaceFolder')}: ${boundPath}`,
+                      currentSessionId,
+                    );
+                  }
+                },
+              );
+            },
+          },
+        );
+      }
+    }
+
     setPendingFiles([]);
     setIsDragging(false);
     dragCounterRef.current = 0;
-  }, [pendingFiles, currentSessionId, addImportedFiles, addSessionWorkingFiles, addNotification]);
+  }, [pendingFiles, currentSessionId, currentSessionWorkDir, addImportedFiles, addSessionWorkingFiles, addNotification, setSessionWorkDirFromPath]);
 
   /** Cancel and close overlay */
   const cancelOverlay = useCallback(() => {
@@ -351,8 +407,8 @@ export function FileDropOverlay() {
               )}
             </div>
             <div>
-              <h2 className="text-base font-bold text-gray-900">
-                {hasPendingFiles ? t('chat.input.filesSelected') : t('chat.input.dragFilesHere')}
+              <h2 className="text-base font-bold text-gray-900" data-testid="file-drop-header">
+                {hasPendingFiles ? t('chat.contextFiles') : t('chat.input.dragFilesHere')}
               </h2>
               {hasPendingFiles && (
                 <p className="text-xs text-gray-500">{t('chat.input.filesCount').replace('{count}', String(pendingFiles.length))}</p>
@@ -374,27 +430,58 @@ export function FileDropOverlay() {
           {hasPendingFiles ? (
             /* Show pending files list */
             <div className="space-y-2">
-              {pendingFiles.map((file) => (
-                <div
-                  key={file.id}
-                  className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-xl group hover:bg-gray-100 transition-colors"
-                >
-                  <span className="text-xl">{getFileIcon(file.name)}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                    <p className="text-xs text-gray-400 truncate">{file.path}</p>
-                  </div>
-                  <button
-                    onClick={() => removePendingFile(file.id)}
-                    className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
-                    title={t('chat.input.removeFile')}
+              {pendingFiles.map((file) => {
+                const insideWorkspace = isContextFileInsideWorkspace(file.path, currentSessionWorkDir);
+                const displayPath = insideWorkspace
+                  ? formatContextFilePath(file.path, currentSessionWorkDir)
+                  : file.path;
+                return (
+                  <div
+                    key={file.id}
+                    className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-xl group hover:bg-gray-100 transition-colors"
+                    data-testid="file-drop-row"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-500" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
+                    <span className="text-xl">{getFileIcon(file.name)}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                        {currentSessionWorkDir ? (
+                          <span
+                            className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                              insideWorkspace
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
+                            }`}
+                            data-testid={insideWorkspace ? 'file-drop-inside' : 'file-drop-external'}
+                            title={insideWorkspace
+                              ? t('chat.contextFileInsideWorkspace')
+                              : t('chat.contextFileExternal')}
+                          >
+                            {insideWorkspace
+                              ? t('chat.contextFileInsideWorkspace')
+                              : t('chat.contextFileExternal')}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-gray-400 truncate" title={file.path}>
+                        {displayPath || file.path}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => removePendingFile(file.id)}
+                      className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
+                      title={t('chat.input.removeFile')}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-gray-500 px-1 pt-1" data-testid="file-drop-subtitle">
+                {t('chat.input.contextFilesNotWorkspace')}
+              </p>
             </div>
           ) : (
             /* Show drop hint */
@@ -415,8 +502,8 @@ export function FileDropOverlay() {
                   />
                 </svg>
               </div>
-              <p className="text-base font-semibold text-gray-700 mb-1">{t('chat.input.dragFilesHere')}</p>
-              <p className="text-xs text-gray-400">{t('chat.input.filesWillBeAddedToList')}</p>
+              <p className="text-base font-semibold text-gray-700 mb-1">{t('chat.input.contextFilesHeader')}</p>
+              <p className="text-xs text-gray-400">{t('chat.input.contextFilesSubtitle')}</p>
             </div>
           )}
         </div>

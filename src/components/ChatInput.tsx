@@ -486,11 +486,18 @@ export function ChatInput({
         {currentSession && currentSession.messages.length > 0 && (
           <div className="px-4 pt-4 pb-2 flex items-center gap-2">
             {workDir ? (
-              // Has work dir — show path chip
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full
+              // Has workspace — show path chip
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full
                               bg-gray-100 border border-gray-200/80
                               text-xs text-gray-600
-                              hover:bg-gray-50 transition-colors group">
+                              hover:bg-gray-50 transition-colors group"
+                title={t('chat.workspaceFolderTooltip')}
+                data-testid="workspace-folder-chip"
+              >
+                <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  {t('chat.workspaceFolder')}
+                </span>
                 {/* Folder icon */}
                 <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -569,7 +576,7 @@ export function ChatInput({
                 </button>
               </div>
             ) : (
-              // No work dir — show quiet "bind folder" prompt
+              // No workspace — show quiet "Set workspace folder" prompt
               <button
                 onClick={async () => {
                   setIsBindingFolder(true);
@@ -586,12 +593,17 @@ export function ChatInput({
                            hover:border-gray-300 hover:text-gray-600
                            disabled:opacity-50 disabled:cursor-not-allowed
                            transition-all duration-150"
+                title={t('chat.workspaceFolderTooltip')}
+                data-testid="workspace-folder-empty"
               >
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                  {t('chat.workspaceFolder')}
+                </span>
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
                 </svg>
-                {isBindingFolder ? t('chat.binding') : t('chat.bindWorkFolder')}
+                {isBindingFolder ? t('chat.binding') : t('chat.setWorkspaceFolder')}
               </button>
             )}
 
@@ -613,6 +625,27 @@ export function ChatInput({
                 {t('chat.terminal')}
               </button>
             )}
+          </div>
+        )}
+
+        {/* Subtle hint when the session has a conversation but no workspace yet. */}
+        {currentSession && currentSession.messages.length > 0 && !workDir && (
+          <div
+            className="mx-4 mt-1 mb-2 flex items-start gap-2 rounded-md border border-amber-200/70 bg-amber-50/60 px-3 py-1.5 text-[11px] text-amber-800"
+            data-testid="workspace-folder-missing-hint"
+            role="status"
+          >
+            <svg
+              className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+            </svg>
+            <span className="leading-snug">{t('chat.noWorkspaceHint')}</span>
           </div>
         )}
 

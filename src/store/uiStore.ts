@@ -266,9 +266,9 @@ export const useUIStore = create<UIState>((set) => ({
   /**
    * Add notification with auto-dismiss
    */
-  addNotification: (type: Notification['type'], message: string, sessionId?: string) => {
+  addNotification: (type, message, sessionId, action) => {
     const id = crypto.randomUUID();
-    const entry = { id, type, message, timestamp: Date.now(), sessionId };
+    const entry: Notification = { id, type, message, timestamp: Date.now(), sessionId, action };
 
     set((state) => ({
       notifications: [...state.notifications, entry],

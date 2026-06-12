@@ -233,6 +233,92 @@ async function ensureSessionWorkDir(sessionId: string, set: ChatSetState, get: (
   return null;
 }
 
+/**
+ * Shared "bind a folder to a session" flow used by both
+ * `setSessionWorkDir` (folder picker) and `setSessionWorkDirFromPath`
+ * (caller-supplied path, e.g. from a "Set parent folder as workspace?"
+ * toast action).
+ *
+ * Steps mirror the original `setSessionWorkDir` body verbatim:
+ * 1. `init_pipi_shrimp` to ensure the `.pipi-shrimp/` tree exists.
+ * 2. On a fresh init, run the README / tech-stack / top-level-structure
+ *    auto-scan and seed `.pipi-shrimp/core.md`.
+ * 3. Persist the session to the DB and update the in-memory store.
+ */
+async function bindSessionWorkDirPath(
+  sessionId: string,
+  selectedPath: string,
+  set: ChatSetState,
+  get: () => ChatState,
+): Promise<string | null> {
+  const initResult = await invoke<string>('init_pipi_shrimp', { workDir: selectedPath });
+  const isNewProject = initResult.endsWith('|new');
+  if (isNewProject) {
+    try {
+      const lines: string[] = ['## 📌 Project Overview\n'];
+      for (const name of ['README.md', 'readme.md', 'README.txt']) {
+        try {
+          const res = await invoke<{ content: string }>('read_file', { path: `${selectedPath}/${name}`, workDir: selectedPath });
+          if (res?.content) {
+            lines.push(`### README\n\`\`\`\n${res.content.split('\n').slice(0, 20).join('\n')}\n\`\`\`\n`);
+            break;
+          }
+        } catch {
+          // ignore missing file
+        }
+      }
+      const techStack: string[] = [];
+      for (const { file, label } of [
+        { file: 'package.json', label: 'Node.js / JS/TS' },
+        { file: 'Cargo.toml', label: 'Rust' },
+        { file: 'pyproject.toml', label: 'Python' },
+        { file: 'go.mod', label: 'Go' },
+        { file: 'pom.xml', label: 'Java/Maven' },
+        { file: 'build.gradle', label: 'Java/Gradle' },
+      ]) {
+        try {
+          await invoke('read_file', { path: `${selectedPath}/${file}`, workDir: selectedPath });
+          techStack.push(label);
+        } catch {
+          // ignore missing manifest
+        }
+      }
+      if (techStack.length > 0) {
+        lines.push(`## 🛠 Tech Stack\n${techStack.map((entry) => `- ${entry}`).join('\n')}\n`);
+      }
+      try {
+        const entries = await invoke<{ name: string; is_dir: boolean }[]>('list_files', { path: selectedPath });
+        lines.push(`## 📖 Top-level Structure\n${[
+          ...entries.filter((entry) => entry.is_dir).map((entry) => `📁 ${entry.name}`),
+          ...entries.filter((entry) => !entry.is_dir).map((entry) => `📄 ${entry.name}`),
+        ].join('\n')}\n`);
+      } catch {
+        // ignore list failure
+      }
+      const coreMdPath = `${selectedPath}/.pipi-shrimp/core.md`;
+      const coreRes = await invoke<{ content: string }>('read_file', { path: coreMdPath, workDir: selectedPath });
+      await invoke('write_file', {
+        path: coreMdPath,
+        content: (coreRes?.content ?? '').replace(
+          '## 📌 Project Overview\n[Auto-detected on bind — see below]\n\n## 🛠 Tech Stack\n[Auto-detected on bind — see below]',
+          lines.join('\n'),
+        ),
+        workDir: selectedPath,
+      });
+    } catch (error) {
+      console.debug('[setSessionWorkDir] auto-scan failed (non-fatal):', error);
+    }
+  }
+  const session = get().sessions.find((candidate) => candidate.id === sessionId);
+  if (!session) {
+    return null;
+  }
+  const updated = { ...session, workDir: selectedPath, updatedAt: Date.now() };
+  await invoke('db_save_session', { session: sessionToDb(updated) });
+  set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
+  return selectedPath;
+}
+
 async function scrubDanglingToolCalls(sessionId: string, set: ChatSetState, get: () => ChatState): Promise<void> {
   const session = get().sessions.find((candidate) => candidate.id === sessionId);
   if (!session || session.messages.length === 0) {
@@ -851,72 +937,18 @@ export const useChatStore = create<ChatState>()(
       if (!selectedPath) {
         return null;
       }
-      const initResult = await invoke<string>('init_pipi_shrimp', { workDir: selectedPath });
-      const isNewProject = initResult.endsWith('|new');
-      if (isNewProject) {
-        try {
-          const lines: string[] = ['## 📌 Project Overview\n'];
-          for (const name of ['README.md', 'readme.md', 'README.txt']) {
-            try {
-              const res = await invoke<{ content: string }>('read_file', { path: `${selectedPath}/${name}`, workDir: selectedPath });
-              if (res?.content) {
-                lines.push(`### README\n\`\`\`\n${res.content.split('\n').slice(0, 20).join('\n')}\n\`\`\`\n`);
-                break;
-              }
-            } catch {
-              // ignore missing file
-            }
-          }
-          const techStack: string[] = [];
-          for (const { file, label } of [
-            { file: 'package.json', label: 'Node.js / JS/TS' },
-            { file: 'Cargo.toml', label: 'Rust' },
-            { file: 'pyproject.toml', label: 'Python' },
-            { file: 'go.mod', label: 'Go' },
-            { file: 'pom.xml', label: 'Java/Maven' },
-            { file: 'build.gradle', label: 'Java/Gradle' },
-          ]) {
-            try {
-              await invoke('read_file', { path: `${selectedPath}/${file}`, workDir: selectedPath });
-              techStack.push(label);
-            } catch {
-              // ignore missing manifest
-            }
-          }
-          if (techStack.length > 0) {
-            lines.push(`## 🛠 Tech Stack\n${techStack.map((entry) => `- ${entry}`).join('\n')}\n`);
-          }
-          try {
-            const entries = await invoke<{ name: string; is_dir: boolean }[]>('list_files', { path: selectedPath });
-            lines.push(`## 📖 Top-level Structure\n${[
-              ...entries.filter((entry) => entry.is_dir).map((entry) => `📁 ${entry.name}`),
-              ...entries.filter((entry) => !entry.is_dir).map((entry) => `📄 ${entry.name}`),
-            ].join('\n')}\n`);
-          } catch {
-            // ignore list failure
-          }
-          const coreMdPath = `${selectedPath}/.pipi-shrimp/core.md`;
-          const coreRes = await invoke<{ content: string }>('read_file', { path: coreMdPath, workDir: selectedPath });
-          await invoke('write_file', {
-            path: coreMdPath,
-            content: (coreRes?.content ?? '').replace(
-              '## 📌 Project Overview\n[Auto-detected on bind — see below]\n\n## 🛠 Tech Stack\n[Auto-detected on bind — see below]',
-              lines.join('\n'),
-            ),
-            workDir: selectedPath,
-          });
-        } catch (error) {
-          console.debug('[setSessionWorkDir] auto-scan failed (non-fatal):', error);
-        }
-      }
-      const session = get().sessions.find((candidate) => candidate.id === sessionId);
-      if (!session) {
+      return bindSessionWorkDirPath(sessionId, selectedPath, set, get);
+    },
+
+    setSessionWorkDirFromPath: async (sessionId: string, path: string) => {
+      // Defensive trim — empty / whitespace inputs collapse to null so the
+      // caller can short-circuit. The folder-picker variant returns null
+      // for the same reason (user cancellation).
+      const trimmed = (path ?? '').trim();
+      if (!trimmed) {
         return null;
       }
-      const updated = { ...session, workDir: selectedPath, updatedAt: Date.now() };
-      await invoke('db_save_session', { session: sessionToDb(updated) });
-      set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
-      return selectedPath;
+      return bindSessionWorkDirPath(sessionId, trimmed, set, get);
     },
 
     ensureSessionWorkDir: async (sessionId: string) => ensureSessionWorkDir(sessionId, set, get),

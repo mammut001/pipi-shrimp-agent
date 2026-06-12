@@ -234,6 +234,18 @@ export interface ChatState {
   setSessionWorkDir: (sessionId: string) => Promise<string | null>;
 
   /**
+   * Bind a known local folder as the work directory for this session
+   * without showing the folder picker. Used by affordances like
+   * "Set parent folder as workspace?" surfaced from the file-drop toast,
+   * where the user has already implicitly chosen a candidate folder.
+   *
+   * The same init/save flow as `setSessionWorkDir` runs (`init_pipi_shrimp`
+   * + first-run README/tech-stack/structure scan + DB persistence).
+   * Returns the bound path, or `null` if `path` is empty / not a string.
+   */
+  setSessionWorkDirFromPath: (sessionId: string, path: string) => Promise<string | null>;
+
+  /**
    * Ensure the session has an app-managed work directory.
    * Does not prompt; creates `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}`.
    */

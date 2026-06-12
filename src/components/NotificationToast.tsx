@@ -150,15 +150,36 @@ function ToastItem({ notification }: { notification: Notification }) {
       <div className="text-sm font-medium pr-4">
         {notification.message}
       </div>
-      <button
-        type="button"
-        onClick={() => removeNotification(notification.id)}
-        className="flex-shrink-0 ml-auto p-1 rounded-md hover:bg-black/5 transition-colors"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+      {notification.action ? (
+        <button
+          type="button"
+          onClick={() => {
+            try {
+              notification.action?.onClick();
+            } finally {
+              // Always dismiss the toast after the action fires, even if
+              // the action throws — leaving a stale toast pointing at a
+              // path the user just adopted would be confusing.
+              removeNotification(notification.id);
+            }
+          }}
+          className="flex-shrink-0 ml-auto rounded-md border border-current/30 px-2.5 py-1 text-xs font-semibold hover:bg-black/5 active:bg-black/10 transition-colors"
+          data-testid="notification-action"
+        >
+          {notification.action.label}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => removeNotification(notification.id)}
+          className="flex-shrink-0 ml-auto p-1 rounded-md hover:bg-black/5 transition-colors"
+          aria-label="Dismiss notification"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

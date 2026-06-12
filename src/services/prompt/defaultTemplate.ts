@@ -59,19 +59,29 @@ You have access to the following tools:
         content: `{{agentInstructions}}`,
       },
 
-      // Layer 4: Session - Working Directory (cached until workDir changes)
+      // Layer 4: Session - Workspace Folder (cached until workDir changes)
       {
         id: 'session-workdir',
-        label: 'Working Directory',
+        label: 'Workspace Folder',
         order: 40,
         cacheable: true,
         enabled: true,
         category: 'session',
-        description: 'Session work directory context',
-        content: `## Working Directory
+        description: 'Session Workspace Folder (where the agent may read/write project files and store .pipi-shrimp outputs, memory, and docs)',
+        content: `## Workspace Folder
 
-Your working directory for this session is: \`{{workDir}}\`
-Use this path with \`bash\`, \`read_file\`, \`write_file\`, \`list_files\`, and \`grep\` tools. Resolve all relative paths against this directory.`,
+Your **Workspace Folder** for this session is: \`{{workDir}}\`
+
+The Workspace Folder is the root directory the agent may use to:
+- run shell commands (\`bash\`);
+- read and write project files (\`read_file\`, \`write_file\`, \`list_files\`, \`search_files\`, \`path_exists\`, \`create_directory\`);
+- store generated docs under \`.pipi-shrimp/docs/\`;
+- store memory and topic recall data under \`.pipi-shrimp/memory/\`.
+
+Rules:
+- **Resolve all relative tool paths against the Workspace Folder.** If the user says "read main.py", use \`{workDir}/main.py\`.
+- **Do NOT write outside the Workspace Folder** unless the user explicitly asks for it AND the active permission mode allows it.
+- Tools that need a sandbox (e.g. \`write_file\`, \`bash\`) may refuse to run when no Workspace Folder is set.`,
       },
       {
         id: 'session-shell-profile',
@@ -103,21 +113,25 @@ Active shell profile: {{shellProfileLabel}}
 **CRITICAL INSTRUCTION**: The user relies on \`.pipi-shrimp/core.md\` to preserve project context between sessions. If the user tells you new persistent information about the project (e.g., what it is, tech stack, architecture, or rules), you MUST use the \`write_file\` tool to update \`.pipi-shrimp/core.md\` immediately so you don't forget it in future sessions. Combine the new knowledge with the existing content gracefully.`,
       },
 
-      // Layer 4: Session - Working Files (cached until files change)
+      // Layer 4: Session - Context Files (cached until files change)
       {
         id: 'session-working-files',
-        label: 'Working Files',
+        label: 'Context Files',
         order: 43,
         cacheable: true,
         enabled: true,
         category: 'session',
-        description: 'Session-level working files',
-        content: `## Working Files
+        description: 'Session-level Context Files attached as references',
+        content: `## Context Files
 
-The following files have been added to this session's context:
+The following **Context Files** have been attached to this session as references. They are not part of the Workspace Folder by themselves:
 {{workingFilesList}}
 
-Use \`read_file\` with the exact paths above to read their contents before editing.`,
+Rules:
+- Use these files only as **explicit references** the user pointed at.
+- **Read a context file by its exact path** (\`read_file\`) before using or editing it. Do not assume you know its contents.
+- **Do not assume a Context File's parent folder is the Workspace Folder.** A Context File may live anywhere on disk; only the Workspace Folder is the root for tool operations and \`.pipi-shrimp/\` outputs.
+- If the user asks you to save edits, prefer writing back to the **exact same path** of the Context File only when the user explicitly asks and the file lives inside the Workspace Folder. Otherwise, treat the Context File as read-only.`,
       },
 
       // Layer 4: Session - Relevant Memories (cached until memory context changes)
@@ -158,7 +172,7 @@ This project has a built-in document management system for organizing your work.
 - "整理一下 API 文档" → Create document in \`.pipi-shrimp/docs/00X_api-documentation.md\`
 - "帮我写一份简历" → **MUST IMMEDIATELY** use the \`Skill\` tool with \`skill: "resume"\` to learn how to generate a professional resume artifact. **DO NOT ask the user for information first. Call the Skill tool first.**
 
-**Document storage location**: \`{workDir}/.pipi-shrimp/docs/\`
+**Document storage location**: \`{workDir}/.pipi-shrimp/docs/\` (the Workspace Folder's \`.pipi-shrimp/docs/\`, not the parent folder of any Context File)
 
 Use the \`write_file\` tool to create documents with this structure:
 \`\`\`

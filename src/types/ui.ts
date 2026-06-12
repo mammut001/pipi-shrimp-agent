@@ -49,6 +49,16 @@ export interface Notification {
   message: string;
   timestamp?: number;
   sessionId?: string;
+  /**
+   * Optional inline action button rendered alongside the message. Used by
+   * the "Set parent folder as workspace?" affordance in `FileDropOverlay`
+   * and any other toast that should let users act without leaving the chat.
+   * The toast is removed when the action fires.
+   */
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
 /** Task step for progress tracking */
@@ -222,7 +232,12 @@ export interface UIState {
   /**
    * Add notification
    */
-  addNotification: (type: Notification['type'], message: string, sessionId?: string) => void;
+  addNotification: (
+    type: Notification['type'],
+    message: string,
+    sessionId?: string,
+    action?: Notification['action'],
+  ) => void;
 
   /**
    * Remove notification
