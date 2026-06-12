@@ -466,6 +466,25 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
             }
         }),
         serde_json::json!({
+            "name": "save_plan_doc",
+            "description": "Persist a Plan Mode plan as a single markdown document under the bound workspace's .pipi-shrimp/docs/ directory. The model supplies the plan body (and optionally a short title); the workspace path comes from the session. The tool refuses to save bodies that lack the standard Plan Mode structure (Execution Plan header, Proposed Implementation Steps, Validation Plan, Execution Gate). Only available when Plan Mode is active.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "markdown": {
+                        "type": "string",
+                        "description": "The full plan body in markdown. Must include the standard Plan Mode structure or the tool will refuse to persist it."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional short title used for the docs file. Defaults to the latest user message, then to the first content line of the markdown body."
+                    }
+                },
+                "required": ["markdown"],
+                "additionalProperties": false
+            }
+        }),
+        serde_json::json!({
             "name": "get_current_workspace",
             "description": "Get the current session's bound working directory path.",
             "input_schema": { "type": "object", "properties": {}, "required": [], "additionalProperties": false }
@@ -591,18 +610,23 @@ pub fn apply_allowed_tools_to_body(body: &mut Value, allowed_tools: Option<&[Str
     body["tools"] = Value::Array(filter_tools_by_allowed_names(existing_tools, allowed_tools));
 }
 
-pub fn convert_tools_to_openai_format(tools: &[Value]) -> Vec<Value> {
+pub fn convert_tools_to_openai_format(tools: &[Value], strict: bool) -> Vec<Value> {
     tools
         .iter()
         .map(|tool| {
+            let mut function_val = serde_json::json!({
+                "name": tool["name"].clone(),
+                "description": tool["description"].clone(),
+                "parameters": tool.get("input_schema").cloned().unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}})),
+            });
+            if strict {
+                if let Some(obj) = function_val.as_object_mut() {
+                    obj.insert("strict".to_string(), Value::Bool(true));
+                }
+            }
             serde_json::json!({
                 "type": "function",
-                "function": {
-                    "name": tool["name"].clone(),
-                    "description": tool["description"].clone(),
-                    "parameters": tool.get("input_schema").cloned().unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}})),
-                    "strict": true,
-                }
+                "function": function_val,
             })
         })
         .collect()
@@ -640,7 +664,7 @@ mod tests {
     #[test]
     fn applies_allowed_tool_filter_to_openai_body() {
         let mut body = serde_json::json!({
-            "tools": convert_tools_to_openai_format(&get_tools(false)),
+            "tools": convert_tools_to_openai_format(&get_tools(false), true),
         });
 
         apply_allowed_tools_to_body(
@@ -656,7 +680,7 @@ mod tests {
 
     #[test]
     fn converts_tools_to_openai_function_shape() {
-        let converted = convert_tools_to_openai_format(&get_tools(false));
+        let converted = convert_tools_to_openai_format(&get_tools(false), true);
         assert_eq!(converted[0]["type"], "function");
         assert!(converted[0]["function"]["parameters"].is_object());
     }

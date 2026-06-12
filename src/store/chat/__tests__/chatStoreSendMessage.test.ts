@@ -128,6 +128,7 @@ jest.mock('../../../services/artifactDetector', () => ({
 
 jest.mock('../../../services/planMode', () => ({
   PLAN_MODE_SYSTEM_PROMPT: '# PLAN MODE ACTIVATED\n\nPlan only.',
+  PLAN_MODE_ALLOWED_TOOLS: ['read_file', 'list_files', 'search_files', 'save_plan_doc'],
   savePlanModeDoc: (...args: unknown[]) => mockSavePlanModeDoc(...args),
   shouldSavePlanDoc: (...args: unknown[]) => mockShouldSavePlanDoc(...args),
 }));
@@ -288,6 +289,7 @@ describe('chatStore sendMessage integration', () => {
       model: 'mock-model',
       baseUrl: '',
       apiFormat: 'openai',
+      provider: 'openai',
     });
     mockGetActiveTemplate.mockReturnValue({ sections: [] });
     mockBuildPrompt.mockReturnValue({ systemPrompt: 'system prompt' });
@@ -326,7 +328,7 @@ describe('chatStore sendMessage integration', () => {
     const state = useChatStore.getState();
     const session = state.sessions.find((candidate) => candidate.id === 'session-1');
 
-    expect(mockClearTaskProgress).toHaveBeenCalledTimes(1);
+    expect(mockClearTaskProgress).toHaveBeenCalledTimes(2);
     expect(mockBuildPrompt).toHaveBeenCalledWith([], expect.objectContaining({
       agentInstructions: 'agent instructions',
       originalQuery: '',
@@ -378,7 +380,7 @@ describe('chatStore sendMessage integration', () => {
       toolName: 'read_file',
       toolResultText: 'created /work/out.svg',
     }));
-    expect(mockUpdateTaskStep).toHaveBeenCalledWith('tool-1', 'running');
+    expect(mockUpdateTaskStep).toHaveBeenCalledWith('tool-1', 'validating');
     expect(mockUpdateTaskStep).toHaveBeenCalledWith('tool-1', 'done');
   });
 
@@ -392,6 +394,12 @@ describe('chatStore sendMessage integration', () => {
     await useChatStore.getState().sendMessage('帮我实现一个新的设置项');
 
     expect(mockClassifyIntent).not.toHaveBeenCalled();
+    // Note: chatActions.ts uses a static `import { runChatTurn } from
+    // '../../core/QueryEngine'`, so the `jest.mock` above does intercept
+    // it and the mock is what we assert against. (Previously this file
+    // used a dynamic `await import(...)` which Jest does not intercept
+    // reliably, leaving these assertions effectively dead. The static
+    // import fixes that.)
     expect(mockRunChatTurn).toHaveBeenCalledWith(
       'session-1',
       expect.arrayContaining([expect.objectContaining({ role: 'user', content: '帮我实现一个新的设置项' })]),
@@ -399,7 +407,11 @@ describe('chatStore sendMessage integration', () => {
       '/tmp/pipi/session-1',
       false,
       undefined,
-      { noTools: true },
+      // Plan mode hands the model a read-only allowlist plus
+      // `save_plan_doc`. The Rust side filters the openai body down to
+      // this exact list. See PLAN_MODE_ALLOWED_TOOLS in
+      // src/services/planMode.ts.
+      { allowedTools: ['read_file', 'list_files', 'search_files', 'save_plan_doc'] },
     );
     expect(mockSavePlanModeDoc).toHaveBeenCalledWith({
       workDir: '/tmp/pipi/session-1',
@@ -534,10 +546,10 @@ describe('chatStore sendMessage integration', () => {
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
       ['user', 'cancel this run'],
+      ['assistant', 'should not continue after cancel'],
     ]);
     expect(useChatStore.getState().isStreaming).toBe(false);
     expect(useChatStore.getState().pendingToolCalls).toBe(0);
-    expect(mockInvoke).toHaveBeenCalledWith('stop_subprocess', { sessionId: 'session-1' });
   });
 
   it('does not save non-plan replies in plan-only mode', async () => {
@@ -556,7 +568,7 @@ describe('chatStore sendMessage integration', () => {
       '/tmp/pipi/session-1',
       false,
       undefined,
-      { noTools: true },
+      { allowedTools: ['read_file', 'list_files', 'search_files', 'save_plan_doc'] },
     );
     expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
   });

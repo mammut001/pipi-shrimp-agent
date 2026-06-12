@@ -36,6 +36,7 @@ export { SleepTool, sleepTool } from './impl/SleepTool';
 export { SyntheticOutputTool, syntheticOutputTool } from './impl/SyntheticOutputTool';
 export { LSPTool, lspTool } from './impl/LSPTool';
 export { SshExecTool, SshUploadFileTool, SshReadFileTool, sshExecTool, sshUploadFileTool, sshReadFileTool } from './impl/SshTool';
+export { SavePlanDocTool, savePlanDocTool, SavePlanDocInputSchema, SavePlanDocOutputSchema } from './impl/SavePlanDocTool';
 
 import { toolRegistry } from './core/ToolRegistry';
 import { fileReadTool } from './impl/FileReadTool';
@@ -59,6 +60,7 @@ import { sleepTool } from './impl/SleepTool';
 import { syntheticOutputTool } from './impl/SyntheticOutputTool';
 import { lspTool } from './impl/LSPTool';
 import { sshExecTool, sshUploadFileTool, sshReadFileTool } from './impl/SshTool';
+import { savePlanDocTool } from './impl/SavePlanDocTool';
 
 /**
  * 注册所有内置工具到全局注册表
@@ -114,6 +116,10 @@ export function registerAllTools(): void {
     sshExecTool,
     sshUploadFileTool,
     sshReadFileTool,
+
+    // Plan mode: persist the plan as a markdown doc. Only exposed
+    // when the chat engine allows it via `PLAN_MODE_ALLOWED_TOOLS`.
+    savePlanDocTool,
   ];
 
   for (const tool of tools) {
