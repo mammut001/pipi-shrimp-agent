@@ -1,7 +1,7 @@
 /**
  * Chat execution mode registry.
  *
- * Single source of truth for the 6-mode composer dropdown.
+ * Single source of truth for the 4-mode composer dropdown.
  * Each mode describes:
  *  - its user-facing label / icon / description
  *  - its risk level (drives visual treatment + Bypass warning gate)
@@ -19,18 +19,16 @@ import type { PermissionMode } from '@/services/tools/toolExecutionPolicy';
 import type { TranslationKeys } from '@/i18n/types';
 
 export type ExecutionModeId =
-  | 'ask'
   | 'plan'
   | 'debug'
   | 'agent'
-  | 'multitask'
   | 'bypass';
 
 export type RiskLevel = 'safe' | 'moderate' | 'elevated' | 'dangerous';
 
 /**
  * What kinds of tool calls the mode allows.
- * - 'none': no tools at all (chat only, like Plan/Ask chat-only)
+ * - 'none': no tools at all (chat only, like Plan mode)
  * - 'read-only': only read tools
  * - 'edit': read + write tools, but no shell/browser
  * - 'shell': read + write + shell
@@ -52,7 +50,7 @@ export interface ExecutionModeProfile {
   /** Localized description key. Resolved with t('executionMode.<id>.description') */
   descriptionKey: keyof TranslationKeys;
   /** Visual icon name. The dropdown renders a switch on this. */
-  icon: 'chat' | 'plan' | 'bug' | 'agent' | 'multitask' | 'bypass';
+  icon: 'plan' | 'bug' | 'agent' | 'bypass';
   /** Risk level drives color, ordering, and warning gates. */
   riskLevel: RiskLevel;
   /** The 4-mode PermissionMode that tool hooks will see. */
@@ -74,28 +72,12 @@ export interface ExecutionModeProfile {
   isAdvanced: boolean;
   /**
    * Honest label shown next to the mode when some advertised behavior is not
-   * fully wired yet (e.g. true multi-agent for Multitask).
+   * fully wired yet. Reserved for future use; no current mode sets it.
    */
   experimentalNoteKey?: keyof TranslationKeys;
 }
 
 export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
-  {
-    id: 'ask',
-    labelKey: 'executionMode.ask.label',
-    descriptionKey: 'executionMode.ask.description',
-    icon: 'chat',
-    riskLevel: 'safe',
-    // 'standard' PermissionMode + an outer guard rejects file writes / shell
-    // / browser unless the user confirms. See guards.ts.
-    permissionMode: 'standard',
-    systemPromptSuffix: '',
-    allowedToolPolicy: 'edit',
-    approvalPolicy: 'always-ask',
-    isDefault: true,
-    requiresWarning: false,
-    isAdvanced: false,
-  },
   {
     id: 'plan',
     labelKey: 'executionMode.plan.label',
@@ -133,31 +115,16 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     riskLevel: 'elevated',
     // 'auto-edits' is the closest existing behavior to a normal autonomous
     // agent: edit tools auto-approve, destructive commands still ask.
+    // Agent is the default for new sessions — long-running goal-driven
+    // multi-step work is the main use case after the Ask/Multitask
+    // modes were retired in favor of the goal evaluator.
     permissionMode: 'auto-edits',
     systemPromptSuffix: '',
     allowedToolPolicy: 'shell',
     approvalPolicy: 'ask-on-risky',
-    isDefault: false,
+    isDefault: true,
     requiresWarning: false,
     isAdvanced: false,
-  },
-  {
-    id: 'multitask',
-    labelKey: 'executionMode.multitask.label',
-    descriptionKey: 'executionMode.multitask.description',
-    icon: 'multitask',
-    riskLevel: 'elevated',
-    // Multitask currently runs on top of standard agent permission, with a
-    // system-prompt suffix that encourages long multi-step plans. The actual
-    // true multi-agent routing is not wired; we say so honestly in the UI.
-    permissionMode: 'auto-edits',
-    systemPromptSuffix: '',
-    allowedToolPolicy: 'shell',
-    approvalPolicy: 'ask-on-risky',
-    isDefault: false,
-    requiresWarning: false,
-    isAdvanced: false,
-    experimentalNoteKey: 'executionMode.multitask.experimentalNote',
   },
   {
     id: 'bypass',

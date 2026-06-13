@@ -101,25 +101,9 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   if (ctx.executionMode === 'plan') {
     return {
       approved: false,
-      error: 'Tool execution is not allowed in Plan mode. Switch to Ask, Agent, or Bypass to run tools.',
+      error: 'Tool execution is not allowed in Plan mode. Switch to Agent or Bypass to run tools.',
       blockedBy: 'permission-mode',
     };
-  }
-
-  if (ctx.executionMode === 'ask') {
-    // Ask mode: tools are allowed only if the registry says so AND the
-    // user explicitly confirms. The 4-mode mapping is 'standard' which
-    // already requires confirmation for every tool; here we additionally
-    // surface a soft "requires confirmation" hint even for read-only
-    // tools so the user always sees the active mode in the consent UI.
-    if (!isToolAllowedForMode('ask', ctx.toolName)) {
-      return {
-        approved: false,
-        error: 'This tool is not allowed in Ask mode. Switch to Agent or Bypass to run it.',
-        blockedBy: 'permission-mode',
-      };
-    }
-    return { approved: true, requiresConfirmation: true };
   }
 
   if (ctx.executionMode === 'debug') {
@@ -127,17 +111,6 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
       return {
         approved: false,
         error: 'This tool is not allowed in Debug mode (read + small writes only).',
-        blockedBy: 'permission-mode',
-      };
-    }
-    return { approved: true };
-  }
-
-  if (ctx.executionMode === 'multitask') {
-    if (!isToolAllowedForMode('multitask', ctx.toolName)) {
-      return {
-        approved: false,
-        error: 'This tool is not allowed in Multitask mode for the current policy.',
         blockedBy: 'permission-mode',
       };
     }

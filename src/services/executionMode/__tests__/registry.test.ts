@@ -14,22 +14,20 @@ import {
 import type { ExecutionModeId } from '../registry';
 
 describe('executionMode/registry', () => {
-  it('exposes exactly the six documented modes', () => {
+  it('exposes exactly the four documented modes', () => {
     const ids = EXECUTION_MODES.map((m) => m.id);
-    expect(ids).toEqual(['ask', 'plan', 'debug', 'agent', 'multitask', 'bypass']);
+    expect(ids).toEqual(['plan', 'debug', 'agent', 'bypass']);
   });
 
-  it('marks Ask as the default and Bypass as the only mode that requires a warning', () => {
-    expect(getDefaultExecutionMode().id).toBe('ask');
-    expect(isDefaultMode('ask')).toBe(true);
+  it('marks Agent as the default and Bypass as the only mode that requires a warning', () => {
+    expect(getDefaultExecutionMode().id).toBe('agent');
+    expect(isDefaultMode('agent')).toBe(true);
     expect(isDefaultMode('bypass')).toBe(false);
 
     expect(modeRequiresWarning('bypass')).toBe(true);
-    expect(modeRequiresWarning('ask')).toBe(false);
     expect(modeRequiresWarning('plan')).toBe(false);
     expect(modeRequiresWarning('debug')).toBe(false);
     expect(modeRequiresWarning('agent')).toBe(false);
-    expect(modeRequiresWarning('multitask')).toBe(false);
   });
 
   it('flags Bypass as advanced and others as primary', () => {
@@ -50,24 +48,24 @@ describe('executionMode/registry', () => {
       byRisk.set(mode.riskLevel, list);
     }
     expect(byRisk.get('dangerous')).toEqual(['bypass']);
-    expect(byRisk.get('safe')).toEqual(['ask', 'plan']);
+    expect(byRisk.get('safe')).toEqual(['plan']);
   });
 
-  it('maps each 6-mode id to a 4-mode PermissionMode', () => {
-    expect(resolvePermissionMode('ask')).toBe('standard');
+  it('maps each 4-mode id to a 4-mode PermissionMode', () => {
     expect(resolvePermissionMode('plan')).toBe('plan-only');
     expect(resolvePermissionMode('debug')).toBe('auto-edits');
     expect(resolvePermissionMode('agent')).toBe('auto-edits');
-    expect(resolvePermissionMode('multitask')).toBe('auto-edits');
     expect(resolvePermissionMode('bypass')).toBe('bypass');
   });
 
-  it('isExecutionModeId accepts the six known ids and rejects the rest', () => {
-    for (const id of ['ask', 'plan', 'debug', 'agent', 'multitask', 'bypass']) {
+  it('isExecutionModeId accepts the four known ids and rejects the rest', () => {
+    for (const id of ['plan', 'debug', 'agent', 'bypass']) {
       expect(isExecutionModeId(id)).toBe(true);
     }
     expect(isExecutionModeId('standard')).toBe(false);
     expect(isExecutionModeId('AUTO-EDITS')).toBe(false);
+    expect(isExecutionModeId('ask')).toBe(false);
+    expect(isExecutionModeId('multitask')).toBe(false);
     expect(isExecutionModeId('')).toBe(false);
     expect(isExecutionModeId(null)).toBe(false);
     expect(isExecutionModeId(undefined)).toBe(false);
@@ -76,19 +74,13 @@ describe('executionMode/registry', () => {
 
   it('falls back to the default mode when given an unknown id', () => {
     const fallback = getExecutionMode('not-a-mode');
-    expect(fallback.id).toBe('ask');
+    expect(fallback.id).toBe('agent');
 
     const empty = getExecutionMode(null);
-    expect(empty.id).toBe('ask');
+    expect(empty.id).toBe('agent');
 
     const undef = getExecutionMode(undefined);
-    expect(undef.id).toBe('ask');
-  });
-
-  it('treats Multitask as honestly limited (experimental note present)', () => {
-    const multitask = getExecutionMode('multitask');
-    expect(multitask.experimentalNoteKey).toBeDefined();
-    expect(multitask.experimentalNoteKey).toMatch(/multitask/);
+    expect(undef.id).toBe('agent');
   });
 });
 
@@ -98,17 +90,6 @@ describe('executionMode/guards: tool allow-list per mode', () => {
     expect(isToolAllowedForMode('plan', 'write_file')).toBe(false);
     expect(isToolAllowedForMode('plan', 'execute_command')).toBe(false);
     expect(isToolAllowedForMode('plan', 'list_files')).toBe(false);
-  });
-
-  it('Ask mode allows read + write tools but no shell / browser mutation', () => {
-    expect(isToolAllowedForMode('ask', 'read_file')).toBe(true);
-    expect(isToolAllowedForMode('ask', 'list_files')).toBe(true);
-    expect(isToolAllowedForMode('ask', 'write_file')).toBe(true);
-    expect(isToolAllowedForMode('ask', 'create_directory')).toBe(true);
-    expect(isToolAllowedForMode('ask', 'execute_command')).toBe(false);
-    expect(isToolAllowedForMode('ask', 'run_in_terminal')).toBe(false);
-    expect(isToolAllowedForMode('ask', 'browser_click')).toBe(false);
-    expect(isToolAllowedForMode('ask', 'ssh_exec')).toBe(false);
   });
 
   it('Debug mode allows read + write but blocks shell / browser / ssh', () => {
@@ -128,14 +109,7 @@ describe('executionMode/guards: tool allow-list per mode', () => {
     expect(isToolAllowedForMode('agent', 'ssh_exec')).toBe(false);
   });
 
-  it('Multitask mode allows shell (with multi-step prompt) but not browser / ssh', () => {
-    expect(isToolAllowedForMode('multitask', 'read_file')).toBe(true);
-    expect(isToolAllowedForMode('multitask', 'execute_command')).toBe(true);
-    expect(isToolAllowedForMode('multitask', 'browser_click')).toBe(false);
-    expect(isToolAllowedForMode('multitask', 'ssh_exec')).toBe(false);
-  });
-
-  it('Bypass mode allows everything under the 6-mode registry', () => {
+  it('Bypass mode allows everything under the 4-mode registry', () => {
     expect(isToolAllowedForMode('bypass', 'read_file')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'write_file')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'execute_command')).toBe(true);
@@ -147,19 +121,19 @@ describe('executionMode/guards: tool allow-list per mode', () => {
 describe('executionMode/registry: back-compat with 4-mode PermissionMode', () => {
   it('does not include the legacy 4-mode ids in the registry', () => {
     const ids: ExecutionModeId[] = EXECUTION_MODES.map((m) => m.id);
-    // 4-mode-only ids (none of these are reused in the 6-mode registry).
+    // 4-mode-only ids (none of these are reused in the 4-mode registry).
     expect(ids).not.toContain('standard');
     expect(ids).not.toContain('auto-edits');
     expect(ids).not.toContain('plan-only');
-    // The 6-mode registry does expose 'bypass' as a mode id, but it is
-    // a 6-mode concept (with a warning gate) and not the raw 4-mode
+    // The 4-mode registry does expose 'bypass' as a mode id, but it is
+    // a registry concept (with a warning gate) and not the raw 4-mode
     // 'bypass' permission. The mapping happens in resolvePermissionMode.
     expect(ids).toContain('bypass');
   });
 
   it('still exposes the 4-mode mapping via resolvePermissionMode for hook compatibility', () => {
-    // preToolUseHooks reads `permissionMode`, not the 6-mode id, and
-    // supports exactly these 4 values. Each 6-mode must round-trip into
+    // preToolUseHooks reads `permissionMode`, not the 4-mode id, and
+    // supports exactly these 4 values. Each 4-mode must round-trip into
     // a known 4-mode value.
     const allowed = new Set(['standard', 'auto-edits', 'bypass', 'plan-only']);
     for (const mode of listExecutionModes()) {

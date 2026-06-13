@@ -297,17 +297,12 @@ export type TranslationKeys = {
   'workflow.executionMode': string;
   'executionMode.label': string;
   'executionMode.advancedSection': string;
-  'executionMode.ask.label': string;
-  'executionMode.ask.description': string;
   'executionMode.plan.label': string;
   'executionMode.plan.description': string;
   'executionMode.debug.label': string;
   'executionMode.debug.description': string;
   'executionMode.agent.label': string;
   'executionMode.agent.description': string;
-  'executionMode.multitask.label': string;
-  'executionMode.multitask.description': string;
-  'executionMode.multitask.experimentalNote': string;
   'executionMode.bypass.label': string;
   'executionMode.bypass.description': string;
   'executionMode.bypass.warningTitle': string;

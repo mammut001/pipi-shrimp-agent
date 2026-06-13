@@ -156,7 +156,7 @@ export function ExecutionModeDropdown({
   );
 
   const riskColor = RISK_COLOR_MAP[selected.riskLevel] ?? RISK_COLOR_MAP.safe!;
-  const TriggerIcon = ICONS[selected.icon] ?? ICONS.chat!;
+  const TriggerIcon = ICONS[selected.icon] ?? ICONS.plan!;
 
   return (
     <div ref={rootRef} className="relative inline-block" data-testid={testId}>
@@ -195,7 +195,7 @@ export function ExecutionModeDropdown({
           {VISIBLE_MODES.map((profile, index) => {
             const isSelected = profile.id === selected.id;
             const isActive = index === activeIndex;
-            const Icon = ICONS[profile.icon] ?? ICONS.chat!;
+            const Icon = ICONS[profile.icon] ?? ICONS.plan!;
             return (
               <button
                 key={profile.id}
@@ -348,11 +348,6 @@ interface IconProps {
 }
 
 const ICONS: Record<ExecutionModeProfile['icon'], React.FC<IconProps>> = {
-  chat: ({ className }) => (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-      <path d="M2 5a2 2 0 012-2h12a2 2 0 012 2v8a2 2 0 01-2 2H6l-4 4V5z" />
-    </svg>
-  ),
   plan: ({ className }) => (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
       <path d="M5 3a2 2 0 00-2 2v12l4-2h8a2 2 0 002-2V5a2 2 0 00-2-2H5z" />
@@ -366,11 +361,6 @@ const ICONS: Record<ExecutionModeProfile['icon'], React.FC<IconProps>> = {
   agent: ({ className }) => (
     <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
       <path d="M10 2a1 1 0 011 1v1.07A4 4 0 0114 8h2a1 1 0 110 2h-2a4 4 0 01-3 3.93V15a1 1 0 11-2 0v-1.07A4 4 0 016 10H4a1 1 0 110-2h2a4 4 0 013-3.93V3a1 1 0 011-1z" />
-    </svg>
-  ),
-  multitask: ({ className }) => (
-    <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-      <path d="M3 3h6v6H3V3zm8 0h6v6h-6V3zM3 11h6v6H3v-6zm8 4h6v2h-6v-2zm0-4h6v2h-6v-2z" />
     </svg>
   ),
   bypass: ({ className }) => (

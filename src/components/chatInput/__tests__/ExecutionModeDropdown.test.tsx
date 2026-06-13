@@ -47,17 +47,17 @@ describe('ExecutionModeDropdown (structural)', () => {
   });
 
   it('honors the disabled prop on the trigger', () => {
-    const html = render('ask', { disabled: true });
+    const html = render('agent', { disabled: true });
     // The trigger button has the `disabled` attribute when disabled.
     expect(html).toMatch(/<button[^>]*\bdisabled\b/);
   });
 
   it('lists every registered mode as a menu item with the right id', () => {
     // The component renders items when open; verify the registry we read
-    // from exposes all 6 ids in the expected order, and that the dropdown
+    // from exposes all 4 ids in the expected order, and that the dropdown
     // module's import surface references them.
     const ids: ExecutionModeId[] = EXECUTION_MODES.map((m) => m.id);
-    expect(ids).toEqual(['ask', 'plan', 'debug', 'agent', 'multitask', 'bypass']);
+    expect(ids).toEqual(['plan', 'debug', 'agent', 'bypass']);
     for (const id of ids) {
       // The registry exports a non-null profile for each id.
       const profile = getExecutionMode(id);

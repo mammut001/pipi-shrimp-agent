@@ -1,10 +1,11 @@
 /**
  * Execution-mode → tool-execution guards.
  *
- * Maps the 6-mode dropdown to the 4-mode PermissionMode that preToolUseHooks
- * already understands, and adds outer-level enforcement for behavior the
- * underlying hook system cannot express on its own (e.g. Ask mode blocking
- * all file writes / shell / browser unless explicitly confirmed).
+ * Maps the 4-mode dropdown (Plan / Debug / Agent / Bypass) to the
+ * 4-mode PermissionMode that preToolUseHooks already understands,
+ * and adds outer-level enforcement for behavior the underlying hook
+ * system cannot express on its own (e.g. Plan mode blocking every
+ * tool, or Agent mode gating shell/exec behind user confirmation).
  */
 
 import {
@@ -54,10 +55,12 @@ const FILE_WRITE_TOOLS = new Set([
 ]);
 
 /**
- * Translate the 6-mode id → the 4-mode PermissionMode that preToolUseHooks
- * is already designed to consume. Returning the underlying PermissionMode
- * keeps the hook pipeline intact while letting us treat the new modes as a
- * user-facing surface.
+ * Translate the 4-mode id → the 4-mode PermissionMode that preToolUseHooks
+ * is already designed to consume. (In this codebase the 4-mode dropdown
+ * happens to use the same vocabulary as the underlying PermissionMode,
+ * with the only divergence being Bypass — but the mapping is still
+ * useful for defensive lookup and for callers that hold a session's
+ * `executionMode` as an opaque string.)
  */
 export function resolvePermissionMode(modeId: ExecutionModeId | string | null | undefined): PermissionMode {
   return getExecutionMode(modeId).permissionMode;
@@ -66,7 +69,8 @@ export function resolvePermissionMode(modeId: ExecutionModeId | string | null | 
 /**
  * Whether a given tool should be allowed to run at all under the supplied
  * execution mode, ignoring preToolUseHooks. This is the "outer guard" used
- * by Ask mode and Plan mode where the hook layer alone is not sufficient.
+ * by Plan mode (which the hook layer alone cannot fully block) and by
+ * modes that whitelist a subset of tool families.
  */
 export function isToolAllowedForMode(
   modeId: ExecutionModeId | string | null | undefined,
@@ -100,7 +104,7 @@ export function isToolAllowedForProfile(
       if (SHELL_TOOLS.has(toolName)) return true;
       // SSH, browser mutation, and MCP tools are still gated by the
       // per-tool approval policy — they aren't blanket-allowed in the
-      // shell-only Agent / Multitask modes.
+      // shell-only Agent mode.
       if (SSH_TOOLS.has(toolName)) return false;
       if (BROWSER_MUTATION_TOOLS.has(toolName)) return false;
       return true;

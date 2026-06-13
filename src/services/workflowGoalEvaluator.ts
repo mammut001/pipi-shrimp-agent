@@ -44,9 +44,11 @@ export interface GoalEvaluatorDeps {
 }
 
 function truncateOutput(output: string): string {
-  return output.length > MAX_OUTPUT_CHARS
-    ? `${output.slice(0, MAX_OUTPUT_CHARS)}\n... [truncated]`
-    : output;
+  if (output.length <= MAX_OUTPUT_CHARS) return output;
+  // Slice on a code-point boundary so we never hand the LLM a malformed
+  // UTF-16 surrogate (which would render as U+FFFD in the prompt).
+  const truncated = Array.from(output).slice(0, MAX_OUTPUT_CHARS).join('');
+  return `${truncated}\n... [truncated]`;
 }
 
 function resolveNextAgentReference(
@@ -54,8 +56,15 @@ function resolveNextAgentReference(
   roleHint?: string,
 ): string | undefined {
   if (!roleHint) return undefined;
-  return resolveAgentIdByRole(agents, roleHint)
+  const resolved = resolveAgentIdByRole(agents, roleHint)
     ?? agents.find((agent) => agent.id === roleHint || agent.name === roleHint)?.id;
+  if (!resolved) return undefined;
+  // Defensive: never point the workflow back at the goal-evaluator itself,
+  // which would create a self-loop on the next iteration. Look up the
+  // resolved agent and bail out if it is the evaluator role.
+  const target = agents.find((agent) => agent.id === resolved);
+  if (target?.role === 'goal-evaluator') return undefined;
+  return resolved;
 }
 
 function extractMissingItemsFromOutputs(outputs: Map<string, string>): string[] {
@@ -170,6 +179,20 @@ function createBuiltInEvaluatorAgent(): WorkflowAgent {
   };
 }
 
+function isBuiltInEvaluator(agent: WorkflowAgent): boolean {
+  return agent.id === 'builtin-goal-evaluator';
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'unknown error';
+  }
+}
+
 export async function evaluateWorkflowGoal(
   context: GoalEvaluationContext,
   deps: GoalEvaluatorDeps = {},
@@ -190,7 +213,9 @@ export async function evaluateWorkflowGoal(
   }
 
   const prompt = buildGoalEvaluatorPrompt(context);
-  const systemPromptOverride = evaluatorAgent.id === 'builtin-goal-evaluator'
+  // The built-in evaluator has no real agent config; it relies on the
+  // bundled system prompt. Custom evaluators use their own soulPrompt.
+  const systemPromptOverride = isBuiltInEvaluator(evaluatorAgent)
     ? GOAL_EVALUATOR_SYSTEM_PROMPT
     : undefined;
 
@@ -205,7 +230,8 @@ export async function evaluateWorkflowGoal(
   } catch (error) {
     return {
       ...ruleResult,
-      reasoning: `${ruleResult.reasoning}（LLM evaluator 执行失败，已回退到规则判定：${String(error)}）`,
+      rawOutput: undefined,
+      reasoning: `${ruleResult.reasoning}（LLM evaluator 执行失败，已回退到规则判定：${errorMessage(error)}）`,
     };
   }
 }

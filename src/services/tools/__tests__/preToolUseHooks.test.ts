@@ -27,27 +27,6 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
     expect(result.error).toMatch(/Plan mode/i);
   });
 
-  it('Ask mode requires confirmation even for read-only tools', async () => {
-    const result = await executionModeGuardCheck(
-      ctx({ executionMode: 'ask', toolName: 'read_file' }),
-    );
-    expect(result.approved).toBe(true);
-    expect(result.requiresConfirmation).toBe(true);
-  });
-
-  it('Ask mode blocks shell and browser tools', async () => {
-    const shell = await executionModeGuardCheck(
-      ctx({ executionMode: 'ask', toolName: 'execute_command' }),
-    );
-    expect(shell.approved).toBe(false);
-    expect(shell.error).toMatch(/Ask mode/i);
-
-    const browser = await executionModeGuardCheck(
-      ctx({ executionMode: 'ask', toolName: 'browser_click' }),
-    );
-    expect(browser.approved).toBe(false);
-  });
-
   it('Debug mode allows writes but blocks shell and browser', async () => {
     const write = await executionModeGuardCheck(
       ctx({ executionMode: 'debug', toolName: 'write_file' }),
@@ -73,18 +52,6 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
 
     const browser = await executionModeGuardCheck(
       ctx({ executionMode: 'agent', toolName: 'browser_click' }),
-    );
-    expect(browser.approved).toBe(false);
-  });
-
-  it('Multitask mode behaves like Agent for tool allow-listing (limited honest fallback)', async () => {
-    const shell = await executionModeGuardCheck(
-      ctx({ executionMode: 'multitask', toolName: 'execute_command' }),
-    );
-    expect(shell.approved).toBe(true);
-
-    const browser = await executionModeGuardCheck(
-      ctx({ executionMode: 'multitask', toolName: 'browser_click' }),
     );
     expect(browser.approved).toBe(false);
   });
