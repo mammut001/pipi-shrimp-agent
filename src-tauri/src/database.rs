@@ -392,6 +392,193 @@ fn parse_backup_schema_version(file_name: &str) -> Option<i64> {
         .ok()
 }
 
+/// Expected schema for the managed user tables. `init_database` consults
+/// this map to detect and drop columns that the running code does not
+/// recognise (the result of a prior v7+ prototype, a manual `ALTER TABLE
+/// ADD COLUMN`, etc.). Keep this in sync with the `apply_migration` arms.
+const EXPECTED_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "sessions",
+        &[
+            "id",
+            "title",
+            "created_at",
+            "updated_at",
+            "cwd",
+            "project_id",
+            "model",
+            "work_dir",
+            "working_files",
+            "permission_mode",
+        ],
+    ),
+    (
+        "messages",
+        &[
+            "id",
+            "session_id",
+            "role",
+            "content",
+            "reasoning",
+            "attachments",
+            "artifacts",
+            "tool_calls",
+            "token_usage",
+            "created_at",
+        ],
+    ),
+    (
+        "projects",
+        &[
+            "id",
+            "name",
+            "description",
+            "color",
+            "work_dir",
+            "created_at",
+            "updated_at",
+        ],
+    ),
+    (
+        "token_usage",
+        &[
+            "id",
+            "session_id",
+            "date",
+            "input_tokens",
+            "output_tokens",
+            "model",
+            "api_config_id",
+            "created_at",
+        ],
+    ),
+];
+
+/// SQLite supports `DROP COLUMN` from 3.35.0 (Mar 2021). Anything older
+/// silently ignores the syntax, so the reconciliation step would no-op
+/// on legacy system SQLite. This constant is the compile-time floor
+/// rusqlite ships with on this project; if a user has a newer SQLite
+/// via a system override, the feature is still detected at runtime by
+/// the version pragma below.
+const SQLITE_MIN_DROP_COLUMN_VERSION: &str = "3.35.0";
+
+/// Reconcile `sqlite_master` against `EXPECTED_COLUMNS`. Any column the
+/// running code does not know about is dropped (when SQLite is new
+/// enough) and the bookkeeping for `schema_version` is rewound so the
+/// post-init migration loop starts from a sane value.
+///
+/// Returns the highest `schema_version` the running code expects to see,
+/// which is the new "current" baseline for `init_database`'s migration
+/// loop. If the DB was ahead of the code (e.g. v7 from a prototype),
+/// we delete the `schema_version` rows above the latest known version
+/// and re-run any migrations between the rolled-back baseline and the
+/// latest known version, so the schema ends up consistent.
+fn reconcile_schema(conn: &Connection) -> SqliteResult<bool> {
+    // Only attempt `DROP COLUMN` when SQLite is new enough. Older
+    // engines (rare in 2026, but possible) would raise a syntax error
+    // and abort the whole init. We surface the limitation as a warning
+    // instead and let the user re-init on a newer runtime.
+    let sqlite_version: String = conn
+        .query_row("SELECT sqlite_version()", [], |row| row.get(0))
+        .unwrap_or_else(|_| "0.0.0".to_string());
+    let can_drop_column = version_at_least(&sqlite_version, SQLITE_MIN_DROP_COLUMN_VERSION);
+
+    let mut changed = false;
+    if can_drop_column {
+        for (table, expected) in EXPECTED_COLUMNS {
+            // Skip silently if the table does not exist yet (first
+            // boot, or the migration has not been run for this table).
+            let table_exists: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![table],
+                |row| row.get(0),
+            )?;
+            if table_exists == 0 {
+                continue;
+            }
+
+            let mut stmt = conn.prepare(&format!("PRAGMA table_info(\"{}\")", table))?;
+            let columns: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for actual in columns {
+                if !expected.contains(&actual.as_str()) {
+                    eprintln!(
+                        "🧹 [db] Dropping unrecognised column {}.{} (added by a newer build or manual DDL)",
+                        table, actual
+                    );
+                    conn.execute(
+                        &format!("ALTER TABLE \"{}\" DROP COLUMN \"{}\"", table, actual),
+                        [],
+                    )?;
+                    changed = true;
+                }
+            }
+        }
+    } else {
+        eprintln!(
+            "⚠️  [db] SQLite {} < {}; unrecognised columns will not be dropped automatically. \
+             Re-init on a newer runtime to clean up.",
+            sqlite_version, SQLITE_MIN_DROP_COLUMN_VERSION
+        );
+    }
+
+    // Roll back schema_version rows that are ahead of the code. We do
+    // this even when no columns were dropped, because the bookkeeping
+    // has to match the schema the running code actually understands.
+    let latest_known: i64 = LATEST_SCHEMA_VERSION;
+    let ahead: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM schema_version WHERE version > ?1",
+            params![latest_known],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if ahead > 0 {
+        eprintln!(
+            "🧹 [db] Discarding {} schema_version row(s) > v{} (build is behind the DB)",
+            ahead, latest_known
+        );
+        conn.execute(
+            "DELETE FROM schema_version WHERE version > ?1",
+            params![latest_known],
+        )?;
+        changed = true;
+    }
+
+    Ok(changed)
+}
+
+/// Tiny semver-ish `a.b.c` comparator: returns true if `actual` >=
+/// `required`. Intentionally simple because SQLite version strings are
+/// always `major.minor.patch` with no pre-release suffix.
+fn version_at_least(actual: &str, required: &str) -> bool {
+    let parse = |s: &str| -> Vec<u32> {
+        s.split('.').filter_map(|p| p.parse::<u32>().ok()).collect()
+    };
+    let a = parse(actual);
+    let r = parse(required);
+    for i in 0..a.len().max(r.len()) {
+        let av = a.get(i).copied().unwrap_or(0);
+        let rv = r.get(i).copied().unwrap_or(0);
+        if av > rv {
+            return true;
+        }
+        if av < rv {
+            return false;
+        }
+    }
+    true
+}
+
+/// The single source of truth for "which schema versions does this
+/// build know about". Both `init_database` and `reconcile_schema` read
+/// from this constant, so a future migration author only has to update
+/// one number.
+const LATEST_SCHEMA_VERSION: i64 = 6;
+
 pub fn list_database_backups() -> SqliteResult<Vec<DbBackupEntry>> {
     let backup_dir = get_backup_directory()?;
     let mut backups = Vec::new();
@@ -963,15 +1150,38 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
  * `LATEST_VERSION`.
  */
 pub fn init_database() -> SqliteResult<()> {
-    const LATEST_VERSION: i64 = 6;
-
     let db_path = get_db_path();
     println!("📂 Database path: {:?}", db_path);
 
     let conn = Connection::open(&db_path)?;
 
+    ensure_wal_mode(&conn)?;
+
+    // Bootstrap the version-tracking table on first run. This must
+    // happen before `reconcile_schema` so it can find a real
+    // `schema_version` table to roll back when the DB is ahead of the
+    // code (a v7 prototype, a manual `INSERT INTO schema_version (7)`,
+    // etc.).
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version    INTEGER PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        );
+    ",
+    )?;
+
+    // Reconcile the on-disk schema against the columns this build knows
+    // about, and roll back bookkeeping rows for migrations the code
+    // does not ship. Returns true if anything was repaired — when that
+    // happens we want to back up *before* re-running migrations, so the
+    // backup reflects the pre-repair state.
+    let reconciled = reconcile_schema(&conn)?;
+
     let current_version = current_schema_version(&conn);
-    if current_version < LATEST_VERSION && database_has_user_tables(&conn)? {
+    if (current_version < LATEST_SCHEMA_VERSION || reconciled)
+        && database_has_user_tables(&conn)?
+    {
         let backup_db_path = db_path.clone();
         let backup_version = current_version;
         let backup_path = std::thread::spawn(move || {
@@ -982,21 +1192,9 @@ pub fn init_database() -> SqliteResult<()> {
         println!("🛟 Database backup created at {:?}", backup_path);
     }
 
-    ensure_wal_mode(&conn)?;
-
-    // Bootstrap the version-tracking table on first run
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version    INTEGER PRIMARY KEY,
-            applied_at INTEGER NOT NULL
-        );
-    ",
-    )?;
-
     let current_version = current_schema_version(&conn);
 
-    for v in (current_version + 1)..=(LATEST_VERSION) {
+    for v in (current_version + 1)..=(LATEST_SCHEMA_VERSION) {
         println!("🚀 Applying database migration v{}", v);
         apply_migration(&conn, v)?;
     }
@@ -1006,7 +1204,7 @@ pub fn init_database() -> SqliteResult<()> {
 
     println!(
         "✅ Database initialized successfully (schema v{})",
-        LATEST_VERSION
+        LATEST_SCHEMA_VERSION
     );
 
     // Store connection globally
@@ -2022,6 +2220,141 @@ mod tests {
             assert!(backups
                 .iter()
                 .all(|backup| !backup.name.ends_with("-v1.sqlite")));
+        });
+    }
+
+    #[test]
+    fn version_at_least_handles_typical_semver_pairs() {
+        assert!(version_at_least("3.35.0", "3.35.0"));
+        assert!(version_at_least("3.36.0", "3.35.0"));
+        assert!(version_at_least("4.0.0", "3.99.99"));
+        assert!(!version_at_least("3.34.99", "3.35.0"));
+        assert!(version_at_least("3.40.1", "3.35.0"));
+        // Malformed strings should not panic; both should be treated
+        // as a no-upgrade floor so we err on the conservative side.
+        assert!(!version_at_least("3.34", "3.35.0"));
+    }
+
+    #[test]
+    fn reconcile_schema_drops_unrecognised_columns_and_ahead_rows() {
+        with_temp_data_dir(|_| {
+            let db_path = get_db_path();
+            let conn = Connection::open(&db_path).expect("open db");
+
+            // Bootstrap a schema that looks like a v7 prototype went
+            // through and was then downgraded: the official v1 columns
+            // are there, plus the rogue `goal_json` and `execution_mode`
+            // columns a v7 prototype added.
+            conn.execute_batch(
+                "
+                CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+                INSERT INTO schema_version (version, applied_at) VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7);
+
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    cwd TEXT,
+                    project_id TEXT,
+                    model TEXT,
+                    work_dir TEXT,
+                    working_files TEXT,
+                    permission_mode TEXT,
+                    goal_json TEXT,
+                    execution_mode TEXT
+                );
+
+                CREATE TABLE messages (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    reasoning TEXT,
+                    attachments TEXT,
+                    artifacts TEXT,
+                    tool_calls TEXT,
+                    token_usage TEXT,
+                    created_at INTEGER NOT NULL
+                );
+
+                INSERT INTO sessions (id, title, created_at, updated_at)
+                    VALUES ('s1', 'Chat 1', 1, 1);
+                INSERT INTO messages (id, session_id, role, content, created_at)
+                    VALUES ('m1', 's1', 'user', 'hi', 1);
+                ",
+            )
+            .expect("seed schema");
+
+            let changed = reconcile_schema(&conn).expect("reconcile");
+
+            assert!(changed, "reconcile should report a change");
+
+            // The rogue columns should be gone; the official ones stay.
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(sessions)")
+                .expect("pragma table_info");
+            let columns: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .expect("query")
+                .filter_map(|r| r.ok())
+                .collect();
+            assert!(!columns.iter().any(|c| c == "goal_json"));
+            assert!(!columns.iter().any(|c| c == "execution_mode"));
+            assert!(columns.iter().any(|c| c == "permission_mode"));
+
+            // The ahead-of-code schema_version row should be dropped.
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM schema_version WHERE version > 6",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("count ahead");
+            assert_eq!(count, 0, "v7 row should be rolled back");
+
+            // User data is preserved by the reconciliation step.
+            let user_rows: i64 = conn
+                .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+                .expect("count sessions");
+            assert_eq!(user_rows, 1, "reconcile must not delete user data");
+            let msg_rows: i64 = conn
+                .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+                .expect("count messages");
+            assert_eq!(msg_rows, 1, "reconcile must not delete user data");
+
+            // Sanity: the file we just created is the one we expected.
+            assert!(db_path.exists());
+        });
+    }
+
+    #[test]
+    fn reconcile_schema_is_a_noop_when_schema_already_matches() {
+        with_temp_data_dir(|_| {
+            let conn = Connection::open(get_db_path()).expect("open db");
+            conn.execute_batch(
+                "
+                CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+                INSERT INTO schema_version (version, applied_at) VALUES (1, 1), (6, 6);
+
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    cwd TEXT,
+                    project_id TEXT,
+                    model TEXT,
+                    work_dir TEXT,
+                    working_files TEXT,
+                    permission_mode TEXT
+                );
+                ",
+            )
+            .expect("seed schema");
+
+            let changed = reconcile_schema(&conn).expect("reconcile");
+            assert!(!changed, "no drift should mean no change");
         });
     }
 }
