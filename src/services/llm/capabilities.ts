@@ -54,6 +54,10 @@ function isDeepSeekReasoningModel(modelLower: string): boolean {
   return /reasoner|reasoning|(^|[-_.\s/])r1($|[-_.\s/])|v4/i.test(modelLower);
 }
 
+function isMiniMaxReasoningModel(modelLower: string): boolean {
+  return /minimax-m[3-9]/i.test(modelLower) || modelLower.includes('reasoning');
+}
+
 const PROVIDER_CAPABILITIES: Record<ProviderCapabilityId, ProviderCapability> = {
   anthropic: {
     id: 'anthropic',
@@ -254,11 +258,12 @@ export function buildProviderExecutionCapabilities(input: {
         requiresToolOrdering: false,
       };
     }
-    case 'minimax':
+    case 'minimax': {
+      const minimaxReasoning = isMiniMaxReasoningModel(modelLower);
       return {
         supportsThinking: false,
-        supportsReasoning: genericReasoning,
-        supportsReasoningStream: genericReasoning,
+        supportsReasoning: minimaxReasoning,
+        supportsReasoningStream: minimaxReasoning,
         supportsToolCalls: true,
         supportsToolOpenAI: true,
         supportsStreaming: true,
@@ -271,6 +276,7 @@ export function buildProviderExecutionCapabilities(input: {
         usesResponsesApi: false,
         requiresToolOrdering: false,
       };
+    }
     case 'deepseek':
       return {
         supportsThinking: false,

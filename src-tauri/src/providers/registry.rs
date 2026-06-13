@@ -73,13 +73,7 @@ pub const PROVIDERS: &[ProviderEntry] = &[
         id: "minimax",
         endpoint_style: EndpointStyle::OpenAI,
         default_base_url: "https://api.minimaxi.com/v1",
-        fallback_models: &[
-            "MiniMax-M2.5",
-            "MiniMax-M2.5-highspeed",
-            "MiniMax-M2.1",
-            "MiniMax-M2.1-highspeed",
-            "MiniMax-M2",
-        ],
+        fallback_models: &["MiniMax-M3", "MiniMax-M2.7"],
     },
     // Legacy alias — treated identically to openai-compatible
     ProviderEntry {

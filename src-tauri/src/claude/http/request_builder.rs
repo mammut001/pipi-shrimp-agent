@@ -503,10 +503,17 @@ pub fn build_openai_body(
         "stream": streaming,
     });
 
+    if streaming {
+        body["stream_options"] = serde_json::json!({
+            "include_usage": true
+        });
+    }
+
     if !no_tools {
-        body["tools"] = serde_json::json!(convert_tools_to_openai_format(&get_tools(
-            allow_browser_tools
-        )));
+        body["tools"] = serde_json::json!(convert_tools_to_openai_format(
+            &get_tools(allow_browser_tools),
+            config.capabilities.supports_response_format_json_schema
+        ));
         body["tool_choice"] = serde_json::json!("auto");
     }
 

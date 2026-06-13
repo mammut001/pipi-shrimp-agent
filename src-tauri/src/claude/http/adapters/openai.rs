@@ -350,6 +350,11 @@ impl ProviderAdapter for OpenAIAdapter {
             ctx.usage.input_tokens = ctx.estimated_input;
         }
 
+        if ctx.usage.output_tokens == 0 {
+            ctx.usage.output_tokens = crate::utils::token::estimate_tokens(&ctx.content)
+                + crate::utils::token::estimate_tokens(&ctx.reasoning);
+        }
+
         validate_structured_tool_call_content(&ctx.content, &ctx.tool_calls)?;
 
         Ok(ChatResponse {

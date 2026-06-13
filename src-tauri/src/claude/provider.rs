@@ -115,6 +115,7 @@ pub struct ProviderCapabilities {
     /// Model supports tool calls
     pub supports_tool_calls: bool,
     /// Provider accepts OpenAI-style `tools` / `tool_calls` payloads.
+    #[serde(rename = "supportsToolOpenAI")]
     pub supports_tool_openai: bool,
     /// Provider supports streaming (SSE)
     pub supports_streaming: bool,
@@ -187,6 +188,12 @@ fn deepseek_model_is_reasoning(model_lower: &str) -> bool {
         || model_lower
             .split(|value: char| !value.is_ascii_alphanumeric())
             .any(|part| part == "r1")
+}
+
+fn minimax_model_is_reasoning(model_lower: &str) -> bool {
+    model_lower.contains("reasoning")
+        || model_lower.contains("minimax-m3")
+        || model_lower.contains("minimax-m4")
 }
 
 impl ResolvedProviderConfig {
@@ -308,10 +315,11 @@ impl ResolvedProviderConfig {
             }
             ProviderId::MiniMax => {
                 // MiniMax: typically OpenAI-compatible
+                let supports_reasoning = minimax_model_is_reasoning(&model_lower);
                 ProviderCapabilities {
                     supports_thinking: false,
-                    supports_reasoning: model_lower.contains("reasoning"),
-                    supports_reasoning_stream: model_lower.contains("reasoning"),
+                    supports_reasoning,
+                    supports_reasoning_stream: supports_reasoning,
                     supports_tool_calls: true,
                     supports_tool_openai: true,
                     supports_streaming: true,

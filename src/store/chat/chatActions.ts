@@ -8,6 +8,7 @@ import {
 } from '@/services/agentConfig';
 import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { safeInvoke, safeInvokeOrNull } from '../../utils/safeInvoke';
+import { runChatTurn } from '../../core/QueryEngine';
 import { formatError } from '../../utils/errorFormat';
 import {
   buildApiMessages,
@@ -27,7 +28,7 @@ import { useSettingsStore, useUIStore } from '@/store';
 import { appendBrowserResultToSystemPrompt, createBrowserResultMessages, mapBrowserResponseArtifacts } from './chatBrowserHandoff';
 import { CHAT_ERROR_MESSAGES, normalizeCaughtErrorMessage } from './chatErrors';
 import { shouldPersistMessage } from './chatPersistence';
-import { PLAN_MODE_SYSTEM_PROMPT, savePlanModeDoc, shouldSavePlanDoc } from '@/services/planMode';
+import { PLAN_MODE_ALLOWED_TOOLS, PLAN_MODE_SYSTEM_PROMPT, savePlanModeDoc, shouldSavePlanDoc } from '@/services/planMode';
 import {
   clearSessionToolRuntime,
   failUnresolvedSessionTools,
@@ -486,9 +487,22 @@ export function createChatActionMethods({
           ? `${systemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
           : systemPrompt;
 
-        const { runChatTurn } = await import('../../core/QueryEngine');
         const engine = isPlanMode
-          ? runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, false, undefined, { noTools: true })
+          ? runChatTurn(
+              activeSessionId,
+              currentMessages(),
+              finalSystemPrompt,
+              sessionWorkDir,
+              false, // allowBrowserTools — always off in plan mode
+              undefined,
+              {
+                // Plan mode: read-only tools + save_plan_doc. The chat engine
+                // forwards `allowedTools` through `buildResolvedChatRequest`
+                // (which normalises `[]` -> `undefined`) and the Rust executor
+                // filters the openai body down to that exact allowlist.
+                allowedTools: [...PLAN_MODE_ALLOWED_TOOLS],
+              },
+            )
           : runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, options?.allowBrowserTools || false);
         const uiStore = useUIStore.getState();
         let tokenUsageResult: TokenUsage | undefined;
@@ -684,13 +698,15 @@ export function createChatActionMethods({
         setError(errorMsg);
 
         const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
-        if (errContent || errReasoning) {
-          const flushed = flushBuffer(streamState);
-          const parsed = parseThinkContent(errContent || flushed.content || '');
-          void saveLastMsg(parsed.content, undefined, mergeReasoningParts(errReasoning, flushed.reasoning, parsed.reasoning)).catch((saveError: unknown) => {
-            console.error('Failed to persist sendMessage error content:', saveError);
-          });
-        }
+        const flushed = flushBuffer(streamState);
+        const parsed = parseThinkContent(errContent || flushed.content || '');
+        const finalContent = parsed.content.trim()
+          ? `${parsed.content}\n\n⚠️ **Error:** ${errorMsg}`
+          : `⚠️ **Error:** ${errorMsg}`;
+
+        void saveLastMsg(finalContent, undefined, mergeReasoningParts(errReasoning, flushed.reasoning, parsed.reasoning)).catch((saveError: unknown) => {
+          console.error('Failed to persist sendMessage error content:', saveError);
+        });
 
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });

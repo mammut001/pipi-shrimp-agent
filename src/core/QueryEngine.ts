@@ -38,6 +38,34 @@ function buildMalformedToolCallRetryMessage(attempt: number): string {
     : 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.';
 }
 
+// Patterns that suggest the model is describing future tool use rather than providing a final answer.
+// These indicate the model "plans" to call tools but didn't actually emit any tool_calls.
+const LAZY_TOOL_CALL_PATTERNS = [
+  // English intent markers
+  /\b(?:let me|i(?:'ll| will)|i(?:'m| am) going to|first,? i)\b.*\b(?:read|explore|look|check|search|scan|list|open|examine|analyze|browse)\b/i,
+  // Chinese intent markers
+  /(?:我先|让我|我来|我会|首先|接下来|现在).*(?:读取|查看|探索|阅读|检查|搜索|扫描|列出|打开|分析|浏览|了解)/,
+  // Short response with ellipsis or planning language (under 200 chars, looks like a stub)
+  /^.{0,200}(?:\.\.\.|…|接下来|然后|逐步).*$/s,
+];
+
+const LAZY_TOOL_CALL_NUDGE =
+  'You described what you plan to do but did not actually call any tools. '
+  + 'Do NOT describe your plan — execute it immediately by calling the appropriate tools now. '
+  + 'Use the structured tool_calls channel to read files, list directories, or perform whatever action you described.';
+
+/**
+ * Detect if a short assistant response looks like a planning stub rather than a genuine final answer.
+ * Only triggers on round 1 when tools are available and the response is short.
+ */
+function looksLikeLazyToolCallResponse(content: string, round: number, toolsAvailable: boolean): boolean {
+  if (!toolsAvailable || round !== 1) return false;
+  const trimmed = content.trim();
+  // Must be short (real answers tend to be longer)
+  if (trimmed.length > 300 || trimmed.length < 5) return false;
+  return LAZY_TOOL_CALL_PATTERNS.some(pattern => pattern.test(trimmed));
+}
+
 function shouldInjectOpenAIToolProtocol(
   config: ResolvedAgentConfig,
   options?: RunChatTurnOptions,
@@ -90,7 +118,7 @@ export async function* runChatTurn(
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
   const maxToolBudget = settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
-  const toolBudgetReserve = Math.min(4, Math.max(1, maxToolBudget - 1));
+  const toolBudgetReserve = maxToolBudget > 4 ? 2 : 1;
   const maxModelRounds = Math.max(maxToolBudget + 8, 25);
   
   // Clone to avoid mutating the original array passed from Zustand directly
@@ -266,6 +294,23 @@ export async function* runChatTurn(
     
     // [Phase 3: Decision & Execution]
     if (!hasToolCalls) {
+      // Detect "lazy" responses where the model describes tool use intent but didn't
+      // actually make any tool calls. This is common with MiniMax M3 which tends to
+      // output planning text ("我先读取...", "Let me explore...") instead of calling tools.
+      if (
+        !options?.noTools
+        && looksLikeLazyToolCallResponse(assistantMessageContent, round, injectOpenAIToolProtocol)
+      ) {
+        // Don't save the lazy response — pop it and nudge the model
+        currentMessages.pop();
+        currentMessages.push({
+          role: 'user',
+          content: LAZY_TOOL_CALL_NUDGE,
+        });
+        yield { type: 'status_update', message: 'Model described tool actions without executing them. Retrying with a nudge.' };
+        continue;
+      }
+
       isTurnComplete = true;
       yield { type: 'turn_complete', tokenUsage };
       // Trigger background memory extraction (fire-and-forget)

@@ -238,6 +238,11 @@ pub trait ProviderAdapter: Send + Sync {
             ctx.usage.input_tokens = ctx.estimated_input;
         }
 
+        if ctx.usage.output_tokens == 0 {
+            ctx.usage.output_tokens = crate::utils::token::estimate_tokens(&ctx.content)
+                + crate::utils::token::estimate_tokens(&ctx.reasoning);
+        }
+
         Ok(ChatResponse {
             content: ctx.content,
             artifacts,

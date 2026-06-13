@@ -7,7 +7,12 @@ jest.mock('@/services/docService', () => ({
 }));
 
 import { DOCS_CHANGED_EVENT } from '@/services/docEvents';
-import { PLAN_MODE_SYSTEM_PROMPT, savePlanModeDoc, shouldSavePlanDoc } from '@/services/planMode';
+import {
+  PLAN_MODE_ALLOWED_TOOLS,
+  PLAN_MODE_SYSTEM_PROMPT,
+  savePlanModeDoc,
+  shouldSavePlanDoc,
+} from '@/services/planMode';
 
 describe('planMode', () => {
   beforeEach(() => {
@@ -70,41 +75,75 @@ describe('planMode', () => {
   });
 });
 
-describe('PLAN_MODE_SYSTEM_PROMPT — no-tools theater guard', () => {
-  // The fix for: "I will first take a look at the project structure…" being
-  // streamed by the model in Plan Mode even though tools are disabled.
-  // See tools/notes/plan-mode-no-tools-theater.md for the full diagnosis.
-  it('still enforces the original strict constraints (regression guard)', () => {
-    expect(PLAN_MODE_SYSTEM_PROMPT).toContain('Do not execute tools.');
-    expect(PLAN_MODE_SYSTEM_PROMPT).toContain(
-      'Do not call file, terminal, browser, shell, or workspace tools.',
-    );
+describe('PLAN_MODE_ALLOWED_TOOLS — read-only plan allowlist', () => {
+  it('exposes exactly the four documented read + save tools, in order', () => {
+    expect([...PLAN_MODE_ALLOWED_TOOLS]).toEqual([
+      'read_file',
+      'list_files',
+      'search_files',
+      'save_plan_doc',
+    ]);
+  });
+
+  it('does not include any write, execute, or browser tool', () => {
+    const banned = [
+      'write_file',
+      'edit_file',
+      'create_directory',
+      'delete_file',
+      'execute_command',
+      'browser_navigate',
+      'browser_click',
+      'browser_type',
+    ];
+    for (const name of banned) {
+      expect(PLAN_MODE_ALLOWED_TOOLS).not.toContain(name);
+    }
+  });
+});
+
+describe('PLAN_MODE_SYSTEM_PROMPT — read-only plan mode', () => {
+  it('still forbids claiming any code change has happened (regression guard)', () => {
     expect(PLAN_MODE_SYSTEM_PROMPT).toContain(
       'Do not pretend that any code change has already happened.',
     );
   });
 
-  it('tells the model tools are disabled in Plan Mode and not to announce "I will look"', () => {
-    expect(PLAN_MODE_SYSTEM_PROMPT).toContain('Tool Availability in Plan Mode');
-    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/tools are intentionally disabled/i);
-    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/do not announce/i);
-    // The exact failure-mode phrase from the user's report:
-    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/let me first take a look/i);
+  it('enumerates the four read + save tools the model may call', () => {
+    for (const tool of PLAN_MODE_ALLOWED_TOOLS) {
+      // The prompt names each allowed tool (with backticks) in the
+      // "Tools you MAY call" section.
+      expect(PLAN_MODE_SYSTEM_PROMPT).toContain(`\`${tool}\``);
+    }
   });
 
-  it('prescribes the two acceptable Plan Mode behaviors and the mode-switch fallback', () => {
-    // Either produce a plan, or ask focused clarifying questions.
+  it('forbids the write / execute / browser families by name', () => {
+    // These are the families the prompt must explicitly call out as
+    // unavailable so the model does not try to call them.
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/write_file/);
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/execute_command/);
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/browser_navigate/);
+    // And it must state that they are filtered out at the request
+    // boundary, not just "behave yourself" in prose.
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/filtered out at the request boundary/i);
+  });
+
+  it('tells the model to read first, then save the plan as a doc', () => {
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/read first, plan second/i);
+    expect(PLAN_MODE_SYSTEM_PROMPT).toContain('save_plan_doc');
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/\.pipi-shrimp\/docs\//);
+  });
+
+  it('does not regress to the old "tools are intentionally disabled" framing', () => {
+    // The old "no tools at all" copy is intentionally gone — that was
+    // the source of the "I'll go look at the code" theater. If a future
+    // edit accidentally restores it, fail loudly.
+    expect(PLAN_MODE_SYSTEM_PROMPT).not.toMatch(/tools are intentionally disabled/i);
+    expect(PLAN_MODE_SYSTEM_PROMPT).not.toMatch(/let me first take a look at the project/i);
+  });
+
+  it('prescribes focused clarifying questions and the mode-switch fallback', () => {
     expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/focused clarifying questions/i);
-    // Or tell the user to switch Execution Mode.
     expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/switch Execution Mode/i);
-  });
-
-  it('applies the no-tools rule to follow-up revisions too', () => {
-    // "Iteration Behavior" must reference the new rule, so that later turns
-    // in the same Plan Mode session also stop the theater.
-    const iterationIdx = PLAN_MODE_SYSTEM_PROMPT.indexOf('Iteration Behavior');
-    expect(iterationIdx).toBeGreaterThanOrEqual(0);
-    const after = PLAN_MODE_SYSTEM_PROMPT.slice(iterationIdx);
-    expect(after).toMatch(/Tool Availability in Plan Mode/);
   });
 });

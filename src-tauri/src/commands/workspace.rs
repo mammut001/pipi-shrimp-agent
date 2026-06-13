@@ -101,11 +101,12 @@ pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
         let _ = fs::write(&core_md_path, template);
     }
 
-    // 2. Update .gitignore if this is a git repo
+    // 2. Update .gitignore if this is a git repo or if a .gitignore already exists
     let git_dir = base.join(".git");
-    if git_dir.exists() {
-        let gitignore_path = base.join(".gitignore");
-        let entry = ".pipi-shrimp/\n";
+    let gitignore_path = base.join(".gitignore");
+    if git_dir.exists() || gitignore_path.exists() {
+        let entry1 = ".pipi-shrimp/\n";
+        let entry2 = ".pipishrimp/\n";
 
         let existing = if gitignore_path.exists() {
             fs::read_to_string(&gitignore_path).map_err(|e| AppError::FileError(e.to_string()))?
@@ -113,15 +114,28 @@ pub fn init_pipi_shrimp(work_dir: String) -> AppResult<String> {
             String::new()
         };
 
-        // Only append if not already present
-        if !existing.contains(".pipi-shrimp/") {
-            let mut content = existing;
+        let mut content = existing.clone();
+        let mut modified = false;
+
+        if !existing.contains(".pipi-shrimp") {
             if !content.ends_with('\n') && !content.is_empty() {
                 content.push('\n');
             }
-            content.push_str(entry);
+            content.push_str(entry1);
+            modified = true;
+        }
+
+        if !existing.contains(".pipishrimp") {
+            if !content.ends_with('\n') && !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str(entry2);
+            modified = true;
+        }
+
+        if modified {
             fs::write(&gitignore_path, content).map_err(|e| AppError::FileError(e.to_string()))?;
-            println!("Added .pipi-shrimp/ to .gitignore");
+            println!("Added .pipi-shrimp/ and .pipishrimp/ to .gitignore");
         }
     }
 
@@ -466,4 +480,76 @@ pub fn delete_session_work_dir(path: String) -> AppResult<bool> {
         .map_err(|e| AppError::FileError(format!("Failed to delete session directory: {}", e)))?;
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn clean_temp_dir() -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("pipishrimp-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_init_pipi_shrimp_no_git_no_gitignore() {
+        let tmp = clean_temp_dir();
+        let work_dir = tmp.to_string_lossy().into_owned();
+
+        let res = init_pipi_shrimp(work_dir).unwrap();
+        assert!(res.contains("new"));
+
+        let pipi_dir = tmp.join(".pipi-shrimp");
+        assert!(pipi_dir.exists());
+        assert!(pipi_dir.join("core.md").exists());
+
+        // gitignore should NOT be created
+        let gitignore = tmp.join(".gitignore");
+        assert!(!gitignore.exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_init_pipi_shrimp_with_git_no_gitignore() {
+        let tmp = clean_temp_dir();
+        let work_dir = tmp.to_string_lossy().into_owned();
+
+        // create .git directory
+        fs::create_dir(tmp.join(".git")).unwrap();
+
+        let res = init_pipi_shrimp(work_dir).unwrap();
+        assert!(res.contains("new"));
+
+        // gitignore SHOULD be created with .pipi-shrimp/
+        let gitignore = tmp.join(".gitignore");
+        assert!(gitignore.exists());
+        let content = fs::read_to_string(gitignore).unwrap();
+        assert!(content.contains(".pipi-shrimp/\n"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_init_pipi_shrimp_with_gitignore_only() {
+        let tmp = clean_temp_dir();
+        let work_dir = tmp.to_string_lossy().into_owned();
+
+        // create .gitignore with some content
+        let gitignore_path = tmp.join(".gitignore");
+        fs::write(&gitignore_path, "target/\n").unwrap();
+
+        let res = init_pipi_shrimp(work_dir).unwrap();
+        assert!(res.contains("new"));
+
+        // gitignore SHOULD contain both original content and .pipi-shrimp/
+        let content = fs::read_to_string(gitignore_path).unwrap();
+        assert!(content.contains("target/\n"));
+        assert!(content.contains(".pipi-shrimp/\n"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

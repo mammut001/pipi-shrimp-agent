@@ -141,6 +141,10 @@ describe('QueryEngine context overflow fallback', () => {
   });
 
   it('reserves a final response round before hard tool exhaustion', async () => {
+    mockGetSettingsState.mockReturnValue({
+      agentSettings: { maxToolRounds: 2 },
+    });
+
     mockInvokeRustAPIStream
       .mockImplementationOnce(async function* firstToolTurn() {
         yield {
@@ -184,7 +188,7 @@ describe('QueryEngine context overflow fallback', () => {
 
     const errorEvent = await iterator.next();
     expect(errorEvent.value.type).toBe('error');
-    expect((errorEvent.value.error as Error).message).toContain('Exceeded maximum tool rounds (4)');
+    expect((errorEvent.value.error as Error).message).toContain('Exceeded maximum tool rounds (2)');
     expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(2);
   });
 

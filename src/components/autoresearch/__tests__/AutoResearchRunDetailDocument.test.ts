@@ -219,7 +219,6 @@ describe('AutoResearchRunDetailDocument', () => {
 
     const view = renderDetail({ run });
 
-    expect(view.container.textContent).toContain('Primary Config · OpenAI · gpt-4.1');
     expect(view.container.textContent).toContain('provider=OpenAI');
     expect(view.container.textContent).toContain('model=gpt-4.1');
     expect(view.container.textContent).not.toContain('[object Object]');

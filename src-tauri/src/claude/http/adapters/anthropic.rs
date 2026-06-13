@@ -200,10 +200,19 @@ impl ProviderAdapter for AnthropicAdapter {
 
     fn finalize_stream(
         &self,
-        ctx: StreamContext,
+        mut ctx: StreamContext,
         _config: &ResolvedProviderConfig,
     ) -> AppResult<ChatResponse> {
         let artifacts = detect_artifacts(&ctx.content);
+
+        if ctx.usage.input_tokens == 0 {
+            ctx.usage.input_tokens = ctx.estimated_input;
+        }
+
+        if ctx.usage.output_tokens == 0 {
+            ctx.usage.output_tokens = crate::utils::token::estimate_tokens(&ctx.content)
+                + crate::utils::token::estimate_tokens(&ctx.reasoning);
+        }
 
         Ok(ChatResponse {
             content: ctx.content,

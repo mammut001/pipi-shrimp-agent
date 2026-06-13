@@ -114,8 +114,8 @@ describe('resolvedChatRequest', () => {
     expect(request.params.baseUrl).toBe('https://api.minimaxi.com/v1');
     expect(request.params.providerCapabilities).toMatchObject({
       supportsThinking: false,
-      supportsReasoning: false,
-      supportsReasoningStream: false,
+      supportsReasoning: true,
+      supportsReasoningStream: true,
       supportsToolCalls: true,
       supportsToolOpenAI: true,
       supportsStreaming: true,
