@@ -79,8 +79,16 @@ export function FileDropOverlay() {
   const { addNotification } = useUIStore();
   const { currentSessionId, addSessionWorkingFiles, sessions, setSessionWorkDirFromPath } = useChatStore();
 
-  const currentSessionWorkDir = useMemo(
-    () => sessions.find((session) => session.id === currentSessionId)?.workDir,
+  // Two-folder model: the FileDropOverlay uses the Project Folder to
+  // decide whether a dropped file is "inside" the project (workspace
+  // badge) or an external reference. The PiPi Output Folder is
+  // intentionally not consulted here — Context Files belong to the
+  // user's repo, not the app-owned output root.
+  const currentSessionProjectDir = useMemo(
+    () => {
+      const session = sessions.find((s) => s.id === currentSessionId);
+      return session?.projectDir ?? session?.workDir;
+    },
     [sessions, currentSessionId],
   );
 
@@ -140,7 +148,7 @@ export function FileDropOverlay() {
     // (always true on Tauri drops; the browser path-only fallback may not
     // have one). Showing this only when workDir is empty avoids noisy
     // suggestions during the normal "add context files" flow.
-    if (!currentSessionWorkDir && pendingFiles.length > 0 && currentSessionId) {
+    if (!currentSessionProjectDir && pendingFiles.length > 0 && currentSessionId) {
       const candidate = pendingFiles.find((file) => Boolean(getParentDirectory(file.path)));
       const candidateParent = candidate ? getParentDirectory(candidate.path) : '';
       if (candidateParent) {
@@ -154,13 +162,15 @@ export function FileDropOverlay() {
               // Fire-and-forget; the toast is already dismissed by the
               // `NotificationToast` component once the action handler
               // returns. We surface a separate success toast only if the
-              // bind actually persisted a path.
+              // bind actually persisted a path. Two-folder model: this
+              // binds the **Project Folder** (the user's repo), not the
+              // PiPi Output Folder.
               void setSessionWorkDirFromPath(currentSessionId, candidateParent).then(
                 (boundPath) => {
                   if (boundPath) {
                     addNotification(
                       'success',
-                      `${t('chat.workspaceFolder')}: ${boundPath}`,
+                      `${t('chat.projectFolder')}: ${boundPath}`,
                       currentSessionId,
                     );
                   }
@@ -175,7 +185,7 @@ export function FileDropOverlay() {
     setPendingFiles([]);
     setIsDragging(false);
     dragCounterRef.current = 0;
-  }, [pendingFiles, currentSessionId, currentSessionWorkDir, addImportedFiles, addSessionWorkingFiles, addNotification, setSessionWorkDirFromPath]);
+  }, [pendingFiles, currentSessionId, currentSessionProjectDir, addImportedFiles, addSessionWorkingFiles, addNotification, setSessionWorkDirFromPath]);
 
   /** Cancel and close overlay */
   const cancelOverlay = useCallback(() => {
@@ -431,9 +441,9 @@ export function FileDropOverlay() {
             /* Show pending files list */
             <div className="space-y-2">
               {pendingFiles.map((file) => {
-                const insideWorkspace = isContextFileInsideWorkspace(file.path, currentSessionWorkDir);
+                const insideWorkspace = isContextFileInsideWorkspace(file.path, currentSessionProjectDir);
                 const displayPath = insideWorkspace
-                  ? formatContextFilePath(file.path, currentSessionWorkDir)
+                  ? formatContextFilePath(file.path, currentSessionProjectDir)
                   : file.path;
                 return (
                   <div
@@ -445,7 +455,7 @@ export function FileDropOverlay() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                        {currentSessionWorkDir ? (
+                        {currentSessionProjectDir ? (
                           <span
                             className={`flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
                               insideWorkspace

@@ -44,6 +44,7 @@ import {
 } from './chatStreaming';
 import { handleToolBatchRequest } from './chatToolExecution';
 import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
+import { getSessionProjectDir as resolveSessionProjectDir } from '@/utils/sessionFolders';
 
 export function shouldRemoveEmptyAssistantPlaceholder(message: Message | undefined): boolean {
   return Boolean(message && message.role === 'assistant' && !message.content && !message.reasoning);
@@ -375,7 +376,12 @@ export function createChatActionMethods({
               if (plan.delegate && plan.agents.length > 0) {
                 await addMessage(createMessage('assistant', describePlan(plan)));
                 const currentSession = get().sessions.find((session) => session.id === activeSessionId);
-                sessionWorkDir = currentSession?.workDir;
+                // Two-folder model: delegated sub-agents run with the
+                // **Project Folder** as their cwd so they can edit the
+                // user's repo directly. The PiPi Output Folder is
+                // resolved via the helper inside each agent when it
+                // needs to write outputs.
+                sessionWorkDir = resolveSessionProjectDir(currentSession);
                 const delegationResult = await executePlan(plan, activeSessionId, sessionWorkDir);
                 const followThrough = resolveFollowThrough(plan);
                 const synthesisPrompt = buildSynthesisPrompt(plan, delegationResult, followThrough);
@@ -416,11 +422,25 @@ export function createChatActionMethods({
         const template = usePromptStore.getState().getActiveTemplate();
         const currentSession = get().sessions.find((session) => session.id === activeSessionId);
         const sessionWorkingFiles = currentSession?.workingFiles ?? [];
-        sessionWorkDir = currentSession?.workDir;
+        // Two-folder model: the engine cwd / prompt builder / tool path
+        // resolution all use the **Project Folder**. Resolve through the
+        // helper so pre-v7 sessions (which only have `workDir`) keep
+        // working without code changes.
+        sessionWorkDir = currentSession?.projectDir ?? currentSession?.workDir;
+        // The PiPi Output Folder is where chat outputs, docs, memory,
+        // and AutoResearch artifacts land. It defaults to the
+        // app-managed `{Documents|HOME}/PiPi-Shrimp/chats/{id}/` when
+        // not yet bound.
+        const sessionPipiOutputDir = currentSession?.pipiOutputDir
+          ?? (currentSession ? `PiPi-Shrimp/chats/${currentSession.id}` : undefined);
 
-        if (!isPlanMode && sessionWorkDir && !currentSession?.outputDir) {
+        if (!isPlanMode && sessionPipiOutputDir && !currentSession?.outputDir) {
           try {
-            const outputDir = await safeInvoke<string>('get_next_output_dir', { workDir: sessionWorkDir });
+            // The Rust `get_next_output_dir` helper takes any folder
+            // and returns `{folder}/.pipi-shrimp/{date}-{i}/`. We point
+            // it at the PiPi Output Folder so the date-stamped layout
+            // lives inside the app-owned root, not the user's repo.
+            const outputDir = await safeInvoke<string>('get_next_output_dir', { workDir: sessionPipiOutputDir });
             await safeInvoke('create_directory', { path: outputDir });
             const updated = { ...currentSession!, outputDir, updatedAt: Date.now() };
             set((state) => ({
@@ -432,12 +452,27 @@ export function createChatActionMethods({
         }
 
         let coreMdContent = '';
-        if (sessionWorkDir) {
+        if (sessionPipiOutputDir) {
           try {
-            const coreMdPath = `${sessionWorkDir}/.pipi-shrimp/core.md`;
+            // core.md lives in the PiPi Output Folder, not the Project
+            // Folder — two-folder model separation. Fall back to the
+            // legacy `${projectDir}/.pipi-shrimp/core.md` location when
+            // the PiPi Output Folder is missing or the legacy file is
+            // the only one present, so pre-v7 sessions don't lose
+            // memory.
+            const legacyPath = sessionWorkDir ? `${sessionWorkDir}/.pipi-shrimp/core.md` : null;
+            const newPath = `${sessionPipiOutputDir}/core.md`;
             const coreMdRes = await invoke<{ content: string; path: string }>('read_file', {
-              path: coreMdPath,
-              workDir: sessionWorkDir,
+              path: newPath,
+              workDir: sessionPipiOutputDir,
+            }).catch(async (error) => {
+              if (!legacyPath || !sessionWorkDir) {
+                throw error;
+              }
+              return invoke<{ content: string; path: string }>('read_file', {
+                path: legacyPath,
+                workDir: sessionWorkDir,
+              });
             });
             if (coreMdRes?.content) {
               coreMdContent = coreMdRes.content;
@@ -452,11 +487,18 @@ export function createChatActionMethods({
           : '';
 
         let memoryContext = '';
-        if (sessionWorkDir) {
+        if (sessionPipiOutputDir) {
           try {
+            // Two-folder model: memory lives under the PiPi Output
+            // Folder (`{pipiOutputDir}/.pipi-shrimp/memory`) rather than
+            // `${projectDir}/.pipi-shrimp/memory`. The `getMemoryDir`
+            // helper accepts a pipiOutputDir override; we pass the
+            // PiPi Output Folder explicitly. Custom paths /
+            // settings-based directories still win via the existing
+            // priority list.
             const { getMemoryDir, getTopicMemoriesDir } = await import('../../services/memory/memoryPaths');
             const { buildMemoryContext, findRelevantMemories } = await import('../../services/memory/relevantRecall');
-            const memoryDir = await getMemoryDir(sessionWorkDir);
+            const memoryDir = await getMemoryDir(sessionWorkDir, sessionPipiOutputDir);
             const topicDir = getTopicMemoriesDir(memoryDir);
             const relevantMemories = await findRelevantMemories(topicDir, content);
             if (relevantMemories.length > 0) {
@@ -474,7 +516,13 @@ export function createChatActionMethods({
         });
         const { systemPrompt } = buildPrompt(template?.sections || [], {
           agentInstructions: useUIStore.getState().agentInstructions,
+          // Two-folder model: `workDir` here is the **Project Folder**
+          // (the user's repo). `pipiOutputDir` is the **PiPi Output
+          // Folder** (app-owned output root). Both are exposed as
+          // template variables so defaultTemplate can mention each one
+          // explicitly in the prompt.
           workDir: sessionWorkDir || '',
+          pipiOutputDir: sessionPipiOutputDir || '',
           coreMdContent,
           workingFilesList,
           memoryContext,
@@ -604,17 +652,18 @@ export function createChatActionMethods({
 
             try {
               const latestSession = get().sessions.find((session) => session.id === activeSessionId);
-              let planWorkDir = latestSession?.workDir ?? sessionWorkDir;
+              // Two-folder model: plan docs are app-owned outputs and
+              // land in the PiPi Output Folder, NOT the Project Folder.
+              let planOutputDir = latestSession?.pipiOutputDir;
 
-              if (!planWorkDir) {
+              if (!planOutputDir) {
                 const resolved = await ensureSessionWorkDir(activeSessionId, set, get);
-                planWorkDir = resolved ?? undefined;
+                planOutputDir = resolved ?? undefined;
               }
 
-              if (planWorkDir) {
-                sessionWorkDir = planWorkDir;
+              if (planOutputDir) {
                 const savedDoc = await savePlanModeDoc({
-                  workDir: planWorkDir,
+                  workDir: planOutputDir,
                   userRequest: content,
                   planMarkdown: finalAssistantContent,
                   sessionId: activeSessionId,
@@ -639,9 +688,15 @@ export function createChatActionMethods({
           const { triggerMemoryExtraction } = await import('../../services/memory/autoExtraction');
           const messagesForExtraction = currentMessages();
           if (messagesForExtraction.length >= 10) {
+            // Two-folder model: memory lives under the PiPi Output
+            // Folder, not the Project Folder. Pass the resolved PiPi
+            // Output Folder as the projectRoot so `getMemoryDir` writes
+            // into the app-owned location.
+            const latestSession = get().sessions.find((session) => session.id === activeSessionId);
+            const memoryRoot = latestSession?.pipiOutputDir ?? sessionPipiOutputDir;
             triggerMemoryExtraction({
               messages: messagesForExtraction.map((message) => ({ role: message.role, content: message.content ?? '' })),
-              projectRoot: sessionWorkDir ?? undefined,
+              projectRoot: memoryRoot,
             });
           }
         } catch (error) {

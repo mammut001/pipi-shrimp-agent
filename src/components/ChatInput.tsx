@@ -20,6 +20,7 @@ import { MCPChatButton, MCPDropdown } from '@/components/mcp';
 import { BrowserIntentConfirm } from './BrowserIntentConfirm';
 import { ExecutionModeDropdown } from './chatInput/ExecutionModeDropdown';
 import { ExecutionModeDropdownErrorBoundary } from './chatInput/ExecutionModeDropdownErrorBoundary';
+import { SessionFolderChip } from './chatInput/SessionFolderChip';
 import {
   decideChatInputSubmission,
   isStaleChatDraftValue,
@@ -123,7 +124,7 @@ export function ChatInput({
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
-  const [isBindingFolder, setIsBindingFolder] = useState(false);
+  const [isBindingFolder, setIsBindingFolder] = useState<'project' | 'output' | null>(null);
   const [isFocused, setIsFocused] = useState(false);
   const [browserIntentCandidate, setBrowserIntentCandidate] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -177,7 +178,19 @@ export function ChatInput({
   }, []);
   // ────────────────────────────────────────────────────────────────────────────
 
-  const { isStreaming, sendMessage, stopGeneration, currentSessionId, sessions, setSessionWorkDir, clearSessionWorkDir, updateSessionExecutionMode } = useChatStore();
+  const {
+    isStreaming,
+    sendMessage,
+    stopGeneration,
+    currentSessionId,
+    sessions,
+    // Two-folder model: each folder has its own bind/clear action.
+    setSessionProjectDir,
+    setSessionPipiOutputDir,
+    clearSessionProjectDir,
+    clearSessionPipiOutputDir,
+    updateSessionExecutionMode,
+  } = useChatStore();
   const { toggleSettings, addNotification } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
@@ -218,7 +231,14 @@ export function ChatInput({
 
   // Get current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
-  const workDir = currentSession?.workDir;
+  // Two-folder model: surface both folders independently. The
+  // Project Folder is the user's repo (tool cwd); the PiPi Output
+  // Folder is the app-owned output root (default: the per-session
+  // `{Documents|HOME}/PiPi-Shrimp/chats/{id}/`). Both default to
+  // `undefined` when not yet bound; the chat store resolves the
+  // PiPi Output Folder fallback lazily.
+  const projectDir = currentSession?.projectDir ?? currentSession?.workDir;
+  const pipiOutputDir = currentSession?.pipiOutputDir;
 
   // Selected 6-mode execution mode. Fall back to default if missing/invalid.
   const selectedExecutionModeId: ExecutionModeId = isExecutionModeId(currentSession?.executionMode)
@@ -290,11 +310,16 @@ export function ChatInput({
   }, []);
 
   /**
-   * Handle opening the current working directory in Finder
+   * Handle opening the current Project Folder in Finder
    */
   const handleOpenFolder = useCallback(async () => {
     try {
-      let targetPath: string | undefined = workDir;
+      // Two-folder model: the "Open folder" button targets the
+      // Project Folder (the user's repo), not the PiPi Output
+      // Folder. Falling back to the app-managed PiPi Output Folder
+      // is still useful so the user has *some* folder to land in
+      // when no Project Folder is bound.
+      let targetPath: string | undefined = projectDir;
       if (!targetPath && currentSessionId) {
         targetPath = await safeInvokeOrNull<string>('get_app_default_dir', { sessionId: currentSessionId }, { source: 'ChatInput.getDefaultDir' }) ?? undefined;
       }
@@ -304,7 +329,7 @@ export function ChatInput({
     } catch (err) {
       console.error('Failed to open folder:', err);
     }
-  }, [workDir, currentSessionId]);
+  }, [projectDir, currentSessionId]);
 
   const clearInputDraft = useCallback(() => {
     setInput('');
@@ -482,130 +507,55 @@ export function ChatInput({
   return (
     <div className={rootClassName}>
       <div className="max-w-4xl relative">
-        {/* Work Dir chip — shown only when session has messages (conversation started) */}
+        {/* Two-folder chips — shown only when session has messages (conversation started) */}
         {currentSession && currentSession.messages.length > 0 && (
-          <div className="px-4 pt-4 pb-2 flex items-center gap-2">
-            {workDir ? (
-              // Has workspace — show path chip
-              <div
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full
-                              bg-gray-100 border border-gray-200/80
-                              text-xs text-gray-600
-                              hover:bg-gray-50 transition-colors group"
-                title={t('chat.workspaceFolderTooltip')}
-                data-testid="workspace-folder-chip"
-              >
-                <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                  {t('chat.workspaceFolder')}
-                </span>
-                {/* Folder icon */}
-                <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                </svg>
-
-                {/* Show only last folder name for brevity */}
-                <span className="truncate max-w-[180px]">
-                  {workDir.split('/').pop() ?? workDir}
-                </span>
-
-                {/* Subtle full path tooltip */}
-                <span className="hidden group-hover:inline text-gray-400 text-[10px] truncate max-w-[120px]">
-                  .pipi-shrimp/
-                </span>
-
-                {/* Open source folder in Finder */}
-                <button
-                  onClick={() => safeInvokeOrNull('reveal_in_finder', { path: workDir }, { source: 'ChatInput.openSourceFolder' })}
-                  className="text-gray-400 hover:text-blue-500 transition-colors ml-0.5"
-                  title={`${t('chat.openSourceFolder')}: ${workDir}`}
-                  aria-label={t('chat.openSourceFolder')}
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  </svg>
-                </button>
-
-                {/* Open .pipi-shrimp output folder in Finder */}
-                <button
-                  onClick={() => safeInvokeOrNull('reveal_in_finder', { path: `${workDir}/.pipi-shrimp` }, { source: 'ChatInput.openOutputFolder' })}
-                  className="text-gray-400 hover:text-purple-500 transition-colors"
-                  title={`${t('chat.openOutputFolder')}: ${workDir}/.pipi-shrimp`}
-                  aria-label={t('chat.openOutputFolder')}
-                >
-                  <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                  </svg>
-                </button>
-
-                {/* Change button */}
-                <button
-                  onClick={async () => {
-                    setIsBindingFolder(true);
-                    try {
-                      await setSessionWorkDir(currentSession.id);
-                    } finally {
-                      setIsBindingFolder(false);
-                    }
-                  }}
-                  disabled={isBindingFolder}
-                  className="ml-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[10px] font-medium"
-                  title={t('chat.changeWorkDirectory')}
-                >
-                  {isBindingFolder ? t('chat.binding') : t('common.change')}
-                </button>
-
-                {/* Remove button */}
-                <button
-                  onClick={async () => {
-                    setIsBindingFolder(true);
-                    try {
-                      await clearSessionWorkDir(currentSession.id);
-                    } finally {
-                      setIsBindingFolder(false);
-                    }
-                  }}
-                  disabled={isBindingFolder}
-                  className="text-gray-300 hover:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ml-0.5"
-                  title={t('chat.removeWorkDirectory')}
-                  aria-label={t('chat.removeWorkDirectory')}
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            ) : (
-              // No workspace — show quiet "Set workspace folder" prompt
-              <button
-                onClick={async () => {
-                  setIsBindingFolder(true);
-                  try {
-                    await setSessionWorkDir(currentSession.id);
-                  } finally {
-                    setIsBindingFolder(false);
-                  }
-                }}
-                disabled={isBindingFolder}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full
-                           border border-dashed border-gray-200
-                           text-xs text-gray-400
-                           hover:border-gray-300 hover:text-gray-600
-                           disabled:opacity-50 disabled:cursor-not-allowed
-                           transition-all duration-150"
-                title={t('chat.workspaceFolderTooltip')}
-                data-testid="workspace-folder-empty"
-              >
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                  {t('chat.workspaceFolder')}
-                </span>
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                </svg>
-                {isBindingFolder ? t('chat.binding') : t('chat.setWorkspaceFolder')}
-              </button>
-            )}
+          <div className="px-4 pt-4 pb-2 flex items-center gap-2 flex-wrap">
+            <SessionFolderChip
+              kind="project"
+              value={projectDir ?? null}
+              isBinding={isBindingFolder === 'project'}
+              onBind={async () => {
+                if (!currentSession) return null;
+                setIsBindingFolder('project');
+                try {
+                  return await setSessionProjectDir(currentSession.id);
+                } finally {
+                  setIsBindingFolder(null);
+                }
+              }}
+              onClear={async () => {
+                if (!currentSession) return;
+                setIsBindingFolder('project');
+                try {
+                  await clearSessionProjectDir(currentSession.id);
+                } finally {
+                  setIsBindingFolder(null);
+                }
+              }}
+            />
+            <SessionFolderChip
+              kind="output"
+              value={pipiOutputDir ?? null}
+              isBinding={isBindingFolder === 'output'}
+              onBind={async () => {
+                if (!currentSession) return null;
+                setIsBindingFolder('output');
+                try {
+                  return await setSessionPipiOutputDir(currentSession.id);
+                } finally {
+                  setIsBindingFolder(null);
+                }
+              }}
+              onClear={async () => {
+                if (!currentSession) return;
+                setIsBindingFolder('output');
+                try {
+                  await clearSessionPipiOutputDir(currentSession.id);
+                } finally {
+                  setIsBindingFolder(null);
+                }
+              }}
+            />
 
             {/* Terminal toggle button */}
             {isTauri && (
@@ -628,11 +578,11 @@ export function ChatInput({
           </div>
         )}
 
-        {/* Subtle hint when the session has a conversation but no workspace yet. */}
-        {currentSession && currentSession.messages.length > 0 && !workDir && (
+        {/* Subtle hint when the session has a conversation but no Project Folder yet. */}
+        {currentSession && currentSession.messages.length > 0 && !projectDir && (
           <div
             className="mx-4 mt-1 mb-2 flex items-start gap-2 rounded-md border border-amber-200/70 bg-amber-50/60 px-3 py-1.5 text-[11px] text-amber-800"
-            data-testid="workspace-folder-missing-hint"
+            data-testid="project-folder-missing-hint"
             role="status"
           >
             <svg
@@ -645,7 +595,7 @@ export function ChatInput({
             >
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
             </svg>
-            <span className="leading-snug">{t('chat.noWorkspaceHint')}</span>
+            <span className="leading-snug">{t('chat.noProjectFolderHint')}</span>
           </div>
         )}
 

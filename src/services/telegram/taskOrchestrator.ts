@@ -123,8 +123,19 @@ async function executeTelegramTask(task: TelegramTask): Promise<void> {
     };
     await saveTelegramTask(liveTask);
 
+    // Two-folder model: the Telegram task runs in the Project Folder
+    // (the user's repo) as cwd, but uses the PiPi Output Folder for
+    // memory / `core.md` lookups so generated artifacts don't pollute
+    // the repo. The session snapshot is re-read so we get the values
+    // the bind helper just persisted.
+    const sessionAfterBind = useChatStore.getState().sessions.find(
+      (candidate) => candidate.id === session.id,
+    ) ?? session;
+    const pipiOutputDir = sessionAfterBind.pipiOutputDir;
+
     const systemPrompt = await buildHeadlessSystemPrompt({
       workDir: currentWorkDir,
+      pipiOutputDir,
       workingFiles: session.workingFiles,
       originalQuery: task.prompt,
     });
@@ -139,6 +150,7 @@ async function executeTelegramTask(task: TelegramTask): Promise<void> {
       ],
       systemPrompt,
       workDir: currentWorkDir,
+      pipiOutputDir,
       resolveWorkDir: async () => resolveTelegramTaskWorkDir(session.id, binding),
       onWorkDirResolved: async (workDir) => {
         currentWorkDir = workDir;

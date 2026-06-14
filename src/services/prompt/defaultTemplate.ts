@@ -59,34 +59,58 @@ You have access to the following tools:
         content: `{{agentInstructions}}`,
       },
 
-      // Layer 4: Session - Workspace Folder (cached until workDir changes)
+      // Layer 4: Session - Project Folder (cached until projectDir changes)
       {
         id: 'session-workdir',
-        label: 'Workspace Folder',
+        label: 'Project Folder',
         order: 40,
         cacheable: true,
         enabled: true,
         category: 'session',
-        description: 'Session Workspace Folder (where the agent may read/write project files and store .pipi-shrimp outputs, memory, and docs)',
-        content: `## Workspace Folder
+        description: 'Session Project Folder (the user\'s repo — where the agent may read/write project files)',
+        content: `## Project Folder
 
-Your **Workspace Folder** for this session is: \`{{workDir}}\`
+Your **Project Folder** for this session is: \`{{workDir}}\`
 
-The Workspace Folder is the root directory the agent may use to:
+The Project Folder is the user's actual repo / project directory. The agent uses it to:
 - run shell commands (\`bash\`);
 - read and write project files (\`read_file\`, \`write_file\`, \`list_files\`, \`search_files\`, \`path_exists\`, \`create_directory\`);
-- store generated docs under \`.pipi-shrimp/docs/\`;
-- store memory and topic recall data under \`.pipi-shrimp/memory/\`.
+- understand the project layout, tech stack, and source code.
 
 Rules:
-- **Resolve all relative tool paths against the Workspace Folder.** If the user says "read main.py", use \`{workDir}/main.py\`.
-- **Do NOT write outside the Workspace Folder** unless the user explicitly asks for it AND the active permission mode allows it.
-- Tools that need a sandbox (e.g. \`write_file\`, \`bash\`) may refuse to run when no Workspace Folder is set.`,
+- **Resolve all relative tool paths against the Project Folder.** If the user says "read main.py", use \`{workDir}/main.py\`.
+- **Do NOT write generated docs, memory, or scratch files into the Project Folder.** Those belong in the PiPi Output Folder (see below) so the agent's work product does not pollute the repo.
+- Tools that need a sandbox (e.g. \`write_file\`, \`bash\`) may refuse to run when no Project Folder is set.`,
+      },
+      // Layer 4: Session - PiPi Output Folder (cached until pipiOutputDir changes)
+      {
+        id: 'session-pipi-output-folder',
+        label: 'PiPi Output Folder',
+        order: 41,
+        cacheable: true,
+        enabled: true,
+        category: 'session',
+        description: 'Session PiPi Output Folder (app-owned root for .pipi-shrimp, generated docs, memory, chat outputs, and AutoResearch artifacts)',
+        content: `## PiPi Output Folder
+
+Your **PiPi Output Folder** for this session is: \`{{pipiOutputDir}}\`
+
+The PiPi Output Folder is the **app-owned output root** for this session. It is independent from the Project Folder on purpose — generated artifacts must not pollute the user's repo by default. Use it for:
+
+- generated docs (\`.pipi-shrimp/docs/\` and the dated \`.pipi-shrimp/{YYYY-MM-DD}-{i}/\` subfolders);
+- long-term memory and topic recall (\`.pipi-shrimp/memory/\` and \`.pipi-shrimp/memory/topic-memories/\`);
+- chat output artefacts produced by \`write_to_workdir\` / plan-mode / save-plan-doc;
+- AutoResearch run artefacts (logs, transcripts, diffs, metrics).
+
+Rules:
+- **Generated docs, memory, and chat outputs MUST land in the PiPi Output Folder**, not the Project Folder. Use \`write_file\` with an absolute path under \`{{pipiOutputDir}}\` whenever the user asks for a document / analysis / report that should survive across sessions.
+- **Do NOT edit project source files via the PiPi Output Folder.** Project source belongs in the Project Folder only.
+- If the user explicitly asks to commit or sync generated files into their repo, ask them to confirm the destination path before writing.`,
       },
       {
         id: 'session-shell-profile',
         label: 'Shell Profile',
-        order: 41,
+        order: 42,
         cacheable: true,
         enabled: true,
         category: 'session',
@@ -124,14 +148,14 @@ Active shell profile: {{shellProfileLabel}}
         description: 'Session-level Context Files attached as references',
         content: `## Context Files
 
-The following **Context Files** have been attached to this session as references. They are not part of the Workspace Folder by themselves:
+The following **Context Files** have been attached to this session as references. They are independent from both the Project Folder and the PiPi Output Folder:
 {{workingFilesList}}
 
 Rules:
 - Use these files only as **explicit references** the user pointed at.
 - **Read a context file by its exact path** (\`read_file\`) before using or editing it. Do not assume you know its contents.
-- **Do not assume a Context File's parent folder is the Workspace Folder.** A Context File may live anywhere on disk; only the Workspace Folder is the root for tool operations and \`.pipi-shrimp/\` outputs.
-- If the user asks you to save edits, prefer writing back to the **exact same path** of the Context File only when the user explicitly asks and the file lives inside the Workspace Folder. Otherwise, treat the Context File as read-only.`,
+- **Do not assume a Context File's parent folder is the Project Folder.** A Context File may live anywhere on disk; only the Project Folder ({{workDir}}) is the root for tool operations. Generated artifacts belong in the PiPi Output Folder ({{pipiOutputDir}}), not the Context File's parent.
+- If the user asks you to save edits, prefer writing back to the **exact same path** of the Context File only when the user explicitly asks and the file lives inside the Project Folder. Otherwise, treat the Context File as read-only and write any generated output into the PiPi Output Folder.`,
       },
 
       // Layer 4: Session - Relevant Memories (cached until memory context changes)
@@ -150,7 +174,7 @@ Rules:
       {
         id: 'session-docs-system',
         label: 'Document System',
-        order: 45,
+        order: 46,
         cacheable: true,
         enabled: true,
         category: 'session',
@@ -161,20 +185,20 @@ This project has a built-in document management system for organizing your work.
 
 **When the user asks you to create documentation, design docs, analysis, or any written material:**
 
-1. **Auto-save to docs**: Save all generated documents to \`.pipi-shrimp/docs/\` with sequential numbering (001, 002, etc.)
+1. **Auto-save to docs**: Save all generated documents under \`.pipi-shrimp/docs/\` *inside the PiPi Output Folder* (not the Project Folder) with sequential numbering (001, 002, etc.). The PiPi Output Folder is the **app-owned output root**; the user's repo stays clean.
 2. **Filename format**: \`{number}_{slug}.md\` (e.g., \`003_readme-design.md\`)
 3. **Always update INDEX.md**: The index file tracks all documents automatically
 4. **Frontmatter**: Include title, created date, tags, and summary in each document
 
 **Example user requests that should trigger document creation:**
-- "帮我写一个设计文档" → Create \`.pipi-shrimp/docs/00X_design-document.md\`
-- "Analyze the code structure" → Create document in \`.pipi-shrimp/docs/\`
-- "整理一下 API 文档" → Create document in \`.pipi-shrimp/docs/00X_api-documentation.md\`
+- "帮我写一个设计文档" → Create \`.pipi-shrimp/docs/00X_design-document.md\` under the PiPi Output Folder
+- "Analyze the code structure" → Create document in \`.pipi-shrimp/docs/\` (PiPi Output Folder)
+- "整理一下 API 文档" → Create document in \`.pipi-shrimp/docs/00X_api-documentation.md\` (PiPi Output Folder)
 - "帮我写一份简历" → **MUST IMMEDIATELY** use the \`Skill\` tool with \`skill: "resume"\` to learn how to generate a professional resume artifact. **DO NOT ask the user for information first. Call the Skill tool first.**
 
-**Document storage location**: \`{workDir}/.pipi-shrimp/docs/\` (the Workspace Folder's \`.pipi-shrimp/docs/\`, not the parent folder of any Context File)
+**Document storage location**: \`{{pipiOutputDir}}/.pipi-shrimp/docs/\` (the PiPi Output Folder's \`.pipi-shrimp/docs/\`, NOT \`{{workDir}}/\`).
 
-Use the \`write_file\` tool to create documents with this structure:
+Use the \`write_file\` tool with the absolute path under \`{{pipiOutputDir}}/.pipi-shrimp/docs/\` to create documents. Use this structure:
 \`\`\`
 ---
 title: Document Title

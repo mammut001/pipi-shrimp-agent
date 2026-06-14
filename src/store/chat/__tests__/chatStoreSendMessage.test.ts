@@ -390,6 +390,19 @@ describe('chatStore sendMessage integration', () => {
       workDir: '/tmp/pipi/session-1',
     });
     mockRunChatTurn.mockImplementation(() => streamPlanAssistantReply());
+    // Two-folder model: plan docs are app-owned outputs and land in the
+    // PiPi Output Folder, not the Project Folder. The chat store
+    // auto-provisions a default PiPi Output Folder when one isn't bound
+    // yet, and `get_app_default_dir` is the Tauri command that returns
+    // it. We mock it to a known path so the save flow can find a
+    // destination.
+    const pipiOutputDir = '/tmp/pipi-shrimp/chats/session-1';
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_app_default_dir') return pipiOutputDir;
+      if (command === 'create_directory') return null;
+      if (command === 'db_save_session') return null;
+      return undefined;
+    });
 
     await useChatStore.getState().sendMessage('帮我实现一个新的设置项');
 
@@ -413,8 +426,12 @@ describe('chatStore sendMessage integration', () => {
       // src/services/planMode.ts.
       { allowedTools: ['read_file', 'list_files', 'search_files', 'save_plan_doc'] },
     );
+    // Two-folder model: `savePlanModeDoc` is called with the PiPi
+    // Output Folder path, NOT the Project Folder (`/tmp/pipi/session-1`
+    // is the Project Folder here — that's the cwd for tools, but plan
+    // docs are app-owned outputs and must not pollute the repo).
     expect(mockSavePlanModeDoc).toHaveBeenCalledWith({
-      workDir: '/tmp/pipi/session-1',
+      workDir: pipiOutputDir,
       userRequest: '帮我实现一个新的设置项',
       planMarkdown: expect.stringContaining('## Execution Plan: Ship Plan Mode'),
       sessionId: 'session-1',

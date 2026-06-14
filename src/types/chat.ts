@@ -56,11 +56,35 @@ export interface Session {
   messages: Message[];          // All messages in the session
   createdAt: number;            // Creation timestamp
   updatedAt: number;            // Last update timestamp
-  cwd?: string;                  // Current working directory (for code execution)
+  cwd?: string;                  // Current working directory (for code execution). Kept in sync with projectDir.
   projectId?: string;           // Project ID this session belongs to (optional)
   model?: string;               // Model to use for this session (optional, defaults to apiConfig model)
-  workDir?: string;             // work directory for this session
-  outputDir?: string;            // current output directory (auto-created under .pipi-shrimp/)
+  /**
+   * Project Folder (the user's actual repo/project path).
+   * Tools run commands and read/write project files relative to this folder.
+   * For backwards compatibility with pre-v7 sessions that only had a
+   * single folder field, the legacy `workDir` is treated as the Project
+   * Folder when this field is absent — see
+   * {@link import('@/utils/sessionFolders').getSessionProjectDir}.
+   */
+  projectDir?: string;
+  /**
+   * PiPi Output Folder (app-owned output root).
+   * Stores `.pipi-shrimp/`, generated docs, memory, chat outputs and
+   * AutoResearch artifacts. By default this is the per-session app-managed
+   * path `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}/` — see
+   * {@link import('@/utils/sessionFolders').getSessionPipiOutputDir}.
+   */
+  pipiOutputDir?: string;
+  /**
+   * Legacy single-folder field retained for backward compatibility with
+   * pre-v7 sessions and DB rows that predate the two-folder split.
+   * Mirrors `projectDir` on save; on load, the helpers in
+   * `utils/sessionFolders.ts` treat this as the Project Folder when no
+   * explicit `projectDir` is set.
+   */
+  workDir?: string;
+  outputDir?: string;            // current output directory (derived from `pipiOutputDir`, not from `projectDir`)
   workingFiles?: ImportedFile[]; // session-level working files
   permissionMode?: 'standard' | 'auto-edits' | 'bypass' | 'plan-only'; // NEW: execution permission mode
   /**
@@ -227,38 +251,86 @@ export interface ChatState {
   renameProject: (projectId: string, name: string) => Promise<void>;
 
   /**
-   * Bind a local folder as the work directory for this session.
+   * Bind a local folder as the **Project Folder** for this session.
    * Opens the native folder-picker dialog.
    * Returns the selected path or null if cancelled.
+   *
+   * Two-folder model: this method only sets the Project Folder. The
+   * PiPi Output Folder continues to be derived from the app-managed
+   * default unless `setSessionPipiOutputDir` is called explicitly.
+   */
+  setSessionProjectDir: (sessionId: string) => Promise<string | null>;
+
+  /**
+   * Bind a known local folder as the **Project Folder** for this
+   * session without showing the folder picker. Used by affordances like
+   * "Set parent folder as workspace?" surfaced from the file-drop toast,
+   * where the user has already implicitly chosen a candidate folder.
+   *
+   * The same init/save flow as `setSessionProjectDir` runs
+   * (`init_pipi_shrimp` + first-run README/tech-stack/structure scan +
+   * DB persistence).
+   * Returns the bound path, or `null` if `path` is empty / not a string.
+   */
+  setSessionProjectDirFromPath: (sessionId: string, path: string) => Promise<string | null>;
+
+  /**
+   * Remove the **Project Folder** binding from this session. The PiPi
+   * Output Folder is preserved (it is independent in the two-folder
+   * model).
+   */
+  clearSessionProjectDir: (sessionId: string) => Promise<void>;
+
+  /**
+   * Bind a local folder as the **PiPi Output Folder** for this session.
+   * Opens the native folder-picker dialog. The PiPi Output Folder is
+   * the app-owned root for `.pipi-shrimp/`, docs, memory, and
+   * AutoResearch artifacts. Defaults to
+   * `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}` when unset.
+   */
+  setSessionPipiOutputDir: (sessionId: string) => Promise<string | null>;
+
+  /**
+   * Bind a known local folder as the **PiPi Output Folder** for this
+   * session without showing the folder picker. Returns the bound path,
+   * or `null` if `path` is empty / not a string.
+   */
+  setSessionPipiOutputDirFromPath: (sessionId: string, path: string) => Promise<string | null>;
+
+  /**
+   * Remove the **PiPi Output Folder** binding from this session. The
+   * app-managed default (`{Documents|HOME}/PiPi-Shrimp/chats/{id}/`)
+   * takes over on subsequent reads.
+   */
+  clearSessionPipiOutputDir: (sessionId: string) => Promise<void>;
+
+  /**
+   * Legacy alias for `setSessionProjectDir`. Pre-v7 callers used this
+   * method name and the binding still maps to the Project Folder in
+   * the two-folder model. New code should prefer the explicit
+   * `setSessionProjectDir` / `setSessionPipiOutputDir` pair.
    */
   setSessionWorkDir: (sessionId: string) => Promise<string | null>;
 
   /**
-   * Bind a known local folder as the work directory for this session
-   * without showing the folder picker. Used by affordances like
-   * "Set parent folder as workspace?" surfaced from the file-drop toast,
-   * where the user has already implicitly chosen a candidate folder.
-   *
-   * The same init/save flow as `setSessionWorkDir` runs (`init_pipi_shrimp`
-   * + first-run README/tech-stack/structure scan + DB persistence).
-   * Returns the bound path, or `null` if `path` is empty / not a string.
+   * Legacy alias for `setSessionProjectDirFromPath`.
    */
   setSessionWorkDirFromPath: (sessionId: string, path: string) => Promise<string | null>;
 
   /**
-   * Ensure the session has an app-managed work directory.
+   * Ensure the session has an app-managed PiPi Output Folder.
    * Does not prompt; creates `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}`.
    */
   ensureSessionWorkDir: (sessionId: string) => Promise<string | null>;
 
   /**
-   * Remove the work directory binding from this session.
+   * Legacy alias for `clearSessionProjectDir`.
    */
   clearSessionWorkDir: (sessionId: string) => Promise<void>;
 
   /**
-   * Write a file into the work dir output structure.
-   * Automatically computes/creates the correct .pipi-shrimp/{date}-{i}/ folder.
+   * Write a file into the PiPi Output Folder structure.
+   * Automatically computes/creates the correct `{pipiOutputDir}/{date}-{i}/` folder.
    * Returns the absolute path where the file was written.
    */
   writeToWorkDir: (sessionId: string, filename: string, content: string) => Promise<string | null>;

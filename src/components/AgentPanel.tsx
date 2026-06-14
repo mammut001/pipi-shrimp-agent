@@ -86,7 +86,12 @@ export const AgentPanel: React.FC = () => {
       setSyncedFiles([]);
       return;
     }
-    let targetPath = currentSession?.workDir;
+    // Two-folder model: "sync workspace files" tracks the **Project
+    // Folder** (the user's repo) — the PiPi Output Folder lives
+    // outside the project and isn't relevant here. We still fall
+    // back to the app-managed PiPi Output Folder when no Project
+    // Folder is bound so the panel isn't permanently empty.
+    let targetPath = currentSession?.projectDir ?? currentSession?.workDir;
     if (!targetPath) {
       try {
         targetPath = await invoke<string>('get_app_default_dir', { sessionId: currentSessionId });
@@ -126,7 +131,7 @@ export const AgentPanel: React.FC = () => {
         setSyncedFiles([]);
       }
     }
-  }, [currentSessionId, currentSession?.workDir]);
+  }, [currentSessionId, currentSession?.projectDir, currentSession?.workDir]);
 
   usePolling(syncWorkspaceFiles, 2000, !!currentSessionId);
 
@@ -517,8 +522,14 @@ export const AgentPanel: React.FC = () => {
         </Section>
 
         {/* Docs Section */}
-        {currentSession?.workDir && (
-          <DocPanel workDir={currentSession.workDir} />
+        {/* Two-folder model: docs land under the PiPi Output Folder,
+            not the Project Folder. We pass `pipiOutputDir` so the
+            panel reads from the correct location. The panel itself
+            doesn't care which folder it points at — the `list_docs`
+            Rust helper just appends `.pipi-shrimp/docs/` to whatever
+            root the caller passes. */}
+        {currentSession?.pipiOutputDir && (
+          <DocPanel workDir={currentSession.pipiOutputDir} />
         )}
 
         {/* Context / Skills Section */}

@@ -47,6 +47,13 @@ fn new_session_record(session_id: String, timestamp: i64) -> DbSession {
         work_dir: None,
         working_files: None,
         permission_mode: Some("standard".to_string()),
+        // Two-folder model: leave the new columns null on first
+        // creation. `project_dir` falls back to `work_dir` (the legacy
+        // mirror) on read, and `pipi_output_dir` falls back to the
+        // app-managed `{Documents|HOME}/PiPi-Shrimp/chats/{id}/`
+        // computed by `get_app_default_dir` on the JS side.
+        project_dir: None,
+        pipi_output_dir: None,
     }
 }
 
@@ -233,7 +240,13 @@ pub async fn update_session_cwd_service(session_id: String, cwd: String) -> AppR
         .into_iter()
         .find(|session| session.id == session_id)
     {
-        session.work_dir = Some(cwd);
+        // Two-folder model: `cwd` is the Project Folder. Mirror it into
+        // both `project_dir` and `work_dir` so JS code that hasn't yet
+        // been migrated (legacy `workDir` consumers, the v7 SELECT
+        // projection, etc.) keeps working. `pipi_output_dir` stays
+        // untouched here — the chat store manages it separately.
+        session.work_dir = Some(cwd.clone());
+        session.project_dir = Some(cwd);
         session.updated_at = get_timestamp() as i64;
         database::save_session(&session)
             .map_err(|e| AppError::InternalError(format!("Failed to update cwd: {}", e)))?;

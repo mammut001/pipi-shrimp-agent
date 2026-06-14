@@ -340,6 +340,17 @@ const zhCN: TranslationKeys = {
   'chat.workspaceFolderTooltip': '命令执行、文件编辑、记忆和生成的文档都会存放在这里。',
   'chat.setWorkspaceFolder': '设置工作区文件夹',
   'chat.noWorkspaceHint': '当前没有设置工作区文件夹——部分工具在设置之前无法运行。',
+  // 两文件夹模型 —— 项目文件夹（用户实际的代码仓库）。
+  'chat.projectFolder': '项目文件夹',
+  'chat.projectFolderTooltip': '你真实的项目 / 仓库路径。工具在这里运行命令、读写项目文件。',
+  'chat.setProjectFolder': '设置项目文件夹',
+  'chat.noProjectFolderHint': '当前没有设置项目文件夹——会修改文件的工具在设置之前无法运行。',
+  // 两文件夹模型 —— 皮皮虾产出文件夹（应用自有的产出根目录）。
+  'chat.pipiOutputFolder': '皮皮虾产出文件夹',
+  'chat.pipiOutputFolderTooltip': '应用自有的产出根目录，存放生成的文档、记忆、对话产出和 AutoResearch 产物。',
+  'chat.setPipiOutputFolder': '设置产出文件夹',
+  'chat.noPipiOutputFolderHint': '当前没有设置产出文件夹——使用应用默认位置。',
+  'chat.openPipiOutputFolder': '打开产出文件夹',
   'chat.contextFiles': '参考文件',
   'chat.contextFileExternal': '外部引用',
   'chat.contextFileInsideWorkspace': '在工作区内',

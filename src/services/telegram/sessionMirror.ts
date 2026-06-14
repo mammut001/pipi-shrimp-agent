@@ -14,11 +14,16 @@ interface DbSessionPayload {
   project_id: string | null;
   model: string | null;
   work_dir: string | null;
+  project_dir: string | null;
+  pipi_output_dir: string | null;
   working_files: string | null;
   permission_mode: Session['permissionMode'] | null;
 }
 
 function sessionToDb(session: Session): DbSessionPayload {
+  // Two-folder model: mirror the Project Folder into `work_dir` for
+  // backwards compat and persist both new fields independently.
+  const effectiveProjectDir = session.projectDir || session.workDir || null;
   return {
     id: session.id,
     title: session.title,
@@ -27,7 +32,9 @@ function sessionToDb(session: Session): DbSessionPayload {
     cwd: session.cwd || null,
     project_id: session.projectId || null,
     model: session.model || null,
-    work_dir: session.workDir || null,
+    work_dir: effectiveProjectDir,
+    project_dir: effectiveProjectDir,
+    pipi_output_dir: session.pipiOutputDir || null,
     working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
     permission_mode: session.permissionMode || null,
   };
@@ -81,10 +88,21 @@ export async function createTelegramTaskSession(
   );
 
   session.permissionMode = binding.defaultPermissionMode;
-  const initialWorkDir = binding.defaultWorkDir ?? currentSession?.workDir;
-  if (initialWorkDir) {
-    session.cwd = initialWorkDir;
-    session.workDir = initialWorkDir;
+  // Two-folder model: bind the **Project Folder** (the user's repo)
+  // to the new session. The PiPi Output Folder stays on the app-managed
+  // default unless the user (or the binding) explicitly sets one.
+  const initialProjectDir = binding.defaultWorkDir ?? currentSession?.workDir;
+  if (initialProjectDir) {
+    session.cwd = initialProjectDir;
+    session.projectDir = initialProjectDir;
+    session.workDir = initialProjectDir;
+  }
+  // Inherit the PiPi Output Folder from the current session when the
+  // binding doesn't carry one. Bindings themselves only model a single
+  // `default_work_dir` (legacy shape), so we don't introduce a second
+  // binding column here.
+  if (currentSession?.pipiOutputDir) {
+    session.pipiOutputDir = currentSession.pipiOutputDir;
   }
 
   await invoke('db_save_session', { session: sessionToDb(session) });
@@ -111,9 +129,13 @@ export async function updateTelegramTaskSessionWorkDir(
     return;
   }
 
+  // Two-folder model: `workDir` here is the **Project Folder** (the
+  // user's repo). Mirror into both `projectDir` and `workDir`. The PiPi
+  // Output Folder is intentionally untouched.
   const updatedSession: Session = {
     ...session,
     cwd: workDir,
+    projectDir: workDir,
     workDir,
     updatedAt: Date.now(),
   };

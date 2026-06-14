@@ -39,7 +39,21 @@ export interface HeadlessAgentRunnerInput {
   sessionId: string;
   initialMessages: HeadlessMessage[];
   systemPrompt: string;
+  /**
+   * Project Folder for the headless run (the user's repo). Tools
+   * execute commands and read / write project files relative to this
+   * folder. Two-folder model: this is the legacy `workDir` semantics,
+   * but the *system prompt* now also receives a separate PiPi Output
+   * Folder for memory / core.md lookups.
+   */
   workDir?: string;
+  /**
+   * PiPi Output Folder for the headless run. App-owned root for
+   * `.pipi-shrimp/` metadata, generated docs, and memory. Optional —
+   * headless runs without one fall back to the legacy project-root
+   * memory layout.
+   */
+  pipiOutputDir?: string;
   agentConfig?: ResolvedAgentConfig;
   allowedTools?: string[];
   toolExecutionSource?: ToolExecutionSource;

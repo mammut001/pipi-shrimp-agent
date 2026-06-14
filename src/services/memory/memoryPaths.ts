@@ -27,8 +27,22 @@ async function getAppManagedMemoryProjectsDir(): Promise<string> {
 
 /**
  * Calculate the memory directory for a project.
+ *
+ * Priority: override > settings > per-session PiPi Output Folder > fallback.
+ *
+ * Two-folder model: callers should pass the session's **PiPi Output
+ * Folder** as `pipiOutputDir` so memory lives under the app-owned root
+ * (`{pipiOutputDir}/.pipi-shrimp/memory`) rather than the user's repo.
+ * For backwards compatibility with callers that predate the split and
+ * still pass a single project root (the legacy `workDir` field), we
+ * accept `projectRoot` as a fallback and continue to place memory under
+ * `${projectRoot}/.pipi-shrimp/memory`. New code should pass
+ * `pipiOutputDir`.
  */
-export async function getMemoryDir(projectRoot?: string): Promise<string> {
+export async function getMemoryDir(
+  projectRoot?: string,
+  pipiOutputDir?: string,
+): Promise<string> {
   // 1. Environment override (browser-safe check)
   const envVars = (globalThis as any).process?.env || {};
   const override = envVars.PIPISHRIMP_MEMORY_PATH;
@@ -38,12 +52,21 @@ export async function getMemoryDir(projectRoot?: string): Promise<string> {
   const customDir = getLocalStorageItem('pipishrimp-memory-dir');
   if (customDir) return customDir;
 
-  // 3. Local project/workDir memory under .pipi-shrimp/
+  // 3. PiPi Output Folder (two-folder model): prefer this when the
+  // caller has explicit access to it. Memory lands in
+  // `{pipiOutputDir}/.pipi-shrimp/memory`.
+  if (pipiOutputDir?.trim()) {
+    return `${trimTrailingSlash(pipiOutputDir)}/.pipi-shrimp/memory`;
+  }
+
+  // 4. Legacy fallback: the single-folder project root (pre-v7 callers
+  // passed the user's repo here). We keep the layout for backwards
+  // compatibility so existing memory survives a downgrade.
   if (projectRoot?.trim()) {
     return `${trimTrailingSlash(projectRoot)}/.pipi-shrimp/memory`;
   }
 
-  // 4. App-managed fallback when no project root is available
+  // 5. App-managed fallback when no project root is available
   try {
     return `${await getAppManagedMemoryProjectsDir()}/default`;
   } catch {

@@ -174,6 +174,17 @@ export type TranslationKeys = {
   'chat.workspaceFolderTooltip': string;
   'chat.setWorkspaceFolder': string;
   'chat.noWorkspaceHint': string;
+  // Two-folder model — Project Folder (the user's repo).
+  'chat.projectFolder': string;
+  'chat.projectFolderTooltip': string;
+  'chat.setProjectFolder': string;
+  'chat.noProjectFolderHint': string;
+  // Two-folder model — PiPi Output Folder (app-owned output root).
+  'chat.pipiOutputFolder': string;
+  'chat.pipiOutputFolderTooltip': string;
+  'chat.setPipiOutputFolder': string;
+  'chat.noPipiOutputFolderHint': string;
+  'chat.openPipiOutputFolder': string;
   'chat.contextFiles': string;
   'chat.contextFileExternal': string;
   'chat.contextFileInsideWorkspace': string;

@@ -36,6 +36,10 @@ import {
   resolveSessionTool,
   syncSessionToolRuntimeToCurrentSession,
 } from './chat/toolRuntimeState';
+import {
+  getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper,
+  getSessionProjectDir as resolveSessionProjectDirHelper,
+} from '../utils/sessionFolders';
 import { useUIStore } from './uiStore';
 
 // AUDIT-FIX [fix-20#1] — Renamed from the legacy `ai-agent-*` namespace
@@ -187,8 +191,14 @@ async function ensureSessionWorkDir(sessionId: string, set: ChatSetState, get: (
   if (!session) {
     return null;
   }
-  if (session.workDir) {
-    return session.workDir;
+  // Two-folder model: this helper provisions the app-managed PiPi
+  // Output Folder (the .pipi-shrimp/, docs, memory, AutoResearch root).
+  // Use `getSessionPipiOutputDir` so a pre-v7 session that already has
+  // `workDir` set (and migrated it to `projectDir`) doesn't get its
+  // PiPi Output Folder accidentally pointed at the user's repo.
+  const existing = resolveSessionPipiOutputDirHelper(session);
+  if (existing && session.pipiOutputDir) {
+    return existing;
   }
 
   const maxRetries = 3;
@@ -199,7 +209,10 @@ async function ensureSessionWorkDir(sessionId: string, set: ChatSetState, get: (
       const defaultDir = await safeInvoke<string>('get_app_default_dir', { sessionId });
       await safeInvoke('create_directory', { path: defaultDir });
       const latestSession = get().sessions.find((candidate) => candidate.id === sessionId) ?? session;
-      const updated = { ...latestSession, workDir: defaultDir, updatedAt: Date.now() };
+      // Persist onto `pipiOutputDir` (the new field). Leave
+      // `projectDir`/`workDir` alone so the Project Folder binding
+      // stays independent.
+      const updated = { ...latestSession, pipiOutputDir: defaultDir, updatedAt: Date.now() };
       await safeInvoke('db_save_session', { session: sessionToDb(updated) });
       set((state) => ({
         sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)),
@@ -235,15 +248,32 @@ async function ensureSessionWorkDir(sessionId: string, set: ChatSetState, get: (
 
 /**
  * Shared "bind a folder to a session" flow used by both
- * `setSessionWorkDir` (folder picker) and `setSessionWorkDirFromPath`
- * (caller-supplied path, e.g. from a "Set parent folder as workspace?"
- * toast action).
+ * `setSessionProjectDir` (folder picker) and
+ * `setSessionProjectDirFromPath` (caller-supplied path, e.g. from a
+ * "Set parent folder as workspace?" toast action).
  *
- * Steps mirror the original `setSessionWorkDir` body verbatim:
- * 1. `init_pipi_shrimp` to ensure the `.pipi-shrimp/` tree exists.
- * 2. On a fresh init, run the README / tech-stack / top-level-structure
- *    auto-scan and seed `.pipi-shrimp/core.md`.
- * 3. Persist the session to the DB and update the in-memory store.
+ * Two-folder model: the bound folder is the **Project Folder** (the
+ * user's repo). The PiPi Output Folder is independent — it stays on
+ * the app-managed default unless the caller has explicitly set one.
+ *
+ * The function reads the project tree (README / tech-stack /
+ * structure) from the Project Folder for the auto-scan, then writes
+ * the seed `core.md` into the PiPi Output Folder so we don't
+ * introduce `.pipi-shrimp/` into the user's repo. If the user has
+ * not yet bound a PiPi Output Folder, we auto-provision the
+ * app-managed default first.
+ *
+ * Steps:
+ * 1. Ensure a PiPi Output Folder exists (auto-provision the
+ *    app-managed default when none is bound).
+ * 2. `init_pipi_shrimp` against the PiPi Output Folder so the
+ *    `.pipi-shrimp/` metadata tree lives there, not in the user's
+ *    repo.
+ * 3. On a fresh init, run the README / tech-stack / top-level-structure
+ *    auto-scan against the Project Folder and seed the
+ *    `.pipi-shrimp/core.md` *into the PiPi Output Folder*.
+ * 4. Persist `projectDir` (and the legacy `workDir` mirror) to the DB
+ *    and update the in-memory store.
  */
 async function bindSessionWorkDirPath(
   sessionId: string,
@@ -251,69 +281,101 @@ async function bindSessionWorkDirPath(
   set: ChatSetState,
   get: () => ChatState,
 ): Promise<string | null> {
-  const initResult = await invoke<string>('init_pipi_shrimp', { workDir: selectedPath });
-  const isNewProject = initResult.endsWith('|new');
-  if (isNewProject) {
+  // Make sure we have a PiPi Output Folder before we touch
+  // `init_pipi_shrimp`. The Rust helper expects an existing folder to
+  // populate — it does not own the lifecycle of the directory itself.
+  const ensuredPipiOutput = await ensureSessionWorkDir(sessionId, set, get);
+  const pipiOutputDir = ensuredPipiOutput ?? get().sessions.find((candidate) => candidate.id === sessionId)?.pipiOutputDir;
+
+  if (pipiOutputDir) {
     try {
-      const lines: string[] = ['## 📌 Project Overview\n'];
-      for (const name of ['README.md', 'readme.md', 'README.txt']) {
+      const initResult = await invoke<string>('init_pipi_shrimp', { workDir: pipiOutputDir });
+      const isNewProject = initResult.endsWith('|new');
+      if (isNewProject) {
+        // Build the project overview from the user's repo (the Project
+        // Folder) but write the seed `core.md` into the PiPi Output
+        // Folder so we don't drop a `.pipi-shrimp/` directory into the
+        // repo by default.
         try {
-          const res = await invoke<{ content: string }>('read_file', { path: `${selectedPath}/${name}`, workDir: selectedPath });
-          if (res?.content) {
-            lines.push(`### README\n\`\`\`\n${res.content.split('\n').slice(0, 20).join('\n')}\n\`\`\`\n`);
-            break;
+          const lines: string[] = ['## 📌 Project Overview\n'];
+          for (const name of ['README.md', 'readme.md', 'README.txt']) {
+            try {
+              const res = await invoke<{ content: string }>('read_file', { path: `${selectedPath}/${name}`, workDir: selectedPath });
+              if (res?.content) {
+                lines.push(`### README\n\`\`\`\n${res.content.split('\n').slice(0, 20).join('\n')}\n\`\`\`\n`);
+                break;
+              }
+            } catch {
+              // ignore missing file
+            }
           }
-        } catch {
-          // ignore missing file
+          const techStack: string[] = [];
+          for (const { file, label } of [
+            { file: 'package.json', label: 'Node.js / JS/TS' },
+            { file: 'Cargo.toml', label: 'Rust' },
+            { file: 'pyproject.toml', label: 'Python' },
+            { file: 'go.mod', label: 'Go' },
+            { file: 'pom.xml', label: 'Java/Maven' },
+            { file: 'build.gradle', label: 'Java/Gradle' },
+          ]) {
+            try {
+              await invoke('read_file', { path: `${selectedPath}/${file}`, workDir: selectedPath });
+              techStack.push(label);
+            } catch {
+              // ignore missing manifest
+            }
+          }
+          if (techStack.length > 0) {
+            lines.push(`## 🛠 Tech Stack\n${techStack.map((entry) => `- ${entry}`).join('\n')}\n`);
+          }
+          try {
+            const entries = await invoke<{ name: string; is_dir: boolean }[]>('list_files', { path: selectedPath });
+            lines.push(`## 📖 Top-level Structure\n${[
+              ...entries.filter((entry) => entry.is_dir).map((entry) => `📁 ${entry.name}`),
+              ...entries.filter((entry) => !entry.is_dir).map((entry) => `📄 ${entry.name}`),
+            ].join('\n')}\n`);
+          } catch {
+            // ignore list failure
+          }
+          // The core memory file lives in the PiPi Output Folder, not
+          // the Project Folder. Two-folder model separation.
+          const coreMdPath = `${pipiOutputDir}/core.md`;
+          const coreRes = await invoke<{ content: string }>('read_file', { path: coreMdPath, workDir: pipiOutputDir });
+          await invoke('write_file', {
+            path: coreMdPath,
+            content: (coreRes?.content ?? '').replace(
+              '## 📌 Project Overview\n[Auto-detected on bind — see below]\n\n## 🛠 Tech Stack\n[Auto-detected on bind — see below]',
+              lines.join('\n'),
+            ),
+            workDir: pipiOutputDir,
+          });
+        } catch (error) {
+          console.debug('[setSessionProjectDir] auto-scan failed (non-fatal):', error);
         }
       }
-      const techStack: string[] = [];
-      for (const { file, label } of [
-        { file: 'package.json', label: 'Node.js / JS/TS' },
-        { file: 'Cargo.toml', label: 'Rust' },
-        { file: 'pyproject.toml', label: 'Python' },
-        { file: 'go.mod', label: 'Go' },
-        { file: 'pom.xml', label: 'Java/Maven' },
-        { file: 'build.gradle', label: 'Java/Gradle' },
-      ]) {
-        try {
-          await invoke('read_file', { path: `${selectedPath}/${file}`, workDir: selectedPath });
-          techStack.push(label);
-        } catch {
-          // ignore missing manifest
-        }
-      }
-      if (techStack.length > 0) {
-        lines.push(`## 🛠 Tech Stack\n${techStack.map((entry) => `- ${entry}`).join('\n')}\n`);
-      }
-      try {
-        const entries = await invoke<{ name: string; is_dir: boolean }[]>('list_files', { path: selectedPath });
-        lines.push(`## 📖 Top-level Structure\n${[
-          ...entries.filter((entry) => entry.is_dir).map((entry) => `📁 ${entry.name}`),
-          ...entries.filter((entry) => !entry.is_dir).map((entry) => `📄 ${entry.name}`),
-        ].join('\n')}\n`);
-      } catch {
-        // ignore list failure
-      }
-      const coreMdPath = `${selectedPath}/.pipi-shrimp/core.md`;
-      const coreRes = await invoke<{ content: string }>('read_file', { path: coreMdPath, workDir: selectedPath });
-      await invoke('write_file', {
-        path: coreMdPath,
-        content: (coreRes?.content ?? '').replace(
-          '## 📌 Project Overview\n[Auto-detected on bind — see below]\n\n## 🛠 Tech Stack\n[Auto-detected on bind — see below]',
-          lines.join('\n'),
-        ),
-        workDir: selectedPath,
-      });
     } catch (error) {
-      console.debug('[setSessionWorkDir] auto-scan failed (non-fatal):', error);
+      // Don't block the bind if the PiPi Output Folder can't be
+      // initialised — the user can still work in Project Folder mode
+      // and the next bind attempt will retry.
+      console.debug('[setSessionProjectDir] init_pipi_shrimp against output dir failed (non-fatal):', error);
     }
   }
+
   const session = get().sessions.find((candidate) => candidate.id === sessionId);
   if (!session) {
     return null;
   }
-  const updated = { ...session, workDir: selectedPath, updatedAt: Date.now() };
+  // Two-folder model: persist to `projectDir` (the new field) and
+  // mirror into `workDir` (the legacy field) so downgrades / pre-v7
+  // callers keep working. `pipiOutputDir` is intentionally untouched
+  // here — the app-managed default takes over unless the user binds
+  // a custom output folder.
+  const updated = {
+    ...session,
+    projectDir: selectedPath,
+    workDir: selectedPath,
+    updatedAt: Date.now(),
+  };
   await invoke('db_save_session', { session: sessionToDb(updated) });
   set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
   return selectedPath;
@@ -823,12 +885,21 @@ export const useChatStore = create<ChatState>()(
 
     deleteSession: async (sessionId: string) => {
       const uiStore = useUIStore.getState();
-      const sessionWorkDir = get().sessions.find((session) => session.id === sessionId)?.workDir;
+      // Two-folder model: deleting a session cleans up BOTH folders,
+      // but only the PiPi Output Folder is unconditionally app-managed.
+      // The Project Folder deletion is gated on it being inside the
+      // managed root (the Rust `delete_session_work_dir` enforces this).
+      const sessionSnapshot = get().sessions.find((session) => session.id === sessionId);
+      const sessionProjectDir = resolveSessionProjectDirHelper(sessionSnapshot);
+      const sessionPipiOutputDir = resolveSessionPipiOutputDirHelper(sessionSnapshot);
       const previousCurrentSessionId = get().currentSessionId;
       await safeInvoke('db_delete_session', { sessionId });
       await safeInvokeOrNull('delete_app_chat_dir', { sessionId });
-      if (sessionWorkDir) {
-        await safeInvokeOrNull('delete_session_work_dir', { path: sessionWorkDir });
+      if (sessionPipiOutputDir && sessionPipiOutputDir !== sessionProjectDir) {
+        await safeInvokeOrNull('delete_session_work_dir', { path: sessionPipiOutputDir });
+      }
+      if (sessionProjectDir && sessionProjectDir !== sessionPipiOutputDir) {
+        await safeInvokeOrNull('delete_session_work_dir', { path: sessionProjectDir });
       }
       let nextSessionId: string | null = null;
       set((state) => {
@@ -854,9 +925,14 @@ export const useChatStore = create<ChatState>()(
           await safeInvoke('db_delete_session', { sessionId });
           deletedSessionIds.push(sessionId);
           await safeInvokeOrNull('delete_app_chat_dir', { sessionId });
-          const sessionWorkDir = get().sessions.find((session) => session.id === sessionId)?.workDir;
-          if (sessionWorkDir) {
-            await safeInvokeOrNull('delete_session_work_dir', { path: sessionWorkDir });
+          const sessionSnapshot = get().sessions.find((session) => session.id === sessionId);
+          const sessionProjectDir = resolveSessionProjectDirHelper(sessionSnapshot);
+          const sessionPipiOutputDir = resolveSessionPipiOutputDirHelper(sessionSnapshot);
+          if (sessionPipiOutputDir && sessionPipiOutputDir !== sessionProjectDir) {
+            await safeInvokeOrNull('delete_session_work_dir', { path: sessionPipiOutputDir });
+          }
+          if (sessionProjectDir && sessionProjectDir !== sessionPipiOutputDir) {
+            await safeInvokeOrNull('delete_session_work_dir', { path: sessionProjectDir });
           }
         } catch (error) {
           console.error(`Failed to delete session ${sessionId}:`, error);
@@ -886,7 +962,17 @@ export const useChatStore = create<ChatState>()(
       if (!session) {
         return;
       }
-      const updatedSession = { ...session, cwd, workDir: cwd, updatedAt: Date.now() };
+      // Two-folder model: `cwd` represents the Project Folder. Mirror
+      // into both `projectDir` and `workDir`. `pipiOutputDir` stays
+      // independent — chat/store callers manage it explicitly via
+      // `setSessionPipiOutputDir` / `clearSessionPipiOutputDir`.
+      const updatedSession = {
+        ...session,
+        cwd,
+        projectDir: cwd,
+        workDir: cwd,
+        updatedAt: Date.now(),
+      };
       await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
       set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updatedSession : candidate)) }));
     },
@@ -932,7 +1018,7 @@ export const useChatStore = create<ChatState>()(
       set((state) => ({ projects: state.projects.map((candidate) => (candidate.id === projectId ? updatedProject : candidate)) }));
     },
 
-    setSessionWorkDir: async (sessionId: string) => {
+    setSessionProjectDir: async (sessionId: string) => {
       const selectedPath = await invoke<string | null>('open_folder_dialog');
       if (!selectedPath) {
         return null;
@@ -940,7 +1026,7 @@ export const useChatStore = create<ChatState>()(
       return bindSessionWorkDirPath(sessionId, selectedPath, set, get);
     },
 
-    setSessionWorkDirFromPath: async (sessionId: string, path: string) => {
+    setSessionProjectDirFromPath: async (sessionId: string, path: string) => {
       // Defensive trim — empty / whitespace inputs collapse to null so the
       // caller can short-circuit. The folder-picker variant returns null
       // for the same reason (user cancellation).
@@ -951,48 +1037,126 @@ export const useChatStore = create<ChatState>()(
       return bindSessionWorkDirPath(sessionId, trimmed, set, get);
     },
 
-    ensureSessionWorkDir: async (sessionId: string) => ensureSessionWorkDir(sessionId, set, get),
-
-    clearSessionWorkDir: async (sessionId: string) => {
+    clearSessionProjectDir: async (sessionId: string) => {
       const session = get().sessions.find((candidate) => candidate.id === sessionId);
       if (!session) {
         return;
       }
-      const updated = { ...session, workDir: undefined, updatedAt: Date.now() };
+      // Two-folder model: clearing the Project Folder must NOT clear
+      // the PiPi Output Folder — they're independent bindings.
+      const updated = {
+        ...session,
+        projectDir: undefined,
+        workDir: undefined,
+        updatedAt: Date.now(),
+      };
       await invoke('db_save_session', { session: sessionToDb(updated) });
       set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
     },
 
+    setSessionPipiOutputDir: async (sessionId: string) => {
+      const selectedPath = await invoke<string | null>('open_folder_dialog');
+      if (!selectedPath) {
+        return null;
+      }
+      const session = get().sessions.find((candidate) => candidate.id === sessionId);
+      if (!session) {
+        return null;
+      }
+      // The PiPi Output Folder is independent — we don't run
+      // `init_pipi_shrimp` here because that helper mutates the
+      // selected folder's `.gitignore`. The user has already chosen
+      // an output root; we just persist it.
+      const updated = {
+        ...session,
+        pipiOutputDir: selectedPath,
+        updatedAt: Date.now(),
+      };
+      await invoke('db_save_session', { session: sessionToDb(updated) });
+      set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
+      return selectedPath;
+    },
+
+    setSessionPipiOutputDirFromPath: async (sessionId: string, path: string) => {
+      const trimmed = (path ?? '').trim();
+      if (!trimmed) {
+        return null;
+      }
+      const session = get().sessions.find((candidate) => candidate.id === sessionId);
+      if (!session) {
+        return null;
+      }
+      const updated = {
+        ...session,
+        pipiOutputDir: trimmed,
+        updatedAt: Date.now(),
+      };
+      await invoke('db_save_session', { session: sessionToDb(updated) });
+      set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
+      return trimmed;
+    },
+
+    clearSessionPipiOutputDir: async (sessionId: string) => {
+      const session = get().sessions.find((candidate) => candidate.id === sessionId);
+      if (!session) {
+        return;
+      }
+      // Clearing the PiPi Output Folder means future reads fall back
+      // to the app-managed default `{Documents|HOME}/PiPi-Shrimp/chats/{id}/`.
+      const updated = { ...session, pipiOutputDir: undefined, updatedAt: Date.now() };
+      await invoke('db_save_session', { session: sessionToDb(updated) });
+      set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
+    },
+
+    setSessionWorkDir: async (sessionId: string) => get().setSessionProjectDir(sessionId),
+
+    setSessionWorkDirFromPath: async (sessionId: string, path: string) =>
+      get().setSessionProjectDirFromPath(sessionId, path),
+
+    ensureSessionWorkDir: async (sessionId: string) => ensureSessionWorkDir(sessionId, set, get),
+
+    clearSessionWorkDir: async (sessionId: string) => get().clearSessionProjectDir(sessionId),
+
     writeToWorkDir: async (sessionId: string, filename: string, content: string) => {
+      // Two-folder model: `writeToWorkDir` writes into the PiPi Output
+      // Folder, NOT the Project Folder. Generated artifacts (docs,
+      // scratch files, plan-mode output, …) must not pollute the user's
+      // repo. The legacy `get_next_output_dir` Rust helper is still
+      // used for backwards-compatible date-stamped subfolders; it's
+      // pointed at the PiPi Output Folder root so the layout matches
+      // the previous UX.
       let session = get().sessions.find((candidate) => candidate.id === sessionId);
-      if (!session?.workDir) {
-        useUIStore.getState().addNotification('info', '请选择一个文件夹来保存生成的文件。', sessionId);
-        const selectedPath = await get().setSessionWorkDir(sessionId);
-        if (!selectedPath) {
-          try {
-            const defaultDir = await invoke<string>('get_app_default_dir', { sessionId });
-            const currentSession = get().sessions.find((candidate) => candidate.id === sessionId);
-            if (currentSession) {
-              const updated = { ...currentSession, workDir: defaultDir, updatedAt: Date.now() };
-              await invoke('db_save_session', { session: sessionToDb(updated) });
-              set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
-            }
-          } catch {
-            return null;
-          }
+      let pipiOutputDir = session?.pipiOutputDir;
+      if (!pipiOutputDir) {
+        // No explicit binding — auto-provision the app-managed default.
+        const ensured = await get().ensureSessionWorkDir(sessionId);
+        if (!ensured) {
+          useUIStore.getState().addNotification(
+            'info',
+            '请选择一个输出文件夹来保存生成的文件。',
+            sessionId,
+          );
+          return null;
         }
         session = get().sessions.find((candidate) => candidate.id === sessionId);
+        pipiOutputDir = session?.pipiOutputDir;
       }
-      if (!session?.workDir) {
+      if (!pipiOutputDir) {
         return null;
       }
       try {
-        let outputDir = session.outputDir;
-        if (!outputDir) {
-          outputDir = await invoke<string>('get_next_output_dir', { workDir: session.workDir });
+        let outputDir = session?.outputDir;
+        // Compute the date-stamped subfolder relative to the PiPi
+        // Output Folder root. The Rust helper's signature is unchanged
+        // — it takes any folder and creates `{root}/.pipi-shrimp/{date}-{i}/`.
+        const rootForDateFolder = pipiOutputDir;
+        if (!outputDir || !outputDir.startsWith(rootForDateFolder)) {
+          outputDir = await invoke<string>('get_next_output_dir', { workDir: rootForDateFolder });
           await invoke('create_directory', { path: outputDir });
-          const updated = { ...session, outputDir, updatedAt: Date.now() };
-          set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
+          if (session) {
+            const updated = { ...session, outputDir, updatedAt: Date.now() };
+            set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updated : candidate)) }));
+          }
         }
         const filePath = `${outputDir}/${filename}`;
         await invoke('write_file', { path: filePath, content });
@@ -1004,12 +1168,16 @@ export const useChatStore = create<ChatState>()(
     },
 
     getWorkDirIndex: async (sessionId: string) => {
+      // Two-folder model: the "work dir index" lists the dated
+      // subfolders inside the PiPi Output Folder (where generated
+      // outputs actually land). Project Folder is excluded by design.
       const session = get().sessions.find((candidate) => candidate.id === sessionId);
-      if (!session?.workDir) {
+      const pipiOutputDir = session?.pipiOutputDir;
+      if (!pipiOutputDir) {
         return [];
       }
       try {
-        return await invoke<OutputFolder[]>('list_pipi_shrimp_index', { workDir: session.workDir });
+        return await invoke<OutputFolder[]>('list_pipi_shrimp_index', { workDir: pipiOutputDir });
       } catch (error) {
         console.error('Failed to get work dir index:', error);
         return [];

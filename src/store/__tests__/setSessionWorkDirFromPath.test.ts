@@ -10,6 +10,15 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 
 const invokeMock = jest.fn(async (cmd: string) => {
+  // Two-folder model: `setSessionWorkDirFromPath` is a backwards-compatible
+  // alias for `setSessionProjectDirFromPath`, which routes through
+  // `bindSessionWorkDirPath`. That helper first auto-provisions a PiPi
+  // Output Folder (`get_app_default_dir` + `create_directory` +
+  // `db_save_session`), then runs `init_pipi_shrimp` against the
+  // PiPi Output Folder (NOT the Project Folder — see `createChatStore`).
+  // The Project Folder bind itself is the trailing `db_save_session`.
+  if (cmd === 'get_app_default_dir') return '/default/pipi-output';
+  if (cmd === 'create_directory') return null;
   if (cmd === 'init_pipi_shrimp') return `${process.cwd()}|existing`;
   if (cmd === 'db_save_session') return null;
   if (cmd === 'read_file') return { content: '' };

@@ -54,6 +54,13 @@ fn row_to_session(row: &Row) -> SqliteResult<DbSession> {
         work_dir: row.get(7)?,
         working_files: row.get(8)?,
         permission_mode: row.get(9)?, // NEW: session permission mode
+        // Two-folder model columns (v7+). Use `get(...).ok()` so the
+        // mapper is tolerant of pre-v7 rows that don't have the columns
+        // yet (defence-in-depth — the SELECT statements below do project
+        // a `NULL` for missing columns, but if a pre-v7 schema somehow
+        // survives the `reconcile_schema` step the mapper won't panic).
+        project_dir: row.get::<_, Option<String>>(10).ok().flatten(),
+        pipi_output_dir: row.get::<_, Option<String>>(11).ok().flatten(),
     })
 }
 
@@ -195,9 +202,19 @@ pub struct DbSession {
     pub cwd: Option<String>,
     pub project_id: Option<String>,
     pub model: Option<String>,
-    pub work_dir: Option<String>,        // each session's work directory
+    pub work_dir: Option<String>,        // legacy single-folder mirror of `project_dir`
     pub working_files: Option<String>,   // JSON serialized ImportedFile[]
     pub permission_mode: Option<String>, // NEW: session permission mode ('standard', 'auto-edits', 'bypass', 'plan-only')
+    /// Two-folder model: the user's repo/project path. Tools run
+    /// commands and read/write project files relative to this folder.
+    /// Replaces the v6 single-folder `work_dir` for tool cwd and file
+    /// resolution; `work_dir` is kept as a mirror for downgrade safety.
+    pub project_dir: Option<String>,
+    /// Two-folder model: app-owned output root (`.pipi-shrimp/`,
+    /// generated docs, memory, chat outputs, AutoResearch artifacts).
+    /// Defaults to `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}/`
+    /// when null — see `get_app_default_dir`.
+    pub pipi_output_dir: Option<String>,
 }
 
 /**
@@ -410,6 +427,9 @@ const EXPECTED_COLUMNS: &[(&str, &[&str])] = &[
             "work_dir",
             "working_files",
             "permission_mode",
+            // Two-folder model columns (added in v7).
+            "project_dir",
+            "pipi_output_dir",
         ],
     ),
     (
@@ -577,7 +597,7 @@ fn version_at_least(actual: &str, required: &str) -> bool {
 /// build know about". Both `init_database` and `reconcile_schema` read
 /// from this constant, so a future migration author only has to update
 /// one number.
-const LATEST_SCHEMA_VERSION: i64 = 6;
+const LATEST_SCHEMA_VERSION: i64 = 7;
 
 pub fn list_database_backups() -> SqliteResult<Vec<DbBackupEntry>> {
     let backup_dir = get_backup_directory()?;
@@ -920,7 +940,9 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                     model TEXT,
                     work_dir TEXT,
                     working_files TEXT,
-                    permission_mode TEXT
+                    permission_mode TEXT,
+                    project_dir TEXT,
+                    pipi_output_dir TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS messages (
@@ -1134,6 +1156,39 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 [],
             )?;
         }
+        7 => {
+            // Two-folder model: split the legacy single-folder `work_dir`
+            // into a Project Folder (`project_dir`) and a PiPi Output
+            // Folder (`pipi_output_dir`).
+            //
+            // Migration strategy:
+            // 1. Add the new columns nullable.
+            // 2. Backfill `project_dir` with the existing `work_dir` so
+            //    the JS helpers' backward-compat path keeps working
+            //    until a user binds a new folder.
+            // 3. Leave `pipi_output_dir` NULL — the Rust default-dir
+            //    helper (`get_app_default_dir`) is the source of truth
+            //    when the column is empty, so we don't need to write
+            //    paths for legacy sessions that may have already been
+            //    deleted on disk.
+            //
+            // Wrapped in a single transaction (matches the v3-v6
+            // atomicity guarantee) so a crash mid-migration doesn't
+            // leave the schema half-applied.
+            conn.execute_batch(
+                "
+                BEGIN;
+                ALTER TABLE sessions ADD COLUMN project_dir TEXT;
+                ALTER TABLE sessions ADD COLUMN pipi_output_dir TEXT;
+                UPDATE sessions SET project_dir = work_dir
+                    WHERE work_dir IS NOT NULL
+                      AND (project_dir IS NULL OR project_dir = '');
+                INSERT INTO schema_version (version, applied_at)
+                    VALUES (7, strftime('%s','now'));
+                COMMIT;
+                ",
+            )?;
+        }
         _ => {
             eprintln!("⚠️  Unknown migration version {}", version);
         }
@@ -1251,9 +1306,22 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![session.id, session.title, session.created_at, session.updated_at, session.cwd, session.project_id, session.model, session.work_dir, session.working_files, session.permission_mode],
+            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                session.id,
+                session.title,
+                session.created_at,
+                session.updated_at,
+                session.cwd,
+                session.project_id,
+                session.model,
+                session.work_dir,
+                session.working_files,
+                session.permission_mode,
+                session.project_dir,
+                session.pipi_output_dir,
+            ],
         )?;
     }
     Ok(())
@@ -1267,8 +1335,13 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
     let mut sessions = Vec::new();
 
     if let Some(conn) = guard.as_ref() {
+        // Two-folder model: project the v7 columns (project_dir,
+        // pipi_output_dir) as NULL when they're missing so a pre-v7 row
+        // still maps cleanly. The migration backfills project_dir from
+        // work_dir so the JS-side `getSessionProjectDir` helper has a
+        // non-null value as soon as v7 has run.
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode FROM sessions ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir FROM sessions ORDER BY updated_at DESC"
         )?;
 
         let session_iter = stmt.query_map([], row_to_session)?;
@@ -2241,14 +2314,16 @@ mod tests {
             let db_path = get_db_path();
             let conn = Connection::open(&db_path).expect("open db");
 
-            // Bootstrap a schema that looks like a v7 prototype went
+            // Bootstrap a schema that looks like a v8 prototype went
             // through and was then downgraded: the official v1 columns
             // are there, plus the rogue `goal_json` and `execution_mode`
-            // columns a v7 prototype added.
+            // columns a v8 prototype added. We seed v8 bookkeeping so
+            // the test stays ahead of the current `LATEST_SCHEMA_VERSION`
+            // (7) regardless of future bumps.
             conn.execute_batch(
                 "
                 CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
-                INSERT INTO schema_version (version, applied_at) VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7);
+                INSERT INTO schema_version (version, applied_at) VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8);
 
                 CREATE TABLE sessions (
                     id TEXT PRIMARY KEY,
@@ -2306,12 +2381,12 @@ mod tests {
             // The ahead-of-code schema_version row should be dropped.
             let count: i64 = conn
                 .query_row(
-                    "SELECT COUNT(*) FROM schema_version WHERE version > 6",
-                    [],
+                    "SELECT COUNT(*) FROM schema_version WHERE version > ?1",
+                    params![LATEST_SCHEMA_VERSION],
                     |row| row.get(0),
                 )
                 .expect("count ahead");
-            assert_eq!(count, 0, "v7 row should be rolled back");
+            assert_eq!(count, 0, "ahead-of-code rows should be rolled back");
 
             // User data is preserved by the reconciliation step.
             let user_rows: i64 = conn
@@ -2335,7 +2410,7 @@ mod tests {
             conn.execute_batch(
                 "
                 CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
-                INSERT INTO schema_version (version, applied_at) VALUES (1, 1), (6, 6);
+                INSERT INTO schema_version (version, applied_at) VALUES (1, 1), (6, 6), (7, 7);
 
                 CREATE TABLE sessions (
                     id TEXT PRIMARY KEY,
@@ -2347,7 +2422,9 @@ mod tests {
                     model TEXT,
                     work_dir TEXT,
                     working_files TEXT,
-                    permission_mode TEXT
+                    permission_mode TEXT,
+                    project_dir TEXT,
+                    pipi_output_dir TEXT
                 );
                 ",
             )

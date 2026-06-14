@@ -26,6 +26,22 @@ const chatStoreState = {
     model: 'gpt-test',
     permissionMode: 'bypass',
   }),
+  // Two-folder model: the Telegram task runtime reads `sessions` from
+  // the chat store to resolve the PiPi Output Folder for the newly
+  // created session. We expose an empty list by default — individual
+  // tests can override it via `setState` if they need a different
+  // shape.
+  sessions: [] as Array<{
+    id: string;
+    projectDir?: string;
+    workDir?: string;
+    pipiOutputDir?: string;
+  }>,
+  setState: (partial: { sessions?: Array<{ id: string; projectDir?: string; workDir?: string; pipiOutputDir?: string }> }) => {
+    if (partial.sessions) {
+      chatStoreState.sessions = partial.sessions;
+    }
+  },
 };
 
 jest.mock('@tauri-apps/api/core', () => ({
@@ -190,8 +206,16 @@ describe('Telegram task orchestrator', () => {
     await flushPromises();
 
     expect(mockCreateTelegramTaskSession).toHaveBeenCalledWith(queuedTask, expect.any(Object));
+    // Two-folder model: `buildHeadlessSystemPrompt` now takes both
+    // `workDir` (Project Folder) and `pipiOutputDir` (PiPi Output
+    // Folder). The Telegram task runtime resolves the PiPi Output
+    // Folder from the chat store (it falls back to the app-managed
+    // default when the session has no explicit binding). In this
+    // mocked store the session was just created and hasn't been
+    // bound to a Project Folder, so `pipiOutputDir` is `undefined`.
     expect(mockBuildHeadlessSystemPrompt).toHaveBeenCalledWith({
       workDir: '/telegram/workdir',
+      pipiOutputDir: undefined,
       workingFiles: ['README.md'],
       originalQuery: 'summarize the repo',
     });

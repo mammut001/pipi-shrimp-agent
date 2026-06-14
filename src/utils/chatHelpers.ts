@@ -18,6 +18,18 @@ export interface DbSession {
   project_id: string | null;
   model: string | null;
   work_dir?: string | null;
+  /**
+   * New: Project Folder column. Mirrors `work_dir` for legacy rows so
+   * the two columns stay in sync on save. The Rust-side migration copies
+   * any existing `work_dir` into `project_dir` on upgrade.
+   */
+  project_dir?: string | null;
+  /**
+   * New: PiPi Output Folder column. Distinct from `project_dir`/`work_dir`
+   * because it lives outside the user's repo by default and is owned by
+   * the app (chat outputs, docs, memory, AutoResearch artifacts).
+   */
+  pipi_output_dir?: string | null;
   working_files?: string | null;
   permission_mode?: string | null;
 }
@@ -242,6 +254,12 @@ export function buildApiMessages(messages: Message[]): ApiMessage[] {
 // ─── DB ↔ Frontend converters ────────────────────────────────────────────────
 
 export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Session {
+  // Two-folder model — when the new `project_dir` column is present it
+  // wins over the legacy `work_dir` (a fresh bind may have moved the
+  // project folder without overwriting the mirror). When `project_dir`
+  // is absent we still want to surface a Project Folder so pre-v7
+  // sessions keep working — fall back to `work_dir`.
+  const projectDir = dbSession.project_dir || dbSession.work_dir || undefined;
   return {
     id: dbSession.id,
     title: dbSession.title,
@@ -251,6 +269,8 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
     projectId: dbSession.project_id || undefined,
     model: dbSession.model || undefined,
     workDir: dbSession.work_dir || undefined,
+    projectDir,
+    pipiOutputDir: dbSession.pipi_output_dir || undefined,
     workingFiles: safeJsonParse(dbSession.working_files, undefined),
     permissionMode: (dbSession.permission_mode as Session['permissionMode']) || undefined,
     messages: dbMessages.map((m) => ({
@@ -268,6 +288,11 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
 }
 
 export function sessionToDb(session: Session): DbSession {
+  // Mirror the Project Folder into the legacy `work_dir` column so a
+  // downgrade still works. `project_dir` is the source of truth for the
+  // two-folder model; `work_dir` is the legacy mirror that pre-v7 code
+  // paths still consult.
+  const effectiveProjectDir = session.projectDir || session.workDir || null;
   return {
     id: session.id,
     title: session.title,
@@ -276,7 +301,9 @@ export function sessionToDb(session: Session): DbSession {
     cwd: session.cwd || null,
     project_id: session.projectId || null,
     model: session.model || null,
-    work_dir: session.workDir || null,
+    work_dir: effectiveProjectDir,
+    project_dir: effectiveProjectDir,
+    pipi_output_dir: session.pipiOutputDir || null,
     working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
     permission_mode: session.permissionMode || null,
   };
