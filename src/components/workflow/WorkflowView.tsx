@@ -5,7 +5,7 @@
  * This is the main entry point for the workflow feature.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { WorkflowExecutionBar } from './WorkflowExecutionBar';
 import { WorkflowGoalPanel } from './WorkflowGoalPanel';
@@ -13,7 +13,11 @@ import { AgentConfigPanel } from './AgentConfigPanel';
 import { WorkflowOutputPanel } from './WorkflowOutputPanel';
 import { WorkflowRunHistory } from './WorkflowRunHistory';
 import { useWorkflowStore } from '@/store/workflowStore';
+import { useUIStore } from '@/store/uiStore';
+import { workflowEngine } from '@/services/workflowEngine';
+import { validateWorkflowForRun } from '@/services/workflow/validation';
 import { t } from '@/i18n';
+import type { GoalPreflightResult } from '@/services/workflow/goalPreflight/schema';
 
 function WorkflowTaskPanel({ agentId }: { agentId: string }) {
   const agent = useWorkflowStore((state) => {
@@ -134,6 +138,31 @@ export function WorkflowView() {
   const agents = currentInstance?.agents ?? [];
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [outputPanelOpen, setOutputPanelOpen] = useState(false);
+  const addNotification = useUIStore((s) => s.addNotification);
+  const preflightStartingRef = useRef(false);
+
+  const handleApplyAndStartFromPreflight = async (_result: GoalPreflightResult) => {
+    if (preflightStartingRef.current || workflowEngine.getIsRunning()) {
+      return;
+    }
+    const validation = validateWorkflowForRun(currentInstance);
+    if (!validation.valid) {
+      addNotification(
+        'error',
+        validation.firstError?.message ?? t('workflow.goalPreflight.cannotStartInvalid'),
+      );
+      return;
+    }
+    preflightStartingRef.current = true;
+    try {
+      await workflowEngine.start();
+    } catch (engineError) {
+      const message = engineError instanceof Error ? engineError.message : String(engineError);
+      addNotification('error', message);
+    } finally {
+      preflightStartingRef.current = false;
+    }
+  };
 
   useEffect(() => {
     if (!selectedAgentId) return;
@@ -174,7 +203,7 @@ export function WorkflowView() {
   return (
     <div key={currentInstance.id} className="flex h-full min-h-0 min-w-0 overflow-hidden bg-white">
       <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden">
-        <WorkflowGoalPanel />
+        <WorkflowGoalPanel onApplyAndStart={handleApplyAndStartFromPreflight} />
         <WorkflowExecutionBar />
 
         <div className="flex min-h-[420px] flex-1 min-w-0 overflow-hidden">

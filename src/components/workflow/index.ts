@@ -7,6 +7,8 @@ export { CustomEdge } from './CustomEdge';
 export { WorkflowCanvas } from './WorkflowCanvas';
 export { WorkflowExecutionBar } from './WorkflowExecutionBar';
 export { WorkflowGoalPanel } from './WorkflowGoalPanel';
+export { WorkflowGoalPreflightPanel } from './WorkflowGoalPreflightPanel';
+export { AsciiPreviewBlock } from './AsciiPreviewBlock';
 export { GoalStatusBadge } from './GoalStatusBadge';
 export { AgentConfigPanel } from './AgentConfigPanel';
 export { AgentTemplateDrawer } from './AgentTemplateDrawer';

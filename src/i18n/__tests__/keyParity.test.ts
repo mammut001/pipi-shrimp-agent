@@ -34,13 +34,10 @@ describe('i18n key parity', () => {
   });
 
   it('en-US translations for new workspace/context copy are non-empty', () => {
-    // Spot-check the keys added in the Workspace Folder / Context Files
-    // rename so an empty string can't sneak through.
+    // Spot-check the keys added in the two-folder rename so an empty
+    // string can't sneak through. The pre-rename `chat.workspaceFolder`
+    // key family is retired (see the retirement test below).
     const requiredKeys: Keys[] = [
-      'chat.workspaceFolder',
-      'chat.workspaceFolderTooltip',
-      'chat.setWorkspaceFolder',
-      'chat.noWorkspaceHint',
       'chat.projectFolder',
       'chat.projectFolderTooltip',
       'chat.setProjectFolder',
@@ -68,10 +65,6 @@ describe('i18n key parity', () => {
 
   it('zh-CN translations for new workspace/context copy are non-empty', () => {
     const requiredKeys: Keys[] = [
-      'chat.workspaceFolder',
-      'chat.workspaceFolderTooltip',
-      'chat.setWorkspaceFolder',
-      'chat.noWorkspaceHint',
       'chat.projectFolder',
       'chat.projectFolderTooltip',
       'chat.setProjectFolder',
@@ -105,6 +98,10 @@ describe('i18n key parity', () => {
     const retiredKeys: Keys[] = [
       // Renamed/restructured
       'chat.bindWorkFolder',
+      'chat.workspaceFolder',
+      'chat.workspaceFolderTooltip',
+      'chat.setWorkspaceFolder',
+      'chat.noWorkspaceHint',
       'chat.workspaceFolderDescription',
       'chat.workspaceFolderNotSet',
       'chat.setWorkspaceFolderHint',

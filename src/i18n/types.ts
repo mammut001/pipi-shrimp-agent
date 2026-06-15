@@ -170,10 +170,6 @@ export type TranslationKeys = {
   'chat.changeWorkDirectory': string;
   'chat.removeWorkDirectory': string;
   'chat.binding': string;
-  'chat.workspaceFolder': string;
-  'chat.workspaceFolderTooltip': string;
-  'chat.setWorkspaceFolder': string;
-  'chat.noWorkspaceHint': string;
   // Two-folder model — Project Folder (the user's repo).
   'chat.projectFolder': string;
   'chat.projectFolderTooltip': string;
@@ -422,6 +418,50 @@ export type TranslationKeys = {
   'workflow.goalStatus.inProgress': string;
   'workflow.goalStatus.noMissingItems': string;
   'workflow.canvas.emptyState': string;
+
+  // Workflow Goal Preflight
+  'workflow.goalPreflight.openButton': string;
+  'workflow.goalPreflight.eyebrow': string;
+  'workflow.goalPreflight.title': string;
+  'workflow.goalPreflight.subtitle': string;
+  'workflow.goalPreflight.emptyState': string;
+  'workflow.goalPreflight.cardEyebrow': string;
+  'workflow.goalPreflight.confirmTitle': string;
+  'workflow.goalPreflight.progressIdle': string;
+  'workflow.goalPreflight.progressStreaming': string;
+  'workflow.goalPreflight.parseFailed': string;
+  'workflow.goalPreflight.quickStart.login': string;
+  'workflow.goalPreflight.quickStart.loginDraft': string;
+  'workflow.goalPreflight.quickStart.refactor': string;
+  'workflow.goalPreflight.quickStart.refactorDraft': string;
+  'workflow.goalPreflight.quickStart.research': string;
+  'workflow.goalPreflight.quickStart.researchDraft': string;
+  'workflow.goalPreflight.askMoreAutoPrompt': string;
+  'workflow.goalPreflight.readyEyebrow': string;
+  'workflow.goalPreflight.readinessLabel': string;
+  'workflow.goalPreflight.finalGoal': string;
+  'workflow.goalPreflight.successCriteria': string;
+  'workflow.goalPreflight.assumptions': string;
+  'workflow.goalPreflight.openQuestions': string;
+  'workflow.goalPreflight.suggestedAgents': string;
+  'workflow.goalPreflight.topologyNote': string;
+  'workflow.goalPreflight.createSuggestedAgents': string;
+  'workflow.goalPreflight.asciiPreview': string;
+  'workflow.goalPreflight.asciiAriaLabel': string;
+  'workflow.goalPreflight.asciiEmpty': string;
+  'workflow.goalPreflight.risks': string;
+  'workflow.goalPreflight.serializedPreview': string;
+  'workflow.goalPreflight.applyAndStart': string;
+  'workflow.goalPreflight.applyOnly': string;
+  'workflow.goalPreflight.askMore': string;
+  'workflow.goalPreflight.editManually': string;
+  'workflow.goalPreflight.appliedNote': string;
+  'workflow.goalPreflight.appliedAndStartedNote': string;
+  'workflow.goalPreflight.appliedToast': string;
+  'workflow.goalPreflight.cannotStartInvalid': string;
+  'workflow.goalPreflight.copy': string;
+  'workflow.goalPreflight.copied': string;
+  'workflow.goalPreflight.copyFailed': string;
 
   // Workflow Output Panel
   'workflow.output.realTime': string;

@@ -75,9 +75,27 @@ async function runSMCompactAfterStreaming(sessionId: string, set: ChatSetState, 
     }
 
     const stats = await getContextTokenStats(sessionId);
-    const workDir = session.workDir ?? undefined;
+    // Two-folder model: session memory is an **app-owned** artefact
+    // (stored as `.pipi-shrimp/session-memory.md` under the folder the
+    // Rust `get_memory_path(work_dir)` helper picks). Pre-v7 the JS
+    // caller passed the user's repo as `work_dir`, which is why the
+    // legacy mirror used `session.workDir` here. In the two-folder
+    // model we MUST pass the **PiPi Output Folder** instead — using the
+    // Project Folder would silently drop a `.pipi-shrimp/` tree into
+    // the user's repo on every compact, which is exactly the pollution
+    // the two-folder split is supposed to prevent.
+    //
+    // Resolution order mirrors `getSessionPipiOutputDir`: an explicit
+    // binding wins; otherwise fall back to the per-session app-managed
+    // default. We do NOT call `ensureSessionWorkDir` here because that
+    // helper may auto-provision a new folder; compact should be best-
+    // effort and silently skip when the session has no output binding
+    // (the next bind will re-trigger compact anyway).
+    const pipiOutputDir = session.pipiOutputDir
+      ?? resolveSessionPipiOutputDirHelper(session);
+    const memoryWorkDir = pipiOutputDir ?? undefined;
     if (stats.current >= config.sm_auto_threshold_tokens) {
-      const result = await trySessionMemoryCompact(sessionId, session.messages, workDir);
+      const result = await trySessionMemoryCompact(sessionId, session.messages, memoryWorkDir);
       if (result.did_compact && result.boundary_message && result.summary_message) {
         set((state) => ({
           sessions: state.sessions.map((candidate) => {
@@ -108,7 +126,12 @@ async function runSMCompactAfterStreaming(sessionId: string, set: ChatSetState, 
     }
 
     if (stats.current >= config.legacy_auto_threshold_tokens) {
-      const result = await triggerLegacyCompact(sessionId, session.messages, workDir);
+      // Two-folder model: same reasoning as the SM branch above —
+      // legacy compact also writes session memory to `workDir`, so it
+      // must point at the PiPi Output Folder rather than the user's
+      // repo. Reuse the resolved `memoryWorkDir` so the two branches
+      // stay in sync.
+      const result = await triggerLegacyCompact(sessionId, session.messages, memoryWorkDir);
       if (result.success && result.boundary_message && result.summary_message) {
         set((state) => ({
           sessions: state.sessions.map((candidate) => {

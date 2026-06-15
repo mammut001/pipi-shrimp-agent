@@ -5,17 +5,24 @@ import {
   shouldSavePlanDoc,
   type SavePlanModeDocResult,
 } from '@/services/planMode';
+import { useChatStore } from '@/store/createChatStore';
+import { getSessionPipiOutputDir } from '@/utils/sessionFolders';
 
 /**
  * SavePlanDocTool — persist a plan-mode plan as a markdown document
  * under the session's `.pipi-shrimp/docs/` directory.
  *
  * The model supplies the plan body (and optionally a short title).
- * `workDir` is taken from `ToolContext.cwd` so the agent cannot
- * redirect the write to a different folder; `userRequest` (used only
- * to derive the file title) is taken from the most recent user
- * message in `ToolContext.messages`, with a markdown-first-line
- * fallback if the context is empty.
+ * The destination folder is resolved through the **PiPi Output Folder**
+ * helper (`getSessionPipiOutputDir`) so plan docs land in the
+ * app-owned output root rather than the user's repo. We deliberately
+ * do NOT honour `ToolContext.cwd` here — `cwd` is the **Project
+ * Folder** (the user's repo, where tool commands run), and writing
+ * a generated doc there would pollute the repo with `.pipi-shrimp/`.
+ *
+ * `userRequest` (used only to derive the file title) is taken from the
+ * most recent user message in `ToolContext.messages`, with a
+ * markdown-first-line fallback if the context is empty.
  *
  * Plan Mode is the only execution mode that exposes this tool. The
  * chat engine restricts it via `PLAN_MODE_ALLOWED_TOOLS`; other
@@ -41,13 +48,24 @@ export class SavePlanDocTool extends BaseTool<SavePlanDocInput, SavePlanDocOutpu
     input: SavePlanDocInput,
     context: ToolContext,
   ): Promise<ToolResult<SavePlanDocOutput>> {
-    const workDir = (context.cwd ?? '').trim();
+    // Two-folder model: plan docs are app-owned outputs, so the
+    // destination folder is the session's **PiPi Output Folder**, NOT
+    // `ToolContext.cwd` (which is the Project Folder / user's repo).
+    // The docs service writes into `{pipiOutputDir}/.pipi-shrimp/docs/`
+    // so we can keep the legacy `context.cwd ?? ''` legacy assertion
+    // below as a defensive guard while always overriding with the
+    // PiPi Output Folder resolution.
+    const session = useChatStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === context.sessionId);
+    const pipiOutputDir = getSessionPipiOutputDir(session) ?? '';
+    const workDir = pipiOutputDir.trim();
 
     if (!workDir) {
       return {
         success: false,
         error:
-          'No workspace is bound to this session. Set a workspace folder before persisting a plan document.',
+          'No PiPi Output Folder is available for this session. Bind an output folder (or wait for the app-managed default to be provisioned) before persisting a plan document.',
       };
     }
 

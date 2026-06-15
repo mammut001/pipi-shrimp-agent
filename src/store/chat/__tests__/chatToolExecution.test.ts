@@ -701,4 +701,171 @@ describe('chatToolExecution', () => {
       expect(ctxArg?.executionMode).toBeUndefined();
     });
   });
+
+  // Two-folder model regression: workspace tools MUST NOT fall back
+  // to the PiPi Output Folder when the Project Folder is missing.
+  // The old `ensureSessionWorkDir()` fallback used to paper over the
+  // single-folder world; in the two-folder model that helper now
+  // provisions the *output* folder, so silently using it as the tool
+  // cwd would let the model "edit" the `.pipi-shrimp/` tree. We
+  // guard the fallback: if `ensureSessionWorkDir` returns the
+  // session's `pipiOutputDir` we surface a hard error instead.
+  describe('two-folder model — no fallback to PiPi Output Folder for tool cwd', () => {
+    it('returns a hard error for write_file when ensureSessionWorkDir lands on the PiPi Output Folder', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-write',
+            name: 'write_file',
+            arguments: { path: 'src/foo.ts', content: 'export const x = 1;\n' },
+          }],
+        })),
+      });
+      // Session has NO projectDir / workDir — only a PiPi Output Folder.
+      const state = createChatState();
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].projectDir = undefined;
+      state.sessions[0].pipiOutputDir = '/home/user/.local/share/PiPi-Shrimp/chats/session-1';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-write',
+          name: 'write_file',
+          arguments: '{"path":"src/foo.ts","content":"export const x = 1;\\n"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        // Return the same path as pipiOutputDir — the executor must
+        // refuse to use it as tool cwd.
+        ensureSessionWorkDir: async () => '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      }, deps);
+
+      // No tool should have been executed against the PiPi Output Folder.
+      expect((deps.invoke as jest.Mock)).not.toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        workDir: '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      }));
+      // The error is surfaced to the model so it can prompt the user
+      // to bind a Project Folder.
+      expect(results).toEqual([
+        expect.objectContaining({
+          id: 'tool-write',
+          toolName: 'write_file',
+          content: expect.stringMatching(/No Project Folder is bound/i),
+        }),
+      ]);
+    });
+
+    it('still uses the Project Folder returned by ensureSessionWorkDir (pre-v7 single-folder path)', async () => {
+      // The legacy `ensureSessionWorkDir` may return a project-root
+      // path for a pre-v7 session that only has a `workDir`. We must
+      // accept that fallback as long as it's NOT the PiPi Output
+      // Folder — this preserves the pre-fix behaviour for sessions
+      // that were bound to a single folder.
+      const resolved = jest.fn();
+      const deps = createDeps({
+        invoke: jest.fn(async () => ({ content: 'ok', is_error: false })) as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-write',
+            name: 'write_file',
+            arguments: { path: 'src/foo.ts', content: 'export const x = 1;\n' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      // The session has pipiOutputDir bound but the fallback returns
+      // a *different* (Project Folder) path. That should still be
+      // accepted as tool cwd.
+      state.sessions[0].pipiOutputDir = '/home/user/.local/share/PiPi-Shrimp/chats/session-1';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-write',
+          name: 'write_file',
+          arguments: '{"path":"src/foo.ts","content":"export const x = 1;\\n"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        // The fallback returns the **Project Folder**, not the
+        // pipiOutputDir — must be accepted.
+        ensureSessionWorkDir: async () => '/home/user/repo',
+      }, deps);
+
+      // The fallback was accepted and the tool ran against the
+      // Project Folder, not the PiPi Output Folder.
+      expect((deps.invoke as jest.Mock)).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        toolCallId: 'tool-write',
+        workDir: '/home/user/repo',
+      }));
+      expect((deps.invoke as jest.Mock)).not.toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        workDir: '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      }));
+    });
+
+    it('still runs read-only tools without a Project Folder', async () => {
+      // Read-only context (read_file, list_files, search_files) keeps
+      // working because the caller can supply an absolute path or
+      // attach a Context File. We do NOT block these tools.
+      const resolved = jest.fn();
+      const deps = createDeps({
+        partitionTools: jest.fn(() => ({
+          concurrent: [{
+            id: 'tool-read',
+            name: 'read_file',
+            arguments: { path: 'C:/absolute/path/to/file.ts' },
+          }],
+          serial: [],
+        })),
+        invoke: jest.fn(async (cmd: string) => {
+          if (cmd === 'execute_single_tool' || cmd === 'execute_tool_batch') {
+            return [{ id: 'tool-read', content: 'file contents', toolName: 'read_file', toolArgs: '{}' }];
+          }
+          return null;
+        }) as unknown as ToolBatchExecutionDeps['invoke'],
+      });
+      const state = createChatState();
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].projectDir = undefined;
+      state.sessions[0].pipiOutputDir = '/home/user/.local/share/PiPi-Shrimp/chats/session-1';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-read',
+          name: 'read_file',
+          arguments: '{"path":"C:/absolute/path/to/file.ts"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      expect(results.length).toBeGreaterThan(0);
+      const block = results.find((result) => /No Project Folder is bound/i.test(result.content));
+      expect(block).toBeUndefined();
+    });
+  });
 });

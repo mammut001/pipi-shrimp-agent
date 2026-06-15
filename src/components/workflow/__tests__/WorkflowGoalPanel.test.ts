@@ -2,6 +2,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 const mockUseWorkflowStore = jest.fn();
+const mockUseUIStore = jest.fn();
+const mockHandleSend = jest.fn();
 
 jest.mock('@/i18n', () => ({
   t: (key: string) => key,
@@ -9,6 +11,35 @@ jest.mock('@/i18n', () => ({
 
 jest.mock('@/store/workflowStore', () => ({
   useWorkflowStore: (selector: unknown) => mockUseWorkflowStore(selector),
+}));
+
+jest.mock('@/store/uiStore', () => ({
+  useUIStore: (selector: unknown) => mockUseUIStore(selector),
+}));
+
+jest.mock('@/services/headless/agentRunner', () => ({
+  runHeadlessAgentTurn: jest.fn(),
+}));
+
+jest.mock('@/components/ChatMessage', () => ({
+  ChatMessage: () => null,
+}));
+
+jest.mock('@/components/ChatInput', () => ({
+  ChatInput: () => {
+    return createElement('div', null, 'chat-input-mock');
+  },
+}));
+
+jest.mock('../AsciiPreviewBlock', () => ({
+  AsciiPreviewBlock: () => null,
+}));
+
+jest.mock('../WorkflowGoalPreflightPanel', () => ({
+  WorkflowGoalPreflightPanel: (props: { onApply?: unknown }) => {
+    mockHandleSend(props);
+    return createElement('div', { 'data-testid': 'preflight-panel-mock' });
+  },
 }));
 
 import { WorkflowGoalPanel } from '../WorkflowGoalPanel';
@@ -36,10 +67,19 @@ function createStoreState() {
   };
 }
 
+function createUIState() {
+  return {
+    addNotification: jest.fn(),
+  };
+}
+
 describe('WorkflowGoalPanel', () => {
   beforeEach(() => {
     mockUseWorkflowStore.mockImplementation((selector: (state: ReturnType<typeof createStoreState>) => unknown) =>
       selector(createStoreState())
+    );
+    mockUseUIStore.mockImplementation((selector: (state: ReturnType<typeof createUIState>) => unknown) =>
+      selector(createUIState())
     );
   });
 
@@ -56,5 +96,16 @@ describe('WorkflowGoalPanel', () => {
     expect(markup).not.toContain('type="number"');
     expect(markup).toContain('workflow.goalPanel.expandConfig');
     expect(markup).toContain('h-20');
+  });
+
+  it('exposes a Clarify Goal button', () => {
+    const markup = renderToStaticMarkup(createElement(WorkflowGoalPanel));
+    expect(markup).toContain('workflow.goalPreflight.openButton');
+  });
+
+  it('does not call updateInstanceMeta on render', () => {
+    renderToStaticMarkup(createElement(WorkflowGoalPanel));
+    const state = createStoreState();
+    expect(state.updateInstanceMeta).not.toHaveBeenCalled();
   });
 });

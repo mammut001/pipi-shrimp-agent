@@ -6,6 +6,32 @@ jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
+// Two-folder model: SavePlanDocTool resolves the destination folder
+// through `getSessionPipiOutputDir(session)`. We mock the chat store
+// so the tool sees a session with the expected `pipiOutputDir` (or,
+// in the no-binding case, no folder at all so the tool can fail with
+// the correct error).
+const mockChatState: {
+  sessions: Array<{ id: string; projectDir?: string; pipiOutputDir?: string }>;
+} = {
+  sessions: [
+    {
+      id: 'session-1',
+      // The default test session has an explicit PiPi Output Folder
+      // that differs from `cwd` (= the Project Folder) so the test
+      // can prove the tool writes to the right one.
+      projectDir: '/tmp/pipi/session-1/project',
+      pipiOutputDir: '/tmp/pipi/session-1',
+    },
+  ],
+};
+
+jest.mock('@/store/createChatStore', () => ({
+  useChatStore: {
+    getState: () => mockChatState,
+  },
+}));
+
 import { savePlanDocTool } from '../SavePlanDocTool';
 import type { ToolContext } from '../../base/Tool';
 
@@ -139,15 +165,59 @@ describe('SavePlanDocTool', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('refuses to save when no workspace is bound (empty cwd)', async () => {
-    const result = await savePlanDocTool.execute(
+  it('refuses to save when no PiPi Output Folder is available (no binding)', async () => {
+    // Two-folder model: the tool requires the session's PiPi Output
+    // Folder, not the Project Folder. We mock the store to throw so
+    // the tool fails fast on the resolution path; in production the
+    // store always has a session for the active tool call.
+    const chatStoreMock = await import('@/store/createChatStore');
+    const originalGetState = chatStoreMock.useChatStore.getState;
+    chatStoreMock.useChatStore.getState = jest.fn(() => ({ sessions: [] })) as never;
+    try {
+      const result = await savePlanDocTool.execute(
+        { markdown: VALID_PLAN_BODY },
+        makeContext({ cwd: '/tmp/project' }),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/PiPi Output Folder/i);
+      expect(mockInvoke).not.toHaveBeenCalled();
+    } finally {
+      chatStoreMock.useChatStore.getState = originalGetState;
+    }
+  });
+
+  it('uses the session PiPi Output Folder, NOT ToolContext.cwd (the Project Folder)', async () => {
+    // Regression: pre-fix the tool used `context.cwd` (= Project
+    // Folder) as the destination, which silently wrote plan docs
+    // into the user's repo. Verify the new behaviour routes through
+    // the session's `pipiOutputDir` and ignores `cwd`.
+    mockChatState.sessions = [
+      {
+        id: 'session-1',
+        projectDir: '/home/user/repo',
+        pipiOutputDir: '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      },
+    ];
+    mockInvoke.mockResolvedValue({
+      number: '001',
+      filename: '001-plan-test.md',
+      path: '/home/user/.local/share/PiPi-Shrimp/chats/session-1/.pipi-shrimp/docs/001-plan-test.md',
+      index_updated: true,
+    });
+
+    await savePlanDocTool.execute(
       { markdown: VALID_PLAN_BODY },
-      makeContext({ cwd: '' }),
+      makeContext({ cwd: '/home/user/repo' }),
     );
 
-    expect(result.success).toBe(false);
-    expect(result.error).toMatch(/workspace/i);
-    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'create_doc',
+      expect.objectContaining({
+        // Must be the PiPi Output Folder, NOT the Project Folder.
+        workDir: '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      }),
+    );
   });
 
   it('falls back to deriving the title from the user message when none is given', async () => {

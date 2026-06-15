@@ -28,6 +28,7 @@ import { createToolTaskSteps } from '../taskLifecycle';
 import { registerArtifactsFromToolResults, type ArtifactDetectorModule, type ToolArtifactResult } from './chatArtifacts';
 import { normalizeCompileTypstArgs, normalizeResumeWorkspaceToolArgs } from './chatResumeTools';
 import { applyWindowsShellProfileToArgsJson } from '@/utils/windowsShellProfile';
+import { getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper } from '@/utils/sessionFolders';
 
 type ToolBatchChunk = Extract<EngineEvent, { type: 'tool_batch_request' }>;
 
@@ -820,6 +821,21 @@ export async function handleToolBatchRequest(
   const { chunk, activeSessionId, assistantMessageId, get, set, ensureSessionWorkDir } = context;
   const uiStore = deps.uiStore.getState();
   let currentSession = get().sessions.find((session) => session.id === activeSessionId);
+  // Two-folder model: `workDir` here is the **Project Folder** — the
+  // folder the tools (bash, read/write/list/...) run against. We do
+  // NOT fall back to the PiPi Output Folder when the Project Folder is
+  // missing: tools that mutate project state have no meaning in the
+  // app-owned output root, and silently using the PiPi Output Folder
+  // as the tool cwd would let the model "edit" `.pipi-shrimp/...` files
+  // it considers source code.
+  //
+  // The legacy `ensureSessionWorkDir()` helper used to paper over this
+  // by returning whichever single folder the session had bound; in the
+  // two-folder world that helper now provisions the **PiPi Output
+  // Folder**. We use it only as a backstop: if it returns a path that
+  // equals the session's `pipiOutputDir` we discard the result and
+  // surface a hard error so the model can prompt the user to bind a
+  // Project Folder. Otherwise the helper is treated as a no-op.
   let workDir = currentSession?.workDir ?? null;
   const permissionMode = currentSession?.permissionMode || 'standard';
   // Mirror the 6-mode execution mode id into the hook context so the
@@ -832,8 +848,45 @@ export async function handleToolBatchRequest(
   if (!workDir) {
     const needsWorkDir = chunk.tools.some((tool) => WORKSPACE_TOOL_NAMES.has(tool.name));
     if (needsWorkDir) {
-      workDir = await ensureSessionWorkDir();
+      const fallback = await ensureSessionWorkDir();
       currentSession = get().sessions.find((session) => session.id === activeSessionId);
+      const sessionPipiOutputDir = resolveSessionPipiOutputDirHelper(currentSession);
+      // Reject the fallback if it landed on the PiPi Output Folder —
+      // tools that mutate project state have no business running
+      // inside the app-owned output root.
+      if (fallback && sessionPipiOutputDir && fallback === sessionPipiOutputDir) {
+        const errorMessage = 'No Project Folder is bound to this session. Set a Project Folder (the user\'s repo) before running workspace tools like write_file, create_directory, execute_command, or compile_typst_file.';
+        for (const tool of chunk.tools) {
+          if (!WORKSPACE_TOOL_NAMES.has(tool.name)) continue;
+          markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
+          uiStore.updateTaskStep(tool.id, 'failed');
+          markSessionToolStatus(activeSessionId, tool.id, tool.name, 'failed', set, get);
+          resolveSessionTool(
+            activeSessionId,
+            tool.id,
+            tool.name,
+            'failed',
+            // AUDIT: keep the message English; localized copy lives in
+            // the chat input toast that fires on bind, not in tool
+            // results (the model needs a deterministic string to react
+            // to).
+            errorMessage,
+            set,
+            get,
+          );
+        }
+        // Surface the error to the model via the batch result so it
+        // can prompt the user to bind a Project Folder before retrying.
+        return chunk.tools
+          .filter((tool) => WORKSPACE_TOOL_NAMES.has(tool.name))
+          .map((tool) => ({
+            id: tool.id,
+            content: errorMessage,
+            toolName: tool.name,
+            toolArgs: tool.arguments,
+          }));
+      }
+      workDir = fallback ?? workDir;
     }
   }
 
