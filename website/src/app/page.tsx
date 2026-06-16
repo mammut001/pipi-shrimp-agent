@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { SITE_CONFIG, githubReleasesUrl } from "@/lib/siteConfig";
 
-const GITHUB_RELEASES_URL = "https://github.com/mammut001/pipi-shrimp-agent/releases";
+const GITHUB_RELEASES_URL = githubReleasesUrl;
 
 const features = [
   {
@@ -97,7 +98,8 @@ export default function HomePage() {
               </div>
 
               <p style={{ marginTop: 24, fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-                {t.hero.version}: 0.1.0 · macOS only
+                {t.hero.version}: {SITE_CONFIG.version}
+                {SITE_CONFIG.macosOnly ? " · macOS only" : ""}
               </p>
             </div>
 

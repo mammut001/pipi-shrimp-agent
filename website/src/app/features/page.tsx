@@ -1,6 +1,7 @@
 "use client";
 
 import { useLanguage } from "@/contexts/LanguageContext";
+import { githubReleasesUrl } from "@/lib/siteConfig";
 
 const featureIcons = [
   <svg key="1" className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -76,7 +77,7 @@ export default function FeaturesPage() {
             Join thousands of developers who are already using Pipi Shrimp Agent to boost their productivity.
           </p>
           <a
-            href="https://github.com/mammut001/pipi-shrimp-agent/releases"
+            href={githubReleasesUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center justify-center gap-2 px-8 py-4 text-lg font-medium text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] rounded-lg transition-all hover:scale-105 hover:shadow-lg"

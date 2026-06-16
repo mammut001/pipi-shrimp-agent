@@ -5,9 +5,10 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { githubRepoUrl, githubReleasesUrl } from "@/lib/siteConfig";
 
-const GITHUB_URL = "https://github.com/mammut001/pipi-shrimp-agent";
-const DOWNLOAD_URL = "https://github.com/mammut001/pipi-shrimp-agent/releases";
+const GITHUB_URL = githubRepoUrl;
+const DOWNLOAD_URL = githubReleasesUrl;
 
 export function Header() {
   const pathname = usePathname();

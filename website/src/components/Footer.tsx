@@ -1,8 +1,9 @@
 "use client";
 
 import { useLanguage } from "@/contexts/LanguageContext";
+import { githubRepoUrl } from "@/lib/siteConfig";
 
-const GITHUB_URL = "https://github.com/mammut001/pipi-shrimp-agent";
+const GITHUB_URL = githubRepoUrl;
 
 export function Footer() {
   const { t } = useLanguage();

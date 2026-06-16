@@ -3,6 +3,10 @@
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import {
+  githubCommitUrl,
+  githubCommitsApiUrl,
+} from "@/lib/siteConfig";
 
 interface Commit {
   sha: string;
@@ -19,7 +23,43 @@ interface Commit {
   } | null;
 }
 
-const GITHUB_REPO = "mammut001/pipi-shrimp-agent";
+const CACHE_KEY = "pipi-shrimp-changelog";
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes, per SPEC §3.2
+const PER_PAGE = 20;
+
+interface CacheEntry {
+  fetchedAt: number;
+  commits: Commit[];
+}
+
+const readCache = (): CacheEntry | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CacheEntry;
+    if (
+      typeof parsed.fetchedAt !== "number" ||
+      !Array.isArray(parsed.commits) ||
+      Date.now() - parsed.fetchedAt > CACHE_TTL_MS
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const writeCache = (commits: Commit[]): void => {
+  if (typeof window === "undefined") return;
+  try {
+    const entry: CacheEntry = { fetchedAt: Date.now(), commits };
+    window.sessionStorage.setItem(CACHE_KEY, JSON.stringify(entry));
+  } catch {
+    // Ignore quota / serialization errors; cache is best-effort.
+  }
+};
 
 export default function ChangelogPage() {
   const { t } = useLanguage();
@@ -28,24 +68,41 @@ export default function ChangelogPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const apply = (data: Commit[]) => {
+      if (cancelled) return;
+      setCommits(data);
+      setLoading(false);
+    };
+
+    const cached = readCache();
+    if (cached) {
+      apply(cached.commits);
+      return;
+    }
+
     async function fetchCommits() {
       try {
-        const response = await fetch(
-          `https://api.github.com/repos/${GITHUB_REPO}/commits?per_page=20`
-        );
+        const response = await fetch(githubCommitsApiUrl(PER_PAGE));
         if (!response.ok) {
           throw new Error("Failed to fetch commits");
         }
-        const data = await response.json();
-        setCommits(data);
+        const data: Commit[] = await response.json();
+        if (cancelled) return;
+        writeCache(data);
+        apply(data);
       } catch {
+        if (cancelled) return;
         setError(t.changelog.error);
-      } finally {
         setLoading(false);
       }
     }
 
     fetchCommits();
+    return () => {
+      cancelled = true;
+    };
   }, [t.changelog.error]);
 
   const formatDate = (dateString: string) => {
@@ -134,7 +191,7 @@ export default function ChangelogPage() {
                         </p>
                       )}
                       <a
-                        href={`https://github.com/${GITHUB_REPO}/commit/${commit.sha}`}
+                        href={githubCommitUrl(commit.sha)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 text-sm text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors"

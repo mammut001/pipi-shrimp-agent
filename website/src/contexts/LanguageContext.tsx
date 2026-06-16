@@ -5,9 +5,22 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
   ReactNode,
 } from "react";
 import { translations, Language, TranslationKeys } from "@/translations";
+
+const STORAGE_KEY = "language";
+const SUPPORTED_LANGUAGES: readonly Language[] = [
+  "en",
+  "fr",
+  "zh",
+  "ko",
+  "vi",
+] as const;
+
+const isSupportedLanguage = (value: string | null): value is Language =>
+  value !== null && (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
 
 interface LanguageContextType {
   language: Language;
@@ -24,13 +37,32 @@ interface LanguageProviderProps {
 }
 
 export function LanguageProvider({ children }: LanguageProviderProps) {
-  const [language, setLanguage] = useState<Language>("en");
+  const [language, setLanguageState] = useState<Language>("en");
+
+  // Hydrate from localStorage exactly once on mount so a returning
+  // user keeps their preferred locale instead of always seeing English
+  // first. This is a one-way bootstrap effect — putting `language` in
+  // the dep array would re-trigger the setState on every change.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (isSupportedLanguage(stored) && stored !== language) {
+      setLanguageState(stored);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep <html lang> in sync with the active locale on every change.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    document.documentElement.lang = language;
+  }, [language]);
 
   const handleSetLanguage = useCallback((lang: Language) => {
-    setLanguage(lang);
+    setLanguageState(lang);
     if (typeof window !== "undefined") {
       document.documentElement.lang = lang;
-      localStorage.setItem("language", lang);
+      window.localStorage.setItem(STORAGE_KEY, lang);
     }
   }, []);
 
