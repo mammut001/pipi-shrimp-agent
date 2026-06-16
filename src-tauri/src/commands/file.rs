@@ -21,8 +21,8 @@ pub struct LocalFileToolError {
 /// Allowed root directories for file operations (path sandbox)
 fn allowed_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Ok(home) = std::env::var("HOME") {
-        roots.push(PathBuf::from(home));
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home);
     }
     // Also allow /tmp for temporary file operations
     roots.push(PathBuf::from("/tmp"));
@@ -41,8 +41,9 @@ fn allowed_roots() -> Vec<PathBuf> {
  */
 fn expand_home(path: &str) -> PathBuf {
     if path.starts_with("~") {
-        if let Ok(home) = std::env::var("HOME") {
-            let expanded = PathBuf::from(path.replacen("~", &home, 1));
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy();
+            let expanded = PathBuf::from(path.replacen("~", &home_str, 1));
             // AUDIT-FIX [fix-1#1-fb] — Use the shared `is_within_dir` helper
             // (sibling-prefix safe) instead of the raw `starts_with`. A naive
             // starts_with would let `~/Desktop-evil` slip past when the home

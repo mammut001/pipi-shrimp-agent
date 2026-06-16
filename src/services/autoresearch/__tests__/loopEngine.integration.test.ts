@@ -125,6 +125,7 @@ describe('loopEngine integration', () => {
   const extraCleanupDirs = new Set<string>();
 
   beforeEach(async () => {
+    await fs.mkdir(projectTmpDir(), { recursive: true });
     workDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-loop-'));
     sessionFilePath = path.join(workDir, 'session.md');
     installLocalInvokeMock(mockInvoke);

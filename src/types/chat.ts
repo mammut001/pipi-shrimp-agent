@@ -9,6 +9,8 @@ import type { ImageAttachment } from './vision';
 export interface ChatSendOptions {
   allowBrowserTools?: boolean;
   attachments?: ImageAttachment[];
+  /** Internal: auto-continue message triggered by session goal loop. */
+  goalLoopContinuation?: boolean;
 }
 
 // ============= Type Definitions =============

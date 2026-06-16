@@ -10,8 +10,12 @@ import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore'
 import { startAutoResearchRun } from '@/services/autoresearch/setupFlow';
 import { resolveAutoResearchRunConfig } from '@/services/autoresearch/runConfig';
 
-const mockSetAgentPanelTab = jest.fn();
+const mockSetCurrentView = jest.fn();
 const mockToggleSettings = jest.fn();
+const mockDialogOpen = jest.fn();
+const mockUseSettingsStore = jest.fn((selector: (state: { windowsShellProfile: 'auto' | 'powershell' | 'wsl' }) => unknown) => selector({
+  windowsShellProfile: 'wsl',
+}));
 
 jest.mock('@/i18n', () => ({
   t: (key: string) => ({
@@ -95,14 +99,21 @@ jest.mock('@/i18n', () => ({
     'autoresearch.passwordHintBefore': 'Kept in memory only (not saved to disk). Requires ',
     'autoresearch.sshpassHintCommand': 'brew install hudochenkov/sshpass/sshpass',
     'autoresearch.baselinePlaceholder': 'e.g. 0.963284',
+    'autoresearch.chooseDirectory': 'Choose directory',
     }[key] ?? key),
+  getCurrentLocale: () => 'en-US',
 }));
 
 jest.mock('@/store', () => ({
-  useUIStore: (selector: (state: { setAgentPanelTab: typeof mockSetAgentPanelTab; toggleSettings: typeof mockToggleSettings }) => unknown) => selector({
-    setAgentPanelTab: mockSetAgentPanelTab,
+  useUIStore: (selector: (state: { setCurrentView: typeof mockSetCurrentView; toggleSettings: typeof mockToggleSettings }) => unknown) => selector({
+    setCurrentView: mockSetCurrentView,
     toggleSettings: mockToggleSettings,
   }),
+  useSettingsStore: (selector: (state: { windowsShellProfile: 'auto' | 'powershell' | 'wsl' }) => unknown) => mockUseSettingsStore(selector),
+}));
+
+jest.mock('@tauri-apps/plugin-dialog', () => ({
+  open: (...args: unknown[]) => mockDialogOpen(...args),
 }));
 
 jest.mock('@/services/agentConfig', () => ({
@@ -190,8 +201,12 @@ describe('AutoResearchSetupModal', () => {
   });
 
   beforeEach(() => {
-    mockSetAgentPanelTab.mockReset();
+    mockSetCurrentView.mockReset();
     mockToggleSettings.mockReset();
+    mockDialogOpen.mockReset();
+    mockUseSettingsStore.mockImplementation((selector: (state: { windowsShellProfile: 'auto' | 'powershell' | 'wsl' }) => unknown) => selector({
+      windowsShellProfile: 'wsl',
+    }));
     jest.mocked(startAutoResearchRun).mockReset();
     jest.mocked(resolveAutoResearchRunConfig).mockReset();
     jest.mocked(resolveAutoResearchRunConfig).mockReturnValue({
@@ -480,6 +495,39 @@ describe('AutoResearchSetupModal', () => {
     });
   });
 
+  it('normalizes picked local directories to WSL paths when WSL shell is selected', async () => {
+    Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
+    Object.defineProperty(navigator, 'userAgent', { value: 'Windows NT 10.0', configurable: true });
+    mockDialogOpen
+      .mockResolvedValueOnce('D:\\WSL\\Ubuntu\\pipishrimp\\.tmp\\autoresearch-wsl-smoke\\workdir')
+      .mockResolvedValueOnce('D:\\WSL\\Ubuntu\\pipishrimp\\.tmp\\autoresearch-wsl-smoke\\experiment');
+
+    const view = renderModal();
+    const manualTab = findButtonByText(view.container, 'Manual');
+    act(() => { manualTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+    const chooseButtons = Array.from(view.container.querySelectorAll('button'))
+      .filter((button) => button.textContent?.includes('Choose directory'));
+
+    expect(chooseButtons).toHaveLength(2);
+
+    await act(async () => {
+      chooseButtons[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      chooseButtons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const workdirInput = view.container.querySelector('input[aria-label="AutoResearch workdir"]') as HTMLInputElement | null;
+    const experimentInput = view.container.querySelector('input[aria-label="Experiment path"]') as HTMLInputElement | null;
+
+    expect(workdirInput?.value).toBe('/mnt/d/WSL/Ubuntu/pipishrimp/.tmp/autoresearch-wsl-smoke/workdir');
+    expect(experimentInput?.value).toBe('/mnt/d/WSL/Ubuntu/pipishrimp/.tmp/autoresearch-wsl-smoke/experiment');
+  });
+
   it('shows a visible validation error instead of doing nothing for invalid SSH input', async () => {
     jest.mocked(startAutoResearchRun).mockResolvedValue({
       sessionId: 'run-1',
@@ -691,7 +739,7 @@ describe('AutoResearchSetupModal', () => {
     expect(view.container.textContent).toContain('Filled');
   });
 
-  it('onReady from BootstrapChatView closes modal and switches to autoresearch tab', async () => {
+  it('onReady from BootstrapChatView closes modal and opens autoresearch view', async () => {
     const view = renderModal();
     const readyButton = view.container.querySelector('[data-testid="trigger-on-ready"]') as HTMLButtonElement | null;
     expect(readyButton).not.toBeNull();
@@ -700,7 +748,7 @@ describe('AutoResearchSetupModal', () => {
       await Promise.resolve();
     });
     expect(useAutoResearchStore.getState().showSetupModal).toBe(false);
-    expect(mockSetAgentPanelTab).toHaveBeenCalledWith('autoresearch');
+    expect(mockSetCurrentView).toHaveBeenCalledWith('autoresearch');
   });
 
   it('exposes ARIA dialog + tab semantics for screen readers', () => {

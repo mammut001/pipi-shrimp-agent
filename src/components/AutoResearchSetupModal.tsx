@@ -11,7 +11,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import { useAutoResearchStore, type SshConfig } from '@/store/autoresearchStore';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
-import { useUIStore } from '@/store';
+import { useSettingsStore, useUIStore } from '@/store';
 import {
   isHorizontalArrowKey,
   sanitizePathInput,
@@ -34,6 +34,7 @@ import {
   buildAutoResearchRunLockMessage,
   useAutoResearchLifecycleLock,
 } from '@/services/autoresearch/runLock';
+import { normalizePathForWindowsShellSelection } from '@/utils/windowsShellProfile';
 
 const BootstrapChatView = lazy(() => import('@/components/autoresearch/BootstrapChatView').then((module) => ({
   default: module.BootstrapChatView,
@@ -155,8 +156,9 @@ export function AutoResearchSetupModal() {
   const setLastUsedConfig = useAutoResearchStore(s => s.setLastUsedConfig);
   const clearLastUsedConfig = useAutoResearchStore(s => s.clearLastUsedConfig);
   const initSession = useAutoResearchStore(s => s.initSession);
-  const setAgentPanelTab = useUIStore(s => s.setAgentPanelTab);
+  const setCurrentView = useUIStore(s => s.setCurrentView);
   const toggleSettings = useUIStore(s => s.toggleSettings);
+  const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
   const suppressFailurePreview = useBrowserObservabilityStore((state) => state.suppressFailurePreview);
   let agentConfigError = '';
   if (showSetupModal) {
@@ -318,13 +320,16 @@ export function AutoResearchSetupModal() {
         defaultPath: form.remoteWorkDir || undefined,
       });
       if (typeof selection === 'string' && selection.length > 0) {
-        setForm((current) => ({ ...current, remoteWorkDir: selection }));
+        setForm((current) => ({
+          ...current,
+          remoteWorkDir: normalizePathForWindowsShellSelection(selection, windowsShellProfile),
+        }));
       }
     } catch {
       // User cancelled the dialog or the platform doesn't support it;
       // fall back to manual text input.
     }
-  }, [form.remoteWorkDir, setupLocked]);
+  }, [form.remoteWorkDir, setupLocked, windowsShellProfile]);
 
   const handleExperimentDirChange = useCallback((value: string) => {
     if (setupLocked) {
@@ -346,13 +351,13 @@ export function AutoResearchSetupModal() {
         defaultPath: experimentDir || undefined,
       });
       if (typeof selection === 'string' && selection.length > 0) {
-        setExperimentDir(selection);
+        setExperimentDir(normalizePathForWindowsShellSelection(selection, windowsShellProfile));
       }
     } catch {
       // User cancelled the dialog or the platform doesn't support it;
       // fall back to manual text input.
     }
-  }, [experimentDir, setupLocked]);
+  }, [experimentDir, setupLocked, windowsShellProfile]);
 
   const handleResetToDefaults = useCallback(() => {
     if (setupLocked) {
@@ -411,7 +416,7 @@ export function AutoResearchSetupModal() {
         initSession,
       });
       setShowSetupModal(false);
-      setAgentPanelTab('autoresearch');
+      setCurrentView('autoresearch');
     } catch (error) {
       setSubmitError(logAutoResearchSetupFailure('modal-start', error, {
         mode: validation.value.sshConfig.mode,
@@ -421,7 +426,7 @@ export function AutoResearchSetupModal() {
     } finally {
       setIsStarting(false);
     }
-  }, [agentConfigError, baselineInput, direction, experimentDir, form, initSession, lifecycleLock, maxIter, metric, setAgentPanelTab, setLastUsedConfig, setShowSetupModal, setSshConfig, setupLocked]);
+  }, [agentConfigError, baselineInput, direction, experimentDir, form, initSession, lifecycleLock, maxIter, metric, setCurrentView, setLastUsedConfig, setShowSetupModal, setSshConfig, setupLocked]);
 
   const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -430,8 +435,8 @@ export function AutoResearchSetupModal() {
 
   const handleBootstrapReady = useCallback(() => {
     setShowSetupModal(false);
-    setAgentPanelTab('autoresearch');
-  }, [setAgentPanelTab, setShowSetupModal]);
+    setCurrentView('autoresearch');
+  }, [setCurrentView, setShowSetupModal]);
 
   if (!showSetupModal) return null;
 
@@ -522,7 +527,7 @@ export function AutoResearchSetupModal() {
                   {t('autoresearch.loadingBootstrap')}
                 </div>
               }>
-                <BootstrapChatView onReady={handleBootstrapReady} />
+                <BootstrapChatView onReady={handleBootstrapReady} sshConfig={form} />
               </Suspense>
             )}
           </div>

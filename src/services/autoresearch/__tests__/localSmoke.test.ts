@@ -108,6 +108,7 @@ describe('local AutoResearch smoke', () => {
   });
 
   it('runs a minimal local iteration and writes smoke artifacts', async () => {
+    await fs.mkdir(projectTmpDir(), { recursive: true });
     const smokeRoot = process.env.AUTORESEARCH_SMOKE_ROOT
       || await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-local-smoke-'));
     const experimentDir = process.env.AUTORESEARCH_SMOKE_EXPERIMENT_DIR

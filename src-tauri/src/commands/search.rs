@@ -19,10 +19,10 @@ fn check_ripgrep() -> AppResult<String> {
     }
 
     // 2. Check in common cargo bin location
-    if let Ok(home) = std::env::var("HOME") {
-        let cargo_rg = format!("{}/.cargo/bin/rg", home);
-        if std::path::Path::new(&cargo_rg).exists() {
-            return Ok(cargo_rg);
+    if let Some(home) = dirs::home_dir() {
+        let cargo_rg = home.join(".cargo").join("bin").join("rg");
+        if cargo_rg.exists() {
+            return Ok(cargo_rg.to_string_lossy().to_string());
         }
     }
 

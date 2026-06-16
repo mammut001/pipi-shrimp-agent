@@ -26,6 +26,7 @@ export {
 
 // Export skill store
 export { useSkillStore } from './skillStore';
+export { useSessionGoalStore } from './sessionGoalStore';
 
 // Export artifacts store
 export { useArtifactsStore } from './artifactsStore';

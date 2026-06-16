@@ -29,6 +29,7 @@ describe('runDir', () => {
   let experimentDir: string;
 
   beforeEach(async () => {
+    await fs.mkdir(projectTmpDir(), { recursive: true });
     workDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-rundir-'));
     experimentDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-rundir-exp-'));
     installLocalInvokeMock(mockInvoke);

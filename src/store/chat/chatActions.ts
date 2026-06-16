@@ -45,6 +45,10 @@ import {
 import { handleToolBatchRequest } from './chatToolExecution';
 import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 import { getSessionProjectDir as resolveSessionProjectDir } from '@/utils/sessionFolders';
+import { t } from '@/i18n';
+import { useSessionGoalStore } from '@/store/sessionGoalStore';
+import { stripGoalMarkers } from '@/services/sessionGoal/goalEvaluator';
+import { decideGoalLoopAfterTurn, shouldRunGoalLoop } from '@/services/sessionGoal/goalLoop';
 
 export function shouldRemoveEmptyAssistantPlaceholder(message: Message | undefined): boolean {
   return Boolean(message && message.role === 'assistant' && !message.content && !message.reasoning);
@@ -359,6 +363,13 @@ export function createChatActionMethods({
         }
         await addMessage(userMessage);
 
+        const activeGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
+        if (activeGoal && activeGoal.status !== 'paused' && activeGoal.status !== 'completed' && !options?.goalLoopContinuation) {
+          useSessionGoalStore.getState().recordTrace(activeSessionId, 'user_turn', content);
+        } else if (activeGoal && options?.goalLoopContinuation) {
+          useSessionGoalStore.getState().recordTrace(activeSessionId, 'system', '自动续跑触发');
+        }
+
         if (!isPlanMode) {
           try {
             const {
@@ -514,6 +525,7 @@ export function createChatActionMethods({
           selection: useSettingsStore.getState().windowsShellProfile,
           workDir: sessionWorkDir,
         });
+        const sessionGoalContext = useSessionGoalStore.getState().getPromptContext(activeSessionId);
         const { systemPrompt } = buildPrompt(template?.sections || [], {
           agentInstructions: useUIStore.getState().agentInstructions,
           // Two-folder model: `workDir` here is the **Project Folder**
@@ -530,6 +542,7 @@ export function createChatActionMethods({
           shellProfileGuidance: shellProfileContext.shellProfileGuidance,
           originalQuery: '',
           browserResult: '',
+          ...sessionGoalContext,
         });
         const finalSystemPrompt = isPlanMode
           ? `${systemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
@@ -604,12 +617,53 @@ export function createChatActionMethods({
             }
           : undefined;
 
+        const displayContent = stripGoalMarkers(parsed.content);
+
         await get().updateLastMessage(
-          parsed.content,
+          displayContent,
           undefined,
           mergeReasoningParts(get().streamingReasoning, streamed.reasoning, parsed.reasoning),
           tokenUsage,
         );
+
+        if (activeGoal && displayContent.trim()) {
+          useSessionGoalStore.getState().recordTrace(activeSessionId, 'assistant_turn', displayContent);
+        }
+
+        const tokenDelta = (tokenUsage?.input_tokens ?? 0) + (tokenUsage?.output_tokens ?? 0);
+        if (activeGoal && shouldRunGoalLoop({ goalLoopContinuation: options?.goalLoopContinuation, isPlanMode })) {
+          const latestGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
+          if (latestGoal) {
+            useSessionGoalStore.getState().consumeTurnBudget(activeSessionId, tokenDelta);
+            const refreshedGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId)!;
+            const loopDecision = decideGoalLoopAfterTurn({
+              goal: refreshedGoal,
+              assistantContent: parsed.content,
+              tokenDelta,
+              isGoalLoopContinuation: options?.goalLoopContinuation,
+            });
+
+            useSessionGoalStore.getState().recordEvaluation(activeSessionId, loopDecision.evaluation);
+
+            if (loopDecision.action === 'complete') {
+              useSessionGoalStore.getState().completeGoal(activeSessionId, loopDecision.evaluation.evidence);
+              uiStore.addNotification('success', t('goal.completedToast'), activeSessionId);
+            } else if (loopDecision.action === 'budget_limited') {
+              useSessionGoalStore.getState().setStatus(activeSessionId, 'budget_limited');
+              useSessionGoalStore.getState().recordTrace(activeSessionId, 'system', '目标预算已用尽');
+              uiStore.addNotification('warning', t('goal.budgetLimitedToast'), activeSessionId);
+            } else if (loopDecision.action === 'blocked') {
+              useSessionGoalStore.getState().pauseGoal(activeSessionId);
+              uiStore.addNotification('info', t('goal.blockedToast'), activeSessionId);
+            } else if (loopDecision.action === 'continue' && loopDecision.continueMessage) {
+              queueMicrotask(() => {
+                void get().sendMessage(loopDecision.continueMessage!, activeSessionId, {
+                  goalLoopContinuation: true,
+                });
+              });
+            }
+          }
+        }
 
         if (tokenUsage) {
           const now = new Date();

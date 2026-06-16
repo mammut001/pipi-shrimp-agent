@@ -135,6 +135,17 @@ export function convertWindowsPathToWsl(path: string): string | null {
   return null;
 }
 
+export function normalizePathForWindowsShellSelection(
+  path: string,
+  selection: WindowsShellProfile,
+): string {
+  const resolution = resolveWindowsShellProfile(selection, path);
+  if (!resolution.isWindows || resolution.resolved !== 'wsl') {
+    return path;
+  }
+  return convertWindowsPathToWsl(path) ?? path;
+}
+
 export function buildShellProfilePromptContext(input: {
   selection: WindowsShellProfile;
   workDir?: string | null;

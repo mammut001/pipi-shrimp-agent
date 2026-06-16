@@ -34,6 +34,7 @@ const AUTO_EDIT_SAFE_TOOLS = new Set([
   'search_files',
   'glob_search',
   'grep_files',
+  'get_current_workspace',
   'write_file',
   'create_directory',
 ]);

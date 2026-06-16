@@ -43,6 +43,7 @@ import {
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
+import { normalizePathForWindowsShellSelection } from '@/utils/windowsShellProfile';
 import {
   logAutoResearchSetupFailure,
   parseOptionalBaseline,
@@ -301,9 +302,12 @@ function AutoResearchView() {
       defaultPath: setupForm.remoteWorkDir || undefined,
     });
     if (typeof selection === 'string') {
-      setSetupForm((current) => ({ ...current, remoteWorkDir: selection }));
+      setSetupForm((current) => ({
+        ...current,
+        remoteWorkDir: normalizePathForWindowsShellSelection(selection, windowsShellProfile),
+      }));
     }
-  }, [getLifecycleLockMessage, setupForm.remoteWorkDir, setupLocked]);
+  }, [getLifecycleLockMessage, setupForm.remoteWorkDir, setupLocked, windowsShellProfile]);
 
   const handlePickExperimentDir = useCallback(async () => {
     if (setupLocked) {
@@ -318,13 +322,13 @@ function AutoResearchView() {
         defaultPath: experimentDir || undefined,
       });
       if (typeof selection === 'string' && selection.length > 0) {
-        setExperimentDir(selection);
+        setExperimentDir(normalizePathForWindowsShellSelection(selection, windowsShellProfile));
       }
     } catch {
       // User cancelled the dialog or the platform doesn't support it;
       // fall back to manual text input.
     }
-  }, [experimentDir, getLifecycleLockMessage, setupLocked]);
+  }, [experimentDir, getLifecycleLockMessage, setupLocked, windowsShellProfile]);
 
   const handleShowSetup = useCallback(async () => {
     if (lifecycleLock.locked) {

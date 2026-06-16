@@ -62,7 +62,12 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**", "**/.pipi-shrimp/**"],
+      ignored: [
+        "**/src-tauri/**",
+        "**/.pipi-shrimp/**",
+        "**/__tests__/.tmp/**",
+        "**/.tmp/**"
+      ],
     },
   },
 }));

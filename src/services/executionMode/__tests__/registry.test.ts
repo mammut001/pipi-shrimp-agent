@@ -102,6 +102,7 @@ describe('executionMode/guards: tool allow-list per mode', () => {
 
   it('Agent mode allows shell but not browser / ssh', () => {
     expect(isToolAllowedForMode('agent', 'read_file')).toBe(true);
+    expect(isToolAllowedForMode('agent', 'get_current_workspace')).toBe(true);
     expect(isToolAllowedForMode('agent', 'write_file')).toBe(true);
     expect(isToolAllowedForMode('agent', 'execute_command')).toBe(true);
     expect(isToolAllowedForMode('agent', 'run_in_terminal')).toBe(true);

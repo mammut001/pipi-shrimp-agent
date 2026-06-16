@@ -15,6 +15,7 @@ describe('toolExecutionPolicy', () => {
   it('keeps auto-edits limited to the safe allowlist', () => {
     expect(canAutoApproveTool('auto-edits', 'write_file')).toBe(true);
     expect(canAutoApproveTool('auto-edits', 'create_directory')).toBe(true);
+    expect(canAutoApproveTool('auto-edits', 'get_current_workspace')).toBe(true);
     expect(canAutoApproveTool('auto-edits', 'execute_command')).toBe(false);
     expect(canAutoApproveTool('auto-edits', 'ssh_read_file')).toBe(false);
   });

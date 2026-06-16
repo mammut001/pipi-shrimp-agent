@@ -6,6 +6,64 @@ import type { SshConfig } from '@/store/autoresearchStore';
 
 const execFileAsync = promisify(execFile);
 
+type BashFlavor = 'git-bash' | 'wsl-bash';
+
+function detectBashFlavor(bashPath: string): BashFlavor {
+  const normalized = bashPath.toLowerCase();
+  return normalized.includes('git\\bin\\bash.exe') || normalized.includes('git/bin/bash.exe')
+    ? 'git-bash'
+    : 'wsl-bash';
+}
+
+function toPosixPath(value: string, flavor: BashFlavor): string {
+  const match = value.match(/^([a-zA-Z]):[\\/](.*)$/);
+  if (!match) {
+    return value.replace(/\\/g, '/');
+  }
+
+  const drive = match[1].toLowerCase();
+  const rest = match[2].replace(/\\/g, '/');
+  return flavor === 'git-bash'
+    ? `/${drive}/${rest}`
+    : `/mnt/${drive}/${rest}`;
+}
+
+function toWindowsPath(value: string): string {
+  const wslMatch = value.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
+  if (wslMatch) {
+    const drive = wslMatch[1].toUpperCase();
+    const rest = wslMatch[2].replace(/\//g, '\\');
+    return `${drive}:\\${rest}`;
+  }
+
+  const match = value.match(/^\/([a-zA-Z])\/(.*)$/);
+  if (!match) {
+    return value;
+  }
+
+  const drive = match[1].toUpperCase();
+  const rest = match[2].replace(/\//g, '\\');
+  return `${drive}:\\${rest}`;
+}
+
+function normalizeCommandForBash(command: string, flavor: BashFlavor): string {
+  if (process.platform !== 'win32') {
+    return command;
+  }
+
+  return command.replace(/[a-zA-Z]:[\\/][^'\r\n]*/g, (segment) => toPosixPath(segment, flavor));
+}
+
+function normalizeBashOutputForWindows(output: string): string {
+  if (process.platform !== 'win32' || !output) {
+    return output;
+  }
+
+  return output.replace(/(^|[\s'"])(\/[a-zA-Z]\/[^\s'"]*)/g, (full, prefix: string, candidate: string) => {
+    return `${prefix}${toWindowsPath(candidate)}`;
+  });
+}
+
 async function findBash(): Promise<string> {
   if (process.platform !== 'win32') return 'bash';
   if (process.env.GIT_INSTALL_ROOT) {
@@ -62,11 +120,20 @@ export function installLocalInvokeMock(mockInvoke: jest.Mock): void {
         const payload = (args.args as Record<string, unknown> | undefined) ?? args;
         try {
           const bashPath = await findBash();
-          const { stdout, stderr } = await execFileAsync(bashPath, ['-lc', String(payload.command ?? '')], {
+          const bashFlavor = detectBashFlavor(bashPath);
+          const cwd = typeof payload.workDir === 'string' && payload.workDir.trim().length > 0
+            ? String(payload.workDir)
+            : undefined;
+          const { stdout, stderr } = await execFileAsync(bashPath, ['-lc', normalizeCommandForBash(String(payload.command ?? ''), bashFlavor)], {
             encoding: 'utf8',
             maxBuffer: 10 * 1024 * 1024,
+            cwd,
           });
-          return { stdout, stderr, exit_code: 0 };
+          return {
+            stdout: normalizeBashOutputForWindows(stdout),
+            stderr: normalizeBashOutputForWindows(stderr),
+            exit_code: 0,
+          };
         } catch (error) {
           const execError = error as Error & {
             stdout?: string;
@@ -74,8 +141,8 @@ export function installLocalInvokeMock(mockInvoke: jest.Mock): void {
             code?: number;
           };
           return {
-            stdout: execError.stdout ?? '',
-            stderr: execError.stderr ?? execError.message,
+            stdout: normalizeBashOutputForWindows(execError.stdout ?? ''),
+            stderr: normalizeBashOutputForWindows(execError.stderr ?? execError.message),
             exit_code: execError.code ?? 1,
           };
         }

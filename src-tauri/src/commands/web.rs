@@ -388,7 +388,7 @@ async fn ensure_chrome_debug_process() -> Result<ChromeDebugLaunchOutcome, Strin
             return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」，软件会自动以调试模式启动它。".to_string());
         }
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "/tmp".to_string());
         let real_profile = format!("{}/Library/Application Support/Google/Chrome", home);
         let chrome_paths = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -470,7 +470,7 @@ async fn ensure_chrome_debug_process() -> Result<ChromeDebugLaunchOutcome, Strin
             return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」。".to_string());
         }
 
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "/tmp".to_string());
         let real_profile = format!("{}/.config/google-chrome", home);
 
         std::process::Command::new("google-chrome")

@@ -5,12 +5,14 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 jest.mock('@/i18n', () => ({
   t: (key: string) => key,
 }));
 
 jest.mock('../BootstrapChatView', () => ({
-  BootstrapChatView: ({ onReady }: { onReady?: () => void }) => {
+  BootstrapChatView: ({ onReady }: { onReady?: () => void; sshConfig?: any }) => {
     const [value, setValue] = useState('');
     return (
       <div>
@@ -67,8 +69,10 @@ describe('AutoResearchTabs', () => {
     const advancedButton = buttons.find((button) => button.textContent === 'autoresearch.tabs.advanced');
     const bootstrapInput = container.querySelector('[data-testid="bootstrap-input"]') as HTMLInputElement;
 
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+
     act(() => {
-      bootstrapInput.value = 'goal';
+      nativeInputValueSetter.call(bootstrapInput, 'goal');
       bootstrapInput.dispatchEvent(new Event('input', { bubbles: true }));
       bootstrapInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -79,7 +83,7 @@ describe('AutoResearchTabs', () => {
 
     const advancedInput = container.querySelector('[data-testid="advanced-input"]') as HTMLInputElement;
     act(() => {
-      advancedInput.value = 'workdir';
+      nativeInputValueSetter.call(advancedInput, 'workdir');
       advancedInput.dispatchEvent(new Event('input', { bubbles: true }));
       advancedInput.dispatchEvent(new Event('change', { bubbles: true }));
     });

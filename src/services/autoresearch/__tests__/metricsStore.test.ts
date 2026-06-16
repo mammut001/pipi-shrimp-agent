@@ -22,6 +22,7 @@ describe('metricsStore', () => {
   let workDir: string;
 
   beforeEach(async () => {
+    await fs.mkdir(projectTmpDir(), { recursive: true });
     workDir = await fs.mkdtemp(path.join(projectTmpDir(), 'autoresearch-metrics-'));
     installLocalInvokeMock(mockInvoke);
     await initGitRepo(workDir);

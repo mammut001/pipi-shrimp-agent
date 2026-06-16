@@ -121,11 +121,23 @@ Active shell profile: {{shellProfileLabel}}
 {{shellProfileGuidance}}`,
       },
 
+      // Layer 4: Session - Durable conversation goal (cached until goal changes)
+      {
+        id: 'session-goal',
+        label: 'Session Goal',
+        order: 41.5,
+        cacheable: true,
+        enabled: true,
+        category: 'session',
+        description: 'Per-session durable objective (Codex /goal-inspired)',
+        content: `{{sessionGoalBlock}}`,
+      },
+
       // Layer 4: Session - Project Core Memory (cached until core.md changes)
       {
         id: 'session-core-md',
         label: 'Project Core Memory',
-        order: 42,
+        order: 43,
         cacheable: true,
         enabled: true,
         category: 'session',

@@ -287,14 +287,14 @@ pub fn resolve_command_shell_for_platform(
             };
 
             let mut args = Vec::new();
-            if !resolved_wsl_cwd.is_empty() {
-                args.push("--cd".to_string());
-                args.push(resolved_wsl_cwd.clone());
-            }
             args.push("--".to_string());
             args.push("bash".to_string());
             args.push("-lc".to_string());
-            args.push(command.to_string());
+            if !resolved_wsl_cwd.is_empty() {
+                args.push(format!("cd '{}' && {}", resolved_wsl_cwd.replace("'", "'\\''"), command));
+            } else {
+                args.push(command.to_string());
+            }
 
             Ok(ShellCommandPlan {
                 requested_profile,
@@ -364,7 +364,7 @@ pub fn resolve_terminal_shell_for_platform(
             }))
         }
         ResolvedShellKind::Wsl => {
-            let resolved_wsl_cwd = match cwd {
+            let _resolved_wsl_cwd = match cwd {
                 Some(value) => convert_windows_path_to_wsl(value).ok_or_else(|| {
                     AppError::ProcessError(format!(
                         "Unable to convert '{}' into a WSL working directory. Switch the Windows shell profile to PowerShell or open the workspace inside WSL.",
@@ -375,10 +375,6 @@ pub fn resolve_terminal_shell_for_platform(
             };
 
             let mut args = Vec::new();
-            if !resolved_wsl_cwd.is_empty() {
-                args.push("--cd".to_string());
-                args.push(resolved_wsl_cwd);
-            }
             args.push("--".to_string());
             args.push("bash".to_string());
             args.push("-l".to_string());

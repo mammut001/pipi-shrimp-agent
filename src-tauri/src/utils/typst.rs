@@ -266,8 +266,8 @@ pub fn init_font_database() -> FontDatabase {
     let mut latin_loaded = false;
     for path in &times_new_roman_paths {
         let expanded_path =
-            if let Some(home) = std::env::var_os("HOME").filter(|_| path.starts_with('~')) {
-                std::path::PathBuf::from(home).join(&path[2..])
+            if let Some(home) = dirs::home_dir().filter(|_| path.starts_with('~')) {
+                home.join(&path[2..])
             } else {
                 std::path::PathBuf::from(path)
             };
@@ -309,8 +309,8 @@ pub fn init_font_database() -> FontDatabase {
     let mut cjk_loaded = 0usize;
     for path in cjk_font_paths {
         let expanded_path =
-            if let Some(home) = std::env::var_os("HOME").filter(|_| path.starts_with('~')) {
-                std::path::PathBuf::from(home).join(&path[2..])
+            if let Some(home) = dirs::home_dir().filter(|_| path.starts_with('~')) {
+                home.join(&path[2..])
             } else {
                 std::path::PathBuf::from(path)
             };

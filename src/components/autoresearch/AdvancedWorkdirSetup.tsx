@@ -31,6 +31,7 @@ import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
+import { normalizePathForWindowsShellSelection } from '@/utils/windowsShellProfile';
 import {
   logAutoResearchSetupFailure,
   parseOptionalBaseline,
@@ -57,6 +58,70 @@ type ConnectionTestState =
   | { status: 'testing'; output: string }
   | { status: 'success'; output: string }
   | { status: 'error'; output: string };
+
+/**
+ * Extract a human-readable SSH error from the raw stderr/stdout of a
+ * connection test. The raw output often contains WSL path warnings,
+ * generic "Command timed out" suffixes, and sshpass boilerplate that
+ * obscure the real failure reason.
+ *
+ * Priority order:
+ *   1. Known SSH error patterns (Connection refused, Permission denied, etc.)
+ *   2. Non-noise stderr lines
+ *   3. stdout fallback
+ *   4. Generic exit-code message
+ */
+function extractSshError(stderr: string, stdout: string, exitCode: number): string {
+  // Lines to ignore — they are informational, not errors.
+  const NOISE_PATTERNS = [
+    /^WSL will use a converted/i,
+    /^Avoid mixing WSL/i,
+    /^Command timed out after \d+ seconds$/i,
+    /^\s*$/,
+  ];
+
+  const isNoise = (line: string): boolean =>
+    NOISE_PATTERNS.some((pattern) => pattern.test(line.trim()));
+
+  // Split stderr into lines, filter noise, and look for SSH-specific errors.
+  const stderrLines = stderr.split('\n').filter((line) => !isNoise(line));
+
+  // Known SSH/sshpass error patterns — prefer these over raw output.
+  const SSH_ERROR_PATTERNS = [
+    /connection timed out/i,
+    /connection refused/i,
+    /no route to host/i,
+    /permission denied/i,
+    /host key verification failed/i,
+    /could not resolve hostname/i,
+    /network is unreachable/i,
+    /banner exchange/i,
+    /ssh_exchange_identification/i,
+    /kex_exchange_identification/i,
+    /port \d+ timed out/i,
+    /sshpass.*error/i,
+    /invalid password/i,
+  ];
+
+  for (const line of stderrLines) {
+    const trimmed = line.trim();
+    if (SSH_ERROR_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+      return trimmed;
+    }
+  }
+
+  // No recognized SSH pattern — return the first meaningful stderr line.
+  if (stderrLines.length > 0) {
+    return stderrLines.join('\n');
+  }
+
+  // Fall back to stdout or generic message.
+  if (stdout) {
+    return stdout;
+  }
+
+  return `Connection test failed (exit ${exitCode})`;
+}
 
 // AUDIT-FIX [audit-1-ar#7]: Strict schema validation + explicit password strip.
 // Two security/correctness concerns addressed here:
@@ -224,9 +289,12 @@ export function AdvancedWorkdirSetup() {
       defaultPath: setupForm.remoteWorkDir || undefined,
     });
     if (typeof selection === 'string') {
-      setSetupForm((current) => ({ ...current, remoteWorkDir: selection }));
+      setSetupForm((current) => ({
+        ...current,
+        remoteWorkDir: normalizePathForWindowsShellSelection(selection, windowsShellProfile),
+      }));
     }
-  }, [setupForm.remoteWorkDir]);
+  }, [setupForm.remoteWorkDir, windowsShellProfile]);
 
   const handlePickExperimentDir = useCallback(async () => {
     try {
@@ -236,13 +304,13 @@ export function AdvancedWorkdirSetup() {
         defaultPath: experimentDir || undefined,
       });
       if (typeof selection === 'string' && selection.length > 0) {
-        setExperimentDir(selection);
+        setExperimentDir(normalizePathForWindowsShellSelection(selection, windowsShellProfile));
       }
     } catch {
       // User cancelled the dialog or the platform doesn't support it;
       // fall back to manual text input.
     }
-  }, [experimentDir]);
+  }, [experimentDir, windowsShellProfile]);
 
   const handleShowSetup = useCallback(async () => {
     setSetupError(null);
@@ -279,7 +347,10 @@ export function AdvancedWorkdirSetup() {
       const result = await invoke<RawBashResult>('execute_bash', {
         args: {
           command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
-          timeoutSecs: 30,
+          // SSH ConnectTimeout is 10s (set in buildSshArgs), so 15s gives
+          // enough headroom for the connection to fail naturally while still
+          // surfacing the real SSH error instead of a generic timeout.
+          timeoutSecs: 15,
           windowsShellProfile,
         },
       });
@@ -287,7 +358,7 @@ export function AdvancedWorkdirSetup() {
       const stderr = (result.stderr || '').trim();
       const exitCode = result.exit_code ?? 0;
       if (exitCode !== 0) {
-        throw new Error(stderr || stdout || `connection test failed (exit ${exitCode})`);
+        throw new Error(extractSshError(stderr, stdout, exitCode));
       }
 
       const [unameLine = '', pwdLine = '', gitLine = ''] = stdout.split('\n');

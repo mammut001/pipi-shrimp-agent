@@ -4,6 +4,7 @@ import {
   applyWindowsShellProfileToArgsJson,
   convertWindowsPathToWsl,
   detectPathKind,
+  normalizePathForWindowsShellSelection,
   resolveWindowsShellProfile,
   withWindowsShellProfileArgs,
 } from '@/utils/windowsShellProfile';
@@ -39,6 +40,15 @@ describe('windowsShellProfile utilities', () => {
     expect(detectPathKind('\\\\wsl$\\Ubuntu\\home\\payton\\project')).toBe('wsl');
     expect(convertWindowsPathToWsl('C:\\Users\\Payton\\project')).toBe('/mnt/c/Users/Payton/project');
     expect(convertWindowsPathToWsl('\\\\wsl$\\Ubuntu\\home\\payton\\project')).toBe('/home/payton/project');
+  });
+
+  it('normalizes picked Windows paths for WSL selections', () => {
+    expect(
+      normalizePathForWindowsShellSelection('D:\\WSL\\Ubuntu\\pipishrimp', 'wsl'),
+    ).toBe('/mnt/d/WSL/Ubuntu/pipishrimp');
+    expect(
+      normalizePathForWindowsShellSelection('D:\\WSL\\Ubuntu\\pipishrimp', 'powershell'),
+    ).toBe('D:\\WSL\\Ubuntu\\pipishrimp');
   });
 
   it('injects windowsShellProfile into execute_command args only', () => {

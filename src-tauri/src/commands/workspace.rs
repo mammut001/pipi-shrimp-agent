@@ -234,9 +234,9 @@ pub fn list_pipi_shrimp_index(work_dir: String) -> AppResult<Vec<OutputFolder>> 
 /// This is used by the workflow engine to create isolated workspaces per run.
 #[tauri::command]
 pub fn create_workflow_run_directory(run_id: String) -> AppResult<String> {
-    let home = std::env::var("HOME")
-        .map_err(|e| AppError::FileError(format!("Cannot get HOME directory: {}", e)))?;
-    let base_dir = PathBuf::from(&home)
+    let home = dirs::home_dir()
+        .ok_or_else(|| AppError::FileError("Cannot get HOME directory".to_string()))?;
+    let base_dir = home
         .join("pipi-shrimp-agent")
         .join("workflows")
         .join(&run_id);
@@ -251,9 +251,9 @@ pub fn create_workflow_run_directory(run_id: String) -> AppResult<String> {
 /// For safety, only deletes directories inside the managed workflows root.
 #[tauri::command]
 pub fn delete_workflow_run_directory(path: String) -> AppResult<()> {
-    let home = std::env::var("HOME")
-        .map_err(|e| AppError::FileError(format!("Cannot get HOME directory: {}", e)))?;
-    let workflows_root = PathBuf::from(&home)
+    let home = dirs::home_dir()
+        .ok_or_else(|| AppError::FileError("Cannot get HOME directory".to_string()))?;
+    let workflows_root = home
         .join("pipi-shrimp-agent")
         .join("workflows");
 

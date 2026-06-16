@@ -124,6 +124,12 @@ function buildPermissionContext(
   };
 }
 
+function buildGetCurrentWorkspaceResult(workDir: string | null): string {
+  return workDir
+    ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
+    : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
+}
+
 function resolveToolStepStatus(
   content: string,
   fallbackFailed: boolean,
@@ -645,6 +651,13 @@ async function executeSerialTool(
     return { id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: normalizedToolArgs };
   }
 
+  if (tool.name === 'get_current_workspace') {
+    const toolResultContent = buildGetCurrentWorkspaceResult(workDir);
+    uiStore.updateTaskStep(tool.id, 'done');
+    resolveSessionTool(activeSessionId, tool.id, tool.name, 'done', toolResultContent, set, get);
+    return { id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: normalizedToolArgs };
+  }
+
   const hookResult = await deps.runPreToolUseHooks({
     toolName: tool.name,
     toolArgs: normalizedToolArgs,
@@ -755,11 +768,7 @@ async function executeSerialTool(
   let toolDidFail = false;
   let finalStatus: 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected' = 'done';
   try {
-    if (tool.name === 'get_current_workspace') {
-      toolResultContent = workDir
-        ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
-        : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
-    } else if (tool.name === 'agent_tool') {
+    if (tool.name === 'agent_tool') {
       toolResultContent = await executeAgentTool(tool, effectiveArgs, activeSessionId, workDir, deps);
       toolDidFail = toolResultContent.startsWith('Error:');
     } else if (isPipelineSingleInvokeTool(tool.name)) {

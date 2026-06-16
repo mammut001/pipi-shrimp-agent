@@ -15,6 +15,7 @@ import { startNewChatFlow } from '@/services/newChatFlow';
 import { buildImageDataUrl, fileToImageAttachment } from '@/services/vision/imageAttachments';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
+import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { useMCPStore } from '@/store/mcpStore';
 import { MCPChatButton, MCPDropdown } from '@/components/mcp';
 import { BrowserIntentConfirm } from './BrowserIntentConfirm';
@@ -129,7 +130,6 @@ export function ChatInput({
   const [browserIntentCandidate, setBrowserIntentCandidate] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [goalPopoverOpen, setGoalPopoverOpen] = useState(false);
-  const [sessionGoal, setSessionGoal] = useState<string>('');
   const [goalInputText, setGoalInputText] = useState<string>('');
   const goalPopoverRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -195,23 +195,29 @@ export function ChatInput({
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
   const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
+  const hydrateGoals = useSessionGoalStore((s) => s.hydrate);
+  const bindSessionGoal = useSessionGoalStore((s) => s.bindSession);
+  const setSessionObjective = useSessionGoalStore((s) => s.setObjective);
+  const clearSessionGoal = useSessionGoalStore((s) => s.clearGoal);
+  const sessionGoal = useSessionGoalStore((s) => (
+    currentSessionId ? s.goalsBySession[currentSessionId]?.objective ?? '' : ''
+  ));
 
-  // Load goal on session switch
+  useEffect(() => {
+    hydrateGoals();
+  }, [hydrateGoals]);
+
+  useEffect(() => {
+    bindSessionGoal(currentSessionId);
+  }, [bindSessionGoal, currentSessionId]);
+
+  // Load goal draft on session switch
   useEffect(() => {
     if (!currentSessionId) {
-      setSessionGoal('');
       setGoalInputText('');
       return;
     }
-    try {
-      const goals = JSON.parse(localStorage.getItem('pipi-shrimp-session-goals') || '{}');
-      const currentGoal = goals[currentSessionId] || '';
-      setSessionGoal(currentGoal);
-      setGoalInputText(currentGoal);
-    } catch {
-      setSessionGoal('');
-      setGoalInputText('');
-    }
+    setGoalInputText(useSessionGoalStore.getState().goalsBySession[currentSessionId]?.objective ?? '');
   }, [currentSessionId]);
 
   // Click outside to close goal popover
@@ -727,6 +733,7 @@ export function ChatInput({
               <button
                 type="button"
                 data-testid="goal-button"
+                data-goal-trigger="true"
                 onClick={() => {
                   setGoalPopoverOpen(!goalPopoverOpen);
                   if (!goalPopoverOpen) {
@@ -792,14 +799,7 @@ export function ChatInput({
                       type="button"
                       onClick={() => {
                         if (!currentSessionId) return;
-                        try {
-                          const goals = JSON.parse(localStorage.getItem('pipi-shrimp-session-goals') || '{}');
-                          delete goals[currentSessionId];
-                          localStorage.setItem('pipi-shrimp-session-goals', JSON.stringify(goals));
-                        } catch (e) {
-                          console.error('Failed to clear session goal:', e);
-                        }
-                        setSessionGoal('');
+                        clearSessionGoal(currentSessionId);
                         setGoalInputText('');
                         setGoalPopoverOpen(false);
                         addNotification('success', t('goal.clearSuccess'));
@@ -821,18 +821,11 @@ export function ChatInput({
                         onClick={() => {
                           if (!currentSessionId) return;
                           const trimmed = goalInputText.trim();
-                          try {
-                            const goals = JSON.parse(localStorage.getItem('pipi-shrimp-session-goals') || '{}');
-                            if (trimmed) {
-                              goals[currentSessionId] = trimmed;
-                            } else {
-                              delete goals[currentSessionId];
-                            }
-                            localStorage.setItem('pipi-shrimp-session-goals', JSON.stringify(goals));
-                          } catch (e) {
-                            console.error('Failed to save session goal:', e);
+                          if (trimmed) {
+                            setSessionObjective(currentSessionId, trimmed);
+                          } else {
+                            clearSessionGoal(currentSessionId);
                           }
-                          setSessionGoal(trimmed);
                           setGoalPopoverOpen(false);
                           addNotification('success', trimmed ? t('goal.saveSuccess') : t('goal.clearSuccess'));
                         }}

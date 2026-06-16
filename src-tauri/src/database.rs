@@ -1143,14 +1143,17 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             )?;
         }
         6 => {
-            // AUDIT-FIX [fix-7#1] — Same atomicity for V6.
-            conn.execute_batch(
-                "
-                BEGIN;
-                ALTER TABLE messages ADD COLUMN attachments TEXT;
-                COMMIT;
-                ",
-            )?;
+            // Add `attachments` column to `messages`.
+            //
+            // NOTE: Migration v1 already creates the `messages` table with an
+            // `attachments TEXT` column in its CREATE TABLE statement, *and*
+            // attempts `ALTER TABLE messages ADD COLUMN attachments TEXT` in its
+            // idempotent ALTER block. Consequently this migration is a no-op for
+            // any database that has ever run v1. We keep it for historical
+            // correctness (schema_version bookkeeping) but silently ignore the
+            // "duplicate column" error just like v1 does.
+            let _ = conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT", []);
+
             conn.execute(
                 "INSERT INTO schema_version (version, applied_at) VALUES (6, strftime('%s','now'))",
                 [],
@@ -1172,21 +1175,25 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
             //    paths for legacy sessions that may have already been
             //    deleted on disk.
             //
-            // Wrapped in a single transaction (matches the v3-v6
-            // atomicity guarantee) so a crash mid-migration doesn't
-            // leave the schema half-applied.
-            conn.execute_batch(
+            // NOTE: Some databases may already contain one or both v7
+            // columns due to an interrupted prototype build or a prior
+            // reconciliation pass that repaired the physical schema but
+            // did not advance `schema_version`. Keep the migration
+            // idempotent by tolerating duplicate-column errors, then
+            // backfill and record version 7 exactly once.
+            let _ = conn.execute("ALTER TABLE sessions ADD COLUMN project_dir TEXT", []);
+            let _ = conn.execute("ALTER TABLE sessions ADD COLUMN pipi_output_dir TEXT", []);
+            conn.execute(
                 "
-                BEGIN;
-                ALTER TABLE sessions ADD COLUMN project_dir TEXT;
-                ALTER TABLE sessions ADD COLUMN pipi_output_dir TEXT;
                 UPDATE sessions SET project_dir = work_dir
                     WHERE work_dir IS NOT NULL
-                      AND (project_dir IS NULL OR project_dir = '');
-                INSERT INTO schema_version (version, applied_at)
-                    VALUES (7, strftime('%s','now'));
-                COMMIT;
+                      AND (project_dir IS NULL OR project_dir = '')
                 ",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (7, strftime('%s','now'))",
+                [],
             )?;
         }
         _ => {

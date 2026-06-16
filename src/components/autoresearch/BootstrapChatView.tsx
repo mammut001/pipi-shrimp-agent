@@ -18,9 +18,13 @@ import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { BootstrapQuickStartCards } from './BootstrapQuickStartCards';
 import { BootstrapProgressRail } from './BootstrapProgressRail';
+import { runSshExec, runSshUpload } from '@/tools/impl/SshTool';
+import { shellEscapePath } from '@/utils/remoteExec';
+import { invoke } from '@tauri-apps/api/core';
 
 interface BootstrapChatViewProps {
   onReady?: () => void;
+  sshConfig?: SshConfig;
 }
 
 function guessMetricDirection(metricName: string): 'higher' | 'lower' {
@@ -63,7 +67,7 @@ function toHeadlessMessages(messages: Message[]) {
     }));
 }
 
-export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
+export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draftKey, setDraftKey] = useState('autoresearch-bootstrap-initial');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -103,24 +107,86 @@ export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
     bootstrappedAtRef.current = result.createdAt;
 
     const workDir = result.plan.scaffold.workDir;
-    const localConfig: SshConfig = {
-      mode: 'local',
-      host: '',
-      user: 'root',
-      keyPath: '',
-      port: 22,
-      remoteWorkDir: workDir,
-      authMode: 'agent',
-      password: '',
-    };
+    const isSshMode = sshConfig && sshConfig.mode === 'ssh';
+    
+    // Determine the directory name and target paths
+    const folderName = workDir.split(/[\\/]/).filter(Boolean).pop() || 'bootstrap-project';
+    const remoteWorkDir = isSshMode
+      ? `${sshConfig.remoteWorkDir || '~/autoresearch'}/${folderName}`
+      : workDir;
+
+    const targetConfig: SshConfig = isSshMode
+      ? {
+          ...sshConfig,
+          remoteWorkDir,
+        }
+      : {
+          mode: 'local',
+          host: '',
+          user: 'root',
+          keyPath: '',
+          port: 22,
+          remoteWorkDir: workDir,
+          authMode: 'agent',
+          password: '',
+        };
+
     const baseline = resolveBaselineValue(result.plan.baselines, result.plan.primaryMetric);
     const direction = guessMetricDirection(result.plan.primaryMetric);
     const autoResearchState = useAutoResearchStore.getState();
 
     try {
+      if (isSshMode) {
+        // 1. Create remote workspace directory
+        await runSshExec({
+          ...sshConfig,
+          command: `mkdir -p ${shellEscapePath(remoteWorkDir)}`,
+        });
+
+        // 2. Upload scaffold files
+        for (const file of result.plan.scaffold.files) {
+          const localFilePath = `${workDir}/${file.path}`;
+          const remoteFilePath = `${remoteWorkDir}/${file.path}`;
+
+          // Read local file content
+          const localFileResponse = await invoke<{ content: string }>('read_file', {
+            path: localFilePath,
+            workDir: null,
+          });
+
+          // Upload to remote
+          await runSshUpload({
+            ...sshConfig,
+            content: localFileResponse.content,
+            remotePath: remoteFilePath,
+          });
+        }
+
+        // 3. Upload bootstrap plan JSON
+        const remoteBootstrapResultPath = `${remoteWorkDir}/.pipi-shrimp/autoresearch.bootstrap.json`;
+        await runSshUpload({
+          ...sshConfig,
+          content: JSON.stringify(result, null, 2),
+          remotePath: remoteBootstrapResultPath,
+        });
+
+        // 4. Initialize Git on remote
+        await runSshExec({
+          ...sshConfig,
+          command: [
+            `cd ${shellEscapePath(remoteWorkDir)}`,
+            `git init`,
+            `git config user.name "AutoResearch"`,
+            `git config user.email "autoresearch@local"`,
+            `git add -A`,
+            `git commit --allow-empty -m "Initial bootstrap scaffold"`,
+          ].join('\n'),
+        });
+      }
+
       const started = await startAutoResearchRun({
-        sshConfig: localConfig,
-        experimentDir: workDir,
+        sshConfig: targetConfig,
+        experimentDir: remoteWorkDir,
         metric: result.plan.primaryMetric,
         direction,
         iterations: 50,
@@ -158,21 +224,21 @@ export function BootstrapChatView({ onReady }: BootstrapChatViewProps) {
         status: 'running',
         startTime: Date.now(),
         agents: [],
-        runDirectory: workDir,
+        runDirectory: isSshMode ? remoteWorkDir : workDir,
         currentIteration: 0,
         goalEvaluations: [],
         reachedGoal: false,
       });
 
-      setHandoffSummary(`${result.plan.primaryMetric} · ${workDir}`);
+      setHandoffSummary(`${result.plan.primaryMetric} · ${isSshMode ? remoteWorkDir : workDir}`);
       onReady?.();
     } catch (handoffError) {
       setError(logAutoResearchSetupFailure('bootstrap-handoff', handoffError, {
-        workDir,
+        workDir: isSshMode ? remoteWorkDir : workDir,
         metric: result.plan.primaryMetric,
       }));
     }
-  }, [onReady]);
+  }, [onReady, sshConfig]);
 
   const handleToolResult = useCallback(async (name: string, result: string) => {
     if (name === 'baseline_extract') {

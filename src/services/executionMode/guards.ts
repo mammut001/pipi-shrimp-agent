@@ -22,6 +22,7 @@ const READ_ONLY_TOOLS = new Set([
   'search_files',
   'glob_search',
   'grep_files',
+  'get_current_workspace',
 ]);
 
 const SHELL_TOOLS = new Set([
