@@ -155,6 +155,26 @@ describe('runDir', () => {
     });
   });
 
+  it('escapes shell variables before local WSL execution so bash sees them', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'wsl' });
+    const cfg = createLocalSshConfig(workDir);
+
+    await expect(executeTargetCommand(cfg, 'printf "$HOME"', 30)).resolves.toEqual(
+      expect.objectContaining({
+        exit_code: 0,
+      }),
+    );
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_bash', {
+      args: expect.objectContaining({
+        command: 'printf "\\$HOME"',
+        workDir: workDir,
+        timeoutSecs: 30,
+        windowsShellProfile: 'wsl',
+      }),
+    });
+  });
+
   it('falls back to /tmp when a local AutoResearch helper clears the workdir', async () => {
     useSettingsStore.setState({ windowsShellProfile: 'wsl' });
     const cfg = createLocalSshConfig('');

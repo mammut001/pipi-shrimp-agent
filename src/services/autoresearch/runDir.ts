@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SshConfig } from '@/store/autoresearchStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { buildRemoteBashCommand, shellEscape, shellEscapePath } from '@/utils/remoteExec';
+import { resolveWindowsShellProfile } from '@/utils/windowsShellProfile';
 import { INFRASTRUCTURE_ERROR_MARKER } from './errors';
 
 interface RawBashResult {
@@ -37,6 +38,12 @@ export interface SessionRunPaths {
 
 const SNAPSHOT_EXCLUDES = ['.git', 'node_modules', 'target', 'runs'] as const;
 const DEFAULT_LOCAL_COMMAND_CWD = '/tmp';
+
+function escapeDollarsForLocalWsl(command: string): string {
+  // Preserve bash-side variable expansion when the command is routed through
+  // `wsl.exe -- bash -lc ...` on Windows.
+  return command.replace(/(?<!\\)\$/g, '\\$');
+}
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/[\\/]+$/, '');
@@ -164,6 +171,10 @@ export async function executeTargetCommand(
 ): Promise<RawBashResult> {
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
   const isLocalTarget = cfg.mode === 'local';
+  const shellResolution = resolveWindowsShellProfile(windowsShellProfile, cfg.remoteWorkDir);
+  const effectiveCommand = isLocalTarget && shellResolution.isWindows && shellResolution.resolved === 'wsl'
+    ? escapeDollarsForLocalWsl(command)
+    : command;
   // AUDIT-FIX [audit-2-ar#5]: Process-group trap for remote child cleanup.
   // For remote targets, wrap the user command in a process-group + trap
   // shell so that when the Rust-side timeout fires and the SSH wrapper
@@ -175,8 +186,8 @@ export async function executeTargetCommand(
   // The local target keeps the raw command — process-group semantics on
   // Windows differ and Tauri Rust already handles local child cleanup.
   const finalCommand = isLocalTarget
-    ? command
-    : `set -e\ntrap 'kill -TERM -$$ 2>/dev/null || true; wait 2>/dev/null || true; exit 143' TERM INT\n${command}\ntrap - TERM INT`;
+    ? effectiveCommand
+    : `set -e\ntrap 'kill -TERM -$$ 2>/dev/null || true; wait 2>/dev/null || true; exit 143' TERM INT\n${effectiveCommand}\ntrap - TERM INT`;
   try {
     return await invoke<RawBashResult>('execute_bash', {
       args: {

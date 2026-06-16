@@ -234,6 +234,18 @@ export function AdvancedWorkdirSetup() {
   const statusMessage = selectedRunContext.statusMessage;
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
 
+  const handleViewActiveRun = useCallback(() => {
+    const targetRunId = activeRunId || selectedRun?.id || sortedRuns[0]?.id;
+    if (!targetRunId) {
+      return;
+    }
+    selectRun(targetRunId);
+    setSelectedExperiment(-1);
+    setSetupError(null);
+    setShowSetup(false);
+    setShowRunList(false);
+  }, [activeRunId, selectRun, selectedRun?.id, setSelectedExperiment, sortedRuns]);
+
   useEffect(() => {
     const { password: _password, ...persisted } = setupForm;
     localStorage.setItem(AUTORESEARCH_CONFIG_STORAGE_KEY, JSON.stringify(persisted));
@@ -685,7 +697,18 @@ export function AdvancedWorkdirSetup() {
             />
             {setupError && setupError !== agentConfigError && (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
-                {setupError}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{setupError}</span>
+                  {activeRunId && (
+                    <button
+                      type="button"
+                      className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50"
+                      onClick={handleViewActiveRun}
+                    >
+                      查看运行详情
+                    </button>
+                  )}
+                </div>
               </div>
             )}
             <button

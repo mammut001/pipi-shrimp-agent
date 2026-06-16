@@ -226,6 +226,18 @@ function AutoResearchView() {
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
   const setupLocked = lifecycleLock.locked;
 
+  const handleViewActiveRun = useCallback(() => {
+    const targetRunId = activeRunId || selectedRun?.id || sortedRuns[0]?.id;
+    if (!targetRunId) {
+      return;
+    }
+    selectRun(targetRunId);
+    setSelectedExperiment(-1);
+    setSetupError(null);
+    setShowSetup(false);
+    setShowRunList(false);
+  }, [activeRunId, selectRun, selectedRun?.id, setSelectedExperiment, sortedRuns]);
+
   const getLifecycleLockMessage = useCallback((action: string) => (
     buildAutoResearchRunLockMessage(action, lifecycleLock)
   ), [lifecycleLock]);
@@ -535,7 +547,18 @@ function AutoResearchView() {
             <fieldset className="space-y-3" disabled={setupLocked || isStarting}>
               {setupLocked && (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  {getLifecycleLockMessage('change the setup')}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>{getLifecycleLockMessage('change the setup')}</span>
+                    {activeRunId && (
+                      <button
+                        type="button"
+                        className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+                        onClick={handleViewActiveRun}
+                      >
+                        查看运行详情
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
               <div className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50/70 px-3 py-2 text-xs text-neutral-700">
@@ -730,7 +753,18 @@ function AutoResearchView() {
               />
               {setupError && setupError !== agentConfigError && (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
-                  {setupError}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>{setupError}</span>
+                    {activeRunId && (
+                      <button
+                        type="button"
+                        className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50"
+                        onClick={handleViewActiveRun}
+                      >
+                        查看运行详情
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
               <button

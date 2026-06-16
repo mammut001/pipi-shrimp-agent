@@ -247,6 +247,16 @@ function buildRunRecordFromInit(opts: {
   livingDocPath?: string;
   baseline?: number | null;
   agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
+  preferredPythonCommand?: string;
+  repoStatus?: 'clean' | 'dirty';
+  dirtyFileCount?: number;
+  gpuTelemetryAvailable?: boolean;
+  gpuSummary?: string;
+  gpuTemperatureC?: number | null;
+  gpuFanSpeedPercent?: number | null;
+  gpuUtilizationPercent?: number | null;
+  gpuMemoryUsedMb?: number | null;
+  gpuMemoryTotalMb?: number | null;
 }): AutoResearchRunRecord {
   return {
     id: opts.id,
@@ -265,6 +275,16 @@ function buildRunRecordFromInit(opts: {
       direction: opts.metricDirection,
       iterations: opts.maxIterations,
       baseline: opts.baseline ?? null,
+      preferredPythonCommand: opts.preferredPythonCommand,
+      repoStatus: opts.repoStatus,
+      dirtyFileCount: opts.dirtyFileCount,
+      gpuTelemetryAvailable: opts.gpuTelemetryAvailable,
+      gpuSummary: opts.gpuSummary,
+      gpuTemperatureC: opts.gpuTemperatureC,
+      gpuFanSpeedPercent: opts.gpuFanSpeedPercent,
+      gpuUtilizationPercent: opts.gpuUtilizationPercent,
+      gpuMemoryUsedMb: opts.gpuMemoryUsedMb,
+      gpuMemoryTotalMb: opts.gpuMemoryTotalMb,
       configSnapshot: toHistoryConfigSnapshot(opts.agentConfigSnapshot),
     },
     currentIteration: 0,
@@ -389,6 +409,16 @@ interface AutoResearchStore extends ExperimentSession {
     livingDocPath?: string;
     baseline?: number | null;
     agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
+    preferredPythonCommand?: string;
+    repoStatus?: 'clean' | 'dirty';
+    dirtyFileCount?: number;
+    gpuTelemetryAvailable?: boolean;
+    gpuSummary?: string;
+    gpuTemperatureC?: number | null;
+    gpuFanSpeedPercent?: number | null;
+    gpuUtilizationPercent?: number | null;
+    gpuMemoryUsedMb?: number | null;
+    gpuMemoryTotalMb?: number | null;
     telegramConfig?: Partial<TelegramNotifyConfig>;
   }) => void;
   resetSession: () => void;
@@ -524,6 +554,16 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       livingDocPath: opts.livingDocPath,
       baseline: opts.baseline,
       agentConfigSnapshot: opts.agentConfigSnapshot,
+      preferredPythonCommand: opts.preferredPythonCommand,
+      repoStatus: opts.repoStatus,
+      dirtyFileCount: opts.dirtyFileCount,
+      gpuTelemetryAvailable: opts.gpuTelemetryAvailable,
+      gpuSummary: opts.gpuSummary,
+      gpuTemperatureC: opts.gpuTemperatureC,
+      gpuFanSpeedPercent: opts.gpuFanSpeedPercent,
+      gpuUtilizationPercent: opts.gpuUtilizationPercent,
+      gpuMemoryUsedMb: opts.gpuMemoryUsedMb,
+      gpuMemoryTotalMb: opts.gpuMemoryTotalMb,
     });
     nextRun.events = [
       createRunEvent(opts.id, {

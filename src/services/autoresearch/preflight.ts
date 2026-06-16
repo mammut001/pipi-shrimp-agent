@@ -131,6 +131,82 @@ function buildRecommendedRunCommand(preferredPythonCommand: string, metricName?:
   return `${preferredPythonCommand} run_experiment.py --primary-metric ${normalizedMetric}`;
 }
 
+async function probePreferredPythonCommand(cfg: SshConfig): Promise<string> {
+  const command = [
+    'preferred_python=""',
+    'for candidate in python3 python /usr/bin/python3 /usr/local/bin/python3 /bin/python3; do',
+    '  if "$candidate" -c \'import sys; print(sys.executable)\' >/dev/null 2>&1; then',
+    '    preferred_python="$candidate"',
+    '    break',
+    '  fi',
+    'done',
+    'printf \'%s\' "$preferred_python"',
+  ].join('\n');
+
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, command, 30);
+  if ((result.exit_code ?? 0) !== 0) {
+    return '';
+  }
+  return (result.stdout || '').trim();
+}
+
+async function probeGitRepository(cfg: SshConfig, experimentDir: string): Promise<{
+  gitRepo: boolean;
+  dirtyFileCount: number;
+}> {
+  const command = [
+    `repo=${shellEscape(experimentDir)}`,
+    'git_repo=0',
+    'dirty_file_count=0',
+    'if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
+    '  git_repo=1',
+    '  dirty_file_count="$(git -C "$repo" status --porcelain | wc -l | tr -d \' \')"',
+    'fi',
+    'printf \'git_repo\\t%s\\n\' "$git_repo"',
+    'printf \'dirty_file_count\\t%s\\n\' "$dirty_file_count"',
+  ].join('\n');
+
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, command, 30);
+  if ((result.exit_code ?? 0) !== 0) {
+    return { gitRepo: false, dirtyFileCount: 0 };
+  }
+
+  const values = new Map<string, string>();
+  for (const line of (result.stdout || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const [key, ...rest] = trimmed.split('\t');
+    values.set(key, rest.join('\t'));
+  }
+
+  const dirtyFileCount = Number.parseInt(values.get('dirty_file_count') || '0', 10);
+  return {
+    gitRepo: values.get('git_repo') === '1',
+    dirtyFileCount: Number.isFinite(dirtyFileCount) ? dirtyFileCount : 0,
+  };
+}
+
+async function probeWorktreeWritable(cfg: SshConfig, experimentDir: string): Promise<boolean> {
+  const command = [
+    `repo=${shellEscape(experimentDir)}`,
+    'probe_path="$repo/.autoresearch-write-probe-$$"',
+    'if touch "$probe_path" >/dev/null 2>&1; then',
+    '  rm -f "$probe_path" >/dev/null 2>&1 || true',
+    '  printf \'1\'',
+    'else',
+    '  printf \'0\'',
+    'fi',
+  ].join('\n');
+
+  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, command, 30);
+  if ((result.exit_code ?? 0) !== 0) {
+    return false;
+  }
+  return (result.stdout || '').trim() === '1';
+}
+
 function buildNotGitRepoMessage(experimentDir: string): string {
   return [
     t('autoresearch.preflight.notGitRepoTitle'),
@@ -174,21 +250,9 @@ function parseEnvironmentSummary(
   }
 
   const preferredPythonCommand = values.get('preferred_python') || '';
-  if (!preferredPythonCommand) {
-    throw new Error(
-      `AutoResearch target is missing python3/python in PATH: ${experimentDir}`,
-    );
-  }
-
   const gitRepo = values.get('git_repo') === '1';
-  if (!gitRepo) {
-    throw new Error(buildNotGitRepoMessage(experimentDir));
-  }
 
   const worktreeWritable = values.get('worktree_writable') === '1';
-  if (!worktreeWritable) {
-    throw new Error(`Experiment directory is not writable: ${experimentDir}`);
-  }
 
   const dirtyFileCount = Number.parseInt(values.get('dirty_file_count') || '0', 10);
   const parsedDirtyFileCount = Number.isFinite(dirtyFileCount) ? dirtyFileCount : 0;
@@ -246,11 +310,12 @@ export async function inspectAutoResearchEnvironment(
   const command = [
     `repo=${shellEscape(experimentDir)}`,
     'preferred_python=""',
-    'if command -v python3 >/dev/null 2>&1; then',
-    '  preferred_python="python3"',
-    'elif command -v python >/dev/null 2>&1; then',
-    '  preferred_python="python"',
-    'fi',
+    'for candidate in python3 python /usr/bin/python3 /usr/local/bin/python3 /bin/python3; do',
+    '  if "$candidate" -c \'import sys; print(sys.executable)\' >/dev/null 2>&1; then',
+    '    preferred_python="$candidate"',
+    '    break',
+    '  fi',
+    'done',
     'git_repo=0',
     'dirty_file_count=0',
     `if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
@@ -280,8 +345,47 @@ export async function inspectAutoResearchEnvironment(
   if ((result.exit_code ?? 0) !== 0) {
     throw new Error(result.stderr || `Failed to inspect experiment environment: ${experimentDir}`);
   }
+  const summary = parseEnvironmentSummary(result.stdout || '', experimentDir, metricName);
+  if (summary.preferredPythonCommand) {
+    if (summary.gitRepo && summary.worktreeWritable) {
+      return summary;
+    }
+  } else {
+    const fallbackPython = await probePreferredPythonCommand(cfg);
+    if (fallbackPython) {
+      summary.preferredPythonCommand = fallbackPython;
+      summary.recommendedRunCommand = buildRecommendedRunCommand(fallbackPython, metricName);
+    }
+  }
 
-  return parseEnvironmentSummary(result.stdout || '', experimentDir, metricName);
+  if (!summary.gitRepo) {
+    const fallbackGit = await probeGitRepository(cfg, experimentDir);
+    if (fallbackGit.gitRepo) {
+      summary.gitRepo = true;
+      summary.repoStatus = fallbackGit.dirtyFileCount > 0 ? 'dirty' : 'clean';
+      summary.dirtyFileCount = fallbackGit.dirtyFileCount;
+    }
+  }
+
+  if (!summary.worktreeWritable) {
+    summary.worktreeWritable = await probeWorktreeWritable(cfg, experimentDir);
+  }
+
+  if (!summary.preferredPythonCommand) {
+    throw new Error(
+      `AutoResearch target is missing python3/python in PATH: ${experimentDir}`,
+    );
+  }
+
+  if (!summary.gitRepo) {
+    throw new Error(buildNotGitRepoMessage(experimentDir));
+  }
+
+  if (!summary.worktreeWritable) {
+    throw new Error(`Experiment directory is not writable: ${experimentDir}`);
+  }
+
+  return summary;
 }
 
 export async function runAutoResearchPreflight(

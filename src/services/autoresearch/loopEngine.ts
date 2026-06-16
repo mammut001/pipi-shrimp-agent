@@ -235,7 +235,7 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 ## WORKSPACE CONTRACT
 - Per-iteration code lives in: ${iterationCodeDir} (already a clean git checkout)
 - Modify run_experiment.py in ${iterationCodeDir}, NOT in the original experiment dir
-- Run the experiment from ${iterationCodeDir} using "python3 run_experiment.py"
+- Run the experiment from ${iterationCodeDir} using "${environmentSummary.recommendedRunCommand}"
 - Write hypothesis.md, metrics.json, diff.patch into ${runDir.iterDir}/ (one level above code/)
 - The host will diff ${iterationCodeDir} vs the parent run's baseline to produce diff.patch
 - Do NOT touch the original experiment directory directly

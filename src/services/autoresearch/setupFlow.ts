@@ -58,6 +58,16 @@ interface StartCallbacks {
     livingDocPath?: string;
     baseline?: number | null;
     agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
+    preferredPythonCommand?: string;
+    repoStatus?: 'clean' | 'dirty';
+    dirtyFileCount?: number;
+    gpuTelemetryAvailable?: boolean;
+    gpuSummary?: string;
+    gpuTemperatureC?: number | null;
+    gpuFanSpeedPercent?: number | null;
+    gpuUtilizationPercent?: number | null;
+    gpuMemoryUsedMb?: number | null;
+    gpuMemoryTotalMb?: number | null;
   }) => void;
 }
 
@@ -307,6 +317,16 @@ export async function startAutoResearchRun(
     sessionFilePath: preflight.sessionFilePath,
     livingDocPath: preflight.livingDocPath,
     agentConfigSnapshot: runConfig.snapshot,
+    preferredPythonCommand: preflight.environmentSummary.preferredPythonCommand,
+    repoStatus: preflight.environmentSummary.repoStatus,
+    dirtyFileCount: preflight.environmentSummary.dirtyFileCount,
+    gpuTelemetryAvailable: preflight.environmentSummary.gpuTelemetryAvailable,
+    gpuSummary: preflight.environmentSummary.gpuSummary,
+    gpuTemperatureC: preflight.environmentSummary.gpuTemperatureC,
+    gpuFanSpeedPercent: preflight.environmentSummary.gpuFanSpeedPercent,
+    gpuUtilizationPercent: preflight.environmentSummary.gpuUtilizationPercent,
+    gpuMemoryUsedMb: preflight.environmentSummary.gpuMemoryUsedMb,
+    gpuMemoryTotalMb: preflight.environmentSummary.gpuMemoryTotalMb,
   });
   recordProjectAdaptationEvent(preflight);
 

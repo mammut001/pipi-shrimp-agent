@@ -101,6 +101,22 @@ function formatMetricValue(value: number | string | boolean | null | undefined):
   return String(value);
 }
 
+function formatGpuTemperature(value: number | null | undefined): string {
+  return typeof value === 'number' ? `${formatMetricValue(value)}C` : 'N/A';
+}
+
+function formatRepoStatusLabel(run: AutoResearchRunRecord): string {
+  if (!run.config.repoStatus) {
+    return 'N/A';
+  }
+  const dirtyFileCount = typeof run.config.dirtyFileCount === 'number'
+    ? run.config.dirtyFileCount
+    : null;
+  return dirtyFileCount === null
+    ? run.config.repoStatus
+    : `${run.config.repoStatus} (${dirtyFileCount} dirty)`;
+}
+
 function basename(path: string): string {
   const normalized = path.replace(/\\/g, '/');
   const parts = normalized.split('/').filter(Boolean);
@@ -423,6 +439,15 @@ export function AutoResearchDashboardView({
   const iterationCards = useMemo(() => buildAutoResearchIterationViewModels(run), [run]);
   const currentIterationCard = iterationCards.find((item) => item.iteration === run.currentIteration) || iterationCards[iterationCards.length - 1] || null;
   const recoverySummary = useMemo(() => buildAutoResearchRecoverySummary(run), [run]);
+  const gpuTemperatureTone = typeof run.config.gpuTemperatureC === 'number'
+    ? run.config.gpuTemperatureC >= 85
+      ? 'error'
+      : run.config.gpuTemperatureC >= 75
+        ? 'warn'
+        : 'good'
+    : run.config.gpuTelemetryAvailable === false
+      ? 'neutral'
+      : 'warn';
   const currentPhaseLabel = formatPhaseLabel(run.currentPhase || currentIterationCard?.phase);
   const subtitle = [
     shortenRunId(run.id),
@@ -588,6 +613,14 @@ export function AutoResearchDashboardView({
                   <OverviewStatCard label="Best metric" value={formatMetricValue(run.bestMetricValue)} tone={typeof run.bestMetricValue === 'number' ? 'good' : 'neutral'} />
                   <OverviewStatCard label="Best iteration" value={run.bestIteration ?? 'N/A'} />
                   <OverviewStatCard label="Failures" value={run.failureCount} tone={run.failureCount > 0 ? 'warn' : 'neutral'} />
+                  <OverviewStatCard label="Python" value={run.config.preferredPythonCommand || 'N/A'} tone={run.config.preferredPythonCommand ? 'good' : 'neutral'} />
+                  <OverviewStatCard label="Git state" value={formatRepoStatusLabel(run)} tone={run.config.repoStatus === 'clean' ? 'good' : run.config.repoStatus === 'dirty' ? 'warn' : 'neutral'} />
+                  <OverviewStatCard label="GPU temperature" value={formatGpuTemperature(run.config.gpuTemperatureC)} tone={gpuTemperatureTone} />
+                  <OverviewStatCard
+                    label="GPU telemetry"
+                    value={run.config.gpuSummary || (run.config.gpuTelemetryAvailable === false ? 'Unavailable' : 'N/A')}
+                    tone={run.config.gpuSummary ? 'good' : 'neutral'}
+                  />
                 </div>
               </section>
 

@@ -1,6 +1,7 @@
 const mockExecuteTargetCommand = jest.fn();
 const mockPathExistsOnTarget = jest.fn();
 const mockTestResolvedChatConnection = jest.fn();
+const mockEnsureAutoResearchProjectReady = jest.fn();
 
 jest.mock('@/i18n', () => ({
   getCurrentLocale: () => 'en-US',
@@ -35,6 +36,10 @@ jest.mock('../runDir', () => ({
   pathExistsOnTarget: (...args: unknown[]) => mockPathExistsOnTarget(...args),
 }));
 
+jest.mock('../projectAdapter', () => ({
+  ensureAutoResearchProjectReady: (...args: unknown[]) => mockEnsureAutoResearchProjectReady(...args),
+}));
+
 jest.mock('@/services/resolvedChatRequest', () => ({
   testResolvedChatConnection: (...args: unknown[]) => mockTestResolvedChatConnection(...args),
 }));
@@ -61,6 +66,7 @@ describe('runAutoResearchPreflight', () => {
     mockExecuteTargetCommand.mockReset();
     mockPathExistsOnTarget.mockReset();
     mockTestResolvedChatConnection.mockReset();
+    mockEnsureAutoResearchProjectReady.mockReset();
     useSettingsStore.setState({ windowsShellProfile: 'auto' });
     mockTestResolvedChatConnection.mockResolvedValue({
       latencyMs: 42,
@@ -88,6 +94,15 @@ describe('runAutoResearchPreflight', () => {
         ].join('\n'),
         exit_code: 0,
       });
+    mockEnsureAutoResearchProjectReady.mockResolvedValue({
+      adapted: false,
+      actions: [],
+      inferredProjectType: 'unknown',
+      detectedEntryScript: null,
+      detectedCommand: null,
+      detectedNotebookFiles: [],
+      detectedResultFiles: [],
+    });
     mockPathExistsOnTarget.mockResolvedValue(true);
   });
 
@@ -198,6 +213,14 @@ describe('runAutoResearchPreflight', () => {
           'worktree_writable\t1',
         ].join('\n'),
         exit_code: 0,
+      })
+      .mockResolvedValueOnce({ stdout: '', exit_code: 0 })
+      .mockResolvedValueOnce({
+        stdout: [
+          'git_repo\t1',
+          'dirty_file_count\t0',
+        ].join('\n'),
+        exit_code: 0,
       });
 
     await expect(runAutoResearchPreflight({
@@ -218,6 +241,43 @@ describe('runAutoResearchPreflight', () => {
     })).rejects.toThrow('AutoResearch target is missing python3/python in PATH: /Users/demo/experiment');
   });
 
+  it('accepts an absolute python fallback when PATH lookup misses but the interpreter exists', async () => {
+    mockExecuteTargetCommand.mockReset();
+    mockExecuteTargetCommand
+      .mockResolvedValueOnce({ stdout: '/Users/demo', exit_code: 0 })
+      .mockResolvedValueOnce({
+        stdout: [
+          'preferred_python\t/usr/bin/python3',
+          'git_repo\t1',
+          'dirty_file_count\t0',
+          'worktree_writable\t1',
+        ].join('\n'),
+        exit_code: 0,
+      });
+
+    await expect(runAutoResearchPreflight({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/Users/demo/experiment',
+      workDir: '~/autoresearch',
+      sessionId: 'autoresearch-1',
+      agentConfig,
+    })).resolves.toEqual(expect.objectContaining({
+      environmentSummary: expect.objectContaining({
+        preferredPythonCommand: '/usr/bin/python3',
+        recommendedRunCommand: '/usr/bin/python3 run_experiment.py',
+      }),
+    }));
+  });
+
   it('surfaces a structured message when the experiment directory is not a git repository', async () => {
     mockExecuteTargetCommand.mockReset();
     mockExecuteTargetCommand
@@ -228,6 +288,13 @@ describe('runAutoResearchPreflight', () => {
           'git_repo\t0',
           'dirty_file_count\t0',
           'worktree_writable\t1',
+        ].join('\n'),
+        exit_code: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: [
+          'git_repo\t0',
+          'dirty_file_count\t0',
         ].join('\n'),
         exit_code: 0,
       });
@@ -259,6 +326,90 @@ describe('runAutoResearchPreflight', () => {
         expect(message).toContain('AUTORESEARCH.md');
       },
     );
+  });
+
+  it('accepts a git repository when the fallback probe succeeds', async () => {
+    mockExecuteTargetCommand.mockReset();
+    mockExecuteTargetCommand
+      .mockResolvedValueOnce({ stdout: '/Users/demo', exit_code: 0 })
+      .mockResolvedValueOnce({
+        stdout: [
+          'preferred_python\tpython3',
+          'git_repo\t0',
+          'dirty_file_count\t0',
+          'worktree_writable\t1',
+        ].join('\n'),
+        exit_code: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: [
+          'git_repo\t1',
+          'dirty_file_count\t0',
+        ].join('\n'),
+        exit_code: 0,
+      });
+
+    await expect(runAutoResearchPreflight({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/Users/demo/experiment',
+      workDir: '~/autoresearch',
+      sessionId: 'autoresearch-1',
+      agentConfig,
+    })).resolves.toEqual(expect.objectContaining({
+      environmentSummary: expect.objectContaining({
+        gitRepo: true,
+        repoStatus: 'clean',
+      }),
+    }));
+  });
+
+  it('accepts a writable experiment directory when the fallback write probe succeeds', async () => {
+    mockExecuteTargetCommand.mockReset();
+    mockExecuteTargetCommand
+      .mockResolvedValueOnce({ stdout: '/Users/demo', exit_code: 0 })
+      .mockResolvedValueOnce({
+        stdout: [
+          'preferred_python\tpython3',
+          'git_repo\t1',
+          'dirty_file_count\t0',
+          'worktree_writable\t0',
+        ].join('\n'),
+        exit_code: 0,
+      })
+      .mockResolvedValueOnce({
+        stdout: '1',
+        exit_code: 0,
+      });
+
+    await expect(runAutoResearchPreflight({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '~/autoresearch',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/Users/demo/experiment',
+      workDir: '~/autoresearch',
+      sessionId: 'autoresearch-1',
+      agentConfig,
+    })).resolves.toEqual(expect.objectContaining({
+      environmentSummary: expect.objectContaining({
+        worktreeWritable: true,
+      }),
+    }));
   });
 
   it('converts Windows local paths to WSL paths when the shell profile is WSL', async () => {

@@ -81,9 +81,13 @@ jest.mock('../AutoResearchDashboardMetricCard', () => ({
   AutoResearchDashboardMetricCard: () => React.createElement('div', null, 'Metric History'),
 }));
 
-jest.mock('@/services/autoresearch/demoRun', () => ({
-  isDemoRun: () => false,
-}));
+jest.mock('@/services/autoresearch/demoRun', () => {
+  const actual = jest.requireActual('@/services/autoresearch/demoRun') as typeof import('@/services/autoresearch/demoRun');
+  return {
+    ...actual,
+    isDemoRun: () => false,
+  };
+});
 
 let AutoResearchDashboardView: typeof import('../AutoResearchDashboardView').AutoResearchDashboardView;
 let container: HTMLDivElement;
@@ -105,6 +109,16 @@ function buildRun(): AutoResearchRunRecord {
       ...base.config,
       metric: 'accuracy',
       direction: 'higher',
+      preferredPythonCommand: 'python3',
+      repoStatus: 'clean',
+      dirtyFileCount: 0,
+      gpuTelemetryAvailable: true,
+      gpuSummary: 'temp=49C, fan=37%, util=41%, memory=1811/8192MB',
+      gpuTemperatureC: 49,
+      gpuFanSpeedPercent: 37,
+      gpuUtilizationPercent: 41,
+      gpuMemoryUsedMb: 1811,
+      gpuMemoryTotalMb: 8192,
       configSnapshot: {
         configId: 'cfg-openai',
         configName: 'Primary Config',
@@ -294,6 +308,9 @@ describe('AutoResearchDashboardView structured UX', () => {
     expect(text).toContain('Run Overview');
     expect(text).toContain('Current phase');
     expect(text).toContain('Structured AutoResearch Run');
+    expect(text).toContain('GPU temperature');
+    expect(text).toContain('49C');
+    expect(text).toContain('temp=49C, fan=37%, util=41%, memory=1811/8192MB');
     expect(text).toContain('Iteration 2');
     expect(text).toContain('Failure reason');
     expect(text).toContain('Schema drift in validation fixtures.');

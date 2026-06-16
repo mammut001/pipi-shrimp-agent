@@ -100,6 +100,16 @@ export interface AutoResearchRunConfig {
   direction: 'higher' | 'lower';
   iterations: number;
   baseline?: number | null;
+  preferredPythonCommand?: string;
+  repoStatus?: 'clean' | 'dirty';
+  dirtyFileCount?: number;
+  gpuTelemetryAvailable?: boolean;
+  gpuSummary?: string;
+  gpuTemperatureC?: number | null;
+  gpuFanSpeedPercent?: number | null;
+  gpuUtilizationPercent?: number | null;
+  gpuMemoryUsedMb?: number | null;
+  gpuMemoryTotalMb?: number | null;
   configSnapshot: AutoResearchConfigSnapshot;
 }
 
@@ -520,6 +530,16 @@ function normalizeRunRecord(record: unknown): AutoResearchRunRecord | null {
       direction: configRecord.direction === 'higher' ? 'higher' : 'lower',
       iterations: typeof configRecord.iterations === 'number' ? configRecord.iterations : 0,
       baseline: typeof configRecord.baseline === 'number' || configRecord.baseline === null ? configRecord.baseline : undefined,
+      preferredPythonCommand: sanitizeDisplayString(configRecord.preferredPythonCommand, MAX_CONFIG_VALUE_CHARS),
+      repoStatus: configRecord.repoStatus === 'dirty' ? 'dirty' : configRecord.repoStatus === 'clean' ? 'clean' : undefined,
+      dirtyFileCount: typeof configRecord.dirtyFileCount === 'number' ? configRecord.dirtyFileCount : undefined,
+      gpuTelemetryAvailable: typeof configRecord.gpuTelemetryAvailable === 'boolean' ? configRecord.gpuTelemetryAvailable : undefined,
+      gpuSummary: sanitizeDisplayString(configRecord.gpuSummary, MAX_SUMMARY_CHARS),
+      gpuTemperatureC: typeof configRecord.gpuTemperatureC === 'number' || configRecord.gpuTemperatureC === null ? configRecord.gpuTemperatureC : undefined,
+      gpuFanSpeedPercent: typeof configRecord.gpuFanSpeedPercent === 'number' || configRecord.gpuFanSpeedPercent === null ? configRecord.gpuFanSpeedPercent : undefined,
+      gpuUtilizationPercent: typeof configRecord.gpuUtilizationPercent === 'number' || configRecord.gpuUtilizationPercent === null ? configRecord.gpuUtilizationPercent : undefined,
+      gpuMemoryUsedMb: typeof configRecord.gpuMemoryUsedMb === 'number' || configRecord.gpuMemoryUsedMb === null ? configRecord.gpuMemoryUsedMb : undefined,
+      gpuMemoryTotalMb: typeof configRecord.gpuMemoryTotalMb === 'number' || configRecord.gpuMemoryTotalMb === null ? configRecord.gpuMemoryTotalMb : undefined,
       configSnapshot: normalizeConfigSnapshot(configRecord.configSnapshot),
     },
     currentIteration: typeof record.currentIteration === 'number' ? record.currentIteration : 0,
@@ -660,6 +680,20 @@ function compactRunRecord(record: AutoResearchRunRecord): AutoResearchRunRecord 
       direction: record.config.direction,
       iterations: record.config.iterations,
       baseline: record.config.baseline,
+      preferredPythonCommand: record.config.preferredPythonCommand
+        ? truncateString(record.config.preferredPythonCommand, MAX_CONFIG_VALUE_CHARS)
+        : undefined,
+      repoStatus: record.config.repoStatus,
+      dirtyFileCount: record.config.dirtyFileCount,
+      gpuTelemetryAvailable: record.config.gpuTelemetryAvailable,
+      gpuSummary: record.config.gpuSummary
+        ? truncateString(record.config.gpuSummary, MAX_SUMMARY_CHARS)
+        : undefined,
+      gpuTemperatureC: record.config.gpuTemperatureC,
+      gpuFanSpeedPercent: record.config.gpuFanSpeedPercent,
+      gpuUtilizationPercent: record.config.gpuUtilizationPercent,
+      gpuMemoryUsedMb: record.config.gpuMemoryUsedMb,
+      gpuMemoryTotalMb: record.config.gpuMemoryTotalMb,
       configSnapshot: toHistoryConfigSnapshot(record.config.configSnapshot as AutoResearchAgentConfigSnapshot),
     },
     currentIteration: record.currentIteration,
