@@ -1,5 +1,5 @@
 /**
- * AutoResearch Page — Experiment monitoring & control dashboard.
+ * AutoResearch Page - Experiment monitoring & control dashboard.
  *
  * Layout: MainLayout with experiment timeline in center and detail panel on right.
  */
@@ -9,6 +9,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import { TerminalPanel } from '@/components';
+import {
+  AutoResearchActiveRunBanner,
+  AutoResearchInlineHint,
+  AutoResearchMetricSummary,
+  AutoResearchPathSummary,
+  AutoResearchReadinessRow,
+  AutoResearchRunHistoryCard,
+  AutoResearchSummaryItem,
+  AutoResearchTargetSummary,
+} from '@/components/autoresearch/AutoResearchSetupHelpers';
 import { AutoResearchTabs } from '@/components/autoresearch/AutoResearchTabs';
 import { AutoResearchRunDetailDocument } from '@/components/autoresearch/AutoResearchRunDetailDocument';
 import { MainLayout } from '@/layout';
@@ -42,7 +52,6 @@ import {
 } from '@/services/autoresearch/runLock';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
-import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 import { normalizePathForWindowsShellSelection } from '@/utils/windowsShellProfile';
 import {
   logAutoResearchSetupFailure,
@@ -50,12 +59,6 @@ import {
   startAutoResearchRun,
   validateAutoResearchSetupDraft,
 } from '@/services/autoresearch/setupFlow';
-
-function formatRunStatusLabel(status: NonNullable<ReturnType<typeof getSelectedAutoResearchRun>>['status']): string {
-  return status === 'reflection_failed'
-    ? t('autoresearch.statusReflectionFailed')
-    : status.replace(/_/g, ' ');
-}
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
 
@@ -84,15 +87,31 @@ function loadPersistedSetup(): SshConfig {
     password: '',
   };
 
+  const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
+  const asNumber = (value: unknown, fallbackNumber: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? value : fallbackNumber;
+  const asMode = (value: unknown): SshConfig['mode'] => (value === 'ssh' || value === 'local' ? value : 'local');
+  const asAuthMode = (value: unknown): SshConfig['authMode'] =>
+    value === 'agent' || value === 'password' || value === 'key' ? value : 'agent';
+
   try {
     const raw = localStorage.getItem(AUTORESEARCH_CONFIG_STORAGE_KEY);
     if (!raw) {
       return fallback;
     }
-    const parsed = JSON.parse(raw) as Partial<SshConfig>;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      return fallback;
+    }
+    const obj = parsed as Record<string, unknown>;
     return {
-      ...fallback,
-      ...parsed,
+      mode: asMode(obj.mode),
+      host: asString(obj.host),
+      user: asString(obj.user) || 'root',
+      keyPath: asString(obj.keyPath),
+      port: asNumber(obj.port, 22),
+      remoteWorkDir: asString(obj.remoteWorkDir) || defaults.workdir,
+      authMode: asAuthMode(obj.authMode),
       password: '',
     };
   } catch {
@@ -171,7 +190,7 @@ function ExperimentDetailPanel() {
         </div>
       )}
       <div className="text-xs text-gray-400">
-        {[entry.startedAt, entry.endedAt].filter(Boolean).join(' → ')}
+        {[entry.startedAt, entry.endedAt].filter(Boolean).join(' -> ')}
       </div>
     </div>
   );
@@ -219,12 +238,23 @@ function AutoResearchView() {
     : '';
   const lifecycleLock = useAutoResearchLifecycleLock();
   const displayRun = selectedRun;
+  const activeRun = useMemo(
+    () => (activeRunId ? sortedRuns.find((run) => run.id === activeRunId) ?? null : null),
+    [activeRunId, sortedRuns],
+  );
   const displayedLiveOutput = selectedRunContext.liveOutput;
   const displayReason = selectedRunContext.reason;
   const loopState = selectedRunContext.loopState;
   const statusMessage = selectedRunContext.statusMessage;
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
   const setupLocked = lifecycleLock.locked;
+  const providerReady = !agentConfigError;
+  const workdirReady = Boolean(setupForm.remoteWorkDir.trim());
+  const experimentDirReady = Boolean(experimentDir.trim());
+  const metricReady = Boolean(metric.trim());
+  const sshReady = setupForm.mode === 'local'
+    ? true
+    : Boolean(setupForm.host.trim() && setupForm.user.trim());
 
   const handleViewActiveRun = useCallback(() => {
     const targetRunId = activeRunId || selectedRun?.id || sortedRuns[0]?.id;
@@ -543,6 +573,14 @@ function AutoResearchView() {
             </p>
           </div>
 
+          {activeRun && (
+            <AutoResearchActiveRunBanner
+              run={activeRun}
+              onView={handleViewActiveRun}
+              onBrowseHistory={() => setShowRunList(true)}
+            />
+          )}
+
           <form className="space-y-3" onSubmit={handleSetupSubmit}>
             <fieldset className="space-y-3" disabled={setupLocked || isStarting}>
               {setupLocked && (
@@ -555,7 +593,7 @@ function AutoResearchView() {
                         className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100"
                         onClick={handleViewActiveRun}
                       >
-                        查看运行详情
+                        {t('autoresearch.viewActiveRun')}
                       </button>
                     )}
                   </div>
@@ -642,28 +680,36 @@ function AutoResearchView() {
                 </>
               )}
               {setupForm.mode === 'local' ? (
-                <div className="flex gap-2">
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+                      placeholder={t('autoresearch.localWorkDirPlaceholder')}
+                      value={setupForm.remoteWorkDir}
+                      onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
+                    />
+                    <button
+                      type="button"
+                      className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                      onClick={handlePickLocalWorkDir}
+                    >
+                      {t('autoresearch.chooseDirectory')}
+                    </button>
+                  </div>
+                  <AutoResearchPathSummary label={t('autoresearch.summaryWorkdir')} path={setupForm.remoteWorkDir} />
+                  <AutoResearchInlineHint>{t('autoresearch.workdirHelper')}</AutoResearchInlineHint>
+                </>
+              ) : (
+                <>
                   <input
-                    className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
-                    placeholder={t('autoresearch.localWorkDirPlaceholder')}
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+                    placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
                     value={setupForm.remoteWorkDir}
                     onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
                   />
-                  <button
-                    type="button"
-                    className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
-                    onClick={handlePickLocalWorkDir}
-                  >
-                    {t('autoresearch.chooseDirectory')}
-                  </button>
-                </div>
-              ) : (
-                <input
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
-                  placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
-                  value={setupForm.remoteWorkDir}
-                  onChange={e => setSetupForm(f => ({ ...f, remoteWorkDir: sanitizePathInput(e.target.value) }))}
-                />
+                  <AutoResearchPathSummary label={t('autoresearch.summaryWorkdir')} path={setupForm.remoteWorkDir} />
+                  <AutoResearchInlineHint>{t('autoresearch.workdirHelper')}</AutoResearchInlineHint>
+                </>
               )}
 
               <div className="flex gap-2">
@@ -682,6 +728,8 @@ function AutoResearchView() {
                   {t('autoresearch.chooseDirectory')}
                 </button>
               </div>
+              <AutoResearchPathSummary label={t('autoresearch.summaryExperimentDir')} path={experimentDir} />
+              <AutoResearchInlineHint>{t('autoresearch.experimentDirHelper')}</AutoResearchInlineHint>
 
               <button
                 type="button"
@@ -735,15 +783,17 @@ function AutoResearchView() {
                   <option value="higher">{t('autoresearch.higherIsBetter')}</option>
                 </select>
               </div>
+              <AutoResearchInlineHint>{t('autoresearch.metricHelper')}</AutoResearchInlineHint>
               <input
                 className={`w-full rounded-xl border bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 ${baselineInvalid ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-neutral-400'}`}
-                placeholder="Baseline (optional, e.g. 0.963284)"
+                placeholder={t('autoresearch.baselinePlaceholder')}
                 value={baselineInput}
                 onChange={e => setBaselineInput(e.target.value)}
               />
               {baselineInvalid && (
                 <div className="text-xs text-rose-500">{t('autoresearch.validationBaselineNumber')}</div>
               )}
+              <AutoResearchInlineHint>{t('autoresearch.baselineHelper')}</AutoResearchInlineHint>
               <input
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
                 placeholder={t('autoresearch.maxIterationsPlaceholder')}
@@ -751,6 +801,36 @@ function AutoResearchView() {
                 value={maxIter}
                 onChange={e => setMaxIter(buildAutoResearchDefaultConfig({ iterations: parseInt(e.target.value, 10) || 50 }).iterations)}
               />
+              <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
+                <AutoResearchReadinessRow label={t('autoresearch.check.provider')} ready={providerReady} />
+                <AutoResearchReadinessRow label={t('autoresearch.check.workdir')} ready={workdirReady} />
+                <AutoResearchReadinessRow label={t('autoresearch.check.experimentDir')} ready={experimentDirReady} />
+                <AutoResearchReadinessRow label={t('autoresearch.check.metric')} ready={metricReady} />
+                {setupForm.mode === 'ssh' && (
+                  <AutoResearchReadinessRow label={t('autoresearch.check.sshConnection')} ready={sshReady} />
+                )}
+                <AutoResearchInlineHint>{t('autoresearch.readiness.helper')}</AutoResearchInlineHint>
+              </div>
+              <div className="space-y-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+                <h5 className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500">{t('autoresearch.summaryTitle')}</h5>
+                <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                  <AutoResearchSummaryItem
+                    label={t('autoresearch.summaryTarget')}
+                    value={AutoResearchTargetSummary({
+                      mode: setupForm.mode,
+                      user: setupForm.user,
+                      host: setupForm.host,
+                    })}
+                  />
+                  <AutoResearchSummaryItem label={t('autoresearch.summaryWorkdir')} value={setupForm.remoteWorkDir || '—'} />
+                  <AutoResearchSummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
+                  <AutoResearchSummaryItem
+                    label={t('autoresearch.summaryMetric')}
+                    value={AutoResearchMetricSummary({ metric, direction })}
+                  />
+                  <AutoResearchSummaryItem label={t('autoresearch.summaryIterations')} value={String(maxIter)} />
+                </div>
+              </div>
               {setupError && setupError !== agentConfigError && (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -761,7 +841,7 @@ function AutoResearchView() {
                         className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50"
                         onClick={handleViewActiveRun}
                       >
-                        查看运行详情
+                        {t('autoresearch.viewActiveRun')}
                       </button>
                     )}
                   </div>
@@ -814,40 +894,43 @@ function AutoResearchView() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">AutoResearch</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">Run History</h2>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">{t('autoresearch.runHistoryTitle')}</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                {t('autoresearch.runHistoryHelper')}
+              </p>
             </div>
-            <button
-              onClick={() => { void handleShowSetup(); }}
-              className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
-            >
-              New Run
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {activeRun && (
+                <button
+                  type="button"
+                  onClick={handleViewActiveRun}
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+                >
+                  {t('autoresearch.viewActiveRun')}
+                </button>
+              )}
+              <button
+                onClick={() => { void handleShowSetup(); }}
+                className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
+              >
+                {t('autoresearch.newRun')}
+              </button>
+            </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {sortedRuns.map((run) => (
-              <button
+              <AutoResearchRunHistoryCard
                 key={run.id}
-                type="button"
+                run={run}
+                isSelected={displayRun?.id === run.id}
+                isActive={activeRunId === run.id}
                 onClick={() => {
                   selectRun(run.id);
                   setSelectedExperiment(-1);
                   setShowSetup(false);
                   setShowRunList(false);
                 }}
-                className={`rounded-2xl border bg-white p-4 text-left shadow-sm transition-colors ${
-                  displayRun?.id === run.id ? 'border-neutral-400 ring-2 ring-neutral-100' : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="rounded-full bg-[#dceeea] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
-                    {formatRunStatusLabel(run.status)}
-                  </span>
-                  <span className="font-mono text-[11px] text-gray-500">{run.currentIteration}/{run.config.iterations}</span>
-                </div>
-                <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-gray-900">{run.title}</h3>
-                <p className="mt-2 truncate text-xs text-gray-600">{run.config.metric} · {run.config.direction}</p>
-                <p className="mt-1 truncate text-xs text-gray-500">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</p>
-              </button>
+              />
             ))}
           </div>
         </div>

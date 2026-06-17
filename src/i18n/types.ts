@@ -1130,6 +1130,18 @@ export type TranslationKeys = {
   'autoresearch.summaryIterations': string;
   'autoresearch.summaryDirectionMinimize': string;
   'autoresearch.summaryDirectionMaximize': string;
+  'autoresearch.activeRun': string;
+  'autoresearch.viewActiveRun': string;
+  'autoresearch.browseHistory': string;
+  'autoresearch.runHistoryTitle': string;
+  'autoresearch.runHistoryHelper': string;
+  'autoresearch.newRun': string;
+  'autoresearch.badgeActive': string;
+  'autoresearch.labelIteration': string;
+  'autoresearch.labelPhase': string;
+  'autoresearch.labelUpdated': string;
+  'autoresearch.labelBest': string;
+  'autoresearch.labelExperiment': string;
   'autoresearch.preparing': string;
   'autoresearch.preparingStepValidating': string;
   'autoresearch.preparingStepChecking': string;

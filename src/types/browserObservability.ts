@@ -185,6 +185,50 @@ export interface BrowserBenchmarkReport {
   recent_samples: BrowserBenchmarkSample[];
 }
 
+/**
+ * Per-step timings from the native browser agent loop. These mirror the Rust
+ * `NativeAgentRunStats` shape so the TypeScript observability pipeline can
+ * serialize them with the same field names.
+ */
+export interface NativeAgentStepStat {
+  step: number;
+  engine: string;
+  url: string;
+  navigation_id: string;
+  observation_level: string;
+  observation_ms: number;
+  prompt_chars: number;
+  llm_ms: number;
+  action_name: string;
+  action_ms: number;
+  post_wait_ms: number;
+  screenshot_ms: number;
+  total_step_ms: number;
+  success: boolean;
+  error_code: string | null;
+  reused_cache: boolean;
+}
+
+export interface NativeAgentRunStatsPayload {
+  total_steps: number;
+  full_snapshots: number;
+  light_observations: number;
+  interactive_observations: number;
+  screenshots: number;
+  loop_detections: number;
+  malformed_responses: number;
+  llm_retries: number;
+  cache_hits: number;
+  cache_misses: number;
+  policy_approvals: number;
+  policy_denials: number;
+  average_step_ms: number | null;
+  slowest_step_ms: number | null;
+  total_runtime_ms: number;
+  outcome: string | null;
+  steps: NativeAgentStepStat[];
+}
+
 export interface BrowserBackendEvent {
   id: string;
   sequence: number;
@@ -206,6 +250,8 @@ export interface BrowserObservabilitySnapshotPayload {
   snapshot_cache: BrowserBackendSnapshotCacheState;
   last_activity_at_ms: number;
   idle_timeout_ms: number;
+  /** Optional per-step timings from the latest native agent run. */
+  native_run_stats?: NativeAgentRunStatsPayload | null;
 }
 
 export interface BrowserDebugSessionInfo {

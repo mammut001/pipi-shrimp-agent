@@ -8,7 +8,10 @@ use crate::browser::actions::{
     self, ActionContext, ClickInput, ElementReference, ExtractContentInput, GetTextContentInput,
     NavigateInput, PressKeyInput, ScrollInput, TypeTextInput, WaitInput,
 };
-use crate::browser::dom::PageState;
+use crate::browser::dom::{
+    capture_light_observation, capture_screenshot_with_options, LightObservation, PageState,
+    ScreenshotArtifact, ScreenshotOptions,
+};
 use crate::browser::failure_snapshot::{
     get_failure_snapshot, list_failure_snapshots, BrowserFailureSnapshot,
 };
@@ -17,6 +20,7 @@ use crate::browser::session::{BrowserConnectionState, BrowserSessionManager};
 use crate::utils::AppResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 pub struct BrowserController {
@@ -207,6 +211,44 @@ pub async fn get_page_state(
 ) -> Result<PageState, String> {
     let ctx = action_context(&state).await;
     action_result(actions::get_page_state(&ctx).await)
+}
+
+/// Cheap observation: URL, title, readyState, navigation id, a short text
+/// excerpt and the active element description. Avoids DOMSnapshot + AX so the
+/// agent loop can poll it every step without paying the full PageState cost.
+#[tauri::command]
+pub async fn get_page_observation_light(
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> Result<LightObservation, String> {
+    let manager = clone_manager_handle(&state).await;
+    let manager_guard = manager.lock().await;
+    let page = manager_guard
+        .page_cloned()
+        .ok_or("CDP 未连接")?;
+    capture_light_observation(&page, Duration::from_secs(5))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Capture a screenshot with explicit options (format, quality, max_width).
+/// Default behaviour matches the live-preview UI (JPEG, q=70, max_width=960,
+/// not full-page) so the frontend can poll this command on a slow cadence
+/// without bloating Zustand state.
+#[tauri::command]
+pub async fn browser_screenshot_options(
+    options: Option<ScreenshotOptions>,
+    state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
+) -> Result<ScreenshotArtifact, String> {
+    let manager = clone_manager_handle(&state).await;
+    let page = {
+        let manager_guard = manager.lock().await;
+        manager_guard.page_cloned().ok_or("CDP 未连接")?
+    };
+    let opts = options.unwrap_or_else(ScreenshotOptions::preview_default);
+    let bytes = capture_screenshot_with_options(&page, Duration::from_secs(15), opts)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(ScreenshotArtifact::from_inline(opts.format, &bytes))
 }
 
 #[tauri::command]

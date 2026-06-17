@@ -19,16 +19,25 @@ import {
   updateDiagnosticsTask,
 } from './taskRegistryStore';
 import { useUIStore } from './uiStore';
+import { useBrowserObservabilityStore } from './browserObservabilityStore';
 import {
   openEmbeddedSurface,
   closeEmbeddedSurface,
   executeAgentTask,
+  executeOnEmbeddedSurface,
   inspectEmbeddedSurface,
   captureScreenshot,
   setEmbeddedSurfaceVisibility,
   type AgentLog,
   type AgentTaskComplete,
 } from '../utils/browserCommands';
+import {
+  isBrowserPageAgentLegacyEnabled,
+  isBrowserVisionFallbackEnabled,
+  getBrowserLivePreviewIntervalMs,
+} from '../utils/browserFeatureFlags';
+import { resolveBrowserEngine } from '../utils/browserEngine';
+import type { BrowserAutomationEngine } from '../types/browserEngine';
 import { sendNotification, requestPermission, isPermissionGranted } from '@tauri-apps/plugin-notification';
 import type {
   BrowserSessionStatus,
@@ -59,6 +68,50 @@ import { clearPendingTimers } from './timerGuard';
 const formatTimestamp = (): string => {
   return new Date().toLocaleTimeString('zh-CN', { hour12: false });
 };
+
+/**
+ * Map a resolved engine into the legacy envelope `executionMode` value so the
+ * downstream dispatcher can stay backwards compatible with the older string
+ * switch. New code should read `resolveBrowserEngine(...)` directly instead.
+ */
+const engineToExecutionMode = (engine: BrowserAutomationEngine): 'cdp' | 'pageagent' => {
+  switch (engine) {
+    case 'cdp_native':
+      return 'cdp';
+    case 'legacy_page_agent':
+      return 'pageagent';
+    case 'vision_fallback':
+      // Until the vision runtime lands, vision callers still flow through the
+      // native loop; the engine tag is what differentiates them in logs.
+      return 'cdp';
+    default:
+      return 'cdp';
+  }
+};
+
+/**
+ * Decide which `executionMode` a brand-new envelope should default to. The
+ * default is CDP Native — page-agent WebView injection is opt-in only.
+ */
+const resolveExecutionMode = (): 'cdp' | 'pageagent' => {
+  if (isBrowserPageAgentLegacyEnabled()) {
+    return 'pageagent';
+  }
+  if (isBrowserVisionFallbackEnabled()) {
+    // Surface the user's intent even though we still run through CDP today.
+    return 'cdp';
+  }
+  return engineToExecutionMode(resolveBrowserEngine().engine);
+};
+
+/**
+ * Public guard so callers that explicitly want the legacy path can be told
+ * when it has been disabled. The agent store still routes through executeTask
+ * but the actual legacy call below will refuse to run unless this returns
+ * true. This keeps the store's surface area unchanged while preventing the
+ * default flow from injecting page-agent into the WebView.
+ */
+const isLegacyPathAllowed = (): boolean => isBrowserPageAgentLegacyEnabled();
 
 let _listenerRefCount = 0;
 let _listenerCleanup: (() => void) | null = null;
@@ -311,11 +364,12 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         }
       });
 
-      // Listen for screenshot events from the backend (dataUrl)
+      // Listen for screenshot events from the backend (dataUrl). Keep only
+      // the last few — large base64 PNGs accumulate fast and bloat Zustand.
       const unlistenScreenshot = await listen<{ dataUrl: string }>('screenshot_captured', (event) => {
         const url = event.payload?.dataUrl;
         if (typeof url === 'string' && url.length > 0) {
-          set((state) => ({ screenshots: [...state.screenshots, url].slice(-20) }));
+          set((state) => ({ screenshots: [...state.screenshots, url].slice(-5) }));
         }
       });
 
@@ -691,7 +745,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         executionPrompt: task,
         requiresLogin: false,
         authPolicy: 'none',
-        executionMode: 'pageagent',
+        executionMode: resolveExecutionMode(),
         allowedControlMode: get().mode,
       };
       get().bindTask(currentTask);
@@ -794,6 +848,51 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
           baseUrl: config.baseUrl,
           onLog: addLog,
           targetUrl,
+          onRunSummary: (summary) => {
+            try {
+              const obs = useBrowserObservabilityStore.getState();
+              obs.setNativeRunStats({
+                total_steps: summary.steps.length,
+                full_snapshots: summary.fullSnapshots,
+                light_observations: summary.lightObservations,
+                interactive_observations: summary.interactiveObservations,
+                screenshots: summary.screenshots,
+                loop_detections: summary.loopDetections,
+                malformed_responses: summary.malformedResponses,
+                llm_retries: summary.llmRetries,
+                cache_hits: summary.cacheHits,
+                cache_misses: summary.cacheMisses,
+                policy_approvals: summary.policyApprovals,
+                policy_denials: summary.policyDenials,
+                average_step_ms: summary.steps.length > 0
+                  ? Math.round(summary.steps.reduce((acc, step) => acc + step.totalStepMs, 0) / summary.steps.length)
+                  : null,
+                slowest_step_ms: summary.steps.reduce((max, step) => Math.max(max, step.totalStepMs), 0) || null,
+                total_runtime_ms: summary.totalMs,
+                outcome: summary.outcome,
+                steps: summary.steps.map((step) => ({
+                  step: step.step,
+                  engine: step.engine,
+                  url: step.url,
+                  navigation_id: step.navigationId,
+                  observation_level: step.observationLevel,
+                  observation_ms: step.observationMs,
+                  prompt_chars: step.promptChars,
+                  llm_ms: step.llmMs,
+                  action_name: step.actionName,
+                  action_ms: step.actionMs,
+                  post_wait_ms: step.postWaitMs,
+                  screenshot_ms: step.screenshotMs,
+                  total_step_ms: step.totalStepMs,
+                  success: step.success,
+                  error_code: step.errorCode ?? null,
+                  reused_cache: step.reusedCache,
+                })),
+              });
+            } catch (error) {
+              addLog('warning', `[NativeAgent] Failed to publish run summary: ${error}`);
+            }
+          },
         });
         addLog('success', t('browserAgent.log.cdpModeComplete').replace('{result}', resultText));
         const completedTaskId = get().pendingTask?.id || null;
@@ -808,8 +907,34 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         return;
       }
 
-      // PageAgent Tier: use embedded WebView (original logic)
+      // PageAgent Tier: use embedded WebView (original logic). The legacy
+      // engine is intentionally off by default — see isLegacyPathAllowed().
       addLog('info', t('browserAgent.log.startExecuting').replace('{task}', task.substring(0, 50) + (task.length > 50 ? '...' : '')));
+
+      if (!isLegacyPathAllowed()) {
+        // Legacy PageAgent is disabled. Fall back to the CDP Native path
+        // automatically so the user request still completes instead of
+        // silently failing. This keeps the store's surface stable while we
+        // deprecate the IIFE injection.
+        addLog('warning', '[LegacyPageAgent] Deprecated engine disabled by default; rerouting to CDP Native.');
+        const cdpResult = await executeCdpTask(task, config.apiKey, config.model || 'claude-3-5-sonnet-20241022', {
+          baseUrl: config.baseUrl,
+          onLog: addLog,
+          targetUrl: pendingTask?.targetUrl,
+        });
+        const cdpTaskId = get().pendingTask?.id || null;
+        if (cdpTaskId) {
+          updateDiagnosticsTask(cdpTaskId, {
+            state: 'completed',
+            cancelable: false,
+            detail: cdpResult || undefined,
+          });
+        }
+        set({ status: 'completed', lastCompletedTaskId: cdpTaskId, lastTaskResult: cdpResult || null });
+        return;
+      }
+
+      addLog('warning', '[LegacyPageAgent] This engine is deprecated and may be slower. Prefer CDP Native.');
 
       const pageAgentSystemPrompt = `You are a browser automation agent. You MUST only use the following actions — do not invent or use any other action names:
 - done: { text: string, success: boolean } — mark the task as complete
@@ -879,8 +1004,9 @@ Complete the task efficiently and call "done" when finished.`;
     });
     set({ lastTaskResult: null });
 
-    // Tiered dispatch: explicitly select execution engine based on executionMode
-    const mode = envelope.executionMode ?? 'pageagent';
+    // Tiered dispatch: explicitly select execution engine based on executionMode.
+    // Default to CDP Native — the legacy page-agent IIFE injection is opt-in only.
+    const mode = envelope.executionMode ?? resolveExecutionMode();
 
     if (mode === 'cdp') {
       // CDP Tier: connect to external Chrome, bypass embedded WebView
@@ -1225,8 +1351,9 @@ Complete the task efficiently and call "done" when finished.`;
 
   refreshScreenshot: (screenshot: string) => {
     const { screenshots } = get();
-    // Add new screenshot and keep only last 10
-    const newScreenshots = [...screenshots, screenshot].slice(-10);
+    // Add new screenshot and keep only last 5 — large base64 PNGs accumulate
+    // fast and bloat Zustand.
+    const newScreenshots = [...screenshots, screenshot].slice(-5);
     set({ screenshots: newScreenshots });
   },
 
@@ -1248,7 +1375,7 @@ Complete the task efficiently and call "done" when finished.`;
       } catch (e) {
         // Ignore screenshot errors during live preview
       }
-    }, 2000); // Update every 2 seconds
+    }, getBrowserLivePreviewIntervalMs()); // Update per flag (default 2s)
 
     set({ _screenshotInterval: interval });
   },

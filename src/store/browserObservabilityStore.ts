@@ -13,6 +13,7 @@ import type {
   BrowserPageStateSnapshot,
   BrowserSnapshotCacheEntry,
   BrowserSnapshotCacheState,
+  NativeAgentRunStatsPayload,
 } from '@/types/browserObservability';
 import { BROWSER_FEATURE_FLAG_KEYS, isBrowserDebugPanelEnabled } from '@/utils/browserFeatureFlags';
 
@@ -66,6 +67,7 @@ interface BrowserObservabilityState {
   latestPageState: BrowserPageStateSnapshot | null;
   snapshotCache: BrowserSnapshotCacheState;
   benchmarkReport: BrowserBenchmarkReport | null;
+  nativeRunStats: NativeAgentRunStatsPayload | null;
   failureSnapshots: BrowserFailureSnapshot[];
   activeFailureSnapshot: BrowserFailureSnapshot | null;
   failurePreviewSuppressed: boolean;
@@ -78,6 +80,7 @@ interface BrowserObservabilityState {
   finishCommand: (id: string, input: CommandFinishInput) => void;
   recordAction: (input: ActionInput) => void;
   setBenchmarkReport: (report: BrowserBenchmarkReport, source?: BrowserDebugSource) => void;
+  setNativeRunStats: (stats: NativeAgentRunStatsPayload | null) => void;
   syncSnapshotCache: (snapshotCache: BrowserSnapshotCacheState, source?: BrowserDebugSource) => void;
   syncSession: (patch: SessionPatch) => void;
   upsertPageState: (input: PageStateInput) => void;
@@ -257,6 +260,7 @@ const materializeState = (state: BrowserObservabilityState, source: BrowserDebug
       latestPageState: state.latestPageState,
       snapshotCache: state.snapshotCache,
       benchmarkReport: state.benchmarkReport,
+      nativeRunStats: state.nativeRunStats,
       failureSnapshots: state.failureSnapshots,
       activeFailureSnapshot: state.activeFailureSnapshot,
       dismissedFailureIds: state.dismissedFailureIds,
@@ -272,6 +276,7 @@ const materializeState = (state: BrowserObservabilityState, source: BrowserDebug
     latestPageState: state.latestPageState?.source === 'mock' ? null : state.latestPageState,
     snapshotCache: createEmptySnapshotCache(),
     benchmarkReport: state.benchmarkReport,
+    nativeRunStats: state.nativeRunStats,
     failureSnapshots: state.failureSnapshots,
     activeFailureSnapshot: state.activeFailureSnapshot,
     dismissedFailureIds: state.dismissedFailureIds,
@@ -289,6 +294,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
   latestPageState: null,
   snapshotCache: createEmptySnapshotCache(),
   benchmarkReport: null,
+  nativeRunStats: null,
   failureSnapshots: [],
   activeFailureSnapshot: null,
   failurePreviewSuppressed: false,
@@ -480,6 +486,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
         latestPageState: base.latestPageState,
         snapshotCache: base.snapshotCache,
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
         timeline: appendTimelineEvent(
           base.timeline,
           input.kind,
@@ -519,6 +526,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
         latestPageState: base.latestPageState,
         snapshotCache: base.snapshotCache,
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
         recentActions: base.recentActions,
         recentCommands: trimToSize([command, ...base.recentCommands], MAX_RECENT_COMMANDS),
         timeline: appendTimelineEvent(
@@ -565,6 +573,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
         latestPageState: base.latestPageState,
         snapshotCache: base.snapshotCache,
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
         recentCommands,
         timeline: appendTimelineEvent(
           base.timeline,
@@ -599,6 +608,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
         latestPageState: base.latestPageState,
         snapshotCache: base.snapshotCache,
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
         recentCommands: base.recentCommands,
         recentActions: trimToSize([action, ...base.recentActions], MAX_RECENT_ACTIONS),
         timeline: appendTimelineEvent(
@@ -626,8 +636,13 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
         latestPageState: base.latestPageState,
         snapshotCache: base.snapshotCache,
         benchmarkReport: report,
+        nativeRunStats: base.nativeRunStats,
       };
     });
+  },
+
+  setNativeRunStats: (stats) => {
+    set({ nativeRunStats: stats });
   },
 
   syncSnapshotCache: (snapshotCache, source = 'backend') => {
@@ -650,6 +665,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
           invalidationCount: snapshotCache.invalidationCount,
         },
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
       };
     });
   },
@@ -706,6 +722,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
         latestPageState: base.latestPageState,
         snapshotCache: base.snapshotCache,
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
       };
     });
   },
@@ -745,6 +762,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
           latestPageState: snapshot,
           snapshotCache,
           benchmarkReport: base.benchmarkReport,
+          nativeRunStats: base.nativeRunStats,
         };
       }
 
@@ -840,6 +858,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
         latestPageState: snapshot,
         snapshotCache,
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
       };
     });
   },
@@ -875,6 +894,7 @@ export const useBrowserObservabilityStore = create<BrowserObservabilityState>((s
           invalidationCount: base.snapshotCache.invalidationCount + 1,
         },
         benchmarkReport: base.benchmarkReport,
+        nativeRunStats: base.nativeRunStats,
         timeline: appendTimelineEvent(
           base.timeline,
           'snapshot_cache_invalidate',

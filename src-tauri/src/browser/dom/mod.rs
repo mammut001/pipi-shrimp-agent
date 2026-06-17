@@ -1,8 +1,16 @@
 pub mod accessibility;
+pub(crate) mod dom_extras;
+pub(crate) mod mod_atomic;
 pub mod interactive;
 pub mod merge;
 pub mod page_state;
 pub mod snapshot;
+
+pub use dom_extras::{
+    capture_light_observation, capture_screenshot_with_options, LightObservation,
+    ObservationLevelArg, ScreenshotArtifact, ScreenshotFormatArg, ScreenshotOptions,
+};
+pub use mod_atomic::{AtomicMs, TimingsRecorder};
 
 use std::time::Duration;
 

@@ -7,6 +7,7 @@ import type {
   BrowserObservabilitySnapshotPayload,
   BrowserPageElementPreview,
   BrowserPageWarning,
+  NativeAgentRunStatsPayload,
 } from '@/types/browserObservability';
 import { isBrowserPageStateV2Enabled } from '@/utils/browserFeatureFlags';
 import { getBrowserObservabilitySnapshot } from '@/utils/browserObservabilityClient';
@@ -463,6 +464,9 @@ const syncBackendObservability = async (reason: 'setup' | 'navigation' | 'browse
       lastBackendObservabilityError = null;
       useBrowserObservabilityStore.getState().syncSnapshotCache(toBackendSnapshotCacheState(snapshot.snapshot_cache), 'backend');
       useBrowserObservabilityStore.getState().setBenchmarkReport(snapshot.benchmark_report, 'backend');
+      if (snapshot.native_run_stats) {
+        useBrowserObservabilityStore.getState().setNativeRunStats(snapshot.native_run_stats);
+      }
 
       const nextEvents = snapshot.recent_events
         .filter((event) => event.sequence > lastBackendEventSequence)

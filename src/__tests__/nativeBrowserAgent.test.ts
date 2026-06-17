@@ -27,6 +27,28 @@ jest.mock('../utils/browserPageStateClient', () => ({
 jest.mock('../utils/browserFeatureFlags', () => ({
   isBrowserActionsV2Enabled: jest.fn(() => true),
   isBrowserPageStateV2Enabled: jest.fn(() => true),
+  isBrowserPageAgentLegacyEnabled: jest.fn(() => false),
+  isBrowserVisionFallbackEnabled: jest.fn(() => false),
+  getBrowserEngineDefault: jest.fn(() => 'cdp_native'),
+  getBrowserMaxAgentSteps: jest.fn(() => 30),
+  getBrowserLivePreviewIntervalMs: jest.fn(() => 2000),
+  getBrowserActionPermissionMode: jest.fn(() => 'auto_safe'),
+  isValidBrowserEngine: jest.fn(() => true),
+  isValidBrowserActionPermissionMode: jest.fn(() => true),
+  BROWSER_FEATURE_FLAG_KEYS: {
+    foundationV2: 'PIPI_BROWSER_FOUNDATION_V2',
+    pageStateV2: 'PIPI_BROWSER_PAGE_STATE_V2',
+    actionsV2: 'PIPI_BROWSER_ACTIONS_V2',
+    debugPanel: 'PIPI_BROWSER_DEBUG_PANEL',
+    engineDefault: 'PIPI_BROWSER_ENGINE_DEFAULT',
+    pageAgentLegacy: 'PIPI_BROWSER_PAGE_AGENT_LEGACY',
+    visionFallback: 'PIPI_BROWSER_VISION_FALLBACK',
+    lockSurfaceWhileRunning: 'PIPI_BROWSER_LOCK_SURFACE_WHILE_RUNNING',
+    livePreviewIntervalMs: 'PIPI_BROWSER_LIVE_PREVIEW_INTERVAL_MS',
+    captureScreenshotEveryStep: 'PIPI_BROWSER_CAPTURE_SCREENSHOT_EVERY_STEP',
+    maxAgentSteps: 'PIPI_BROWSER_MAX_AGENT_STEPS',
+    actionPermissionMode: 'PIPI_BROWSER_ACTION_PERMISSION_MODE',
+  },
 }));
 
 import { invoke } from '@tauri-apps/api/core';
@@ -103,7 +125,9 @@ describe('nativeBrowserAgent', () => {
         }),
       });
 
-    const resultPromise = executeNativeBrowserTask('Continue to dashboard', 'api-key', 'model', {});
+    const resultPromise = executeNativeBrowserTask('Continue to dashboard', 'api-key', 'model', {
+      approveAction: () => Promise.resolve(true),
+    });
     await jest.runAllTimersAsync();
 
     await expect(resultPromise).resolves.toBe('Finished');
@@ -114,8 +138,8 @@ describe('nativeBrowserAgent', () => {
     });
 
     const firstInvokeArgs = invokeMock.mock.calls[0]?.[1] as { messages: Array<{ content: string }>; systemPrompt: string };
-    expect(firstInvokeArgs.systemPrompt).toContain('CURRENT PAGE STATE includes backend_node_id');
-    expect(firstInvokeArgs.messages[0]?.content).toContain('CURRENT PAGE STATE');
+    expect(firstInvokeArgs.systemPrompt).toContain('backend_node_id');
+    expect(firstInvokeArgs.messages[0]?.content).toContain('CURRENT URL');
     expect(firstInvokeArgs.messages[0]?.content).toContain('backend_node_id=88');
   });
 
@@ -137,6 +161,6 @@ describe('nativeBrowserAgent', () => {
     expect(getBrowserPageStateMock).not.toHaveBeenCalled();
 
     const firstInvokeArgs = invokeMock.mock.calls[0]?.[1] as { messages: Array<{ content: string }> };
-    expect(firstInvokeArgs.messages[0]?.content).toContain('CURRENT VISIBLE ELEMENTS');
+    expect(firstInvokeArgs.messages[0]?.content).toContain('CURRENT URL');
   });
 });

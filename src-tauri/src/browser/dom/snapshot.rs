@@ -15,6 +15,7 @@ use chromiumoxide::page::Page;
 use crate::browser::cdp::{run_with_timeout, CdpError};
 
 use super::accessibility::normalize_ax_nodes;
+use super::mod_atomic::TimingsRecorder;
 use super::page_state::ElementBounds;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -89,16 +90,33 @@ pub struct CapturedPageSnapshot {
 #[async_trait]
 pub trait StablePageSnapshotSource {
     async fn capture(&self, page: &Page) -> Result<CapturedPageSnapshot, CdpError>;
+    /// When supported, the source can record timing samples into the shared
+    /// recorder. Default is a no-op so existing implementations don't need to
+    /// change.
+    fn attach_timings_recorder(&mut self, _recorder: TimingsRecorder) {}
 }
 
 #[derive(Debug, Clone)]
 pub struct CdpPageSnapshotSource {
     timeout: Duration,
+    timings: TimingsRecorder,
 }
 
 impl CdpPageSnapshotSource {
     pub fn new(timeout: Duration) -> Self {
-        Self { timeout }
+        Self {
+            timeout,
+            timings: TimingsRecorder::default(),
+        }
+    }
+
+    pub fn attach_timings(mut self, recorder: TimingsRecorder) -> Self {
+        self.timings = recorder;
+        self
+    }
+
+    pub fn timings(&self) -> &TimingsRecorder {
+        &self.timings
     }
 
     async fn capture_ax_nodes(
@@ -106,6 +124,7 @@ impl CdpPageSnapshotSource {
         page: &Page,
         frame_id: Option<String>,
     ) -> Result<Vec<AccessibilityNodeSnapshot>, CdpError> {
+        let ax_started = std::time::Instant::now();
         run_with_timeout(
             "Accessibility.enable",
             self.timeout,
@@ -129,6 +148,7 @@ impl CdpPageSnapshotSource {
         .map_err(|error| {
             CdpError::Session(format!("Unable to capture accessibility tree: {}", error))
         })?;
+        self.timings.record("accessibility_ms", ax_started.elapsed());
 
         Ok(normalize_ax_nodes(response.result.nodes))
     }
@@ -137,6 +157,8 @@ impl CdpPageSnapshotSource {
 #[async_trait]
 impl StablePageSnapshotSource for CdpPageSnapshotSource {
     async fn capture(&self, page: &Page) -> Result<CapturedPageSnapshot, CdpError> {
+        let started = std::time::Instant::now();
+        let frame_started = std::time::Instant::now();
         let frame_tree = run_with_timeout(
             "Page.getFrameTree",
             self.timeout,
@@ -144,6 +166,9 @@ impl StablePageSnapshotSource for CdpPageSnapshotSource {
         )
         .await?
         .map_err(|error| CdpError::Session(format!("Unable to get frame tree: {}", error)))?;
+        self.timings.record("frame_tree_ms", frame_started.elapsed());
+
+        let layout_started = std::time::Instant::now();
         let layout_metrics = run_with_timeout(
             "Page.getLayoutMetrics",
             self.timeout,
@@ -151,6 +176,9 @@ impl StablePageSnapshotSource for CdpPageSnapshotSource {
         )
         .await?
         .map_err(|error| CdpError::Session(format!("Unable to get layout metrics: {}", error)))?;
+        self.timings.record("layout_metrics_ms", layout_started.elapsed());
+
+        let dom_started = std::time::Instant::now();
         let dom_snapshot_params = CaptureSnapshotParams::builder()
             .computed_styles(["display", "visibility"])
             .include_dom_rects(true)
@@ -163,13 +191,17 @@ impl StablePageSnapshotSource for CdpPageSnapshotSource {
         )
         .await?
         .map_err(|error| CdpError::Session(format!("Unable to capture DOM snapshot: {}", error)))?;
+        self.timings.record("dom_snapshot_ms", dom_started.elapsed());
 
         let frames = flatten_frame_tree(&frame_tree.frame_tree);
         let root_frame = frames.first().cloned().ok_or_else(|| {
             CdpError::InvalidResponse("Page.getFrameTree returned no root frame".to_string())
         })?;
-        let dom_nodes = flatten_dom_nodes(&dom_snapshot)?;
         let mut warnings = Vec::new();
+
+        let flatten_started = std::time::Instant::now();
+        let dom_nodes = flatten_dom_nodes(&dom_snapshot)?;
+        self.timings.record("flatten_ms", flatten_started.elapsed());
 
         if frames.len() > dom_snapshot.documents.len() || has_partial_iframe_documents(&dom_nodes) {
             warnings.push("cross_origin_iframe_partial".to_string());
@@ -192,6 +224,8 @@ impl StablePageSnapshotSource for CdpPageSnapshotSource {
                 Vec::new()
             }
         };
+
+        self.timings.record("total_ms", started.elapsed());
 
         let root_document = dom_snapshot.documents.first().ok_or_else(|| {
             CdpError::InvalidResponse(

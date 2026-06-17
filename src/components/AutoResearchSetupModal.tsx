@@ -749,7 +749,7 @@ export function AutoResearchSetupModal() {
             <div className="space-y-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
               <h5 className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500">{t('autoresearch.summaryTitle')}</h5>
               <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
-                <SummaryItem label={t('autoresearch.summaryTarget')} value={form.mode === 'local' ? 'Local' : `SSH ${form.user}@${form.host || '...'}`} />
+                <SummaryItem label={t('autoresearch.summaryTarget')} value={form.mode === 'local' ? t('autoresearch.mode.local') : `SSH ${form.user}@${form.host || '...'}`} />
                 <SummaryItem label={t('autoresearch.summaryWorkdir')} value={form.remoteWorkDir || '—'} />
                 <SummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
                 <SummaryItem label={t('autoresearch.summaryMetric')} value={`${metric || '—'} (${direction === 'lower' ? t('autoresearch.summaryDirectionMinimize') : t('autoresearch.summaryDirectionMaximize')})`} />

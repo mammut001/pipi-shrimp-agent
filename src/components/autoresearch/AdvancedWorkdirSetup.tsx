@@ -3,6 +3,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { t } from '@/i18n';
 import { TerminalPanel } from '@/components';
+import {
+  AutoResearchActiveRunBanner,
+  AutoResearchInlineHint,
+  AutoResearchMetricSummary,
+  AutoResearchPathSummary,
+  AutoResearchReadinessRow,
+  AutoResearchRunHistoryCard,
+  AutoResearchSummaryItem,
+  AutoResearchTargetSummary,
+} from '@/components/autoresearch/AutoResearchSetupHelpers';
 import { AutoResearchRunDetailDocument } from '@/components/autoresearch/AutoResearchRunDetailDocument';
 import { useSettingsStore } from '@/store';
 import {
@@ -30,7 +40,6 @@ import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
-import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 import { normalizePathForWindowsShellSelection } from '@/utils/windowsShellProfile';
 import {
   logAutoResearchSetupFailure,
@@ -38,12 +47,6 @@ import {
   startAutoResearchRun,
   validateAutoResearchSetupDraft,
 } from '@/services/autoresearch/setupFlow';
-
-function formatRunStatusLabel(status: NonNullable<ReturnType<typeof getSelectedAutoResearchRun>>['status']): string {
-  return status === 'reflection_failed'
-    ? t('autoresearch.statusReflectionFailed')
-    : status.replace(/_/g, ' ');
-}
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
 
@@ -72,7 +75,7 @@ type ConnectionTestState =
  *   4. Generic exit-code message
  */
 function extractSshError(stderr: string, stdout: string, exitCode: number): string {
-  // Lines to ignore — they are informational, not errors.
+  // Lines to ignore - they are informational, not errors.
   const NOISE_PATTERNS = [
     /^WSL will use a converted/i,
     /^Avoid mixing WSL/i,
@@ -86,7 +89,7 @@ function extractSshError(stderr: string, stdout: string, exitCode: number): stri
   // Split stderr into lines, filter noise, and look for SSH-specific errors.
   const stderrLines = stderr.split('\n').filter((line) => !isNoise(line));
 
-  // Known SSH/sshpass error patterns — prefer these over raw output.
+  // Known SSH/sshpass error patterns - prefer these over raw output.
   const SSH_ERROR_PATTERNS = [
     /connection timed out/i,
     /connection refused/i,
@@ -110,7 +113,7 @@ function extractSshError(stderr: string, stdout: string, exitCode: number): stri
     }
   }
 
-  // No recognized SSH pattern — return the first meaningful stderr line.
+  // No recognized SSH pattern - return the first meaningful stderr line.
   if (stderrLines.length > 0) {
     return stderrLines.join('\n');
   }
@@ -150,7 +153,7 @@ function loadPersistedSetup(): SshConfig {
 
   // Strict field whitelist: if a field is missing or has the wrong type we
   // fall back to the default value rather than letting garbage into the
-  // form. Note `password` is intentionally NOT loaded from storage — we
+  // form. Note `password` is intentionally NOT loaded from storage - we
   // never persist it (see the persist useEffect) and any stale value from
   // a previous build is explicitly scrubbed here as a defense-in-depth
   // measure.
@@ -228,11 +231,22 @@ export function AdvancedWorkdirSetup() {
     ? formatAgentConfigValidationError(agentConfig, agentConfigIssues)
     : '';
   const displayRun = selectedRun;
+  const activeRun = useMemo(
+    () => (activeRunId ? sortedRuns.find((run) => run.id === activeRunId) ?? null : null),
+    [activeRunId, sortedRuns],
+  );
   const displayedLiveOutput = selectedRunContext.liveOutput;
   const displayReason = selectedRunContext.reason;
   const loopState = selectedRunContext.loopState;
   const statusMessage = selectedRunContext.statusMessage;
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
+  const providerReady = !agentConfigError;
+  const workdirReady = Boolean(setupForm.remoteWorkDir.trim());
+  const experimentDirReady = Boolean(experimentDir.trim());
+  const metricReady = Boolean(metric.trim());
+  const sshReady = setupForm.mode === 'local'
+    ? true
+    : Boolean(setupForm.host.trim() && setupForm.user.trim());
 
   const handleViewActiveRun = useCallback(() => {
     const targetRunId = activeRunId || selectedRun?.id || sortedRuns[0]?.id;
@@ -505,6 +519,14 @@ export function AdvancedWorkdirSetup() {
             </p>
           </div>
 
+          {activeRun && (
+            <AutoResearchActiveRunBanner
+              run={activeRun}
+              onView={handleViewActiveRun}
+              onBrowseHistory={() => setShowRunList(true)}
+            />
+          )}
+
           <form className="space-y-3" onSubmit={handleSetupSubmit}>
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50/70 px-3 py-2 text-xs text-neutral-700">
               <span>
@@ -587,28 +609,36 @@ export function AdvancedWorkdirSetup() {
             )}
 
             {setupForm.mode === 'local' ? (
-              <div className="flex gap-2">
+              <>
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
+                    placeholder={t('autoresearch.localWorkDirPlaceholder')}
+                    value={setupForm.remoteWorkDir}
+                    onChange={(event) => setSetupForm((current) => ({ ...current, remoteWorkDir: sanitizePathInput(event.target.value) }))}
+                  />
+                  <button
+                    type="button"
+                    className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+                    onClick={handlePickLocalWorkDir}
+                  >
+                    {t('autoresearch.chooseDirectory')}
+                  </button>
+                </div>
+                <AutoResearchPathSummary label={t('autoresearch.summaryWorkdir')} path={setupForm.remoteWorkDir} />
+                <AutoResearchInlineHint>{t('autoresearch.workdirHelper')}</AutoResearchInlineHint>
+              </>
+            ) : (
+              <>
                 <input
-                  className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                  placeholder={t('autoresearch.localWorkDirPlaceholder')}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
+                  placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
                   value={setupForm.remoteWorkDir}
                   onChange={(event) => setSetupForm((current) => ({ ...current, remoteWorkDir: sanitizePathInput(event.target.value) }))}
                 />
-                <button
-                  type="button"
-                  className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
-                  onClick={handlePickLocalWorkDir}
-                >
-                  {t('autoresearch.chooseDirectory')}
-                </button>
-              </div>
-            ) : (
-              <input
-                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
-                value={setupForm.remoteWorkDir}
-                onChange={(event) => setSetupForm((current) => ({ ...current, remoteWorkDir: sanitizePathInput(event.target.value) }))}
-              />
+                <AutoResearchPathSummary label={t('autoresearch.summaryWorkdir')} path={setupForm.remoteWorkDir} />
+                <AutoResearchInlineHint>{t('autoresearch.workdirHelper')}</AutoResearchInlineHint>
+              </>
             )}
 
             <div className="flex gap-2">
@@ -627,6 +657,8 @@ export function AdvancedWorkdirSetup() {
                 {t('autoresearch.chooseDirectory')}
               </button>
             </div>
+            <AutoResearchPathSummary label={t('autoresearch.summaryExperimentDir')} path={experimentDir} />
+            <AutoResearchInlineHint>{t('autoresearch.experimentDirHelper')}</AutoResearchInlineHint>
 
             <button
               type="button"
@@ -663,8 +695,8 @@ export function AdvancedWorkdirSetup() {
 
             <hr className="border-gray-200" />
 
-            <div className="flex gap-2">
-              <input
+              <div className="flex gap-2">
+                <input
                 className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
                 placeholder={t('autoresearch.metricNamePlaceholder')}
                 value={metric}
@@ -674,20 +706,22 @@ export function AdvancedWorkdirSetup() {
                 className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
                 value={direction}
                 onChange={(event) => setDirection(event.target.value as 'lower' | 'higher')}
-              >
-                <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
-                <option value="higher">{t('autoresearch.higherIsBetter')}</option>
-              </select>
-            </div>
+                >
+                  <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
+                  <option value="higher">{t('autoresearch.higherIsBetter')}</option>
+                </select>
+              </div>
+              <AutoResearchInlineHint>{t('autoresearch.metricHelper')}</AutoResearchInlineHint>
             <input
               className={`w-full rounded-xl border bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:outline-none ${baselineInvalid ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-neutral-400'}`}
-              placeholder="Baseline (optional, e.g. 0.963284)"
+              placeholder={t('autoresearch.baselinePlaceholder')}
               value={baselineInput}
               onChange={(event) => setBaselineInput(event.target.value)}
             />
             {baselineInvalid && (
               <div className="text-xs text-rose-500">{t('autoresearch.validationBaselineNumber')}</div>
             )}
+            <AutoResearchInlineHint>{t('autoresearch.baselineHelper')}</AutoResearchInlineHint>
             <input
               className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
               placeholder={t('autoresearch.maxIterationsPlaceholder')}
@@ -695,6 +729,36 @@ export function AdvancedWorkdirSetup() {
               value={maxIter}
               onChange={(event) => setMaxIter(buildAutoResearchDefaultConfig({ iterations: Number.parseInt(event.target.value, 10) || 50 }).iterations)}
             />
+            <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
+              <AutoResearchReadinessRow label={t('autoresearch.check.provider')} ready={providerReady} />
+              <AutoResearchReadinessRow label={t('autoresearch.check.workdir')} ready={workdirReady} />
+              <AutoResearchReadinessRow label={t('autoresearch.check.experimentDir')} ready={experimentDirReady} />
+              <AutoResearchReadinessRow label={t('autoresearch.check.metric')} ready={metricReady} />
+              {setupForm.mode === 'ssh' && (
+                <AutoResearchReadinessRow label={t('autoresearch.check.sshConnection')} ready={sshReady} />
+              )}
+              <AutoResearchInlineHint>{t('autoresearch.readiness.helper')}</AutoResearchInlineHint>
+            </div>
+            <div className="space-y-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+              <h5 className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500">{t('autoresearch.summaryTitle')}</h5>
+              <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                <AutoResearchSummaryItem
+                  label={t('autoresearch.summaryTarget')}
+                  value={AutoResearchTargetSummary({
+                    mode: setupForm.mode,
+                    user: setupForm.user,
+                    host: setupForm.host,
+                  })}
+                />
+                <AutoResearchSummaryItem label={t('autoresearch.summaryWorkdir')} value={setupForm.remoteWorkDir || '—'} />
+                <AutoResearchSummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
+                <AutoResearchSummaryItem
+                  label={t('autoresearch.summaryMetric')}
+                  value={AutoResearchMetricSummary({ metric, direction })}
+                />
+                <AutoResearchSummaryItem label={t('autoresearch.summaryIterations')} value={String(maxIter)} />
+              </div>
+            </div>
             {setupError && setupError !== agentConfigError && (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -705,7 +769,7 @@ export function AdvancedWorkdirSetup() {
                       className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50"
                       onClick={handleViewActiveRun}
                     >
-                      查看运行详情
+                      {t('autoresearch.viewActiveRun')}
                     </button>
                   )}
                 </div>
@@ -757,40 +821,43 @@ export function AdvancedWorkdirSetup() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">AutoResearch</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">Run History</h2>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">{t('autoresearch.runHistoryTitle')}</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                {t('autoresearch.runHistoryHelper')}
+              </p>
             </div>
-            <button
-              onClick={() => { void handleShowSetup(); }}
-              className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
-            >
-              New Run
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {activeRun && (
+                <button
+                  type="button"
+                  onClick={handleViewActiveRun}
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+                >
+                  {t('autoresearch.viewActiveRun')}
+                </button>
+              )}
+              <button
+                onClick={() => { void handleShowSetup(); }}
+                className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
+              >
+                {t('autoresearch.newRun')}
+              </button>
+            </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {sortedRuns.map((run) => (
-              <button
+              <AutoResearchRunHistoryCard
                 key={run.id}
-                type="button"
+                run={run}
+                isSelected={displayRun?.id === run.id}
+                isActive={activeRunId === run.id}
                 onClick={() => {
                   selectRun(run.id);
                   setSelectedExperiment(-1);
                   setShowSetup(false);
                   setShowRunList(false);
                 }}
-                className={`rounded-2xl border bg-white p-4 text-left shadow-sm transition-colors ${
-                  displayRun?.id === run.id ? 'border-neutral-400 ring-2 ring-neutral-100' : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="rounded-full bg-[#dceeea] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#0f766e]">
-                    {formatRunStatusLabel(run.status)}
-                  </span>
-                  <span className="font-mono text-[11px] text-gray-500">{run.currentIteration}/{run.config.iterations}</span>
-                </div>
-                <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-gray-900">{run.title}</h3>
-                <p className="mt-2 truncate text-xs text-gray-600">{run.config.metric} · {run.config.direction}</p>
-                <p className="mt-1 truncate text-xs text-gray-500">{buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel}</p>
-              </button>
+              />
             ))}
           </div>
         </div>

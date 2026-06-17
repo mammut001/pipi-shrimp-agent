@@ -105,6 +105,50 @@ pub struct BrowserBenchmarkReport {
     pub recent_samples: Vec<BrowserBenchmarkSample>,
 }
 
+/// Aggregate per-step timings published by the native agent loop. The values
+/// come from the TS side and roll up LLM/observation/action durations plus
+/// counters that aren't otherwise exposed.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct NativeAgentRunStats {
+    pub total_steps: usize,
+    pub full_snapshots: usize,
+    pub light_observations: usize,
+    pub interactive_observations: usize,
+    pub screenshots: usize,
+    pub loop_detections: usize,
+    pub malformed_responses: usize,
+    pub llm_retries: usize,
+    pub cache_hits: usize,
+    pub cache_misses: usize,
+    pub policy_approvals: usize,
+    pub policy_denials: usize,
+    pub average_step_ms: Option<u64>,
+    pub slowest_step_ms: Option<u64>,
+    pub total_runtime_ms: u64,
+    pub outcome: Option<String>,
+    pub steps: Vec<NativeAgentStepStat>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct NativeAgentStepStat {
+    pub step: u32,
+    pub engine: String,
+    pub url: String,
+    pub navigation_id: String,
+    pub observation_level: String,
+    pub observation_ms: u64,
+    pub prompt_chars: u64,
+    pub llm_ms: u64,
+    pub action_name: String,
+    pub action_ms: u64,
+    pub post_wait_ms: u64,
+    pub screenshot_ms: u64,
+    pub total_step_ms: u64,
+    pub success: bool,
+    pub error_code: Option<String>,
+    pub reused_cache: bool,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BrowserObservabilitySnapshot {
     pub recent_events: Vec<BrowserEvent>,
@@ -112,6 +156,11 @@ pub struct BrowserObservabilitySnapshot {
     pub snapshot_cache: SnapshotCacheSnapshot,
     pub last_activity_at_ms: i64,
     pub idle_timeout_ms: u64,
+    /// Optional per-step timings from the most recent native agent run. The
+    /// `Option` is used so we don't have to maintain a separate "default"
+    /// every time we serialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_run_stats: Option<NativeAgentRunStats>,
 }
 
 #[derive(Clone)]
@@ -276,7 +325,23 @@ impl BrowserEventBus {
             snapshot_cache,
             last_activity_at_ms,
             idle_timeout_ms,
+            native_run_stats: None,
         }
+    }
+
+    /// Snapshot variant that also includes the most recent native agent run
+    /// stats. The stats field is optional in the serialized form to keep
+    /// older dashboards happy.
+    pub fn snapshot_with_native_stats(
+        &self,
+        snapshot_cache: SnapshotCacheSnapshot,
+        last_activity_at_ms: i64,
+        idle_timeout_ms: u64,
+        native_run_stats: Option<NativeAgentRunStats>,
+    ) -> BrowserObservabilitySnapshot {
+        let mut snapshot = self.snapshot(snapshot_cache, last_activity_at_ms, idle_timeout_ms);
+        snapshot.native_run_stats = native_run_stats;
+        snapshot
     }
 
     pub fn benchmark_report(&self) -> BrowserBenchmarkReport {
@@ -362,6 +427,63 @@ impl BrowserEventBus {
         while samples.len() > self.inner.benchmark_sample_limit {
             samples.pop_back();
         }
+    }
+
+    pub fn export_markdown_with(&self, native_run_stats: Option<&NativeAgentRunStats>) -> String {
+        let base = self.export_markdown();
+        let Some(stats) = native_run_stats else {
+            return base;
+        };
+        let mut lines = base.split('\n').map(str::to_string).collect::<Vec<_>>();
+        lines.push(String::new());
+        lines.push("## Native Agent Run".to_string());
+        lines.push(String::new());
+        lines.push(format!("Outcome: {}", stats.outcome.clone().unwrap_or_else(|| "unknown".to_string())));
+        lines.push(format!("Total runtime: {} ms", stats.total_runtime_ms));
+        lines.push(format!("Steps: {}", stats.total_steps));
+        lines.push(format!(
+            "Observations: light={}, interactive={}, full={}",
+            stats.light_observations, stats.interactive_observations, stats.full_snapshots
+        ));
+        lines.push(format!(
+            "Cache: hits={}, misses={}, hit_rate={:.2}",
+            stats.cache_hits,
+            stats.cache_misses,
+            if stats.cache_hits + stats.cache_misses == 0 {
+                0.0
+            } else {
+                stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64
+            },
+        ));
+        lines.push(format!(
+            "Loops detected: {}, malformed responses: {}, policy approvals: {}, policy denials: {}",
+            stats.loop_detections,
+            stats.malformed_responses,
+            stats.policy_approvals,
+            stats.policy_denials,
+        ));
+        if !stats.steps.is_empty() {
+            lines.push(String::new());
+            lines.push("### Per-step timings".to_string());
+            lines.push(String::new());
+            lines.push("| Step | Action | Obs | Obs (ms) | LLM (ms) | Action (ms) | Total (ms) | Success | Error |".to_string());
+            lines.push("| ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- |".to_string());
+            for step in &stats.steps {
+                lines.push(format!(
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                    step.step,
+                    step.action_name,
+                    step.observation_level,
+                    step.observation_ms,
+                    step.llm_ms,
+                    step.action_ms,
+                    step.total_step_ms,
+                    if step.success { "yes" } else { "no" },
+                    step.error_code.clone().unwrap_or_else(|| "-".to_string()),
+                ));
+            }
+        }
+        lines.join("\n")
     }
 
     pub fn export_markdown(&self) -> String {
