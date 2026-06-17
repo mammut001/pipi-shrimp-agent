@@ -282,6 +282,9 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
     if (_listenerCleanup) {
       return () => {
         _listenerRefCount = Math.max(0, _listenerRefCount - 1);
+        if (_listenerRefCount === 0 && _listenerCleanup) {
+          _listenerCleanup();
+        }
       };
     }
 

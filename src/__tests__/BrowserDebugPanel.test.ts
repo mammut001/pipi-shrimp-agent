@@ -256,7 +256,9 @@ describe('BrowserDebugPanel', () => {
         ],
         screenshot: {
           kind: 'base64_png',
-          value: 'ZmFrZS1pbWFnZQ==',
+          // Pad the base64 string so the test fixture passes the
+          // MIN_BASE64_IMAGE_LENGTH guard inside normalizeScreenshotSrc.
+          value: 'a'.repeat(120),
         },
         createdAt: Date.now() - 1_500,
         navigationId: 'nav-43',

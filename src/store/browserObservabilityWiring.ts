@@ -738,6 +738,15 @@ export const setupBrowserObservabilityWiring = (): (() => void) => {
     unsubscribeCdp();
     useBrowserObservabilityStore.getState().markWiringReady(false);
     wiringCleanup = null;
+    // Reset module-level sync state so the next setup re-ingests all
+    // backend events from the beginning. Without this, repeated setups
+    // (e.g. across test cases) would skip events whose sequence is at or
+    // below the previous run's high-water mark.
+    lastBackendEventSequence = 0;
+    lastBackendPageStateKey = null;
+    lastBackendPageStateError = null;
+    lastBackendObservabilityError = null;
+    lastBackendFailureError = null;
   };
 
   return wiringCleanup;

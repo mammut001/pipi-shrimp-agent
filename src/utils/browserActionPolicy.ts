@@ -60,6 +60,7 @@ const SENSITIVE_LABEL_PATTERNS: RegExp[] = [
   /\bdelete\b/i,
   /\bremove\b/i,
   /\bunsubscribe\b/i,
+  /\bsubscribe\b/i,
   /\blog\s*in\b/i,
   /\bsign\s*in\b/i,
   /\bsign\s*up\b/i,

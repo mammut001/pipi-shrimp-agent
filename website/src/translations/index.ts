@@ -64,10 +64,27 @@ export type TranslationKeys = {
     loading: string;
     error: string;
     viewOnGithub: string;
+    errorTitle: string;
+    errorGeneric: string;
+    errorTimeout: string;
+    errorNetwork: string;
+    errorRateLimited: string;
+    empty: string;
+    retry: string;
+    refreshing: string;
+    cacheHint: string;
   };
   footer: {
     copyright: string;
     builtWith: string;
+  };
+  notFound: {
+    title: string;
+    description: string;
+    goHome: string;
+    seeFeatures: string;
+    readChangelog: string;
+    openGithub: string;
   };
 };
 
@@ -182,10 +199,28 @@ export const translations: Record<Language, TranslationKeys> = {
       loading: "Loading commits...",
       error: "Failed to load commits",
       viewOnGithub: "View on GitHub",
+      errorTitle: "Couldn't load the changelog",
+      errorGeneric: "Something went wrong while fetching the latest commits. Please try again, or view them directly on GitHub.",
+      errorTimeout: "The request to GitHub timed out. Please try again in a moment.",
+      errorNetwork: "We couldn't reach GitHub. Check your connection and try again.",
+      errorRateLimited: "GitHub temporarily rate-limited our requests. Please try again in a few minutes, or browse the commits directly on GitHub.",
+      empty: "No commits to show yet.",
+      retry: "Try again",
+      refreshing: "Refreshing...",
+      cacheHint: "This list refreshes roughly every {seconds} minutes.",
     },
     footer: {
       copyright: "All rights reserved.",
       builtWith: "Built with",
+    },
+    notFound: {
+      title: "Page not found",
+      description:
+        "The page you are looking for does not exist or has been moved. Pick one of the pages below to get back on track.",
+      goHome: "Go home",
+      seeFeatures: "See features",
+      readChangelog: "Read changelog",
+      openGithub: "Open GitHub",
     },
   },
   fr: {
@@ -296,10 +331,28 @@ export const translations: Record<Language, TranslationKeys> = {
       loading: "Chargement des commits...",
       error: "Échec du chargement des commits",
       viewOnGithub: "Voir sur GitHub",
+      errorTitle: "Impossible de charger le journal",
+      errorGeneric: "Une erreur s'est produite lors de la récupération des commits. Veuillez réessayer ou les consulter directement sur GitHub.",
+      errorTimeout: "La requête vers GitHub a expiré. Veuillez réessayer dans un instant.",
+      errorNetwork: "Impossible de joindre GitHub. Vérifiez votre connexion et réessayez.",
+      errorRateLimited: "GitHub a temporairement limité nos requêtes. Réessayez dans quelques minutes ou consultez les commits directement sur GitHub.",
+      empty: "Aucun commit à afficher pour le moment.",
+      retry: "Réessayer",
+      refreshing: "Actualisation...",
+      cacheHint: "Cette liste est actualisée environ toutes les {seconds} minutes.",
     },
     footer: {
       copyright: "Tous droits réservés.",
       builtWith: "Construit avec",
+    },
+    notFound: {
+      title: "Page introuvable",
+      description:
+        "La page que vous cherchez n'existe pas ou a été déplacée. Choisissez une page ci-dessous pour continuer.",
+      goHome: "Retour à l'accueil",
+      seeFeatures: "Voir les fonctionnalités",
+      readChangelog: "Lire le journal des modifications",
+      openGithub: "Ouvrir GitHub",
     },
   },
   zh: {
@@ -410,10 +463,28 @@ export const translations: Record<Language, TranslationKeys> = {
       loading: "加载提交中...",
       error: "加载提交失败",
       viewOnGithub: "在 GitHub 上查看",
+      errorTitle: "无法加载更新日志",
+      errorGeneric: "获取最新提交时出现问题。请重试，或直接在 GitHub 上查看。",
+      errorTimeout: "请求 GitHub 超时。请稍后重试。",
+      errorNetwork: "无法连接到 GitHub。请检查网络后重试。",
+      errorRateLimited: "GitHub 暂时限制了我们的请求。请几分钟后重试，或直接在 GitHub 上查看。",
+      empty: "暂无提交可显示。",
+      retry: "重试",
+      refreshing: "刷新中...",
+      cacheHint: "此列表大约每 {seconds} 分钟刷新一次。",
     },
     footer: {
       copyright: "版权所有。",
       builtWith: "由",
+    },
+    notFound: {
+      title: "页面未找到",
+      description:
+        "您访问的页面不存在或已被移动。请选择下方任一页面继续浏览。",
+      goHome: "返回首页",
+      seeFeatures: "查看功能",
+      readChangelog: "阅读更新日志",
+      openGithub: "打开 GitHub",
     },
   },
   ko: {
@@ -524,10 +595,28 @@ export const translations: Record<Language, TranslationKeys> = {
       loading: "커밋 로드 중...",
       error: "커밋 로드 실패",
       viewOnGithub: "GitHub에서 보기",
+      errorTitle: "변경 로그를 불러올 수 없습니다",
+      errorGeneric: "최신 커밋을 가져오는 중 문제가 발생했습니다. 다시 시도하거나 GitHub에서 직접 확인하세요.",
+      errorTimeout: "GitHub 요청이 시간 초과되었습니다. 잠시 후 다시 시도하세요.",
+      errorNetwork: "GitHub에 연결할 수 없습니다. 연결을 확인하고 다시 시도하세요.",
+      errorRateLimited: "GitHub에서 일시적으로 요청을 제한했습니다. 몇 분 후 다시 시도하거나 GitHub에서 직접 커밋을 확인하세요.",
+      empty: "표시할 커밋이 없습니다.",
+      retry: "다시 시도",
+      refreshing: "새로 고치는 중...",
+      cacheHint: "이 목록은 약 {seconds}분마다 새로 고쳐집니다.",
     },
     footer: {
       copyright: "모든 권리 보유.",
       builtWith: "만든 곳",
+    },
+    notFound: {
+      title: "페이지를 찾을 수 없습니다",
+      description:
+        "찾고 계신 페이지가 존재하지 않거나 이동되었습니다. 아래 페이지 중 하나를 선택해 계속 진행하세요.",
+      goHome: "홈으로",
+      seeFeatures: "기능 보기",
+      readChangelog: "변경 로그 보기",
+      openGithub: "GitHub 열기",
     },
   },
   vi: {
@@ -638,10 +727,28 @@ export const translations: Record<Language, TranslationKeys> = {
       loading: "Đang tải commits...",
       error: "Tải commits thất bại",
       viewOnGithub: "Xem trên GitHub",
+      errorTitle: "Không thể tải nhật ký thay đổi",
+      errorGeneric: "Đã xảy ra sự cố khi tải các commit mới nhất. Vui lòng thử lại hoặc xem trực tiếp trên GitHub.",
+      errorTimeout: "Yêu cầu tới GitHub đã hết thời gian. Vui lòng thử lại sau.",
+      errorNetwork: "Không thể kết nối tới GitHub. Kiểm tra kết nối và thử lại.",
+      errorRateLimited: "GitHub tạm thời giới hạn yêu cầu. Vui lòng thử lại sau vài phút hoặc xem các commit trực tiếp trên GitHub.",
+      empty: "Chưa có commit nào để hiển thị.",
+      retry: "Thử lại",
+      refreshing: "Đang làm mới...",
+      cacheHint: "Danh sách này được làm mới khoảng mỗi {seconds} phút.",
     },
     footer: {
       copyright: "Mọi quyền được bảo lưu.",
       builtWith: "Được xây dựng với",
+    },
+    notFound: {
+      title: "Không tìm thấy trang",
+      description:
+        "Trang bạn đang tìm không tồn tại hoặc đã được di chuyển. Hãy chọn một trang bên dưới để tiếp tục.",
+      goHome: "Về trang chủ",
+      seeFeatures: "Xem tính năng",
+      readChangelog: "Đọc nhật ký thay đổi",
+      openGithub: "Mở GitHub",
     },
   },
 };

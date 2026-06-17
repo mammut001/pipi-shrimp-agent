@@ -2,207 +2,260 @@
 
 import Image from "next/image";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Container, Section } from "@/components";
 import { SITE_CONFIG, githubReleasesUrl } from "@/lib/siteConfig";
 
 const GITHUB_RELEASES_URL = githubReleasesUrl;
 
-const features = [
-  {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-      </svg>
-    ),
-    key: "ai" as const,
-  },
-  {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-      </svg>
-    ),
-    key: "privacy" as const,
-  },
-  {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-      </svg>
-    ),
-    key: "fast" as const,
-  },
+const featureKeys = ["ai", "privacy", "fast"] as const;
+
+const featureIcons = [
+  // AI / spark
+  <svg
+    key="ai"
+    className="h-6 w-6"
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M13 10V3L4 14h7v7l9-11h-7z"
+    />
+  </svg>,
+  // Privacy / shield-lock
+  <svg
+    key="privacy"
+    className="h-6 w-6"
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+    />
+  </svg>,
+  // Fast / bolt
+  <svg
+    key="fast"
+    className="h-6 w-6"
+    fill="none"
+    stroke="currentColor"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+    />
+  </svg>,
 ];
 
 export default function HomePage() {
   const { t } = useLanguage();
 
   return (
-    <div className="page-enter" style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-
+    <div className="page-enter">
       {/* ── Hero ── */}
-      <section style={{ position: "relative", overflow: "hidden" }}>
-        {/* Bg blobs */}
-        <div style={{ position: "absolute", inset: 0, zIndex: -1, pointerEvents: "none" }}>
-          <div style={{ position: "absolute", top: 40, left: "25%", width: 480, height: 480, background: "var(--accent)", opacity: 0.07, borderRadius: "50%", filter: "blur(80px)" }} />
-          <div style={{ position: "absolute", bottom: 0, right: "20%", width: 360, height: 360, background: "var(--accent)", opacity: 0.05, borderRadius: "50%", filter: "blur(60px)" }} />
+      <Section variant="hero" className="relative overflow-hidden">
+        {/* Background blobs */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 -z-10"
+        >
+          <div className="absolute left-1/4 top-10 h-[480px] w-[480px] rounded-full bg-[var(--accent)] opacity-[0.07] blur-3xl" />
+          <div className="absolute bottom-0 right-1/5 h-[360px] w-[360px] rounded-full bg-[var(--accent)] opacity-[0.05] blur-3xl" />
         </div>
 
-        <div className="container hero-padding">
-          <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 48, flexWrap: "wrap" }}>
-
+        <Container>
+          <div className="flex flex-col-reverse items-center gap-12 md:flex-row md:items-center md:justify-between md:gap-12">
             {/* Text */}
-            <div style={{ flex: 1, minWidth: 280 }}>
-              {/* Badge */}
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", marginBottom: 32, fontSize: 14, color: "var(--text-secondary)", background: "var(--background-secondary)", border: "1px solid var(--border)", borderRadius: 9999 }}>
-                <span style={{ width: 8, height: 8, background: "var(--accent)", borderRadius: "50%", animation: "pulse 2s infinite" }} />
+            <div className="w-full max-w-xl flex-1">
+              <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--background-secondary)] px-4 py-2 text-sm text-[var(--text-secondary)]">
+                <span className="pulse-dot inline-block h-2 w-2 rounded-full bg-[var(--accent)]" />
                 {t.hero.subtitle}
               </div>
 
-              {/* Title */}
-              <h1 style={{ fontSize: "clamp(2.5rem, 5vw, 4rem)", fontWeight: 800, color: "var(--text-primary)", lineHeight: 1.1, letterSpacing: "-0.02em", marginBottom: 24 }}>
+              <h1 className="mb-6 text-4xl font-extrabold leading-[1.1] tracking-tight text-[var(--text-primary)] sm:text-5xl md:text-6xl">
                 {t.hero.title}
               </h1>
 
-              {/* Description */}
-              <p style={{ fontSize: "1.125rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: 40, maxWidth: 520 }}>
+              <p className="mb-10 max-w-[32rem] text-lg leading-relaxed text-[var(--text-secondary)]">
                 {t.hero.description}
               </p>
 
-              {/* Buttons */}
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <div className="flex flex-wrap gap-4">
                 <a
                   href={GITHUB_RELEASES_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", fontSize: "0.95rem", fontWeight: 600, color: "white", background: "var(--accent)", borderRadius: 12, textDecoration: "none", transition: "all 0.2s", boxShadow: "0 8px 24px rgba(255,71,87,0.3)" }}
-                  onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.05)")}
-                  onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-7 py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(255,71,87,0.3)] transition-all hover:-translate-y-0.5 hover:bg-[var(--accent-hover)]"
                 >
-                  <svg width={20} height={20} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  <svg
+                    width={18}
+                    height={18}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                    />
                   </svg>
                   {t.hero.downloadArm}
                 </a>
-
                 <a
                   href={GITHUB_RELEASES_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "14px 28px", fontSize: "0.95rem", fontWeight: 600, color: "var(--text-primary)", background: "var(--background-secondary)", border: "1px solid var(--border)", borderRadius: 12, textDecoration: "none", transition: "all 0.2s" }}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--background-secondary)] px-7 py-3.5 text-sm font-semibold text-[var(--text-primary)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
                 >
-                  <svg width={20} height={20} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  <svg
+                    width={18}
+                    height={18}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                    />
                   </svg>
                   {t.hero.downloadIntel}
                 </a>
               </div>
 
-              <p style={{ marginTop: 24, fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+              <p className="mt-6 text-sm text-[var(--text-secondary)]">
                 {t.hero.version}: {SITE_CONFIG.version}
                 {SITE_CONFIG.macosOnly ? " · macOS only" : ""}
               </p>
             </div>
 
-            {/* Shrimp Image */}
-            <div style={{ flexShrink: 0, position: "relative", width: 280, height: 280 }}>
-              <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "var(--accent)", opacity: 0.08, filter: "blur(40px)", transform: "scale(1.2)" }} />
-              <picture>
-                <source srcSet="/shrimp-avatar.webp" type="image/webp" />
-                <Image
-                  src="/shrimp-avatar-256.png"
-                  alt="PiPi Shrimp"
-                  fill
-                  style={{ objectFit: "contain", filter: "drop-shadow(0 20px 40px rgba(0,0,0,0.15))" }}
-                  priority
-                />
-              </picture>
+            {/* Shrimp image */}
+            <div className="relative h-64 w-64 shrink-0 md:h-72 md:w-72">
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 scale-110 rounded-full bg-[var(--accent)] opacity-10 blur-2xl"
+              />
+              <Image
+                src="/shrimp-avatar-256.png"
+                alt="PiPi Shrimp"
+                fill
+                priority
+                sizes="(min-width: 768px) 18rem, 16rem"
+                className="relative object-contain drop-shadow-[0_20px_40px_rgba(0,0,0,0.15)]"
+              />
             </div>
-
           </div>
-        </div>
-      </section>
+        </Container>
+      </Section>
 
       {/* ── Features ── */}
-      <section className="section-padding bg-secondary">
-        <div className="container">
-          {/* Section header */}
-          <div style={{ textAlign: "center", marginBottom: 56 }}>
-            <h2 style={{ fontSize: "2rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: 12 }}>
+      <Section variant="muted">
+        <Container>
+          <div className="mb-14 text-center">
+            <h2 className="mb-3 text-3xl font-bold text-[var(--text-primary)] md:text-4xl">
               Why PiPi Shrimp Agent?
             </h2>
-            <p style={{ color: "var(--text-secondary)", maxWidth: 480, margin: "0 auto" }}>
-              Built from the ground up for macOS, with privacy and performance at its core.
+            <p className="mx-auto max-w-xl text-[var(--text-secondary)]">
+              Built from the ground up for macOS, with privacy and
+              performance at its core.
             </p>
           </div>
 
-          {/* Cards grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 24 }}>
-            {features.map((f, i) => (
-              <div
-                key={i}
-                style={{ padding: 28, background: "white", borderRadius: 16, border: "1px solid var(--border)", transition: "all 0.2s", cursor: "default" }}
-                onMouseEnter={e => {
-                  (e.currentTarget as HTMLDivElement).style.borderColor = "var(--accent)";
-                  (e.currentTarget as HTMLDivElement).style.boxShadow = "0 8px 32px rgba(255,71,87,0.1)";
-                  (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)";
-                }}
-                onMouseLeave={e => {
-                  (e.currentTarget as HTMLDivElement).style.borderColor = "var(--border)";
-                  (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
-                  (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)";
-                }}
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {featureKeys.map((key, i) => (
+              <article
+                key={key}
+                className="group rounded-2xl border border-[var(--border)] bg-white p-7 transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[0_8px_32px_rgba(255,71,87,0.1)]"
               >
-                <div style={{ width: 48, height: 48, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,71,87,0.1)", borderRadius: 12, marginBottom: 20, color: "var(--accent)" }}>
-                  {f.icon}
+                <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--accent)]/10 text-[var(--accent)]">
+                  {featureIcons[i]}
                 </div>
-                <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
-                  {t.about.features[f.key].title}
+                <h3 className="mb-2 text-lg font-semibold text-[var(--text-primary)]">
+                  {t.about.features[key].title}
                 </h3>
-                <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                  {t.about.features[f.key].description}
+                <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+                  {t.about.features[key].description}
                 </p>
-              </div>
+              </article>
             ))}
           </div>
-        </div>
-      </section>
+        </Container>
+      </Section>
 
       {/* ── CTA ── */}
-      <section className="section-padding">
-        <div className="container">
-          <div style={{ position: "relative", overflow: "hidden", background: "var(--text-primary)", borderRadius: 24, padding: "64px 48px", textAlign: "center" }}>
-            {/* dot pattern */}
-            <div style={{ position: "absolute", inset: 0, opacity: 0.05, backgroundImage: "radial-gradient(circle, white 1px, transparent 1px)", backgroundSize: "24px 24px" }} />
-
-            <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <picture>
-                <source srcSet="/shrimp-avatar-128.webp" type="image/webp" />
-                <Image src="/shrimp-avatar-128.webp" alt="PiPi Shrimp" width={80} height={80} style={{ marginBottom: 24, filter: "drop-shadow(0 8px 16px rgba(0,0,0,0.3))" }} />
-              </picture>
-              <h2 style={{ fontSize: "2rem", fontWeight: 700, color: "white", marginBottom: 16 }}>
+      <Section>
+        <Container>
+          <div className="relative overflow-hidden rounded-3xl bg-[var(--text-primary)] px-6 py-16 text-center sm:px-12">
+            {/* Dot grid background rendered as a Tailwind gradient
+                instead of an inline `style={{...}}` so the markup
+                stays readable and Tailwind's tree-shaking still kicks
+                in. The grid is purely decorative and ignored by
+                assistive tech. */}
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 opacity-10 bg-[radial-gradient(circle,white_1px,transparent_1px)] [background-size:24px_24px]"
+            />
+            <div className="relative z-10 flex flex-col items-center">
+              <Image
+                src="/shrimp-avatar-128.webp"
+                alt="PiPi Shrimp"
+                width={80}
+                height={80}
+                className="mb-6 drop-shadow-[0_8px_16px_rgba(0,0,0,0.3)]"
+              />
+              <h2 className="mb-4 text-3xl font-bold text-white md:text-4xl">
                 Ready to get started?
               </h2>
-              <p style={{ color: "rgba(255,255,255,0.6)", marginBottom: 40, maxWidth: 400, lineHeight: 1.6 }}>
-                Download PiPi Shrimp Agent today and experience the future of AI assistance on your Mac.
+              <p className="mb-10 max-w-md text-base leading-relaxed text-white/60">
+                Download PiPi Shrimp Agent today and experience the future
+                of AI assistance on your Mac.
               </p>
               <a
                 href={GITHUB_RELEASES_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "16px 36px", fontSize: "1rem", fontWeight: 600, color: "var(--text-primary)", background: "white", borderRadius: 12, textDecoration: "none", transition: "all 0.2s" }}
-                onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.05)")}
-                onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-9 py-4 text-base font-semibold text-[var(--text-primary)] transition-all hover:-translate-y-0.5 hover:shadow-lg"
               >
-                <svg width={20} height={20} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                <svg
+                  width={18}
+                  height={18}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                  />
                 </svg>
                 {t.header.download}
               </a>
             </div>
           </div>
-        </div>
-      </section>
-
+        </Container>
+      </Section>
     </div>
   );
 }

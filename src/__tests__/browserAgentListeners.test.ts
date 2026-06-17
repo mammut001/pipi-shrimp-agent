@@ -48,6 +48,12 @@ jest.mock('../utils/errorLogger', () => ({
 
 jest.mock('../i18n', () => ({
   t: (key: string) => key,
+  getCurrentLocale: () => 'zh-CN',
+  setLocale: jest.fn(),
+  addLocaleChangeListener: () => () => undefined,
+  getSupportedLocales: () => [],
+  convertOldLanguageCode: (code: string) => code,
+  convertToOldLanguageCode: (code: string) => code,
 }));
 
 // ─── Mock browser commands ────────────────────────────────────────────────────
@@ -177,31 +183,50 @@ describe('browserAgentStore listener idempotency', () => {
 
   describe('concurrent setupEventListeners guard', () => {
     it('concurrent calls share the same in-flight promise (no duplicate registration)', async () => {
-      // Override listen to track call order
+      // Override listen to track call order. Each listen() returns a Promise
+      // we control; resolve it on demand so we can interleave.
       const listenMock = jest.requireMock('@tauri-apps/api/event') as any;
-      let resolveUnlisten: () => void;
+      const resolvers: Array<() => void> = [];
       let callCount = 0;
 
       listenMock.listen.mockImplementation(() => {
         callCount++;
         return new Promise<() => void>((resolve) => {
-          resolveUnlisten = () => resolve(jest.fn());
-          // Only resolve after all "concurrent" calls have been made
-          if (callCount >= 2) {
-            setTimeout(() => resolveUnlisten!(), 0);
-          }
+          resolvers.push(() => resolve(jest.fn()));
         });
       });
 
-      // Fire two setupEventListeners calls in the same tick
+      // Fire two setupEventListeners calls in the same tick.
       const p1 = browserAgentStore.getState().setupEventListeners();
       const p2 = browserAgentStore.getState().setupEventListeners();
 
+      // Drain resolvers until both setupEventListeners() calls have settled.
+      // Each iteration resolves the head resolver, then yields so the awaited
+      // microtasks in setupEventListeners can advance and call listen() again.
+      for (let safety = 0; safety < 16; safety += 1) {
+        if (resolvers.length === 0) {
+          // Allow in-flight microtasks to either resolve p1/p2 or push more
+          // resolvers.
+          await Promise.resolve();
+          if (resolvers.length === 0) {
+            break;
+          }
+          continue;
+        }
+        const next = resolvers.shift()!;
+        next();
+        await Promise.resolve();
+      }
+
       const [cleanup1, cleanup2] = await Promise.all([p1, p2]);
 
-      // Both got the same promise, so only ONE listener registration happened
-      // Call count should reflect a single registration, not two
-      expect(callCount).toBeLessThanOrEqual(2); // At most 2 (one per event type)
+      // Both calls share the same in-flight promise — only one registration
+      // happened, so listen() was called exactly the expected number of
+      // times for a single setup (4: agent_log, agent_task_complete,
+      // screenshot_captured, screenshot_error).
+      expect(callCount).toBe(4);
+      expect(typeof cleanup1).toBe('function');
+      expect(typeof cleanup2).toBe('function');
     });
   });
 

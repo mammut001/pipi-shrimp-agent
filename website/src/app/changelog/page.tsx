@@ -1,221 +1,45 @@
-"use client";
+import { fetchChangelog } from "@/lib/changelog";
+import { ChangelogList } from "@/components/ChangelogList";
+import { Container, Section } from "@/components";
 
-import Image from "next/image";
-import { useState, useEffect } from "react";
-import { useLanguage } from "@/contexts/LanguageContext";
-import {
-  githubCommitUrl,
-  githubCommitsApiUrl,
-} from "@/lib/siteConfig";
-
-interface Commit {
-  sha: string;
-  commit: {
-    message: string;
-    author: {
-      name: string;
-      date: string;
-    };
-  };
-  author: {
-    login: string;
-    avatar_url: string;
-  } | null;
-}
-
-const CACHE_KEY = "pipi-shrimp-changelog";
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes, per SPEC §3.2
-const PER_PAGE = 20;
-
-interface CacheEntry {
-  fetchedAt: number;
-  commits: Commit[];
-}
-
-const readCache = (): CacheEntry | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CacheEntry;
-    if (
-      typeof parsed.fetchedAt !== "number" ||
-      !Array.isArray(parsed.commits) ||
-      Date.now() - parsed.fetchedAt > CACHE_TTL_MS
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+export const metadata = {
+  title: "Changelog - Pipi Shrimp Agent",
+  description: "Latest commits and updates for Pipi Shrimp Agent.",
 };
 
-const writeCache = (commits: Commit[]): void => {
-  if (typeof window === "undefined") return;
-  try {
-    const entry: CacheEntry = { fetchedAt: Date.now(), commits };
-    window.sessionStorage.setItem(CACHE_KEY, JSON.stringify(entry));
-  } catch {
-    // Ignore quota / serialization errors; cache is best-effort.
-  }
-};
+// Next.js 16 requires this export to be a static string literal.
+// The page is always rendered on demand, but `fetchChangelog` still
+// applies a 5-minute revalidation window at the data-cache layer, so
+// production traffic to GitHub is throttled to ~once per 5 minutes
+// per instance regardless of how dynamic this page is.
+export const dynamic = "force-dynamic";
 
-export default function ChangelogPage() {
-  const { t } = useLanguage();
-  const [commits, setCommits] = useState<Commit[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const apply = (data: Commit[]) => {
-      if (cancelled) return;
-      setCommits(data);
-      setLoading(false);
-    };
-
-    const cached = readCache();
-    if (cached) {
-      apply(cached.commits);
-      return;
-    }
-
-    async function fetchCommits() {
-      try {
-        const response = await fetch(githubCommitsApiUrl(PER_PAGE));
-        if (!response.ok) {
-          throw new Error("Failed to fetch commits");
-        }
-        const data: Commit[] = await response.json();
-        if (cancelled) return;
-        writeCache(data);
-        apply(data);
-      } catch {
-        if (cancelled) return;
-        setError(t.changelog.error);
-        setLoading(false);
-      }
-    }
-
-    fetchCommits();
-    return () => {
-      cancelled = true;
-    };
-  }, [t.changelog.error]);
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  };
+export default async function ChangelogPage() {
+  // Server-side fetch. We always await here, so by the time React
+  // renders, we already know which of the three states we are in
+  // (ok / empty / error) and the UI can switch on `result.status`
+  // without ever showing a loading spinner.
+  const result = await fetchChangelog();
 
   return (
-    <div className="page-enter stack-reset">
-      {/* Hero Section */}
-      <section className="section-padding bg-secondary pt-32">
-        <div className="max-w-[1200px] mx-auto px-6">
-          <h1 className="text-4xl md:text-5xl font-bold text-[var(--text-primary)] mb-6">
-            {t.changelog.title}
+    <div className="page-enter">
+      <Section variant="hero-muted">
+        <Container>
+          <h1 className="mb-4 text-4xl font-bold text-[var(--text-primary)] md:text-5xl">
+            Changelog
           </h1>
-          <p className="text-lg text-[var(--text-secondary)]">
-            {t.changelog.subtitle}
+          <p className="max-w-2xl text-lg text-[var(--text-secondary)]">
+            Latest updates and improvements. Pulled from the GitHub commit
+            history of the main branch.
           </p>
-        </div>
-      </section>
+        </Container>
+      </Section>
 
-      {/* Changelog List */}
-      <section className="section-padding">
-        <div className="max-w-[1200px] mx-auto px-6">
-          {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="flex items-center gap-3 text-[var(--text-secondary)]">
-                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                {t.changelog.loading}
-              </div>
-            </div>
-          ) : error ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="text-[var(--accent)]">{error}</div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {commits.map((commit) => (
-                <div
-                  key={commit.sha}
-                  className="p-6 bg-white rounded-xl border border-[var(--border)] hover:border-[var(--accent)] transition-colors"
-                >
-                  <div className="flex items-start gap-4">
-                    {/* Avatar */}
-                    <div className="flex-shrink-0">
-                      {commit.author ? (
-                        <Image
-                          src={commit.author.avatar_url}
-                          alt={commit.author.login}
-                          width={40}
-                          height={40}
-                          className="w-10 h-10 rounded-full"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-[var(--background-secondary)] flex items-center justify-center">
-                          <svg className="w-5 h-5 text-[var(--text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className="text-sm text-[var(--text-secondary)]">
-                          {commit.commit.author.name}
-                        </span>
-                        <span className="text-sm text-[var(--text-secondary)]">
-                          · {formatDate(commit.commit.author.date)}
-                        </span>
-                      </div>
-                      <p className="text-[var(--text-primary)] font-medium mb-3 break-words">
-                        {commit.commit.message.split("\n")[0]}
-                      </p>
-                      {commit.commit.message.split("\n").length > 1 && (
-                        <p className="text-sm text-[var(--text-secondary)] mb-3 break-words">
-                          {commit.commit.message.split("\n").slice(1).join("\n").trim()}
-                        </p>
-                      )}
-                      <a
-                        href={githubCommitUrl(commit.sha)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-sm text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors"
-                      >
-                        {t.changelog.viewOnGithub}
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </a>
-                    </div>
-
-                    {/* Commit hash */}
-                    <div className="flex-shrink-0">
-                      <code className="text-xs font-mono text-[var(--text-secondary)] bg-[var(--code-background)] px-2 py-1 rounded">
-                        {commit.sha.slice(0, 7)}
-                      </code>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
+      <Section>
+        <Container>
+          <ChangelogList initialResult={result} />
+        </Container>
+      </Section>
     </div>
   );
 }

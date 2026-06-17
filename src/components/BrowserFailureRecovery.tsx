@@ -36,8 +36,6 @@ export function BrowserFailureRecovery() {
       } else {
         await browserStore.inspectCurrentPage();
       }
-
-      dismissFailureSnapshot(snapshot.taskId);
     } catch (error) {
       addNotification('error', error instanceof Error ? error.message : String(error));
     } finally {
@@ -54,7 +52,6 @@ export function BrowserFailureRecovery() {
       } else {
         await browserStore.inspectCurrentPage();
       }
-      dismissFailureSnapshot(snapshot.taskId);
     } catch (error) {
       addNotification('error', error instanceof Error ? error.message : String(error));
     } finally {
@@ -69,7 +66,6 @@ export function BrowserFailureRecovery() {
       const browserStore = useBrowserAgentStore.getState();
       browserStore.switchToManualMode();
       browserStore.showMiniBrowser();
-      dismissFailureSnapshot(snapshot.taskId);
     } catch (error) {
       addNotification('error', error instanceof Error ? error.message : String(error));
     } finally {

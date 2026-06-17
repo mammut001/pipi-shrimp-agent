@@ -13,6 +13,7 @@ maintainers who need deeper context.
 |-----------|----------|----------------|----------|
 | AutoResearch | [`audits/auto-research.md`](./audits/auto-research.md) | Audit history, anchored fix log, design rationale, regression-test backlog | EN |
 | Full Codebase (10 rounds) | [`audits/full-codebase.md`](./audits/full-codebase.md) | 10-round audit summary (97 issues), fix log by P0/P1/P2/P3 priority, anchor index, backlog | EN |
+| Browser Automation | [`design/browser-automation.md`](./design/browser-automation.md) | Engine selection, action policy, vision fallback, observability, embedded surface, test map | EN |
 
 ---
 
@@ -56,7 +57,9 @@ rg "AUDIT-FIX \[audit-" src/
 ```
 
 ### Future: `design/`, `runbooks/`, `migration/`
-Reserved for the same per-subsystem split as `audits/`. Nothing here yet.
+Reserved for the same per-subsystem split as `audits/`. The
+[`design/browser-automation.md`](./design/browser-automation.md) doc is the
+first entry under `design/`.
 
 ---
 
@@ -128,6 +131,7 @@ rg "AUDIT-FIX \[audit-\d+-ar#" src/ -n
 | 子系统 | 文档 | 内容 | 语言 |
 |--------|------|------|------|
 | AutoResearch | [`audits/auto-research.md`](./audits/auto-research.md) | 审计历史、锚定修复日志、设计理由、回归测试清单 | 英文 |
+| 浏览器自动化 | [`design/browser-automation.md`](./design/browser-automation.md) | 引擎选择、动作策略、视觉回退、可观测性、嵌入式 WebView、测试矩阵 | 英文 |
 
 ---
 
@@ -166,7 +170,9 @@ rg "AUDIT-FIX \[audit-" src/
 ```
 
 ### 未来：`design/`、`runbooks/`、`migration/`
-预留给同样的「按子系统切分」结构。暂时为空。
+预留给同样的「按子系统切分」结构。
+[`design/browser-automation.md`](./design/browser-automation.md) 是
+`design/` 下的第一份文档。
 
 ---
 

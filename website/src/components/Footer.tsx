@@ -1,22 +1,36 @@
-"use client";
-
-import { useLanguage } from "@/contexts/LanguageContext";
+import { Container } from "./Container";
 import { githubRepoUrl } from "@/lib/siteConfig";
+import { translations, type Language } from "@/translations";
 
 const GITHUB_URL = githubRepoUrl;
 
-export function Footer() {
-  const { t } = useLanguage();
-  const currentYear = new Date().getFullYear();
+interface FooterProps {
+  /** Active language, used to pick the right translation. */
+  language: Language;
+}
+
+/**
+ * Site footer.
+ *
+ * Server component (no `"use client"`) because nothing here needs
+ * browser-only APIs. The translation is passed in as a prop so the
+ * client `LanguageContext` stays the single source of truth without
+ * forcing the footer itself to ship JS.
+ */
+export function Footer({ language }: FooterProps) {
+  const copyright = translations[language].footer.copyright;
+  const currentYear = new Date().getUTCFullYear();
 
   return (
     <footer className="border-t border-[var(--border)] bg-[var(--background-secondary)]">
-      <div className="max-w-[1200px] mx-auto px-6 py-8">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+      <Container className="py-8">
+        <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm text-[var(--text-secondary)] md:justify-start">
             <span>© {currentYear} Pipi Shrimp Agent</span>
-            <span className="hidden sm:inline">·</span>
-            <span className="hidden sm:inline">{t.footer.copyright}</span>
+            <span className="hidden sm:inline" aria-hidden="true">
+              ·
+            </span>
+            <span className="hidden sm:inline">{copyright}</span>
           </div>
 
           <div className="flex items-center gap-4">
@@ -24,12 +38,13 @@ export function Footer() {
               href={GITHUB_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+              className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
             >
               <svg
-                className="w-5 h-5"
+                className="h-5 w-5"
                 fill="currentColor"
                 viewBox="0 0 24 24"
+                aria-hidden="true"
               >
                 <path
                   fillRule="evenodd"
@@ -41,7 +56,7 @@ export function Footer() {
             </a>
           </div>
         </div>
-      </div>
+      </Container>
     </footer>
   );
 }

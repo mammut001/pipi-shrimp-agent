@@ -61,7 +61,16 @@ const clickElementPayload = z
     backendNodeId: z.number().int().positive().optional(),
     selector: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.id != null ||
+      value.backend_node_id != null ||
+      value.element_id != null ||
+      value.backendNodeId != null ||
+      value.selector != null,
+    { message: 'click_element requires id, backend_node_id, or selector' },
+  );
 
 const inputTextPayload = z
   .object({

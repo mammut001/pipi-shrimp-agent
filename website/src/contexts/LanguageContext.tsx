@@ -8,19 +8,12 @@ import {
   useEffect,
   ReactNode,
 } from "react";
-import { translations, Language, TranslationKeys } from "@/translations";
-
-const STORAGE_KEY = "language";
-const SUPPORTED_LANGUAGES: readonly Language[] = [
-  "en",
-  "fr",
-  "zh",
-  "ko",
-  "vi",
-] as const;
-
-const isSupportedLanguage = (value: string | null): value is Language =>
-  value !== null && (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
+import { translations, type Language, type TranslationKeys } from "@/translations";
+import {
+  DEFAULT_LANGUAGE,
+  LANGUAGE_COOKIE,
+  isSupportedLanguage,
+} from "@/lib/language";
 
 interface LanguageContextType {
   language: Language;
@@ -29,40 +22,61 @@ interface LanguageContextType {
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(
-  undefined
+  undefined,
 );
 
 interface LanguageProviderProps {
   children: ReactNode;
+  /**
+   * Initial language. On the server this comes from the `language`
+   * cookie (see `lib/serverLanguage.ts`); on the client the layout
+   * passes the same value via this prop so the very first paint
+   * already matches the visitor's preference and there is no
+   * "EN -> ZH" flash.
+   */
+  initialLanguage?: Language;
 }
 
-export function LanguageProvider({ children }: LanguageProviderProps) {
-  const [language, setLanguageState] = useState<Language>("en");
+/**
+ * Reads the active language from a `language` cookie. The server
+ * layout passes the parsed value into `<LanguageProvider initialLanguage>`
+ * so the first paint already has the right translation.
+ */
+export function LanguageProvider({
+  children,
+  initialLanguage = DEFAULT_LANGUAGE,
+}: LanguageProviderProps) {
+  const [language, setLanguageState] = useState<Language>(initialLanguage);
 
-  // Hydrate from localStorage exactly once on mount so a returning
-  // user keeps their preferred locale instead of always seeing English
-  // first. This is a one-way bootstrap effect — putting `language` in
-  // the dep array would re-trigger the setState on every change.
+  // Belt-and-braces: if the cookie was modified by another tab
+  // before hydration finished, honour that value too.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (typeof document === "undefined") return;
+    const match = document.cookie.match(
+      new RegExp("(?:^|; )" + LANGUAGE_COOKIE + "=([^;]*)"),
+    );
+    const stored = match ? decodeURIComponent(match[1]) : null;
     if (isSupportedLanguage(stored) && stored !== language) {
       setLanguageState(stored);
     }
+    // Run once on mount only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Keep <html lang> in sync with the active locale on every change.
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof document === "undefined") return;
     document.documentElement.lang = language;
   }, [language]);
 
   const handleSetLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
-    if (typeof window !== "undefined") {
+    if (typeof document !== "undefined") {
       document.documentElement.lang = lang;
-      window.localStorage.setItem(STORAGE_KEY, lang);
+      // 1 year, lax, root path so the server can read it on the
+      // very next request.
+      const oneYear = 60 * 60 * 24 * 365;
+      document.cookie = `${LANGUAGE_COOKIE}=${encodeURIComponent(lang)}; Max-Age=${oneYear}; Path=/; SameSite=Lax`;
     }
   }, []);
 
