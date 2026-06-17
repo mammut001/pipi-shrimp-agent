@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from '@jest/globals';
 
 import {
   applyWindowsShellProfileToArgsJson,
+  convertWslPathToWindows,
   convertWindowsPathToWsl,
   detectPathKind,
+  normalizePathForExternalOpen,
   normalizePathForWindowsShellSelection,
   resolveWindowsShellProfile,
   withWindowsShellProfileArgs,
@@ -40,6 +42,7 @@ describe('windowsShellProfile utilities', () => {
     expect(detectPathKind('\\\\wsl$\\Ubuntu\\home\\payton\\project')).toBe('wsl');
     expect(convertWindowsPathToWsl('C:\\Users\\Payton\\project')).toBe('/mnt/c/Users/Payton/project');
     expect(convertWindowsPathToWsl('\\\\wsl$\\Ubuntu\\home\\payton\\project')).toBe('/home/payton/project');
+    expect(convertWslPathToWindows('/mnt/d/WSL/Ubuntu/pipishrimp')).toBe('D:\\WSL\\Ubuntu\\pipishrimp');
   });
 
   it('normalizes picked Windows paths for WSL selections', () => {
@@ -49,6 +52,11 @@ describe('windowsShellProfile utilities', () => {
     expect(
       normalizePathForWindowsShellSelection('D:\\WSL\\Ubuntu\\pipishrimp', 'powershell'),
     ).toBe('D:\\WSL\\Ubuntu\\pipishrimp');
+  });
+
+  it('normalizes WSL mount paths before external open on Windows', () => {
+    expect(normalizePathForExternalOpen('/mnt/d/WSL/Ubuntu/pipishrimp')).toBe('D:\\WSL\\Ubuntu\\pipishrimp');
+    expect(normalizePathForExternalOpen('D:\\WSL\\Ubuntu\\pipishrimp')).toBe('D:\\WSL\\Ubuntu\\pipishrimp');
   });
 
   it('injects windowsShellProfile into execute_command args only', () => {

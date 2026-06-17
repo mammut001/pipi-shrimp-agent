@@ -22,6 +22,7 @@ import { t } from '@/i18n';
 import { useSettingsStore } from '@/store';
 import {
   convertWindowsPathToWsl,
+  detectPathKind,
   formatShellProfileLabel,
   resolveWindowsShellProfile,
 } from '@/utils/windowsShellProfile';
@@ -88,6 +89,16 @@ export function TerminalPanel({
   const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
   const shellResolution = resolveWindowsShellProfile(windowsShellProfile, cwd);
   const shellLabel = formatShellProfileLabel(shellResolution);
+  const cwdPathKind = detectPathKind(cwd);
+  const shellBanner = shellResolution.isWindows && shellResolution.resolved === 'wsl' && cwdPathKind === 'windows'
+    ? {
+      tone: 'warning' as const,
+      message: t('terminal.shell.wslMixedPathWarning'),
+    }
+    : null;
+  const shellInlineHint = shellResolution.isWindows && shellResolution.resolved === 'wsl' && cwdPathKind === 'wsl'
+    ? t('terminal.shell.wslReady')
+    : null;
 
   const buildCwdCommand = useCallback((target: string): string => {
     if (!shellResolution.isWindows || shellResolution.resolved === 'default') {
@@ -331,6 +342,11 @@ export function TerminalPanel({
           <span className="text-[11px] text-white/50 ml-2">
             {t('terminal.shell.activeProfile')}: {shellLabel}
           </span>
+          {shellInlineHint && (
+            <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-200">
+              {shellInlineHint}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -364,9 +380,9 @@ export function TerminalPanel({
           {errorMessage}
         </div>
       )}
-      {shellResolution.isWindows && shellResolution.resolved === 'wsl' && (
+      {shellBanner && (
         <div className="px-3 py-1.5 bg-amber-900/25 border-b border-amber-500/30 text-[11px] text-amber-200 flex-shrink-0">
-          {t('terminal.shell.wslWarning')}
+          {shellBanner.message}
         </div>
       )}
 

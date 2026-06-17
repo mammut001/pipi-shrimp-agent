@@ -80,6 +80,8 @@ export type TranslationKeys = {
   'terminal.shell.activeProfile': string;
   'terminal.shell.powerShellRecommended': string;
   'terminal.shell.wslWarning': string;
+  'terminal.shell.wslMixedPathWarning': string;
+  'terminal.shell.wslReady': string;
 
   // Diagnostics
   'diagnostics.dbHealth': string;
@@ -1065,6 +1067,14 @@ export type TranslationKeys = {
   'autoresearch.experimentDirPlaceholder': string;
   'autoresearch.testConnection': string;
   'autoresearch.connectionTesting': string;
+  'autoresearch.connectionStatusNeedsTestTitle': string;
+  'autoresearch.connectionStatusTestingTitle': string;
+  'autoresearch.connectionStatusTestingBody': string;
+  'autoresearch.connectionStatusSuccessTitle': string;
+  'autoresearch.connectionStatusSuccessBody': string;
+  'autoresearch.connectionStatusErrorTitle': string;
+  'autoresearch.connectionStatusErrorBody': string;
+  'autoresearch.connectionStatusRawOutput': string;
   'autoresearch.connectionTestRequired': string;
   'autoresearch.metricNamePlaceholder': string;
   'autoresearch.lowerIsBetter': string;
@@ -1124,6 +1134,7 @@ export type TranslationKeys = {
   'autoresearch.readiness.filled': string;
   'autoresearch.readiness.check': string;
   'autoresearch.readiness.missing': string;
+  'autoresearch.check.connectionTest': string;
   'autoresearch.readiness.helper': string;
   'autoresearch.field.host': string;
   'autoresearch.field.userAuth': string;

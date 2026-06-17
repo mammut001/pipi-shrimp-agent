@@ -135,6 +135,20 @@ export function convertWindowsPathToWsl(path: string): string | null {
   return null;
 }
 
+export function convertWslPathToWindows(path: string): string | null {
+  const value = path.trim();
+  if (!value) return null;
+
+  const driveMatch = value.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
+  if (driveMatch) {
+    const drive = driveMatch[1].toUpperCase();
+    const rest = driveMatch[2].replace(/\//g, '\\');
+    return `${drive}:\\${rest}`;
+  }
+
+  return null;
+}
+
 export function normalizePathForWindowsShellSelection(
   path: string,
   selection: WindowsShellProfile,
@@ -144,6 +158,13 @@ export function normalizePathForWindowsShellSelection(
     return path;
   }
   return convertWindowsPathToWsl(path) ?? path;
+}
+
+export function normalizePathForExternalOpen(path: string): string {
+  if (!isWindowsPlatform()) {
+    return path;
+  }
+  return convertWslPathToWindows(path) ?? path;
 }
 
 export function buildShellProfilePromptContext(input: {

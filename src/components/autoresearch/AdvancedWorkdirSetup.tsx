@@ -8,6 +8,7 @@ import {
   AutoResearchInlineHint,
   AutoResearchMetricSummary,
   AutoResearchPathSummary,
+  AutoResearchConnectionStatusPanel,
   AutoResearchReadinessRow,
   AutoResearchRunHistoryCard,
   AutoResearchSummaryItem,
@@ -247,6 +248,16 @@ export function AdvancedWorkdirSetup() {
   const sshReady = setupForm.mode === 'local'
     ? true
     : Boolean(setupForm.host.trim() && setupForm.user.trim());
+  const connectionTestReady = connectionTest.status === 'success';
+  const testConnectionDisabled = setupForm.mode === 'ssh'
+    ? (!setupForm.host || !setupForm.user
+        || (setupForm.authMode === 'password' && !setupForm.password)
+        || (setupForm.authMode === 'key' && !setupForm.keyPath)
+        || !setupForm.remoteWorkDir
+        || !experimentDir
+        || Boolean(agentConfigError)
+        || baselineInvalid)
+    : !setupForm.remoteWorkDir || !experimentDir || Boolean(agentConfigError) || baselineInvalid;
 
   const handleViewActiveRun = useCallback(() => {
     const targetRunId = activeRunId || selectedRun?.id || sortedRuns[0]?.id;
@@ -510,7 +521,7 @@ export function AdvancedWorkdirSetup() {
   if (showSetup) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md space-y-4 rounded-[28px] border border-gray-200/70 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(28,25,23,0.25)]">
+        <div className="flex max-h-[calc(100vh-6rem)] w-full max-w-2xl flex-col rounded-[28px] border border-gray-200/70 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(28,25,23,0.25)]">
           <div className="space-y-1">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-gray-400">AutoResearch</p>
             <h2 className="text-xl font-semibold text-gray-900">{t('autoresearch.setupTitle')}</h2>
@@ -527,7 +538,8 @@ export function AdvancedWorkdirSetup() {
             />
           )}
 
-          <form className="space-y-3" onSubmit={handleSetupSubmit}>
+          <form className="mt-4 flex min-h-0 flex-1 flex-col" onSubmit={handleSetupSubmit}>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50/70 px-3 py-2 text-xs text-neutral-700">
               <span>
                 {prefillSource === 'last-used'
@@ -660,39 +672,6 @@ export function AdvancedWorkdirSetup() {
             <AutoResearchPathSummary label={t('autoresearch.summaryExperimentDir')} path={experimentDir} />
             <AutoResearchInlineHint>{t('autoresearch.experimentDirHelper')}</AutoResearchInlineHint>
 
-            <button
-              type="button"
-              className="w-full rounded-2xl border border-gray-200 bg-white py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50"
-              disabled={
-                setupForm.mode === 'ssh'
-                  ? (!setupForm.host || !setupForm.user
-                      || (setupForm.authMode === 'password' && !setupForm.password)
-                      || (setupForm.authMode === 'key' && !setupForm.keyPath)
-                      || !setupForm.remoteWorkDir
-                      || !experimentDir
-                      || Boolean(agentConfigError)
-                      || baselineInvalid)
-                  : !setupForm.remoteWorkDir || !experimentDir || Boolean(agentConfigError) || baselineInvalid
-              }
-              onClick={handleTestConnection}
-            >
-              {connectionTest.status === 'testing'
-                ? t('autoresearch.connectionTesting')
-                : t('autoresearch.testConnection')}
-            </button>
-
-            {connectionTest.output && (
-              <div className={`rounded-2xl border px-3 py-2 text-xs whitespace-pre-wrap ${
-                connectionTest.status === 'success'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : connectionTest.status === 'error'
-                    ? 'border-rose-200 bg-rose-50 text-rose-700'
-                    : 'border-gray-200 bg-gray-50 text-gray-600'
-              }`}>
-                {connectionTest.output}
-              </div>
-            )}
-
             <hr className="border-gray-200" />
 
               <div className="flex gap-2">
@@ -734,6 +713,7 @@ export function AdvancedWorkdirSetup() {
               <AutoResearchReadinessRow label={t('autoresearch.check.workdir')} ready={workdirReady} />
               <AutoResearchReadinessRow label={t('autoresearch.check.experimentDir')} ready={experimentDirReady} />
               <AutoResearchReadinessRow label={t('autoresearch.check.metric')} ready={metricReady} />
+              <AutoResearchReadinessRow label={t('autoresearch.check.connectionTest')} ready={connectionTestReady} />
               {setupForm.mode === 'ssh' && (
                 <AutoResearchReadinessRow label={t('autoresearch.check.sshConnection')} ready={sshReady} />
               )}
@@ -775,19 +755,40 @@ export function AdvancedWorkdirSetup() {
                 </div>
               </div>
             )}
-            <button
-              type="submit"
-              className="w-full rounded-2xl bg-neutral-900 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-neutral-800 disabled:opacity-50"
-              disabled={isStarting}
-              aria-busy={isStarting}
-            >
-              {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
-            </button>
+            </div>
+            <div className="mt-3 shrink-0 border-t border-gray-100 pt-3">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                className="w-full rounded-2xl border border-gray-200 bg-white py-2.5 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-48"
+                disabled={testConnectionDisabled || isStarting}
+                onClick={handleTestConnection}
+              >
+                {connectionTest.status === 'testing'
+                  ? t('autoresearch.connectionTesting')
+                  : t('autoresearch.testConnection')}
+              </button>
+              <button
+                type="submit"
+                className="w-full rounded-2xl bg-neutral-900 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-neutral-800 disabled:opacity-50"
+                disabled={isStarting}
+                aria-busy={isStarting}
+              >
+                {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
+              </button>
+            </div>
+            <div className="mt-2">
+              <AutoResearchConnectionStatusPanel
+                status={connectionTest.status}
+                output={connectionTest.output}
+              />
+            </div>
             {agentConfigError && (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <div className="mt-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 {agentConfigError}
               </div>
             )}
+            </div>
           </form>
         </div>
       </div>

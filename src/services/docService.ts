@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { normalizePathForExternalOpen } from '@/utils/windowsShellProfile';
 
 export interface DocMeta {
   number: string;
@@ -82,7 +83,7 @@ export async function updateDoc(
 }
 
 export async function openFileExternal(path: string): Promise<void> {
-  return invoke<void>('open_file_external', { path });
+  return invoke<void>('open_file_external', { path: normalizePathForExternalOpen(path) });
 }
 
 export async function openFileWithApp(path: string, appName: string): Promise<void> {

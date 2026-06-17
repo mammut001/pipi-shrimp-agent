@@ -1,5 +1,6 @@
 import { t } from '@/i18n';
 import type { AutoResearchRunPhase, AutoResearchRunRecord, AutoResearchRunStatus } from '@/services/autoresearch/history';
+import type { AutoResearchConnectionTestStatus } from '@/services/autoresearch/setupFlow';
 import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 
 function formatMetricValue(value: number | null | undefined): string {
@@ -278,6 +279,87 @@ export function AutoResearchSummaryItem({
     <div className="flex items-baseline gap-2 text-[12px]">
       <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.16em] text-gray-400">{label}</span>
       <span className="truncate font-medium text-gray-800">{value}</span>
+    </div>
+  );
+}
+
+export function AutoResearchConnectionStatusPanel({
+  status,
+  output,
+}: {
+  status: AutoResearchConnectionTestStatus;
+  output: string;
+}) {
+  if (status === 'idle' && !output.trim()) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold text-amber-900">{t('autoresearch.connectionStatusNeedsTestTitle')}</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-amber-800">{t('autoresearch.connectionTestRequired')}</div>
+          </div>
+          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+            {t('autoresearch.readiness.check')}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const tone = status === 'success'
+    ? {
+      border: 'border-emerald-200',
+      bg: 'bg-emerald-50',
+      title: 'text-emerald-900',
+      body: 'text-emerald-800',
+      badge: 'text-emerald-700',
+      badgeLabel: t('autoresearch.readiness.filled'),
+      titleText: t('autoresearch.connectionStatusSuccessTitle'),
+      bodyText: t('autoresearch.connectionStatusSuccessBody'),
+    }
+    : status === 'error'
+      ? {
+        border: 'border-rose-200',
+        bg: 'bg-rose-50',
+        title: 'text-rose-900',
+        body: 'text-rose-800',
+        badge: 'text-rose-700',
+        badgeLabel: t('autoresearch.readiness.missing'),
+        titleText: t('autoresearch.connectionStatusErrorTitle'),
+        bodyText: t('autoresearch.connectionStatusErrorBody'),
+      }
+      : {
+        border: 'border-sky-200',
+        bg: 'bg-sky-50',
+        title: 'text-sky-900',
+        body: 'text-sky-800',
+        badge: 'text-sky-700',
+        badgeLabel: t('autoresearch.connectionTesting'),
+        titleText: t('autoresearch.connectionStatusTestingTitle'),
+        bodyText: t('autoresearch.connectionStatusTestingBody'),
+      };
+
+  return (
+    <div className={`rounded-2xl border px-3 py-2 ${tone.border} ${tone.bg}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className={`text-xs font-semibold ${tone.title}`}>{tone.titleText}</div>
+          <div className={`mt-1 text-[11px] leading-relaxed ${tone.body}`}>{tone.bodyText}</div>
+        </div>
+        <span className={`rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${tone.badge}`}>
+          {tone.badgeLabel}
+        </span>
+      </div>
+      {output.trim() && (
+        <details className="mt-2">
+          <summary className={`cursor-pointer text-[11px] font-medium ${tone.body}`}>
+            {t('autoresearch.connectionStatusRawOutput')}
+          </summary>
+          <div className={`mt-2 whitespace-pre-wrap rounded-xl border border-white/70 bg-white/70 px-3 py-2 font-mono text-[11px] ${tone.body}`}>
+            {output}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
