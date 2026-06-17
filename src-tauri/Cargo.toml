@@ -34,7 +34,7 @@ regex = "1.10"
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 fontdb = "0.14"
-typst = "0.11"
+typst = "0.14"
 typst-svg = "0.11"
 typst-pdf = "0.11"
 comemo = "0.4"
