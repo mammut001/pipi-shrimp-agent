@@ -177,7 +177,7 @@ describe('AutoResearchRunDetailDocument', () => {
     expect(view.container.textContent).toContain('Metric History');
   });
 
-  it('uses the demo fallback when a selected run has no iterations', async () => {
+  it('shows the real run shell when a selected run has no iterations yet', async () => {
     const run = {
       ...createAutoResearchDemoRun(),
       id: 'real-empty-run',
@@ -191,8 +191,9 @@ describe('AutoResearchRunDetailDocument', () => {
       run,
     });
 
-    expect(view.container.textContent).toContain('Demo');
-    expect(view.container.textContent).toContain('Benchmark fixture optimization sweep');
+    expect(view.container.textContent).toContain('Empty real run');
+    expect(view.container.textContent).toContain('No iterations recorded yet.');
+    expect(view.container.textContent).not.toContain('Benchmark fixture optimization sweep');
   });
 
   it('renders the snapshot-based model label in the dashboard header and chips', () => {

@@ -198,6 +198,8 @@ pub fn run() {
             commands::web::cdp_execute_script,
             commands::web::cdp_screenshot,
             commands::web::cdp_extract_content,
+            commands::web::get_page_observation_light,
+            commands::web::browser_screenshot_options,
             commands::open_url,
             // Claude SDK commands (API-based)
             commands::claude_sdk::send_claude_sdk_chat,

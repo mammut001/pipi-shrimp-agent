@@ -1,3 +1,4 @@
+import { t } from '@/i18n';
 import type { ConversationalTemplateId } from './types';
 
 export interface ConversationalTemplateOption {
@@ -7,31 +8,31 @@ export interface ConversationalTemplateOption {
 }
 
 export const CONVERSATIONAL_TEMPLATE_OPENERS: Record<ConversationalTemplateId, string> = {
-  'reproduce-paper': 'I want to reproduce a paper end-to-end. Help me choose the goal, papers, baselines, metric, and starter scaffold.',
-  'beat-baseline': 'I want to beat a baseline on a known task. Propose the goal, keep the comparison honest, and scaffold the experiment workspace.',
-  ablation: 'I want to run an ablation study on an existing method. Help me lock the question, metrics, and an experiment scaffold.',
-  'from-scratch': 'I want to start a new AutoResearch project from scratch. Propose a concrete research goal and bootstrap the workspace.',
+  'reproduce-paper': t('autoresearch.bootstrap.card.reproduce.opener'),
+  'beat-baseline': t('autoresearch.bootstrap.card.baseline.opener'),
+  ablation: t('autoresearch.bootstrap.card.ablation.opener'),
+  'from-scratch': t('autoresearch.bootstrap.card.scratch.opener'),
 };
 
 export const CONVERSATIONAL_TEMPLATE_OPTIONS: ConversationalTemplateOption[] = [
   {
     id: 'reproduce-paper',
-    title: 'Reproduce a paper',
+    title: t('autoresearch.bootstrap.card.reproduce.title'),
     opener: CONVERSATIONAL_TEMPLATE_OPENERS['reproduce-paper'],
   },
   {
     id: 'beat-baseline',
-    title: 'Beat a baseline',
+    title: t('autoresearch.bootstrap.card.baseline.title'),
     opener: CONVERSATIONAL_TEMPLATE_OPENERS['beat-baseline'],
   },
   {
     id: 'ablation',
-    title: 'Ablation study',
+    title: t('autoresearch.bootstrap.card.ablation.title'),
     opener: CONVERSATIONAL_TEMPLATE_OPENERS.ablation,
   },
   {
     id: 'from-scratch',
-    title: 'From scratch',
+    title: t('autoresearch.bootstrap.card.scratch.title'),
     opener: CONVERSATIONAL_TEMPLATE_OPENERS['from-scratch'],
   },
 ];

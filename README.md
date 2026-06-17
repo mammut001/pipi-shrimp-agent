@@ -1,6 +1,4 @@
 <div align="center">
-  <img src="crawfish-avatar.png" alt="Pipi-Shrimp Agent Avatar" width="120" />
-
   <h1>Pipi-Shrimp Agent (皮皮虾助手)</h1>
 
   <p><strong>A blazingly fast, lightweight, and high-performance AI personal assistant built with Tauri + React + TypeScript.</strong></p>
@@ -14,7 +12,7 @@
   </p>
 
   <p>
-    <a href="#english">English</a> | <a href="#中文">简体中文</a>
+    <a href="#english">English</a> | <a href="#chinese">简体中文</a>
   </p>
 </div>
 
@@ -80,58 +78,47 @@ pipi-shrimp-agent/
 ├── src/                         # ⚛️ React Frontend (UI + Business Logic)
 │   ├── components/               # Reusable UI components
 │   │   ├── workflow/            # Workflow canvas, agent nodes, execution bar
+│   │   ├── autoresearch/       # AutoResearch dashboard & bootstrap views
+│   │   ├── mcp/                # MCP server management UI
+│   │   ├── settings/           # Settings page sub-components
 │   │   └── ...
 │   ├── core/                    # QueryEngine, stream adapter, core types
-│   ├── hooks/                   # Custom React hooks
+│   ├── hooks/                   # Custom React hooks (polling, MCP, search, etc.)
 │   ├── layout/                  # App layout with sidebar navigation
-│   ├── pages/                   # Main pages (Chat, Workflow, Skill, Settings)
+│   ├── pages/                   # Main pages (Chat, Workflow, Skill, Settings, AutoResearch, Diagnostics)
 │   ├── services/                # Core services
 │   │   ├── swarm/              # Multi-agent collaboration system
 │   │   ├── compact/             # 3-layer context compression
 │   │   ├── memory/              # Long-term memory & auto-extraction
+│   │   ├── autoresearch/       # AutoResearch experiment loop & bootstrap
+│   │   ├── orchestration/      # Multi-agent intent classification & delegation
+│   │   ├── workflowEngine/     # Visual workflow orchestration engine
 │   │   ├── toolEngine.ts        # Tool execution orchestration
-│   │   ├── workflowEngine.ts    # Visual workflow orchestration
 │   │   └── telegramService.ts   # Telegram Bot integration
-│   ├── skills/                  # Skill plugins (PDF, DOCX, XLSX, Email)
+│   ├── skills/                  # Skill plugins (Resume, PDF, DOCX, XLSX, Email)
 │   ├── store/                   # Zustand state management
-│   ├── tools/                   # Tool implementations (Bash, File, Browser, etc.)
+│   ├── tools/                   # Tool implementations (24+ tools: Bash, File, Grep, Glob, WebSearch, REPL, SSH, LSP, etc.)
 │   ├── types/                   # TypeScript type definitions
-│   └── utils/                   # Utilities (pricing, permissions, browser utils)
+│   └── utils/                   # Utilities (pricing, permissions, browser engine, security)
 ├── src-tauri/                   # 🦀 Rust Backend (Native Core)
 │   ├── src/
 │   │   ├── lib.rs               # Main library with 60+ Tauri commands
 │   │   ├── database.rs          # SQLite persistence layer
 │   │   ├── claude/              # Claude API HTTP client (multi-provider)
+│   │   ├── browser/             # CDP browser automation (actions, DOM, session)
+│   │   ├── commands/            # 15+ Tauri command handlers (chat, browser, file, etc.)
+│   │   ├── mcp/                 # MCP protocol client & transport
 │   │   ├── models/              # IPC request/response types
 │   │   ├── tools/                # Tool pipeline registry & scheduler
 │   │   └── utils/                # Typst rendering, error handling
-│   ├── skills/                  # Skill metadata (skills.config.json)
+│   ├── skills/                  # Skill metadata & scripts (PDF, DOCX, XLSX, etc.)
 │   ├── capabilities/            # Tauri permission configurations
 │   ├── Cargo.toml               # Rust dependencies
 │   └── tauri.conf.json          # Tauri application config
-├── docs/                        # Documentation
-│   ├── audits/                  # Code-audit history and anchored fix log
-│   └── ...                      # Other subsystem docs
+├── website/                     # 🌐 Project website (Next.js)
 ├── public/                      # Static assets
 └── package.json                 # Frontend dependencies
 ```
-
-### 📚 Documentation
-
-Detailed subsystem docs live under `docs/`. The top-level entry point is
-[`docs/README.md`](./docs/README.md).
-
-| Subsystem | Document | What it covers |
-|-----------|----------|----------------|
-| AutoResearch | [`docs/audits/auto-research.md`](./docs/audits/auto-research.md) | Audit history, fix log, design rationale, regression-test backlog |
-| Full Codebase (10 rounds) | [`docs/audits/full-codebase.md`](./docs/audits/full-codebase.md) | 10-round audit summary (97 issues), fix log by P0/P1/P2/P3 priority, anchor index, backlog |
-
-Code-audit fixes are anchored in the source with `// AUDIT-FIX [audit-N-ar#M]`
-comments (the `-ar` namespace suffix keeps AutoResearch anchors distinct
-from chat-module anchors). Run
-`rg "AUDIT-FIX \[audit-\d+-ar#" src/` to list every AutoResearch fix,
-or `rg "AUDIT-FIX \[audit-" src/` to list every audit anchor in the
-project.
 
 ### Claude HTTP Architecture
 
@@ -180,6 +167,10 @@ The resulting bootstrap artifact is persisted at `workDir/.pipi-shrimp/autoresea
 - **AI Engine**: Anthropic API / Claude SDK (multi-provider: MiniMax, OpenAI-compatible, Gemini)
 - **Tools**: pnpm, Cargo
 
+### 🏗️ Architecture
+
+For a visual overview of the 6-layer architecture, message flow, and security model, see the **[Architecture](https://github.com/mammut001/pipi-shrimp-agent/tree/main/website)** page on the project website.
+
 ### 📝 Roadmap
 
 - [x] Task 1: Core framework initialization (Tauri + React)
@@ -208,7 +199,7 @@ We highly recommend using **VS Code** for development and installing the followi
 
 ---
 
-<h2 id="中文">🇨🇳 简体中文</h2>
+<h2 id="chinese">🇨🇳 简体中文</h2>
 
 ### ✨ 核心特性
 
@@ -268,56 +259,47 @@ pipi-shrimp-agent/
 ├── src/                         # ⚛️ React 前端代码 (UI + 业务逻辑)
 │   ├── components/               # 可复用 UI 组件
 │   │   ├── workflow/            # 工作流画布、节点、执行栏
+│   │   ├── autoresearch/       # AutoResearch 仪表盘与 Bootstrap 视图
+│   │   ├── mcp/                # MCP 服务器管理 UI
+│   │   ├── settings/           # 设置页子组件
 │   │   └── ...
 │   ├── core/                    # QueryEngine, 流适配器, 核心类型
-│   ├── hooks/                   # 自定义 React hooks
+│   ├── hooks/                   # 自定义 React hooks (轮询, MCP, 搜索等)
 │   ├── layout/                  # 带侧边栏导航的布局
-│   ├── pages/                   # 核心页面 (Chat, Workflow, Skill, Settings)
+│   ├── pages/                   # 核心页面 (Chat, Workflow, Skill, Settings, AutoResearch, Diagnostics)
 │   ├── services/                # 核心服务
 │   │   ├── swarm/              # 多智能体协作系统
 │   │   ├── compact/             # 三层上下文压缩
 │   │   ├── memory/              # 长期记忆与自动提取
+│   │   ├── autoresearch/       # AutoResearch 实验循环与 Bootstrap
+│   │   ├── orchestration/      # 多智能体意图分类与任务委派
+│   │   ├── workflowEngine/     # 可视化工作流编排引擎
 │   │   ├── toolEngine.ts        # 工具执行编排
-│   │   ├── workflowEngine.ts     # 可视化工作流编排
 │   │   └── telegramService.ts    # Telegram 机器人集成
-│   ├── skills/                  # 技能插件 (PDF, DOCX, XLSX, Email)
+│   ├── skills/                  # 技能插件 (简历, PDF, DOCX, XLSX, Email)
 │   ├── store/                   # Zustand 状态管理
-│   ├── tools/                   # 工具实现 (Bash, File, Browser 等)
+│   ├── tools/                   # 工具实现 (24+ 工具: Bash, File, Grep, Glob, WebSearch, REPL, SSH, LSP 等)
 │   ├── types/                   # TypeScript 类型定义
-│   └── utils/                   # 工具函数 (定价, 权限, 浏览器工具)
+│   └── utils/                   # 工具函数 (定价, 权限, 浏览器引擎, 安全)
 ├── src-tauri/                   # 🦀 Rust 后端代码 (原生核心)
 │   ├── src/
 │   │   ├── lib.rs               # 主库，包含 60+ 个 Tauri 命令
 │   │   ├── database.rs          # SQLite 持久化层
 │   │   ├── claude/              # Claude API HTTP 客户端 (多 provider)
+│   │   ├── browser/             # CDP 浏览器自动化 (actions, DOM, session)
+│   │   ├── commands/            # 15+ 个 Tauri 命令处理器 (chat, browser, file 等)
+│   │   ├── mcp/                 # MCP 协议客户端与传输层
 │   │   ├── models/              # IPC 请求/响应类型
 │   │   ├── tools/                # 工具管道注册与调度
 │   │   └── utils/                # Typst 渲染, 错误处理
-│   ├── skills/                  # 技能元数据 (skills.config.json)
+│   ├── skills/                  # 技能元数据与脚本 (PDF, DOCX, XLSX 等)
 │   ├── capabilities/            # Tauri 权限配置
 │   ├── Cargo.toml               # Rust 依赖
 │   └── tauri.conf.json          # Tauri 应用配置
-├── docs/                        # 文档
-│   ├── audits/                  # 代码审计历史与锚定修复日志
-│   └── ...                      # 其他子系统文档
+├── website/                     # 🌐 项目官网 (Next.js)
 ├── public/                      # 静态资源
 └── package.json                  # 前端依赖
 ```
-
-### 📚 文档
-
-各子系统的详细文档在 `docs/` 目录下，顶层入口是
-[`docs/README.md`](./docs/README.md)。
-
-| 子系统 | 文档 | 内容 |
-|--------|------|------|
-| AutoResearch | [`docs/audits/auto-research.md`](./docs/audits/auto-research.md) | 审计历史、修复日志、设计理由、回归测试清单 |
-| 全 Codebase (10 轮) | [`docs/audits/full-codebase.md`](./docs/audits/full-codebase.md) | 10 轮审计汇总 (97 个 issue)、按 P0/P1/P2/P3 优先级整理的 fix 日志、锚点索引、待办清单 |
-
-代码审计的修复在源码中以 `// AUDIT-FIX [audit-N-ar#M]` 注释锚定
-（`-ar` 命名空间后缀用来和 chat 模块的锚点区分开）。运行
-`rg "AUDIT-FIX \[audit-\d+-ar#" src/` 列出所有 AutoResearch 修复，
-或 `rg "AUDIT-FIX \[audit-" src/` 列出项目中所有 audit 锚点。
 
 ### Claude HTTP 架构
 
@@ -366,6 +348,10 @@ flowchart LR
 - **AI 引擎 (AI)**: Anthropic API / Claude SDK (多 provider: MiniMax, OpenAI-compatible, Gemini)
 - **工具 (Tools)**: pnpm, Cargo
 
+### 🏗️ 架构概览
+
+项目网站上有完整的 **[架构](https://github.com/mammut001/pipi-shrimp-agent/tree/main/website)** 页面，包含 6 层架构图、消息流和安全模型的可视化说明。
+
 ### 📝 开发进度
 
 - [x] Task 1: 核心框架初始化 (Tauri + React)
@@ -375,7 +361,7 @@ flowchart LR
 - [x] Task 5: **项目级对话上下文管理** (SQLite 本地存储)
 - [x] Task 6: Typst 排版与渲染引擎深度整合
 - [x] Task 7: 核心本地系统操作指令集 (Bash/Node/Python/文件系统)
-- [x] Task 8: ** Agent 项目级长效记忆体系** (`.pipi-shrimp/core.md`)
+- [x] Task 8: **Agent 项目级长效记忆体系** (`.pipi-shrimp/core.md`)
 - [x] Task 9: **基于 CDP 的高性能浏览器智能控制能力**
 - [x] Task 10: **多智能体协作系统 (Swarm)**
 - [x] Task 11: **三层上下文压缩系统** (microcompact, session memory, full compact)

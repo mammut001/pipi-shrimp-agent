@@ -3,6 +3,7 @@ export type TranslationKeys = {
     home: string;
     about: string;
     features: string;
+    architecture: string;
     changelog: string;
   };
   header: {
@@ -58,6 +59,32 @@ export type TranslationKeys = {
       description: string;
     }>;
   };
+  architecture: {
+    title: string;
+    subtitle: string;
+    intro: string;
+    layers: Array<{
+      title: string;
+      description: string;
+    }>;
+    flow: {
+      title: string;
+      description: string;
+      steps: Array<{
+        title: string;
+        description: string;
+      }>;
+    };
+    security: {
+      title: string;
+      description: string;
+      items: string[];
+    };
+    openSource: {
+      title: string;
+      description: string;
+    };
+  };
   changelog: {
     title: string;
     subtitle: string;
@@ -96,6 +123,7 @@ export const translations: Record<Language, TranslationKeys> = {
       home: "Home",
       about: "About",
       features: "Features",
+      architecture: "Architecture",
       changelog: "Changelog",
     },
     header: {
@@ -193,6 +221,98 @@ export const translations: Record<Language, TranslationKeys> = {
         },
       ],
     },
+    architecture: {
+      title: "Architecture",
+      subtitle: "How Pipi Shrimp Agent is put together",
+      intro:
+        "Pipi Shrimp Agent is a Tauri desktop application with a Rust backend and a React + TypeScript front end. It is designed around four guiding principles: native performance, local-first privacy, transparent tooling, and a small, well-typed surface area. This page is a high-level tour of how those principles show up in the code.",
+      layers: [
+        {
+          title: "Tauri shell",
+          description:
+            "The Rust binary is the Tauri shell. It owns the OS window, the webview process, the file-system access policy, and the IPC bridge that the front end uses to talk to the desktop. There is no Node.js runtime in production — everything that would have been a Node module is replaced with a Rust crate or a thin Tauri command.",
+        },
+        {
+          title: "React + TypeScript front end",
+          description:
+            "The UI is a single-page React application built with the Vite toolchain and bundled by Tauri. State is local where it can be, with a few Zustand stores for cross-cutting concerns like the browser agent and the chat session. The whole UI tree is typed end-to-end so a renamed prop is a compile-time error, not a runtime one.",
+        },
+        {
+          title: "Claude SDK integration",
+          description:
+            "Conversations are driven by the Claude SDK through a thin adapter. The adapter exposes streaming responses, tool calls, and a small set of host-side capabilities (read/write file, run a shell command, browse a page). The model never sees the host directly — every tool call is brokered by Rust.",
+        },
+        {
+          title: "Local toolchain",
+          description:
+            "Bash, Python, and Node.js scripts run in a sandboxed child process that the Rust shell supervises. Output streams back over the same IPC channel so the chat UI can render stdout and stderr in real time without polling.",
+        },
+        {
+          title: "Browser agent",
+          description:
+            "A long-running background task that drives a Chromium instance via the Chrome DevTools Protocol. It captures accessibility snapshots, takes screenshots, clicks elements, and runs in a separate process so a hang on the web never freezes the chat UI.",
+        },
+        {
+          title: "Local persistence",
+          description:
+            "SQLite stores the conversation history, agent run logs, and per-project preferences. The schema is intentionally narrow: one table per concern, foreign keys turned on, every migration checked in. There is no network database and no sync layer.",
+        },
+      ],
+      flow: {
+        title: "What happens when you send a message",
+        description:
+          "A typical turn in the chat goes through six well-defined steps. Each step is implemented in a single module so a failure in one place is easy to localise.",
+        steps: [
+          {
+            title: "1. Capture",
+            description:
+              "Your message is appended to the in-memory session and the conversation row is written to SQLite. The input is also mirrored to the on-disk debug log so it can be replayed.",
+          },
+          {
+            title: "2. Context assembly",
+            description:
+              "The context manager compresses earlier turns in three layers (microcompact, session memory, legacy compact) so long conversations stay within the model's context window without losing important state.",
+          },
+          {
+            title: "3. Model call",
+            description:
+              "The Claude SDK streams a response back to the UI as tokens arrive. Tool calls are emitted inline as soon as the model decides to use one, rather than at the end of the turn.",
+          },
+          {
+            title: "4. Tool dispatch",
+            description:
+              "Tool calls cross the IPC bridge into the Rust shell, which enforces the permission policy (read-only by default, write access must be opted into) and runs the requested operation in the right sandbox.",
+          },
+          {
+            title: "5. Result streaming",
+            description:
+              "Tool results stream back through the same IPC channel. The UI renders them incrementally so a long-running shell command does not freeze the conversation.",
+          },
+          {
+            title: "6. Persistence",
+            description:
+              "When the model finishes its turn, the final assistant message is committed to SQLite and the session is sealed. The next user message starts a new turn but reuses the same context window.",
+          },
+        ],
+      },
+      security: {
+        title: "Security model",
+        description:
+          "The desktop app never sends your data to a server we control. Tool calls and conversation history stay on your machine unless you explicitly opt in to a feature that requires the network (such as fetching a public URL through the browser agent). The permission policy is enforced in Rust, not in JavaScript, so a compromised front end cannot read arbitrary files.",
+        items: [
+          "Conversations, files, and tool logs are stored locally in SQLite. No telemetry leaves the machine.",
+          "Every tool call is mediated by a Rust permission check. The front end cannot bypass it.",
+          "External network calls go through a single audited module with a strict allow-list of domains.",
+          "Secrets (API keys, OAuth tokens) live in the OS keychain, never in the database or the bundle.",
+          "Auto-update is signed; the Tauri shell refuses to launch an update whose signature does not match the project's release key.",
+        ],
+      },
+      openSource: {
+        title: "Built in the open",
+        description:
+          "Pipi Shrimp Agent is open source under the project licence. Issues, pull requests, and design discussions all happen on GitHub. The architecture documented here is the architecture that ships; if you find a discrepancy, that is a bug and we want to know about it.",
+      },
+    },
     changelog: {
       title: "Changelog",
       subtitle: "Latest updates and improvements",
@@ -228,6 +348,7 @@ export const translations: Record<Language, TranslationKeys> = {
       home: "Accueil",
       about: "À propos",
       features: "Fonctionnalités",
+      architecture: "Architecture",
       changelog: "Journal des modifications",
     },
     header: {
@@ -317,13 +438,105 @@ export const translations: Record<Language, TranslationKeys> = {
         },
         {
           title: "Gestion intelligente du contexte",
-          description: "Compression automatique du contexte avec un système à 3 couches : Microcompact, Mémoire de session et Compression遗产 pour des conversations infinies.",
+          description: "Compression automatique du contexte avec un système à 3 couches : Microcompact, Mémoire de session et Compression héritée pour des conversations infinies.",
         },
         {
           title: "Terminal intégré",
           description: "Panneau de terminal complet intégré dans l'application. Exécutez des commandes et voyez les résultats sans changer de fenêtre.",
         },
       ],
+    },
+    architecture: {
+      title: "Architecture",
+      subtitle: "Comment Pipi Shrimp Agent est assemblé",
+      intro:
+        "Pipi Shrimp Agent est une application de bureau Tauri avec un backend Rust et un front end React + TypeScript. Elle s'articule autour de quatre principes : performance native, confidentialité locale d'abord, outils transparents et une surface petite et bien typée. Cette page propose une visite guidée de la façon dont ces principes se traduisent dans le code.",
+      layers: [
+        {
+          title: "Coque Tauri",
+          description:
+            "Le binaire Rust constitue la coque Tauri. Il possède la fenêtre OS, le processus webview, la politique d'accès au système de fichiers et le pont IPC utilisé par le front end pour communiquer avec le bureau. Il n'y a pas de runtime Node.js en production — tout ce qui aurait été un module Node est remplacé par une crate Rust ou une commande Tauri fine.",
+        },
+        {
+          title: "Front end React + TypeScript",
+          description:
+            "L'interface est une application React monopage construite avec Vite et groupée par Tauri. L'état est local quand c'est possible, avec quelques stores Zustand pour les préoccupations transverses comme l'agent de navigateur et la session de chat. L'ensemble de l'arbre UI est typé de bout en bout pour qu'une prop renommée soit une erreur de compilation, pas d'exécution.",
+        },
+        {
+          title: "Intégration Claude SDK",
+          description:
+            "Les conversations sont pilotées par le Claude SDK via un adaptateur fin. L'adaptateur expose des réponses en streaming, des appels d'outils et un petit ensemble de capacités côté hôte (lire/écrire un fichier, exécuter une commande shell, parcourir une page). Le modèle ne voit jamais l'hôte directement — chaque appel d'outil est servi par Rust.",
+        },
+        {
+          title: "Chaîne d'outils locale",
+          description:
+            "Les scripts Bash, Python et Node.js s'exécutent dans un processus enfant sandboxé supervisé par la coque Rust. La sortie revient par le même canal IPC pour que l'UI de chat puisse afficher stdout et stderr en temps réel sans sondage.",
+        },
+        {
+          title: "Agent de navigateur",
+          description:
+            "Une tâche de fond de longue durée qui pilote une instance Chromium via le Chrome DevTools Protocol. Il capture des instantanés d'accessibilité, prend des captures d'écran, clique sur des éléments, et s'exécute dans un processus séparé pour qu'un blocage sur le web ne gèle jamais l'UI de chat.",
+        },
+        {
+          title: "Persistance locale",
+          description:
+            "SQLite stocke l'historique des conversations, les journaux d'exécution de l'agent et les préférences par projet. Le schéma est volontairement étroit : une table par préoccupation, clés étrangères activées, chaque migration archivée. Pas de base réseau ni de couche de synchronisation.",
+        },
+      ],
+      flow: {
+        title: "Ce qui se passe quand vous envoyez un message",
+        description:
+          "Un tour typique du chat passe par six étapes bien définies. Chaque étape est implémentée dans un seul module pour qu'une défaillance soit facile à localiser.",
+        steps: [
+          {
+            title: "1. Capture",
+            description:
+              "Votre message est ajouté à la session en mémoire et la ligne de conversation est écrite dans SQLite. L'entrée est aussi mise en miroir dans le journal de débogage sur disque pour pouvoir être rejouée.",
+          },
+          {
+            title: "2. Assemblage du contexte",
+            description:
+              "Le gestionnaire de contexte compresse les tours précédents en trois couches (microcompact, mémoire de session, compact hérité) pour que les longues conversations restent dans la fenêtre de contexte du modèle sans perdre d'état important.",
+          },
+          {
+            title: "3. Appel au modèle",
+            description:
+              "Le Claude SDK streame une réponse vers l'UI au fur et à mesure que les tokens arrivent. Les appels d'outils sont émis en ligne dès que le modèle décide d'en utiliser un, plutôt qu'à la fin du tour.",
+          },
+          {
+            title: "4. Dispatch des outils",
+            description:
+              "Les appels d'outils traversent le pont IPC vers la coque Rust, qui applique la politique de permissions (lecture seule par défaut, l'accès en écriture doit être activé) et exécute l'opération demandée dans le bon sandbox.",
+          },
+          {
+            title: "5. Streaming des résultats",
+            description:
+              "Les résultats des outils reviennent par le même canal IPC. L'UI les rend de façon incrémentale pour qu'une commande shell longue ne fige pas la conversation.",
+          },
+          {
+            title: "6. Persistance",
+            description:
+              "Quand le modèle termine son tour, le message final de l'assistant est validé dans SQLite et la session est scellée. Le message utilisateur suivant commence un nouveau tour mais réutilise la même fenêtre de contexte.",
+          },
+        ],
+      },
+      security: {
+        title: "Modèle de sécurité",
+        description:
+          "L'application de bureau n'envoie jamais vos données à un serveur que nous contrôlons. Les appels d'outils et l'historique des conversations restent sur votre machine sauf si vous activez explicitement une fonctionnalité qui requiert le réseau (comme la récupération d'une URL publique via l'agent navigateur). La politique de permissions est appliquée en Rust, pas en JavaScript, pour qu'un front end compromis ne puisse pas lire de fichiers arbitraires.",
+        items: [
+          "Les conversations, fichiers et journaux d'outils sont stockés localement dans SQLite. Aucune télémétrie ne quitte la machine.",
+          "Chaque appel d'outil est médié par une vérification de permission Rust. Le front end ne peut pas la contourner.",
+          "Les appels réseau externes passent par un seul module audité avec une liste blanche stricte de domaines.",
+          "Les secrets (clés API, jetons OAuth) vivent dans le trousseau OS, jamais dans la base ni dans le bundle.",
+          "La mise à jour automatique est signée ; la coque Tauri refuse de lancer une mise à jour dont la signature ne correspond pas à la clé de release du projet.",
+        ],
+      },
+      openSource: {
+        title: "Construit en ouvert",
+        description:
+          "Pipi Shrimp Agent est open source sous la licence du projet. Les issues, pull requests et discussions de design se passent sur GitHub. L'architecture documentée ici est celle qui est livrée ; si vous trouvez un écart, c'est un bug et nous voulons le savoir.",
+      },
     },
     changelog: {
       title: "Journal des modifications",
@@ -360,6 +573,7 @@ export const translations: Record<Language, TranslationKeys> = {
       home: "首页",
       about: "关于",
       features: "功能",
+      architecture: "架构",
       changelog: "更新日志",
     },
     header: {
@@ -457,6 +671,98 @@ export const translations: Record<Language, TranslationKeys> = {
         },
       ],
     },
+    architecture: {
+      title: "架构",
+      subtitle: "Pipi Shrimp Agent 的内部构成",
+      intro:
+        "Pipi Shrimp Agent 是一个使用 Tauri 构建的桌面应用，后端为 Rust，前端为 React + TypeScript。它的设计围绕四个原则：原生性能、本地优先的隐私、工具链透明、以及小而精确的类型化接口。本页面是对这些原则如何在代码中落地的概览。",
+      layers: [
+        {
+          title: "Tauri 外壳",
+          description:
+            "Rust 二进制就是 Tauri 外壳。它拥有操作系统窗口、WebView 进程、文件系统访问策略，以及前端用来与桌面通信的 IPC 桥。生产环境没有 Node.js 运行时 —— 任何原本会是 Node 模块的部分，都由 Rust crate 或一层薄薄的 Tauri 命令替代。",
+        },
+        {
+          title: "React + TypeScript 前端",
+          description:
+            "界面是用 Vite 构建、由 Tauri 打包的单页 React 应用。状态尽量保持局部，只有跨页面共享的部分（浏览器代理、聊天会话）用少量 Zustand store 维护。整个 UI 树端到端类型化，重命名一个 prop 是编译错误而不是运行时错误。",
+        },
+        {
+          title: "Claude SDK 集成",
+          description:
+            "会话由 Claude SDK 通过一个薄适配器驱动。适配器暴露流式响应、工具调用，以及一组主机端能力（读/写文件、执行 shell 命令、浏览页面）。模型从不直接看到主机 —— 每个工具调用都由 Rust 中转。",
+        },
+        {
+          title: "本地工具链",
+          description:
+            "Bash、Python 和 Node.js 脚本在 Rust 外壳监管的沙箱子进程中运行。输出通过同一条 IPC 通道回传，让聊天 UI 能实时渲染 stdout 和 stderr，无需轮询。",
+        },
+        {
+          title: "浏览器代理",
+          description:
+            "一个常驻后台任务，通过 Chrome DevTools Protocol 驱动 Chromium 实例。它抓取无障碍快照、截图、点击元素，并跑在独立进程中，因此网页卡死永远不会冻结聊天 UI。",
+        },
+        {
+          title: "本地持久化",
+          description:
+            "SQLite 存储对话历史、代理运行日志和每个项目的偏好设置。模式有意保持精简：一个关注点一张表、启用外键、每次迁移都入版本库。没有网络数据库，也没有同步层。",
+        },
+      ],
+      flow: {
+        title: "当你发送一条消息时发生了什么",
+        description:
+          "一次典型的聊天回合会经过六个明确步骤。每一步都在单一模块内实现，便于故障定位。",
+        steps: [
+          {
+            title: "1. 捕获",
+            description:
+              "你的消息被追加到内存中的会话，对话行被写入 SQLite。输入还会镜像到磁盘上的调试日志，方便回放。",
+          },
+          {
+            title: "2. 上下文组装",
+            description:
+              "上下文管理器用三层压缩机制（Microcompact、会话内存、传统压缩）压缩早期回合，让长对话在不丢失重要状态的情况下保持在模型的上下文窗口内。",
+          },
+          {
+            title: "3. 模型调用",
+            description:
+              "Claude SDK 一边生成 token 一边向 UI 流式回传响应。工具调用在模型决定使用时立刻内联发出，而不是等到回合结束。",
+          },
+          {
+            title: "4. 工具派发",
+            description:
+              "工具调用跨过 IPC 桥进入 Rust 外壳，由它强制执行权限策略（默认只读，写入权限必须显式开启），并在正确的沙箱中运行请求的操作。",
+          },
+          {
+            title: "5. 结果流式回传",
+            description:
+              "工具结果沿同一条 IPC 通道流回。UI 增量渲染，因此一条长时间运行的 shell 命令不会冻住对话。",
+          },
+          {
+            title: "6. 持久化",
+            description:
+              "模型结束回合后，最终的助手消息被提交到 SQLite，会话被封存。下一条用户消息开启新回合，但复用同一上下文窗口。",
+          },
+        ],
+      },
+      security: {
+        title: "安全模型",
+        description:
+          "桌面应用从不会把你的数据发送到我们控制的服务器。除非你显式开启需要联网的功能（例如通过浏览器代理抓取公共 URL），否则工具调用和对话历史都保留在你的机器上。权限策略由 Rust 而非 JavaScript 强制执行，因此即便前端被攻破，也无法读取任意文件。",
+        items: [
+          "对话、文件和工具日志都存储在本地 SQLite 中。没有遥测数据离开本机。",
+          "每次工具调用都经由 Rust 的权限检查。前端无法绕过。",
+          "外部网络调用走唯一的已审计模块，并配有严格的域名白名单。",
+          "密钥（API Key、OAuth 令牌）存放在操作系统钥匙串中，从不写入数据库或 bundle。",
+          "自动更新经过签名；Tauri 外壳拒绝启动签名与项目发布密钥不匹配的更新。",
+        ],
+      },
+      openSource: {
+        title: "开放构建",
+        description:
+          "Pipi Shrimp Agent 在项目许可证下开源。Issue、PR 和设计讨论都在 GitHub 上进行。这里描述的架构就是发布的架构；如果你发现不一致，那就是 bug，欢迎告诉我们。",
+      },
+    },
     changelog: {
       title: "更新日志",
       subtitle: "最新更新和改进",
@@ -492,6 +798,7 @@ export const translations: Record<Language, TranslationKeys> = {
       home: "홈",
       about: "정보",
       features: "기능",
+      architecture: "아키텍처",
       changelog: "변경 로그",
     },
     header: {
@@ -589,6 +896,98 @@ export const translations: Record<Language, TranslationKeys> = {
         },
       ],
     },
+    architecture: {
+      title: "아키텍처",
+      subtitle: "Pipi Shrimp Agent의 내부 구조",
+      intro:
+        "Pipi Shrimp Agent는 Rust 백엔드와 React + TypeScript 프런트엔드로 구성된 Tauri 데스크톱 앱입니다. 네 가지 원칙 — 네이티브 성능, 로컬 우선 프라이버시, 투명한 도구, 작고 잘 타입된 표면 — 을 중심으로 설계되었습니다. 이 페이지는 그 원칙이 코드에서 어떻게 나타나는지 상위 수준에서 살펴봅니다.",
+      layers: [
+        {
+          title: "Tauri 셸",
+          description:
+            "Rust 바이너리가 Tauri 셸입니다. OS 창, 웹뷰 프로세스, 파일 시스템 접근 정책, 그리고 프런트엔드가 데스크톱과 소통하는 IPC 브릿지를 소유합니다. 프로덕션에는 Node.js 런타임이 없습니다 — Node 모듈이 될 만한 것은 모두 Rust crate나 얇은 Tauri 커맨드로 대체됩니다.",
+        },
+        {
+          title: "React + TypeScript 프런트엔드",
+          description:
+            "UI는 Vite로 빌드되고 Tauri가 번들링하는 SPA입니다. 상태는 가능한 한 로컬로 유지하고, 브라우저 에이전트와 채팅 세션처럼 횡단 관심사에는 소수의 Zustand 스토어를 사용합니다. UI 트리 전체가 엔드 투 엔드로 타입되어 있어 prop 이름 변경은 런타임 오류가 아닌 컴파일 오류가 됩니다.",
+        },
+        {
+          title: "Claude SDK 통합",
+          description:
+            "대화는 얇은 어댑터를 통해 Claude SDK가 구동합니다. 어댑터는 스트리밍 응답, 도구 호출, 그리고 호스트 측 기능(파일 읽기/쓰기, 셸 명령 실행, 페이지 탐색)을 제공합니다. 모델은 호스트를 직접 보지 못하며, 모든 도구 호출은 Rust가 중개합니다.",
+        },
+        {
+          title: "로컬 도구 체인",
+          description:
+            "Bash, Python, Node.js 스크립트는 Rust 셸이 감독하는 샌드박스 자식 프로세스에서 실행됩니다. 출력은 동일한 IPC 채널을 통해 흘러 채팅 UI가 폴링 없이 실시간으로 stdout/stderr을 렌더링할 수 있습니다.",
+        },
+        {
+          title: "브라우저 에이전트",
+          description:
+            "Chrome DevTools Protocol로 Chromium 인스턴스를 구동하는 장기 실행 백그라운드 작업입니다. 접근성 스냅샷을 캡처하고, 스크린샷을 찍고, 요소를 클릭하며, 별도 프로세스에서 실행되어 웹에서의 행이 채팅 UI를 절대 멈추지 않습니다.",
+        },
+        {
+          title: "로컬 영속성",
+          description:
+            "SQLite가 대화 기록, 에이전트 실행 로그, 프로젝트별 환경설정을 저장합니다. 스키마는 의도적으로 좁습니다 — 관심사당 하나의 테이블, 외래 키 활성화, 모든 마이그레이션 버전 관리. 네트워크 데이터베이스도, 동기화 계층도 없습니다.",
+        },
+      ],
+      flow: {
+        title: "메시지를 보냈을 때 일어나는 일",
+        description:
+          "전형적인 채팅 한 턴은 잘 정의된 여섯 단계를 거칩니다. 각 단계는 단일 모듈에 구현되어 있어 한 곳의 실패를 쉽게 격리할 수 있습니다.",
+        steps: [
+          {
+            title: "1. 캡처",
+            description:
+              "메시지가 메모리 세션에 추가되고 대화 행이 SQLite에 기록됩니다. 입력은 디스크의 디버그 로그에도 미러링되어 재실행할 수 있습니다.",
+          },
+          {
+            title: "2. 컨텍스트 조립",
+            description:
+              "컨텍스트 관리자가 세 계층(마이크로컴팩트, 세션 메모리, 레거시 컴팩트)으로 이전 턴을 압축해, 중요한 상태를 잃지 않으면서도 긴 대화를 모델의 컨텍스트 창 안에 유지합니다.",
+          },
+          {
+            title: "3. 모델 호출",
+            description:
+              "Claude SDK가 토큰이 생성되는 대로 응답을 UI에 스트리밍합니다. 도구 호출은 턴 끝이 아니라 모델이 사용하기로 결정하는 즉시 인라인으로 방출됩니다.",
+          },
+          {
+            title: "4. 도구 디스패치",
+            description:
+              "도구 호출은 IPC 브릿지를 통해 Rust 셸로 넘어가고, 셸이 권한 정책(기본값은 읽기 전용, 쓰기 권한은 옵트인)을 적용해 올바른 샌드박스에서 요청된 작업을 실행합니다.",
+          },
+          {
+            title: "5. 결과 스트리밍",
+            description:
+              "도구 결과는 동일한 IPC 채널을 통해 스트리밍됩니다. UI가 점진적으로 렌더링하므로 긴 셸 명령이 대화를 멈추지 않습니다.",
+          },
+          {
+            title: "6. 영속화",
+            description:
+              "모델이 턴을 마치면 최종 어시스턴트 메시지가 SQLite에 커밋되고 세션이 봉인됩니다. 다음 사용자 메시지는 새 턴을 시작하지만 같은 컨텍스트 창을 재사용합니다.",
+          },
+        ],
+      },
+      security: {
+        title: "보안 모델",
+        description:
+          "데스크톱 앱은 사용자의 데이터를 우리가 통제하는 서버로 절대 전송하지 않습니다. 네트워크가 필요한 기능(브라우저 에이전트를 통한 공개 URL 가져오기 등)을 명시적으로 켜지 않는 한, 도구 호출과 대화 기록은 모두 사용자 컴퓨터에 머뭅니다. 권한 정책은 JavaScript가 아니라 Rust에서 적용되므로 프런트엔드가 손상되더라도 임의의 파일을 읽을 수 없습니다.",
+        items: [
+          "대화, 파일, 도구 로그는 모두 로컬 SQLite에 저장됩니다. 어떤 원격 측정도 기기를 떠나지 않습니다.",
+          "모든 도구 호출은 Rust의 권한 검사를 거칩니다. 프런트엔드는 이를 우회할 수 없습니다.",
+          "외부 네트워크 호출은 단일 감사 모듈을 거치며 엄격한 도메인 화이트리스트를 따릅니다.",
+          "비밀(API 키, OAuth 토큰)은 OS 키체인에 보관되며 데이터베이스나 번들에 절대 들어가지 않습니다.",
+          "자동 업데이트는 서명되며, Tauri 셸은 프로젝트 릴리스 키와 일치하지 않는 서명의 업데이트 실행을 거부합니다.",
+        ],
+      },
+      openSource: {
+        title: "오픈 방식으로 만들기",
+        description:
+          "Pipi Shrimp Agent는 프로젝트 라이선스 하에 오픈 소스입니다. 이슈, PR, 설계 논의는 모두 GitHub에서 이루어집니다. 여기에 문서화된 아키텍처가 그대로 출시되는 아키텍처입니다. 불일치를 발견하시면 그건 버그이니 알려주세요.",
+      },
+    },
     changelog: {
       title: "변경 로그",
       subtitle: "최신 업데이트 및 개선 사항",
@@ -624,6 +1023,7 @@ export const translations: Record<Language, TranslationKeys> = {
       home: "Trang chủ",
       about: "Giới thiệu",
       features: "Tính năng",
+      architecture: "Kiến trúc",
       changelog: "Nhật ký thay đổi",
     },
     header: {
@@ -720,6 +1120,98 @@ export const translations: Record<Language, TranslationKeys> = {
           description: "Bảng terminal đầy đủ tính năng được nhúng trong ứng dụng. Chạy lệnh và xem kết quả mà không cần chuyển đổi cửa sổ.",
         },
       ],
+    },
+    architecture: {
+      title: "Kiến trúc",
+      subtitle: "Cách Pipi Shrimp Agent được xây dựng",
+      intro:
+        "Pipi Shrimp Agent là ứng dụng desktop Tauri với backend Rust và front end React + TypeScript. Nó được thiết kế xoay quanh bốn nguyên tắc: hiệu suất gốc, quyền riêng tư ưu tiên cục bộ, công cụ minh bạch và diện tích type nhỏ gọn. Trang này là chuyến tham quan cấp cao về cách những nguyên tắc đó thể hiện trong mã nguồn.",
+      layers: [
+        {
+          title: "Vỏ Tauri",
+          description:
+            "Tệp nhị phân Rust chính là vỏ Tauri. Nó sở hữu cửa sổ OS, tiến trình webview, chính sách truy cập hệ thống tệp và cầu IPC mà front end sử dụng để giao tiếp với desktop. Không có runtime Node.js trong sản phẩm — mọi thứ lẽ ra là module Node đều được thay thế bằng crate Rust hoặc lệnh Tauri mỏng.",
+        },
+        {
+          title: "Front end React + TypeScript",
+          description:
+            "Giao diện là ứng dụng React một trang xây dựng bằng công cụ Vite và đóng gói bởi Tauri. Trạng thái được giữ cục bộ khi có thể, với vài store Zustand cho các mối quan tâm cắt ngang như agent trình duyệt và phiên trò chuyện. Toàn bộ cây UI được type hóa đầu cuối để đổi tên prop là lỗi biên dịch, không phải lỗi runtime.",
+        },
+        {
+          title: "Tích hợp Claude SDK",
+          description:
+            "Cuộc trò chuyện được điều khiển bởi Claude SDK thông qua bộ điều hợp mỏng. Bộ điều hợp expose phản hồi streaming, gọi công cụ và một tập nhỏ khả năng phía máy chủ (đọc/ghi tệp, chạy lệnh shell, duyệt trang). Mô hình không bao giờ thấy trực tiếp máy chủ — mỗi lệnh gọi công cụ đều được trung gian bởi Rust.",
+        },
+        {
+          title: "Chuỗi công cụ cục bộ",
+          description:
+            "Các tệp lệnh Bash, Python và Node.js chạy trong tiến trình con sandbox được vỏ Rust giám sát. Đầu ra truyền ngược qua cùng kênh IPC để UI chat có thể hiển thị stdout và stderr theo thời gian thực mà không cần thăm dò.",
+        },
+        {
+          title: "Agent trình duyệt",
+          description:
+            "Một tác vụ nền chạy dài điều khiển phiên bản Chromium qua Chrome DevTools Protocol. Nó chụp ảnh chụp nhanh khả năng tiếp cận, chụp ảnh màn hình, nhấp vào phần tử và chạy trong tiến trình riêng để treo trên web không bao giờ đóng băng UI chat.",
+        },
+        {
+          title: "Lưu trữ cục bộ",
+          description:
+            "SQLite lưu lịch sử trò chuyện, nhật ký chạy agent và tùy chọn cho từng dự án. lược đồ cố tình thu hẹp: một bảng cho mỗi mối quan tâm, bật khóa ngoại, mỗi lần di chuyển được kiểm tra vào. Không có cơ sở dữ liệu mạng và không có lớp đồng bộ.",
+        },
+      ],
+      flow: {
+        title: "Điều gì xảy ra khi bạn gửi tin nhắn",
+        description:
+          "Một lượt chat điển hình trải qua sáu bước được xác định rõ ràng. Mỗi bước được triển khai trong một module duy nhất để lỗi ở một nơi dễ dàng xác định vị trí.",
+        steps: [
+          {
+            title: "1. Chụp",
+            description:
+              "Tin nhắn của bạn được thêm vào phiên trong bộ nhớ và dòng cuộc trò chuyện được ghi vào SQLite. Đầu vào cũng được phản chiếu vào nhật ký gỡ lỗi trên đĩa để có thể phát lại.",
+          },
+          {
+            title: "2. Lắp ráp ngữ cảnh",
+            description:
+              "Trình quản lý ngữ cảnh nén các lượt trước thành ba lớp (microcompact, bộ nhớ phiên, compact kế thừa) để các cuộc trò chuyện dài nằm trong cửa sổ ngữ cảnh của mô hình mà không mất trạng thái quan trọng.",
+          },
+          {
+            title: "3. Gọi mô hình",
+            description:
+              "Claude SDK truyền phản hồi về UI dưới dạng token đến. Lệnh gọi công cụ được phát ra nội tuyến ngay khi mô hình quyết định sử dụng, thay vì ở cuối lượt.",
+          },
+          {
+            title: "4. Phân phối công cụ",
+            description:
+              "Lệnh gọi công cụ đi qua cầu IPC vào vỏ Rust, nơi thực thi chính sách quyền (chỉ đọc theo mặc định, quyền ghi phải được chọn tham gia) và chạy hoạt động được yêu cầu trong sandbox phù hợp.",
+          },
+          {
+            title: "5. Truyền kết quả",
+            description:
+              "Kết quả công cụ truyền ngược qua cùng kênh IPC. UI hiển thị chúng theo gia tăng để lệnh shell chạy lâu không đóng băng cuộc trò chuyện.",
+          },
+          {
+            title: "6. Lưu trữ",
+            description:
+              "Khi mô hình hoàn thành lượt, tin nhắn trợ lý cuối cùng được cam kết vào SQLite và phiên được niêm phong. Tin nhắn người dùng tiếp theo bắt đầu lượt mới nhưng tái sử dụng cùng cửa sổ ngữ cảnh.",
+          },
+        ],
+      },
+      security: {
+        title: "Mô hình bảo mật",
+        description:
+          "Ứng dụng desktop không bao giờ gửi dữ liệu của bạn đến máy chủ mà chúng tôi kiểm soát. Lệnh gọi công cụ và lịch sử trò chuyện nằm trên máy của bạn trừ khi bạn chủ động chọn tham gia tính năng yêu cầu mạng (chẳng hạn như lấy URL công khai qua agent trình duyệt). Chính sách quyền được thực thi bằng Rust, không phải JavaScript, nên front end bị xâm phạm không thể đọc tệp tùy ý.",
+        items: [
+          "Cuộc trò chuyện, tệp và nhật ký công cụ được lưu trữ cục bộ trong SQLite. Không có dữ liệu遥测 nào rời khỏi máy.",
+          "Mọi lệnh gọi công cụ đều được kiểm tra quyền bởi Rust. Front end không thể bỏ qua.",
+          "Gọi mạng bên ngoài đi qua module đã kiểm toán duy nhất với danh sách trắng tên miền nghiêm ngặt.",
+          "Bí mật (khóa API, mã thông báo OAuth) nằm trong chuỗi khóa OS, không bao giờ trong cơ sở dữ liệu hoặc bundle.",
+          "Tự động cập nhật được ký; vỏ Tauri từ chối khởi động cập nhật có chữ ký không khớp với khóa phát hành của dự án.",
+        ],
+      },
+      openSource: {
+        title: "Xây dựng công khai",
+        description:
+          "Pipi Shrimp Agent là mã nguồn mở theo giấy phép dự án. Sự cố, yêu cầu kéo và thảo luận thiết kế đều diễn ra trên GitHub. Kiến trúc được ghi lại ở đây là kiến trúc được xuất bản; nếu bạn phát hiện sự khác biệt, đó là lỗi và chúng tôi muốn biết.",
+      },
     },
     changelog: {
       title: "Nhật ký thay đổi",

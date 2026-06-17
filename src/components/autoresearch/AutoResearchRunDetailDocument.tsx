@@ -17,7 +17,7 @@ interface AutoResearchRunDetailDocumentProps {
 }
 
 function shouldUseDemoFallback(run?: AutoResearchRunRecord | null): boolean {
-  return !run || run.iterations.length === 0;
+  return !run;
 }
 
 export function AutoResearchRunDetailDocument({

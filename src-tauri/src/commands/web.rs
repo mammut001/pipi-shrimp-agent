@@ -245,10 +245,10 @@ pub async fn browser_screenshot_options(
         manager_guard.page_cloned().ok_or("CDP 未连接")?
     };
     let opts = options.unwrap_or_else(ScreenshotOptions::preview_default);
-    let bytes = capture_screenshot_with_options(&page, Duration::from_secs(15), opts)
+    let processed = capture_screenshot_with_options(&page, Duration::from_secs(15), opts)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(ScreenshotArtifact::from_inline(opts.format, &bytes))
+    Ok(ScreenshotArtifact::from_processed(opts.format, &processed))
 }
 
 #[tauri::command]

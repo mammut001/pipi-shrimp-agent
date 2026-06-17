@@ -82,7 +82,16 @@ const inputTextPayload = z
     press_enter: z.boolean().optional(),
     selector: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.id != null ||
+      value.backend_node_id != null ||
+      value.element_id != null ||
+      value.backendNodeId != null ||
+      value.selector != null,
+    { message: 'input_text requires id, backend_node_id, or selector' },
+  );
 
 const pressKeyPayload = z
   .object({

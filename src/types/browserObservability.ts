@@ -267,3 +267,33 @@ export interface BrowserDebugSessionInfo {
   lastError: string | null;
   source: BrowserDebugSource;
 }
+
+// ─── Light observation (Rust → frontend) ──────────────────────────────────
+
+export interface LightObservation {
+  url: string;
+  title: string;
+  navigation_id: string;
+  ready_state: string;
+  text_excerpt: string;
+  active_element: string;
+  timestamp_ms: number;
+}
+
+// ─── Screenshot options + artifact ────────────────────────────────────────
+
+export interface ScreenshotOptions {
+  format?: 'png' | 'jpeg';
+  quality?: number;
+  max_width?: number;
+  full_page?: boolean;
+}
+
+export interface ScreenshotArtifact {
+  kind: string;
+  value: string;
+  format: 'png' | 'jpeg';
+  width?: number;
+  height?: number;
+  bytes?: number;
+}

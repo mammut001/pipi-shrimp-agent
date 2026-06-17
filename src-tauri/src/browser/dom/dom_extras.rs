@@ -232,13 +232,38 @@ impl ScreenshotArtifact {
             bytes: Some(bytes.len()),
         }
     }
+
+    pub fn from_processed(format: ScreenshotFormatArg, processed: &ProcessedScreenshot) -> Self {
+        let prefix = match format {
+            ScreenshotFormatArg::Png => "base64_png",
+            ScreenshotFormatArg::Jpeg => "base64_jpeg",
+        };
+        Self {
+            kind: prefix.to_string(),
+            value: base64::engine::general_purpose::STANDARD.encode(&processed.bytes),
+            format,
+            width: Some(processed.width),
+            height: Some(processed.height),
+            bytes: Some(processed.bytes.len()),
+        }
+    }
+}
+
+/// Result of processing a screenshot through the optional resize pipeline.
+/// Carries the final image bytes together with the actual pixel dimensions
+/// so callers don't need to re-decode just to read width/height.
+#[derive(Debug, Clone)]
+pub struct ProcessedScreenshot {
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub async fn capture_screenshot_with_options(
     page: &Page,
     timeout: Duration,
     options: ScreenshotOptions,
-) -> Result<Vec<u8>, CdpError> {
+) -> Result<ProcessedScreenshot, CdpError> {
     let mut builder = CaptureScreenshotParams::builder().format(options.format.as_cdp_format());
     if let Some(quality) = options.quality {
         builder = builder.quality(quality);
@@ -254,8 +279,88 @@ pub async fn capture_screenshot_with_options(
 
     // chromiumoxide returns a Binary ref. Copy the bytes into a Vec so the
     // caller doesn't depend on chromiumoxide's internal buffer lifetime.
-    let bytes: &[u8] = response.data.as_ref();
-    Ok(bytes.to_vec())
+    let raw_bytes: &[u8] = response.data.as_ref();
+
+    // Apply optional max_width resize using the `image` crate.
+    if let Some(max_width) = options.max_width {
+        resize_screenshot(raw_bytes, max_width, options.format, options.quality)
+    } else {
+        // No resize needed — decode once to populate width/height.
+        let (w, h) = match image::load_from_memory(raw_bytes) {
+            Ok(img) => (img.width(), img.height()),
+            Err(_) => (0, 0),
+        };
+        Ok(ProcessedScreenshot {
+            bytes: raw_bytes.to_vec(),
+            width: w,
+            height: h,
+        })
+    }
+}
+
+/// Decode `raw_bytes`, resize to fit within `max_width` preserving aspect
+/// ratio, then re-encode in the target format.
+fn resize_screenshot(
+    raw_bytes: &[u8],
+    max_width: u32,
+    format: ScreenshotFormatArg,
+    quality: Option<u8>,
+) -> Result<ProcessedScreenshot, CdpError> {
+    let img = image::load_from_memory(raw_bytes)
+        .map_err(|error| CdpError::Session(format!("Failed to decode screenshot: {}", error)))?;
+
+    let (orig_w, orig_h) = (img.width(), img.height());
+
+    if orig_w <= max_width {
+        // Already within budget — return the original bytes.
+        return Ok(ProcessedScreenshot {
+            bytes: raw_bytes.to_vec(),
+            width: orig_w,
+            height: orig_h,
+        });
+    }
+
+    let scale = max_width as f64 / orig_w as f64;
+    let new_height = (orig_h as f64 * scale).round().max(1.0) as u32;
+    let resized = img.resize(max_width, new_height, image::imageops::FilterType::Lanczos3);
+
+    let mut out = std::io::Cursor::new(Vec::new());
+    match format {
+        ScreenshotFormatArg::Jpeg => {
+            let q = quality.unwrap_or(70);
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, q);
+            resized
+                .write_with_encoder(encoder)
+                .map_err(|error| CdpError::Session(format!("JPEG encode failed: {}", error)))?;
+        }
+        ScreenshotFormatArg::Png => {
+            let encoder = image::codecs::png::PngEncoder::new(&mut out);
+            resized
+                .write_with_encoder(encoder)
+                .map_err(|error| CdpError::Session(format!("PNG encode failed: {}", error)))?;
+        }
+    }
+
+    Ok(ProcessedScreenshot {
+        bytes: out.into_inner(),
+        width: resized.width(),
+        height: resized.height(),
+    })
+}
+
+/// Create a minimal valid JPEG in memory for tests that need to exercise
+/// the image-decode / resize pipeline. The returned bytes are a 100×50
+/// white JPEG produced entirely by the `image` crate.
+fn make_test_jpeg(width: u32, height: u32) -> Vec<u8> {
+    let img = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
+        width,
+        height,
+        image::Rgb([255u8, 255, 255]),
+    ));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 90);
+    img.write_with_encoder(encoder).unwrap();
+    buf.into_inner()
 }
 
 #[cfg(test)]
@@ -292,5 +397,51 @@ mod tests {
         let artifact = ScreenshotArtifact::from_inline(ScreenshotFormatArg::Jpeg, b"abc");
         assert!(artifact.kind.starts_with("base64_"));
         assert!(!artifact.value.is_empty());
+    }
+
+    #[test]
+    fn artifact_from_processed_populates_dimensions() {
+        let processed = ProcessedScreenshot {
+            bytes: make_test_jpeg(100, 50),
+            width: 100,
+            height: 50,
+        };
+        let artifact = ScreenshotArtifact::from_processed(ScreenshotFormatArg::Jpeg, &processed);
+        assert_eq!(artifact.width, Some(100));
+        assert_eq!(artifact.height, Some(50));
+        assert!(artifact.bytes.unwrap() > 0);
+        assert_eq!(artifact.kind, "base64_jpeg");
+    }
+
+    #[test]
+    fn resize_screenshot_reduces_width_when_over_max() {
+        let raw = make_test_jpeg(1920, 1080);
+        let result = resize_screenshot(&raw, 960, ScreenshotFormatArg::Jpeg, Some(70)).unwrap();
+        assert!(result.width <= 960, "width {} should be <= 960", result.width);
+        assert!(result.height > 0, "height should be positive");
+        // Aspect ratio preserved: 960/1920 = 0.5 → height = 540
+        let expected_h = (1080.0_f64 * 960.0_f64 / 1920.0_f64).round() as u32;
+        assert_eq!(result.height, expected_h);
+        assert!(!result.bytes.is_empty());
+    }
+
+    #[test]
+    fn resize_screenshot_no_op_when_within_max() {
+        let raw = make_test_jpeg(800, 400);
+        let result = resize_screenshot(&raw, 960, ScreenshotFormatArg::Jpeg, Some(70)).unwrap();
+        assert_eq!(result.width, 800);
+        assert_eq!(result.height, 400);
+    }
+
+    #[test]
+    fn resize_screenshot_png_format_roundtrips() {
+        let raw = make_test_jpeg(640, 320);
+        let result = resize_screenshot(&raw, 320, ScreenshotFormatArg::Png, None).unwrap();
+        assert!(result.width <= 320);
+        assert!(result.height > 0);
+        // Verify it's valid PNG by decoding it.
+        let decoded = image::load_from_memory(&result.bytes).unwrap();
+        assert_eq!(decoded.width(), result.width);
+        assert_eq!(decoded.height(), result.height);
     }
 }

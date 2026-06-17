@@ -27,6 +27,7 @@ import {
   waitForBrowser,
 } from './browserActionClient';
 import {
+  getBrowserLightObservation,
   getBrowserPageState,
   getBrowserSemanticTree,
   getBrowserText,
@@ -182,10 +183,9 @@ const computeCacheKey = (pageState: BrowserPageState | null): CacheKey | null =>
 };
 
 /**
- * Lightweight PageState used by ObservationLevel.light. We don't have a
- * dedicated Rust command for it yet, so we synthesize it from the JS context
- * via cdp_execute_script. This is dramatically cheaper than a full
- * DOMSnapshot + AX tree capture.
+ * Lightweight PageState used by ObservationLevel.light. Calls the dedicated
+ * Rust `get_page_observation_light` command which runs a single JS expression
+ * via CDP — dramatically cheaper than a full DOMSnapshot + AX tree capture.
  */
 async function fetchLightObservation(log: AgentLogger): Promise<{
   url: string;
@@ -195,36 +195,15 @@ async function fetchLightObservation(log: AgentLogger): Promise<{
   activeElement: string;
   navigationId: string;
 }> {
-  const script = `(() => {
-    try {
-      const active = document.activeElement;
-      const activeDesc = active
-        ? (active.tagName || '') +
-          (active.id ? '#' + active.id : '') +
-          (active.className && typeof active.className === 'string' ? '.' + active.className.split(/\\s+/).filter(Boolean).slice(0, 2).join('.') : '')
-        : '';
-      const text = (document.body && document.body.innerText) ? document.body.innerText : '';
-      return JSON.stringify({
-        url: location.href,
-        title: document.title,
-        readyState: document.readyState,
-        textExcerpt: text.replace(/\\s+/g, ' ').trim().slice(0, 600),
-        activeElement: activeDesc,
-      });
-    } catch (e) {
-      return JSON.stringify({ url: '', title: '', readyState: 'unknown', textExcerpt: '', activeElement: '' });
-    }
-  })()`;
   try {
-    const raw = await invoke<string>('cdp_execute_script', { script });
-    const parsed = JSON.parse(raw);
+    const obs = await getBrowserLightObservation();
     return {
-      url: typeof parsed?.url === 'string' ? parsed.url : '',
-      title: typeof parsed?.title === 'string' ? parsed.title : '',
-      readyState: typeof parsed?.readyState === 'string' ? parsed.readyState : 'unknown',
-      textExcerpt: typeof parsed?.textExcerpt === 'string' ? parsed.textExcerpt : '',
-      activeElement: typeof parsed?.activeElement === 'string' ? parsed.activeElement : '',
-      navigationId: '',
+      url: obs.url,
+      title: obs.title,
+      readyState: obs.ready_state,
+      textExcerpt: obs.text_excerpt,
+      activeElement: obs.active_element,
+      navigationId: obs.navigation_id,
     };
   } catch (error) {
     log('warning', `[NativeAgent] Light observation failed: ${error}`);

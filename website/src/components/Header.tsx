@@ -22,6 +22,7 @@ export function Header() {
     { href: "/", label: t.nav.home },
     { href: "/about", label: t.nav.about },
     { href: "/features", label: t.nav.features },
+    { href: "/architecture", label: t.nav.architecture },
     { href: "/changelog", label: t.nav.changelog },
   ];
 

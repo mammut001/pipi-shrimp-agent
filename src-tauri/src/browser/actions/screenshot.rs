@@ -28,7 +28,7 @@ impl BrowserAction for ScreenshotAction {
         let page = ctx.page().await?;
         let options = input.unwrap_or_else(default_screenshot_options);
 
-        let bytes = capture_screenshot_with_options(&page, std::time::Duration::from_secs(15), options)
+        let processed = capture_screenshot_with_options(&page, std::time::Duration::from_secs(15), options)
             .await
             .map_err(|error| {
                 BrowserActionError::execution_failed(
@@ -37,7 +37,7 @@ impl BrowserAction for ScreenshotAction {
                 )
             })?;
 
-        Ok(ScreenshotArtifact::from_inline(options.format, &bytes))
+        Ok(ScreenshotArtifact::from_processed(options.format, &processed))
     }
 }
 

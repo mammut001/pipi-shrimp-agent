@@ -11,10 +11,10 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { Language } from "@/translations";
 
 const languages: { code: Language; name: string; flag: string }[] = [
-  // Flags are *language* indicators, not national affiliations —
-  // they only signal which language the user is reading in.
-  { code: "en", name: "English", flag: "🇬🇧" },
-  { code: "fr", name: "Français", flag: "🇫🇷" },
+  // EN and FR use 🇨🇦 because the project and primary author are
+  // Canadian. Other languages use their country's flag.
+  { code: "en", name: "English", flag: "🇨🇦" },
+  { code: "fr", name: "Français", flag: "🇨🇦" },
   { code: "zh", name: "中文", flag: "🇨🇳" },
   { code: "ko", name: "한국어", flag: "🇰🇷" },
   { code: "vi", name: "Tiếng Việt", flag: "🇻🇳" },

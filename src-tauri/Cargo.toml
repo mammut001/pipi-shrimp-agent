@@ -43,6 +43,7 @@ chromiumoxide = { version = "0.5", features = ["tokio"] }
 urlencoding = "2.1"
 jsonschema = "0.18"
 base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 portable-pty = "0.9"
 libc = "0.2"
 

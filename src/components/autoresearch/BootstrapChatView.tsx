@@ -314,7 +314,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
 
     return (
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-        <p className="font-semibold">Ready to hand off</p>
+        <p className="font-semibold">{t('autoresearch.bootstrap.readyTitle')}</p>
         <p className="mt-1">{readyResult.plan.primaryMetric} · {readyResult.plan.scaffold.workDir}</p>
         <p className="mt-1 text-xs text-emerald-800">{readyResult.plan.successCriteria}</p>
       </div>
@@ -325,10 +325,10 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-sm">
         <div className="border-b border-gray-100 px-5 py-4">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">Conversational Bootstrap</p>
-          <h2 className="mt-1 text-xl font-semibold text-gray-900">Bootstrap AutoResearch from a conversation</h2>
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">{t('autoresearch.bootstrap.kicker')}</p>
+          <h2 className="mt-1 text-xl font-semibold text-gray-900">{t('autoresearch.bootstrap.title')}</h2>
           <p className="mt-2 max-w-2xl text-sm text-gray-600">
-            Clarify the goal, gather papers, lock baselines, scaffold the workdir, then hand off into the existing AutoResearch loop.
+            {t('autoresearch.bootstrap.description')}
           </p>
         </div>
 
@@ -336,7 +336,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
           {messages.length === 0 ? (
             <div className="space-y-5">
               <div className="rounded-[24px] border border-dashed border-gray-300 bg-white px-5 py-6 text-sm text-gray-600">
-                Start with a natural-language goal or pick a quick-start opener.
+                {t('autoresearch.bootstrap.emptyPrompt')}
               </div>
               <BootstrapQuickStartCards onSelect={handleQuickStart} />
             </div>
@@ -359,7 +359,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
             {summaryCard}
             {handoffSummary && (
               <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                AutoResearch started: {handoffSummary}
+                {t('autoresearch.bootstrap.started')}: {handoffSummary}
               </div>
             )}
             {error && (

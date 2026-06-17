@@ -1003,10 +1003,18 @@ function AutoResearchView() {
 // ============== Page wrapper ==============
 
 export function AutoResearch() {
+  const selectedRun = useAutoResearchStore(getSelectedAutoResearchRun);
+  const selectedExperiment = useAutoResearchStore((state) => state.selectedExperiment);
+  const hasSelectedIteration = Boolean(
+    selectedRun
+    && selectedExperiment >= 0
+    && selectedExperiment < selectedRun.iterations.length,
+  );
+
   return (
     <MainLayout
-      showRightPanel={true}
-      rightPanelContent={<ExperimentDetailPanel />}
+      showRightPanel={hasSelectedIteration}
+      rightPanelContent={hasSelectedIteration ? <ExperimentDetailPanel /> : null}
       rightPanelWidthClassName="w-[360px]"
     >
       <AutoResearchTabs />

@@ -8,7 +8,8 @@ pub mod snapshot;
 
 pub use dom_extras::{
     capture_light_observation, capture_screenshot_with_options, LightObservation,
-    ObservationLevelArg, ScreenshotArtifact, ScreenshotFormatArg, ScreenshotOptions,
+    ObservationLevelArg, ProcessedScreenshot, ScreenshotArtifact, ScreenshotFormatArg,
+    ScreenshotOptions,
 };
 pub use mod_atomic::{AtomicMs, TimingsRecorder};
 

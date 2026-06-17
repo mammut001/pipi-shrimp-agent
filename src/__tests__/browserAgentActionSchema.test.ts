@@ -121,6 +121,37 @@ describe('browserAgentActionSchema', () => {
       const result = parseBrowserActionEnvelope('{"action":{"click_element":{"id":-1}}}');
       expect(result.ok).toBe(false);
     });
+
+    it('rejects input_text without any target identifier', () => {
+      const result = parseBrowserActionEnvelope(
+        JSON.stringify({ action: { input_text: { text: 'hello' } } }),
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('input_text');
+      }
+    });
+
+    it('accepts input_text with a selector target', () => {
+      const result = parseBrowserActionEnvelope(
+        JSON.stringify({ action: { input_text: { text: 'hello', selector: '#search' } } }),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.envelope.payload.text).toBe('hello');
+        expect(result.envelope.payload.selector).toBe('#search');
+      }
+    });
+
+    it('accepts input_text with backend_node_id target', () => {
+      const result = parseBrowserActionEnvelope(
+        JSON.stringify({ action: { input_text: { text: 'world', backend_node_id: 42 } } }),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.envelope.payload.backend_node_id).toBe(42);
+      }
+    });
   });
 
   describe('parseBrowserActionEnvelopeWithRetry', () => {
