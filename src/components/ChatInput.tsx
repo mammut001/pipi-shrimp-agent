@@ -246,7 +246,7 @@ export function ChatInput({
   const projectDir = currentSession?.projectDir ?? currentSession?.workDir;
   const pipiOutputDir = currentSession?.pipiOutputDir;
 
-  // Selected 6-mode execution mode. Fall back to default if missing/invalid.
+  // Selected 5-mode execution mode. Fall back to default if missing/invalid.
   const selectedExecutionModeId: ExecutionModeId = isExecutionModeId(currentSession?.executionMode)
     ? (currentSession!.executionMode as ExecutionModeId)
     : getDefaultExecutionMode().id;

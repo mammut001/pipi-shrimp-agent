@@ -33,9 +33,9 @@ export interface HookContext {
   workDir?: string;
   permissionMode: PermissionMode;
   /**
-   * Optional 6-mode execution mode id. When set, outer guards in
+   * Optional 5-mode execution mode id. When set, outer guards in
    * preToolUseHooks can enforce mode-specific tool policies that the
-   * 4-mode PermissionMode alone cannot express (e.g. Ask mode forcing
+   * PermissionMode alone cannot express (e.g. Ask mode forcing
    * every tool call to require confirmation, Plan mode blocking all
    * tools, Debug mode restricting writes).
    */
@@ -75,7 +75,7 @@ export async function dangerousCommandCheck(ctx: HookContext): Promise<HookResul
  * Hook 1b: Execution-mode outer guard.
  *
  * Enforces the 5-mode execution mode policy for tools that the
- * 4-mode PermissionMode cannot express on its own. Runs after the
+ * PermissionMode cannot express on its own. Runs after the
  * dangerous-command check so it can never be used to bypass hard
  * safety constraints.
  *
@@ -85,11 +85,11 @@ export async function dangerousCommandCheck(ctx: HookContext): Promise<HookResul
  *    read_file, write_file, browser tools, etc. If a tool call slips
  *    through we return a structured block with a hint to switch mode.
  *  - Plan mode: blocks all tools (the existing plan-only hook handles
- *    the 4-mode mapping; this also covers the 6-mode 'plan' id which
- *    may be present alongside a non-plan permissionMode in some flows).
+ *    the mapping; this also covers the 'plan' id which may be present
+ *    alongside a non-plan permissionMode in some flows).
  *  - Debug / Agent: use the per-mode allow-list from the registry.
  *  - Bypass: no outer restriction; per-tool approval policy still
- *    applies through the existing 4-mode hooks.
+ *    applies through the existing hooks.
  *
  * This is the runtime enforcement of the 5-mode registry. It is
  * deliberately conservative: when in doubt, it blocks and lets the UI
@@ -101,10 +101,10 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   }
 
   // Ask mode short-circuit: chat only. Blocks every tool regardless
-  // of the underlying 4-mode permissionMode field. This is the
+  // of the underlying permissionMode field. This is the
   // primary defense against "simple Q&A falls into an Agent/Bypass
   // tool loop" — even if the backend reports `allowed` for the
-  // tool, the 6-mode outer guard vetoes it.
+  // tool, the 5-mode outer guard vetoes it.
   if (ctx.executionMode === 'ask') {
     return {
       approved: false,
@@ -114,7 +114,7 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   }
 
   // Plan mode short-circuit: blocks all tool execution regardless of
-  // the underlying 4-mode permissionMode field. Plan is meant to be
+  // the underlying permissionMode field. Plan is meant to be
   // read-only and produce a plan/checklist only.
   if (ctx.executionMode === 'plan') {
     return {
@@ -147,7 +147,7 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   }
 
   // Bypass: no outer restriction; per-tool approval policy still applies
-  // through the existing 4-mode hooks.
+  // through the existing PermissionMode hooks.
   return { approved: true };
 }
 

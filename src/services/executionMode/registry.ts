@@ -1,11 +1,11 @@
 /**
  * Chat execution mode registry.
  *
- * Single source of truth for the 4-mode composer dropdown.
+ * Single source of truth for the 5-mode composer dropdown.
  * Each mode describes:
  *  - its user-facing label / icon / description
  *  - its risk level (drives visual treatment + Bypass warning gate)
- *  - the underlying 4-mode PermissionMode it maps to for tool execution
+ *  - the underlying PermissionMode it maps to for tool execution
  *  - the system-prompt suffix it injects
  *  - the approval / confirmation policy
  *  - the allowed tool policy
@@ -54,7 +54,7 @@ export interface ExecutionModeProfile {
   icon: 'plan' | 'bug' | 'agent' | 'bypass' | 'ask';
   /** Risk level drives color, ordering, and warning gates. */
   riskLevel: RiskLevel;
-  /** The 4-mode PermissionMode that tool hooks will see. */
+  /** The PermissionMode that tool hooks will see. */
   permissionMode: PermissionMode;
   /** System prompt suffix that gets injected when the mode is active. */
   systemPromptSuffix: string;
@@ -86,8 +86,8 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     icon: 'ask',
     riskLevel: 'safe',
     // Ask is chat-only; we still map to 'plan-only' so the existing
-    // 4-mode PermissionMode path blocks tool execution before the
-    // 6-mode outer guard runs.
+    // PermissionMode path blocks tool execution before the
+    // 5-mode outer guard runs.
     permissionMode: 'plan-only',
     systemPromptSuffix: '',
     allowedToolPolicy: 'none',

@@ -787,8 +787,8 @@ export const useChatStore = create<ChatState>()(
     },
 
     /**
-     * Update the 6-mode execution mode for a session and derive the
-     * 4-mode PermissionMode in lockstep so existing preToolUseHooks keep
+     * Update the 5-mode execution mode for a session and derive the
+     * PermissionMode in lockstep so existing preToolUseHooks keep
      * working. Persisted via db_save_session so the choice survives reload.
      */
     updateSessionExecutionMode: async (sessionId: string, executionMode) => {

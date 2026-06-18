@@ -2,7 +2,7 @@
  * Execution-mode → tool-execution guards.
  *
  * Maps the 5-mode dropdown (Ask / Plan / Debug / Agent / Bypass) to the
- * 4-mode PermissionMode that preToolUseHooks already understands,
+ * PermissionMode that preToolUseHooks already understands,
  * and adds outer-level enforcement for behavior the underlying hook
  * system cannot express on its own (e.g. Ask/Plan modes blocking every
  * tool, or Agent mode gating shell/exec behind user confirmation).
@@ -56,8 +56,8 @@ const FILE_WRITE_TOOLS = new Set([
 ]);
 
 /**
- * Translate the 4-mode id → the 4-mode PermissionMode that preToolUseHooks
- * is already designed to consume. (In this codebase the 4-mode dropdown
+ * Translate the 5-mode id → the PermissionMode that preToolUseHooks
+ * is already designed to consume. (In this codebase the 5-mode dropdown
  * happens to use the same vocabulary as the underlying PermissionMode,
  * with the only divergence being Bypass — but the mapping is still
  * useful for defensive lookup and for callers that hold a session's
@@ -89,7 +89,7 @@ export function isToolAllowedForProfile(
     case 'none':
       // 'none' covers both Plan mode (read-only plan output) and the
       // chat-only Ask mode (no tools at all). The downstream caller
-      // distinguishes Ask vs Plan via the 6-mode id; here we just
+      // distinguishes Ask vs Plan via the 5-mode id; here we just
       // return false for any tool name.
       return false;
     case 'read-only':

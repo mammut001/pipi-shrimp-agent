@@ -885,10 +885,10 @@ export async function handleToolBatchRequest(
   // Project Folder. Otherwise the helper is treated as a no-op.
   let workDir = currentSession?.workDir ?? null;
   const permissionMode = currentSession?.permissionMode || 'standard';
-  // Mirror the 6-mode execution mode id into the hook context so the
+  // Mirror the 5-mode execution mode id into the hook context so the
   // preToolUseHooks.executionModeGuardCheck can enforce mode-specific
   // policy. Falls back to 'standard' PermissionMode behavior when the
-  // session was created before the 6-mode system shipped.
+  // session was created before the 5-mode system shipped.
   const executionModeId = currentSession?.executionMode;
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
 

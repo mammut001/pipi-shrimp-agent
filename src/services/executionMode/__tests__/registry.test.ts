@@ -57,8 +57,8 @@ describe('executionMode/registry', () => {
   it('maps each 5-mode id to a 4-mode PermissionMode', () => {
     // Ask and Plan both map to plan-only — Ask is chat-only, Plan is
     // read-only plan output. The downstream hook layer then blocks
-    // tool execution based on the explicit 6-mode id, not the
-    // 4-mode PermissionMode.
+    // tool execution based on the explicit 5-mode id, not the
+    // PermissionMode.
     expect(resolvePermissionMode('ask')).toBe('plan-only');
     expect(resolvePermissionMode('plan')).toBe('plan-only');
     expect(resolvePermissionMode('debug')).toBe('auto-edits');
@@ -135,23 +135,23 @@ describe('executionMode/guards: tool allow-list per mode', () => {
   });
 });
 
-describe('executionMode/registry: back-compat with 4-mode PermissionMode', () => {
-  it('does not include the legacy 4-mode ids in the registry', () => {
+describe('executionMode/registry: back-compat with legacy PermissionMode', () => {
+  it('does not include the legacy PermissionMode ids in the registry', () => {
     const ids: ExecutionModeId[] = EXECUTION_MODES.map((m) => m.id);
-    // 4-mode-only ids (none of these are reused in the 4-mode registry).
+    // PermissionMode-only ids (none of these are reused in the registry).
     expect(ids).not.toContain('standard');
     expect(ids).not.toContain('auto-edits');
     expect(ids).not.toContain('plan-only');
-    // The 4-mode registry does expose 'bypass' as a mode id, but it is
-    // a registry concept (with a warning gate) and not the raw 4-mode
+    // The PermissionMode does expose 'bypass' as a value, but it is
+    // a registry concept (with a warning gate) and not the raw
     // 'bypass' permission. The mapping happens in resolvePermissionMode.
     expect(ids).toContain('bypass');
   });
 
-  it('still exposes the 4-mode mapping via resolvePermissionMode for hook compatibility', () => {
-    // preToolUseHooks reads `permissionMode`, not the 4-mode id, and
-    // supports exactly these 4 values. Each 4-mode must round-trip into
-    // a known 4-mode value.
+  it('still exposes the PermissionMode mapping via resolvePermissionMode for hook compatibility', () => {
+    // preToolUseHooks reads `permissionMode`, not the 5-mode id, and
+    // supports exactly these 4 values. Each 5-mode must round-trip into
+    // a known PermissionMode value.
     const allowed = new Set(['standard', 'auto-edits', 'bypass', 'plan-only']);
     for (const mode of listExecutionModes()) {
       expect(allowed.has(resolvePermissionMode(mode.id))).toBe(true);

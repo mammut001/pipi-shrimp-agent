@@ -69,9 +69,9 @@ export interface ToolExecutionOptions {
   source?: ToolExecutionSource;
   permissionMode?: PermissionMode;
   /**
-   * Optional 6-mode execution mode id. When provided, the preToolUseHooks
-   * executionModeGuardCheck enforces the 6-mode registry policy on top of
-   * the 4-mode PermissionMode.
+   * Optional 5-mode execution mode id. When provided, the preToolUseHooks
+   * executionModeGuardCheck enforces the 5-mode registry policy on top of
+   * the PermissionMode.
    */
   executionMode?: string;
   allowedTools?: string[];

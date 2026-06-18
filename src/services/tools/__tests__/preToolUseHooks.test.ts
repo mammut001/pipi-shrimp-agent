@@ -87,7 +87,7 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
   });
 
   it('Ask mode blocks even when underlying permissionMode is bypass', async () => {
-    // The 6-mode outer guard wins over the 4-mode permissionMode
+    // The 5-mode outer guard wins over the underlying permissionMode
     // when Ask mode is active — this is the chat-only guarantee.
     const result = await executionModeGuardCheck(
       ctx({ executionMode: 'ask', permissionMode: 'bypass', toolName: 'read_file' }),

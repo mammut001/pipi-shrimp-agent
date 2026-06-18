@@ -676,7 +676,7 @@ describe('chatToolExecution', () => {
         })),
       });
       const state = createChatStateWithMode('bypass');
-      // Mirror the 6-mode id so the outer guard treats this as Bypass.
+      // Mirror the 5-mode id so the outer guard treats this as Bypass.
       (state.sessions[0] as { executionMode?: string }).executionMode = 'bypass';
       const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
         type: 'tool_batch_request',
@@ -1080,9 +1080,87 @@ describe('chatToolExecution', () => {
       expect(updateTaskStep).not.toHaveBeenCalledWith('tool-vis-1', 'awaiting_confirmation');
       expect(updateTaskStep).toHaveBeenCalledWith('tool-vis-1', 'running');
     });
+
+    it('Bypass + write_file inside Project Folder does not call waitForPermission', async () => {
+      // The audit checklist explicitly calls out a benign
+      // project-scoped write_file as a must-not-prompt case for
+      // Bypass. The frontend must short-circuit the modal the same
+      // way it does for execute_command.
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const updateTaskStep = jest.fn();
+      const invoke = jest.fn(async (command: string) => {
+        if (command === 'preview_tool_policy') {
+          // Backend preview can still say awaiting_confirmation for
+          // any write tool, but Bypass must override it.
+          return {
+            toolCallId: 'tool-write-1',
+            toolName: 'write_file',
+            decision: 'awaiting_confirmation',
+            reason: 'Write tool approval required',
+            approvalToken: 'unused-write-token',
+          };
+        }
+        if (command === 'execute_single_tool') {
+          return { content: '{"status":"succeeded"}', is_error: false };
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep,
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        invoke: invoke as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-write-1',
+            name: 'write_file',
+            arguments: { path: 'src/foo.ts', content: 'export const x = 1;\n' },
+          }],
+        })),
+      });
+      const state = createChatStateWithMode('bypass');
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'bypass';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-write-1',
+          name: 'write_file',
+          arguments: '{"path":"src/foo.ts","content":"export const x = 1;\\n"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      // Bypass + auto-approvable write tool: no permission modal, no
+      // awaiting_confirmation step, straight to running.
+      expect(waitForPermission as jest.Mock).not.toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        toolCallId: 'tool-write-1',
+        name: 'write_file',
+        workDir: '/tmp/workspace',
+      }));
+      expect(updateTaskStep).not.toHaveBeenCalledWith('tool-write-1', 'awaiting_confirmation');
+      expect(updateTaskStep).toHaveBeenCalledWith('tool-write-1', 'running');
+    });
   });
 
-  describe('6-mode execution mode plumbing', () => {
+  describe('5-mode execution mode plumbing', () => {
     it('forwards the session executionMode id into the preToolUseHook context', async () => {
       const resolved = jest.fn();
       const runPreToolUseHooks = jest.fn(async () => ({ approved: true }));
@@ -1090,7 +1168,7 @@ describe('chatToolExecution', () => {
         runPreToolUseHooks,
       });
       const state = createChatState();
-      // The session was switched to the 6-mode 'plan' (Plan) mode.
+      // The session was switched to the 5-mode 'plan' (Plan) mode.
       (state.sessions[0] as { executionMode?: string }).executionMode = 'plan';
       const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
         type: 'tool_batch_request',
@@ -1123,7 +1201,7 @@ describe('chatToolExecution', () => {
         runPreToolUseHooks,
       });
       const state = createChatState();
-      // No executionMode on the session — only the 4-mode permissionMode.
+      // No executionMode on the session — only the legacy permissionMode.
       state.sessions[0].permissionMode = 'auto-edits';
       const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
         type: 'tool_batch_request',
@@ -1145,9 +1223,10 @@ describe('chatToolExecution', () => {
       }, deps);
 
       const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string } | undefined;
-      // Legacy sessions still flow through the 4-mode path; the new guard
-      // hook is a no-op when executionMode is undefined, preserving the
-      // existing tool-execution behavior bit-for-bit.
+      // Legacy sessions still flow through the legacy permissionMode
+      // path; the new guard hook is a no-op when executionMode is
+      // undefined, preserving the existing tool-execution behavior
+      // bit-for-bit.
       expect(ctxArg?.executionMode).toBeUndefined();
     });
   });

@@ -90,7 +90,7 @@ export interface Session {
   workingFiles?: ImportedFile[]; // session-level working files
   permissionMode?: 'standard' | 'auto-edits' | 'bypass' | 'plan-only'; // NEW: execution permission mode
   /**
-   * Chat execution mode (6-mode dropdown). When present, this is the source
+   * Chat execution mode (5-mode dropdown). When present, this is the source
    * of truth for the composer; `permissionMode` is derived from it via
    * `resolvePermissionMode`. Older sessions without this field fall back to
    * the default Ask mode and `permissionMode` is still honored.
@@ -362,8 +362,8 @@ export interface ChatState {
    */
   updateSessionPermissionMode: (sessionId: string, permissionMode: 'standard' | 'auto-edits' | 'bypass' | 'plan-only') => Promise<void>;
   /**
-   * Update the 6-mode execution mode for a session. Internally mirrors
-   * the 4-mode PermissionMode so existing preToolUseHooks keep working.
+   * Update the 5-mode execution mode for a session. Internally mirrors
+   * the PermissionMode so existing preToolUseHooks keep working.
    */
   updateSessionExecutionMode: (sessionId: string, executionMode: import('@/services/executionMode').ExecutionModeId) => Promise<void>;
 

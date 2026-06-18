@@ -2,7 +2,7 @@
  * Chat execution mode dropdown.
  *
  * Cursor-style compact trigger: icon + label + chevron. Clicking opens a
- * menu listing all 6 modes. Each item shows an icon, label, short
+ * menu listing all 5 modes. Each item shows an icon, label, short
  * description, and a check mark for the active mode. Advanced (Bypass) is
  * pushed under a separator + "Advanced" section header. Bypass requires an
  * explicit one-time warning before the selection is committed.
