@@ -523,7 +523,7 @@ const enUS: TranslationKeys = {
   'executionMode.ask.label': 'Ask',
   'executionMode.ask.description': 'Chat only. No tool calls. Switch to Agent or Bypass to run tools.',
   'executionMode.plan.label': 'Plan',
-  'executionMode.plan.description': 'Inspect code read-only and save a structured plan document. No file edits, no shell, no browser, no MCP, no agent spawn.',
+  'executionMode.plan.description': 'Inspect code read-only and produce a structured plan. The app saves valid plans automatically. No edits, shell, browser, MCP, or agent spawn.',
   'executionMode.debug.label': 'Debug',
   'executionMode.debug.description': 'Reproduce → fix → verify. Read + small write tools auto-approve; broader changes still ask.',
   'executionMode.agent.label': 'Agent',

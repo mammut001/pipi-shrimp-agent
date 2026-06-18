@@ -30,9 +30,12 @@ export type RiskLevel = 'safe' | 'moderate' | 'elevated' | 'dangerous';
 /**
  * What kinds of tool calls the mode allows.
  * - 'none': no tools at all (chat only, like Ask mode)
- * - 'plan': read-only inspection plus the `save_plan_doc` writer — Plan
- *   mode. The exact tool list lives in `PLAN_MODE_ALLOWED_TOOLS` so the
- *   plan-doc writer and the read-only inspectors stay together.
+ * - 'plan': read-only inspection of the bound workspace — Plan mode.
+ *   The exact tool list lives in `PLAN_MODE_ALLOWED_TOOLS` so the
+ *   registry, the model-facing tool catalog, and the chat engine
+ *   `allowedTools` filter stay in sync. Plan-document persistence
+ *   is an app-side post-turn action (see `PLAN_MODE_SYSTEM_PROMPT`),
+ *   NOT a model-callable tool.
  * - 'read-only': only read tools
  * - 'edit': read + write tools, but no shell/browser
  * - 'shell': read + write + shell
@@ -109,10 +112,10 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     riskLevel: 'safe',
     permissionMode: 'plan-only',
     systemPromptSuffix: '', // appended separately via PLAN_MODE_SYSTEM_PROMPT
-    // Plan mode is read-only inspection + save_plan_doc. The exact tool
-    // allowlist is enforced by `isToolAllowedForProfile` for the 'plan'
-    // policy and re-checked by the preToolUseHooks outer guard at
-    // runtime, so PLAN_MODE_ALLOWED_TOOLS is the single source of truth.
+    // Plan mode is read-only inspection only — no write/edit/shell/browser/
+    // mcp/agent tools, and no `save_plan_doc` (the Rust tool registry
+    // does not implement it; plan-doc persistence is an app-side
+    // post-turn action in `chatActions.sendMessage`).
     allowedToolPolicy: 'plan',
     approvalPolicy: 'always-ask',
     isDefault: false,

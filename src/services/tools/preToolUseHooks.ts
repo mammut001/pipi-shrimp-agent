@@ -112,8 +112,11 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
     };
   }
 
-  // Plan mode: only the read-only inspection + save_plan_doc tools that
-  // chatActions exposes via `allowedTools`. Block everything else.
+  // Plan mode: only the read-only inspection tools that chatActions
+  // exposes via `allowedTools` (PLAN_MODE_ALLOWED_TOOLS). Block
+  // everything else, including `save_plan_doc` — that tool is
+  // intentionally NOT exposed to the model; plan-doc persistence is
+  // an app-side post-turn action.
   if (ctx.executionMode === 'plan') {
     if (PLAN_MODE_ALLOWED_TOOLS.includes(ctx.toolName)) {
       return { approved: true };

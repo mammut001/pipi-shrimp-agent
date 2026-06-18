@@ -6,7 +6,10 @@ import {
   type SavePlanModeDocResult,
 } from '@/services/planMode';
 import { useChatStore } from '@/store/createChatStore';
-import { getSessionPipiOutputDir } from '@/utils/sessionFolders';
+import {
+  getSessionPipiOutputDir,
+  resolveRealSessionPipiOutputDir,
+} from '@/utils/sessionFolders';
 
 /**
  * SavePlanDocTool — persist a plan-mode plan as a markdown document
@@ -24,9 +27,15 @@ import { getSessionPipiOutputDir } from '@/utils/sessionFolders';
  * most recent user message in `ToolContext.messages`, with a
  * markdown-first-line fallback if the context is empty.
  *
- * Plan Mode is the only execution mode that exposes this tool. The
- * chat engine restricts it via `PLAN_MODE_ALLOWED_TOOLS`; other
- * modes will reject the call as "not allowed in this execution lane".
+ * NOTE: This tool is intentionally NOT exposed to the model in the
+ * active chat path. The Rust tool registry has no `save_plan_doc`
+ * handler and the chat engine routes tool calls through that
+ * registry, so advertising it would make the model call an "Unknown
+ * tool". Instead, `chatActions.sendMessage` auto-persists the final
+ * plan after `turn_complete` via `shouldSavePlanDoc` + `savePlanModeDoc`
+ * (see `src/services/planMode.ts`). This class is retained for the
+ * legacy TypeScript tool executor and for direct programmatic use;
+ * the chat composer should never advertise it to the model.
  *
  * The tool deliberately does not take a free-form `path` argument —
  * the on-disk location is fully determined by the docs service so
@@ -51,14 +60,22 @@ export class SavePlanDocTool extends BaseTool<SavePlanDocInput, SavePlanDocOutpu
     // Two-folder model: plan docs are app-owned outputs, so the
     // destination folder is the session's **PiPi Output Folder**, NOT
     // `ToolContext.cwd` (which is the Project Folder / user's repo).
-    // The docs service writes into `{pipiOutputDir}/.pipi-shrimp/docs/`
-    // so we can keep the legacy `context.cwd ?? ''` legacy assertion
-    // below as a defensive guard while always overriding with the
-    // PiPi Output Folder resolution.
+    //
+    // We resolve the real on-disk path via `resolveRealSessionPipiOutputDir`
+    // (which calls `get_app_default_dir` when `pipiOutputDir` is unset)
+    // because the JS-only `getSessionPipiOutputDir` returns the
+    // `PiPi-Shrimp/chats/<id>` placeholder — that string has NOT been
+    // joined with the platform's Documents folder yet and feeding it
+    // to `createDoc` would land in the wrong directory. We still call
+    // `getSessionPipiOutputDir` once for the deterministic error
+    // message below (which reads better than "real path unavailable"
+    // when the session has a fully-bound folder).
     const session = useChatStore
       .getState()
       .sessions.find((candidate) => candidate.id === context.sessionId);
-    const pipiOutputDir = getSessionPipiOutputDir(session) ?? '';
+    const pipiOutputDir = (await resolveRealSessionPipiOutputDir(session))
+      ?? getSessionPipiOutputDir(session)
+      ?? '';
     const workDir = pipiOutputDir.trim();
 
     if (!workDir) {

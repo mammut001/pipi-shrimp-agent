@@ -1456,4 +1456,298 @@ describe('chatToolExecution', () => {
       expect(block).toBeUndefined();
     });
   });
+
+  // Project Folder cwd resolution regression: the executor must
+  // resolve tool cwd via `getSessionProjectDir(session)`, which
+  // prefers the new `projectDir` column and falls back to the legacy
+  // `workDir` mirror. Raw `session.workDir` reads in `handleToolBatchRequest`
+  // were the bug — `workDir` is only a backwards-compat mirror of
+  // `projectDir`, never the canonical source.
+  describe('Project Folder cwd resolution (two-folder model)', () => {
+    it('write_file uses projectDir as workDir when only projectDir is set', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        invoke: jest.fn(async () => ({ content: 'ok', is_error: false })) as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-write',
+            name: 'write_file',
+            arguments: { path: 'src/foo.ts', content: 'export const x = 1;\n' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      // projectDir-only: legacy workDir is undefined.
+      state.sessions[0].projectDir = '/tmp/project';
+      state.sessions[0].workDir = undefined;
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-write',
+          name: 'write_file',
+          arguments: '{"path":"src/foo.ts","content":"export const x = 1;\\n"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      expect((deps.invoke as jest.Mock)).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        toolCallId: 'tool-write',
+        name: 'write_file',
+        workDir: '/tmp/project',
+      }));
+    });
+
+    it('execute_command uses projectDir as workDir when only projectDir is set', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        invoke: jest.fn(async () => ({ content: '{"stdout":"ok"}', is_error: false })) as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-exec',
+            name: 'execute_command',
+            arguments: { command: 'pwd' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = '/tmp/project';
+      state.sessions[0].workDir = undefined;
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-exec',
+          name: 'execute_command',
+          arguments: '{"command":"pwd"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      expect((deps.invoke as jest.Mock)).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        toolCallId: 'tool-exec',
+        name: 'execute_command',
+        workDir: '/tmp/project',
+      }));
+    });
+
+    it('legacy workDir-only session still uses workDir as cwd', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        invoke: jest.fn(async () => ({ content: 'ok', is_error: false })) as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-legacy',
+            name: 'write_file',
+            arguments: { path: 'src/foo.ts', content: 'x' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      // Legacy: only workDir set, no projectDir.
+      state.sessions[0].projectDir = undefined;
+      state.sessions[0].workDir = '/tmp/legacy';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-legacy',
+          name: 'write_file',
+          arguments: '{"path":"src/foo.ts","content":"x"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      expect((deps.invoke as jest.Mock)).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        toolCallId: 'tool-legacy',
+        name: 'write_file',
+        workDir: '/tmp/legacy',
+      }));
+    });
+
+    it('execute_command refuses pipiOutputDir-only session (clear Project Folder error)', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        invoke: jest.fn(async () => ({ content: '{"stdout":"ok"}', is_error: false })) as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-exec',
+            name: 'execute_command',
+            arguments: { command: 'ls' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = undefined;
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].pipiOutputDir = '/home/user/.local/share/PiPi-Shrimp/chats/session-1';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-exec',
+          name: 'execute_command',
+          arguments: '{"command":"ls"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        // Fallback returns the same path as pipiOutputDir — must be rejected.
+        ensureSessionWorkDir: async () => '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      }, deps);
+
+      // execute_command must never have been invoked against the
+      // PiPi Output Folder.
+      expect((deps.invoke as jest.Mock)).not.toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        workDir: '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      }));
+      expect(results).toEqual([
+        expect.objectContaining({
+          id: 'tool-exec',
+          toolName: 'execute_command',
+          content: expect.stringMatching(/No Project Folder is bound/i),
+        }),
+      ]);
+    });
+
+    it('Bypass mode + projectDir-only session auto-approves execute_command with projectDir', async () => {
+      const resolved = jest.fn();
+      const updateTaskStep = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const deps = createDeps({
+        invoke: jest.fn(async () => ({ content: '{"stdout":"ok"}', is_error: false })) as ToolBatchExecutionDeps['invoke'],
+        runPreToolUseHooks: jest.fn(async () => ({ approved: true })),
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-bypass-exec',
+            name: 'execute_command',
+            arguments: { command: 'pwd' },
+          }],
+        })),
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep,
+          showQuestionnaire: jest.fn(async () => 'ok'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = '/tmp/project';
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].executionMode = 'bypass';
+      state.sessions[0].permissionMode = 'bypass';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-bypass-exec',
+          name: 'execute_command',
+          arguments: '{"command":"pwd"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      // Bypass auto-approves the project-scoped shell tool.
+      expect(waitForPermission as jest.Mock).not.toHaveBeenCalled();
+      expect((deps.invoke as jest.Mock)).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        toolCallId: 'tool-bypass-exec',
+        name: 'execute_command',
+        workDir: '/tmp/project',
+      }));
+    });
+
+    it('Ask mode + projectDir-only session still blocks every tool', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        // Hook chain always reports "Ask mode blocked" — this matches
+        // the real preToolUseHooks.executionModeGuardCheck contract.
+        runPreToolUseHooks: jest.fn(async () => ({
+          approved: false,
+          error: 'Tool execution is disabled in Ask mode.',
+          blockedBy: 'permission-mode',
+        })),
+        invoke: jest.fn(async () => ({ content: 'ok', is_error: false })) as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [{
+            id: 'tool-read',
+            name: 'read_file',
+            arguments: { path: 'src/index.ts' },
+          }],
+          serial: [],
+        })),
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = '/tmp/project';
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].executionMode = 'ask';
+      state.sessions[0].permissionMode = 'plan-only';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-read',
+          name: 'read_file',
+          arguments: '{"path":"src/index.ts"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      // No real tool execution happened — the hook chain rejected.
+      expect((deps.invoke as jest.Mock)).not.toHaveBeenCalledWith('execute_single_tool', expect.anything());
+      expect((deps.invoke as jest.Mock)).not.toHaveBeenCalledWith('execute_tool_batch', expect.anything());
+    });
+  });
 });

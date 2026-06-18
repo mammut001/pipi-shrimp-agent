@@ -76,13 +76,24 @@ describe('planMode', () => {
 });
 
 describe('PLAN_MODE_ALLOWED_TOOLS — read-only plan allowlist', () => {
-  it('exposes exactly the four documented read + save tools, in order', () => {
+  it('exposes exactly the three documented read-only tools, in order', () => {
+    // Plan mode is read-only inspection of the bound workspace. Plan
+    // document persistence is an app-side post-turn action, NOT a
+    // model-callable tool — so `save_plan_doc` is intentionally
+    // absent here.
     expect([...PLAN_MODE_ALLOWED_TOOLS]).toEqual([
       'read_file',
       'list_files',
       'search_files',
-      'save_plan_doc',
     ]);
+  });
+
+  it('does not include save_plan_doc (Option A — app-side post-turn persistence)', () => {
+    // The Rust tool registry has no `save_plan_doc` handler, so the
+    // model must never be told to call it. Plan docs are saved by
+    // chatActions after turn_complete via shouldSavePlanDoc +
+    // savePlanModeDoc using the real PiPi Output Folder.
+    expect(PLAN_MODE_ALLOWED_TOOLS).not.toContain('save_plan_doc');
   });
 
   it('does not include any write, execute, or browser tool', () => {
@@ -109,12 +120,25 @@ describe('PLAN_MODE_SYSTEM_PROMPT — read-only plan mode', () => {
     );
   });
 
-  it('enumerates the four read + save tools the model may call', () => {
+  it('enumerates the three read-only tools the model may call', () => {
     for (const tool of PLAN_MODE_ALLOWED_TOOLS) {
       // The prompt names each allowed tool (with backticks) in the
       // "Tools you MAY call" section.
       expect(PLAN_MODE_SYSTEM_PROMPT).toContain(`\`${tool}\``);
     }
+  });
+
+  it('does not advertise save_plan_doc to the model', () => {
+    // The "Tools you MAY call" section must not contain save_plan_doc.
+    // Plan-doc persistence is handled by the chat store, not by a
+    // model tool call.
+    const mayCallSection = PLAN_MODE_SYSTEM_PROMPT.split('### Tools you MAY call')[1]
+      ?.split('### Tools you MUST NOT call')[0] ?? '';
+    expect(mayCallSection).not.toMatch(/save_plan_doc/);
+  });
+
+  it('explicitly states the chat store auto-saves valid plans', () => {
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/auto-saves your final assistant message/i);
   });
 
   it('forbids the write / execute / browser families by name', () => {
@@ -128,10 +152,11 @@ describe('PLAN_MODE_SYSTEM_PROMPT — read-only plan mode', () => {
     expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/filtered out at the request boundary/i);
   });
 
-  it('tells the model to read first, then save the plan as a doc', () => {
+  it('tells the model to read first, then produce a structured plan', () => {
     expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/read first, plan second/i);
-    expect(PLAN_MODE_SYSTEM_PROMPT).toContain('save_plan_doc');
-    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/\.pipi-shrimp\/docs\//);
+    // The prompt now tells the model to write the plan in chat and
+    // let the app persist it — not to call save_plan_doc.
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/do not need to call any tool to persist the plan/i);
   });
 
   it('does not regress to the old "tools are intentionally disabled" framing', () => {

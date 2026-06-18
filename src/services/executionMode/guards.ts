@@ -179,11 +179,13 @@ export function isToolAllowedForProfile(
       // can keep read-only inspection + save_plan_doc available.
       return false;
     case 'plan':
-      // Plan mode: read-only inspection + save_plan_doc. The exact
-      // allowlist lives in PLAN_MODE_ALLOWED_TOOLS (single source of
-      // truth — chatActions, preToolUseHooks and this guard all
-      // consult it). Block every other tool: writes, edits, shell,
-      // browser mutation, ssh, mcp__*, agent_tool.
+      // Plan mode: read-only inspection of the bound workspace only.
+      // The exact allowlist lives in PLAN_MODE_ALLOWED_TOOLS (single
+      // source of truth — chatActions, preToolUseHooks and this guard
+      // all consult it). Block every other tool: writes, edits,
+      // shell, browser mutation, ssh, mcp__*, agent_tool, and
+      // save_plan_doc (the Rust tool registry does not implement
+      // it; plan-doc persistence is an app-side post-turn action).
       return PLAN_MODE_ALLOWED_TOOLS.includes(toolName);
     case 'read-only':
       return READ_ONLY_TOOLS.has(toolName);

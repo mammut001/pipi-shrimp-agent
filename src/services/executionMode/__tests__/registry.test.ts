@@ -104,12 +104,16 @@ describe('executionMode/guards: tool allow-list per mode', () => {
     expect(isToolAllowedForMode('ask', 'ssh_exec')).toBe(false);
   });
 
-  it('Plan mode allows read-only inspection + save_plan_doc only', () => {
-    // Read-only inspection + save_plan_doc are allowed.
+  it('Plan mode allows read-only inspection only (no save_plan_doc)', () => {
+    // Read-only inspection is allowed.
     expect(isToolAllowedForMode('plan', 'read_file')).toBe(true);
     expect(isToolAllowedForMode('plan', 'list_files')).toBe(true);
     expect(isToolAllowedForMode('plan', 'search_files')).toBe(true);
-    expect(isToolAllowedForMode('plan', 'save_plan_doc')).toBe(true);
+    // save_plan_doc is intentionally NOT exposed as a model-callable
+    // tool — the Rust registry has no handler for it. Plan-doc
+    // persistence is an app-side post-turn action (see
+    // PLAN_MODE_SYSTEM_PROMPT and chatActions).
+    expect(isToolAllowedForMode('plan', 'save_plan_doc')).toBe(false);
     // Writes, edits, shell, browser, ssh, mcp and agent spawn are all
     // blocked — Plan mode must never produce side effects.
     expect(isToolAllowedForMode('plan', 'write_file')).toBe(false);

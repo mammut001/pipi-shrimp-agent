@@ -466,25 +466,6 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "save_plan_doc",
-            "description": "Persist a Plan Mode plan as a single markdown document under the bound workspace's .pipi-shrimp/docs/ directory. The model supplies the plan body (and optionally a short title); the workspace path comes from the session. The tool refuses to save bodies that lack the standard Plan Mode structure (Execution Plan header, Proposed Implementation Steps, Validation Plan, Execution Gate). Only available when Plan Mode is active.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "markdown": {
-                        "type": "string",
-                        "description": "The full plan body in markdown. Must include the standard Plan Mode structure or the tool will refuse to persist it."
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Optional short title used for the docs file. Defaults to the latest user message, then to the first content line of the markdown body."
-                    }
-                },
-                "required": ["markdown"],
-                "additionalProperties": false
-            }
-        }),
-        serde_json::json!({
             "name": "get_current_workspace",
             "description": "Get the current session's bound working directory path.",
             "input_schema": { "type": "object", "properties": {}, "required": [], "additionalProperties": false }
@@ -645,8 +626,13 @@ mod tests {
 
     #[test]
     fn exposes_browser_tools_only_when_enabled() {
-        assert_eq!(get_tools(false).len(), 15);
-        assert_eq!(get_tools(true).len(), 25);
+        // The tool catalog no longer advertises `save_plan_doc` to the
+        // model: plan-document persistence is an app-side post-turn
+        // action (see `PLAN_MODE_SYSTEM_PROMPT` in
+        // `src/services/planMode.ts`) so the model never calls a tool
+        // the Rust registry does not implement.
+        assert_eq!(get_tools(false).len(), 14);
+        assert_eq!(get_tools(true).len(), 24);
     }
 
     #[test]

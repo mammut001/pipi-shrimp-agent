@@ -555,15 +555,14 @@ describe('G. Tool allow-list per mode (outer guard)', () => {
     }
   });
 
-  it('Plan allows read-only inspection + save_plan_doc and blocks side-effecting tools', () => {
-    // Plan mode is read-only inspection + plan-doc persistence. The
-    // exact allowlist lives in PLAN_MODE_ALLOWED_TOOLS so all three
-    // enforcement layers (registry, preToolUseHooks, chatActions)
-    // stay in sync.
+  it('Plan allows read-only inspection only and blocks side-effecting tools', () => {
+    // Plan mode is read-only inspection only — no save_plan_doc.
+    // Plan-doc persistence is an app-side post-turn action in
+    // chatActions, NOT a model-callable tool.
     expect(isToolAllowedForMode('plan', 'read_file')).toBe(true);
     expect(isToolAllowedForMode('plan', 'list_files')).toBe(true);
     expect(isToolAllowedForMode('plan', 'search_files')).toBe(true);
-    expect(isToolAllowedForMode('plan', 'save_plan_doc')).toBe(true);
+    expect(isToolAllowedForMode('plan', 'save_plan_doc')).toBe(false);
 
     const blocked = [
       'write_file', 'edit_file', 'create_directory', 'delete_file',

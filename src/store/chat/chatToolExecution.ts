@@ -29,7 +29,10 @@ import { createToolTaskSteps } from '../taskLifecycle';
 import { registerArtifactsFromToolResults, type ArtifactDetectorModule, type ToolArtifactResult } from './chatArtifacts';
 import { normalizeCompileTypstArgs, normalizeResumeWorkspaceToolArgs } from './chatResumeTools';
 import { applyWindowsShellProfileToArgsJson } from '@/utils/windowsShellProfile';
-import { getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper } from '@/utils/sessionFolders';
+import {
+  getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper,
+  getSessionProjectDir as resolveSessionProjectDir,
+} from '@/utils/sessionFolders';
 
 type ToolBatchChunk = Extract<EngineEvent, { type: 'tool_batch_request' }>;
 
@@ -869,22 +872,29 @@ export async function handleToolBatchRequest(
   const { chunk, activeSessionId, assistantMessageId, get, set, ensureSessionWorkDir } = context;
   const uiStore = deps.uiStore.getState();
   let currentSession = get().sessions.find((session) => session.id === activeSessionId);
-  // Two-folder model: `workDir` here is the **Project Folder** — the
-  // folder the tools (bash, read/write/list/...) run against. We do
-  // NOT fall back to the PiPi Output Folder when the Project Folder is
-  // missing: tools that mutate project state have no meaning in the
-  // app-owned output root, and silently using the PiPi Output Folder
-  // as the tool cwd would let the model "edit" `.pipi-shrimp/...` files
-  // it considers source code.
+  // Two-folder model: the tool cwd is the **Project Folder** — the
+  // folder tools (bash, read/write/list/...) run against. We resolve
+  // it via `getSessionProjectDir(session)` which prefers the new
+  // `projectDir` column and falls back to the legacy `workDir`
+  // mirror. Raw `session.workDir` reads are wrong in the two-folder
+  // world — `workDir` is only a backwards-compat mirror of
+  // `projectDir`, never the canonical source.
   //
-  // The legacy `ensureSessionWorkDir()` helper used to paper over this
-  // by returning whichever single folder the session had bound; in the
-  // two-folder world that helper now provisions the **PiPi Output
-  // Folder**. We use it only as a backstop: if it returns a path that
-  // equals the session's `pipiOutputDir` we discard the result and
-  // surface a hard error so the model can prompt the user to bind a
-  // Project Folder. Otherwise the helper is treated as a no-op.
-  let workDir = currentSession?.workDir ?? null;
+  // We do NOT fall back to the PiPi Output Folder when the Project
+  // Folder is missing: tools that mutate project state have no
+  // meaning in the app-owned output root, and silently using the PiPi
+  // Output Folder as the tool cwd would let the model "edit"
+  // `.pipi-shrimp/...` files it considers source code.
+  //
+  // The legacy `ensureSessionWorkDir()` helper used to paper over
+  // this by returning whichever single folder the session had bound;
+  // in the two-folder world that helper now provisions the **PiPi
+  // Output Folder**. We use it only as a backstop: if it returns a
+  // path that equals the session's `pipiOutputDir` we discard the
+  // result and surface a hard error so the model can prompt the user
+  // to bind a Project Folder. Otherwise the helper is treated as a
+  // no-op.
+  let workDir = resolveSessionProjectDir(currentSession) ?? null;
   const executionModeId = resolveSessionExecutionModeId(currentSession);
   const permissionMode = resolvePermissionMode(executionModeId);
   // Mirror the 5-mode execution mode id into the hook context so the
@@ -954,17 +964,22 @@ export async function handleToolBatchRequest(
   seedSessionToolRuntime(activeSessionId, chunk.tools, set, get);
   uiStore.setTaskProgress(createToolTaskSteps(chunk.tools));
 
+  // Always resolve the normalization cwd through the canonical helper
+  // so a session that only has `workDir` (legacy mirror) still picks
+  // up the right folder. We never use the raw `currentSession.workDir`
+  // directly here — that was the bug.
+  const projectFolderForNormalization = workDir ?? resolveSessionProjectDir(currentSession);
   const normalizedToolArgsById = new Map<string, string>();
   for (const tool of chunk.tools) {
     let normalizedArgs = deps.normalizeResumeWorkspaceToolArgs(
       tool.name,
       tool.arguments,
-      workDir ?? currentSession?.workDir,
+      projectFolderForNormalization,
       uiStore.activeSkill,
     );
 
     if (tool.name === 'compile_typst_file') {
-      normalizedArgs = await deps.normalizeCompileTypstArgs(normalizedArgs, workDir ?? currentSession?.workDir);
+      normalizedArgs = await deps.normalizeCompileTypstArgs(normalizedArgs, projectFolderForNormalization);
     }
 
     normalizedArgs = applyWindowsShellProfileToArgsJson(tool.name, normalizedArgs, windowsShellProfile);

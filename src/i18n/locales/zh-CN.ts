@@ -523,7 +523,7 @@ const zhCN: TranslationKeys = {
   'executionMode.ask.label': '问答',
   'executionMode.ask.description': '仅聊天，不调用任何工具。需要执行工具请切换到智能体或绕过。',
   'executionMode.plan.label': '规划',
-  'executionMode.plan.description': '只读检查代码并保存一份结构化的计划文档。不编辑文件、不执行 shell、不调用浏览器、不使用 MCP、不派生子代理。',
+  'executionMode.plan.description': '只读检查代码并输出结构化计划。符合结构的计划会由应用自动保存。不编辑文件、不执行 shell、不调用浏览器、不使用 MCP、不派生子代理。',
   'executionMode.debug.label': '调试',
   'executionMode.debug.description': '复现 → 修复 → 验证。读取和小幅写入自动通过，较大改动仍需确认。',
   'executionMode.agent.label': '智能体',

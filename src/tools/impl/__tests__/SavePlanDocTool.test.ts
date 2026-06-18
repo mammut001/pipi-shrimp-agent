@@ -1,9 +1,19 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockInvoke = jest.fn();
+const mockSafeInvokeOrNull = jest.fn();
 
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
+// `resolveRealSessionPipiOutputDir` falls through to `safeInvokeOrNull`
+// when the session has no persisted `pipiOutputDir`. The default test
+// fixture below has an explicit `pipiOutputDir`, so this mock should
+// never be called — any test that exercises the fallback path must
+// mock it explicitly.
+jest.mock('@/utils/safeInvoke', () => ({
+  safeInvokeOrNull: (...args: unknown[]) => mockSafeInvokeOrNull(...args),
 }));
 
 // Two-folder model: SavePlanDocTool resolves the destination folder
@@ -89,6 +99,7 @@ function makeContext(overrides: Partial<ToolContext> = {}): ToolContext {
 describe('SavePlanDocTool', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSafeInvokeOrNull.mockReset();
   });
 
   it('persists a structurally valid plan and returns the saved file path', async () => {

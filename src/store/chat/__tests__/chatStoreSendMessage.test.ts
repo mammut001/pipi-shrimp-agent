@@ -128,7 +128,7 @@ jest.mock('../../../services/artifactDetector', () => ({
 
 jest.mock('../../../services/planMode', () => ({
   PLAN_MODE_SYSTEM_PROMPT: '# PLAN MODE ACTIVATED\n\nPlan only.',
-  PLAN_MODE_ALLOWED_TOOLS: ['read_file', 'list_files', 'search_files', 'save_plan_doc'],
+  PLAN_MODE_ALLOWED_TOOLS: ['read_file', 'list_files', 'search_files'],
   savePlanModeDoc: (...args: unknown[]) => mockSavePlanModeDoc(...args),
   shouldSavePlanDoc: (...args: unknown[]) => mockShouldSavePlanDoc(...args),
 }));
@@ -424,11 +424,12 @@ describe('chatStore sendMessage integration', () => {
       '/tmp/pipi/session-1',
       false,
       undefined,
-      // Plan mode hands the model a read-only allowlist plus
-      // `save_plan_doc`. The Rust side filters the openai body down to
-      // this exact list. See PLAN_MODE_ALLOWED_TOOLS in
+      // Plan mode hands the model a read-only allowlist. Plan-doc
+      // persistence is an app-side post-turn action — `save_plan_doc`
+      // is intentionally NOT in this list because the Rust registry
+      // has no handler for it. See PLAN_MODE_ALLOWED_TOOLS in
       // src/services/planMode.ts.
-      { allowedTools: ['read_file', 'list_files', 'search_files', 'save_plan_doc'] },
+      { allowedTools: ['read_file', 'list_files', 'search_files'] },
     );
     // Two-folder model: `savePlanModeDoc` is called with the PiPi
     // Output Folder path, NOT the Project Folder (`/tmp/pipi/session-1`
@@ -590,7 +591,7 @@ describe('chatStore sendMessage integration', () => {
       '/tmp/pipi/session-1',
       false,
       undefined,
-      { allowedTools: ['read_file', 'list_files', 'search_files', 'save_plan_doc'] },
+      { allowedTools: ['read_file', 'list_files', 'search_files'] },
     );
     expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
   });

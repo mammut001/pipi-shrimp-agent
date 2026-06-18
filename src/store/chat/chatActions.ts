@@ -574,10 +574,13 @@ export function createChatActionMethods({
               false, // allowBrowserTools — always off in plan mode
               undefined,
               {
-                // Plan mode: read-only tools + save_plan_doc. The chat engine
+                // Plan mode: read-only inspection only. The chat engine
                 // forwards `allowedTools` through `buildResolvedChatRequest`
                 // (which normalises `[]` -> `undefined`) and the Rust executor
                 // filters the openai body down to that exact allowlist.
+                // Plan-doc persistence is an app-side post-turn action,
+                // not a model-callable tool, so `save_plan_doc` is
+                // intentionally absent here.
                 allowedTools: [...PLAN_MODE_ALLOWED_TOOLS],
               },
             )
