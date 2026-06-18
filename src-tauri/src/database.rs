@@ -61,6 +61,7 @@ fn row_to_session(row: &Row) -> SqliteResult<DbSession> {
         // survives the `reconcile_schema` step the mapper won't panic).
         project_dir: row.get::<_, Option<String>>(10).ok().flatten(),
         pipi_output_dir: row.get::<_, Option<String>>(11).ok().flatten(),
+        execution_mode: row.get::<_, Option<String>>(12).ok().flatten(),
     })
 }
 
@@ -215,6 +216,8 @@ pub struct DbSession {
     /// Defaults to `{Documents|HOME}/PiPi-Shrimp/chats/{session_id}/`
     /// when null — see `get_app_default_dir`.
     pub pipi_output_dir: Option<String>,
+    /// 5-mode composer selection (`ask`, `plan`, `debug`, `agent`, `bypass`).
+    pub execution_mode: Option<String>,
 }
 
 /**
@@ -430,6 +433,7 @@ const EXPECTED_COLUMNS: &[(&str, &[&str])] = &[
             // Two-folder model columns (added in v7).
             "project_dir",
             "pipi_output_dir",
+            "execution_mode",
         ],
     ),
     (
@@ -597,7 +601,7 @@ fn version_at_least(actual: &str, required: &str) -> bool {
 /// build know about". Both `init_database` and `reconcile_schema` read
 /// from this constant, so a future migration author only has to update
 /// one number.
-const LATEST_SCHEMA_VERSION: i64 = 7;
+const LATEST_SCHEMA_VERSION: i64 = 8;
 
 pub fn list_database_backups() -> SqliteResult<Vec<DbBackupEntry>> {
     let backup_dir = get_backup_directory()?;
@@ -1196,6 +1200,29 @@ fn apply_migration(conn: &Connection, version: i64) -> SqliteResult<()> {
                 [],
             )?;
         }
+        8 => {
+            // Persist the 5-mode composer selection separately from
+            // `permission_mode` so Ask vs Plan (both map to plan-only)
+            // survives reload.
+            let _ = conn.execute("ALTER TABLE sessions ADD COLUMN execution_mode TEXT", []);
+            conn.execute(
+                "
+                UPDATE sessions SET execution_mode = CASE permission_mode
+                    WHEN 'bypass' THEN 'bypass'
+                    WHEN 'auto-edits' THEN 'agent'
+                    WHEN 'standard' THEN 'agent'
+                    WHEN 'plan-only' THEN 'plan'
+                    ELSE 'ask'
+                END
+                WHERE execution_mode IS NULL OR execution_mode = ''
+                ",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (8, strftime('%s','now'))",
+                [],
+            )?;
+        }
         _ => {
             eprintln!("⚠️  Unknown migration version {}", version);
         }
@@ -1313,8 +1340,8 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir, execution_mode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 session.id,
                 session.title,
@@ -1328,6 +1355,7 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
                 session.permission_mode,
                 session.project_dir,
                 session.pipi_output_dir,
+                session.execution_mode,
             ],
         )?;
     }
@@ -1348,7 +1376,7 @@ pub fn get_all_sessions() -> SqliteResult<Vec<DbSession>> {
         // work_dir so the JS-side `getSessionProjectDir` helper has a
         // non-null value as soon as v7 has run.
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir FROM sessions ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir, execution_mode FROM sessions ORDER BY updated_at DESC"
         )?;
 
         let session_iter = stmt.query_map([], row_to_session)?;
@@ -2382,7 +2410,7 @@ mod tests {
                 .filter_map(|r| r.ok())
                 .collect();
             assert!(!columns.iter().any(|c| c == "goal_json"));
-            assert!(!columns.iter().any(|c| c == "execution_mode"));
+            assert!(columns.iter().any(|c| c == "execution_mode"));
             assert!(columns.iter().any(|c| c == "permission_mode"));
 
             // The ahead-of-code schema_version row should be dropped.

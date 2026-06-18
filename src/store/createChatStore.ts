@@ -3,7 +3,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 
 import { triggerLegacyCompact } from '../services/compact/compact';
-import { resolvePermissionMode, getExecutionMode } from '../services/executionMode';
+import { resolvePermissionMode, getExecutionMode, executionModeFromPermissionMode, hydrateSessionModes } from '../services/executionMode';
 import { getCompactConfig, getContextTokenStats } from '../services/compact/config';
 import { runMicrocompactCheck } from '../services/compact/microCompact';
 import { trySessionMemoryCompact } from '../services/compact/sessionMemoryCompact';
@@ -662,7 +662,7 @@ export const useChatStore = create<ChatState>()(
             }
           }
           if (stored) {
-            set({ sessions: JSON.parse(stored) as Session[] });
+            set({ sessions: (JSON.parse(stored) as Session[]).map(hydrateSessionModes) });
           }
         } catch (localStorageError) {
           console.error('Failed to load from localStorage:', localStorageError);
@@ -773,7 +773,13 @@ export const useChatStore = create<ChatState>()(
         return;
       }
       const pendingPermissions = get().currentSessionId === sessionId ? [...useUIStore.getState().permissionQueue] : [];
-      const updatedSession = { ...session, permissionMode, updatedAt: Date.now() };
+      const executionMode = executionModeFromPermissionMode(permissionMode);
+      const updatedSession = hydrateSessionModes({
+        ...session,
+        permissionMode,
+        executionMode,
+        updatedAt: Date.now(),
+      });
       set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updatedSession : candidate)) }));
       await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
 
@@ -798,12 +804,12 @@ export const useChatStore = create<ChatState>()(
       }
       const profile = getExecutionMode(executionMode);
       const derivedPermissionMode = resolvePermissionMode(executionMode);
-      const updatedSession = {
+      const updatedSession = hydrateSessionModes({
         ...session,
         executionMode: profile.id,
         permissionMode: derivedPermissionMode,
         updatedAt: Date.now(),
-      };
+      });
       set((state) => ({
         sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updatedSession : candidate)),
       }));

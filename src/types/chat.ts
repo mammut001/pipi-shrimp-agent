@@ -5,6 +5,7 @@
 
 import { ImportedFile } from './settings';
 import type { ImageAttachment } from './vision';
+import { getDefaultExecutionMode } from '@/services/executionMode';
 
 export interface ChatSendOptions {
   allowBrowserTools?: boolean;
@@ -424,15 +425,20 @@ export const createMessage = (
 /**
  * Helper function to create a new session
  */
-export const createSession = (title?: string, projectId?: string | null, model?: string): Session => ({
-  id: crypto.randomUUID(),
-  title: title || 'Chat',
-  messages: [],
-  createdAt: Date.now(),
-  updatedAt: Date.now(),
-  projectId: projectId ?? undefined,
-  model,
-});
+export const createSession = (title?: string, projectId?: string | null, model?: string): Session => {
+  const defaultMode = getDefaultExecutionMode();
+  return {
+    id: crypto.randomUUID(),
+    title: title || 'Chat',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    projectId: projectId ?? undefined,
+    model,
+    executionMode: defaultMode.id,
+    permissionMode: defaultMode.permissionMode,
+  };
+};
 
 /**
  * Helper function to create a new project

@@ -30,7 +30,7 @@ import {
   shouldDismissBrowserIntentConfirm,
 } from './chatInputFlow';
 import { t } from '@/i18n';
-import { getDefaultExecutionMode, isExecutionModeId, type ExecutionModeId } from '@/services/executionMode';
+import { resolveSessionExecutionModeId, type ExecutionModeId } from '@/services/executionMode';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 import type { ImageAttachment } from '@/types/vision';
 
@@ -246,10 +246,9 @@ export function ChatInput({
   const projectDir = currentSession?.projectDir ?? currentSession?.workDir;
   const pipiOutputDir = currentSession?.pipiOutputDir;
 
-  // Selected 5-mode execution mode. Fall back to default if missing/invalid.
-  const selectedExecutionModeId: ExecutionModeId = isExecutionModeId(currentSession?.executionMode)
-    ? (currentSession!.executionMode as ExecutionModeId)
-    : getDefaultExecutionMode().id;
+  // Selected 5-mode execution mode. Resolve from persisted id or legacy
+  // permission_mode so the dropdown matches what chatActions will use.
+  const selectedExecutionModeId: ExecutionModeId = resolveSessionExecutionModeId(currentSession);
   const handleExecutionModeSelect = useCallback(
     (modeId: ExecutionModeId) => {
       if (!currentSessionId) return;
@@ -513,8 +512,8 @@ export function ChatInput({
   return (
     <div className={rootClassName}>
       <div className="max-w-4xl relative">
-        {/* Two-folder chips — shown only when session has messages (conversation started) */}
-        {currentSession && currentSession.messages.length > 0 && (
+        {/* Two-folder chips — always visible once a session exists */}
+        {currentSession && (
           <div className="px-4 pt-4 pb-2 flex items-center gap-2 flex-wrap">
             <SessionFolderChip
               kind="project"
@@ -581,27 +580,6 @@ export function ChatInput({
                 {t('chat.terminal')}
               </button>
             )}
-          </div>
-        )}
-
-        {/* Subtle hint when the session has a conversation but no Project Folder yet. */}
-        {currentSession && currentSession.messages.length > 0 && !projectDir && (
-          <div
-            className="mx-4 mt-1 mb-2 flex items-start gap-2 rounded-md border border-amber-200/70 bg-amber-50/60 px-3 py-1.5 text-[11px] text-amber-800"
-            data-testid="project-folder-missing-hint"
-            role="status"
-          >
-            <svg
-              className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-              aria-hidden="true"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
-            </svg>
-            <span className="leading-snug">{t('chat.noProjectFolderHint')}</span>
           </div>
         )}
 

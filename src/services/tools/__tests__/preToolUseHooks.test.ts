@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { executionModeGuardCheck, type HookContext } from '../preToolUseHooks';
+import { executionModeGuardCheck, permissionModeCheck, type HookContext } from '../preToolUseHooks';
 
 function ctx(overrides: Partial<HookContext> = {}): HookContext {
   return {
@@ -19,12 +19,17 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
     expect(result.requiresConfirmation).toBeUndefined();
   });
 
-  it('Plan mode blocks every tool, regardless of underlying PermissionMode', async () => {
-    const result = await executionModeGuardCheck(
+  it('Plan mode allows read-only plan tools and blocks side-effecting tools', async () => {
+    const read = await executionModeGuardCheck(
       ctx({ executionMode: 'plan', toolName: 'read_file' }),
     );
-    expect(result.approved).toBe(false);
-    expect(result.error).toMatch(/Plan mode/i);
+    expect(read.approved).toBe(true);
+
+    const write = await executionModeGuardCheck(
+      ctx({ executionMode: 'plan', toolName: 'write_file' }),
+    );
+    expect(write.approved).toBe(false);
+    expect(write.error).toMatch(/Plan mode/i);
   });
 
   it('Debug mode allows writes but blocks shell and browser', async () => {
@@ -93,5 +98,29 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
       ctx({ executionMode: 'ask', permissionMode: 'bypass', toolName: 'read_file' }),
     );
     expect(result.approved).toBe(false);
+  });
+});
+
+describe('preToolUseHooks.permissionModeCheck', () => {
+  it('allows Plan read tools when permissionMode is plan-only', async () => {
+    const result = await permissionModeCheck(
+      ctx({ executionMode: 'plan', permissionMode: 'plan-only', toolName: 'read_file' }),
+    );
+    expect(result.approved).toBe(true);
+  });
+
+  it('blocks Ask when permissionMode is plan-only', async () => {
+    const result = await permissionModeCheck(
+      ctx({ executionMode: 'ask', permissionMode: 'plan-only', toolName: 'read_file' }),
+    );
+    expect(result.approved).toBe(false);
+    expect(result.error).toMatch(/Ask mode/i);
+  });
+
+  it('allows legacy plan-only rows without executionMode', async () => {
+    const result = await permissionModeCheck(
+      ctx({ permissionMode: 'plan-only', toolName: 'read_file' }),
+    );
+    expect(result.approved).toBe(true);
   });
 });

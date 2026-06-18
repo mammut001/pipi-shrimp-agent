@@ -54,6 +54,13 @@ fn new_session_record(session_id: String, timestamp: i64) -> DbSession {
         // computed by `get_app_default_dir` on the JS side.
         project_dir: None,
         pipi_output_dir: None,
+        // 5-mode composer: defaults to Ask on every fresh session
+        // because Ask is the only mode that is safe to enter without
+        // seeing a tool-loop bug. The JS-side `hydrateSessionModes`
+        // will keep Ask + plan-only in sync even if the Rust row was
+        // created before the column was added (the `reconcile_schema`
+        // migration backfills `ask` for pre-v8 rows).
+        execution_mode: Some("ask".to_string()),
     }
 }
 

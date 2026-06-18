@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import { useChatStore } from '@/store';
-import { createMessage, createSession, type Session } from '@/types/chat';
+import { hydrateSessionModes } from '@/services/executionMode';
 import type { TelegramBinding, TelegramTask } from '@/types/telegramTask';
 import { formatTelegramTaskRef } from '@/types/telegramTask';
+import { useChatStore } from '@/store/createChatStore';
+import type { Session } from '@/types/chat';
+import { createMessage, createSession } from '@/types/chat';
 
 interface DbSessionPayload {
   id: string;
@@ -18,6 +20,7 @@ interface DbSessionPayload {
   pipi_output_dir: string | null;
   working_files: string | null;
   permission_mode: Session['permissionMode'] | null;
+  execution_mode: string | null;
 }
 
 function sessionToDb(session: Session): DbSessionPayload {
@@ -37,6 +40,7 @@ function sessionToDb(session: Session): DbSessionPayload {
     pipi_output_dir: session.pipiOutputDir || null,
     working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
     permission_mode: session.permissionMode || null,
+    execution_mode: session.executionMode || null,
   };
 }
 
@@ -87,7 +91,11 @@ export async function createTelegramTaskSession(
     currentSession?.model,
   );
 
-  session.permissionMode = binding.defaultPermissionMode;
+  const withBindingMode = hydrateSessionModes({
+    ...session,
+    permissionMode: binding.defaultPermissionMode,
+  });
+  Object.assign(session, withBindingMode);
   // Two-folder model: bind the **Project Folder** (the user's repo)
   // to the new session. The PiPi Output Folder stays on the app-managed
   // default unless the user (or the binding) explicitly sets one.

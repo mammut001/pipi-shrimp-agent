@@ -10,7 +10,7 @@
  * 1. dangerousCommandCheck — hard constraint, cannot be bypassed
  * 2. pathValidationCheck — ensures paths are within workDir
  * 2b. typstRenderGuardCheck — blocks inline render tools for @preview imports
- * 3. permissionModeCheck — plan-only blocks all tools
+ * 3. permissionModeCheck — legacy plan-only guard for Ask only
  * 4. autoEditsRestriction — auto-edits limits which tools are auto-approved
  */
 
@@ -22,6 +22,7 @@ import {
   type PermissionMode,
 } from './toolExecutionPolicy';
 import { isToolAllowedForMode } from '../executionMode';
+import { PLAN_MODE_ALLOWED_TOOLS } from '../planMode';
 import { defaultClassifier, type PermissionRequest } from '../../utils/permissions/classifierDecision';
 import { classifyBashCommand } from '../../utils/permissions/bashClassifier';
 import { defaultTelemetry } from '../../utils/permissions/permissionLogging';
@@ -84,9 +85,7 @@ export async function dangerousCommandCheck(ctx: HookContext): Promise<HookResul
  *    to respond conversationally without calling execute_command,
  *    read_file, write_file, browser tools, etc. If a tool call slips
  *    through we return a structured block with a hint to switch mode.
- *  - Plan mode: blocks all tools (the existing plan-only hook handles
- *    the mapping; this also covers the 'plan' id which may be present
- *    alongside a non-plan permissionMode in some flows).
+ *  - Plan mode: only PLAN_MODE_ALLOWED_TOOLS pass; everything else blocks.
  *  - Debug / Agent: use the per-mode allow-list from the registry.
  *  - Bypass: no outer restriction; per-tool approval policy still
  *    applies through the existing hooks.
@@ -113,13 +112,15 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
     };
   }
 
-  // Plan mode short-circuit: blocks all tool execution regardless of
-  // the underlying permissionMode field. Plan is meant to be
-  // read-only and produce a plan/checklist only.
+  // Plan mode: only the read-only inspection + save_plan_doc tools that
+  // chatActions exposes via `allowedTools`. Block everything else.
   if (ctx.executionMode === 'plan') {
+    if (PLAN_MODE_ALLOWED_TOOLS.includes(ctx.toolName)) {
+      return { approved: true };
+    }
     return {
       approved: false,
-      error: 'Tool execution is not allowed in Plan mode. Switch to Agent or Bypass to run tools.',
+      error: 'This tool is not allowed in Plan mode (read-only inspection and plan docs only).',
       blockedBy: 'permission-mode',
     };
   }
@@ -197,16 +198,27 @@ export async function typstRenderGuardCheck(ctx: HookContext): Promise<HookResul
 
 /**
  * Hook 3: Permission mode check.
- * plan-only mode blocks all tool execution.
+ *
+ * `plan-only` is shared by Ask (no tools) and Plan (read-only tools).
+ * Ask/Plan distinctions are enforced in executionModeGuardCheck; this
+ * hook only blocks the legacy blanket case when we know the session is Ask.
  */
 export async function permissionModeCheck(ctx: HookContext): Promise<HookResult> {
-  if (ctx.permissionMode === 'plan-only') {
+  if (ctx.permissionMode !== 'plan-only') {
+    return { approved: true };
+  }
+
+  if (ctx.executionMode === 'ask') {
     return {
       approved: false,
-      error: 'Tool execution is not allowed in plan-only mode. The AI should provide a plan instead.',
+      error: 'Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
       blockedBy: 'permission-mode',
     };
   }
+
+  // Plan (or legacy plan-only rows) — executionModeGuardCheck already
+  // validated the allowlist when executionMode is set; when it is not
+  // set the API boundary still filters tools for Plan mode.
   return { approved: true };
 }
 

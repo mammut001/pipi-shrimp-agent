@@ -50,6 +50,9 @@ function createChatState(): ChatState {
       messages: [],
       createdAt: 1,
       updatedAt: 1,
+      // Mirror the legacy single-folder test fixture: a session with
+      // only `permissionMode: 'standard'` (no executionMode field).
+      // The canonical resolver still maps this to agent/auto-edits.
       permissionMode: 'standard',
     }],
     projects: [],
@@ -111,7 +114,29 @@ function createChatState(): ChatState {
 function createChatStateWithMode(permissionMode: ChatState['sessions'][number]['permissionMode']): ChatState {
   const state = createChatState();
   state.sessions[0].permissionMode = permissionMode;
+  // Mirror the 5-mode id so the canonical resolver agrees with the
+  // legacy permissionMode the test wants to exercise. Without this,
+  // `resolveSessionExecutionModeId` would fall back to a different
+  // 5-mode id and the hook chain would diverge from the test's
+  // intent.
+  state.sessions[0].executionMode = legacyPermissionModeToExecutionMode(permissionMode);
   return state;
+}
+
+function legacyPermissionModeToExecutionMode(
+  permissionMode: ChatState['sessions'][number]['permissionMode'],
+): 'ask' | 'plan' | 'debug' | 'agent' | 'bypass' {
+  switch (permissionMode) {
+    case 'plan-only':
+      return 'plan';
+    case 'bypass':
+      return 'bypass';
+    case 'auto-edits':
+      return 'agent';
+    case 'standard':
+    default:
+      return 'agent';
+  }
 }
 
 function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchExecutionDeps {
@@ -275,7 +300,12 @@ describe('chatToolExecution', () => {
       workDir: '/tmp/workspace',
       source: 'assistant_tool_call',
     }));
-    expect(results).toEqual([{ id: 'tool-3', content: '{"stdout":"ok","stderr":"","exit_code":0}', toolName: 'execute_command', toolArgs: chunk.tools[0].arguments }]);
+    expect(results).toEqual([expect.objectContaining({
+      id: 'tool-3',
+      content: '{"stdout":"ok","stderr":"","exit_code":0}',
+      toolName: 'execute_command',
+      toolArgs: expect.stringContaining('"command":"pwd"'),
+    })]);
     expect(resolved).toHaveBeenCalledWith([{ id: 'tool-3', content: '{"stdout":"ok","stderr":"","exit_code":0}' }]);
   });
 
@@ -377,7 +407,7 @@ describe('chatToolExecution', () => {
       tools: [{
         id: 'tool-4',
         name: 'execute_command',
-        arguments: expect.stringContaining('"command":"pwd"'),
+        arguments: JSON.stringify({ command: 'pwd', cwd: '/tmp/workspace' }),
       }],
       _resolveAll: resolved,
     };
@@ -452,7 +482,7 @@ describe('chatToolExecution', () => {
       tools: [{
         id: 'tool-5',
         name: 'execute_command',
-        arguments: expect.stringContaining('"command":"curl https://example.com"'),
+        arguments: JSON.stringify({ command: 'curl https://example.com', cwd: '/tmp/workspace' }),
       }],
       _resolveAll: resolved,
     };
@@ -611,7 +641,7 @@ describe('chatToolExecution', () => {
       tools: [{
         id: 'tool-7',
         name: 'execute_command',
-        arguments: expect.stringContaining('"command":"pwd"'),
+        arguments: JSON.stringify({ command: 'pwd', cwd: '/tmp/workspace' }),
       }],
       _resolveAll: resolved,
     };
@@ -1194,7 +1224,7 @@ describe('chatToolExecution', () => {
       expect(ctxArg?.executionMode).toBe('plan');
     });
 
-    it('omits executionMode from the hook context when the session has none (legacy 4-mode session)', async () => {
+    it('resolves legacy permissionMode into executionMode for hook context', async () => {
       const resolved = jest.fn();
       const runPreToolUseHooks = jest.fn(async () => ({ approved: true }));
       const deps = createDeps({
@@ -1222,12 +1252,41 @@ describe('chatToolExecution', () => {
         ensureSessionWorkDir: async () => '/tmp/workspace',
       }, deps);
 
-      const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string } | undefined;
-      // Legacy sessions still flow through the legacy permissionMode
-      // path; the new guard hook is a no-op when executionMode is
-      // undefined, preserving the existing tool-execution behavior
-      // bit-for-bit.
-      expect(ctxArg?.executionMode).toBeUndefined();
+      const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string; permissionMode?: string } | undefined;
+      expect(ctxArg?.executionMode).toBe('agent');
+      expect(ctxArg?.permissionMode).toBe('auto-edits');
+    });
+
+    it('resolves legacy bypass permissionMode for hook context', async () => {
+      const resolved = jest.fn();
+      const runPreToolUseHooks = jest.fn(async () => ({ approved: true }));
+      const deps = createDeps({
+        runPreToolUseHooks,
+      });
+      const state = createChatState();
+      state.sessions[0].permissionMode = 'bypass';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-bypass-1',
+          name: 'read_file',
+          arguments: '{"path":"src/index.ts"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string; permissionMode?: string } | undefined;
+      expect(ctxArg?.executionMode).toBe('bypass');
+      expect(ctxArg?.permissionMode).toBe('bypass');
     });
   });
 

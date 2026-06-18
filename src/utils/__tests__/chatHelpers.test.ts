@@ -112,6 +112,35 @@ describe('chatHelpers — two-folder model', () => {
       expect(session.workDir).toBeUndefined();
       expect(session.pipiOutputDir).toBeUndefined();
     });
+
+    it('hydrates executionMode from execution_mode and syncs permissionMode', () => {
+      const session = dbToSession(
+        makeDbSession({
+          execution_mode: 'bypass',
+          permission_mode: 'bypass',
+        }),
+        [],
+      );
+      expect(session.executionMode).toBe('bypass');
+      expect(session.permissionMode).toBe('bypass');
+    });
+
+    it('hydrates legacy bypass rows that only have permission_mode', () => {
+      const session = dbToSession(
+        makeDbSession({
+          permission_mode: 'bypass',
+        }),
+        [],
+      );
+      expect(session.executionMode).toBe('bypass');
+      expect(session.permissionMode).toBe('bypass');
+    });
+
+    it('defaults blank rows to Ask mode', () => {
+      const session = dbToSession(makeDbSession(), []);
+      expect(session.executionMode).toBe('ask');
+      expect(session.permissionMode).toBe('plan-only');
+    });
   });
 
   describe('sessionToDb', () => {
@@ -124,6 +153,7 @@ describe('chatHelpers — two-folder model', () => {
       );
       expect(row.project_dir).toBe('/repo/proj');
       expect(row.pipi_output_dir).toBe('/output/proj');
+      expect(row.execution_mode).toBeNull();
       // The legacy mirror stays in sync so a downgrade still works.
       expect(row.work_dir).toBe('/repo/proj');
     });
@@ -146,6 +176,15 @@ describe('chatHelpers — two-folder model', () => {
       expect(row.project_dir).toBeNull();
       expect(row.work_dir).toBeNull();
       expect(row.pipi_output_dir).toBeNull();
+    });
+
+    it('persists execution_mode for bypass sessions', () => {
+      const row = sessionToDb(makeSession({
+        executionMode: 'bypass',
+        permissionMode: 'bypass',
+      }));
+      expect(row.execution_mode).toBe('bypass');
+      expect(row.permission_mode).toBe('bypass');
     });
   });
 

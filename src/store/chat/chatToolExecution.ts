@@ -14,6 +14,7 @@ import {
   type ToolPolicyPreviewResult,
   type PermissionMode,
 } from '../../services/tools/toolExecutionPolicy';
+import { resolvePermissionMode, resolveSessionExecutionModeId } from '../../services/executionMode';
 import type { ChatState } from '../../types/chat';
 import {
   markSessionToolStatus,
@@ -884,12 +885,12 @@ export async function handleToolBatchRequest(
   // surface a hard error so the model can prompt the user to bind a
   // Project Folder. Otherwise the helper is treated as a no-op.
   let workDir = currentSession?.workDir ?? null;
-  const permissionMode = currentSession?.permissionMode || 'standard';
+  const executionModeId = resolveSessionExecutionModeId(currentSession);
+  const permissionMode = resolvePermissionMode(executionModeId);
   // Mirror the 5-mode execution mode id into the hook context so the
   // preToolUseHooks.executionModeGuardCheck can enforce mode-specific
-  // policy. Falls back to 'standard' PermissionMode behavior when the
+  // policy. Falls back to legacy PermissionMode behavior when the
   // session was created before the 5-mode system shipped.
-  const executionModeId = currentSession?.executionMode;
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
 
   if (!workDir) {

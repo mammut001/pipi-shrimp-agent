@@ -10,8 +10,8 @@
  * The locked copy:
  *   - The two folders are **independent** controls in the chat input:
  *       1. **Project Folder** (chat.projectFolder) — the user's repo.
- *          Tools run commands here. `chat.noProjectFolderHint` is shown
- *          when it's missing.
+ *          Tools run commands here. The empty chip label (`chat.setProjectFolder`)
+ *          is the affordance when it's missing.
  *       2. **PiPi Output Folder** (chat.pipiOutputFolder) — the
  *          app-owned output root for `.pipi-shrimp/`, generated docs,
  *          memory, AutoResearch artifacts. The hint when missing is
@@ -64,11 +64,12 @@ describe('ChatInput two-folder copy', () => {
     expect(source).toMatch(/kind="output"/);
   });
 
-  it('renders a hint when the Project Folder is missing', () => {
-    // The Project Folder hint uses the new testid so the user can
-    // tell which folder is missing.
-    expect(source).toMatch(/chat\.noProjectFolderHint/);
-    expect(source).toMatch(/data-testid="project-folder-missing-hint"/);
+  it('shows folder chips as soon as a session exists (not gated on messages)', () => {
+    // Folder binding is a pre-flight step — users should be able to set
+    // folders before sending the first message.
+    expect(source).toMatch(/Two-folder chips — always visible once a session exists/);
+    expect(source).toMatch(/\{currentSession && \(/);
+    expect(source).not.toMatch(/currentSession\.messages\.length > 0/);
   });
 
   it('exposes independent bind and clear handlers for each folder', () => {

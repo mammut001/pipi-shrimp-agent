@@ -22,4 +22,7 @@ export {
   isToolAllowedForProfile,
   modeRequiresWarning,
   resolvePermissionMode,
+  resolveSessionExecutionModeId,
+  executionModeFromPermissionMode,
+  hydrateSessionModes,
 } from './guards';

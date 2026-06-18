@@ -29,6 +29,7 @@ import { appendBrowserResultToSystemPrompt, createBrowserResultMessages, mapBrow
 import { CHAT_ERROR_MESSAGES, normalizeCaughtErrorMessage } from './chatErrors';
 import { shouldPersistMessage } from './chatPersistence';
 import { PLAN_MODE_ALLOWED_TOOLS, PLAN_MODE_SYSTEM_PROMPT, savePlanModeDoc, shouldSavePlanDoc } from '@/services/planMode';
+import { resolveSessionExecutionModeId } from '@/services/executionMode';
 import {
   clearSessionToolRuntime,
   failUnresolvedSessionTools,
@@ -318,7 +319,9 @@ export function createChatActionMethods({
       }
 
       const sessionSnapshot = get().sessions.find((session) => session.id === activeSessionId);
-      const isPlanMode = sessionSnapshot?.permissionMode === 'plan-only';
+      const executionModeId = resolveSessionExecutionModeId(sessionSnapshot);
+      const isAskMode = executionModeId === 'ask';
+      const isPlanMode = executionModeId === 'plan';
 
       const diagnosticsTaskId = `chat:${activeSessionId}:${Date.now()}`;
       setActiveChatDiagnosticsTaskId(activeSessionId, diagnosticsTaskId);
@@ -548,7 +551,17 @@ export function createChatActionMethods({
           ? `${systemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
           : systemPrompt;
 
-        const engine = isPlanMode
+        const engine = isAskMode
+          ? runChatTurn(
+              activeSessionId,
+              currentMessages(),
+              finalSystemPrompt,
+              sessionWorkDir,
+              false,
+              undefined,
+              { noTools: true },
+            )
+          : isPlanMode
           ? runChatTurn(
               activeSessionId,
               currentMessages(),

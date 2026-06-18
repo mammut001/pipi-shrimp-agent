@@ -6,6 +6,7 @@
  */
 
 import type { Session, Message, Project } from '../types/chat';
+import { hydrateSessionModes, isExecutionModeId } from '@/services/executionMode';
 
 // ─── Database types ──────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ export interface DbSession {
   pipi_output_dir?: string | null;
   working_files?: string | null;
   permission_mode?: string | null;
+  execution_mode?: string | null;
 }
 
 export interface DbMessage {
@@ -260,7 +262,7 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
   // is absent we still want to surface a Project Folder so pre-v7
   // sessions keep working — fall back to `work_dir`.
   const projectDir = dbSession.project_dir || dbSession.work_dir || undefined;
-  return {
+  return hydrateSessionModes({
     id: dbSession.id,
     title: dbSession.title,
     createdAt: dbSession.created_at,
@@ -273,6 +275,9 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
     pipiOutputDir: dbSession.pipi_output_dir || undefined,
     workingFiles: safeJsonParse(dbSession.working_files, undefined),
     permissionMode: (dbSession.permission_mode as Session['permissionMode']) || undefined,
+    executionMode: isExecutionModeId(dbSession.execution_mode)
+      ? dbSession.execution_mode
+      : undefined,
     messages: dbMessages.map((m) => ({
       id: m.id,
       role: m.role as 'user' | 'assistant',
@@ -284,7 +289,7 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
       tool_calls: safeJsonParse(m.tool_calls, undefined),
       token_usage: safeJsonParse(m.token_usage, undefined),
     })),
-  };
+  });
 }
 
 export function sessionToDb(session: Session): DbSession {
@@ -306,6 +311,7 @@ export function sessionToDb(session: Session): DbSession {
     pipi_output_dir: session.pipiOutputDir || null,
     working_files: session.workingFiles ? JSON.stringify(session.workingFiles) : null,
     permission_mode: session.permissionMode || null,
+    execution_mode: session.executionMode || null,
   };
 }
 

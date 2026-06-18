@@ -10,6 +10,9 @@ import {
   listExecutionModes,
   modeRequiresWarning,
   resolvePermissionMode,
+  resolveSessionExecutionModeId,
+  executionModeFromPermissionMode,
+  hydrateSessionModes,
 } from '../index';
 import type { ExecutionModeId } from '../registry';
 
@@ -136,6 +139,39 @@ describe('executionMode/guards: tool allow-list per mode', () => {
 });
 
 describe('executionMode/registry: back-compat with legacy PermissionMode', () => {
+  it('resolveSessionExecutionModeId prefers executionMode when present', () => {
+    expect(resolveSessionExecutionModeId({ executionMode: 'ask', permissionMode: 'plan-only' })).toBe('ask');
+    expect(resolveSessionExecutionModeId({ executionMode: 'agent', permissionMode: 'auto-edits' })).toBe('agent');
+  });
+
+  it('resolveSessionExecutionModeId maps legacy permissionMode rows', () => {
+    expect(resolveSessionExecutionModeId({ permissionMode: 'plan-only' })).toBe('plan');
+    expect(resolveSessionExecutionModeId({ permissionMode: 'bypass' })).toBe('bypass');
+    expect(resolveSessionExecutionModeId({ permissionMode: 'auto-edits' })).toBe('agent');
+    expect(resolveSessionExecutionModeId({ permissionMode: 'standard' })).toBe('agent');
+    expect(resolveSessionExecutionModeId({})).toBe('ask');
+    expect(resolveSessionExecutionModeId(undefined)).toBe('ask');
+  });
+
+  it('createSession persists the registry default Ask mode', async () => {
+    const { createSession } = await import('@/types/chat');
+    const session = createSession();
+    expect(session.executionMode).toBe('ask');
+    expect(session.permissionMode).toBe('plan-only');
+  });
+
+  it('hydrateSessionModes keeps Ask when executionMode is ask', () => {
+    const hydrated = hydrateSessionModes({ executionMode: 'ask', permissionMode: 'plan-only' });
+    expect(hydrated.executionMode).toBe('ask');
+    expect(hydrated.permissionMode).toBe('plan-only');
+  });
+
+  it('hydrateSessionModes maps legacy bypass permission rows', () => {
+    const hydrated = hydrateSessionModes({ permissionMode: 'bypass' });
+    expect(hydrated.executionMode).toBe('bypass');
+    expect(hydrated.permissionMode).toBe('bypass');
+  });
+
   it('does not include the legacy PermissionMode ids in the registry', () => {
     const ids: ExecutionModeId[] = EXECUTION_MODES.map((m) => m.id);
     // PermissionMode-only ids (none of these are reused in the registry).

@@ -339,7 +339,9 @@ describe('chatStore sendMessage integration', () => {
       expect.arrayContaining([expect.objectContaining({ role: 'user', content: 'hello world' })]),
       'system prompt',
       undefined,
-      true,
+      false,
+      undefined,
+      { noTools: true },
     );
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
       ['user', 'hello world'],
@@ -365,6 +367,7 @@ describe('chatStore sendMessage integration', () => {
   });
 
   it('routes tool batch execution through the extracted coordinator and artifact detector', async () => {
+    resetChatState({ executionMode: 'agent', permissionMode: 'auto-edits' });
     mockRunChatTurn.mockImplementation(() => streamWithToolBatch());
 
     await useChatStore.getState().sendMessage('generate artifact');
@@ -386,6 +389,7 @@ describe('chatStore sendMessage integration', () => {
 
   it('uses plan-only prompt and saves the final plan as a doc without delegation', async () => {
     resetChatState({
+      executionMode: 'plan',
       permissionMode: 'plan-only',
       workDir: '/tmp/pipi/session-1',
     });
@@ -571,6 +575,7 @@ describe('chatStore sendMessage integration', () => {
 
   it('does not save non-plan replies in plan-only mode', async () => {
     resetChatState({
+      executionMode: 'plan',
       permissionMode: 'plan-only',
       workDir: '/tmp/pipi/session-1',
     });
@@ -588,5 +593,44 @@ describe('chatStore sendMessage integration', () => {
       { allowedTools: ['read_file', 'list_files', 'search_files', 'save_plan_doc'] },
     );
     expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
+  });
+
+  it('routes Bypass mode through full tools in sendMessage', async () => {
+    resetChatState({ executionMode: 'bypass', permissionMode: 'bypass' });
+
+    await useChatStore.getState().sendMessage('详细阅读一下这个项目吧');
+
+    expect(mockRunChatTurn).toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Array),
+      'system prompt',
+      undefined,
+      false,
+    );
+    expect(mockRunChatTurn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      { noTools: true },
+    );
+  });
+
+  it('routes Ask mode through noTools so the model cannot enter a tool loop', async () => {
+    resetChatState({ executionMode: 'ask', permissionMode: 'plan-only' });
+
+    await useChatStore.getState().sendMessage('详细阅读一下这个项目吧');
+
+    expect(mockRunChatTurn).toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Array),
+      'system prompt',
+      undefined,
+      false,
+      undefined,
+      { noTools: true },
+    );
   });
 });

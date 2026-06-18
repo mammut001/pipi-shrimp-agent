@@ -9,7 +9,9 @@
  */
 
 import {
+  getDefaultExecutionMode,
   getExecutionMode,
+  isExecutionModeId,
   type ExecutionModeId,
   type ExecutionModeProfile,
 } from './registry';
@@ -67,6 +69,90 @@ export function resolvePermissionMode(modeId: ExecutionModeId | string | null | 
   return getExecutionMode(modeId).permissionMode;
 }
 
+type SessionModeSnapshot = {
+  executionMode?: ExecutionModeId | string;
+  permissionMode?: PermissionMode;
+} | null | undefined;
+
+/**
+ * Resolve the effective 5-mode id for a session.
+ *
+ * New sessions persist `executionMode` explicitly. Legacy rows may only
+ * have `permissionMode`; map those conservatively so Ask (the UI default)
+ * does not silently inherit full Agent tool access.
+ *
+ * Invariant: if the `executionMode` field is present at all — even when
+ * the string is not a known 5-mode id — we never fall through to the
+ * legacy `permissionMode` map. A garbage `executionMode` value means
+ * the row is corrupted; the safe behaviour is Ask, not "fall back to
+ * whatever the legacy column says". This protects us from a buggy
+ * migration that stamps `executionMode = "multitask"` (or any other
+ * stale wording) and silently inherits Bypass tool access via the
+ * `permissionMode` column.
+ */
+export function resolveSessionExecutionModeId(session: SessionModeSnapshot): ExecutionModeId {
+  if (session && 'executionMode' in session && session.executionMode !== undefined && session.executionMode !== null) {
+    if (isExecutionModeId(session.executionMode)) {
+      return session.executionMode;
+    }
+    // Field present but invalid — treat as Ask rather than leaking
+    // through the legacy permissionMode column.
+    return getDefaultExecutionMode().id;
+  }
+  if (!session) {
+    return getDefaultExecutionMode().id;
+  }
+  switch (session.permissionMode) {
+    case 'plan-only':
+      return 'plan';
+    case 'bypass':
+      return 'bypass';
+    case 'auto-edits':
+      return 'agent';
+    case 'standard':
+      return 'agent';
+    default:
+      return getDefaultExecutionMode().id;
+  }
+}
+
+/**
+ * Map a legacy PermissionMode row to the closest 5-mode id when the
+ * composer dropdown was not persisted (pre-v8 DB rows, Telegram mirror).
+ */
+export function executionModeFromPermissionMode(
+  permissionMode: PermissionMode | null | undefined,
+): ExecutionModeId {
+  switch (permissionMode) {
+    case 'plan-only':
+      return 'plan';
+    case 'bypass':
+      return 'bypass';
+    case 'auto-edits':
+      return 'agent';
+    case 'standard':
+      return 'agent';
+    default:
+      return getDefaultExecutionMode().id;
+  }
+}
+
+/**
+ * Normalize in-memory session mode fields so UI, chatActions, and tool
+ * hooks always agree. Prefers the persisted `executionMode` when valid.
+ */
+export function hydrateSessionModes<T extends SessionModeSnapshot>(
+  session: T,
+): T & { executionMode: ExecutionModeId; permissionMode: PermissionMode } {
+  const executionMode = resolveSessionExecutionModeId(session);
+  const permissionMode = resolvePermissionMode(executionMode);
+  return {
+    ...session,
+    executionMode,
+    permissionMode,
+  };
+}
+
 /**
  * Whether a given tool should be allowed to run at all under the supplied
  * execution mode, ignoring preToolUseHooks. This is the "outer guard" used
@@ -107,11 +193,15 @@ export function isToolAllowedForProfile(
       if (READ_ONLY_TOOLS.has(toolName)) return true;
       if (FILE_WRITE_TOOLS.has(toolName)) return true;
       if (SHELL_TOOLS.has(toolName)) return true;
-      // SSH, browser mutation, and MCP tools are still gated by the
-      // per-tool approval policy — they aren't blanket-allowed in the
-      // shell-only Agent mode.
+      // SSH, browser mutation, MCP tools, and agent-tool spawning are
+      // still gated by the per-tool approval policy — they aren't
+      // blanket-allowed in the shell-only Agent mode. agent_tool can
+      // spin up sub-agents and team runs that the user should still
+      // explicitly approve.
       if (SSH_TOOLS.has(toolName)) return false;
       if (BROWSER_MUTATION_TOOLS.has(toolName)) return false;
+      if (toolName.startsWith('mcp__')) return false;
+      if (toolName === 'agent_tool') return false;
       return true;
     case 'full':
       return true;

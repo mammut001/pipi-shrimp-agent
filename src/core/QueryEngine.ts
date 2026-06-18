@@ -74,7 +74,19 @@ function shouldInjectOpenAIToolProtocol(
     return false;
   }
 
+  // Empty allowedTools is equivalent to "no tools this turn" — don't
+  // inject the OpenAI "MUST invoke tools" protocol, otherwise the
+  // model would loop back into tool calls we already told it to skip.
   if (options?.allowedTools && options.allowedTools.length === 0) {
+    return false;
+  }
+
+  // When the caller passed an explicit `allowedTools` allowlist (Plan
+  // mode, AutoResearch, etc.) the prompt builder has already
+  // specialised the system prompt for that mode. Injecting a blanket
+  // "MUST invoke tools via structured channel" addendum fights with
+  // that specialisation and tells the model to over-call tools.
+  if (options?.allowedTools && options.allowedTools.length > 0) {
     return false;
   }
 
@@ -167,7 +179,13 @@ export async function* runChatTurn(
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id
     })), resolvedConfig!);
-    const injectOpenAIToolProtocol = shouldInjectOpenAIToolProtocol(resolvedConfig!, options);
+    const effectiveNoTools = Boolean(options?.noTools || reserveFinalResponseRound);
+    const effectiveOptions: RunChatTurnOptions = {
+      ...options,
+      noTools: effectiveNoTools,
+      allowedTools: effectiveNoTools ? undefined : options?.allowedTools,
+    };
+    const injectOpenAIToolProtocol = shouldInjectOpenAIToolProtocol(resolvedConfig!, effectiveOptions);
     const effectiveSystemPrompt = buildEffectiveSystemPrompt(systemPrompt, injectOpenAIToolProtocol);
 
     // [Phase 2: API Call]
@@ -206,8 +224,8 @@ export async function* runChatTurn(
         allowBrowserTools,
         sessionId,
         contextBudget: { strict: strictBudgetRetry },
-        noTools: options?.noTools,
-        allowedTools: options?.allowedTools,
+        noTools: effectiveOptions.noTools ?? false,
+        allowedTools: effectiveOptions.allowedTools,
       });
       const stream = invokeRustAPIStream(request.params);
 
@@ -307,7 +325,7 @@ export async function* runChatTurn(
       // actually make any tool calls. This is common with MiniMax M3 which tends to
       // output planning text ("我先读取...", "Let me explore...") instead of calling tools.
       if (
-        !options?.noTools
+        !effectiveNoTools
         && looksLikeLazyToolCallResponse(assistantMessageContent, round, injectOpenAIToolProtocol)
       ) {
         // Don't save the lazy response — pop it and nudge the model
@@ -327,7 +345,7 @@ export async function* runChatTurn(
       break; 
     }
 
-    if (reserveFinalResponseRound) {
+    if (reserveFinalResponseRound && hasToolCalls) {
       yield {
         type: 'error',
         error: withToolBudgetSummary(
@@ -379,7 +397,7 @@ export async function* runChatTurn(
       const allContentList = pendingToolCalls.map((_, index) => allContent[index] ?? 'Error: no result returned for tool');
       const allFailed = allContentList.length > 0
         && allContentList.every((content) => /^\s*(error|tool execution blocked|permission denied)/i.test(content));
-      if (allFailed && !options?.noTools) {
+      if (allFailed && !effectiveNoTools) {
         yield {
           type: 'error',
           error: withToolBudgetSummary(

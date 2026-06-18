@@ -51,7 +51,14 @@ export type AutoResearchRunEventType =
   | 'raw';
 
 export interface AutoResearchRecoveryAction {
-  type: 'retry_failed_phase' | 'retry_iteration' | 'switch_provider' | 'open_raw_request_summary' | 'open_logs' | 'abort_run';
+  type:
+    | 'retry_failed_phase'
+    | 'retry_iteration'
+    | 'switch_provider'
+    | 'open_raw_request_summary'
+    | 'open_logs'
+    | 'abort_run'
+    | 'increase_tool_budget';
   supported: boolean;
   label?: string;
   reason?: string;
@@ -224,7 +231,8 @@ function isRecoveryActionType(value: unknown): value is AutoResearchRecoveryActi
     || value === 'switch_provider'
     || value === 'open_raw_request_summary'
     || value === 'open_logs'
-    || value === 'abort_run';
+    || value === 'abort_run'
+    || value === 'increase_tool_budget';
 }
 
 function sanitizeParsedMetrics(value: unknown): Record<string, number | string | boolean | null> | undefined {
