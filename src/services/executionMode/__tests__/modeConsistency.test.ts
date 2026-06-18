@@ -605,4 +605,73 @@ describe('G. Tool allow-list per mode (outer guard)', () => {
     expect(isToolAllowedForMode('bypass', 'mcp__tool')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'agent_tool')).toBe(true);
   });
+
+  // Option A — Agent and Bypass modes do NOT advertise save_plan_doc
+  // to the model. The tool name is intentionally absent from every
+  // execution mode's allow-list because the Rust tool registry has
+  // no handler for it; advertising it would make the model call an
+  // "Unknown tool" error in Agent/Bypass (where allowedTools is not
+  // restricted). Plan-doc persistence is an app-side post-turn
+  // action in chatActions, not a model-callable tool.
+  it('Agent mode does not allow save_plan_doc as a model-callable tool', () => {
+    expect(isToolAllowedForMode('agent', 'save_plan_doc')).toBe(false);
+  });
+
+  it('Bypass mode does not allow save_plan_doc as a model-callable tool', () => {
+    expect(isToolAllowedForMode('bypass', 'save_plan_doc')).toBe(false);
+  });
+
+  it('Debug mode does not allow save_plan_doc as a model-callable tool', () => {
+    expect(isToolAllowedForMode('debug', 'save_plan_doc')).toBe(false);
+  });
+
+  it('Ask mode does not allow save_plan_doc as a model-callable tool', () => {
+    expect(isToolAllowedForMode('ask', 'save_plan_doc')).toBe(false);
+  });
+});
+
+// Option A — Rust model-facing tool catalog audit. The Rust
+// `tool_catalog.rs` is the source of truth for the OpenAI/Anthropic
+// `tools` array sent to the model. If `save_plan_doc` ever reappears
+// here, the model would see and call a tool the Rust registry does
+// not implement. Pin the invariant from the JS side too.
+describe('H. Rust tool catalog does not expose save_plan_doc', () => {
+  it('src-tauri/src/claude/http/tool_catalog.rs has no save_plan_doc entry', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const repoRoot = path.resolve(process.cwd());
+    const catalogSource = fs.readFileSync(
+      path.join(repoRoot, 'src-tauri/src/claude/http/tool_catalog.rs'),
+      'utf8',
+    );
+
+    // The model-facing catalog lives in the `get_tools` literal list
+    // (and the `get_browser_tools` helper). A `"name": "save_plan_doc"`
+    // entry in any of those would re-introduce the model-visible tool.
+    // We scan for the JSON-shape `"name": "save_plan_doc"` (with
+    // surrounding whitespace, as emitted by serde_json::json!) and
+    // ignore prose mentions in comments and tests.
+    const toolEntryRegex = /"name"\s*:\s*"save_plan_doc"/;
+    expect(toolEntryRegex.test(catalogSource)).toBe(false);
+
+    // The catalog must NOT advertise the tool even with browser tools
+    // disabled — Agent/Bypass pass `allow_browser_tools = false`.
+    expect(catalogSource).toMatch(/get_tools\(allow_browser_tools:\s*bool\)/);
+  });
+
+  it('Rust tool registry has no save_plan_doc handler', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const repoRoot = path.resolve(process.cwd());
+    const registrySource = fs.readFileSync(
+      path.join(repoRoot, 'src-tauri/src/tools/registry.rs'),
+      'utf8',
+    );
+
+    // The Rust registry registers tools via `registry.register("name", ...)`.
+    // If save_plan_doc were ever registered, the model would have a
+    // working execution path. Pin the absence.
+    const registrationRegex = /registry\.register\(\s*"save_plan_doc"/;
+    expect(registrationRegex.test(registrySource)).toBe(false);
+  });
 });

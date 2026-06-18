@@ -172,11 +172,22 @@ export function isToolAllowedForProfile(
   profile: ExecutionModeProfile,
   toolName: string,
 ): boolean {
+  // Option A — `save_plan_doc` is intentionally NOT a model-callable
+  // tool in any execution mode. The Rust tool registry has no
+  // handler for it (plan-document persistence is an app-side
+  // post-turn action in `chatActions.sendMessage`), so allowing the
+  // outer guard to return `true` for Agent/Bypass would let the
+  // model call an "Unknown tool". Block it up-front before the
+  // per-policy switch.
+  if (toolName === 'save_plan_doc') {
+    return false;
+  }
+
   switch (profile.allowedToolPolicy) {
     case 'none':
       // 'none' is reserved for the chat-only Ask mode (no tools at
       // all). Plan mode now uses the dedicated 'plan' policy so it
-      // can keep read-only inspection + save_plan_doc available.
+      // can keep read-only inspection available.
       return false;
     case 'plan':
       // Plan mode: read-only inspection of the bound workspace only.

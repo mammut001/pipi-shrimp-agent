@@ -118,6 +118,18 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   // intentionally NOT exposed to the model; plan-doc persistence is
   // an app-side post-turn action.
   if (ctx.executionMode === 'plan') {
+    // Defense-in-depth: even though `save_plan_doc` is no longer in
+    // PLAN_MODE_ALLOWED_TOOLS, hard-block it here so a future
+    // regression that adds it back to the allowlist still fails
+    // closed at the hook layer. The Rust registry has no handler
+    // for it.
+    if (ctx.toolName === 'save_plan_doc') {
+      return {
+        approved: false,
+        error: '`save_plan_doc` is not a model-callable tool in Plan mode. The app saves valid plans automatically after turn_complete.',
+        blockedBy: 'permission-mode',
+      };
+    }
     if (PLAN_MODE_ALLOWED_TOOLS.includes(ctx.toolName)) {
       return { approved: true };
     }

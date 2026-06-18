@@ -596,6 +596,69 @@ describe('chatStore sendMessage integration', () => {
     expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
   });
 
+  // Option A — auto-save must use the REAL PiPi Output Folder, not
+  // the JS-only `PiPi-Shrimp/chats/<id>` placeholder. The chat store
+  // resolves the path via `resolveRealSessionPipiOutputDir(session)`,
+  // which calls `get_app_default_dir` when `pipiOutputDir` is unset.
+  // We mock `get_app_default_dir` to a known on-disk path and assert
+  // that `savePlanModeDoc` receives exactly that path (NOT a
+  // `PiPi-Shrimp/chats/...` placeholder string).
+  it('Plan auto-save uses the real PiPi Output Folder (resolved via get_app_default_dir), not the JS placeholder', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+    });
+    mockRunChatTurn.mockImplementation(() => streamPlanAssistantReply());
+    const realPipiOutputDir = 'C:/Users/test/Documents/PiPi-Shrimp/chats/session-1';
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_app_default_dir') return realPipiOutputDir;
+      if (command === 'create_directory') return null;
+      if (command === 'db_save_session') return null;
+      return undefined;
+    });
+
+    await useChatStore.getState().sendMessage('帮我实现一个新的设置项');
+
+    expect(mockSavePlanModeDoc).toHaveBeenCalledTimes(1);
+    expect(mockSavePlanModeDoc).toHaveBeenCalledWith(expect.objectContaining({
+      // The argument MUST be the real Tauri-resolved path, not the
+      // JS-side `PiPi-Shrimp/chats/session-1` placeholder.
+      workDir: realPipiOutputDir,
+      sessionId: 'session-1',
+    }));
+    // Hard guard: the JS placeholder pattern must never be the
+    // destination of a real save call.
+    expect(mockSavePlanModeDoc).not.toHaveBeenCalledWith(expect.objectContaining({
+      workDir: expect.stringMatching(/^PiPi-Shrimp\/chats\//),
+    }));
+  });
+
+  // Option A — when `get_app_default_dir` returns null (Tauri not
+  // available, e.g. in browser/Jest), the chat store MUST skip the
+  // auto-save rather than write to the JS placeholder. We assert the
+  // store stays quiet on success and the user gets a clear warning.
+  it('Plan auto-save skips when get_app_default_dir returns null and warns the user', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+    });
+    mockRunChatTurn.mockImplementation(() => streamPlanAssistantReply());
+    mockInvoke.mockImplementation(async () => null);
+
+    await useChatStore.getState().sendMessage('帮我实现一个新的设置项');
+
+    // No save — we cannot guarantee a real on-disk folder.
+    expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
+    // The user is told the plan was generated but could not be saved.
+    expect(mockAddNotification).toHaveBeenCalledWith(
+      'warning',
+      expect.stringMatching(/no working directory was available/i),
+      'session-1',
+    );
+  });
+
   it('routes Bypass mode through full tools in sendMessage', async () => {
     resetChatState({ executionMode: 'bypass', permissionMode: 'bypass' });
 
@@ -633,5 +696,38 @@ describe('chatStore sendMessage integration', () => {
       undefined,
       { noTools: true },
     );
+  });
+
+  // Option A — even though Agent and Bypass modes do not restrict
+  // `allowedTools` (the catalog already excludes `save_plan_doc`),
+  // we still pin the JS-side contract: sendMessage must never pass
+  // a 7th arg `{ allowedTools: [..., 'save_plan_doc', ...] }` to
+  // runChatTurn, because the Rust registry has no handler for it
+  // and the model would call an "Unknown tool".
+  it('Agent mode sendMessage never passes save_plan_doc in allowedTools', async () => {
+    resetChatState({ executionMode: 'agent', permissionMode: 'auto-edits' });
+    await useChatStore.getState().sendMessage('Explore the project');
+
+    for (const call of (mockRunChatTurn as jest.Mock).mock.calls) {
+      const seventh = call[6];
+      // The 7th arg is `options`; if set, it must not contain
+      // save_plan_doc in `allowedTools`. We accept `undefined` and
+      // options without allowedTools.
+      if (seventh && Array.isArray(seventh.allowedTools)) {
+        expect(seventh.allowedTools).not.toContain('save_plan_doc');
+      }
+    }
+  });
+
+  it('Bypass mode sendMessage never passes save_plan_doc in allowedTools', async () => {
+    resetChatState({ executionMode: 'bypass', permissionMode: 'bypass' });
+    await useChatStore.getState().sendMessage('Explore the project');
+
+    for (const call of (mockRunChatTurn as jest.Mock).mock.calls) {
+      const seventh = call[6];
+      if (seventh && Array.isArray(seventh.allowedTools)) {
+        expect(seventh.allowedTools).not.toContain('save_plan_doc');
+      }
+    }
   });
 });

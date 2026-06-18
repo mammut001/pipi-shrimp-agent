@@ -670,4 +670,46 @@ mod tests {
         assert_eq!(converted[0]["type"], "function");
         assert!(converted[0]["function"]["parameters"].is_object());
     }
+
+    // Option A — `save_plan_doc` is intentionally NOT a model-visible
+    // tool. Plan-document persistence is an app-side post-turn action
+    // in `chatActions.sendMessage` (see `PLAN_MODE_SYSTEM_PROMPT` and
+    // `shouldSavePlanDoc` in `src/services/planMode.ts`), and the Rust
+    // tool registry has no `save_plan_doc` handler. The catalog must
+    // never advertise the tool in any configuration — neither with
+    // nor without browser tools enabled.
+    #[test]
+    fn model_facing_catalog_does_not_expose_save_plan_doc() {
+        for allow_browser in [false, true] {
+            let tools = get_tools(allow_browser);
+            for tool in &tools {
+                let name = tool
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                assert_ne!(
+                    name, "save_plan_doc",
+                    "save_plan_doc must not be advertised in the model-facing tool catalog \
+                     (allow_browser_tools = {allow_browser}); plan-doc persistence is an \
+                     app-side post-turn action, not a model-callable tool."
+                );
+            }
+        }
+    }
+
+    // Filtering by an allowedTools list that mentions save_plan_doc
+    // must produce an empty result — the catalog has nothing to match,
+    // so the model never sees a tool name it cannot execute.
+    #[test]
+    fn filter_by_save_plan_doc_yields_empty_catalog() {
+        let filtered = filter_tools_by_allowed_names(
+            &get_tools(false),
+            Some(&["save_plan_doc".to_string()]),
+        );
+        assert!(
+            filtered.is_empty(),
+            "Filtering by the unknown save_plan_doc name must produce an empty tool list; \
+             the model must never see a tool it cannot execute."
+        );
+    }
 }
