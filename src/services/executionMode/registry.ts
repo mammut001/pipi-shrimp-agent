@@ -29,13 +29,16 @@ export type RiskLevel = 'safe' | 'moderate' | 'elevated' | 'dangerous';
 
 /**
  * What kinds of tool calls the mode allows.
- * - 'none': no tools at all (chat only, like Plan mode)
+ * - 'none': no tools at all (chat only, like Ask mode)
+ * - 'plan': read-only inspection plus the `save_plan_doc` writer — Plan
+ *   mode. The exact tool list lives in `PLAN_MODE_ALLOWED_TOOLS` so the
+ *   plan-doc writer and the read-only inspectors stay together.
  * - 'read-only': only read tools
  * - 'edit': read + write tools, but no shell/browser
  * - 'shell': read + write + shell
  * - 'full': read + write + shell + browser + mcp + ssh
  */
-export type AllowedToolPolicy = 'none' | 'read-only' | 'edit' | 'shell' | 'full';
+export type AllowedToolPolicy = 'none' | 'plan' | 'read-only' | 'edit' | 'shell' | 'full';
 
 export type ApprovalPolicy =
   | 'always-ask'        // every tool call requires explicit confirmation
@@ -106,7 +109,11 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     riskLevel: 'safe',
     permissionMode: 'plan-only',
     systemPromptSuffix: '', // appended separately via PLAN_MODE_SYSTEM_PROMPT
-    allowedToolPolicy: 'none',
+    // Plan mode is read-only inspection + save_plan_doc. The exact tool
+    // allowlist is enforced by `isToolAllowedForProfile` for the 'plan'
+    // policy and re-checked by the preToolUseHooks outer guard at
+    // runtime, so PLAN_MODE_ALLOWED_TOOLS is the single source of truth.
+    allowedToolPolicy: 'plan',
     approvalPolicy: 'always-ask',
     isDefault: false,
     requiresWarning: false,

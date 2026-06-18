@@ -6,7 +6,7 @@
  */
 
 import type { Session, Message, Project } from '../types/chat';
-import { hydrateSessionModes, isExecutionModeId } from '@/services/executionMode';
+import { hydrateSessionModes } from '@/services/executionMode';
 
 // ─── Database types ──────────────────────────────────────────────────────────
 
@@ -262,7 +262,25 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
   // is absent we still want to surface a Project Folder so pre-v7
   // sessions keep working — fall back to `work_dir`.
   const projectDir = dbSession.project_dir || dbSession.work_dir || undefined;
-  return hydrateSessionModes({
+
+  // SAFETY: pass the raw `execution_mode` string straight through.
+  // `hydrateSessionModes` is the only place that knows how to handle a
+  // present-but-invalid value — it collapses to Ask instead of falling
+  // through to `permission_mode` (which could be Bypass). Filtering
+  // here with `isExecutionModeId` would silently lose that safety net
+  // and let a corrupted `execution_mode` row inherit whatever the
+  // legacy `permission_mode` column happens to say.
+  //
+  // The wider `string | undefined` snapshot type comes from
+  // `hydrateSessionModes`'s own `SessionModeSnapshot`; we widen the
+  // Session.executionMode assignment via `unknown` so the unsafe
+  // value can reach the resolver without TypeScript narrowing it
+  // back to a valid 5-mode id.
+  const rawExecutionMode = dbSession.execution_mode as unknown as
+    | import('@/services/executionMode').ExecutionModeId
+    | string
+    | undefined;
+  const hydrated = hydrateSessionModes({
     id: dbSession.id,
     title: dbSession.title,
     createdAt: dbSession.created_at,
@@ -275,9 +293,7 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
     pipiOutputDir: dbSession.pipi_output_dir || undefined,
     workingFiles: safeJsonParse(dbSession.working_files, undefined),
     permissionMode: (dbSession.permission_mode as Session['permissionMode']) || undefined,
-    executionMode: isExecutionModeId(dbSession.execution_mode)
-      ? dbSession.execution_mode
-      : undefined,
+    executionMode: rawExecutionMode,
     messages: dbMessages.map((m) => ({
       id: m.id,
       role: m.role as 'user' | 'assistant',
@@ -290,6 +306,7 @@ export function dbToSession(dbSession: DbSession, dbMessages: DbMessage[]): Sess
       token_usage: safeJsonParse(m.token_usage, undefined),
     })),
   });
+  return hydrated as Session;
 }
 
 export function sessionToDb(session: Session): DbSession {

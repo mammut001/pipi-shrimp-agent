@@ -182,3 +182,43 @@ describe('Context Files do not change mode or folders', () => {
     expect(source).not.toMatch(/handlePaste[\s\S]{0,400}updateSessionExecutionMode/);
   });
 });
+
+describe('PiPi Output Folder is resolved via Tauri before real I/O', () => {
+  // chatActions used to compute `sessionPipiOutputDir` as the JS-only
+  // `PiPi-Shrimp/chats/${session.id}` placeholder, then feed it into
+  // `get_next_output_dir`, `create_directory`, `read_file`,
+  // `triggerMemoryExtraction`, and the plan-doc save fallback. That
+  // placeholder is a *naming* convention only — it has not been joined
+  // with the platform's Documents folder — so passing it to a
+  // filesystem call would either fail or land in the wrong directory.
+  // The fix is `resolveRealSessionPipiOutputDir`, which must call
+  // `get_app_default_dir` and return undefined (skipping the I/O)
+  // when Tauri is unavailable.
+
+  const chatActionsSource = readFileSync(
+    resolve(repoRoot, 'src/store/chat/chatActions.ts'),
+    'utf8',
+  );
+  const sessionFoldersSource = readFileSync(
+    resolve(repoRoot, 'src/utils/sessionFolders.ts'),
+    'utf8',
+  );
+
+  it('chatActions imports the real-path resolver', () => {
+    expect(chatActionsSource).toMatch(/resolveRealSessionPipiOutputDir/);
+  });
+
+  it('chatActions no longer builds the JS-only placeholder for I/O', () => {
+    // The historical `currentSession ? `PiPi-Shrimp/chats/${currentSession.id}` : undefined`
+    // pattern is gone — the placeholder is now reserved for naming.
+    expect(chatActionsSource).not.toMatch(/`PiPi-Shrimp\/chats\/\$\{/);
+  });
+
+  it('sessionFolders exports resolveRealSessionPipiOutputDir', () => {
+    expect(sessionFoldersSource).toMatch(/export\s+async\s+function\s+resolveRealSessionPipiOutputDir/);
+  });
+
+  it('sessionFolders helper invokes get_app_default_dir to resolve the real path', () => {
+    expect(sessionFoldersSource).toMatch(/get_app_default_dir/);
+  });
+});

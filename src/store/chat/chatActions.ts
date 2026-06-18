@@ -45,7 +45,10 @@ import {
 } from './chatStreaming';
 import { handleToolBatchRequest } from './chatToolExecution';
 import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
-import { getSessionProjectDir as resolveSessionProjectDir } from '@/utils/sessionFolders';
+import {
+  getSessionProjectDir as resolveSessionProjectDir,
+  resolveRealSessionPipiOutputDir,
+} from '@/utils/sessionFolders';
 import { t } from '@/i18n';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { stripGoalMarkers } from '@/services/sessionGoal/goalEvaluator';
@@ -442,11 +445,12 @@ export function createChatActionMethods({
         // working without code changes.
         sessionWorkDir = currentSession?.projectDir ?? currentSession?.workDir;
         // The PiPi Output Folder is where chat outputs, docs, memory,
-        // and AutoResearch artifacts land. It defaults to the
-        // app-managed `{Documents|HOME}/PiPi-Shrimp/chats/{id}/` when
-        // not yet bound.
-        const sessionPipiOutputDir = currentSession?.pipiOutputDir
-          ?? (currentSession ? `PiPi-Shrimp/chats/${currentSession.id}` : undefined);
+        // and AutoResearch artifacts land. Resolve the **real on-disk
+        // path** via the Rust `get_app_default_dir` command — the
+        // `PiPi-Shrimp/chats/<id>` placeholder must NEVER be fed into
+        // a filesystem call, because nothing has joined it with the
+        // platform's Documents folder yet.
+        const sessionPipiOutputDir = await resolveRealSessionPipiOutputDir(currentSession);
 
         if (!isPlanMode && sessionPipiOutputDir && !currentSession?.outputDir) {
           try {
@@ -721,7 +725,9 @@ export function createChatActionMethods({
               const latestSession = get().sessions.find((session) => session.id === activeSessionId);
               // Two-folder model: plan docs are app-owned outputs and
               // land in the PiPi Output Folder, NOT the Project Folder.
-              let planOutputDir = latestSession?.pipiOutputDir;
+              // Resolve the real on-disk path via the Tauri helper so
+              // we never write into the JS-side placeholder.
+              let planOutputDir = await resolveRealSessionPipiOutputDir(latestSession);
 
               if (!planOutputDir) {
                 const resolved = await ensureSessionWorkDir(activeSessionId, set, get);
@@ -756,15 +762,18 @@ export function createChatActionMethods({
           const messagesForExtraction = currentMessages();
           if (messagesForExtraction.length >= 10) {
             // Two-folder model: memory lives under the PiPi Output
-            // Folder, not the Project Folder. Pass the resolved PiPi
-            // Output Folder as the projectRoot so `getMemoryDir` writes
-            // into the app-owned location.
+            // Folder, not the Project Folder. Resolve the real on-disk
+            // path so the extraction pipeline writes into the
+            // app-owned location — the JS-side placeholder must never
+            // reach the filesystem.
             const latestSession = get().sessions.find((session) => session.id === activeSessionId);
-            const memoryRoot = latestSession?.pipiOutputDir ?? sessionPipiOutputDir;
-            triggerMemoryExtraction({
-              messages: messagesForExtraction.map((message) => ({ role: message.role, content: message.content ?? '' })),
-              projectRoot: memoryRoot,
-            });
+            const memoryRoot = await resolveRealSessionPipiOutputDir(latestSession);
+            if (memoryRoot) {
+              triggerMemoryExtraction({
+                messages: messagesForExtraction.map((message) => ({ role: message.role, content: message.content ?? '' })),
+                projectRoot: memoryRoot,
+              });
+            }
           }
         } catch (error) {
           console.debug('Auto memory extraction setup failed:', error);

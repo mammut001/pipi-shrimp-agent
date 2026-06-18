@@ -104,11 +104,23 @@ describe('executionMode/guards: tool allow-list per mode', () => {
     expect(isToolAllowedForMode('ask', 'ssh_exec')).toBe(false);
   });
 
-  it('Plan mode blocks every tool', () => {
-    expect(isToolAllowedForMode('plan', 'read_file')).toBe(false);
+  it('Plan mode allows read-only inspection + save_plan_doc only', () => {
+    // Read-only inspection + save_plan_doc are allowed.
+    expect(isToolAllowedForMode('plan', 'read_file')).toBe(true);
+    expect(isToolAllowedForMode('plan', 'list_files')).toBe(true);
+    expect(isToolAllowedForMode('plan', 'search_files')).toBe(true);
+    expect(isToolAllowedForMode('plan', 'save_plan_doc')).toBe(true);
+    // Writes, edits, shell, browser, ssh, mcp and agent spawn are all
+    // blocked — Plan mode must never produce side effects.
     expect(isToolAllowedForMode('plan', 'write_file')).toBe(false);
+    expect(isToolAllowedForMode('plan', 'edit_file')).toBe(false);
+    expect(isToolAllowedForMode('plan', 'create_directory')).toBe(false);
+    expect(isToolAllowedForMode('plan', 'delete_file')).toBe(false);
     expect(isToolAllowedForMode('plan', 'execute_command')).toBe(false);
-    expect(isToolAllowedForMode('plan', 'list_files')).toBe(false);
+    expect(isToolAllowedForMode('plan', 'browser_click')).toBe(false);
+    expect(isToolAllowedForMode('plan', 'ssh_exec')).toBe(false);
+    expect(isToolAllowedForMode('plan', 'mcp__tool')).toBe(false);
+    expect(isToolAllowedForMode('plan', 'agent_tool')).toBe(false);
   });
 
   it('Debug mode allows read + write but blocks shell / browser / ssh', () => {

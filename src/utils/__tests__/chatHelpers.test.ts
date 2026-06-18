@@ -141,6 +141,99 @@ describe('chatHelpers — two-folder model', () => {
       expect(session.executionMode).toBe('ask');
       expect(session.permissionMode).toBe('plan-only');
     });
+
+    // SAFETY REGRESSION — dbToSession used to pre-filter
+    // `dbSession.execution_mode` through `isExecutionModeId` before
+    // calling `hydrateSessionModes`. That silently nullified the
+    // safety net in `resolveSessionExecutionModeId` which collapses a
+    // present-but-invalid `executionMode` to Ask instead of falling
+    // through to the legacy `permissionMode` column (which could be
+    // Bypass). The fix is to pass the raw value through unchanged.
+    it('invalid execution_mode string + permission_mode=bypass collapses to Ask (no Bypass inheritance)', () => {
+      const session = dbToSession(
+        makeDbSession({
+          execution_mode: 'multitask',
+          permission_mode: 'bypass',
+        }),
+        [],
+      );
+      expect(session.executionMode).toBe('ask');
+      expect(session.permissionMode).toBe('plan-only');
+    });
+
+    it('null execution_mode + permission_mode=bypass still hydrates to Bypass (legacy row preserved)', () => {
+      const session = dbToSession(
+        makeDbSession({
+          execution_mode: null,
+          permission_mode: 'bypass',
+        }),
+        [],
+      );
+      expect(session.executionMode).toBe('bypass');
+      expect(session.permissionMode).toBe('bypass');
+    });
+
+    it('null execution_mode + permission_mode=plan-only hydrates to Plan', () => {
+      const session = dbToSession(
+        makeDbSession({
+          execution_mode: null,
+          permission_mode: 'plan-only',
+        }),
+        [],
+      );
+      expect(session.executionMode).toBe('plan');
+      expect(session.permissionMode).toBe('plan-only');
+    });
+
+    it('garbage execution_mode + null permission_mode still collapses to Ask', () => {
+      const session = dbToSession(
+        makeDbSession({
+          execution_mode: 'totally-not-a-mode',
+          permission_mode: null,
+        }),
+        [],
+      );
+      expect(session.executionMode).toBe('ask');
+      expect(session.permissionMode).toBe('plan-only');
+    });
+
+    // dbToSession preserves `execution_mode` exactly so the
+    // ChatInput-selected mode id flows through unchanged.
+    it('execution_mode is preserved verbatim when it is a known id', () => {
+      for (const id of ['ask', 'plan', 'debug', 'agent', 'bypass'] as const) {
+        const session = dbToSession(
+          makeDbSession({
+            execution_mode: id,
+            permission_mode: 'plan-only',
+          }),
+          [],
+        );
+        expect(session.executionMode).toBe(id);
+      }
+    });
+
+    // ChatInput's dropdown selection is then handed to chatActions as
+    // the same id. We assert the equality via the canonical resolver
+    // so any drift between dropdown rendering and the engine would
+    // surface here.
+    it('ChatInput-selected execution mode id equals the resolver result on the loaded session', async () => {
+      const { resolveSessionExecutionModeId } = await import(
+        '@/services/executionMode'
+      );
+      for (const id of ['ask', 'plan', 'debug', 'agent', 'bypass'] as const) {
+        const session = dbToSession(
+          makeDbSession({
+            execution_mode: id,
+            permission_mode: 'plan-only',
+          }),
+          [],
+        );
+        // Both ChatInput (selectedExecutionModeId) and chatActions
+        // (executionModeId) read from the same resolver.
+        expect(resolveSessionExecutionModeId(session)).toBe(id);
+        expect(resolveSessionExecutionModeId(session)).toBe(session.executionMode);
+      }
+    });
   });
 
   describe('sessionToDb', () => {

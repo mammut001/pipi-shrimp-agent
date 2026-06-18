@@ -22,6 +22,7 @@
  * the new and old code paths.
  */
 import type { Session } from '../types/chat';
+import { safeInvokeOrNull } from './safeInvoke';
 
 /**
  * The Rust-side default PiPi Output Folder is computed by
@@ -73,6 +74,50 @@ export function getSessionPipiOutputDir(session: Pick<Session, 'id' | 'pipiOutpu
   if (!session) return undefined;
   if (session.pipiOutputDir) return session.pipiOutputDir;
   return getDefaultPipiOutputDirForSession(session.id);
+}
+
+/**
+ * Resolve the real, on-disk PiPi Output Folder for a session.
+ *
+ * The JS-only `getSessionPipiOutputDir` helper returns a placeholder
+ * (`PiPi-Shrimp/chats/<id>`) when `pipiOutputDir` is not persisted — that
+ * string is for *naming* only (tooltips, prompt previews, unit tests).
+ * It is NOT safe to feed into `create_directory`, `read_file`, `get_next_output_dir`
+ * or any other filesystem call because nothing has actually joined it
+ * with the platform's Documents folder yet.
+ *
+ * This helper performs the real resolution by invoking the Rust
+ * `get_app_default_dir` command. It returns:
+ *   - `session.pipiOutputDir` if it is already persisted (the user
+ *     explicitly bound a folder), OR
+ *   - the on-disk path returned by `get_app_default_dir({ sessionId })`,
+ *     OR
+ *   - `undefined` if neither is available (e.g. session is null or the
+ *     Tauri runtime is not present in tests).
+ *
+ * Callers should pass `undefined` through (skip the operation) rather
+ * than fall back to the placeholder for any real filesystem I/O.
+ */
+export async function resolveRealSessionPipiOutputDir(
+  session: Pick<Session, 'id' | 'pipiOutputDir'> | null | undefined,
+): Promise<string | undefined> {
+  if (!session) return undefined;
+  if (session.pipiOutputDir) return session.pipiOutputDir;
+  try {
+    const realPath = await safeInvokeOrNull<string>(
+      'get_app_default_dir',
+      { sessionId: session.id },
+      { source: 'sessionFolders.resolveRealSessionPipiOutputDir' },
+    );
+    if (typeof realPath === 'string' && realPath.length > 0) {
+      return realPath;
+    }
+  } catch {
+    // safeInvokeOrNull already swallows Tauri runtime errors; treat any
+    // unexpected exception as "no real path available" so callers can
+    // skip the operation instead of writing into the placeholder.
+  }
+  return undefined;
 }
 
 /**

@@ -66,6 +66,7 @@ const ALLOWED_PERMISSION_MODES = new Set([
 
 const ALLOWED_ALLOWED_TOOL_POLICIES = new Set([
   'none',
+  'plan',
   'read-only',
   'edit',
   'shell',
@@ -190,10 +191,10 @@ describe('B. Mapping invariants (5-mode → 4-mode permission)', () => {
     expect(profile.approvalPolicy).toBe('always-ask');
   });
 
-  it('plan → plan-only / none / always-ask (no-tools Plan invariant)', () => {
+  it('plan → plan-only / plan / always-ask (read-only + save_plan_doc)', () => {
     expect(resolvePermissionMode('plan')).toBe('plan-only');
     const profile = getExecutionMode('plan');
-    expect(profile.allowedToolPolicy).toBe('none');
+    expect(profile.allowedToolPolicy).toBe('plan');
     expect(profile.approvalPolicy).toBe('always-ask');
   });
 
@@ -554,12 +555,24 @@ describe('G. Tool allow-list per mode (outer guard)', () => {
     }
   });
 
-  it('Plan blocks every tool (no-tools Plan invariant)', () => {
-    const tools = [
-      'read_file', 'write_file', 'execute_command',
-      'list_files', 'path_exists',
+  it('Plan allows read-only inspection + save_plan_doc and blocks side-effecting tools', () => {
+    // Plan mode is read-only inspection + plan-doc persistence. The
+    // exact allowlist lives in PLAN_MODE_ALLOWED_TOOLS so all three
+    // enforcement layers (registry, preToolUseHooks, chatActions)
+    // stay in sync.
+    expect(isToolAllowedForMode('plan', 'read_file')).toBe(true);
+    expect(isToolAllowedForMode('plan', 'list_files')).toBe(true);
+    expect(isToolAllowedForMode('plan', 'search_files')).toBe(true);
+    expect(isToolAllowedForMode('plan', 'save_plan_doc')).toBe(true);
+
+    const blocked = [
+      'write_file', 'edit_file', 'create_directory', 'delete_file',
+      'execute_command', 'run_in_terminal',
+      'browser_navigate', 'browser_click', 'browser_type',
+      'ssh_exec', 'ssh_read_file', 'ssh_upload_file',
+      'mcp__tool', 'agent_tool',
     ];
-    for (const tool of tools) {
+    for (const tool of blocked) {
       expect(isToolAllowedForMode('plan', tool)).toBe(false);
     }
   });

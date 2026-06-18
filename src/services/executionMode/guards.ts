@@ -16,6 +16,7 @@ import {
   type ExecutionModeProfile,
 } from './registry';
 import type { PermissionMode } from '@/services/tools/toolExecutionPolicy';
+import { PLAN_MODE_ALLOWED_TOOLS } from '@/services/planMode';
 
 const READ_ONLY_TOOLS = new Set([
   'read_file',
@@ -173,11 +174,17 @@ export function isToolAllowedForProfile(
 ): boolean {
   switch (profile.allowedToolPolicy) {
     case 'none':
-      // 'none' covers both Plan mode (read-only plan output) and the
-      // chat-only Ask mode (no tools at all). The downstream caller
-      // distinguishes Ask vs Plan via the 5-mode id; here we just
-      // return false for any tool name.
+      // 'none' is reserved for the chat-only Ask mode (no tools at
+      // all). Plan mode now uses the dedicated 'plan' policy so it
+      // can keep read-only inspection + save_plan_doc available.
       return false;
+    case 'plan':
+      // Plan mode: read-only inspection + save_plan_doc. The exact
+      // allowlist lives in PLAN_MODE_ALLOWED_TOOLS (single source of
+      // truth — chatActions, preToolUseHooks and this guard all
+      // consult it). Block every other tool: writes, edits, shell,
+      // browser mutation, ssh, mcp__*, agent_tool.
+      return PLAN_MODE_ALLOWED_TOOLS.includes(toolName);
     case 'read-only':
       return READ_ONLY_TOOLS.has(toolName);
     case 'edit':
