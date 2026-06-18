@@ -918,6 +918,7 @@ mod tests {
             api_format: None,
             provider_capabilities: None,
             approval_token: None,
+            execution_mode: None,
         }
     }
 

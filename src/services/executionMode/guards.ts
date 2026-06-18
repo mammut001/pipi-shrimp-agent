@@ -1,10 +1,10 @@
 /**
  * Execution-mode → tool-execution guards.
  *
- * Maps the 4-mode dropdown (Plan / Debug / Agent / Bypass) to the
+ * Maps the 5-mode dropdown (Ask / Plan / Debug / Agent / Bypass) to the
  * 4-mode PermissionMode that preToolUseHooks already understands,
  * and adds outer-level enforcement for behavior the underlying hook
- * system cannot express on its own (e.g. Plan mode blocking every
+ * system cannot express on its own (e.g. Ask/Plan modes blocking every
  * tool, or Agent mode gating shell/exec behind user confirmation).
  */
 
@@ -87,6 +87,10 @@ export function isToolAllowedForProfile(
 ): boolean {
   switch (profile.allowedToolPolicy) {
     case 'none':
+      // 'none' covers both Plan mode (read-only plan output) and the
+      // chat-only Ask mode (no tools at all). The downstream caller
+      // distinguishes Ask vs Plan via the 6-mode id; here we just
+      // return false for any tool name.
       return false;
     case 'read-only':
       return READ_ONLY_TOOLS.has(toolName);

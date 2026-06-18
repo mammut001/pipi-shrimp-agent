@@ -632,6 +632,456 @@ describe('chatToolExecution', () => {
     }));
   });
 
+  describe('Bypass + Ask mode semantics', () => {
+    it('Bypass + execute_command does not call waitForPermission (auto-approves)', async () => {
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const updateTaskStep = jest.fn();
+      const invoke = jest.fn(async (command: string) => {
+        if (command === 'preview_tool_policy') {
+          // Backend policy reports awaiting_confirmation (network-like
+          // heuristic). Bypass must override this locally so the
+          // frontend doesn't open a modal.
+          return {
+            toolCallId: 'tool-bypass-1',
+            toolName: 'execute_command',
+            decision: 'awaiting_confirmation',
+            reason: 'Assistant tool calls need approval for network or package-install commands.',
+            approvalToken: null,
+          };
+        }
+        if (command === 'execute_single_tool') {
+          return { content: '{"stdout":"42","stderr":"","exit_code":0}', is_error: false };
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep,
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        invoke: invoke as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-bypass-1',
+            name: 'execute_command',
+            arguments: { command: 'wc -l src/services/autoresearch/loopEngine.ts', cwd: '/tmp/workspace' },
+          }],
+        })),
+      });
+      const state = createChatStateWithMode('bypass');
+      // Mirror the 6-mode id so the outer guard treats this as Bypass.
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'bypass';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-bypass-1',
+          name: 'execute_command',
+          arguments: JSON.stringify({ command: 'wc -l src/services/autoresearch/loopEngine.ts', cwd: '/tmp/workspace' }),
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      // Bypass must NOT open the permission modal — neither for the
+      // serial path nor for any approval flow inside it.
+      expect(waitForPermission as jest.Mock).not.toHaveBeenCalled();
+      // The backend was told the request is awaiting_confirmation,
+      // but Bypass + auto-approveable tool short-circuits before any
+      // approval token is consumed.
+      expect(invoke).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        toolCallId: 'tool-bypass-1',
+        name: 'execute_command',
+        workDir: '/tmp/workspace',
+      }));
+      // No "awaiting_confirmation" task step — the tool went straight
+      // to running.
+      expect(updateTaskStep).not.toHaveBeenCalledWith('tool-bypass-1', 'awaiting_confirmation');
+      expect(updateTaskStep).toHaveBeenCalledWith('tool-bypass-1', 'running');
+    });
+
+    it('Bypass still rejects dangerous commands via preToolUseHooks', async () => {
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const updateTaskStep = jest.fn();
+      const runPreToolUseHooks = jest.fn(async () => ({
+        approved: false,
+        blockedBy: 'dangerous-command',
+        error: 'Blocked: Attempting to delete root filesystem',
+      }));
+      const invoke = jest.fn();
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep,
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        runPreToolUseHooks: runPreToolUseHooks as unknown as ToolBatchExecutionDeps['runPreToolUseHooks'],
+        invoke: invoke as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-danger',
+            name: 'execute_command',
+            arguments: { command: 'rm -rf /', cwd: '/tmp/workspace' },
+          }],
+        })),
+      });
+      const state = createChatStateWithMode('bypass');
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'bypass';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-danger',
+          name: 'execute_command',
+          arguments: '{"command":"rm -rf /","cwd":"/tmp/workspace"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      // Hard hook blocked it — no preview, no execution.
+      expect(runPreToolUseHooks).toHaveBeenCalled();
+      expect(waitForPermission).not.toHaveBeenCalled();
+      expect(invoke).not.toHaveBeenCalledWith('execute_single_tool', expect.anything());
+      expect(results[0]?.content).toMatch(/Blocked: Attempting to delete root filesystem/);
+    });
+
+    it('Bypass still blocks writes outside Project Folder via path validation', async () => {
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const runPreToolUseHooks = jest.fn(async () => ({
+        approved: false,
+        blockedBy: 'path-validation',
+        error: 'Path /etc/passwd is outside working directory /tmp/workspace',
+      }));
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep: jest.fn(),
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        runPreToolUseHooks: runPreToolUseHooks as unknown as ToolBatchExecutionDeps['runPreToolUseHooks'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-write',
+            name: 'write_file',
+            arguments: { path: '/etc/passwd', content: 'pwned' },
+          }],
+        })),
+      });
+      const state = createChatStateWithMode('bypass');
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'bypass';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-write',
+          name: 'write_file',
+          arguments: '{"path":"/etc/passwd","content":"pwned"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      expect(waitForPermission).not.toHaveBeenCalled();
+      expect(results[0]?.content).toMatch(/outside working directory/);
+    });
+
+    it('Ask mode blocks every tool via the outer preToolUseHook', async () => {
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const updateTaskStep = jest.fn();
+      const invoke = jest.fn();
+      const runPreToolUseHooks = jest.fn(async () => ({
+        approved: false,
+        blockedBy: 'permission-mode',
+        error: 'Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+      }));
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep,
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        runPreToolUseHooks: runPreToolUseHooks as unknown as ToolBatchExecutionDeps['runPreToolUseHooks'],
+        invoke: invoke as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-ask-1',
+            name: 'execute_command',
+            arguments: { command: 'pwd', cwd: '/tmp/workspace' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'ask';
+      state.sessions[0].permissionMode = 'plan-only';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-ask-1',
+          name: 'execute_command',
+          arguments: '{"command":"pwd","cwd":"/tmp/workspace"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      // The outer guard vetoed the request before preview / execute.
+      expect(waitForPermission).not.toHaveBeenCalled();
+      expect(invoke).not.toHaveBeenCalled();
+      expect(results[0]?.content).toMatch(/Ask mode/);
+      // The tool step landed in 'failed', not 'rejected' (it's a
+      // block, not a user denial).
+      expect(updateTaskStep).toHaveBeenCalledWith('tool-ask-1', 'failed');
+    });
+
+    it('Ask mode also blocks read_file / write_file / browser_* tools', async () => {
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      // Mock the preToolUseHooks to simulate the registry's response
+      // for Ask mode (which blocks everything).
+      const runPreToolUseHooks = jest.fn(async () => ({
+        approved: false,
+        blockedBy: 'permission-mode',
+        error: 'Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+      }));
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep: jest.fn(),
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        runPreToolUseHooks: runPreToolUseHooks as unknown as ToolBatchExecutionDeps['runPreToolUseHooks'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [
+            { id: 't-read', name: 'read_file', arguments: { path: 'src/index.ts' } },
+            { id: 't-write', name: 'write_file', arguments: { path: 'src/x.ts', content: '' } },
+            { id: 't-browser', name: 'browser_navigate', arguments: { url: 'https://example.com' } },
+          ],
+          serial: [],
+        })),
+      });
+      const state = createChatState();
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'ask';
+      state.sessions[0].permissionMode = 'plan-only';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [
+          { id: 't-read', name: 'read_file', arguments: '{"path":"src/index.ts"}' },
+          { id: 't-write', name: 'write_file', arguments: '{"path":"src/x.ts","content":""}' },
+          { id: 't-browser', name: 'browser_navigate', arguments: '{"url":"https://example.com"}' },
+        ],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      expect(runPreToolUseHooks).toHaveBeenCalledTimes(3);
+      expect(waitForPermission).not.toHaveBeenCalled();
+      expect(results.length).toBe(3);
+      for (const result of results) {
+        expect(result.content).toMatch(/Ask mode/);
+      }
+    });
+
+    it('Agent mode still asks for execute_command when preview says awaiting_confirmation', async () => {
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const invoke = jest.fn(async (command: string) => {
+        if (command === 'preview_tool_policy') {
+          return {
+            toolCallId: 'tool-agent-1',
+            toolName: 'execute_command',
+            decision: 'awaiting_confirmation',
+            reason: 'Assistant tool calls need approval for network or package-install commands.',
+            approvalToken: 'agent-token',
+          };
+        }
+        if (command === 'execute_single_tool') {
+          return { content: '{"stdout":"ok","stderr":"","exit_code":0}', is_error: false };
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep: jest.fn(),
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        invoke: invoke as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-agent-1',
+            name: 'execute_command',
+            arguments: { command: 'curl https://example.com', cwd: '/tmp/workspace' },
+          }],
+        })),
+      });
+      const state = createChatStateWithMode('auto-edits');
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'agent';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-agent-1',
+          name: 'execute_command',
+          arguments: JSON.stringify({ command: 'curl https://example.com', cwd: '/tmp/workspace' }),
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      // Agent mode still asks the user for risky commands.
+      expect(waitForPermission as jest.Mock).toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
+        approvalToken: 'agent-token',
+      }));
+    });
+
+    it('Permission modal and "awaiting_confirmation" task step never both render in Bypass', async () => {
+      const resolved = jest.fn();
+      const waitForPermission = jest.fn(async () => true);
+      const updateTaskStep = jest.fn();
+      const invoke = jest.fn(async (command: string) => {
+        if (command === 'preview_tool_policy') {
+          return {
+            toolCallId: 'tool-vis-1',
+            toolName: 'execute_command',
+            decision: 'awaiting_confirmation',
+            reason: 'Network command',
+            approvalToken: 'unused-token',
+          };
+        }
+        if (command === 'execute_single_tool') {
+          return { content: 'ok', is_error: false };
+        }
+        throw new Error(`Unexpected command: ${command}`);
+      });
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep,
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission,
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        invoke: invoke as ToolBatchExecutionDeps['invoke'],
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-vis-1',
+            name: 'execute_command',
+            arguments: { command: 'echo hi', cwd: '/tmp/workspace' },
+          }],
+        })),
+      });
+      const state = createChatStateWithMode('bypass');
+      (state.sessions[0] as { executionMode?: string }).executionMode = 'bypass';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-vis-1',
+          name: 'execute_command',
+          arguments: '{"command":"echo hi","cwd":"/tmp/workspace"}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      // In Bypass the modal never opens, and the task step never
+      // enters "awaiting_confirmation". It goes straight to running.
+      expect(waitForPermission as jest.Mock).not.toHaveBeenCalled();
+      expect(updateTaskStep).not.toHaveBeenCalledWith('tool-vis-1', 'awaiting_confirmation');
+      expect(updateTaskStep).toHaveBeenCalledWith('tool-vis-1', 'running');
+    });
+  });
+
   describe('6-mode execution mode plumbing', () => {
     it('forwards the session executionMode id into the preToolUseHook context', async () => {
       const resolved = jest.fn();

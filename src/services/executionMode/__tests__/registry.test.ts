@@ -14,17 +14,19 @@ import {
 import type { ExecutionModeId } from '../registry';
 
 describe('executionMode/registry', () => {
-  it('exposes exactly the four documented modes', () => {
+  it('exposes exactly the five documented modes in expected order', () => {
     const ids = EXECUTION_MODES.map((m) => m.id);
-    expect(ids).toEqual(['plan', 'debug', 'agent', 'bypass']);
+    expect(ids).toEqual(['ask', 'plan', 'debug', 'agent', 'bypass']);
   });
 
-  it('marks Agent as the default and Bypass as the only mode that requires a warning', () => {
-    expect(getDefaultExecutionMode().id).toBe('agent');
-    expect(isDefaultMode('agent')).toBe(true);
+  it('marks Ask as the default and Bypass as the only mode that requires a warning', () => {
+    expect(getDefaultExecutionMode().id).toBe('ask');
+    expect(isDefaultMode('ask')).toBe(true);
+    expect(isDefaultMode('agent')).toBe(false);
     expect(isDefaultMode('bypass')).toBe(false);
 
     expect(modeRequiresWarning('bypass')).toBe(true);
+    expect(modeRequiresWarning('ask')).toBe(false);
     expect(modeRequiresWarning('plan')).toBe(false);
     expect(modeRequiresWarning('debug')).toBe(false);
     expect(modeRequiresWarning('agent')).toBe(false);
@@ -48,23 +50,28 @@ describe('executionMode/registry', () => {
       byRisk.set(mode.riskLevel, list);
     }
     expect(byRisk.get('dangerous')).toEqual(['bypass']);
-    expect(byRisk.get('safe')).toEqual(['plan']);
+    // Ask and Plan are both safe (chat-only / read-only plan output).
+    expect(byRisk.get('safe')).toEqual(['ask', 'plan']);
   });
 
-  it('maps each 4-mode id to a 4-mode PermissionMode', () => {
+  it('maps each 5-mode id to a 4-mode PermissionMode', () => {
+    // Ask and Plan both map to plan-only — Ask is chat-only, Plan is
+    // read-only plan output. The downstream hook layer then blocks
+    // tool execution based on the explicit 6-mode id, not the
+    // 4-mode PermissionMode.
+    expect(resolvePermissionMode('ask')).toBe('plan-only');
     expect(resolvePermissionMode('plan')).toBe('plan-only');
     expect(resolvePermissionMode('debug')).toBe('auto-edits');
     expect(resolvePermissionMode('agent')).toBe('auto-edits');
     expect(resolvePermissionMode('bypass')).toBe('bypass');
   });
 
-  it('isExecutionModeId accepts the four known ids and rejects the rest', () => {
-    for (const id of ['plan', 'debug', 'agent', 'bypass']) {
+  it('isExecutionModeId accepts the five known ids and rejects the rest', () => {
+    for (const id of ['ask', 'plan', 'debug', 'agent', 'bypass']) {
       expect(isExecutionModeId(id)).toBe(true);
     }
     expect(isExecutionModeId('standard')).toBe(false);
     expect(isExecutionModeId('AUTO-EDITS')).toBe(false);
-    expect(isExecutionModeId('ask')).toBe(false);
     expect(isExecutionModeId('multitask')).toBe(false);
     expect(isExecutionModeId('')).toBe(false);
     expect(isExecutionModeId(null)).toBe(false);
@@ -74,17 +81,26 @@ describe('executionMode/registry', () => {
 
   it('falls back to the default mode when given an unknown id', () => {
     const fallback = getExecutionMode('not-a-mode');
-    expect(fallback.id).toBe('agent');
+    expect(fallback.id).toBe('ask');
 
     const empty = getExecutionMode(null);
-    expect(empty.id).toBe('agent');
+    expect(empty.id).toBe('ask');
 
     const undef = getExecutionMode(undefined);
-    expect(undef.id).toBe('agent');
+    expect(undef.id).toBe('ask');
   });
 });
 
 describe('executionMode/guards: tool allow-list per mode', () => {
+  it('Ask mode blocks every tool (chat-only)', () => {
+    expect(isToolAllowedForMode('ask', 'read_file')).toBe(false);
+    expect(isToolAllowedForMode('ask', 'write_file')).toBe(false);
+    expect(isToolAllowedForMode('ask', 'execute_command')).toBe(false);
+    expect(isToolAllowedForMode('ask', 'list_files')).toBe(false);
+    expect(isToolAllowedForMode('ask', 'browser_click')).toBe(false);
+    expect(isToolAllowedForMode('ask', 'ssh_exec')).toBe(false);
+  });
+
   it('Plan mode blocks every tool', () => {
     expect(isToolAllowedForMode('plan', 'read_file')).toBe(false);
     expect(isToolAllowedForMode('plan', 'write_file')).toBe(false);
@@ -110,7 +126,7 @@ describe('executionMode/guards: tool allow-list per mode', () => {
     expect(isToolAllowedForMode('agent', 'ssh_exec')).toBe(false);
   });
 
-  it('Bypass mode allows everything under the 4-mode registry', () => {
+  it('Bypass mode allows everything under the registry allow-list', () => {
     expect(isToolAllowedForMode('bypass', 'read_file')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'write_file')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'execute_command')).toBe(true);

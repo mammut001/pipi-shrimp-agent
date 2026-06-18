@@ -40,10 +40,17 @@ describe('ExecutionModeDropdown (structural)', () => {
     expect(html).toContain('executionMode.plan.label');
   });
 
+  it('renders the Ask mode label when Ask is the selected mode', () => {
+    const html = render('ask');
+    expect(html).toContain('executionMode.ask.label');
+  });
+
   it('falls back to the default mode label when given an unknown id', () => {
     const html = render('not-a-real-mode');
     const fallbackLabel = getDefaultExecutionMode().labelKey;
     expect(html).toContain(fallbackLabel);
+    // The default is now Ask, so the fallback should land on Ask.
+    expect(fallbackLabel).toBe('executionMode.ask.label');
   });
 
   it('honors the disabled prop on the trigger', () => {
@@ -54,10 +61,10 @@ describe('ExecutionModeDropdown (structural)', () => {
 
   it('lists every registered mode as a menu item with the right id', () => {
     // The component renders items when open; verify the registry we read
-    // from exposes all 4 ids in the expected order, and that the dropdown
+    // from exposes all 5 ids in the expected order, and that the dropdown
     // module's import surface references them.
     const ids: ExecutionModeId[] = EXECUTION_MODES.map((m) => m.id);
-    expect(ids).toEqual(['plan', 'debug', 'agent', 'bypass']);
+    expect(ids).toEqual(['ask', 'plan', 'debug', 'agent', 'bypass']);
     for (const id of ids) {
       // The registry exports a non-null profile for each id.
       const profile = getExecutionMode(id);
@@ -70,5 +77,12 @@ describe('ExecutionModeDropdown (structural)', () => {
     expect(bypass.isAdvanced).toBe(true);
     expect(bypass.requiresWarning).toBe(true);
     expect(bypass.riskLevel).toBe('dangerous');
+  });
+
+  it('marks Ask as the default mode (chat-only, no warning gate)', () => {
+    const ask = getExecutionMode('ask');
+    expect(ask.isDefault).toBe(true);
+    expect(ask.requiresWarning).toBe(false);
+    expect(ask.riskLevel).toBe('safe');
   });
 });

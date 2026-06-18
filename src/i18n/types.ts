@@ -306,6 +306,8 @@ export type TranslationKeys = {
   'workflow.executionMode': string;
   'executionMode.label': string;
   'executionMode.advancedSection': string;
+  'executionMode.ask.label': string;
+  'executionMode.ask.description': string;
   'executionMode.plan.label': string;
   'executionMode.plan.description': string;
   'executionMode.debug.label': string;

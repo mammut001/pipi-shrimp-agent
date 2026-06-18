@@ -184,9 +184,18 @@ export async function* runChatTurn(
       // not the overall round counter. This ensures retries don't prematurely
       // exhaust the API call budget.
       if (modelRound >= maxModelRounds) {
+        // AUDIT-FIX: stop with a user-actionable message that tells
+        // them which mode to use next time. Hitting this error is
+        // almost always caused by Ask-mode Q&A falling into an
+        // Agent/Bypass tool loop; nudging the user back to Ask (or to
+        // disable tool calls entirely) is the right next step.
         yield {
           type: 'error',
-          error: new Error(`Exceeded maximum model reasoning rounds (${maxModelRounds}). The conversation is too long or complex.`),
+          error: new Error(
+            `The agent exceeded its reasoning/tool loop limit (${maxModelRounds} rounds). `
+            + 'Try Ask mode for questions or Agent mode for tasks. '
+            + 'If the model keeps looping, switch execution mode and retry.',
+          ),
         };
         return;
       }
@@ -363,6 +372,26 @@ export async function* runChatTurn(
           content: allContent[index] ?? 'Error: no result returned for tool',
         })),
       );
+      // AUDIT-FIX: short-circuit if every tool in this batch failed.
+      // Without this, a permission-denied `wc -l` could be re-emitted
+      // by the model in Ask-mode Q&A, hit `rejected` again, and burn
+      // 25 model rounds before we yield the error to the user.
+      const allContentList = pendingToolCalls.map((_, index) => allContent[index] ?? 'Error: no result returned for tool');
+      const allFailed = allContentList.length > 0
+        && allContentList.every((content) => /^\s*(error|tool execution blocked|permission denied)/i.test(content));
+      if (allFailed && !options?.noTools) {
+        yield {
+          type: 'error',
+          error: withToolBudgetSummary(
+            new Error(
+              'Every tool call in the last round was rejected by the safety policy. '
+              + 'If this happened in Ask mode, switch to Agent or Bypass to run tools.',
+            ),
+            toolBudgetSummary,
+          ),
+        };
+        return;
+      }
       if (toolBudgetSummary.toolBudgetUsedRaw >= Math.max(0, maxToolBudget - toolBudgetReserve)) {
         reserveFinalResponseRound = true;
       }
@@ -403,7 +432,11 @@ export async function* runChatTurn(
       type: 'error',
       error: withToolBudgetSummary(
         new Error(
-          `Exceeded maximum tool rounds (${maxToolBudget}); tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; failed_calls=${toolBudgetSummary.failedCalls}; successful_calls=${toolBudgetSummary.successfulCalls}`,
+          `The agent exceeded its tool loop limit (${maxToolBudget} tool rounds). `
+          + `tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; `
+          + `failed_calls=${toolBudgetSummary.failedCalls}; `
+          + `successful_calls=${toolBudgetSummary.successfulCalls}. `
+          + 'Try Ask mode for questions or Agent mode for tasks.',
         ),
         toolBudgetSummary,
       ),
@@ -416,7 +449,11 @@ export async function* runChatTurn(
       type: 'error',
       error: withToolBudgetSummary(
         new Error(
-          `Exceeded maximum model rounds (${maxModelRounds}) before completing the turn; tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; failed_calls=${toolBudgetSummary.failedCalls}; successful_calls=${toolBudgetSummary.successfulCalls}`,
+          `The agent exceeded its reasoning/tool loop limit (${maxModelRounds} model rounds). `
+          + `tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; `
+          + `failed_calls=${toolBudgetSummary.failedCalls}; `
+          + `successful_calls=${toolBudgetSummary.successfulCalls}. `
+          + 'Try Ask mode for questions or Agent mode for tasks.',
         ),
         toolBudgetSummary,
       ),

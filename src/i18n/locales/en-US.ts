@@ -520,6 +520,8 @@ const enUS: TranslationKeys = {
   'workflow.executionMode': 'Execution Mode',
   'executionMode.label': 'Mode',
   'executionMode.advancedSection': 'Advanced',
+  'executionMode.ask.label': 'Ask',
+  'executionMode.ask.description': 'Chat only. No tool calls. Switch to Agent or Bypass to run tools.',
   'executionMode.plan.label': 'Plan',
   'executionMode.plan.description': 'Read-only. Produces a plan/checklist only. No file edits, no shell, no browser.',
   'executionMode.debug.label': 'Debug',

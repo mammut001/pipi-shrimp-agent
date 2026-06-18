@@ -74,6 +74,15 @@ pub struct ToolCallRequest {
     /// Optional backend-issued approval token bound to this exact request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_token: Option<String>,
+    /// Optional 5-mode execution mode id (ask / plan / debug / agent / bypass).
+    /// When set to "bypass", normal project-scoped tools skip the
+    /// confirmation gate (the hard safety hooks — dangerous-command /
+    /// path-validation — still run on the frontend). When set to "ask"
+    /// or "plan", the frontend blocks the request entirely before it
+    /// reaches the backend; this field is only consulted as defense
+    /// in depth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<String>,
 }
 
 /// Tool execution result

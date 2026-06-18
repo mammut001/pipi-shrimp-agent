@@ -74,6 +74,7 @@ pub async fn execute_single_tool(
         crate::claude::provider::ProviderCapabilities,
     >,
     #[allow(non_snake_case)] approvalToken: Option<String>,
+    #[allow(non_snake_case)] executionMode: Option<String>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<ToolCallResult, String> {
     let req = ToolCallRequest {
@@ -90,6 +91,7 @@ pub async fn execute_single_tool(
         api_format: apiFormat,
         provider_capabilities: providerCapabilities,
         approval_token: approvalToken,
+        execution_mode: executionMode,
     };
 
     let registry = state.0.lock().await;

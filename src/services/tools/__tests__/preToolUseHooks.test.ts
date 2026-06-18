@@ -67,4 +67,31 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
     );
     expect(browser.approved).toBe(true);
   });
+
+  it('Ask mode blocks every tool, including read_file / write_file / execute_command / browser_navigate', async () => {
+    for (const toolName of [
+      'read_file',
+      'write_file',
+      'execute_command',
+      'browser_navigate',
+      'ssh_exec',
+      'agent_tool',
+    ]) {
+      const result = await executionModeGuardCheck(
+        ctx({ executionMode: 'ask', toolName }),
+      );
+      expect(result.approved).toBe(false);
+      expect(result.error).toMatch(/Ask mode/i);
+      expect(result.blockedBy).toBe('permission-mode');
+    }
+  });
+
+  it('Ask mode blocks even when underlying permissionMode is bypass', async () => {
+    // The 6-mode outer guard wins over the 4-mode permissionMode
+    // when Ask mode is active — this is the chat-only guarantee.
+    const result = await executionModeGuardCheck(
+      ctx({ executionMode: 'ask', permissionMode: 'bypass', toolName: 'read_file' }),
+    );
+    expect(result.approved).toBe(false);
+  });
 });

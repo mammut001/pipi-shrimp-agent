@@ -308,6 +308,30 @@ function parseMetricValue(value: unknown): { value: number | null; error?: strin
   };
 }
 
+/**
+ * Resolve `metricValue` from a candidate object, distinguishing an explicit
+ * `null` (which is valid for FAILED results with a failReason) from a missing
+ * key. We must not use `metricValue ?? metric_value` because the `??` operator
+ * would treat `null` as missing and silently substitute the snake_case
+ * alternative — so a JSON object that intentionally sets `metricValue: null`
+ * would fall through and the parser would report
+ * "Invalid structured result metricValue \"<missing>\"".
+ */
+function resolveCandidateMetricValue(candidate: Record<string, unknown>): {
+  value: unknown;
+  present: boolean;
+} {
+  const hasCamel = Object.prototype.hasOwnProperty.call(candidate, 'metricValue');
+  const hasSnake = Object.prototype.hasOwnProperty.call(candidate, 'metric_value');
+  if (hasCamel) {
+    return { value: candidate.metricValue, present: true };
+  }
+  if (hasSnake) {
+    return { value: candidate.metric_value, present: true };
+  }
+  return { value: undefined, present: false };
+}
+
 function extractBalancedJsonObjects(text: string): string[] {
   const matches: string[] = [];
   let depth = 0;
@@ -438,7 +462,8 @@ function normalizeParsedResult(
     };
   }
 
-  const metric = parseMetricValue(candidate.metricValue ?? candidate.metric_value);
+  const resolvedMetric = resolveCandidateMetricValue(candidate);
+  const metric = parseMetricValue(resolvedMetric.value);
   if (metric.error) {
     return {
       parsed: null,
@@ -778,12 +803,13 @@ function buildRateLimitRetryNarrative(input: {
 function buildIterationRecoveryActions(options: {
   status: ExperimentStatus;
   hasLogs: boolean;
-}): Array<{ type: 'retry_failed_phase' | 'retry_iteration' | 'switch_provider' | 'open_raw_request_summary' | 'open_logs' | 'abort_run'; supported: boolean; label?: string; reason?: string }> {
+  failReason?: string;
+}): Array<{ type: 'retry_failed_phase' | 'retry_iteration' | 'switch_provider' | 'open_raw_request_summary' | 'open_logs' | 'abort_run' | 'increase_tool_budget'; supported: boolean; label?: string; reason?: string }> {
   if (options.status !== 'FAILED') {
     return [];
   }
 
-  return [
+  const actions: Array<{ type: 'retry_failed_phase' | 'retry_iteration' | 'switch_provider' | 'open_raw_request_summary' | 'open_logs' | 'abort_run' | 'increase_tool_budget'; supported: boolean; label?: string; reason?: string }> = [
     {
       type: 'open_raw_request_summary',
       supported: true,
@@ -796,6 +822,27 @@ function buildIterationRecoveryActions(options: {
       reason: options.hasLogs ? undefined : 'No log artifact is available for this iteration.',
     },
   ];
+
+  if (isToolBudgetExhaustedReason(options.failReason)) {
+    actions.push({
+      type: 'increase_tool_budget',
+      supported: true,
+      label: 'Increase tool budget or fix tool permission/confirmation settings.',
+      reason: 'This iteration stopped because the AutoResearch tool budget ran out before evaluation completed. Increase the tool-round budget for the active agent config, or fix any tool permission/confirmation settings so reads and writes no longer require manual approval.',
+    });
+  }
+
+  return actions;
+}
+
+function isToolBudgetExhaustedReason(failReason: string | undefined): boolean {
+  if (!failReason) {
+    return false;
+  }
+  const normalized = failReason.trim().toLowerCase();
+  return normalized === 'tool_budget_exhausted'
+    || normalized.includes('tool budget exhausted')
+    || normalized.includes('budget exhausted before evaluation');
 }
 
 async function hydrateSessionFromDisk(cfg: SshConfig, sessionId: string, direction: 'lower' | 'higher'): Promise<void> {

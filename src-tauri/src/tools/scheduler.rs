@@ -261,6 +261,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
             ToolCallRequest {
                 id: "2".into(),
@@ -276,6 +277,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
             ToolCallRequest {
                 id: "3".into(),
@@ -291,6 +293,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);
@@ -321,6 +324,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
             ToolCallRequest {
                 id: "2".into(),
@@ -336,6 +340,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
             ToolCallRequest {
                 id: "3".into(),
@@ -351,6 +356,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
             ToolCallRequest {
                 id: "4".into(),
@@ -366,6 +372,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);
@@ -396,6 +403,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
             ToolCallRequest {
                 id: "2".into(),
@@ -411,6 +419,7 @@ mod tests {
                 api_format: None,
                 provider_capabilities: None,
                 approval_token: None,
+                execution_mode: None,
             },
         ];
         let batches = partition_tool_calls(&requests, &reg);

@@ -520,6 +520,8 @@ const zhCN: TranslationKeys = {
   'workflow.executionMode': '执行模式',
   'executionMode.label': '模式',
   'executionMode.advancedSection': '高级',
+  'executionMode.ask.label': '问答',
+  'executionMode.ask.description': '仅聊天，不调用任何工具。需要执行工具请切换到智能体或绕过。',
   'executionMode.plan.label': '规划',
   'executionMode.plan.description': '只读。仅输出计划/清单，不编辑文件、不执行 shell、不调用浏览器。',
   'executionMode.debug.label': '调试',

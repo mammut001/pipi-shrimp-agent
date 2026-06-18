@@ -19,6 +19,7 @@ import type { PermissionMode } from '@/services/tools/toolExecutionPolicy';
 import type { TranslationKeys } from '@/i18n/types';
 
 export type ExecutionModeId =
+  | 'ask'
   | 'plan'
   | 'debug'
   | 'agent'
@@ -50,7 +51,7 @@ export interface ExecutionModeProfile {
   /** Localized description key. Resolved with t('executionMode.<id>.description') */
   descriptionKey: keyof TranslationKeys;
   /** Visual icon name. The dropdown renders a switch on this. */
-  icon: 'plan' | 'bug' | 'agent' | 'bypass';
+  icon: 'plan' | 'bug' | 'agent' | 'bypass' | 'ask';
   /** Risk level drives color, ordering, and warning gates. */
   riskLevel: RiskLevel;
   /** The 4-mode PermissionMode that tool hooks will see. */
@@ -78,6 +79,25 @@ export interface ExecutionModeProfile {
 }
 
 export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
+  {
+    id: 'ask',
+    labelKey: 'executionMode.ask.label',
+    descriptionKey: 'executionMode.ask.description',
+    icon: 'ask',
+    riskLevel: 'safe',
+    // Ask is chat-only; we still map to 'plan-only' so the existing
+    // 4-mode PermissionMode path blocks tool execution before the
+    // 6-mode outer guard runs.
+    permissionMode: 'plan-only',
+    systemPromptSuffix: '',
+    allowedToolPolicy: 'none',
+    approvalPolicy: 'always-ask',
+    // Ask is the default for new chats — simple Q&A must never enter
+    // Agent/Bypass tool loops.
+    isDefault: true,
+    requiresWarning: false,
+    isAdvanced: false,
+  },
   {
     id: 'plan',
     labelKey: 'executionMode.plan.label',
@@ -115,14 +135,11 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     riskLevel: 'elevated',
     // 'auto-edits' is the closest existing behavior to a normal autonomous
     // agent: edit tools auto-approve, destructive commands still ask.
-    // Agent is the default for new sessions — long-running goal-driven
-    // multi-step work is the main use case after the Ask/Multitask
-    // modes were retired in favor of the goal evaluator.
     permissionMode: 'auto-edits',
     systemPromptSuffix: '',
     allowedToolPolicy: 'shell',
     approvalPolicy: 'ask-on-risky',
-    isDefault: true,
+    isDefault: false,
     requiresWarning: false,
     isAdvanced: false,
   },

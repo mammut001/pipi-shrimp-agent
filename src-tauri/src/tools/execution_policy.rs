@@ -378,6 +378,25 @@ fn evaluate_command_policy(
         )));
     }
 
+    // Bypass mode shortcut: for AssistantToolCall source, allow normal
+    // project-scoped commands without confirmation. Dangerous commands
+    // are still rejected by `validate_command` (called by the executor)
+    // and by the frontend `dangerousCommandCheck` hook before this
+    // ever runs. Network/long-running flags only trigger
+    // require_confirmation, which the frontend now resolves locally
+    // without opening the modal.
+    let is_bypass = req
+        .execution_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case("bypass"))
+        .unwrap_or(false);
+
+    if is_bypass && matches!(req.source, ToolExecutionSource::AssistantToolCall) {
+        return Ok(allow(None));
+    }
+
     let uses_network = command_uses_network(command);
     let long_running = command_is_long_running(command);
 
@@ -700,6 +719,7 @@ mod tests {
             api_format: None,
             provider_capabilities: None,
             approval_token: None,
+            execution_mode: None,
         }
     }
 
@@ -783,6 +803,76 @@ mod tests {
         let replay_error = enforce_request_policy(&request, &args, Some("session-1"))
             .expect_err("approval token should be single-use");
         assert!(replay_error.to_string().contains("approval"));
+    }
+
+    #[test]
+    fn bypass_assistant_execute_command_allows_normal_command_without_confirmation() {
+        // Bypass mode shortcut: a benign Assistant tool call command
+        // like `wc -l` must preview as `allowed` so the frontend can
+        // skip the permission modal entirely. The frontend still runs
+        // the hard safety hooks (dangerousCommandCheck /
+        // pathValidationCheck) before this preview fires.
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.execution_mode = Some("bypass".to_string());
+        request.arguments = serde_json::json!({
+            "command": "wc -l src/services/autoresearch/loopEngine.ts",
+            "cwd": "/tmp/project"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({
+                "command": "wc -l src/services/autoresearch/loopEngine.ts",
+                "cwd": "/tmp/project"
+            }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(preview.decision, "allowed");
+        assert!(preview.approval_token.is_none());
+
+        // And enforce must also pass without a token.
+        enforce_request_policy(
+            &request,
+            &serde_json::json!({
+                "command": "wc -l src/services/autoresearch/loopEngine.ts",
+                "cwd": "/tmp/project"
+            }),
+            Some("session-1"),
+        )
+        .expect("bypass execution should not require approval token");
+    }
+
+    #[test]
+    fn bypass_does_not_relax_non_assistant_sources() {
+        // Bypass must only affect AssistantToolCall — other sources
+        // keep their existing strict policy.
+        let mut request = make_request("execute_command");
+        request.execution_mode = Some("bypass".to_string());
+        // Source is HeadlessAgent from make_request.
+        request.arguments = serde_json::json!({
+            "command": "pwd",
+            "cwd": "/tmp/project"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({
+                "command": "pwd",
+                "cwd": "/tmp/project"
+            }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(
+            preview.decision, "awaiting_confirmation",
+            "Bypass only relaxes AssistantToolCall; HeadlessAgent still requires approval"
+        );
     }
 
     #[test]

@@ -94,11 +94,19 @@ export function canAutoApproveTool(
   toolName: string,
 ): boolean {
   if (permissionMode === 'bypass') {
-    return !isHighRiskToolName(toolName)
-      && !isSshTool(toolName)
-      && !isMcpTool(toolName)
-      && !isBrowserMutationTool(toolName)
-      && toolName !== 'agent_tool';
+    // Bypass auto-approves normal project-scoped tools (read, write,
+    // shell, terminal). It does NOT auto-approve tools that touch
+    // remote systems, the browser DOM, external MCP servers, or
+    // agent-tool spawning — those keep their existing confirmation
+    // gate because the hard safety hooks (dangerous-command /
+    // path-validation) cannot express "is this safe" for them
+    // generically. agent_tool in particular can spin up sub-agents
+    // and team runs that the user should still explicitly approve.
+    if (isSshTool(toolName)) return false;
+    if (isMcpTool(toolName)) return false;
+    if (isBrowserMutationTool(toolName)) return false;
+    if (toolName === 'agent_tool') return false;
+    return true;
   }
 
   if (permissionMode !== 'auto-edits') {

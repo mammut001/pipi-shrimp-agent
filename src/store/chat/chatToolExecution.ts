@@ -158,6 +158,7 @@ async function previewBackendToolPolicy(
   activeSessionId: string,
   workDir: string | null,
   deps: ToolBatchExecutionDeps,
+  executionModeId?: string,
 ): Promise<ToolPolicyPreviewResult> {
   return deps.invoke<ToolPolicyPreviewResult>('preview_tool_policy', {
     toolCall: {
@@ -167,6 +168,7 @@ async function previewBackendToolPolicy(
       workDir,
       source: 'assistant_tool_call',
       approvalToken: null,
+      executionMode: executionModeId ?? null,
     },
     sessionId: activeSessionId,
   });
@@ -288,6 +290,16 @@ async function executeConcurrentTools(
       permissionMode,
       executionMode: executionModeId,
       requestPermission: async (request) => {
+        // Bypass: auto-approve normal project-scoped tools without
+        // showing the permission modal. Hard safety blocks still
+        // happen upstream via preToolUseHooks, and the backend
+        // `rejected` decision already short-circuits before this
+        // callback fires. SSH / browser / MCP tools still fall
+        // through to the modal because canAutoApproveTool returns
+        // false for them.
+        if (permissionMode === 'bypass' && canAutoApproveTool(permissionMode, request.name)) {
+          return true;
+        }
         uiStore.updateTaskStep(request.id, 'awaiting_confirmation');
         markSessionToolStatus(activeSessionId, request.id, request.name, 'awaiting_confirmation', set, get);
         const approved = await uiStore.waitForPermission({
@@ -389,6 +401,23 @@ async function resolveSerialToolPermission(
     approvalToken?: string | null;
   },
 ): Promise<boolean> {
+  // Bypass auto-approves normal project-scoped tools even when the
+  // backend preview asks for confirmation (e.g. `curl` in a benign
+  // command). The hard safety hooks (dangerous-command,
+  // path-validation) have already run before we get here, so we know
+  // the request isn't a critical destructive command or an
+  // out-of-project write. We only fall through to the UI prompt for
+  // SSH / browser / MCP tools which `canAutoApproveTool` still
+  // rejects, and for tools that the policy preview explicitly
+  // rejected (caller already handled `rejected` separately).
+  if (permissionMode === 'bypass') {
+    if (canAutoApproveTool(permissionMode, tool.name)) {
+      return true;
+    }
+    // SSH / browser / MCP fall through to the user-facing modal —
+    // they keep their existing confirmation gate even in Bypass.
+  }
+
   if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name)) {
     return true;
   }
@@ -698,7 +727,7 @@ async function executeSerialTool(
   }
   let preview: ToolPolicyPreviewResult;
   try {
-    preview = await previewBackendToolPolicy(tool, effectiveArgs, activeSessionId, workDir, deps);
+    preview = await previewBackendToolPolicy(tool, effectiveArgs, activeSessionId, workDir, deps, executionModeId);
   } catch (error) {
     toolResultContent = `Error: policy preview failed: ${error instanceof Error ? error.message : String(error)}`;
     uiStore.updateTaskStep(tool.id, 'failed');
@@ -724,9 +753,17 @@ async function executeSerialTool(
   }
 
   const requiresExplicitApproval = Boolean(hookResult.requiresConfirmation) || preview.decision === 'awaiting_confirmation';
-  if (requiresExplicitApproval) {
+  // In Bypass mode for normal project-scoped tools we still want to
+  // mark the tool as auto-approved (not as "awaiting user input") so
+  // the UI doesn't render a yellow inline approval card behind the
+  // (now-skipped) permission modal.
+  const bypassAutoApproves = permissionMode === 'bypass'
+    && canAutoApproveTool(permissionMode, tool.name);
+  if (requiresExplicitApproval && !bypassAutoApproves) {
     uiStore.updateTaskStep(tool.id, 'awaiting_confirmation');
     markSessionToolStatus(activeSessionId, tool.id, tool.name, 'awaiting_confirmation', set, get);
+  }
+  if (requiresExplicitApproval) {
     approvalToken = preview.approvalToken ?? null;
   }
 
@@ -754,7 +791,7 @@ async function executeSerialTool(
     };
   }
 
-  if (requiresExplicitApproval) {
+  if (requiresExplicitApproval && !bypassAutoApproves) {
     uiStore.updateTaskStep(tool.id, 'approved');
     markSessionToolStatus(activeSessionId, tool.id, tool.name, 'approved', set, get);
   }
@@ -782,6 +819,7 @@ async function executeSerialTool(
         workDir,
         source: 'assistant_tool_call',
         approvalToken,
+        executionMode: executionModeId ?? null,
       });
       toolResultContent = nativeResult.content;
       toolDidFail = Boolean(nativeResult.is_error);

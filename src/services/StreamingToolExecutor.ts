@@ -20,6 +20,7 @@ import {
 } from '@/services/tools/autoresearchBootstrap';
 import {
   DEFAULT_TOOL_EXECUTION_SOURCE,
+  canAutoApproveTool,
   type ToolPolicyPreviewResult,
   type PermissionMode,
   type ToolExecutionSource,
@@ -398,6 +399,7 @@ export class StreamingToolExecutor {
           source,
           allowedTools: allowedTools?.length ? allowedTools : null,
           approvalToken: null,
+          executionMode: executionMode ?? null,
         },
         sessionId,
       });
@@ -413,6 +415,25 @@ export class StreamingToolExecutor {
       }
 
       if (preview.decision === 'awaiting_confirmation') {
+        // Bypass mode: auto-approve normal project-scoped tools so the
+        // frontend doesn't open a permission modal for things like
+        // `wc -l src/foo.ts`. SSH / browser / MCP tools still fall
+        // through to the confirmation gate because `canAutoApproveTool`
+        // returns false for them even in Bypass. Hard safety blocks
+        // (dangerous-command / path-validation) have already run via
+        // preToolUseHooks upstream, so we know the request isn't
+        // destructive.
+        if (
+          permissionMode === 'bypass'
+          && canAutoApproveTool('bypass', request.name)
+        ) {
+          executableRequests.push({
+            ...request,
+            approvalToken: preview.approvalToken,
+          });
+          continue;
+        }
+
         if (!requestPermission) {
           prevalidatedResults.push(buildPolicyErrorResult(
             request,
@@ -463,6 +484,7 @@ export class StreamingToolExecutor {
       workDir,
       source,
       allowedTools,
+      executionMode,
     );
     const frontendResults = await this.executeFrontendOnlyBatch(frontendOnlyRequests, reportProgress, workDir);
 
@@ -528,6 +550,7 @@ export class StreamingToolExecutor {
     workDir?: string,
     source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
     allowedTools?: string[],
+    executionMode?: string,
   ): Promise<{ results: ToolResult[]; errors: ToolResult[] }> {
     if (toolRequests.length === 0) {
       return { results: [], errors: [] };
@@ -555,6 +578,7 @@ export class StreamingToolExecutor {
             provider,
             apiFormat: activeConfig?.apiFormat || null,
             providerCapabilities,
+            executionMode: executionMode ?? null,
           })),
           sessionId,
         }),
