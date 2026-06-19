@@ -20,7 +20,9 @@ import { BootstrapQuickStartCards } from './BootstrapQuickStartCards';
 import { BootstrapProgressRail } from './BootstrapProgressRail';
 import { runSshExec, runSshUpload } from '@/tools/impl/SshTool';
 import { shellEscapePath } from '@/utils/remoteExec';
+import { shouldAutoOpenAutoResearchTerminal } from '@/utils/windowsShellProfile';
 import { invoke } from '@tauri-apps/api/core';
+import { useSettingsStore } from '@/store';
 
 interface BootstrapChatViewProps {
   onReady?: () => void;
@@ -78,6 +80,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   const currentStep = useBootstrapPlanStore((state) => state.currentStep);
   const warnings = useBootstrapPlanStore((state) => state.warnings);
   const readyResult = useBootstrapPlanStore((state) => state.readyResult);
+  const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
   const noteTool = useBootstrapPlanStore((state) => state.noteTool);
   const markMetricsStep = useBootstrapPlanStore((state) => state.markMetricsStep);
   const setWarnings = useBootstrapPlanStore((state) => state.setWarnings);
@@ -206,10 +209,16 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         setPrimaryMetric?: (value: string) => void;
       }).setPrimaryMetric?.(result.plan.primaryMetric);
 
-      autoResearchState.openTerminalPanel(
-        `autoresearch-terminal-${Date.now()}`,
-        started.resolvedConfig.mode === 'local' ? started.resolvedConfig.remoteWorkDir : '',
-      );
+      if (shouldAutoOpenAutoResearchTerminal({
+        selection: windowsShellProfile,
+        mode: started.resolvedConfig.mode,
+        workDir: started.resolvedConfig.remoteWorkDir,
+      })) {
+        autoResearchState.openTerminalPanel(
+          `autoresearch-terminal-${Date.now()}`,
+          started.resolvedConfig.mode === 'local' ? started.resolvedConfig.remoteWorkDir : '',
+        );
+      }
 
       const workflowState = useWorkflowStore.getState();
       if (!workflowState.getCurrentInstance()) {
@@ -238,7 +247,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         metric: result.plan.primaryMetric,
       }));
     }
-  }, [onReady, sshConfig]);
+  }, [onReady, sshConfig, windowsShellProfile]);
 
   const handleToolResult = useCallback(async (name: string, result: string) => {
     if (name === 'baseline_extract') {

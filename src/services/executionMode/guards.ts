@@ -58,6 +58,10 @@ const FILE_WRITE_TOOLS = new Set([
   'delete_file',
 ]);
 
+function dedupeTools(tools: Iterable<string>): string[] {
+  return [...new Set(tools)];
+}
+
 /**
  * Translate the 5-mode id → the PermissionMode that preToolUseHooks
  * is already designed to consume. (In this codebase the 5-mode dropdown
@@ -227,6 +231,49 @@ export function isToolAllowedForProfile(
       return true;
     default:
       return false;
+  }
+}
+
+/**
+ * Model-facing allowlist for the active execution mode.
+ *
+ * Plan mode already constrains the tool catalog so the model never sees
+ * write/shell tools. Apply the same idea to Debug and Agent to avoid
+ * first-round failures where the model picks browser/MCP/agent tools that the
+ * outer execution-mode guard will reject anyway.
+ *
+ * Returns:
+ * - `[]` for Ask (no tools)
+ * - a concrete allowlist for Plan / Debug / Agent
+ * - `undefined` for Bypass, which intentionally keeps the full catalog
+ */
+export function getAllowedToolsForMode(
+  modeId: ExecutionModeId | string | null | undefined,
+): string[] | undefined {
+  const profile = getExecutionMode(modeId);
+
+  switch (profile.allowedToolPolicy) {
+    case 'none':
+      return [];
+    case 'plan':
+      return [...PLAN_MODE_ALLOWED_TOOLS];
+    case 'read-only':
+      return dedupeTools(READ_ONLY_TOOLS);
+    case 'edit':
+      return dedupeTools([
+        ...READ_ONLY_TOOLS,
+        ...FILE_WRITE_TOOLS,
+      ]);
+    case 'shell':
+      return dedupeTools([
+        ...READ_ONLY_TOOLS,
+        ...FILE_WRITE_TOOLS,
+        ...SHELL_TOOLS,
+      ]);
+    case 'full':
+      return undefined;
+    default:
+      return undefined;
   }
 }
 

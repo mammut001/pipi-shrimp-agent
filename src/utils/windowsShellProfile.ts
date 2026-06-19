@@ -203,6 +203,23 @@ export function buildShellProfilePromptContext(input: {
   };
 }
 
+export function shouldAutoOpenAutoResearchTerminal(input: {
+  selection: WindowsShellProfile;
+  mode: 'local' | 'ssh';
+  workDir?: string | null;
+}): boolean {
+  if (input.mode !== 'local') {
+    return true;
+  }
+
+  const resolution = resolveWindowsShellProfile(input.selection, input.workDir);
+  if (!resolution.isWindows) {
+    return true;
+  }
+
+  return resolution.resolved !== 'wsl';
+}
+
 export function withWindowsShellProfileArgs(
   toolName: string,
   args: Record<string, unknown>,

@@ -236,7 +236,8 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 - Per-iteration code lives in: ${iterationCodeDir} (already a clean git checkout)
 - Modify run_experiment.py in ${iterationCodeDir}, NOT in the original experiment dir
 - Run the experiment from ${iterationCodeDir} using "${environmentSummary.recommendedRunCommand}"
-- Write hypothesis.md, metrics.json, diff.patch into ${runDir.iterDir}/ (one level above code/)
+- Write hypothesis.md and diff.patch into ${runDir.iterDir}/ (one level above code/)
+- Write metrics.json to ${runDir.metricsPath}. If your experiment script naturally emits ./metrics.json from ${iterationCodeDir}, the host will also accept that location as a fallback.
 - The host will diff ${iterationCodeDir} vs the parent run's baseline to produce diff.patch
 - Do NOT touch the original experiment directory directly
 
@@ -647,7 +648,19 @@ async function parseIterationMetrics(
   metricDirection: 'lower' | 'higher',
   agentOutput: string,
 ): Promise<ParsedIterationMetricsResult> {
-  const metricsContent = await readTargetText(cfg, runDir.metricsPath);
+  const metricsCandidates = [
+    runDir.metricsPath,
+    `${runDir.codeDir}/metrics.json`,
+  ].filter((value, index, list) => list.indexOf(value) === index);
+
+  let metricsContent: string | null = null;
+  for (const candidatePath of metricsCandidates) {
+    metricsContent = await readTargetText(cfg, candidatePath);
+    if (metricsContent) {
+      break;
+    }
+  }
+
   if (metricsContent) {
     try {
       const raw = JSON.parse(metricsContent) as unknown;

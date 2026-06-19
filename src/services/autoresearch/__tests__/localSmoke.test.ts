@@ -27,7 +27,9 @@ jest.mock('../platformGuard', () => ({
 }));
 
 import { useAutoResearchStore } from '@/store/autoresearchStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
+import { getAutoResearchTestTmpDir } from './tmpRoot';
 import { startExperimentLoop } from '../loopEngine';
 import { parseMetricsArtifactPayload } from '../metricsSchema';
 import { getCurrentRunDir } from '../terminalRunner';
@@ -66,12 +68,30 @@ async function ensureExperimentFixture(experimentDir: string): Promise<void> {
   });
 }
 
-jest.setTimeout(30000);
+const LOCAL_SMOKE_TEST_TIMEOUT_MS = Number.parseInt(
+  process.env.AUTORESEARCH_LOCAL_SMOKE_TEST_TIMEOUT_MS ?? '120000',
+  10,
+);
 
-const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+// Windows + WSL local smoke can take well over 30s because the loop
+// creates git snapshots, shells through WSL, and rebuilds artifacts.
+jest.setTimeout(Number.isFinite(LOCAL_SMOKE_TEST_TIMEOUT_MS) ? LOCAL_SMOKE_TEST_TIMEOUT_MS : 120000);
+
+const PROJECT_TMP_DIR = getAutoResearchTestTmpDir();
 
 function projectTmpDir(): string {
   return PROJECT_TMP_DIR;
+}
+
+function toLocalFsPath(targetPath: string): string {
+  const normalized = targetPath.replace(/\\/g, '/');
+  const wslMatch = normalized.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
+  if (!wslMatch) {
+    return targetPath;
+  }
+  const drive = wslMatch[1].toUpperCase();
+  const rest = wslMatch[2].replace(/\//g, '\\');
+  return `${drive}:\\${rest}`;
 }
 
 describe('local AutoResearch smoke', () => {
@@ -80,6 +100,7 @@ describe('local AutoResearch smoke', () => {
   beforeEach(async () => {
     tempRoot = null;
     installLocalInvokeMock(mockInvoke);
+    useSettingsStore.setState({ windowsShellProfile: 'wsl' });
     mockInvoke.mockClear();
     mockLogExperiment.mockClear();
     mockNotifier.onExperimentComplete.mockClear();
@@ -155,8 +176,8 @@ describe('local AutoResearch smoke', () => {
         throw new Error('run dir not set');
       }
 
-      await fs.writeFile(runDir.hypothesisPath, `${validMetrics.hypothesis}\n`, 'utf8');
-      await fs.writeFile(runDir.metricsPath, JSON.stringify(validMetrics, null, 2), 'utf8');
+      await fs.writeFile(toLocalFsPath(runDir.hypothesisPath), `${validMetrics.hypothesis}\n`, 'utf8');
+      await fs.writeFile(toLocalFsPath(runDir.metricsPath), JSON.stringify(validMetrics, null, 2), 'utf8');
       return JSON.stringify(validMetrics);
     });
 
@@ -176,8 +197,11 @@ describe('local AutoResearch smoke', () => {
       primaryMetric: 'cv_accuracy',
       direction: 'higher' as const,
       schemaVersion: 1 as const,
-      timestamp: '2026-05-15T00:00:00.000Z',
-      generator: 'agent' as const,
+      timestamp: '2026-05-15T00:00:01.234Z',
+      generator: 'loop_engine' as const,
+      durationMs: 1234,
+      startedAt: '2026-05-15T00:00:00.000Z',
+      finishedAt: '2026-05-15T00:00:01.234Z',
     };
     const invalidParse = parseMetricsArtifactPayload(invalidMetrics, {
       expectedSessionId: sessionId,
@@ -206,7 +230,7 @@ describe('local AutoResearch smoke', () => {
     expect(run?.status).toBe('completed');
     expect(writtenMetrics).toContain('"metricValue": 0.9751');
     expect(invalidParse.value).toBeNull();
-    expect(invalidParse.error).toContain('Current AutoResearch uses sessionId as runId.');
+    expect(invalidParse.error).toContain('Current AutoResearch uses sessionId as runId');
     expect(failedArtifact.error).toBeUndefined();
     expect(failedArtifact.value?.status).toBe('FAILED');
     expect(failedArtifact.value?.failReason).toBe('synthetic smoke failure');

@@ -8,6 +8,7 @@ import {
   normalizePathForExternalOpen,
   normalizePathForWindowsShellSelection,
   resolveWindowsShellProfile,
+  shouldAutoOpenAutoResearchTerminal,
   withWindowsShellProfileArgs,
 } from '@/utils/windowsShellProfile';
 
@@ -70,5 +71,25 @@ describe('windowsShellProfile utilities', () => {
     expect(
       applyWindowsShellProfileToArgsJson('execute_command', '{"command":"npm test"}', 'powershell'),
     ).toBe('{"command":"npm test","windowsShellProfile":"powershell"}');
+  });
+
+  it('skips auto-opening the AutoResearch terminal for local WSL runs on Windows', () => {
+    expect(shouldAutoOpenAutoResearchTerminal({
+      selection: 'wsl',
+      mode: 'local',
+      workDir: '/mnt/d/WSL/Ubuntu/pipishrimp/.tmp/autoresearch-wsl-smoke/experiment',
+    })).toBe(false);
+
+    expect(shouldAutoOpenAutoResearchTerminal({
+      selection: 'powershell',
+      mode: 'local',
+      workDir: 'D:\\WSL\\Ubuntu\\pipishrimp',
+    })).toBe(true);
+
+    expect(shouldAutoOpenAutoResearchTerminal({
+      selection: 'wsl',
+      mode: 'ssh',
+      workDir: '/remote/workdir',
+    })).toBe(true);
   });
 });

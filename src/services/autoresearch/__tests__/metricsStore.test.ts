@@ -1,7 +1,8 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { getAutoResearchTestTmpDir } from './tmpRoot';
 
-const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+const PROJECT_TMP_DIR = getAutoResearchTestTmpDir();
 
 function projectTmpDir(): string {
   return PROJECT_TMP_DIR;

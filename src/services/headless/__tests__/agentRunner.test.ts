@@ -230,6 +230,7 @@ describe('runHeadlessAgentTurn', () => {
       expect.objectContaining({
         allowedTools: ['ssh_exec'],
       }),
+      undefined,
     );
     expect(resolveAll).toHaveBeenCalledWith([
       {
@@ -373,6 +374,103 @@ describe('runHeadlessAgentTurn', () => {
     );
   });
 
+  it('defaults AutoResearch headless turns to bypass permission mode', async () => {
+    const resolveAll = jest.fn();
+    mockRunChatTurn.mockReturnValue(
+      createAsyncGenerator([
+        {
+          type: 'tool_batch_request',
+          tools: [
+            { id: 'tool-1', name: 'execute_command', arguments: '{"command":"python3 run_experiment.py"}' },
+          ],
+          _resolveAll: resolveAll,
+        },
+        {
+          type: 'turn_complete',
+          tokenUsage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ]),
+    );
+
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+    await runHeadlessAgentTurn({
+      sessionId: 'session-autoresearch-bypass',
+      initialMessages: [{ role: 'user', content: 'Run one AutoResearch step' }],
+      systemPrompt: 'system prompt',
+      toolExecutionSource: 'autoresearch_phase',
+    });
+
+    expect(mockExecuteBatch).toHaveBeenCalledWith(
+      [
+        {
+          id: 'tool-1',
+          name: 'execute_command',
+          arguments: { command: 'python3 run_experiment.py' },
+        },
+      ],
+      expect.objectContaining({
+        sessionId: 'session-autoresearch-bypass',
+        source: 'autoresearch_phase',
+        permissionMode: 'bypass',
+      }),
+    );
+    const [bypassResults] = resolveAll.mock.calls[0] ?? [];
+    expect(bypassResults?.[0]?.content).toBe('file contents');
+  });
+
+  it('respects an explicit permission mode override for headless turns', async () => {
+    const resolveAll = jest.fn();
+    mockRunChatTurn.mockReturnValue(
+      createAsyncGenerator([
+        {
+          type: 'tool_batch_request',
+          tools: [
+            { id: 'tool-1', name: 'read_file', arguments: '{"path":"README.md"}' },
+          ],
+          _resolveAll: resolveAll,
+        },
+        {
+          type: 'turn_complete',
+          tokenUsage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          },
+        },
+      ]),
+    );
+
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+    await runHeadlessAgentTurn({
+      sessionId: 'session-explicit-standard',
+      initialMessages: [{ role: 'user', content: 'Read one file' }],
+      systemPrompt: 'system prompt',
+      toolExecutionSource: 'autoresearch_phase',
+      permissionMode: 'standard',
+    });
+
+    expect(mockExecuteBatch).toHaveBeenCalledWith(
+      [
+        {
+          id: 'tool-1',
+          name: 'read_file',
+          arguments: { path: 'README.md' },
+        },
+      ],
+      expect.objectContaining({
+        sessionId: 'session-explicit-standard',
+        source: 'autoresearch_phase',
+        permissionMode: 'standard',
+      }),
+    );
+    const [standardResults] = resolveAll.mock.calls[0] ?? [];
+    expect(standardResults?.[0]?.content).toBe('file contents');
+  });
+
   it('rejects ssh_exec when the run is restricted to the local AutoResearch lane', async () => {
     const resolveAll = jest.fn();
     mockRunChatTurn.mockReturnValue(
@@ -405,12 +503,16 @@ describe('runHeadlessAgentTurn', () => {
     });
 
     expect(mockExecuteBatch).not.toHaveBeenCalled();
-    expect(resolveAll).toHaveBeenCalledWith([
-      expect.objectContaining({
-        id: 'tool-1',
-        content: expect.stringContaining('Tool "ssh_exec" is disabled for this AutoResearch run.'),
-      }),
-    ]);
+    const [localRejectResults] = resolveAll.mock.calls[0] ?? [];
+    expect(localRejectResults).toHaveLength(1);
+    expect(localRejectResults?.[0]?.id).toBe('tool-1');
+    const localRejectPayload = JSON.parse(localRejectResults?.[0]?.content ?? '{}');
+    expect(localRejectPayload).toMatchObject({
+      error: true,
+      error_kind: 'tool_disabled',
+      tool: 'ssh_exec',
+    });
+    expect(localRejectPayload.message).toContain('Tool "ssh_exec" is disabled for this AutoResearch run.');
   });
 
   it('rejects execute_command when the run is restricted to the SSH AutoResearch lane', async () => {
@@ -445,12 +547,16 @@ describe('runHeadlessAgentTurn', () => {
     });
 
     expect(mockExecuteBatch).not.toHaveBeenCalled();
-    expect(resolveAll).toHaveBeenCalledWith([
-      expect.objectContaining({
-        id: 'tool-1',
-        content: expect.stringContaining('Tool "execute_command" is disabled for this AutoResearch run.'),
-      }),
-    ]);
+    const [sshRejectResults] = resolveAll.mock.calls[0] ?? [];
+    expect(sshRejectResults).toHaveLength(1);
+    expect(sshRejectResults?.[0]?.id).toBe('tool-1');
+    const sshRejectPayload = JSON.parse(sshRejectResults?.[0]?.content ?? '{}');
+    expect(sshRejectPayload).toMatchObject({
+      error: true,
+      error_kind: 'tool_disabled',
+      tool: 'execute_command',
+    });
+    expect(sshRejectPayload.message).toContain('Tool "execute_command" is disabled for this AutoResearch run.');
   });
 
   it('rejects unrelated tools when the run is restricted to bootstrap-only tools', async () => {
@@ -485,11 +591,15 @@ describe('runHeadlessAgentTurn', () => {
     });
 
     expect(mockExecuteBatch).not.toHaveBeenCalled();
-    expect(resolveAll).toHaveBeenCalledWith([
-      expect.objectContaining({
-        id: 'tool-1',
-        content: expect.stringContaining('Tool "execute_command" is disabled for this AutoResearch run.'),
-      }),
-    ]);
+    const [bootstrapRejectResults] = resolveAll.mock.calls[0] ?? [];
+    expect(bootstrapRejectResults).toHaveLength(1);
+    expect(bootstrapRejectResults?.[0]?.id).toBe('tool-1');
+    const bootstrapRejectPayload = JSON.parse(bootstrapRejectResults?.[0]?.content ?? '{}');
+    expect(bootstrapRejectPayload).toMatchObject({
+      error: true,
+      error_kind: 'tool_disabled',
+      tool: 'execute_command',
+    });
+    expect(bootstrapRejectPayload.message).toContain('Tool "execute_command" is disabled for this AutoResearch run.');
   });
 });

@@ -676,6 +676,14 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                         "type": "number",
                         "description": "Optional timeout hint in seconds"
                     },
+                    "executionId": {
+                        "type": "string",
+                        "description": "Optional execution identifier used to track and cancel a running command."
+                    },
+                    "execution_id": {
+                        "type": "string",
+                        "description": "Legacy snake_case alias for executionId."
+                    },
                     "windowsShellProfile": {
                         "type": "string",
                         "enum": ["auto", "powershell", "wsl"],

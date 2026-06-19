@@ -935,7 +935,7 @@ export async function handleToolBatchRequest(
         }
         // Surface the error to the model via the batch result so it
         // can prompt the user to bind a Project Folder before retrying.
-        return chunk.tools
+        const blockedResults = chunk.tools
           .filter((tool) => WORKSPACE_TOOL_NAMES.has(tool.name))
           .map((tool) => ({
             id: tool.id,
@@ -943,6 +943,8 @@ export async function handleToolBatchRequest(
             toolName: tool.name,
             toolArgs: tool.arguments,
           }));
+        chunk._resolveAll(blockedResults.map(({ id, content }) => ({ id, content })));
+        return blockedResults;
       }
       workDir = fallback ?? workDir;
     }

@@ -64,6 +64,7 @@ jest.mock('../preflight', () => ({
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
+import { getAutoResearchTestTmpDir } from './tmpRoot';
 import { createAutoResearchSendMessage } from '../chatAdapter';
 import { startExperimentLoop } from '../loopEngine';
 import { getCurrentRunDir } from '../terminalRunner';
@@ -80,7 +81,7 @@ import { installDynamicTranscriptFixture } from './transcriptHarness';
 
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
 
-const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+const PROJECT_TMP_DIR = getAutoResearchTestTmpDir();
 
 function projectTmpDir(): string {
   return PROJECT_TMP_DIR;

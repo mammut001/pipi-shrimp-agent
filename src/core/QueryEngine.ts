@@ -8,7 +8,7 @@ import {
 } from '@/services/agentConfig';
 import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { isContextOverflowError } from '@/services/context/contextBudget';
-import { useSettingsStore } from '@/store';
+import { useChatStore, useSettingsStore } from '@/store';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
 import {
   appendToolBudgetEntries,
@@ -32,10 +32,20 @@ const MALFORMED_TOOL_CALL_RETRY_NOTES = [
   'Your previous response still used text-form or XML tool calls. Reply using only the structured tool_calls channel. Do not emit XML tags, markdown, or prose describing the tool call.',
 ] as const;
 
+const DISALLOWED_TOOL_RETRY_NOTES_PREFIX = 'Your previous tool calls were rejected because they are outside the allowed tool lane for this turn.';
+
 function buildMalformedToolCallRetryMessage(attempt: number): string {
   return attempt === 1
     ? 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.'
     : 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.';
+}
+
+function buildAllowedToolsRetryMessage(allowedTools: string[]): string {
+  return [
+    DISALLOWED_TOOL_RETRY_NOTES_PREFIX,
+    `Only these tools are allowed in this turn: ${allowedTools.join(', ')}.`,
+    'Retry now using only the allowed tools. Do not call any other tool, and do not describe a plan instead of making the allowed tool call.',
+  ].join(' ');
 }
 
 // Patterns that suggest the model is describing future tool use rather than providing a final answer.
@@ -81,15 +91,6 @@ function shouldInjectOpenAIToolProtocol(
     return false;
   }
 
-  // When the caller passed an explicit `allowedTools` allowlist (Plan
-  // mode, AutoResearch, etc.) the prompt builder has already
-  // specialised the system prompt for that mode. Injecting a blanket
-  // "MUST invoke tools via structured channel" addendum fights with
-  // that specialisation and tells the model to over-call tools.
-  if (options?.allowedTools && options.allowedTools.length > 0) {
-    return false;
-  }
-
   const capabilities = buildProviderExecutionCapabilities({
     provider: config.provider,
     apiFormat: config.apiFormat,
@@ -102,12 +103,22 @@ function shouldInjectOpenAIToolProtocol(
 function buildEffectiveSystemPrompt(
   baseSystemPrompt: string,
   injectToolProtocol: boolean,
+  allowedTools?: string[],
 ): string {
-  if (!injectToolProtocol || baseSystemPrompt.includes('structured OpenAI function-calling channel named tool_calls')) {
-    return baseSystemPrompt;
+  let prompt = baseSystemPrompt;
+
+  if (allowedTools?.length) {
+    const constraintLine = `HARD RULE: you may call only these tools in this turn: ${allowedTools.join(', ')}.`;
+    if (!prompt.includes(constraintLine)) {
+      prompt = `${prompt}\n\n## Tool Lane Constraints\n- ${constraintLine}\n- Do not call any other tool.\n- If you need workspace inspection, use only the allowed tools above.`;
+    }
   }
 
-  return `${baseSystemPrompt}\n\n${OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM}`;
+  if (!injectToolProtocol || prompt.includes('structured OpenAI function-calling channel named tool_calls')) {
+    return prompt;
+  }
+
+  return `${prompt}\n\n${OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM}`;
 }
 
 function isMalformedToolCallError(error: unknown): boolean {
@@ -127,6 +138,7 @@ export async function* runChatTurn(
   allowBrowserTools: boolean = false,
   requestConfig?: ResolvedAgentConfig,
   options?: RunChatTurnOptions,
+  pipiOutputDir?: string,
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
   const maxToolBudget = settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
@@ -140,9 +152,12 @@ export async function* runChatTurn(
   let toolBudgetSummary = createToolBudgetSummary(maxToolBudget);
   let reserveFinalResponseRound = false;
   let malformedToolCallRetryCount = 0;
+  let disallowedToolRetryCount = 0;
 
   // Memory hook — fires after each final (no-tool-call) response
-  const memoryHook = createMemoryHook({ projectRoot });
+  const effectivePipiOutputDir = pipiOutputDir
+    ?? useChatStore.getState().sessions.find((session) => session.id === sessionId)?.pipiOutputDir;
+  const memoryHook = createMemoryHook({ projectRoot, pipiOutputDir: effectivePipiOutputDir });
 
   // AUDIT-019 FIX: Separate model reasoning rounds from tool execution rounds.
   // modelRound only increments when we make an actual API call, not on tool retries.
@@ -186,7 +201,11 @@ export async function* runChatTurn(
       allowedTools: effectiveNoTools ? undefined : options?.allowedTools,
     };
     const injectOpenAIToolProtocol = shouldInjectOpenAIToolProtocol(resolvedConfig!, effectiveOptions);
-    const effectiveSystemPrompt = buildEffectiveSystemPrompt(systemPrompt, injectOpenAIToolProtocol);
+    const effectiveSystemPrompt = buildEffectiveSystemPrompt(
+      systemPrompt,
+      injectOpenAIToolProtocol,
+      effectiveOptions.allowedTools,
+    );
 
     // [Phase 2: API Call]
     let hasToolCalls = false;
@@ -397,6 +416,32 @@ export async function* runChatTurn(
       const allContentList = pendingToolCalls.map((_, index) => allContent[index] ?? 'Error: no result returned for tool');
       const allFailed = allContentList.length > 0
         && allContentList.every((content) => /^\s*(error|tool execution blocked|permission denied)/i.test(content));
+      const allRejectedByAllowedLane = allContentList.length > 0
+        && allContentList.every((content) => {
+          const normalized = content.toLowerCase();
+          return normalized.includes('not allowed in plan mode')
+            || normalized.includes('outside the allowed tool lane')
+            || normalized.includes('not allowed for execution source')
+            || normalized.includes('tool execution blocked')
+            || normalized.includes('permission denied');
+        });
+      if (
+        allRejectedByAllowedLane
+        && effectiveOptions.allowedTools?.length
+        && disallowedToolRetryCount < 1
+      ) {
+        disallowedToolRetryCount += 1;
+        currentMessages.pop();
+        currentMessages.push({
+          role: 'user',
+          content: buildAllowedToolsRetryMessage(effectiveOptions.allowedTools),
+        });
+        yield {
+          type: 'status_update',
+          message: `Model called disallowed tools. Retrying with a stricter allowlist reminder (${effectiveOptions.allowedTools.join(', ')}).`,
+        };
+        continue;
+      }
       if (allFailed && !effectiveNoTools) {
         yield {
           type: 'error',

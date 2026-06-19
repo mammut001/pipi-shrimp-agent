@@ -184,6 +184,20 @@ async function* streamPlanAssistantReply() {
   };
 }
 
+async function* streamAskModePseudoToolReply() {
+  yield { type: 'text_delta' as const, content: ']<]minimax[>[<tool_call>\n' };
+  yield { type: 'text_delta' as const, content: ']<]minimax[>[<list_files path=\".\">\n' };
+  yield { type: 'text_delta' as const, content: ']<]minimax[>[</tool_call>' };
+  yield {
+    type: 'turn_complete' as const,
+    tokenUsage: {
+      input_tokens: 6,
+      output_tokens: 3,
+      model: 'mock-model',
+    },
+  };
+}
+
 async function* streamWithToolBatchThenContinuation() {
   let resolved = false;
 
@@ -337,7 +351,7 @@ describe('chatStore sendMessage integration', () => {
     expect(mockRunChatTurn).toHaveBeenCalledWith(
       'session-1',
       expect.arrayContaining([expect.objectContaining({ role: 'user', content: 'hello world' })]),
-      'system prompt',
+      expect.stringContaining('# ASK MODE ACTIVATED'),
       undefined,
       false,
       undefined,
@@ -364,6 +378,19 @@ describe('chatStore sendMessage integration', () => {
         api_config_id: 'api-config-1',
       }),
     }));
+  });
+
+  it('clears a stale error banner when a new turn succeeds', async () => {
+    useChatStore.setState({ error: 'Every tool call in the last round was rejected by the safety policy.' });
+
+    await useChatStore.getState().sendMessage('hello again');
+
+    expect(useChatStore.getState().error).toBeNull();
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
+      ['user', 'hello again'],
+      ['assistant', 'Hello from model'],
+    ]);
   });
 
   it('routes tool batch execution through the extracted coordinator and artifact detector', async () => {
@@ -664,22 +691,16 @@ describe('chatStore sendMessage integration', () => {
 
     await useChatStore.getState().sendMessage('详细阅读一下这个项目吧');
 
-    expect(mockRunChatTurn).toHaveBeenCalledWith(
-      'session-1',
-      expect.any(Array),
-      'system prompt',
-      undefined,
-      false,
-    );
-    expect(mockRunChatTurn).not.toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      { noTools: true },
-    );
+    const [sessionId, messages, systemPrompt, projectDir, allowBrowserTools, requestConfig, options, pipiOutputDir] =
+      (mockRunChatTurn as jest.Mock).mock.calls[0];
+    expect(sessionId).toBe('session-1');
+    expect(messages).toEqual(expect.any(Array));
+    expect(systemPrompt).toBe('system prompt');
+    expect(projectDir).toBeUndefined();
+    expect(allowBrowserTools).toBe(false);
+    expect(requestConfig).toBeUndefined();
+    expect(options).toBeUndefined();
+    expect(pipiOutputDir).toBeUndefined();
   });
 
   it('routes Ask mode through noTools so the model cannot enter a tool loop', async () => {
@@ -690,7 +711,7 @@ describe('chatStore sendMessage integration', () => {
     expect(mockRunChatTurn).toHaveBeenCalledWith(
       'session-1',
       expect.any(Array),
-      'system prompt',
+      expect.stringContaining('# ASK MODE ACTIVATED'),
       undefined,
       false,
       undefined,
@@ -698,25 +719,40 @@ describe('chatStore sendMessage integration', () => {
     );
   });
 
-  // Option A — even though Agent and Bypass modes do not restrict
-  // `allowedTools` (the catalog already excludes `save_plan_doc`),
-  // we still pin the JS-side contract: sendMessage must never pass
-  // a 7th arg `{ allowedTools: [..., 'save_plan_doc', ...] }` to
-  // runChatTurn, because the Rust registry has no handler for it
-  // and the model would call an "Unknown tool".
-  it('Agent mode sendMessage never passes save_plan_doc in allowedTools', async () => {
+  // Non-Plan modes still need a model-facing allowlist whenever the
+  // execution-mode guard is stricter than the raw global catalog.
+  // This keeps Agent/Debug from seeing browser/MCP/sub-agent tools that
+  // would be rejected immediately by the outer guard.
+  it('replaces Ask-mode pseudo tool-call text with a no-tools guidance reply', async () => {
+    resetChatState({ executionMode: 'ask', permissionMode: 'plan-only' });
+    mockRunChatTurn.mockImplementation(() => streamAskModePseudoToolReply());
+
+    await useChatStore.getState().sendMessage('读取 README 并总结。');
+
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
+      ['user', '读取 README 并总结。'],
+      ['assistant', 'Ask 模式这回合不能读取本地文件或调用工具，所以我现在不能直接打开 `README`。请切到 `Agent` 或 `Bypass` 模式后重试；如果你愿意，也可以把 `README` 内容贴到这里，我可以立刻帮你总结。'],
+    ]);
+  });
+
+  it('Agent mode passes a shell-lane allowlist without save_plan_doc', async () => {
     resetChatState({ executionMode: 'agent', permissionMode: 'auto-edits' });
     await useChatStore.getState().sendMessage('Explore the project');
 
-    for (const call of (mockRunChatTurn as jest.Mock).mock.calls) {
-      const seventh = call[6];
-      // The 7th arg is `options`; if set, it must not contain
-      // save_plan_doc in `allowedTools`. We accept `undefined` and
-      // options without allowedTools.
-      if (seventh && Array.isArray(seventh.allowedTools)) {
-        expect(seventh.allowedTools).not.toContain('save_plan_doc');
-      }
-    }
+    const calls = (mockRunChatTurn as jest.Mock).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const seventh = calls[0]?.[6];
+    expect(seventh?.allowedTools).toEqual(expect.arrayContaining([
+      'read_file',
+      'list_files',
+      'write_file',
+      'execute_command',
+    ]));
+    expect(seventh?.allowedTools).not.toContain('save_plan_doc');
+    expect(seventh?.allowedTools).not.toContain('browser_click');
+    expect(seventh?.allowedTools).not.toContain('mcp__tool');
+    expect(seventh?.allowedTools).not.toContain('agent_tool');
   });
 
   it('Bypass mode sendMessage never passes save_plan_doc in allowedTools', async () => {

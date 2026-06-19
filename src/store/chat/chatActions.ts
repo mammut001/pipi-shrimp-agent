@@ -29,7 +29,11 @@ import { appendBrowserResultToSystemPrompt, createBrowserResultMessages, mapBrow
 import { CHAT_ERROR_MESSAGES, normalizeCaughtErrorMessage } from './chatErrors';
 import { shouldPersistMessage } from './chatPersistence';
 import { PLAN_MODE_ALLOWED_TOOLS, PLAN_MODE_SYSTEM_PROMPT, savePlanModeDoc, shouldSavePlanDoc } from '@/services/planMode';
-import { resolveSessionExecutionModeId } from '@/services/executionMode';
+import {
+  getAllowedToolsForMode,
+  getExecutionMode,
+  resolveSessionExecutionModeId,
+} from '@/services/executionMode';
 import {
   clearSessionToolRuntime,
   failUnresolvedSessionTools,
@@ -157,6 +161,44 @@ function consumeChatGenerationCancel(sessionId: string | null | undefined): bool
 
 function isChatGenerationCancelledError(error: unknown): error is ChatGenerationCancelledError {
   return error instanceof ChatGenerationCancelledError;
+}
+
+const ASK_MODE_PSEUDO_TOOL_CALL_PATTERNS = [
+  /<tool_call>/i,
+  /<\/tool_call>/i,
+  /<tool_calls?>/i,
+  /<\/tool_calls?>/i,
+  /<invoke>/i,
+  /<\/invoke>/i,
+  /<parameter>/i,
+  /<\/parameter>/i,
+  /<list_files\b/i,
+  /<read_file\b/i,
+  /<search_files\b/i,
+  /<execute_command\b/i,
+  /<write_file\b/i,
+  /<browser_[a-z_]+\b/i,
+  /<ssh_[a-z_]+\b/i,
+  /\b(?:list_files|read_file|search_files|write_file|execute_command|browser_[a-z_]+|ssh_[a-z_]+|mcp_call)\b/i,
+];
+
+const ASK_MODE_TOOL_REQUEST_PATTERNS = [
+  /\b(?:read|open|inspect|list|search|scan|summari[sz]e)\b/i,
+  /(?:读取|查看|检查|列出|搜索|扫描|总结|概括)/,
+];
+
+function looksLikeAskModePseudoToolCall(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  return ASK_MODE_PSEUDO_TOOL_CALL_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+function buildAskModeToolUnavailableReply(userRequest: string): string {
+  const asksForWorkspaceAccess = ASK_MODE_TOOL_REQUEST_PATTERNS.some((pattern) => pattern.test(userRequest));
+  if (asksForWorkspaceAccess) {
+    return 'Ask 模式这回合不能读取本地文件或调用工具，所以我现在不能直接打开 `README`。请切到 `Agent` 或 `Bypass` 模式后重试；如果你愿意，也可以把 `README` 内容贴到这里，我可以立刻帮你总结。';
+  }
+  return 'Ask 模式这回合不能调用工具。如果你需要我读取文件、执行命令或操作 AutoResearch，请切到 `Agent` 或 `Bypass` 模式。';
 }
 
 export function createChatActionMethods({
@@ -323,6 +365,7 @@ export function createChatActionMethods({
 
       const sessionSnapshot = get().sessions.find((session) => session.id === activeSessionId);
       const executionModeId = resolveSessionExecutionModeId(sessionSnapshot);
+      const executionModeProfile = getExecutionMode(executionModeId);
       const isAskMode = executionModeId === 'ask';
       const isPlanMode = executionModeId === 'plan';
 
@@ -343,6 +386,7 @@ export function createChatActionMethods({
       useUIStore.getState().clearTaskProgress();
       clearChatGenerationCancel(activeSessionId);
       clearSessionToolRuntime(activeSessionId, set, get);
+      setError(null);
 
       const resolvedConfig = resolveActiveAgentConfig();
       const configIssues = validateResolvedAgentConfig(resolvedConfig);
@@ -551,9 +595,18 @@ export function createChatActionMethods({
           browserResult: '',
           ...sessionGoalContext,
         });
-        const finalSystemPrompt = isPlanMode
-          ? `${systemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
+        const modeSystemPrompt = executionModeProfile.systemPromptSuffix
+          ? `${systemPrompt}\n\n${executionModeProfile.systemPromptSuffix}`
           : systemPrompt;
+        const finalSystemPrompt = isPlanMode
+          ? `${modeSystemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
+          : modeSystemPrompt;
+
+        const modeAllowedTools = isAskMode
+          ? []
+          : isPlanMode
+            ? [...PLAN_MODE_ALLOWED_TOOLS]
+            : getAllowedToolsForMode(executionModeId);
 
         const engine = isAskMode
           ? runChatTurn(
@@ -581,10 +634,19 @@ export function createChatActionMethods({
                 // Plan-doc persistence is an app-side post-turn action,
                 // not a model-callable tool, so `save_plan_doc` is
                 // intentionally absent here.
-                allowedTools: [...PLAN_MODE_ALLOWED_TOOLS],
+                allowedTools: modeAllowedTools,
               },
             )
-          : runChatTurn(activeSessionId, currentMessages(), finalSystemPrompt, sessionWorkDir, options?.allowBrowserTools || false);
+          : runChatTurn(
+              activeSessionId,
+              currentMessages(),
+              finalSystemPrompt,
+              sessionWorkDir,
+              options?.allowBrowserTools || false,
+              undefined,
+              modeAllowedTools?.length ? { allowedTools: modeAllowedTools } : undefined,
+              sessionPipiOutputDir ?? undefined,
+            );
         const uiStore = useUIStore.getState();
         let tokenUsageResult: TokenUsage | undefined;
 
@@ -637,7 +699,10 @@ export function createChatActionMethods({
             }
           : undefined;
 
-        const displayContent = stripGoalMarkers(parsed.content);
+        const sanitizedAssistantContent = isAskMode && looksLikeAskModePseudoToolCall(parsed.content)
+          ? buildAskModeToolUnavailableReply(content)
+          : parsed.content;
+        const displayContent = stripGoalMarkers(sanitizedAssistantContent);
 
         await get().updateLastMessage(
           displayContent,
@@ -645,6 +710,8 @@ export function createChatActionMethods({
           mergeReasoningParts(get().streamingReasoning, streamed.reasoning, parsed.reasoning),
           tokenUsage,
         );
+        setError(null);
+        set({ streamingContent: displayContent });
 
         if (activeGoal && displayContent.trim()) {
           useSessionGoalStore.getState().recordTrace(activeSessionId, 'assistant_turn', displayContent);
@@ -658,7 +725,7 @@ export function createChatActionMethods({
             const refreshedGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId)!;
             const loopDecision = decideGoalLoopAfterTurn({
               goal: refreshedGoal,
-              assistantContent: parsed.content,
+              assistantContent: sanitizedAssistantContent,
               tokenDelta,
               isGoalLoopContinuation: options?.goalLoopContinuation,
             });
@@ -708,7 +775,7 @@ export function createChatActionMethods({
         updateDiagnosticsTask(diagnosticsTaskId, {
           state: 'completed',
           cancelable: false,
-          detail: parsed.content.slice(0, 240),
+          detail: displayContent.slice(0, 240),
         });
         setActiveChatDiagnosticsTaskId(activeSessionId, null);
         useUIStore.getState().setActiveSkill(null);

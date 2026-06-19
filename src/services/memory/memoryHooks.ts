@@ -21,6 +21,8 @@ import { triggerMemoryExtraction, type ExtractionContext } from './autoExtractio
 export interface MemoryHookOptions {
   /** Current project / workspace root directory */
   projectRoot?: string;
+  /** Current PiPi Output Folder for session-owned memory */
+  pipiOutputDir?: string;
   /**
    * Called after memories are saved.
    * Use this to show a notification in the UI.
@@ -46,6 +48,7 @@ export function createMemoryHook(options: MemoryHookOptions = {}): MemoryHook {
       const ctx: ExtractionContext = {
         messages,
         projectRoot: options.projectRoot,
+        pipiOutputDir: options.pipiOutputDir,
         onMemorySaved: options.onMemorySaved,
       };
       triggerMemoryExtraction(ctx);

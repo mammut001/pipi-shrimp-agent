@@ -3,13 +3,22 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockBuildResolvedChatRequest = jest.fn();
 const mockInvokeRustAPIStream = jest.fn();
 const mockOnTurnComplete = jest.fn();
+const mockCreateMemoryHook = jest.fn(() => ({
+  onTurnComplete: mockOnTurnComplete,
+}));
 const mockGetSettingsState = jest.fn(() => ({
   agentSettings: { maxToolRounds: 4 },
 }));
+const mockChatStoreState = {
+  sessions: [] as Array<{ id: string; pipiOutputDir?: string }>,
+};
 
 jest.mock('@/store', () => ({
   useSettingsStore: {
     getState: () => mockGetSettingsState(),
+  },
+  useChatStore: {
+    getState: () => mockChatStoreState,
   },
 }));
 
@@ -28,9 +37,7 @@ jest.mock('@/core/streamAdapter', () => ({
 }));
 
 jest.mock('@/services/memory/memoryHooks', () => ({
-  createMemoryHook: () => ({
-    onTurnComplete: mockOnTurnComplete,
-  }),
+  createMemoryHook: (...args: unknown[]) => mockCreateMemoryHook(...args),
 }));
 
 jest.mock('@/services/tools/toolResultSanitizer', () => ({
@@ -56,6 +63,8 @@ describe('QueryEngine context overflow fallback', () => {
   beforeEach(() => {
     mockInvokeRustAPIStream.mockReset();
     mockBuildResolvedChatRequest.mockReset();
+    mockCreateMemoryHook.mockClear();
+    mockChatStoreState.sessions = [];
     mockGetSettingsState.mockReturnValue({
       agentSettings: { maxToolRounds: 4 },
     });
@@ -92,6 +101,35 @@ describe('QueryEngine context overflow fallback', () => {
         droppedContextReasons: [],
       },
       });
+    });
+  });
+
+  it('hydrates memory hook with the session PiPi Output Folder from chat store', async () => {
+    mockChatStoreState.sessions = [
+      { id: 'session-1', pipiOutputDir: '/tmp/pipi-output/session-1' },
+    ];
+    mockInvokeRustAPIStream.mockImplementationOnce(async function* succeed() {
+      yield { type: 'text_delta', content: 'OK' };
+      yield {
+        type: 'api_response_complete',
+        response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+      };
+    });
+
+    for await (const _event of runChatTurn(
+      'session-1',
+      [{ role: 'user', content: 'hello' }],
+      'system prompt',
+      '/tmp/project',
+      false,
+      resolvedConfig,
+    )) {
+      // drain
+    }
+
+    expect(mockCreateMemoryHook).toHaveBeenCalledWith({
+      projectRoot: '/tmp/project',
+      pipiOutputDir: '/tmp/pipi-output/session-1',
     });
   });
 
@@ -519,7 +557,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     expect(call?.systemPrompt).not.toMatch(/structured OpenAI function-calling channel named tool_calls/);
   });
 
-  it('Plan mode (allowedTools non-empty) still does not inject the OpenAI tool-calling protocol addendum', async () => {
+  it('Plan mode (allowedTools non-empty) still injects the OpenAI tool-calling protocol addendum', async () => {
     mockInvokeRustAPIStream.mockImplementationOnce(async function* planReply() {
       yield { type: 'text_delta', content: 'Plan written to docs.' };
       yield {
@@ -548,7 +586,8 @@ describe('QueryEngine Ask-mode noTools contract', () => {
       }),
     );
     const call = mockBuildResolvedChatRequest.mock.calls[0]?.[1] as { systemPrompt?: string };
-    expect(call?.systemPrompt).not.toMatch(/structured OpenAI function-calling channel named tool_calls/);
+    expect(call?.systemPrompt).toMatch(/structured OpenAI function-calling channel named tool_calls/);
+    expect(call?.systemPrompt).toMatch(/HARD RULE: you may call only these tools in this turn: read_file, list_files/);
   });
 
   it('Tool-budget final summary round uses noTools=true and does not inject the tool-call protocol', async () => {
@@ -641,5 +680,76 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(1);
     expect(events.find((e) => e.type === 'turn_complete')).toBeTruthy();
     expect(events.find((e) => e.type === 'status_update' && /nudge/i.test(String((e as { message?: string }).message ?? '')))).toBeUndefined();
+  });
+
+  it('retries once when every Plan-mode tool call is rejected for leaving the allowed tool lane', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* toolTurn() {
+        yield {
+          type: 'tool_call',
+          tool: { id: 'tool-1', name: 'execute_command', arguments: '{"command":"ls"}' },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      })
+      .mockImplementationOnce(async function* recovered() {
+        yield { type: 'text_delta', content: '## Execution Plan: README summary update' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 2, output_tokens: 4 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const iterator = runChatTurn(
+      'session-plan-retry',
+      [{ role: 'user', content: 'inspect the repo and draft a plan' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+      { allowedTools: ['read_file', 'list_files', 'search_files'] },
+    );
+
+    const status = await iterator.next();
+    expect(status.value).toEqual({
+      type: 'status_update',
+      message: 'Executing 1 tool(s): execute_command',
+    });
+
+    const batch = await iterator.next();
+    expect(batch.value.type).toBe('tool_batch_request');
+    batch.value._resolveAll([
+      { id: 'tool-1', content: 'Error: This tool is not allowed in Plan mode (read-only inspection and plan docs only).' },
+    ]);
+
+    const retryStatus = await iterator.next();
+    expect(retryStatus.value).toEqual({
+      type: 'status_update',
+      message: 'Model called disallowed tools. Retrying with a stricter allowlist reminder (read_file, list_files, search_files).',
+    });
+
+    let event = await iterator.next();
+    while (event.value?.type === 'text_delta') {
+      event = await iterator.next();
+    }
+    expect(event.value).toEqual({
+      type: 'turn_complete',
+      tokenUsage: { input_tokens: 2, output_tokens: 4, model: 'MiniMax-M2.7' },
+    });
+
+    expect(mockBuildResolvedChatRequest).toHaveBeenNthCalledWith(
+      2,
+      resolvedConfig,
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('Only these tools are allowed in this turn: read_file, list_files, search_files.'),
+          }),
+        ]),
+      }),
+    );
   });
 });

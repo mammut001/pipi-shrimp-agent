@@ -16,6 +16,7 @@ export {
 } from './registry';
 
 export {
+  getAllowedToolsForMode,
   isAdvancedMode,
   isDefaultMode,
   isToolAllowedForMode,

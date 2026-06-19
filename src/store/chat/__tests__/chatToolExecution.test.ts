@@ -1350,6 +1350,12 @@ describe('chatToolExecution', () => {
           content: expect.stringMatching(/No Project Folder is bound/i),
         }),
       ]);
+      expect(resolved).toHaveBeenCalledWith([
+        expect.objectContaining({
+          id: 'tool-write',
+          content: expect.stringMatching(/No Project Folder is bound/i),
+        }),
+      ]);
     });
 
     it('still uses the Project Folder returned by ensureSessionWorkDir (pre-v7 single-folder path)', async () => {
@@ -1638,6 +1644,12 @@ describe('chatToolExecution', () => {
         expect.objectContaining({
           id: 'tool-exec',
           toolName: 'execute_command',
+          content: expect.stringMatching(/No Project Folder is bound/i),
+        }),
+      ]);
+      expect(resolved).toHaveBeenCalledWith([
+        expect.objectContaining({
+          id: 'tool-exec',
           content: expect.stringMatching(/No Project Folder is bound/i),
         }),
       ]);

@@ -84,6 +84,13 @@ export interface ExecutionModeProfile {
   experimentalNoteKey?: keyof TranslationKeys;
 }
 
+const ASK_MODE_SYSTEM_PROMPT_SUFFIX = `# ASK MODE ACTIVATED
+
+You are in Ask mode for this turn.
+- No tools are available.
+- Do not emit tool calls, XML tool tags, pseudo-tool syntax, or "I'll inspect/read/list files" stubs.
+- If the user asks for file access, shell commands, browser actions, MCP calls, or AutoResearch execution, explain briefly that Ask mode cannot run tools and suggest switching to Agent or Bypass mode.`;
+
 export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
   {
     id: 'ask',
@@ -95,7 +102,7 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     // PermissionMode path blocks tool execution before the
     // 5-mode outer guard runs.
     permissionMode: 'plan-only',
-    systemPromptSuffix: '',
+    systemPromptSuffix: ASK_MODE_SYSTEM_PROMPT_SUFFIX,
     allowedToolPolicy: 'none',
     approvalPolicy: 'always-ask',
     // Ask is the default for new chats — simple Q&A must never enter

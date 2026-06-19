@@ -702,6 +702,14 @@ export async function handleChatBrowserWorkflow(message: string): Promise<boolea
  */
 export function quickCheckBrowserIntent(message: string): boolean {
   const lowerMessage = message.toLowerCase();
+  const trimmedMessage = lowerMessage.trim();
+  const hasEnglishNavWord = (msg: string) => /\b(open|visit|go to)\b/i.test(msg);
+  const hasShellShape = (msg: string) => (
+    /\b(wc|cat|ls|pwd|cd|grep|find|sed|awk|head|tail|mkdir|rm|cp|mv|git|pnpm|npm|node|python|python3|bash|sh|cmd|powershell)\b/.test(msg)
+    || /(^|[\s"'`])-[A-Za-z](?:\s|$)/.test(msg)
+    || /[\\/][^/\s]+\.[A-Za-z0-9]+/.test(msg)
+    || /^(run|exec|execute|运行|执行)\s+\S+/.test(msg)
+  );
 
   const isCodeOrProjectAnalysisRequest = (msg: string) => {
     return [
@@ -715,11 +723,15 @@ export function quickCheckBrowserIntent(message: string): boolean {
     if (msg.includes('用浏览器打开') || msg.includes('用浏览器访问') || msg.includes('在浏览器中打开') || msg.includes('打开网页') || msg.includes('访问网站')) return true;
     
     const hasDomain = /(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s，。！？,!?]*)?/i.test(msg);
-    const hasStrongNav = ['打开', '访问', '进入', '导航到', 'open', 'visit', 'go to'].some(verb => msg.includes(verb));
+    const hasStrongNav = ['打开', '访问', '进入', '导航到'].some(verb => msg.includes(verb)) || hasEnglishNavWord(msg);
     if (hasDomain && hasStrongNav) return true;
 
     return false;
   };
+
+  if (hasShellShape(trimmedMessage) && !trimmedMessage.startsWith('/browser') && !trimmedMessage.startsWith('browser:')) {
+    return false;
+  }
 
   if (isCodeOrProjectAnalysisRequest(lowerMessage)) {
     // Escape hatch: even if explicit rules might catch it, if it mentions code strongly,

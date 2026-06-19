@@ -59,9 +59,13 @@ function normalizeBashOutputForWindows(output: string): string {
     return output;
   }
 
-  return output.replace(/(^|[\s'"])(\/[a-zA-Z]\/[^\s'"]*)/g, (full, prefix: string, candidate: string) => {
-    return `${prefix}${toWindowsPath(candidate)}`;
-  });
+  return output
+    .replace(/(^|[\s'"])(\/mnt\/[a-zA-Z]\/[^\s'"]*)/g, (full, prefix: string, candidate: string) => {
+      return `${prefix}${toWindowsPath(candidate)}`;
+    })
+    .replace(/(^|[\s'"])(\/[a-zA-Z]\/[^\s'"]*)/g, (full, prefix: string, candidate: string) => {
+      return `${prefix}${toWindowsPath(candidate)}`;
+    });
 }
 
 async function findBash(): Promise<string> {
@@ -78,6 +82,49 @@ async function findBash(): Promise<string> {
     try { await fs.access(bp); return bp; } catch {}
   } catch {}
   return 'bash';
+}
+
+async function runLocalShellCommand(
+  command: string,
+  cwd: string | undefined,
+  windowsShellProfile: unknown,
+): Promise<{ stdout: string; stderr: string }> {
+  if (
+    process.platform === 'win32'
+    && (windowsShellProfile === 'wsl' || windowsShellProfile === 'auto' || windowsShellProfile == null)
+  ) {
+    const effectiveCommand = cwd
+      ? `cd ${JSON.stringify(toPosixPath(cwd, 'wsl-bash'))}\n${normalizeCommandForBash(command, 'wsl-bash')}`
+      : normalizeCommandForBash(command, 'wsl-bash');
+    const { stdout, stderr } = await execFileAsync(
+      'wsl.exe',
+      ['--', 'bash', '-lc', effectiveCommand],
+      {
+        encoding: 'utf8',
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+    return {
+      stdout: normalizeBashOutputForWindows(stdout),
+      stderr: normalizeBashOutputForWindows(stderr),
+    };
+  }
+
+  const bashPath = await findBash();
+  const bashFlavor = detectBashFlavor(bashPath);
+  const { stdout, stderr } = await execFileAsync(
+    bashPath,
+    ['-lc', normalizeCommandForBash(command, bashFlavor)],
+    {
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+      cwd,
+    },
+  );
+  return {
+    stdout: normalizeBashOutputForWindows(stdout),
+    stderr: normalizeBashOutputForWindows(stderr),
+  };
 }
 
 
@@ -119,19 +166,17 @@ export function installLocalInvokeMock(mockInvoke: jest.Mock): void {
       case 'execute_bash': {
         const payload = (args.args as Record<string, unknown> | undefined) ?? args;
         try {
-          const bashPath = await findBash();
-          const bashFlavor = detectBashFlavor(bashPath);
           const cwd = typeof payload.workDir === 'string' && payload.workDir.trim().length > 0
             ? String(payload.workDir)
             : undefined;
-          const { stdout, stderr } = await execFileAsync(bashPath, ['-lc', normalizeCommandForBash(String(payload.command ?? ''), bashFlavor)], {
-            encoding: 'utf8',
-            maxBuffer: 10 * 1024 * 1024,
+          const { stdout, stderr } = await runLocalShellCommand(
+            String(payload.command ?? ''),
             cwd,
-          });
+            payload.windowsShellProfile,
+          );
           return {
-            stdout: normalizeBashOutputForWindows(stdout),
-            stderr: normalizeBashOutputForWindows(stderr),
+            stdout,
+            stderr,
             exit_code: 0,
           };
         } catch (error) {

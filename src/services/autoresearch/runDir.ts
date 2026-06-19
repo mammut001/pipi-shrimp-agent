@@ -49,6 +49,21 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/[\\/]+$/, '');
 }
 
+function normalizePathForComparison(targetPath: string): string {
+  return trimTrailingSlash(targetPath).replace(/\\/g, '/');
+}
+
+function inferPathSeparator(targetPath: string): '/' | '\\' {
+  return targetPath.includes('\\') ? '\\' : '/';
+}
+
+function joinTargetPath(basePath: string, ...segments: string[]): string {
+  const separator = inferPathSeparator(basePath);
+  const trimmedBase = trimTrailingSlash(basePath);
+  const cleanedSegments = segments.map((segment) => segment.replace(/^[\\/]+|[\\/]+$/g, ''));
+  return [trimmedBase, ...cleanedSegments].join(separator);
+}
+
 function assertSafeSessionId(sessionId: string): string {
   const normalized = sessionId.trim();
   if (!normalized) {
@@ -76,30 +91,37 @@ function formatTimestamp(date = new Date()): string {
 }
 
 function getParentDirectory(path: string): string {
-  const idx = path.lastIndexOf('/');
+  const normalized = path.replace(/\\/g, '/');
+  const idx = normalized.lastIndexOf('/');
   return idx > 0 ? path.slice(0, idx) : '.';
+}
+
+function getPathBasename(targetPath: string): string {
+  const normalized = targetPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx = normalized.lastIndexOf('/');
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
 }
 
 function buildRunDir(sessionDir: string, sessionId: string, iter: number, directoryName: string): RunDir {
   const safeSessionId = assertSafeSessionId(sessionId);
   const safeIteration = assertPositiveIteration(iter);
-  const iterDir = `${sessionDir}/${directoryName}`;
-  const codeDir = `${iterDir}/code`;
+  const iterDir = joinTargetPath(sessionDir, directoryName);
+  const codeDir = joinTargetPath(iterDir, 'code');
   return {
     sessionId: safeSessionId,
     iter: safeIteration,
     iterDir,
     codeDir,
-    logsDir: `${iterDir}/logs`,
-    transcriptPath: `${iterDir}/transcript.md`,
-    systemPromptPath: `${iterDir}/system_prompt.txt`,
-    hypothesisPath: `${iterDir}/hypothesis.md`,
-    diffPath: `${iterDir}/diff.patch`,
-    metricsPath: `${iterDir}/metrics.json`,
-    statusPath: `${iterDir}/status.json`,
-    reflectionInputPath: `${iterDir}/reflection.input.json`,
-    reflectionRawPath: `${iterDir}/reflection.raw.txt`,
-    reflectionParsedPath: `${iterDir}/reflection.parsed.json`,
+    logsDir: joinTargetPath(iterDir, 'logs'),
+    transcriptPath: joinTargetPath(iterDir, 'transcript.md'),
+    systemPromptPath: joinTargetPath(iterDir, 'system_prompt.txt'),
+    hypothesisPath: joinTargetPath(iterDir, 'hypothesis.md'),
+    diffPath: joinTargetPath(iterDir, 'diff.patch'),
+    metricsPath: joinTargetPath(iterDir, 'metrics.json'),
+    statusPath: joinTargetPath(iterDir, 'status.json'),
+    reflectionInputPath: joinTargetPath(iterDir, 'reflection.input.json'),
+    reflectionRawPath: joinTargetPath(iterDir, 'reflection.raw.txt'),
+    reflectionParsedPath: joinTargetPath(iterDir, 'reflection.parsed.json'),
   };
 }
 
@@ -138,8 +160,8 @@ function buildWorktreeCleanupCommand(worktreeDir: string): string {
 }
 
 function isSessionChildRunDir(sessionDir: string, iterDir: string): boolean {
-  const normalizedSessionDir = trimTrailingSlash(sessionDir);
-  const normalizedIterDir = trimTrailingSlash(iterDir);
+  const normalizedSessionDir = normalizePathForComparison(sessionDir);
+  const normalizedIterDir = normalizePathForComparison(iterDir);
   if (!normalizedIterDir.startsWith(`${normalizedSessionDir}/`)) {
     return false;
   }
@@ -150,18 +172,18 @@ function isSessionChildRunDir(sessionDir: string, iterDir: string): boolean {
 
 export function getSessionRunPaths(cfg: SshConfig, sessionId: string): SessionRunPaths {
   const safeSessionId = assertSafeSessionId(sessionId);
-  const sessionDir = `${trimTrailingSlash(cfg.remoteWorkDir)}/runs/${safeSessionId}`;
+  const sessionDir = joinTargetPath(cfg.remoteWorkDir, 'runs', safeSessionId);
   return {
     sessionDir,
-    sessionFilePath: `${sessionDir}/session.md`,
-    livingDocPath: `${sessionDir}/autoresearch.md`,
-    metricsJsonlPath: `${sessionDir}/metrics.jsonl`,
-    runConfigPath: `${sessionDir}/run_config.json`,
+    sessionFilePath: joinTargetPath(sessionDir, 'session.md'),
+    livingDocPath: joinTargetPath(sessionDir, 'autoresearch.md'),
+    metricsJsonlPath: joinTargetPath(sessionDir, 'metrics.jsonl'),
+    runConfigPath: joinTargetPath(sessionDir, 'run_config.json'),
   };
 }
 
 export function getSessionBaselineDir(cfg: SshConfig, sessionId: string): string {
-  return `${getSessionRunPaths(cfg, sessionId).sessionDir}/best-baseline`;
+  return joinTargetPath(getSessionRunPaths(cfg, sessionId).sessionDir, 'best-baseline');
 }
 
 export async function executeTargetCommand(
@@ -372,7 +394,8 @@ export async function promoteRunDirToBestBaseline(
 }
 
 export async function listIterations(cfg: SshConfig, sessionId: string): Promise<RunDir[]> {
-  const sessionDir = await ensureSessionDir(cfg, sessionId);
+  const { sessionDir } = getSessionRunPaths(cfg, sessionId);
+  await ensureSessionDir(cfg, sessionId);
   const result = await executeTargetCommand(
     cfg,
     `find ${shellEscapePath(sessionDir)} -maxdepth 1 -mindepth 1 -type d -name 'iter-*' | sort`,
@@ -386,18 +409,50 @@ export async function listIterations(cfg: SshConfig, sessionId: string): Promise
     .split('\n')
     .map(line => line.trim())
     .filter(Boolean)
-    .map((iterDir) => {
-      const name = iterDir.slice(sessionDir.length + 1);
+    .map((iterDir) => getPathBasename(iterDir))
+    .map((name) => {
       const match = name.match(/^iter-(\d+)-/);
-      const iter = match ? Number.parseInt(match[1], 10) : 0;
+      if (!match) {
+        return null;
+      }
+      const iter = Number.parseInt(match[1], 10);
       return buildRunDir(sessionDir, sessionId, iter, name);
     })
+    .filter((run): run is RunDir => run !== null)
     .sort((a, b) => a.iter - b.iter);
 }
 
 export async function pruneOldRuns(cfg: SshConfig, sessionId: string, keepLast: number): Promise<void> {
-  const runs = await listIterations(cfg, sessionId);
   const { sessionDir } = getSessionRunPaths(cfg, sessionId);
+  await ensureSessionDir(cfg, sessionId);
+  const rawDirsResult = await executeTargetCommand(
+    cfg,
+    `find ${shellEscapePath(sessionDir)} -maxdepth 1 -mindepth 1 -type d -name 'iter-*' | sort`,
+    60,
+  );
+  if ((rawDirsResult.exit_code ?? 0) !== 0) {
+    throw new Error(rawDirsResult.stderr || `Failed to list iterations for ${sessionId}`);
+  }
+
+  const runs = (rawDirsResult.stdout || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((iterDir) => {
+      if (!isSessionChildRunDir(sessionDir, iterDir)) {
+        throw new Error(`Refusing to prune non-session run directory: ${iterDir}`);
+      }
+
+      const name = getPathBasename(iterDir);
+      const match = name.match(/^iter-(\d+)-/);
+      if (!match) {
+        throw new Error(`Refusing to prune non-session run directory: ${iterDir}`);
+      }
+
+      return buildRunDir(sessionDir, sessionId, Number.parseInt(match[1], 10), name);
+    })
+    .sort((a, b) => a.iter - b.iter);
+
   const stale = runs.slice(0, Math.max(0, runs.length - keepLast));
   for (const run of stale) {
     if (!isSessionChildRunDir(sessionDir, run.iterDir)) {

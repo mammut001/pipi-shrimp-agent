@@ -12,13 +12,21 @@ jest.mock('@tauri-apps/api/core', () => ({
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
+import { getAutoResearchTestTmpDir } from './tmpRoot';
 import { createRunDir, executeTargetCommand, getSessionRunPaths, listIterations, pruneOldRuns } from '../runDir';
 
 const execFileAsync = promisify(execFile);
 
 jest.setTimeout(30000);
 
-const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/services/autoresearch/__tests__/.tmp');
+const PROJECT_TMP_DIR = getAutoResearchTestTmpDir();
+
+function normalizeComparablePath(value: string): string {
+  return value
+    .replace(/\\/g, '/')
+    .replace(/\/mnt\/([a-zA-Z])\//g, (_, drive: string) => `${drive.toUpperCase()}:\/`)
+    .replace(/\/+/g, '/');
+}
 
 function projectTmpDir(): string {
   return PROJECT_TMP_DIR;
@@ -89,10 +97,10 @@ describe('runDir', () => {
     expect(path.basename(first.reflectionInputPath)).toBe('reflection.input.json');
     expect(path.basename(first.reflectionRawPath)).toBe('reflection.raw.txt');
     expect(path.basename(first.reflectionParsedPath)).toBe('reflection.parsed.json');
-    expect(first.metricsPath.startsWith(`${first.iterDir}/`)).toBe(true);
-    expect(first.hypothesisPath.startsWith(`${first.iterDir}/`)).toBe(true);
-    expect(first.transcriptPath.startsWith(`${first.iterDir}/`)).toBe(true);
-    expect(first.statusPath.startsWith(`${first.iterDir}/`)).toBe(true);
+    expect(normalizeComparablePath(path.dirname(first.metricsPath))).toBe(normalizeComparablePath(first.iterDir));
+    expect(normalizeComparablePath(path.dirname(first.hypothesisPath))).toBe(normalizeComparablePath(first.iterDir));
+    expect(normalizeComparablePath(path.dirname(first.transcriptPath))).toBe(normalizeComparablePath(first.iterDir));
+    expect(normalizeComparablePath(path.dirname(first.statusPath))).toBe(normalizeComparablePath(first.iterDir));
   });
 
   it('keeps run directories under the AutoResearch workDir instead of the source experiment dir', async () => {
@@ -212,12 +220,12 @@ describe('runDir', () => {
     const first = await createRunDir(cfg, 'session-prune-worktree', 1);
 
     const before = await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: workDir });
-    expect(before.stdout).toContain(first.codeDir);
+    expect(normalizeComparablePath(before.stdout)).toContain(normalizeComparablePath(first.codeDir));
 
     await pruneOldRuns(cfg, 'session-prune-worktree', 0);
 
     const after = await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: workDir });
-    expect(after.stdout).not.toContain(first.codeDir);
+    expect(normalizeComparablePath(after.stdout)).not.toContain(normalizeComparablePath(first.codeDir));
   });
 
   it('refuses to prune directories that do not match the iter-NNN naming contract', async () => {

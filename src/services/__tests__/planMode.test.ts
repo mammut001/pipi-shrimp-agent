@@ -154,6 +154,7 @@ describe('PLAN_MODE_SYSTEM_PROMPT — read-only plan mode', () => {
 
   it('tells the model to read first, then produce a structured plan', () => {
     expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/read first, plan second/i);
+    expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/one focused inspection pass/i);
     // The prompt now tells the model to write the plan in chat and
     // let the app persist it — not to call save_plan_doc.
     expect(PLAN_MODE_SYSTEM_PROMPT).toMatch(/do not need to call any tool to persist the plan/i);

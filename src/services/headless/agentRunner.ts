@@ -2,7 +2,7 @@ import { runChatTurn } from '@/core/QueryEngine';
 import type { ToolCallParams, TokenUsage } from '@/core/types';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { StreamingToolExecutor, partitionTools } from '@/services/StreamingToolExecutor';
-import type { ToolExecutionSource } from '@/services/tools/toolExecutionPolicy';
+import type { ToolExecutionSource, PermissionMode } from '@/services/tools/toolExecutionPolicy';
 import { useSettingsStore } from '@/store';
 import {
   appendToolBudgetEntries,
@@ -57,6 +57,16 @@ export interface HeadlessAgentRunnerInput {
   agentConfig?: ResolvedAgentConfig;
   allowedTools?: string[];
   toolExecutionSource?: ToolExecutionSource;
+  /**
+   * Permission mode for tool execution. When set to 'bypass', tools like
+   * execute_command, write_file, etc. are auto-approved without a confirmation
+   * modal. This is essential for autonomous headless runs (e.g. AutoResearch)
+   * where no UI is available to approve tool calls.
+   *
+   * Defaults to 'bypass' when toolExecutionSource is 'autoresearch_phase',
+   * and 'standard' otherwise.
+   */
+  permissionMode?: PermissionMode;
   resolveWorkDir?: () => Promise<string | null>;
   onWorkDirResolved?: (workDir: string) => Promise<void> | void;
   onTextDelta?: (chunk: string) => void;
@@ -177,6 +187,7 @@ async function executeToolBatch(
   source: ToolExecutionSource,
   allowedTools?: Set<string>,
   allowToolExecution?: HeadlessAgentRunnerInput['allowToolExecution'],
+  permissionMode?: PermissionMode,
 ): Promise<Array<{ id: string; name: string; content: string; durationMs: number }>> {
   const manualResults: Array<{ id: string; name: string; content: string; durationMs: number }> = [];
   const executableTools: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
@@ -241,6 +252,7 @@ async function executeToolBatch(
       sessionId,
       workDir,
       source,
+      permissionMode,
       allowedTools: allowedTools ? [...allowedTools] : undefined,
     });
 
@@ -262,6 +274,7 @@ async function executeToolBatch(
       sessionId,
       workDir,
       source,
+      permissionMode,
       allowedTools: allowedTools ? [...allowedTools] : undefined,
     });
     const result = batchResult.results[0];
@@ -284,6 +297,8 @@ export async function runHeadlessAgentTurn(
   const allowedTools = input.allowedTools?.length
     ? new Set(input.allowedTools)
     : undefined;
+  const effectivePermissionMode: PermissionMode = input.permissionMode
+    ?? (input.toolExecutionSource === 'autoresearch_phase' ? 'bypass' : 'standard');
   const toolExecutionSource = input.toolExecutionSource ?? 'headless_agent';
   const constrainedSystemPrompt = input.allowedTools?.length
     ? buildAllowedToolsSystemPrompt(input.systemPrompt, input.allowedTools)
@@ -298,6 +313,7 @@ export async function runHeadlessAgentTurn(
     {
       allowedTools: input.allowedTools,
     },
+    input.pipiOutputDir,
   );
 
   let currentWorkDir = input.workDir;
@@ -350,6 +366,7 @@ export async function runHeadlessAgentTurn(
           toolExecutionSource,
           allowedTools,
           input.allowToolExecution,
+          effectivePermissionMode,
         );
         toolBudgetSummary = appendToolBudgetEntries(
           toolBudgetSummary,
@@ -390,6 +407,7 @@ export async function runHeadlessAgentTurn(
           toolExecutionSource,
           allowedTools,
           input.allowToolExecution,
+          effectivePermissionMode,
         );
         if (result) {
           toolBudgetSummary = appendToolBudgetEntries(

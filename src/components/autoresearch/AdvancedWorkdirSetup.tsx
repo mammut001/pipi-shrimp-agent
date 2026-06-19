@@ -41,7 +41,10 @@ import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
-import { normalizePathForWindowsShellSelection } from '@/utils/windowsShellProfile';
+import {
+  normalizePathForWindowsShellSelection,
+  shouldAutoOpenAutoResearchTerminal,
+} from '@/utils/windowsShellProfile';
 import {
   logAutoResearchSetupFailure,
   parseOptionalBaseline,
@@ -444,10 +447,16 @@ export function AdvancedWorkdirSetup() {
       });
 
       setShowSetup(false);
-      openTerminalPanel(
-        `autoresearch-terminal-${Date.now()}`,
-        started.resolvedConfig.mode === 'local' ? started.resolvedConfig.remoteWorkDir : '',
-      );
+      if (shouldAutoOpenAutoResearchTerminal({
+        selection: windowsShellProfile,
+        mode: started.resolvedConfig.mode,
+        workDir: started.resolvedConfig.remoteWorkDir,
+      })) {
+        openTerminalPanel(
+          `autoresearch-terminal-${Date.now()}`,
+          started.resolvedConfig.mode === 'local' ? started.resolvedConfig.remoteWorkDir : '',
+        );
+      }
     } catch (error) {
       setSetupError(logAutoResearchSetupFailure('page-start', error, {
         mode: validation.value.sshConfig.mode,
@@ -470,6 +479,7 @@ export function AdvancedWorkdirSetup() {
     setLastUsedConfig,
     setSshConfig,
     setupForm,
+    windowsShellProfile,
   ]);
 
   const handleSetupSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {

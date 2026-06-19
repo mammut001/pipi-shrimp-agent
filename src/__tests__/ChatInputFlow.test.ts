@@ -1,12 +1,17 @@
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: jest.fn(),
 }));
+jest.mock('@/utils/browserIntentDetector', () => ({
+  detectBrowserIntent: jest.fn(),
+  detectGenericBrowserTask: jest.fn(),
+}));
 import {
   decideChatInputSubmission,
   resolveChatTargetSessionId,
   shouldClearDraftAfterBrowserWorkflow,
   shouldDismissBrowserIntentConfirm,
 } from '@/components/chatInputFlow';
+import { quickCheckBrowserIntent } from '@/utils/chatBrowserBridge';
 
 describe('ChatInput send flow', () => {
   it('routes browser-looking prompts to a confirmation step instead of sending immediately', () => {
@@ -53,5 +58,14 @@ describe('ChatInput send flow', () => {
     expect(shouldDismissBrowserIntentConfirm('打开网页', '打开网页')).toBe(false);
     expect(shouldDismissBrowserIntentConfirm('打开网页', '打开网页看一下')).toBe(true);
     expect(shouldDismissBrowserIntentConfirm(null, '任意内容')).toBe(false);
+  });
+  it('does not treat shell commands with file paths as browser intents', () => {
+    expect(quickCheckBrowserIntent('运行 wc -l src/services/autoresearch/loopEngine.ts')).toBe(false);
+    expect(quickCheckBrowserIntent('run wc -l src/services/autoresearch/loopEngine.ts')).toBe(false);
+  });
+
+  it('keeps explicit browser commands working', () => {
+    expect(quickCheckBrowserIntent('/browser open github.com')).toBe(true);
+    expect(quickCheckBrowserIntent('open github.com')).toBe(true);
   });
 });

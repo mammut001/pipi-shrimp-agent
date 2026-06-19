@@ -18,6 +18,8 @@ const mockValidateResolvedAgentConfig = jest.fn();
 const mockFormatAgentConfigValidationError = jest.fn();
 const mockGetAgentConfigDiagnostics = jest.fn();
 const mockAddRunEvent = jest.fn();
+const mockPatchIterationRecord = jest.fn();
+const mockSetCurrentPhase = jest.fn();
 const mockRequestReflectionDecision = jest.fn();
 const mockGetDeterministicRecoveryDecision = jest.fn();
 const mockBuildFallbackReflectionDecision = jest.fn();
@@ -61,6 +63,8 @@ jest.mock('@/store/autoresearchStore', () => ({
       ],
       appendLiveOutput: mockAppendLiveOutput,
       addRunEvent: mockAddRunEvent,
+      patchIterationRecord: mockPatchIterationRecord,
+      setCurrentPhase: mockSetCurrentPhase,
     }),
   },
 }));
@@ -159,6 +163,8 @@ describe('createAutoResearchSendMessage', () => {
     jest.clearAllMocks();
     mockWriteTargetText.mockReset();
     mockAppendTargetText.mockReset();
+    mockPatchIterationRecord.mockReset();
+    mockSetCurrentPhase.mockReset();
     mockResolveActiveAgentConfig.mockReturnValue(activeConfig);
     mockValidateResolvedAgentConfig.mockReturnValue([]);
     mockFormatAgentConfigValidationError.mockReturnValue('invalid config');

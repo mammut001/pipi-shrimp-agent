@@ -56,6 +56,8 @@ export interface ExtractionContext {
   messages: Array<{ role: string; content: string }>;
   /** Optional project root for calculating memory dir */
   projectRoot?: string;
+  /** Optional PiPi Output Folder so memory stays out of the repo */
+  pipiOutputDir?: string;
   /**
    * Callback invoked after memories are saved so the main conversation
    * can display a notification.
@@ -95,7 +97,7 @@ function buildConversationText(
 // ============================================================================
 
 async function runExtraction(ctx: ExtractionContext, isTrailingRun = false): Promise<void> {
-  const { messages, projectRoot, onMemorySaved } = ctx;
+  const { messages, projectRoot, pipiOutputDir, onMemorySaved } = ctx;
 
   // --- Throttle check ---
   if (!isTrailingRun) {
@@ -116,7 +118,7 @@ async function runExtraction(ctx: ExtractionContext, isTrailingRun = false): Pro
   extractionInProgress = true;
 
   try {
-    const memoryDir = await getMemoryDir(projectRoot);
+    const memoryDir = await getMemoryDir(projectRoot, pipiOutputDir);
     await ensureMemoryDirs(memoryDir);
 
     // Scan existing memories so the LLM can avoid duplicates
@@ -253,4 +255,3 @@ export function resetExtractionState(): void {
   pendingContext = undefined;
   turnsSinceLastExtraction = 0;
 }
-

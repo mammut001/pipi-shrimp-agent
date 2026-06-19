@@ -26,6 +26,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   EXECUTION_MODES,
+  getAllowedToolsForMode,
   getDefaultExecutionMode,
   getExecutionMode,
   executionModeFromPermissionMode,
@@ -604,6 +605,35 @@ describe('G. Tool allow-list per mode (outer guard)', () => {
     expect(isToolAllowedForMode('bypass', 'browser_click')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'mcp__tool')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'agent_tool')).toBe(true);
+  });
+
+  it('model-facing allowlists stay aligned with debug/agent mode policies', () => {
+    expect(getAllowedToolsForMode('debug')).toEqual(expect.arrayContaining([
+      'read_file',
+      'list_files',
+      'write_file',
+    ]));
+    expect(getAllowedToolsForMode('debug')).not.toEqual(expect.arrayContaining([
+      'execute_command',
+      'browser_click',
+      'agent_tool',
+    ]));
+
+    expect(getAllowedToolsForMode('agent')).toEqual(expect.arrayContaining([
+      'read_file',
+      'write_file',
+      'execute_command',
+      'run_in_terminal',
+    ]));
+    expect(getAllowedToolsForMode('agent')).not.toEqual(expect.arrayContaining([
+      'ssh_exec',
+      'browser_click',
+      'mcp__tool',
+      'agent_tool',
+      'save_plan_doc',
+    ]));
+
+    expect(getAllowedToolsForMode('bypass')).toBeUndefined();
   });
 
   // Option A — Agent and Bypass modes do NOT advertise save_plan_doc
