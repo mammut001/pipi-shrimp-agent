@@ -1234,6 +1234,18 @@ describe('loopEngine integration', () => {
     });
     await fs.writeFile(path.join(experimentDir, 'run_experiment.py'), 'print("dirty local edit")\n', 'utf8');
 
+    mockInspectAutoResearchEnvironment.mockResolvedValueOnce({
+      experimentDir,
+      gitRepo: true,
+      repoStatus: 'dirty',
+      dirtyFileCount: 1,
+      preferredPythonCommand: 'python3',
+      worktreeWritable: true,
+      runScriptPath: path.join(experimentDir, 'run_experiment.py'),
+      notesPath: path.join(experimentDir, 'AUTORESEARCH.md'),
+      recommendedRunCommand: 'python3 run_experiment.py',
+    });
+
     const cfg = createLocalSshConfig(worktreeRoot);
     useAutoResearchStore.getState().initSession({
       id: 'autoresearch-dirty-source',
