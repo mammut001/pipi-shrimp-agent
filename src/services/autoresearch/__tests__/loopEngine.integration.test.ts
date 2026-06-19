@@ -21,6 +21,20 @@ const mockNotifier = {
   onTrendReport: jest.fn().mockResolvedValue(undefined),
 };
 
+let eventListener: any;
+jest.mock('@tauri-apps/api/event', () => ({
+  listen: jest.fn().mockImplementation(async (eventName, handler) => {
+    if (eventName === 'terminal-output') {
+      eventListener = handler;
+    }
+    return () => {
+      if (eventListener === handler) {
+        eventListener = undefined;
+      }
+    };
+  }),
+}));
+
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
@@ -123,6 +137,7 @@ jest.setTimeout(30000);
 describe('loopEngine integration', () => {
   let workDir: string;
   let sessionFilePath: string;
+  let unsubStore: () => void;
   const extraCleanupDirs = new Set<string>();
 
   beforeEach(async () => {
@@ -189,6 +204,36 @@ describe('loopEngine integration', () => {
     });
     await fs.writeFile(sessionFilePath, '# Objective\nImprove validation loss.\n', 'utf8');
     useAutoResearchStore.getState().resetSession();
+    unsubStore = useAutoResearchStore.subscribe((state) => {
+      if (state.terminalSessionId && !state.terminalReady) {
+        Promise.resolve().then(() => {
+          useAutoResearchStore.getState().setTerminalReady(true);
+        });
+      }
+    });
+
+    const originalImplementation = mockInvoke.getMockImplementation();
+    mockInvoke.mockImplementation(async (command, args) => {
+      if (command === 'terminal_input') {
+        const data = String(args.data ?? '');
+        const tokenMatch = data.match(/__PIPI_AUTORESEARCH_EXIT__:(.+?):%s/);
+        if (tokenMatch?.[1]) {
+          const token = tokenMatch[1];
+          Promise.resolve().then(() => {
+            if (eventListener) {
+              eventListener({
+                payload: {
+                  session_id: String(args.sessionId ?? ''),
+                  data: `__PIPI_AUTORESEARCH_EXIT__:${token}:0\n`,
+                },
+              });
+            }
+          });
+        }
+        return;
+      }
+      return originalImplementation ? originalImplementation(command, args) : undefined;
+    });
   });
 
   afterEach(async () => {
@@ -210,6 +255,7 @@ describe('loopEngine integration', () => {
       // Same as above.
     }
     extraCleanupDirs.clear();
+    unsubStore?.();
     useAutoResearchStore.getState().resetSession();
   });
 

@@ -27,6 +27,7 @@ import {
   writeTargetText,
   executeTargetCommand,
   type RunDir,
+  type SessionRunPaths,
 } from './runDir';
 import { readLivingDoc, rebuildLivingDoc } from './livingDoc';
 import { clearCurrentRunDir, setCurrentRunDir } from './terminalRunner';
@@ -997,7 +998,13 @@ export async function startExperimentLoop(
 
   const artifactCfg = startup.artifactCfg;
   const experimentCfg = startup.experimentCfg;
-  const sessionPaths = getSessionRunPaths(artifactCfg, sessionId);
+  let sessionPaths: SessionRunPaths;
+  try {
+    sessionPaths = getSessionRunPaths(artifactCfg, sessionId);
+  } catch (error) {
+    useAutoResearchStore.getState().setError(formatError(error));
+    return;
+  }
   const sessionContent = startup.sessionContent;
   let environmentSummary: AutoResearchEnvironmentSummary;
 
@@ -1770,7 +1777,9 @@ export async function startExperimentLoop(
       });
       emitAutoResearchRuntimeEvent({
         level: 'error',
-        phase: 'FAILED',
+        phase: isTerminalFailureError(error)
+          ? 'terminal'
+          : (failureKind === 'reflection_failed' ? 'agent_execution' : 'FAILED'),
         type: reflectionFailure ? 'provider_error' : 'iteration_failed',
         message: entry.failReason ?? 'Agent execution error',
         summary: `Iteration ${iteration} failed.`,

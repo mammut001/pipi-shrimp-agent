@@ -57,7 +57,9 @@ export function getAutoResearchAllowedToolsForPhase(
       return uniqueTools([
         'get_current_workspace',
         profile.readTool,
-      ]);
+        writeTool,
+        createDirectoryTool,
+      ].filter((t): t is string => typeof t === 'string'));
     case 'DONE':
     case 'FAILED':
     default:
@@ -114,10 +116,26 @@ export function classifyAutoResearchToolPhase(input: {
   }
 
   if (createDirectoryTool && input.toolName === createDirectoryTool) {
+    if (
+      input.currentPhase === 'RUN_EXPERIMENT' ||
+      input.currentPhase === 'PARSE_METRICS' ||
+      input.currentPhase === 'DECIDE_NEXT' ||
+      input.currentPhase === 'REFLECT'
+    ) {
+      return 'PARSE_METRICS';
+    }
     return 'EDIT_CODE';
   }
 
   if (writeTool && input.toolName === writeTool) {
+    if (
+      input.currentPhase === 'RUN_EXPERIMENT' ||
+      input.currentPhase === 'PARSE_METRICS' ||
+      input.currentPhase === 'DECIDE_NEXT' ||
+      input.currentPhase === 'REFLECT'
+    ) {
+      return 'PARSE_METRICS';
+    }
     return 'EDIT_CODE';
   }
 

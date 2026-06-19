@@ -16,7 +16,7 @@ interface RawBashResult {
 }
 
 function normalizePath(value: string): string {
-  return value.replace(/[\\/]+$/, '');
+  return value.replace(/\\/g, '/').replace(/\/+$/, '');
 }
 
 function isAutoResearchWorkspacePath(path: string): boolean {

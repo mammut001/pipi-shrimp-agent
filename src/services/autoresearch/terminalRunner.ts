@@ -114,6 +114,7 @@ function buildTargetLoggedCommand(
 
 function waitForTerminalReady(sessionId: string): Promise<void> {
   const state = useAutoResearchStore.getState();
+  const initialStatus = getActiveAutoResearchRun(state)?.status ?? null;
   if (state.terminalSessionId === sessionId && state.terminalReady) {
     return Promise.resolve();
   }
@@ -121,7 +122,12 @@ function waitForTerminalReady(sessionId: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const poll = () => {
       const snapshot = getTerminalRunSnapshot();
-      if (snapshot.runState && isAutoResearchTerminalState(snapshot.runState) && snapshot.runState !== 'running') {
+      if (
+        snapshot.runState &&
+        isAutoResearchTerminalState(snapshot.runState) &&
+        snapshot.runState !== 'running' &&
+        snapshot.runState !== initialStatus
+      ) {
         cleanup();
         reject(buildTerminalStopError(snapshot.runState, snapshot.reason));
         return true;
@@ -188,6 +194,8 @@ function readBufferedLines(buffer: string): { lines: string[]; remainder: string
 }
 
 export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalRunResult> {
+  const state = useAutoResearchStore.getState();
+  const initialStatus = getActiveAutoResearchRun(state)?.status ?? null;
   const sessionId = await ensureAutoResearchTerminal(opts.cfg, opts.cwd);
   const token = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const stdoutPath = `${opts.logsDir}/stdout.log`;
@@ -220,7 +228,12 @@ export async function runInTerminal(opts: TerminalRunOptions): Promise<TerminalR
         return;
       }
       const snapshot = getTerminalRunSnapshot();
-      if (snapshot.runState && isAutoResearchTerminalState(snapshot.runState) && snapshot.runState !== 'running') {
+      if (
+        snapshot.runState &&
+        isAutoResearchTerminalState(snapshot.runState) &&
+        snapshot.runState !== 'running' &&
+        snapshot.runState !== initialStatus
+      ) {
         settled = true;
         cleanup();
         reject(buildTerminalStopError(snapshot.runState, snapshot.reason));
