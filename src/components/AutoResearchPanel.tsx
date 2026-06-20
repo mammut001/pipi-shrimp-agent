@@ -703,7 +703,7 @@ export function AutoResearchPanel() {
                         {isResumingInterruptedRun ? 'Resuming…' : 'Resume Run'}
                       </button>
                     ) : undefined}
-                    className="min-h-screen sm:min-h-[calc(100vh-2rem)] sm:rounded-[28px] sm:border sm:border-[#e7ded1]"
+                    className="min-h-screen sm:min-h-[calc(100vh-2rem)] sm:rounded-[28px] sm:border sm:border-[#e9e7e2]"
                   />
                 </div>
               </div>

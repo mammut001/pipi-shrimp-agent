@@ -118,12 +118,13 @@ fn resolve_path(path: &str, work_dir: Option<&str>) -> Result<String, PathSecuri
 /// var to avoid a TOCTOU race where an attacker (or another process) can
 /// change $HOME between the read here and the caller's use of the value.
 fn expand_home(path: &str) -> String {
+    let path = crate::tools::shell_profile::normalize_windows_native_path(path);
     if path.starts_with('~') {
         if let Some(home) = dirs::home_dir() {
             return path.replacen('~', home.to_string_lossy().as_ref(), 1);
         }
     }
-    path.to_string()
+    path
 }
 
 /// AUDIT-FIX [fix-1#1] — `is_within_dir(child, parent)` returns true only if

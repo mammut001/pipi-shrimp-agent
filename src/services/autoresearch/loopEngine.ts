@@ -58,8 +58,8 @@ interface ParsedResult {
   metricValue: number | null;
   status: ExperimentStatus;
   hypothesis: string;
-  change: string;
-  reasoning: string;
+  change?: string;
+  reasoning?: string;
   artifactPaths: string[];
   parseSource: 'metrics_json' | 'agent_json' | 'deprecated_result_line';
   failReason?: string;
@@ -234,9 +234,10 @@ ${livingDoc || 'No prior iterations recorded yet.'}
 - Diff file: ${runDir.diffPath}
 
 ## WORKSPACE CONTRACT
+- Your tool working directory is ${runDir.iterDir}. Use relative paths from there whenever possible.
 - Per-iteration code lives in: ${iterationCodeDir} (already a clean git checkout)
-- Modify run_experiment.py in ${iterationCodeDir}, NOT in the original experiment dir
-- Run the experiment from ${iterationCodeDir} using "${environmentSummary.recommendedRunCommand}"
+- Modify run_experiment.py in ${iterationCodeDir} (for example: code/run_experiment.py), NOT in the original experiment dir
+- Run the experiment from ${iterationCodeDir} using "${environmentSummary.recommendedRunCommand}". When calling execute_command, set cwd/work_dir to ${iterationCodeDir}.
 - Write hypothesis.md and diff.patch into ${runDir.iterDir}/ (one level above code/)
 - Write metrics.json to ${runDir.metricsPath}. If your experiment script naturally emits ./metrics.json from ${iterationCodeDir}, the host will also accept that location as a fallback.
 - The host will diff ${iterationCodeDir} vs the parent run's baseline to produce diff.patch
@@ -473,16 +474,18 @@ function normalizeParsedResult(
     };
   }
 
-  const change = typeof candidate.change === 'string'
+  const rawChange = typeof candidate.change === 'string'
     ? candidate.change.trim()
     : typeof candidate.patchSummary === 'string'
       ? candidate.patchSummary.trim()
       : '';
-  const reasoning = typeof candidate.reasoning === 'string'
+  const rawReasoning = typeof candidate.reasoning === 'string'
     ? candidate.reasoning.trim()
     : typeof candidate.analysis === 'string'
       ? candidate.analysis.trim()
       : '';
+  const change = rawChange || undefined;
+  const reasoning = rawReasoning || undefined;
   const artifactPaths = Array.isArray(candidate.artifactPaths)
     ? candidate.artifactPaths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     : Array.isArray(candidate.artifacts)
@@ -543,8 +546,6 @@ function parseExperimentResult(agentOutput: string, metricName: string): ParsedI
       status: status as ExperimentStatus,
       failReason: match[3] || undefined,
       hypothesis,
-      change: '',
-      reasoning: '',
       artifactPaths: [],
       parseSource: 'deprecated_result_line',
     },

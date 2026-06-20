@@ -145,7 +145,7 @@ describe('AutoResearch recovery actions include increase_tool_budget for budget 
 });
 
 describe('AutoResearch work dir isolation', () => {
-  it('chatAdapter builds effectiveWorkDir from iteration codeDir in local mode, not from chat session cwd', async () => {
+  it('chatAdapter builds effectiveWorkDir from iteration dir in local mode, not from chat session cwd', async () => {
     const fs = await import('node:fs');
     const path = await import('node:path');
     const source = fs.readFileSync(
@@ -153,11 +153,12 @@ describe('AutoResearch work dir isolation', () => {
       'utf8',
     );
     // The contract: in local mode, effectiveWorkDir comes from
-    // `currentRunDir?.codeDir || workDir` — never the bare chat session
-    // cwd. This keeps AutoResearch writes inside the iteration
-    // codeDir even when the chat session has a project folder bound.
+    // `currentRunDir?.iterDir || workDir` — never the bare chat session
+    // cwd. This keeps AutoResearch reads/writes inside the iteration
+    // workspace root so the agent can access both `code/` and the
+    // sibling metrics/hypothesis files without escaping the sandbox.
     expect(source).toMatch(/effectiveWorkDir\s*=\s*store\.sshConfig\?\.mode\s*===\s*'local'/);
-    expect(source).toMatch(/currentRunDir\?\.codeDir\s*\|\|\s*workDir/);
+    expect(source).toMatch(/currentRunDir\?\.iterDir\s*\|\|\s*workDir/);
   });
 
   it('chatAdapter does NOT pass the chat session cwd to AutoResearch in any mode', async () => {

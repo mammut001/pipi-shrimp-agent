@@ -319,6 +319,9 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
     // Handle decision
     if (!decision.approved) {
       if (decision.riskLevel !== 'critical') {
+        if (ctx.permissionMode === 'bypass') {
+          return { approved: true };
+        }
         return {
           approved: true,
           requiresConfirmation: true,
@@ -341,6 +344,9 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
     return { approved: true };
   } catch (error) {
     console.warn('ML classifier check failed:', error);
+    if (ctx.permissionMode === 'bypass') {
+      return { approved: true };
+    }
     if (!isHighRiskToolName(ctx.toolName)) {
       return { approved: true };
     }
@@ -356,7 +362,7 @@ export async function mlClassifierCheck(ctx: HookContext): Promise<HookResult> {
  * Analyzes shell commands for safety and risk assessment.
  */
 export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult> {
-  if (ctx.toolName !== 'run_in_terminal') {
+  if (ctx.toolName !== 'run_in_terminal' && ctx.toolName !== 'execute_command') {
     return { approved: true };
   }
 
@@ -394,6 +400,9 @@ export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult>
 
     if (classification.requiresApproval) {
       if (classification.riskLevel !== 'critical') {
+        if (ctx.permissionMode === 'bypass') {
+          return { approved: true };
+        }
         return {
           approved: true,
           requiresConfirmation: true,
@@ -411,6 +420,9 @@ export async function bashClassifierCheck(ctx: HookContext): Promise<HookResult>
     return { approved: true };
   } catch (error) {
     console.warn('Bash classifier check failed:', error);
+    if (ctx.permissionMode === 'bypass') {
+      return { approved: true };
+    }
     if (!isHighRiskToolName(ctx.toolName)) {
       return { approved: true };
     }

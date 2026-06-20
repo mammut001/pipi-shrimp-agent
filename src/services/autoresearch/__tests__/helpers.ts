@@ -28,44 +28,12 @@ function toPosixPath(value: string, flavor: BashFlavor): string {
     : `/mnt/${drive}/${rest}`;
 }
 
-function toWindowsPath(value: string): string {
-  const wslMatch = value.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
-  if (wslMatch) {
-    const drive = wslMatch[1].toUpperCase();
-    const rest = wslMatch[2].replace(/\//g, '\\');
-    return `${drive}:\\${rest}`;
-  }
-
-  const match = value.match(/^\/([a-zA-Z])\/(.*)$/);
-  if (!match) {
-    return value;
-  }
-
-  const drive = match[1].toUpperCase();
-  const rest = match[2].replace(/\//g, '\\');
-  return `${drive}:\\${rest}`;
-}
-
 function normalizeCommandForBash(command: string, flavor: BashFlavor): string {
   if (process.platform !== 'win32') {
     return command;
   }
 
   return command.replace(/[a-zA-Z]:[\\/][^'\r\n]*/g, (segment) => toPosixPath(segment, flavor));
-}
-
-function normalizeBashOutputForWindows(output: string): string {
-  if (process.platform !== 'win32' || !output) {
-    return output;
-  }
-
-  return output
-    .replace(/(^|[\s'"])(\/mnt\/[a-zA-Z]\/[^\s'"]*)/g, (full, prefix: string, candidate: string) => {
-      return `${prefix}${toWindowsPath(candidate)}`;
-    })
-    .replace(/(^|[\s'"])(\/[a-zA-Z]\/[^\s'"]*)/g, (full, prefix: string, candidate: string) => {
-      return `${prefix}${toWindowsPath(candidate)}`;
-    });
 }
 
 async function findBash(): Promise<string> {
@@ -105,8 +73,8 @@ async function runLocalShellCommand(
       },
     );
     return {
-      stdout: normalizeBashOutputForWindows(stdout),
-      stderr: normalizeBashOutputForWindows(stderr),
+      stdout,
+      stderr,
     };
   }
 
@@ -122,8 +90,8 @@ async function runLocalShellCommand(
     },
   );
   return {
-    stdout: normalizeBashOutputForWindows(stdout),
-    stderr: normalizeBashOutputForWindows(stderr),
+    stdout,
+    stderr,
   };
 }
 
@@ -186,8 +154,8 @@ export function installLocalInvokeMock(mockInvoke: jest.Mock): void {
             code?: number;
           };
           return {
-            stdout: normalizeBashOutputForWindows(execError.stdout ?? ''),
-            stderr: normalizeBashOutputForWindows(execError.stderr ?? execError.message),
+            stdout: execError.stdout ?? '',
+            stderr: execError.stderr ?? execError.message,
             exit_code: execError.code ?? 1,
           };
         }

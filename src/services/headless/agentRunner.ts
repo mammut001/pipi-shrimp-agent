@@ -1,6 +1,7 @@
 import { runChatTurn } from '@/core/QueryEngine';
 import type { ToolCallParams, TokenUsage } from '@/core/types';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
+import type { ExecutionModeId } from '@/services/executionMode';
 import { StreamingToolExecutor, partitionTools } from '@/services/StreamingToolExecutor';
 import type { ToolExecutionSource, PermissionMode } from '@/services/tools/toolExecutionPolicy';
 import { useSettingsStore } from '@/store';
@@ -67,6 +68,7 @@ export interface HeadlessAgentRunnerInput {
    * and 'standard' otherwise.
    */
   permissionMode?: PermissionMode;
+  executionMode?: ExecutionModeId | string;
   resolveWorkDir?: () => Promise<string | null>;
   onWorkDirResolved?: (workDir: string) => Promise<void> | void;
   onTextDelta?: (chunk: string) => void;
@@ -188,6 +190,7 @@ async function executeToolBatch(
   allowedTools?: Set<string>,
   allowToolExecution?: HeadlessAgentRunnerInput['allowToolExecution'],
   permissionMode?: PermissionMode,
+  executionMode?: ExecutionModeId | string,
 ): Promise<Array<{ id: string; name: string; content: string; durationMs: number }>> {
   const manualResults: Array<{ id: string; name: string; content: string; durationMs: number }> = [];
   const executableTools: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
@@ -253,6 +256,7 @@ async function executeToolBatch(
       workDir,
       source,
       permissionMode,
+      executionMode,
       allowedTools: allowedTools ? [...allowedTools] : undefined,
     });
 
@@ -275,6 +279,7 @@ async function executeToolBatch(
       workDir,
       source,
       permissionMode,
+      executionMode,
       allowedTools: allowedTools ? [...allowedTools] : undefined,
     });
     const result = batchResult.results[0];
@@ -299,6 +304,8 @@ export async function runHeadlessAgentTurn(
     : undefined;
   const effectivePermissionMode: PermissionMode = input.permissionMode
     ?? (input.toolExecutionSource === 'autoresearch_phase' ? 'bypass' : 'standard');
+  const effectiveExecutionMode: ExecutionModeId | string | undefined = input.executionMode
+    ?? (effectivePermissionMode === 'bypass' ? 'bypass' : undefined);
   const toolExecutionSource = input.toolExecutionSource ?? 'headless_agent';
   const constrainedSystemPrompt = input.allowedTools?.length
     ? buildAllowedToolsSystemPrompt(input.systemPrompt, input.allowedTools)
@@ -367,6 +374,7 @@ export async function runHeadlessAgentTurn(
           allowedTools,
           input.allowToolExecution,
           effectivePermissionMode,
+          effectiveExecutionMode,
         );
         toolBudgetSummary = appendToolBudgetEntries(
           toolBudgetSummary,

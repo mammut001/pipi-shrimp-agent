@@ -1,6 +1,38 @@
-import { describe, expect, it } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { executionModeGuardCheck, permissionModeCheck, type HookContext } from '../preToolUseHooks';
+jest.mock('../../../utils/permissions/classifierDecision', () => ({
+  defaultClassifier: {
+    classifyPermission: jest.fn(),
+  },
+}));
+
+jest.mock('../../../utils/permissions/denialTracking', () => ({
+  defaultDenialTracker: {
+    shouldDenyBasedOnHistory: jest.fn(),
+    recordDenial: jest.fn(),
+  },
+}));
+
+jest.mock('../../../utils/permissions/bashClassifier', () => ({
+  classifyBashCommand: jest.fn(),
+}));
+
+jest.mock('../../../utils/permissions/permissionLogging', () => ({
+  defaultTelemetry: {
+    logPermissionDecision: jest.fn(),
+  },
+}));
+
+import { defaultClassifier } from '../../../utils/permissions/classifierDecision';
+import { classifyBashCommand } from '../../../utils/permissions/bashClassifier';
+import { defaultDenialTracker } from '../../../utils/permissions/denialTracking';
+import {
+  bashClassifierCheck,
+  executionModeGuardCheck,
+  mlClassifierCheck,
+  permissionModeCheck,
+  type HookContext,
+} from '../preToolUseHooks';
 
 function ctx(overrides: Partial<HookContext> = {}): HookContext {
   return {
@@ -11,6 +43,25 @@ function ctx(overrides: Partial<HookContext> = {}): HookContext {
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.mocked(defaultClassifier.classifyPermission).mockResolvedValue({
+    approved: true,
+    confidence: 0.9,
+    riskLevel: 'low',
+    reasoning: 'safe',
+  });
+  jest.mocked(defaultDenialTracker.shouldDenyBasedOnHistory).mockReturnValue({
+    shouldDeny: false,
+    reason: undefined,
+  });
+  jest.mocked(classifyBashCommand).mockReturnValue({
+    requiresApproval: false,
+    riskLevel: 'safe',
+    reasoning: 'safe',
+  });
+});
 
 describe('preToolUseHooks.executionModeGuardCheck', () => {
   it('is a no-op when no execution mode is provided', async () => {
@@ -122,5 +173,40 @@ describe('preToolUseHooks.permissionModeCheck', () => {
       ctx({ permissionMode: 'plan-only', toolName: 'read_file' }),
     );
     expect(result.approved).toBe(true);
+  });
+});
+
+describe('preToolUseHooks bypass classifier behavior', () => {
+  it('mlClassifierCheck auto-approves non-critical denials in bypass mode', async () => {
+    jest.mocked(defaultClassifier.classifyPermission).mockResolvedValue({
+      approved: false,
+      confidence: 0.5,
+      riskLevel: 'medium',
+      reasoning: 'needs confirmation',
+    });
+
+    const result = await mlClassifierCheck(
+      ctx({ permissionMode: 'bypass', toolName: 'read_file', toolArgs: '{"path":"README.md"}' }),
+    );
+
+    expect(result).toEqual({ approved: true });
+  });
+
+  it('bashClassifierCheck auto-approves non-critical approval requests in bypass mode', async () => {
+    jest.mocked(classifyBashCommand).mockReturnValue({
+      requiresApproval: true,
+      riskLevel: 'high',
+      reasoning: 'network access',
+    });
+
+    const result = await bashClassifierCheck(
+      ctx({
+        permissionMode: 'bypass',
+        toolName: 'execute_command',
+        toolArgs: '{"command":"curl https://example.com"}',
+      }),
+    );
+
+    expect(result).toEqual({ approved: true });
   });
 });

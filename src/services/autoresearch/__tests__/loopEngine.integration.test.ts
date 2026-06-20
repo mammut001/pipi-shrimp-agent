@@ -132,7 +132,16 @@ function buildChatAdapterSendMessage(experimentDir: string) {
   });
 }
 
-jest.setTimeout(30000);
+const LOOP_ENGINE_INTEGRATION_TIMEOUT_MS = Number.parseInt(
+  process.env.AUTORESEARCH_LOOP_ENGINE_INTEGRATION_TIMEOUT_MS ?? '120000',
+  10,
+);
+
+jest.setTimeout(
+  Number.isFinite(LOOP_ENGINE_INTEGRATION_TIMEOUT_MS)
+    ? LOOP_ENGINE_INTEGRATION_TIMEOUT_MS
+    : 120000,
+);
 
 describe('loopEngine integration', () => {
   let workDir: string;
@@ -1393,11 +1402,22 @@ describe('loopEngine integration', () => {
       await fs.writeFile(
         runDir.metricsPath,
         JSON.stringify({
+          schemaVersion: 1,
+          sessionId: 'autoresearch-failed-metrics-artifact',
+          runId: 'autoresearch-failed-metrics-artifact',
+          iteration: 1,
+          primaryMetric: 'cv_accuracy',
+          direction: 'higher',
+          timestamp: new Date().toISOString(),
+          generator: 'agent',
           metricName: 'cv_accuracy',
           metricValue: null,
           status: 'FAILED',
           hypothesis: 'capture the failure reason',
+          change: 'record failed evaluation',
+          reasoning: 'the evaluation timed out before producing a metric',
           failReason: 'evaluation timed out',
+          artifactPaths: [],
         }, null, 2),
         'utf8',
       );

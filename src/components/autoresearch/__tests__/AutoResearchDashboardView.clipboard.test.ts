@@ -142,12 +142,20 @@ describe('AutoResearchDashboardView clipboard actions', () => {
       debugButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const copyLiveOutputButton = container.querySelector('[data-copy-target="live-output-copy"]') as HTMLButtonElement | null;
-    expect(copyLiveOutputButton).not.toBeNull();
+    const copyRawEventsButton = container.querySelector('[data-copy-target="debug-raw-events"]') as HTMLButtonElement | null;
+    const copyRawConversationButton = container.querySelector('[data-copy-target="debug-raw-conversation"]') as HTMLButtonElement | null;
+    expect(copyRawEventsButton).not.toBeNull();
+    expect(copyRawConversationButton).not.toBeNull();
+    expect(container.querySelector('[data-copy-target="live-output-copy"]')).toBeNull();
 
     await act(async () => {
-      copyLiveOutputButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      copyRawEventsButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(writeText).toHaveBeenNthCalledWith(3, 'line 1\nline 2\nline 3\n');
+    expect(writeText).toHaveBeenNthCalledWith(3, formatAutoResearchEventDump(run.events));
+
+    await act(async () => {
+      copyRawConversationButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(writeText).toHaveBeenNthCalledWith(4, 'line 1\nline 2\nline 3\n');
   });
 });

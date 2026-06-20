@@ -244,6 +244,8 @@ const zhCN: TranslationKeys = {
   'autoresearch.detail.failedNoMetric': '失败 / 无指标',
   'autoresearch.liveOutput.copy': '复制',
   'autoresearch.liveOutput.copied': '已复制',
+  'autoresearch.debug.copyRawEvents': '复制事件',
+  'autoresearch.debug.copyRawConversation': '复制对话',
   'autoresearch.liveOutput.download': '下载 .log',
   'autoresearch.liveOutput.clear': '清空',
   'autoresearch.liveOutput.cleared': '已清空（文件保留）',

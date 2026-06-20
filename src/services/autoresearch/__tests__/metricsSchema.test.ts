@@ -60,6 +60,24 @@ describe('metricsSchema', () => {
     expect(result.value?.failReason).toBe('timeout');
   });
 
+  it('treats blank optional agent narrative fields as omitted', () => {
+    const result = parseMetricsArtifactPayload({
+      ...createValidArtifact(),
+      change: '',
+      reasoning: '   ',
+    }, {
+      expectedSessionId: 'run-1',
+      expectedRunId: 'run-1',
+      expectedIteration: 1,
+      expectedMetricName: 'cv_accuracy',
+      expectedDirection: 'higher',
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.change).toBeUndefined();
+    expect(result.value?.reasoning).toBeUndefined();
+  });
+
   it('rejects FAILED artifacts without failReason', () => {
     const result = parseMetricsArtifactPayload({
       ...createValidArtifact(),
@@ -92,7 +110,7 @@ describe('metricsSchema', () => {
     });
 
     expect(result.value).toBeNull();
-    expect(result.error).toContain('Current AutoResearch uses sessionId as runId.');
+    expect(result.error).toContain('Current AutoResearch uses sessionId as runId');
   });
 
   it('rejects sessionId mismatches', () => {
@@ -212,5 +230,29 @@ describe('metricsSchema', () => {
     expect(normalized.runId).toBe('run-normalized');
     expect(normalized.primaryMetric).toBe('cv_accuracy');
     expect(normalized.timestamp).toBe('2026-05-05T00:00:00.400Z');
+  });
+
+  it('normalizes blank optional persisted narrative fields before validation', () => {
+    const normalized = normalizeIterationMetricsRecord({
+      iteration: 4,
+      sessionId: 'run-blank-narrative',
+      metricName: 'score',
+      metricValue: null,
+      status: 'FAILED',
+      failReason: 'agent execution error',
+      hypothesis: 'record failed iteration',
+      change: '',
+      reasoning: '  ',
+      durationMs: 250,
+      startedAt: '2026-05-05T00:00:00.000Z',
+      finishedAt: '2026-05-05T00:00:00.250Z',
+    }, {
+      sessionId: 'run-blank-narrative',
+      direction: 'higher',
+      generator: 'loop_engine',
+    });
+
+    expect(normalized.change).toBeUndefined();
+    expect(normalized.reasoning).toBeUndefined();
   });
 });

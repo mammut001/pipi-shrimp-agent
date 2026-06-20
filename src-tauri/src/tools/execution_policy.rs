@@ -393,7 +393,12 @@ fn evaluate_command_policy(
         .map(|value| value.eq_ignore_ascii_case("bypass"))
         .unwrap_or(false);
 
-    if is_bypass && matches!(req.source, ToolExecutionSource::AssistantToolCall) {
+    if is_bypass
+        && matches!(
+            req.source,
+            ToolExecutionSource::AssistantToolCall | ToolExecutionSource::AutoresearchPhase
+        )
+    {
         return Ok(allow(None));
     }
 
@@ -806,14 +811,14 @@ mod tests {
     }
 
     #[test]
-    fn bypass_assistant_execute_command_allows_normal_command_without_confirmation() {
-        // Bypass mode shortcut: a benign Assistant tool call command
+    fn bypass_autoresearch_execute_command_allows_normal_command_without_confirmation() {
+        // Bypass mode shortcut: a benign AutoResearch command
         // like `wc -l` must preview as `allowed` so the frontend can
         // skip the permission modal entirely. The frontend still runs
         // the hard safety hooks (dangerousCommandCheck /
         // pathValidationCheck) before this preview fires.
         let mut request = make_request("execute_command");
-        request.source = ToolExecutionSource::AssistantToolCall;
+        request.source = ToolExecutionSource::AutoresearchPhase;
         request.execution_mode = Some("bypass".to_string());
         request.arguments = serde_json::json!({
             "command": "wc -l src/services/autoresearch/loopEngine.ts",

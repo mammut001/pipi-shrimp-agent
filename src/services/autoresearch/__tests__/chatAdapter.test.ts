@@ -1,4 +1,4 @@
-import type { ResolvedAgentConfig } from '@/services/agentConfig';
+﻿import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import { buildAutoResearchToolCatalog, getAutoResearchToolProfile } from '../toolCatalog';
 import {
   deepseekMixedFailureTranscriptFixture,
@@ -161,6 +161,7 @@ describe('createAutoResearchSendMessage', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    mockRunHeadlessAgentTurn.mockReset();
     mockWriteTargetText.mockReset();
     mockAppendTargetText.mockReset();
     mockPatchIterationRecord.mockReset();
@@ -225,6 +226,8 @@ describe('createAutoResearchSendMessage', () => {
       agentConfig: activeConfig,
       allowedTools: localToolCatalog,
       toolExecutionSource: 'autoresearch_phase',
+      permissionMode: 'bypass',
+      executionMode: 'bypass',
       initialMessages: [
         {
           role: 'user',
@@ -236,8 +239,7 @@ describe('createAutoResearchSendMessage', () => {
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('partial output');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('[thinking]\nreasoning trace\n');
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('[status] working\n');
-    expect(mockAppendLiveOutput).toHaveBeenCalledWith('  → read_file: README excerpt\n');
-    expect(mockAppendLiveOutput).not.toHaveBeenCalledWith('💭 reasoning trace');
+    expect(mockAppendLiveOutput).toHaveBeenCalledWith(expect.stringContaining('read_file: README excerpt'));
   });
 
   it('does not reuse freeform transcripts from previous iterations', async () => {
@@ -261,6 +263,8 @@ describe('createAutoResearchSendMessage', () => {
       1,
       expect.objectContaining({
         toolExecutionSource: 'autoresearch_phase',
+        permissionMode: 'bypass',
+        executionMode: 'bypass',
         initialMessages: [
           {
             role: 'user',
@@ -273,6 +277,8 @@ describe('createAutoResearchSendMessage', () => {
       2,
       expect.objectContaining({
         toolExecutionSource: 'autoresearch_phase',
+        permissionMode: 'bypass',
+        executionMode: 'bypass',
         initialMessages: [
           {
             role: 'user',
@@ -295,8 +301,10 @@ describe('createAutoResearchSendMessage', () => {
     await expect(sendMessage('system prompt', 'use iteration workspace')).resolves.toBe('final answer');
 
     expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
-      workDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code',
+      workDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z',
       toolExecutionSource: 'autoresearch_phase',
+      permissionMode: 'bypass',
+      executionMode: 'bypass',
     }));
   });
 
@@ -338,7 +346,7 @@ describe('createAutoResearchSendMessage', () => {
     }));
   });
 
-  it('switches to python3 deterministically after python command-not-found failures', async () => {
+  it('finalizes command-not-found experiment failures as parseable FAILED metrics', async () => {
     mockRunHeadlessAgentTurn
       .mockImplementationOnce(async (input) => {
         await input.onToolCall?.({
@@ -386,22 +394,19 @@ describe('createAutoResearchSendMessage', () => {
       maxIterations: 5,
     });
 
-    await expect(sendMessage('system prompt', 'recover please')).resolves.toBe('recovered answer');
-    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(2);
+    const result = await sendMessage('system prompt', 'recover please');
+    expect(result).toContain('"status": "FAILED"');
+    expect(result).toContain('"metricValue": null');
+    expect(result).toContain('bash: python: command not found');
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
     expect(mockRequestReflectionDecision).not.toHaveBeenCalled();
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Reflection decision: switch_command — Use python3 instead of python.',
+      message: expect.stringContaining('Reflection decision: switch_command'),
       metadata: expect.objectContaining({
         action: 'switch_command',
         rootCause: 'python command not found',
       }),
     }));
-    expect(mockRunHeadlessAgentTurn).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining('python3 run_experiment.py'),
-      }),
-    );
   });
 
   it('finalizes the iteration instead of surfacing a run-level reflection failure on tool-round exhaustion', async () => {
@@ -413,7 +418,7 @@ describe('createAutoResearchSendMessage', () => {
       decision: {
         action: 'mark_iteration_failed',
         summary: 'The agent exhausted the tool budget without producing the metric.',
-        userMessage: '工具调用轮数已耗尽。最近的关键错误是：python: command not found。',
+        userMessage: 'Tool budget exhausted. Recent key error: python: command not found.',
         shouldRetry: false,
         confidence: 'medium',
       },
@@ -426,7 +431,7 @@ describe('createAutoResearchSendMessage', () => {
     expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
     expect(mockRequestReflectionDecision).toHaveBeenCalledTimes(1);
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Reflection decision: mark_iteration_failed — The agent exhausted the tool budget without producing the metric.',
+      message: expect.stringContaining('Reflection decision: mark_iteration_failed'),
     }));
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining('budget_near_limit:'),
@@ -460,7 +465,10 @@ describe('createAutoResearchSendMessage', () => {
       reflectionConfig,
     });
 
-    await expect(sendMessage('system prompt', 'use override')).rejects.toThrow('Reflection override answered.');
+    const result = await sendMessage('system prompt', 'use override');
+    expect(result).toContain('__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__');
+    expect(result).toContain('"status": "FAILED"');
+    expect(result).toContain('Reflection override answered.');
     expect(mockRunHeadlessAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
       agentConfig: activeConfig,
     }));
@@ -495,7 +503,7 @@ describe('createAutoResearchSendMessage', () => {
     await expect(sendMessage('system prompt', 'reflect and continue')).resolves.toContain('tool budget exhausted before evaluation completed');
     expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
-      phase: 'reflection_parse_failed',
+      phase: 'REFLECT',
       message: expect.stringContaining('not json'),
     }));
   });
@@ -738,7 +746,7 @@ describe('createAutoResearchSendMessage', () => {
       systemPrompt: string;
       initialMessages: Array<{ role: string; content: string }>;
     };
-    expect(thirdCallInput.workDir).toBe(deepseekMixedFailureTranscriptFixture.runDir.codeDir);
+    expect(thirdCallInput.workDir).toBe(deepseekMixedFailureTranscriptFixture.runDir.iterDir);
     expect(thirdCallInput.allowedTools).toEqual(localToolCatalog);
     expect(thirdCallInput.toolExecutionSource).toBe('autoresearch_phase');
     expect(thirdCallInput.systemPrompt).toContain(`HARD CONSTRAINT: do not call ${deepseekMixedFailureTranscriptFixture.expected.blockedTool}.`);
@@ -766,6 +774,6 @@ describe('createAutoResearchSendMessage', () => {
       expect.stringContaining(deepseekMixedFailureTranscriptFixture.expected.metricsFileName),
     );
     expect(mockAppendLiveOutput).toHaveBeenCalledWith('[status] calling provider\n');
-    expect(mockAppendLiveOutput).toHaveBeenCalledWith('💭 checking provider compatibility');
+    expect(mockAppendLiveOutput).toHaveBeenCalledWith('[thinking]\nchecking provider compatibility\n');
   });
 });

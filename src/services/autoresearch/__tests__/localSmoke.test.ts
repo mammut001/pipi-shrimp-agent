@@ -235,6 +235,7 @@ describe('local AutoResearch smoke', () => {
     expect(failedArtifact.value?.status).toBe('FAILED');
     expect(failedArtifact.value?.failReason).toBe('synthetic smoke failure');
 
+    await fs.mkdir(resultsDir, { recursive: true });
     await fs.writeFile(path.join(resultsDir, 'metrics-valid.json'), writtenMetrics || '', 'utf8');
     await fs.writeFile(path.join(resultsDir, 'metrics-invalid.json'), JSON.stringify(invalidMetrics, null, 2), 'utf8');
     await fs.writeFile(

@@ -1227,6 +1227,8 @@ export type TranslationKeys = {
   'autoresearch.detail.failedNoMetric': string;
   'autoresearch.liveOutput.copy': string;
   'autoresearch.liveOutput.copied': string;
+  'autoresearch.debug.copyRawEvents': string;
+  'autoresearch.debug.copyRawConversation': string;
   'autoresearch.liveOutput.download': string;
   'autoresearch.liveOutput.clear': string;
   'autoresearch.liveOutput.cleared': string;

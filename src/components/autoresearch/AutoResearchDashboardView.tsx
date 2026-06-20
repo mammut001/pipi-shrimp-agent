@@ -138,7 +138,7 @@ function getPhaseToneClasses(phase?: string | null): string {
   if (phase === 'DONE') {
     return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   }
-  return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-[#e9e7e2] bg-[#faf9f6] text-[#6f6e69]';
 }
 
 function getStatusToneClasses(status: string): string {
@@ -159,9 +159,9 @@ function getRecoveryToneClasses(tone: 'info' | 'warn' | 'error'): string {
     return 'border-red-200 bg-red-50 text-red-800';
   }
   if (tone === 'warn') {
-    return 'border-amber-200 bg-amber-50 text-amber-900';
+    return 'border-[#ece9e2] bg-[#faf9f6] text-[#5f5a52]';
   }
-  return 'border-blue-200 bg-blue-50 text-blue-900';
+  return 'border-[#e3e2de] bg-[#f7f6f3] text-[#37352f]';
 }
 
 function SectionHeading({ children, subtitle }: { children: ReactNode; subtitle?: ReactNode }) {
@@ -202,16 +202,37 @@ function OverviewStatCard({ label, value, tone = 'neutral' }: { label: string; v
   const toneClasses = tone === 'good'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
     : tone === 'warn'
-      ? 'border-amber-200 bg-amber-50 text-amber-900'
+      ? 'border-[#ece9e2] bg-[#faf9f6] text-[#5f5a52]'
       : tone === 'error'
         ? 'border-red-200 bg-red-50 text-red-900'
-        : 'border-gray-200 bg-white text-gray-900';
+        : 'border-[#e9e7e2] bg-white text-[#37352f]';
 
   return (
     <div className={`rounded-2xl border px-4 py-3 ${toneClasses}`}>
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] opacity-70">{label}</p>
       <div className="mt-2 text-sm font-medium">{value}</div>
     </div>
+  );
+}
+
+function DebugCopyButton({
+  label,
+  onClick,
+  dataCopyTarget,
+}: {
+  label: string;
+  onClick: () => void;
+  dataCopyTarget: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-copy-target={dataCopyTarget}
+      className="rounded-full border border-[#e7e5e1] bg-white px-2.5 py-1 text-[11px] font-medium text-[#6f6e69] transition-colors hover:border-[#ded9d1] hover:text-[#37352f]"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -312,10 +333,10 @@ function TimelineEventCard({
   const levelTone = event.level === 'error'
     ? 'border-red-200 bg-red-50/90'
     : event.level === 'warning'
-      ? 'border-amber-200 bg-amber-50/90'
+      ? 'border-[#ece9e2] bg-[#faf9f6]'
       : event.kind === 'metrics'
         ? 'border-emerald-200 bg-emerald-50/90'
-        : 'border-gray-200 bg-white';
+        : 'border-[#e9e7e2] bg-white';
   const detailText = typeof event.detail === 'string'
     ? event.detail
     : event.rawMessage;
@@ -346,12 +367,12 @@ function TimelineEventCard({
               {EventMetadataChips({ event })}
             </div>
           ) : event.kind === 'reflection' ? (
-            <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+            <div className="mt-2 rounded-xl border border-[#e9e7e2] bg-[#faf9f6] px-3 py-3 text-sm text-[#37352f]">
               <p className="font-semibold">Reflection</p>
               <p className="mt-1">{event.summary}</p>
             </div>
           ) : event.kind === 'plan' ? (
-            <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900">
+            <div className="mt-2 rounded-xl border border-[#e3e2de] bg-[#f7f6f3] px-3 py-3 text-sm text-[#37352f]">
               <p className="font-semibold">Agent plan</p>
               <p className="mt-1 whitespace-pre-wrap">{event.summary}</p>
             </div>
@@ -538,7 +559,7 @@ export function AutoResearchDashboardView({
       <DocumentContentCard>
         <div className="space-y-6">
           {demo && (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm leading-6 text-amber-900">
+            <div className="rounded-2xl border border-[#e9e7e2] bg-[#faf9f6] px-4 py-3 text-sm leading-6 text-[#37352f]">
               {t('autoresearch.detail.demoNotice')}
             </div>
           )}
@@ -630,7 +651,7 @@ export function AutoResearchDashboardView({
               </div>
 
               {run.summary && !recoverySummary && (
-                <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm leading-6 text-amber-900">
+                <div className="rounded-2xl border border-[#e9e7e2] bg-[#faf9f6] px-4 py-3 text-sm leading-6 text-[#37352f]">
                   {redactSensitiveText(run.summary)}
                 </div>
               )}
@@ -791,40 +812,44 @@ export function AutoResearchDashboardView({
           )}
 
           {activeTab === 'debug' && (
-            <section className="rounded-2xl border border-gray-200 bg-white p-4">
+            <section className="rounded-2xl border border-[#e9e7e2] bg-white p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <SectionHeading subtitle="Raw terminal output and unfiltered event dump remain available for recovery and deep debugging.">Debug</SectionHeading>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(displayedLiveOutput)}
-                    data-copy-target="live-output-copy"
-                    className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-900"
-                  >
-                    {t('autoresearch.liveOutput.copy')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDownload}
-                    data-copy-target="live-output-download"
-                    className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-900"
-                  >
-                    {t('autoresearch.liveOutput.download')}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  data-copy-target="live-output-download"
+                  className="rounded-full border border-[#e7e5e1] bg-white px-2.5 py-1 text-[11px] font-medium text-[#6f6e69] transition-colors hover:border-[#ded9d1] hover:text-[#37352f]"
+                >
+                  {t('autoresearch.liveOutput.download')}
+                </button>
               </div>
               <div className="mt-4 grid gap-4 xl:grid-cols-2">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Raw Events</p>
-                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-gray-200 bg-white p-4 text-xs leading-5 text-gray-900 whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9b9a97]">Raw Events</p>
+                    <DebugCopyButton
+                      label={t('autoresearch.debug.copyRawEvents')}
+                      onClick={() => handleCopy(allEventLines)}
+                      dataCopyTarget="debug-raw-events"
+                    />
+                  </div>
+                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-[#e9e7e2] bg-[#faf9f6] p-4 text-xs leading-5 text-[#37352f] whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(0,0,0,0.02)]">
                     {allEventLines || 'No events recorded.'}
                   </pre>
                 </div>
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Raw Conversation</p>
-                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-gray-200 bg-white p-4 text-xs leading-5 text-gray-900 whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9b9a97]">Raw Conversation</p>
+                    <DebugCopyButton
+                      label={t('autoresearch.debug.copyRawConversation')}
+                      onClick={() => handleCopy(redactSensitiveText(displayedLiveOutput))}
+                      dataCopyTarget="debug-raw-conversation"
+                    />
+                  </div>
+                  <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-[#e9e7e2] bg-[#faf9f6] p-4 text-xs leading-5 text-[#37352f] whitespace-pre-wrap shadow-[inset_0_0_0_1px_rgba(0,0,0,0.02)]">
                     {redactSensitiveText(displayedLiveOutput) || 'No live output recorded.'}
                   </pre>
                 </div>

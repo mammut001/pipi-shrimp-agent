@@ -277,4 +277,50 @@ describe('StreamingToolExecutor.executeBatch', () => {
       }),
     ]);
   });
+
+  it('auto-approves AutoResearch bypass commands without calling requestPermission', async () => {
+    mockRunPreToolUseHooks.mockResolvedValue({ approved: true });
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-bypass',
+          toolName: 'execute_command',
+          decision: 'allowed',
+        };
+      }
+      if (command === 'execute_tool_batch') {
+        return [{
+          id: 'tool-bypass',
+          name: 'execute_command',
+          content: '{"status":"succeeded","stdout":"42 src/services/autoresearch/loopEngine.ts"}',
+          is_error: false,
+        }];
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const requestPermission = jest.fn(async () => true);
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      {
+        id: 'tool-bypass',
+        name: 'execute_command',
+        arguments: { command: 'wc -l src/services/autoresearch/loopEngine.ts', cwd: '/tmp/project' },
+      },
+    ], {
+      sessionId: 'session-ar-bypass',
+      workDir: '/tmp/project',
+      source: 'autoresearch_phase',
+      permissionMode: 'bypass',
+      executionMode: 'bypass',
+      requestPermission,
+    });
+
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(result.results[0]).toEqual(expect.objectContaining({
+      id: 'tool-bypass',
+      is_error: false,
+      content: '{"status":"succeeded","stdout":"42 src/services/autoresearch/loopEngine.ts"}',
+    }));
+  });
 });

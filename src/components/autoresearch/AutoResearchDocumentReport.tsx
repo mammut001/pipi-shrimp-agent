@@ -70,8 +70,8 @@ function StatCard({ label, value, tone = 'neutral' }: { label: string; value: Re
   const toneClassName = tone === 'good'
     ? 'border-green-100 bg-green-50/70 text-green-900'
     : tone === 'warn'
-      ? 'border-amber-100 bg-amber-50/70 text-amber-900'
-      : 'border-gray-200 bg-white text-gray-900';
+      ? 'border-[#ece9e2] bg-[#faf9f6] text-[#5f5a52]'
+      : 'border-[#e9e7e2] bg-white text-[#37352f]';
 
   return (
     <div className={`rounded-2xl border px-4 py-3 ${toneClassName}`}>
@@ -334,7 +334,7 @@ export function AutoResearchDocumentReport({
           </div>
 
           {run.summary && (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm leading-6 text-amber-900">
+            <div className="rounded-2xl border border-[#e9e7e2] bg-[#faf9f6] px-4 py-3 text-sm leading-6 text-[#37352f]">
               {redactSensitiveText(run.summary)}
             </div>
           )}

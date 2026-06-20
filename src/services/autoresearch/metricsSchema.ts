@@ -70,6 +70,10 @@ const StatusSchema = z.enum(['IMPROVED', 'NOT_IMPROVED', 'FAILED']);
 const DirectionSchema = z.enum(['lower', 'higher']);
 const GeneratorSchema = z.enum(['agent', 'loop_engine', 'bootstrap']);
 const MetricsExtraValueSchema = z.union([z.number().finite(), z.string(), z.boolean()]);
+const OptionalNonEmptyStringSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
+  z.string().min(1).optional(),
+);
 
 const MetricsArtifactBaseObjectSchema = z.object({
   metricName: z.string().min(1),
@@ -77,8 +81,8 @@ const MetricsArtifactBaseObjectSchema = z.object({
   status: StatusSchema,
   failReason: z.string().min(1).optional(),
   hypothesis: z.string().min(1),
-  change: z.string().min(1).optional(),
-  reasoning: z.string().min(1).optional(),
+  change: OptionalNonEmptyStringSchema,
+  reasoning: OptionalNonEmptyStringSchema,
   artifactPaths: z.array(z.string().min(1)).optional(),
   extra: z.record(MetricsExtraValueSchema).optional(),
 }).strict();
@@ -246,6 +250,12 @@ function hasSchemaFields(value: unknown): value is Record<string, unknown> {
     );
 }
 
+function readMetricsGenerator(value: Record<string, unknown>): MetricsGenerator | null {
+  return typeof value.generator === 'string' && ['agent', 'loop_engine', 'bootstrap'].includes(value.generator)
+    ? value.generator as MetricsGenerator
+    : null;
+}
+
 export function normalizeIterationMetricsRecord(
   input: IterationMetrics,
   options: NormalizeMetricsRecordOptions,
@@ -317,12 +327,35 @@ export function parseMetricsArtifactPayload(
   options: ParseMetricsArtifactOptions = {},
 ): { value: MetricsArtifactPayload | null; error?: string } {
   if (hasSchemaFields(value)) {
+    const generator = readMetricsGenerator(value);
+    if (generator === 'agent') {
+      const artifact = AgentMetricsArtifactSchema.safeParse(value);
+      if (artifact.success) {
+        const mismatch = validateExpectedFields(artifact.data, options);
+        return mismatch
+          ? { value: null, error: mismatch }
+          : { value: artifact.data satisfies MetricsArtifactPayload };
+      }
+
+      return {
+        value: null,
+        error: formatSchemaError('Invalid metrics artifact', artifact.error),
+      };
+    }
+
     const persisted = PersistedIterationMetricsSchema.safeParse(value);
     if (persisted.success) {
       const mismatch = validateExpectedFields(persisted.data, options);
       return mismatch
         ? { value: null, error: mismatch }
         : { value: persisted.data satisfies MetricsArtifactPayload };
+    }
+
+    if (generator === 'loop_engine' || generator === 'bootstrap') {
+      return {
+        value: null,
+        error: formatSchemaError('Invalid metrics artifact', persisted.error),
+      };
     }
 
     const artifact = AgentMetricsArtifactSchema.safeParse(value);

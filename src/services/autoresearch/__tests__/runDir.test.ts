@@ -235,7 +235,7 @@ describe('runDir', () => {
     await fs.mkdir(invalidDir, { recursive: true });
 
     await expect(pruneOldRuns(cfg, 'session-unsafe', 0)).rejects.toThrow(
-      `Refusing to prune non-session run directory: ${invalidDir}`,
+      /Refusing to prune non-session run directory: .*iter-oops/,
     );
     await expect(fs.access(invalidDir)).resolves.toBeUndefined();
   });

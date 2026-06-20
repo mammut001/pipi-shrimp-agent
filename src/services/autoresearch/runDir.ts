@@ -50,7 +50,8 @@ function trimTrailingSlash(value: string): string {
 }
 
 function normalizePathForComparison(targetPath: string): string {
-  return trimTrailingSlash(targetPath).replace(/\\/g, '/');
+  const slashNormalized = trimTrailingSlash(targetPath).replace(/\\/g, '/');
+  return slashNormalized.replace(/^\/mnt\/([a-zA-Z])\//, (_, drive: string) => `${drive.toUpperCase()}:/`);
 }
 
 function inferPathSeparator(targetPath: string): '/' | '\\' {

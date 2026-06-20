@@ -416,6 +416,7 @@ describe('runHeadlessAgentTurn', () => {
         sessionId: 'session-autoresearch-bypass',
         source: 'autoresearch_phase',
         permissionMode: 'bypass',
+        executionMode: 'bypass',
       }),
     );
     const [bypassResults] = resolveAll.mock.calls[0] ?? [];
@@ -465,6 +466,7 @@ describe('runHeadlessAgentTurn', () => {
         sessionId: 'session-explicit-standard',
         source: 'autoresearch_phase',
         permissionMode: 'standard',
+        executionMode: undefined,
       }),
     );
     const [standardResults] = resolveAll.mock.calls[0] ?? [];

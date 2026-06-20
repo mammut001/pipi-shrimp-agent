@@ -119,6 +119,49 @@ pub fn convert_windows_path_to_wsl(path: &str) -> Option<String> {
     None
 }
 
+/// Convert a WSL-style `/mnt/<drive>/...` path to a Windows drive path.
+/// Returns `None` when the input is not a `/mnt/` path.
+pub fn convert_wsl_path_to_windows(path: &str) -> Option<String> {
+    let value = path.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    const PREFIX: &str = "/mnt/";
+    if !value.starts_with(PREFIX) {
+        return None;
+    }
+
+    let rest = &value[PREFIX.len()..];
+    let mut parts = rest.splitn(2, '/');
+    let drive = parts.next()?;
+    if drive.len() != 1 {
+        return None;
+    }
+    let drive_char = drive.chars().next()?;
+    if !drive_char.is_ascii_alphabetic() {
+        return None;
+    }
+
+    let remainder = parts.next().unwrap_or("");
+    let windows_rest = remainder.replace('/', "\\");
+    Some(format!(
+        "{}:\\{}",
+        drive_char.to_ascii_uppercase(),
+        windows_rest
+    ))
+}
+
+/// On Windows, translate WSL mount paths to native drive paths for local
+/// filesystem APIs (`read_file`, `write_file`, etc.). Other platforms pass
+/// through unchanged.
+pub fn normalize_windows_native_path(path: &str) -> String {
+    if cfg!(target_os = "windows") {
+        return convert_wsl_path_to_windows(path).unwrap_or_else(|| path.to_string());
+    }
+    path.to_string()
+}
+
 pub fn looks_like_bash_only_command(command: &str) -> bool {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -470,6 +513,32 @@ mod tests {
             Some("/mnt/c/Users/Payton/project")
         );
         assert!(plan.warning.is_some());
+    }
+
+    #[test]
+    fn convert_wsl_path_to_windows_maps_mnt_drive_paths() {
+        assert_eq!(
+            convert_wsl_path_to_windows("/mnt/d/WSL/Ubuntu/pipishrimp"),
+            Some(r"D:\WSL\Ubuntu\pipishrimp".to_string())
+        );
+        assert_eq!(
+            convert_wsl_path_to_windows("/mnt/c/Users/Payton/project"),
+            Some(r"C:\Users\Payton\project".to_string())
+        );
+        assert_eq!(convert_wsl_path_to_windows("/home/payton/project"), None);
+    }
+
+    #[test]
+    fn normalize_windows_native_path_converts_only_on_windows() {
+        let sample = "/mnt/d/tmp/example";
+        if cfg!(target_os = "windows") {
+            assert_eq!(
+                normalize_windows_native_path(sample),
+                r"D:\tmp\example".to_string()
+            );
+        } else {
+            assert_eq!(normalize_windows_native_path(sample), sample.to_string());
+        }
     }
 
     #[test]

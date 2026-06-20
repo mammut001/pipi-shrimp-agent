@@ -393,7 +393,35 @@ function parseToolCommand(call: { name: string; arguments: string }): string | u
   }
 }
 
-function parseToolResult(
+function parsePlainToolResult(
+  toolName: string,
+  result: string,
+): Pick<AutoResearchObservedToolResult, 'stdout' | 'stderr' | 'exitCode'> {
+  const trimmed = result.trim();
+  if (!trimmed) {
+    return { stdout: undefined, stderr: undefined, exitCode: null };
+  }
+
+  if (trimmed.startsWith('Error:')) {
+    return { stdout: undefined, stderr: result, exitCode: 1 };
+  }
+
+  if (toolName === 'write_file' && /^Successfully wrote \d+ bytes to /i.test(trimmed)) {
+    return { stdout: result, stderr: undefined, exitCode: 0 };
+  }
+
+  if (toolName === 'create_directory' && /^Directory created successfully:/i.test(trimmed)) {
+    return { stdout: result, stderr: undefined, exitCode: 0 };
+  }
+
+  if (toolName === 'read_file' || toolName === 'list_files' || toolName === 'path_exists') {
+    return { stdout: result, stderr: undefined, exitCode: 0 };
+  }
+
+  return { stdout: result, stderr: undefined, exitCode: null };
+}
+
+export function parseToolResult(
   call: { id: string; name: string; result: string; durationMs: number },
   toolCommand?: string,
 ): AutoResearchObservedToolResult {
@@ -417,8 +445,11 @@ function parseToolResult(
         ? 1
         : null;
   } catch {
-    stderr = call.result;
-    exitCode = null;
+    return {
+      tool: call.name,
+      command: toolCommand,
+      ...parsePlainToolResult(call.name, call.result),
+    };
   }
 
   return {
@@ -606,7 +637,7 @@ export function createAutoResearchSendMessage(
     let toolLanePhase: AutoResearchRunPhase = 'READ_CONTEXT';
     const currentRunDir = getCurrentRunDir();
     const effectiveWorkDir = store.sshConfig?.mode === 'local'
-      ? (currentRunDir?.codeDir || workDir)
+      ? (currentRunDir?.iterDir || workDir)
       : workDir;
     const disabledToolAttemptCounts = new Map<string, number>();
     const blockedTools = new Set<string>();
@@ -671,6 +702,8 @@ export function createAutoResearchSendMessage(
           agentConfig: agentConfig!,
           allowedTools: retryConstraintState.allowedTools,
           toolExecutionSource: 'autoresearch_phase',
+          permissionMode: 'bypass',
+          executionMode: 'bypass',
           onTextDelta: (chunk) => {
             useAutoResearchStore.getState().appendLiveOutput(chunk);
           },

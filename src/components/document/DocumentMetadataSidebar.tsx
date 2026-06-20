@@ -33,9 +33,9 @@ function formatDateTime(value?: string | null): string {
 
 function MetadataCard({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="rounded-2xl bg-white/80 px-3 py-2 shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#998c7e]">{label}</p>
-      <div className="mt-1 text-sm font-medium text-[#2f251a]">{children}</div>
+    <div className="rounded-2xl border border-[#e9e7e2] bg-white px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9b9a97]">{label}</p>
+      <div className="mt-1 text-sm font-medium text-[#37352f]">{children}</div>
     </div>
   );
 }
@@ -50,11 +50,11 @@ export function DocumentMetadataSidebar({
   const hasTimeline = Boolean(createdAt || updatedAt);
 
   return (
-    <aside className="border-b border-[#e7ded1] bg-[#f1eadf]/85 px-4 py-5 lg:border-b-0 lg:border-r sm:px-6">
-      <div className="space-y-5 text-sm text-[#5c5247]">
+    <aside className="border-b border-[#e9e7e2] bg-[#fbfbfa] px-4 py-5 lg:border-b-0 lg:border-r sm:px-6">
+      <div className="space-y-5 text-sm text-[#6f6e69]">
         {hasTimeline && (
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8f8375]">Timeline</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">Timeline</p>
             <div className="mt-3 space-y-3">
               {createdAt && (
                 <MetadataCard label="Created">
@@ -72,8 +72,8 @@ export function DocumentMetadataSidebar({
 
         {sections.map((section) => (
           <div key={section.label}>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8f8375]">{section.label}</p>
-            <div className="mt-3 rounded-2xl bg-white/80 px-3 py-3 text-[12px] leading-5 text-[#5c5247] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">{section.label}</p>
+            <div className="mt-3 rounded-2xl border border-[#e9e7e2] bg-white px-3 py-3 text-[12px] leading-5 text-[#6f6e69]">
               {section.content}
             </div>
           </div>
@@ -81,8 +81,8 @@ export function DocumentMetadataSidebar({
 
         {path && (
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8f8375]">Path</p>
-            <p className="mt-3 break-all rounded-2xl bg-white/80 px-3 py-3 text-[12px] leading-5 text-[#5c5247] shadow-[inset_0_0_0_1px_rgba(231,222,209,0.9)]">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">Path</p>
+            <p className="mt-3 break-all rounded-2xl border border-[#e9e7e2] bg-white px-3 py-3 text-[12px] leading-5 text-[#6f6e69]">
               {path}
             </p>
           </div>
@@ -90,7 +90,7 @@ export function DocumentMetadataSidebar({
 
         {tags.length > 0 && (
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8f8375]">Tags</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">Tags</p>
             <div className="mt-3">
               <DocumentTagList tags={tags} />
             </div>

@@ -40,6 +40,7 @@ fn allowed_roots() -> Vec<PathBuf> {
  * the final resolved path is within an allowed root directory.
  */
 fn expand_home(path: &str) -> PathBuf {
+    let path = crate::tools::shell_profile::normalize_windows_native_path(path);
     if path.starts_with("~") {
         if let Some(home) = dirs::home_dir() {
             let home_str = home.to_string_lossy();
@@ -596,6 +597,28 @@ mod tests {
 
         fs::remove_dir_all(root).expect("temp root should be removed");
         fs::remove_dir_all(outside).expect("outside temp root should be removed");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn read_file_resolves_wsl_mnt_work_dir_on_windows() {
+        use crate::tools::shell_profile::convert_windows_path_to_wsl;
+
+        let root = create_temp_root("wsl-workdir");
+        let root_string = root.to_string_lossy().to_string();
+        let wsl_work_dir = convert_windows_path_to_wsl(&root_string)
+            .expect("temp dir should convert to a /mnt/ path");
+        let relative_path = "wsl-roundtrip.txt";
+        let expected = "wsl path roundtrip\n";
+
+        write_file_for_tool(relative_path, expected, Some(wsl_work_dir.as_str()))
+            .expect("write_file_for_tool should accept a /mnt/ work_dir on Windows");
+        let read_result = read_file_for_tool(relative_path, Some(wsl_work_dir.as_str()))
+            .expect("read_file_for_tool should read via a /mnt/ work_dir on Windows");
+
+        assert_eq!(read_result.content, expected);
+
+        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 }
 

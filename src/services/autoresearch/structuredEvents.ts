@@ -392,18 +392,22 @@ function formatMetricValue(value: number | string | boolean | null | undefined):
 function buildPhaseSteps(currentPhase: AutoResearchRunPhase, status: AutoResearchIterationRecord['status']): AutoResearchPhaseStep[] {
   const terminalPhase = status === 'failed' ? 'FAILED' : status === 'completed' ? 'DONE' : currentPhase;
   const terminalIndex = AUTORESEARCH_PHASE_ORDER.indexOf(terminalPhase);
+  const visiblePhases = status === 'failed'
+    ? AUTORESEARCH_PHASE_ORDER
+    : AUTORESEARCH_PHASE_ORDER.filter((phase) => phase !== 'FAILED');
 
-  return AUTORESEARCH_PHASE_ORDER.map((phase, index) => {
+  return visiblePhases.map((phase) => {
+    const index = AUTORESEARCH_PHASE_ORDER.indexOf(phase);
     if (status === 'failed' && phase === 'FAILED') {
-      return { phase, state: 'failed' };
+      return { phase, state: 'failed' as const };
     }
     if (index < terminalIndex) {
-      return { phase, state: 'completed' };
+      return { phase, state: 'completed' as const };
     }
     if (index === terminalIndex) {
-      return { phase, state: status === 'failed' ? 'failed' : 'current' };
+      return { phase, state: status === 'failed' ? 'failed' as const : 'current' as const };
     }
-    return { phase, state: 'pending' };
+    return { phase, state: 'pending' as const };
   });
 }
 
