@@ -60,6 +60,7 @@ TESTING.md
 # Local desktop test artifacts
 /.playwright-cli/
 /.tmp-*
+/.codex-tauri-dev*
 /.tauri-dev.log
 /build-stderr.log
 /build-stdout.log
