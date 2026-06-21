@@ -7,6 +7,10 @@ import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 import { createAutoResearchDemoRun } from '@/services/autoresearch/demoRun';
 import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 
+beforeAll(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
 jest.mock('@/i18n', () => ({
   t: (key: string) => ({
     'autoresearch.lowerIsBetter': 'lower is better',

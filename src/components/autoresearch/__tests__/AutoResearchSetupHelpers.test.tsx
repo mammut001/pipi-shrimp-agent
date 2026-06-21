@@ -127,4 +127,102 @@ describe('AutoResearchSetupHelpers', () => {
       root.unmount();
     });
   });
+
+  it('handles toggle select and delete callbacks', () => {
+    const run = createRun();
+    const mockToggleSelect = jest.fn();
+    const mockDelete = jest.fn();
+    const mockClick = jest.fn();
+
+    const { container, root } = renderElement(
+      <AutoResearchRunHistoryCard
+        run={run}
+        isSelected={false}
+        isActive={true}
+        isSelectMode={true}
+        isChecked={true}
+        onClick={mockClick}
+        onToggleSelect={mockToggleSelect}
+        onDelete={mockDelete}
+      />,
+    );
+
+    const divs = container.getElementsByTagName('div');
+    let checkboxDiv: HTMLDivElement | null = null;
+    for (let i = 0; i < divs.length; i++) {
+      if (divs[i].className.includes('absolute -top-2 -left-2')) {
+        checkboxDiv = divs[i] as HTMLDivElement;
+        break;
+      }
+    }
+
+    expect(checkboxDiv).not.toBeNull();
+    if (checkboxDiv) {
+      act(() => {
+        checkboxDiv.click();
+      });
+      expect(mockToggleSelect).toHaveBeenCalledTimes(1);
+    }
+
+    act(() => {
+      root.unmount();
+    });
+
+    const { container: container2, root: root2 } = renderElement(
+      <AutoResearchRunHistoryCard
+        run={run}
+        isSelected={false}
+        isActive={true}
+        isSelectMode={false}
+        isChecked={false}
+        onClick={mockClick}
+        onToggleSelect={mockToggleSelect}
+        onDelete={mockDelete}
+      />,
+    );
+
+    const buttons = container2.getElementsByTagName('button');
+    let deleteBtn: HTMLButtonElement | null = null;
+    for (let i = 0; i < buttons.length; i++) {
+      if (buttons[i].className.includes('absolute -top-2 -right-2')) {
+        deleteBtn = buttons[i] as HTMLButtonElement;
+        break;
+      }
+    }
+
+    expect(deleteBtn).not.toBeNull();
+    if (deleteBtn) {
+      act(() => {
+        deleteBtn.click();
+      });
+      expect(mockDelete).toHaveBeenCalledTimes(1);
+    }
+
+    act(() => {
+      root2.unmount();
+    });
+    const { container: container3, root: root3 } = renderElement(
+      <AutoResearchRunHistoryCard
+        run={run}
+        isSelected={false}
+        isActive={true}
+        isSelectMode={true}
+        isChecked={false}
+        onClick={mockClick}
+        onToggleSelect={mockToggleSelect}
+        onDelete={mockDelete}
+      />,
+    );
+
+    const cardWrapper = container3.firstElementChild as HTMLElement;
+    act(() => {
+      cardWrapper.click();
+    });
+    expect(mockToggleSelect).toHaveBeenCalledTimes(2);
+    expect(mockClick).not.toHaveBeenCalled();
+
+    act(() => {
+      root3.unmount();
+    });
+  });
 });

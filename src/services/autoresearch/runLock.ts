@@ -23,11 +23,11 @@ const ACTIVE_LOCK_STATUSES = new Set<AutoResearchRunStatus>([
 ]);
 
 function getActiveRun(state: AutoResearchLifecycleState): AutoResearchRunRecord | null {
-  if (!state.id) {
+  if (!state || !state.id) {
     return null;
   }
 
-  return state.runHistory.find((run) => run.id === state.id) ?? null;
+  return (state.runHistory || []).find((run) => run.id === state.id) ?? null;
 }
 
 function getLockReason(

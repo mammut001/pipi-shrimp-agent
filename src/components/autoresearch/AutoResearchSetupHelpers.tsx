@@ -174,26 +174,93 @@ export function AutoResearchRunHistoryCard({
   run,
   isSelected,
   isActive,
+  isSelectMode = false,
+  isChecked = false,
   onClick,
+  onToggleSelect,
+  onDelete,
 }: {
   run: AutoResearchRunRecord;
   isSelected: boolean;
   isActive: boolean;
+  isSelectMode?: boolean;
+  isChecked?: boolean;
   onClick: () => void;
+  onToggleSelect?: (e: React.MouseEvent) => void;
+  onDelete?: (e: React.MouseEvent) => void;
 }) {
   const modelLabel = buildAutoResearchModelDisplayFromSnapshot(run.config.configSnapshot).compactLabel;
   const bestMetric = formatMetricValue(run.bestMetricValue);
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    if (isSelectMode) {
+      onToggleSelect?.(e);
+    } else {
+      onClick();
+    }
+  };
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-3xl border bg-white p-4 text-left shadow-sm transition-all ${
-        isSelected
-          ? 'border-neutral-400 ring-2 ring-neutral-100'
-          : 'border-gray-200 hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md'
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleCardClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (isSelectMode) {
+            onToggleSelect?.(e as any);
+          } else {
+            onClick();
+          }
+        }
+      }}
+      className={`relative group rounded-3xl border p-4 text-left shadow-sm transition-all cursor-pointer select-none outline-none ${
+        isChecked
+          ? 'border-neutral-900 bg-neutral-50/50 ring-2 ring-neutral-100'
+          : isSelected
+          ? 'border-neutral-400 bg-white ring-2 ring-neutral-100'
+          : 'border-gray-200 bg-white hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md'
       }`}
     >
+      {/* Checkbox overlay */}
+      {(isSelectMode || onToggleSelect) && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect?.(e);
+          }}
+          className={`absolute -top-2 -left-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border shadow-sm transition-all ${
+            isChecked
+              ? 'border-neutral-900 bg-neutral-900 text-white'
+              : 'border-gray-300 bg-white hover:border-gray-400 text-transparent'
+          } ${
+            isSelectMode ? 'opacity-100 scale-100' : 'opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100'
+          }`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+      )}
+
+      {/* Hover delete button */}
+      {!isSelectMode && onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(e);
+          }}
+          className="absolute -top-2 -right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400 shadow-sm transition-all hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100"
+          title={t('common.delete')}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+      )}
+
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${getStatusClasses(run.status)}`}>
@@ -237,7 +304,7 @@ export function AutoResearchRunHistoryCard({
           </span>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 

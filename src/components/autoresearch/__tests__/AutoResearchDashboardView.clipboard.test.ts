@@ -26,6 +26,10 @@ jest.mock('@/services/autoresearch/demoRun', () => ({
   isDemoRun: () => false,
 }));
 
+beforeAll(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
 describe('AutoResearchDashboardView clipboard actions', () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;

@@ -32,7 +32,7 @@ Preferred workflow:
     maxRounds: 8,
     roundCondition: 'untilComplete',
   },
-  allowedTools: [...AUTORESEARCH_BOOTSTRAP_TOOL_NAMES],
+  allowedTools: [...AUTORESEARCH_BOOTSTRAP_TOOL_NAMES, 'read_file'],
   recommendedRole: 'planner',
   requiredOutputMarkers: ['PASS', 'GOAL_NOT_REACHED'],
 };

@@ -33,6 +33,9 @@ import { t } from '@/i18n';
 import { resolveSessionExecutionModeId, type ExecutionModeId } from '@/services/executionMode';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 import type { ImageAttachment } from '@/types/vision';
+import { BlockComposer } from './chatInput/BlockComposer';
+import { type ComposerBlock } from './chatInput/blocks/types';
+import { buildPromptFromBlocks } from './chatInput/blocks/promptBuilder';
 
 // AUDIT-FIX [audit-1#6] — Debounce window for localStorage writes. 300ms is
 // short enough that a navigation away from the tab will still flush the
@@ -112,6 +115,10 @@ interface ChatInputProps {
   submitMode?: 'chat-store' | 'callback-only';
   /** Visual density. Compact is intended for embedded/modal surfaces. */
   density?: 'default' | 'compact';
+  /** Default block composer open state */
+  defaultComposerOpen?: boolean;
+  /** Default block composer blocks */
+  defaultBlocks?: ComposerBlock[];
 }
 
 /**
@@ -122,6 +129,8 @@ export function ChatInput({
   draftKey = 'default',
   submitMode = 'chat-store',
   density = 'default',
+  defaultComposerOpen = false,
+  defaultBlocks,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
@@ -136,6 +145,9 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const draftStorageKey = `chat_draft_${draftKey}`;
+  const [composerOpen, setComposerOpen] = useState(defaultComposerOpen);
+  const [composerBlocks, setComposerBlocks] = useState<ComposerBlock[]>(defaultBlocks ?? []);
+  const blockDraftStorageKey = `chat_blocks_draft_${draftKey}`;
   const isCompact = density === 'compact';
   const textareaMaxHeight = isCompact ? 96 : 200;
   const textareaMinHeight = isCompact ? '36px' : '48px';
@@ -264,6 +276,71 @@ export function ChatInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftStorageKey]);
 
+  // Restore block draft on draftKey switch
+  useEffect(() => {
+    const saved = localStorage.getItem(blockDraftStorageKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setComposerBlocks(parsed);
+          setComposerOpen(true);
+        } else {
+          // Legacy format or corrupt data
+          setComposerBlocks(defaultBlocks ?? []);
+          setComposerOpen(defaultComposerOpen);
+          localStorage.removeItem(blockDraftStorageKey);
+        }
+      } catch (error) {
+        setComposerBlocks(defaultBlocks ?? []);
+        setComposerOpen(defaultComposerOpen);
+      }
+    } else {
+      setComposerBlocks(defaultBlocks ?? []);
+      setComposerOpen(defaultComposerOpen);
+    }
+  }, [blockDraftStorageKey, defaultBlocks, defaultComposerOpen]);
+
+  // Persist block draft
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const isDirty = composerBlocks.length > 0;
+      if (composerOpen && isDirty) {
+        localStorage.setItem(blockDraftStorageKey, JSON.stringify(composerBlocks));
+      } else {
+        localStorage.removeItem(blockDraftStorageKey);
+      }
+    }, DRAFT_PERSIST_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [composerBlocks, composerOpen, blockDraftStorageKey]);
+
+  // Bidirectional execution mode synchronization
+  // 1. Sync from store/dropdown to composer
+  useEffect(() => {
+    if (!selectedExecutionModeId) return;
+    const modeBlockIdx = composerBlocks.findIndex((b) => b.type === 'mode');
+    if (modeBlockIdx !== -1) {
+      const modeBlock = composerBlocks[modeBlockIdx] as any;
+      if (modeBlock.executionMode !== selectedExecutionModeId) {
+        const nextBlocks = [...composerBlocks];
+        nextBlocks[modeBlockIdx] = {
+          ...modeBlock,
+          executionMode: selectedExecutionModeId,
+        };
+        setComposerBlocks(nextBlocks);
+      }
+    }
+  }, [selectedExecutionModeId]);
+
+  // 2. Sync from composer to store
+  const handleComposerBlocksChange = useCallback((newBlocks: ComposerBlock[]) => {
+    setComposerBlocks(newBlocks);
+    const modeBlock = newBlocks.find((b) => b.type === 'mode') as any;
+    if (modeBlock && modeBlock.executionMode !== selectedExecutionModeId && currentSessionId) {
+      void updateSessionExecutionMode(currentSessionId, modeBlock.executionMode);
+    }
+  }, [selectedExecutionModeId, currentSessionId, updateSessionExecutionMode]);
+
   // AUDIT-FIX [audit-1#6] — Persist the draft with a short debounce so
   // every keystroke (especially for large copy-pasted prompts) doesn't
   // trigger a synchronous localStorage.setItem on the main thread. We also
@@ -341,7 +418,10 @@ export function ChatInput({
     setAttachments([]);
     setBrowserIntentCandidate(null);
     localStorage.removeItem(draftStorageKey);
-  }, [draftStorageKey]);
+    localStorage.removeItem(blockDraftStorageKey);
+    setComposerBlocks([]);
+    setComposerOpen(false);
+  }, [draftStorageKey, blockDraftStorageKey]);
 
   const appendImageAttachments = useCallback(async (
     files: File[],
@@ -360,7 +440,7 @@ export function ChatInput({
     }
   }, [addNotification]);
 
-  const sendAsRegularChat = useCallback(async (message: string, messageAttachments: ImageAttachment[]) => {
+  const sendAsRegularChat = useCallback(async (message: string, messageAttachments: ImageAttachment[], rawInput?: string) => {
     setIsSubmitting(true);
     try {
       const targetSessionId = await resolveChatTargetSessionId(
@@ -378,7 +458,7 @@ export function ChatInput({
     } catch (error) {
       // Preserve input on failure so user can retry
       console.error('[ChatInput] sendMessage failed, preserving input:', error);
-      setInput(message);
+      setInput(rawInput !== undefined ? rawInput : message);
       setAttachments(messageAttachments);
     } finally {
       setIsSubmitting(false);
@@ -412,8 +492,17 @@ export function ChatInput({
    * Handle message submission
    */
   const handleSubmit = useCallback(async () => {
+    const rawMessage = input.trim();
+    let message = rawMessage;
+    if (composerOpen) {
+      const compiled = buildPromptFromBlocks(composerBlocks, {
+        projectFolder: projectDir ?? undefined,
+        pipiOutputDir: pipiOutputDir ?? undefined,
+      });
+      message = compiled + (rawMessage ? `\n\n# ADDITIONAL DETAILS\n${rawMessage}` : '');
+    }
+
     if (submitMode === 'callback-only') {
-      const message = input.trim();
       if (!message || isSubmitting) {
         return;
       }
@@ -424,7 +513,7 @@ export function ChatInput({
         clearInputDraft();
       } catch (error) {
         console.error('[ChatInput] callback-only onSend failed, preserving input:', error);
-        setInput(message);
+        setInput(rawMessage);
       } finally {
         setIsSubmitting(false);
       }
@@ -432,7 +521,7 @@ export function ChatInput({
     }
 
     const decision = decideChatInputSubmission({
-      input,
+      input: message,
       hasAttachments: attachments.length > 0,
       isStreaming,
       isSubmitting,
@@ -448,8 +537,8 @@ export function ChatInput({
       return;
     }
 
-    await sendAsRegularChat(decision.message, attachments);
-  }, [attachments, clearInputDraft, input, isStreaming, isSubmitting, onSend, sendAsRegularChat, submitMode]);
+    await sendAsRegularChat(decision.message, attachments, rawMessage);
+  }, [attachments, clearInputDraft, input, isStreaming, isSubmitting, onSend, sendAsRegularChat, submitMode, composerOpen, composerBlocks, projectDir, pipiOutputDir]);
 
   const handleConfirmBrowserIntent = useCallback(async () => {
     if (!browserIntentCandidate || isSubmitting) return;
@@ -459,8 +548,17 @@ export function ChatInput({
   const handleSendAsNormalMessage = useCallback(async () => {
     const message = browserIntentCandidate ?? input.trim();
     if (!message || isSubmitting) return;
-    await sendAsRegularChat(message, []);
-  }, [browserIntentCandidate, input, isSubmitting, sendAsRegularChat]);
+    let finalMessage = message;
+    const rawInput = input.trim();
+    if (composerOpen && !message.startsWith('# TASK SPECIFICATION')) {
+      const compiled = buildPromptFromBlocks(composerBlocks, {
+        projectFolder: projectDir ?? undefined,
+        pipiOutputDir: pipiOutputDir ?? undefined,
+      });
+      finalMessage = compiled + (message ? `\n\n# ADDITIONAL DETAILS\n${message}` : '');
+    }
+    await sendAsRegularChat(finalMessage, [], rawInput);
+  }, [browserIntentCandidate, input, isSubmitting, sendAsRegularChat, composerOpen, composerBlocks, projectDir, pipiOutputDir]);
 
   const handleCancelBrowserIntent = useCallback(() => {
     if (isSubmitting) return;
@@ -593,6 +691,24 @@ export function ChatInput({
           />
         )}
 
+        {composerOpen && (
+          <BlockComposer
+            blocks={composerBlocks}
+            onChange={handleComposerBlocksChange}
+            onClose={() => setComposerOpen(false)}
+            onUseAsMessage={(compiledPrompt) => {
+              setInput(compiledPrompt);
+            }}
+            onSend={(compiledPrompt) => {
+              void sendAsRegularChat(compiledPrompt, attachments, input.trim());
+            }}
+            context={{
+              projectFolder: projectDir ?? undefined,
+              pipiOutputDir: pipiOutputDir ?? undefined,
+            }}
+          />
+        )}
+
         <div
           className={`${inputShellClassName} ${
           isFocused
@@ -705,6 +821,22 @@ export function ChatInput({
                 disabled={isDisabled}
               />
             </ExecutionModeDropdownErrorBoundary>
+
+            {/* Toggle Block Composer button */}
+            <button
+              type="button"
+              onClick={() => setComposerOpen(!composerOpen)}
+              disabled={isDisabled}
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                composerOpen
+                  ? 'border-gray-900 bg-gray-900 text-white hover:bg-gray-800'
+                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              title={t('chat.blockComposerToggle') || 'Toggle Block Composer'}
+            >
+              <span>🧩</span>
+              <span>{t('chat.composerLabel') || 'Composer'}</span>
+            </button>
 
             {/* Goal button and Popover */}
             <div className="relative" ref={goalPopoverRef}>
@@ -874,7 +1006,7 @@ export function ChatInput({
             ) : (
               <button
                 onClick={() => { void handleSubmit(); }}
-                disabled={isDisabled || (!input.trim() && attachments.length === 0)}
+                disabled={isDisabled || (!input.trim() && !composerOpen && attachments.length === 0)}
                 className={`${actionButtonClassName} bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
                 title={t('chat.send')}
               >

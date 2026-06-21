@@ -73,9 +73,15 @@ export function addLocaleChangeListener(listener: LocaleChangeListener): () => v
 /**
  * 获取翻译文本
  */
-export function t(key: keyof TranslationKeys): string {
+export function t(key: keyof TranslationKeys, options?: Record<string, string | number>): string {
   const locale = getCurrentLocale();
-  return translations[locale][key] || translations[DEFAULT_LOCALE][key] || key;
+  let text = translations[locale][key] || translations[DEFAULT_LOCALE][key] || key;
+  if (options) {
+    Object.entries(options).forEach(([k, v]) => {
+      text = text.replace(`{${k}}`, String(v));
+    });
+  }
+  return text;
 }
 
 /**

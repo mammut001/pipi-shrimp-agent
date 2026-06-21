@@ -171,6 +171,11 @@ export type TranslationKeys = {
   'chat.openOutputFolder': string;
   'chat.changeWorkDirectory': string;
   'chat.removeWorkDirectory': string;
+  'chat.blockComposerTitle': string;
+  'chat.blockComposerSubtitle': string;
+  'chat.loadPreset': string;
+  'chat.blockComposerToggle': string;
+  'chat.composerLabel': string;
   'chat.binding': string;
   // Two-folder model — Project Folder (the user's repo).
   'chat.projectFolder': string;
@@ -1128,6 +1133,9 @@ export type TranslationKeys = {
   'autoresearch.bootstrap.card.ablation.opener': string;
   'autoresearch.bootstrap.card.scratch.title': string;
   'autoresearch.bootstrap.card.scratch.opener': string;
+  'autoresearch.bootstrap.referenceDocsTitle': string;
+  'autoresearch.bootstrap.addReference': string;
+  'autoresearch.bootstrap.noReference': string;
   'autoresearch.validationBaselineNumber': string;
   'autoresearch.card.runTarget': string;
   'autoresearch.card.experimentGoal': string;
@@ -1177,6 +1185,11 @@ export type TranslationKeys = {
   'autoresearch.runHistoryHelper': string;
   'autoresearch.newRun': string;
   'autoresearch.badgeActive': string;
+  'autoresearch.deleteConfirm': string;
+  'autoresearch.batchDelete': string;
+  'autoresearch.batchDeleteConfirm': string;
+  'autoresearch.selectedCount': string;
+  'autoresearch.exitSelect': string;
   'autoresearch.labelIteration': string;
   'autoresearch.labelPhase': string;
   'autoresearch.labelUpdated': string;

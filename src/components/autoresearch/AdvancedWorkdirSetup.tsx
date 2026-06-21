@@ -201,6 +201,7 @@ export function AdvancedWorkdirSetup() {
     id: activeRunId,
     sshConfig,
     setSelectedExperiment, initSession, setSshConfig, runHistory, selectRun,
+    deleteRun, deleteRuns,
     terminalVisible, terminalSessionId, terminalCwd,
     openTerminalPanel, setTerminalReady, setTerminalVisible,
   } = useAutoResearchStore();
@@ -226,6 +227,37 @@ export function AdvancedWorkdirSetup() {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [showRunList, setShowRunList] = useState(false);
+  const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
+
+  const isSelectMode = batchSelectedIds.length > 0;
+
+  const handleToggleSelectRun = (runId: string) => {
+    setBatchSelectedIds((prev) =>
+      prev.includes(runId)
+        ? prev.filter((id) => id !== runId)
+        : [...prev, runId]
+    );
+  };
+
+  const handleExitSelection = () => {
+    setBatchSelectedIds([]);
+  };
+
+  const handleBatchDelete = () => {
+    if (batchSelectedIds.length === 0) return;
+    const confirmMessage = t('autoresearch.batchDeleteConfirm', { count: batchSelectedIds.length });
+    if (window.confirm(confirmMessage)) {
+      deleteRuns(batchSelectedIds);
+      setBatchSelectedIds([]);
+    }
+  };
+
+  const handleSingleDelete = (runId: string) => {
+    const confirmMessage = t('autoresearch.deleteConfirm');
+    if (window.confirm(confirmMessage)) {
+      deleteRun(runId);
+    }
+  };
   const agentConfig = useMemo(
     () => resolveActiveAgentConfig(),
     [activeConfigId, apiConfigs],
@@ -829,32 +861,59 @@ export function AdvancedWorkdirSetup() {
     return (
       <div className="flex-1 overflow-y-auto bg-gray-50 p-6">
         <div className="mx-auto max-w-5xl space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">AutoResearch</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">{t('autoresearch.runHistoryTitle')}</h2>
-              <p className="mt-1 text-sm text-gray-500">
-                {t('autoresearch.runHistoryHelper')}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {activeRun && (
+          {isSelectMode ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm transition-all">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-neutral-900 animate-pulse" />
+                <span className="text-sm font-medium text-gray-700">
+                  {t('autoresearch.selectedCount', { count: batchSelectedIds.length })}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleViewActiveRun}
-                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+                  onClick={handleBatchDelete}
+                  className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-1.5 text-xs font-semibold text-rose-700 shadow-sm transition-colors hover:bg-rose-100"
                 >
-                  {t('autoresearch.viewActiveRun')}
+                  {t('autoresearch.batchDelete')}
                 </button>
-              )}
-              <button
-                onClick={() => { void handleShowSetup(); }}
-                className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
-              >
-                {t('autoresearch.newRun')}
-              </button>
+                <button
+                  type="button"
+                  onClick={handleExitSelection}
+                  className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+                >
+                  {t('autoresearch.exitSelect')}
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">AutoResearch</p>
+                <h2 className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">{t('autoresearch.runHistoryTitle')}</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  {t('autoresearch.runHistoryHelper')}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {activeRun && (
+                  <button
+                    type="button"
+                    onClick={handleViewActiveRun}
+                    className="rounded-2xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
+                  >
+                    {t('autoresearch.viewActiveRun')}
+                  </button>
+                )}
+                <button
+                  onClick={() => { void handleShowSetup(); }}
+                  className="rounded-2xl bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-neutral-800"
+                >
+                  {t('autoresearch.newRun')}
+                </button>
+              </div>
+            </div>
+          )}
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {sortedRuns.map((run) => (
               <AutoResearchRunHistoryCard
@@ -862,6 +921,10 @@ export function AdvancedWorkdirSetup() {
                 run={run}
                 isSelected={displayRun?.id === run.id}
                 isActive={activeRunId === run.id}
+                isSelectMode={isSelectMode}
+                isChecked={batchSelectedIds.includes(run.id)}
+                onToggleSelect={() => handleToggleSelectRun(run.id)}
+                onDelete={() => handleSingleDelete(run.id)}
                 onClick={() => {
                   selectRun(run.id);
                   setSelectedExperiment(-1);

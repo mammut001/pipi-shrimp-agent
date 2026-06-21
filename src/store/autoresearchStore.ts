@@ -423,6 +423,8 @@ interface AutoResearchStore extends ExperimentSession {
   }) => void;
   resetSession: () => void;
   selectRun: (runId: string) => void;
+  deleteRun: (runId: string) => void;
+  deleteRuns: (runIds: string[]) => void;
   setLoopState: (state: LoopState) => void;
   setCurrentPhase: (phase?: AutoResearchRunPhase) => void;
   setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string; reason?: string }) => void;
@@ -626,6 +628,36 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     selectedRunId: state.runHistory.some((run) => run.id === runId) ? runId : state.selectedRunId,
     selectedExperiment: -1,
   })),
+
+  deleteRun: (runId) => set((state) => {
+    const updatedHistory = state.runHistory.filter((run) => run.id !== runId);
+    const wasActive = state.id === runId;
+    const isSelected = state.selectedRunId === runId;
+    const newSelectedRunId = isSelected
+      ? (updatedHistory[0]?.id ?? null)
+      : state.selectedRunId;
+    return {
+      runHistory: updatedHistory,
+      selectedRunId: newSelectedRunId,
+      selectedExperiment: isSelected ? -1 : state.selectedExperiment,
+      ...(wasActive ? createEmptySession() : {}),
+    };
+  }),
+
+  deleteRuns: (runIds) => set((state) => {
+    const updatedHistory = state.runHistory.filter((run) => !runIds.includes(run.id));
+    const wasActiveDeleted = runIds.includes(state.id);
+    const isSelectedDeleted = state.selectedRunId && runIds.includes(state.selectedRunId);
+    const newSelectedRunId = isSelectedDeleted
+      ? (updatedHistory[0]?.id ?? null)
+      : state.selectedRunId;
+    return {
+      runHistory: updatedHistory,
+      selectedRunId: newSelectedRunId,
+      selectedExperiment: isSelectedDeleted ? -1 : state.selectedExperiment,
+      ...(wasActiveDeleted ? createEmptySession() : {}),
+    };
+  }),
 
   setLoopState: (loopState) => set({ loopState }),
 

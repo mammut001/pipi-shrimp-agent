@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { t } from '@/i18n';
+import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { AdvancedWorkdirSetup } from './AdvancedWorkdirSetup';
 import { BootstrapChatView } from './BootstrapChatView';
 
 type AutoResearchTabId = 'conversational' | 'advanced';
 
 export function AutoResearchTabs() {
-  const [activeTab, setActiveTab] = useState<AutoResearchTabId>('conversational');
+  const runHistory = useAutoResearchStore((s) => s.runHistory);
+  const [activeTab, setActiveTab] = useState<AutoResearchTabId>(
+    runHistory.length > 0 ? 'advanced' : 'conversational'
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-gray-50">
