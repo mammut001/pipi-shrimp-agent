@@ -214,7 +214,7 @@ describe('BootstrapRecipeBuilder UI Component', () => {
     // Start button should be disabled
     const startBtn = container.querySelector('button[disabled]') as HTMLButtonElement;
     expect(startBtn).toBeTruthy();
-    expect(startBtn.textContent).toContain('autoresearch.recipe.startScaffolding');
+    expect(startBtn.textContent).toContain('autoresearch.recipe.confirmResearchGoalFirst');
   });
 
   it('collapses and opens prompt preview modal', () => {
@@ -243,12 +243,32 @@ describe('BootstrapRecipeBuilder UI Component', () => {
   });
 
   it('selects From scratch template and maps taskType formatting correctly', () => {
-    const { formatTaskTypeLabel } = require('../BootstrapRecipeBuilder');
+    const { formatTaskTypeLabel, formatDirectionLabel, formatWorkspaceSummary, formatOutputContractSummary, formatMetricSummary } = require('../BootstrapRecipeBuilder');
     expect(formatTaskTypeLabel('from_scratch', 'zh-CN')).toBe('从零开始');
     expect(formatTaskTypeLabel('from_scratch', 'en-US')).toBe('From scratch');
     expect(formatTaskTypeLabel('reproduce_paper', 'zh-CN')).toBe('复现论文');
     expect(formatTaskTypeLabel('beat_baseline', 'zh-CN')).toBe('超越基线');
     expect(formatTaskTypeLabel('ablation', 'zh-CN')).toBe('消融实验');
+
+    expect(formatDirectionLabel('higher', 'zh-CN')).toBe('目标越大越好');
+    expect(formatDirectionLabel('lower', 'zh-CN')).toBe('目标越小越好');
+    expect(formatDirectionLabel('higher', 'en-US')).toBe('larger is better');
+
+    expect(formatWorkspaceSummary('/work/dir', 'my-proj', 'zh-CN')).toBe('工作区根目录：/work/dir · 脚手架目录：my-proj');
+    expect(formatWorkspaceSummary('', 'my-proj', 'zh-CN')).toBe('工作区根目录：未选择 · 脚手架目录：my-proj');
+
+    const mockContract = {
+      includeMetrics: true,
+      includeArtifacts: true,
+      includeCommandsRun: false,
+      includeFailureReason: true,
+      includeRemainingRisks: false,
+    };
+    expect(formatOutputContractSummary(mockContract, 'zh-CN')).toBe('最终报告包含：指标、产物、失败原因');
+    expect(formatOutputContractSummary(mockContract, 'en-US')).toBe('Final report contains: metrics, artifacts, failure reason');
+
+    expect(formatMetricSummary('accuracy', 'higher', '0.85', 'zh-CN')).toBe('主指标：accuracy，目标越大越好，当前基线 0.85');
+    expect(formatMetricSummary('loss', 'lower', '', 'zh-CN')).toBe('主指标：loss，目标越小越好，当前基线 未指定');
   });
 
   it('scaffoldFolderName exists but workspaceRoot missing -> section status is Missing and summary shows workspace root missing', () => {
@@ -271,7 +291,7 @@ describe('BootstrapRecipeBuilder UI Component', () => {
     });
 
     const text = container.textContent || '';
-    expect(text).toContain('autoresearch.recipe.workspaceRootMissing');
+    expect(text).toContain('not selected');
     
     const workspaceCard = container.querySelector('.rounded-2xl:nth-of-type(4)');
     expect(workspaceCard?.textContent).toContain('autoresearch.recipe.missing');
@@ -302,7 +322,7 @@ describe('BootstrapRecipeBuilder UI Component', () => {
 
     const startBtn = container.querySelector('button[disabled]') as HTMLButtonElement;
     expect(startBtn).toBeTruthy();
-    expect(startBtn.textContent).toContain('autoresearch.recipe.startScaffolding');
+    expect(startBtn.textContent).toContain('autoresearch.recipe.action.selectWorkspace');
   });
 
   it('detects template placeholder goal as placeholder (not completed) and disables Start button', () => {
@@ -326,11 +346,12 @@ describe('BootstrapRecipeBuilder UI Component', () => {
     });
 
     const text = container.textContent || '';
-    expect(text).toContain('autoresearch.recipe.templateDefault');
+    expect(text).toContain('autoresearch.recipe.confirmGoal');
     expect(text).toContain('2 / 3');
 
     const startBtn = container.querySelector('button[disabled]') as HTMLButtonElement;
     expect(startBtn).toBeTruthy();
+    expect(startBtn.textContent).toContain('autoresearch.recipe.confirmResearchGoalFirst');
   });
 
   it('clicking missing workspace action button expands Workspace section', () => {
@@ -364,5 +385,63 @@ describe('BootstrapRecipeBuilder UI Component', () => {
     });
 
     expect(container.innerHTML).toContain('autoresearch.recipe.rootDir');
+  });
+
+  it('clicking right panel progress step buttons expands the matching section on the left', () => {
+    act(() => {
+      root.render(
+        <BootstrapRecipeBuilder
+          recipe={mockRecipe}
+          onChange={mockOnChange}
+          onSend={mockOnSend}
+        />
+      );
+    });
+
+    expect(container.innerHTML).not.toContain('autoresearch.recipe.rootDir');
+
+    // Find step button for workspace in right panel progress steps list
+    const stepButtons = Array.from(container.querySelectorAll('button'));
+    const workspaceStepBtn = stepButtons.find(b => b.getAttribute('aria-label') === 'Configure autoresearch.recipe.workspace');
+    expect(workspaceStepBtn).toBeTruthy();
+
+    act(() => {
+      workspaceStepBtn!.click();
+    });
+
+    // Left workspace section should now be expanded
+    expect(container.innerHTML).toContain('autoresearch.recipe.rootDir');
+  });
+
+  it('renders template-aware reference guidance in References card when no files are attached', () => {
+    const guidanceRecipe: Recipe = {
+      ...mockRecipe,
+      researchGoal: {
+        goalText: 'Initial goal',
+        taskType: 'reproduce_paper',
+      },
+    };
+
+    act(() => {
+      root.render(
+        <BootstrapRecipeBuilder
+          recipe={guidanceRecipe}
+          onChange={mockOnChange}
+          onSend={mockOnSend}
+        />
+      );
+    });
+
+    // Expand References section
+    const stepButtons = Array.from(container.querySelectorAll('button'));
+    const referencesStepBtn = stepButtons.find(b => b.getAttribute('aria-label') === 'Configure autoresearch.recipe.references');
+    expect(referencesStepBtn).toBeTruthy();
+
+    act(() => {
+      referencesStepBtn!.click();
+    });
+
+    // Should render the guidance for reproduce_paper
+    expect(container.textContent).toContain('autoresearch.recipe.referenceGuidance.reproduce');
   });
 });

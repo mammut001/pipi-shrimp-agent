@@ -17,7 +17,8 @@
     "test:browser-gate": "bash tests/browser/release-gate.sh",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "report:complexity": "node scripts/complexity-report.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

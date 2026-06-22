@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, type FormEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { t } from '@/i18n';
+import { t, getCurrentLocale } from '@/i18n';
+import { useUIStore } from '@/store/uiStore';
 import { TerminalPanel } from '@/components';
 import {
   AutoResearchActiveRunBanner,
@@ -15,6 +16,18 @@ import {
   AutoResearchTargetSummary,
 } from '@/components/autoresearch/AutoResearchSetupHelpers';
 import { AutoResearchRunDetailDocument } from '@/components/autoresearch/AutoResearchRunDetailDocument';
+import {
+  getManualSetupReadiness,
+  getManualSetupNextAction,
+  type ManualSetupDraft,
+} from './manual/manualReadiness';
+import { ManualLaunchCockpit } from './manual/ManualLaunchCockpit';
+import {
+  formatRuntimeTargetSummary,
+  formatManualWorkspaceSummary,
+  formatMetricIterationsSummary,
+  parseConnectionCheckOutput,
+} from './manual/manualFormatting';
 import { useSettingsStore } from '@/store';
 import {
   useAutoResearchStore,
@@ -51,6 +64,28 @@ import {
   startAutoResearchRun,
   validateAutoResearchSetupDraft,
 } from '@/services/autoresearch/setupFlow';
+
+export function formatRuntimeSummary(cfg: SshConfig, locale: string): string {
+  return formatRuntimeTargetSummary(cfg, locale);
+}
+
+export function formatWorkspaceSummary(workDir: string, expDir: string, locale: string): string {
+  return formatManualWorkspaceSummary({ remoteWorkDir: workDir, experimentDir: expDir }, locale);
+}
+
+export function formatMetricSummary(metric: string, direction: 'lower' | 'higher', baseline: string, iterations: number, locale: string): string {
+  return formatMetricIterationsSummary({ metric, direction, baselineInput: baseline, maxIter: iterations }, locale);
+}
+
+export function getPathBasename(path: string): string {
+  if (!path) return '';
+  const parts = path.split(/[/\\]+/).filter(Boolean);
+  return parts[parts.length - 1] || path;
+}
+
+export function parseConnectionSuccessOutput(output: string): { platform: string; pwd: string; isGitRepo: boolean } {
+  return parseConnectionCheckOutput(output);
+}
 
 const AUTORESEARCH_CONFIG_STORAGE_KEY = 'pipi-shrimp-autoresearch-ssh-config';
 
@@ -231,6 +266,7 @@ export function AdvancedWorkdirSetup() {
 
   const isSelectMode = batchSelectedIds.length > 0;
 
+
   const handleToggleSelectRun = (runId: string) => {
     setBatchSelectedIds((prev) =>
       prev.includes(runId)
@@ -277,6 +313,26 @@ export function AdvancedWorkdirSetup() {
   const statusMessage = selectedRunContext.statusMessage;
   const baselineInvalid = baselineInput.trim().length > 0 && parseOptionalBaseline(baselineInput) === null;
   const providerReady = !agentConfigError;
+
+  const readiness = useMemo(() => {
+    const draft: ManualSetupDraft = {
+      setupForm,
+      experimentDir,
+      metric,
+      baselineInvalid,
+      connectionTestStatus: connectionTest.status,
+      providerReady,
+    };
+    return getManualSetupReadiness(draft);
+  }, [setupForm, experimentDir, metric, baselineInvalid, connectionTest.status, providerReady]);
+
+  const getManualSetupSectionStatus = (section: string) => {
+    if (section === 'workspace' || section === 'targetProject' || section === 'runtime' || section === 'metric' || section === 'envCheck' || section === 'provider') {
+      return readiness.rawSectionStatus[section as keyof typeof readiness.rawSectionStatus];
+    }
+    return 'completed';
+  };
+
   const workdirReady = Boolean(setupForm.remoteWorkDir.trim());
   const experimentDirReady = Boolean(experimentDir.trim());
   const metricReady = Boolean(metric.trim());
@@ -562,278 +618,39 @@ export function AdvancedWorkdirSetup() {
 
   if (showSetup) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="flex max-h-[calc(100vh-6rem)] w-full max-w-2xl flex-col rounded-[28px] border border-gray-200/70 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(28,25,23,0.25)]">
-          <div className="space-y-1">
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-gray-400">AutoResearch</p>
-            <h2 className="text-xl font-semibold text-gray-900">{t('autoresearch.setupTitle')}</h2>
-            <p className="text-sm text-gray-500">
-              {t('autoresearch.setupDescription')}
-            </p>
-          </div>
-
-          {activeRun && (
-            <AutoResearchActiveRunBanner
-              run={activeRun}
-              onView={handleViewActiveRun}
-              onBrowseHistory={() => setShowRunList(true)}
-            />
-          )}
-
-          <form className="mt-4 flex min-h-0 flex-1 flex-col" onSubmit={handleSetupSubmit}>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-            <div className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50/70 px-3 py-2 text-xs text-neutral-700">
-              <span>
-                {prefillSource === 'last-used'
-                  ? t('autoresearch.prefillLastUsed')
-                  : t('autoresearch.prefillDefaults')}
-              </span>
-              <button
-                type="button"
-                className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-neutral-700 transition-colors hover:bg-white/70 hover:text-neutral-900"
-                onClick={handleResetToDefaults}
-              >
-                {t('autoresearch.resetToDefaults')}
-              </button>
-            </div>
-            <div className="flex gap-1 rounded-2xl bg-gray-100/80 p-1">
-              <button
-                type="button"
-                onClick={() => setSetupForm((current) => ({ ...current, mode: 'ssh' }))}
-                className={`flex-1 rounded-xl py-1.5 text-sm font-semibold transition-all ${setupForm.mode === 'ssh' ? 'bg-white text-neutral-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              >{t('autoresearch.modeRemote')}</button>
-              <button
-                type="button"
-                onClick={() => setSetupForm((current) => ({ ...current, mode: 'local' }))}
-                className={`flex-1 rounded-xl py-1.5 text-sm font-semibold transition-all ${setupForm.mode === 'local' ? 'bg-white text-neutral-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              >{t('autoresearch.modeLocal')}</button>
-            </div>
-
-            {setupForm.mode === 'ssh' && (
-              <>
-                <input
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                  placeholder={t('autoresearch.hostPlaceholder')}
-                  value={setupForm.host}
-                  onChange={(event) => setSetupForm((current) => ({ ...current, host: event.target.value }))}
-                />
-                <div className="flex gap-2">
-                  <input
-                    className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                    placeholder={t('autoresearch.userPlaceholder')}
-                    value={setupForm.user}
-                    onChange={(event) => setSetupForm((current) => ({ ...current, user: event.target.value }))}
-                  />
-                  <input
-                    className="w-20 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                    placeholder={t('autoresearch.portPlaceholder')}
-                    type="number"
-                    value={setupForm.port}
-                    onChange={(event) => setSetupForm((current) => ({ ...current, port: Number.parseInt(event.target.value, 10) || 22 }))}
-                  />
-                </div>
-                <select
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                  value={setupForm.authMode}
-                  onChange={(event) => setSetupForm((current) => ({ ...current, authMode: event.target.value as SshConfig['authMode'] }))}
-                >
-                  <option value="agent">{t('autoresearch.authAgent')}</option>
-                  <option value="password">{t('autoresearch.authPassword')}</option>
-                  <option value="key">{t('autoresearch.authKey')}</option>
-                </select>
-                {setupForm.authMode === 'password' && (
-                  <input
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                    placeholder={t('autoresearch.passwordPlaceholder')}
-                    type="password"
-                    autoComplete="off"
-                    value={setupForm.password}
-                    onChange={(event) => setSetupForm((current) => ({ ...current, password: event.target.value }))}
-                  />
-                )}
-                {setupForm.authMode === 'key' && (
-                  <input
-                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                    placeholder={t('autoresearch.sshKeyPathPlaceholder')}
-                    value={setupForm.keyPath}
-                    onChange={(event) => setSetupForm((current) => ({ ...current, keyPath: event.target.value }))}
-                  />
-                )}
-              </>
-            )}
-
-            {setupForm.mode === 'local' ? (
-              <>
-                <div className="flex gap-2">
-                  <input
-                    className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                    placeholder={t('autoresearch.localWorkDirPlaceholder')}
-                    value={setupForm.remoteWorkDir}
-                    onChange={(event) => setSetupForm((current) => ({ ...current, remoteWorkDir: sanitizePathInput(event.target.value) }))}
-                  />
-                  <button
-                    type="button"
-                    className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
-                    onClick={handlePickLocalWorkDir}
-                  >
-                    {t('autoresearch.chooseDirectory')}
-                  </button>
-                </div>
-                <AutoResearchPathSummary label={t('autoresearch.summaryWorkdir')} path={setupForm.remoteWorkDir} />
-                <AutoResearchInlineHint>{t('autoresearch.workdirHelper')}</AutoResearchInlineHint>
-              </>
-            ) : (
-              <>
-                <input
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                  placeholder={t('autoresearch.remoteWorkDirPlaceholder')}
-                  value={setupForm.remoteWorkDir}
-                  onChange={(event) => setSetupForm((current) => ({ ...current, remoteWorkDir: sanitizePathInput(event.target.value) }))}
-                />
-                <AutoResearchPathSummary label={t('autoresearch.summaryWorkdir')} path={setupForm.remoteWorkDir} />
-                <AutoResearchInlineHint>{t('autoresearch.workdirHelper')}</AutoResearchInlineHint>
-              </>
-            )}
-
-            <div className="flex gap-2">
-              <input
-                className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                placeholder={t('autoresearch.experimentDirPlaceholder')}
-                value={experimentDir}
-                onChange={(event) => setExperimentDir(sanitizePathInput(event.target.value))}
-              />
-              <button
-                type="button"
-                className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50"
-                onClick={handlePickExperimentDir}
-                aria-label={t('autoresearch.chooseDirectory')}
-              >
-                {t('autoresearch.chooseDirectory')}
-              </button>
-            </div>
-            <AutoResearchPathSummary label={t('autoresearch.summaryExperimentDir')} path={experimentDir} />
-            <AutoResearchInlineHint>{t('autoresearch.experimentDirHelper')}</AutoResearchInlineHint>
-
-            <hr className="border-gray-200" />
-
-              <div className="flex gap-2">
-                <input
-                className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                placeholder={t('autoresearch.metricNamePlaceholder')}
-                value={metric}
-                onChange={(event) => setMetric(event.target.value)}
-              />
-              <select
-                className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-                value={direction}
-                onChange={(event) => setDirection(event.target.value as 'lower' | 'higher')}
-                >
-                  <option value="lower">{t('autoresearch.lowerIsBetter')}</option>
-                  <option value="higher">{t('autoresearch.higherIsBetter')}</option>
-                </select>
-              </div>
-              <AutoResearchInlineHint>{t('autoresearch.metricHelper')}</AutoResearchInlineHint>
-            <input
-              className={`w-full rounded-xl border bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:outline-none ${baselineInvalid ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-neutral-400'}`}
-              placeholder={t('autoresearch.baselinePlaceholder')}
-              value={baselineInput}
-              onChange={(event) => setBaselineInput(event.target.value)}
-            />
-            {baselineInvalid && (
-              <div className="text-xs text-rose-500">{t('autoresearch.validationBaselineNumber')}</div>
-            )}
-            <AutoResearchInlineHint>{t('autoresearch.baselineHelper')}</AutoResearchInlineHint>
-            <input
-              className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
-              placeholder={t('autoresearch.maxIterationsPlaceholder')}
-              type="number"
-              value={maxIter}
-              onChange={(event) => setMaxIter(buildAutoResearchDefaultConfig({ iterations: Number.parseInt(event.target.value, 10) || 50 }).iterations)}
-            />
-            <div className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50/70 p-3">
-              <AutoResearchReadinessRow label={t('autoresearch.check.provider')} ready={providerReady} />
-              <AutoResearchReadinessRow label={t('autoresearch.check.workdir')} ready={workdirReady} />
-              <AutoResearchReadinessRow label={t('autoresearch.check.experimentDir')} ready={experimentDirReady} />
-              <AutoResearchReadinessRow label={t('autoresearch.check.metric')} ready={metricReady} />
-              <AutoResearchReadinessRow label={t('autoresearch.check.connectionTest')} ready={connectionTestReady} />
-              {setupForm.mode === 'ssh' && (
-                <AutoResearchReadinessRow label={t('autoresearch.check.sshConnection')} ready={sshReady} />
-              )}
-              <AutoResearchInlineHint>{t('autoresearch.readiness.helper')}</AutoResearchInlineHint>
-            </div>
-            <div className="space-y-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-              <h5 className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500">{t('autoresearch.summaryTitle')}</h5>
-              <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
-                <AutoResearchSummaryItem
-                  label={t('autoresearch.summaryTarget')}
-                  value={AutoResearchTargetSummary({
-                    mode: setupForm.mode,
-                    user: setupForm.user,
-                    host: setupForm.host,
-                  })}
-                />
-                <AutoResearchSummaryItem label={t('autoresearch.summaryWorkdir')} value={setupForm.remoteWorkDir || '—'} />
-                <AutoResearchSummaryItem label={t('autoresearch.summaryExperimentDir')} value={experimentDir || '—'} />
-                <AutoResearchSummaryItem
-                  label={t('autoresearch.summaryMetric')}
-                  value={AutoResearchMetricSummary({ metric, direction })}
-                />
-                <AutoResearchSummaryItem label={t('autoresearch.summaryIterations')} value={String(maxIter)} />
-              </div>
-            </div>
-            {setupError && setupError !== agentConfigError && (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>{setupError}</span>
-                  {activeRunId && (
-                    <button
-                      type="button"
-                      className="rounded-full border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50"
-                      onClick={handleViewActiveRun}
-                    >
-                      {t('autoresearch.viewActiveRun')}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-            </div>
-            <div className="mt-3 shrink-0 border-t border-gray-100 pt-3">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
-                className="w-full rounded-2xl border border-gray-200 bg-white py-2.5 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 sm:w-48"
-                disabled={testConnectionDisabled || isStarting}
-                onClick={handleTestConnection}
-              >
-                {connectionTest.status === 'testing'
-                  ? t('autoresearch.connectionTesting')
-                  : t('autoresearch.testConnection')}
-              </button>
-              <button
-                type="submit"
-                className="w-full rounded-2xl bg-neutral-900 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-neutral-800 disabled:opacity-50"
-                disabled={isStarting}
-                aria-busy={isStarting}
-              >
-                {isStarting ? t('autoresearch.starting') : t('autoresearch.start')}
-              </button>
-            </div>
-            <div className="mt-2">
-              <AutoResearchConnectionStatusPanel
-                status={connectionTest.status}
-                output={connectionTest.output}
-              />
-            </div>
-            {agentConfigError && (
-              <div className="mt-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                {agentConfigError}
-              </div>
-            )}
-            </div>
-          </form>
-        </div>
-      </div>
+      <ManualLaunchCockpit
+        setupForm={setupForm}
+        setSetupForm={setSetupForm}
+        maxIter={maxIter}
+        setMaxIter={setMaxIter}
+        metric={metric}
+        setMetric={setMetric}
+        direction={direction}
+        setDirection={setDirection}
+        experimentDir={experimentDir}
+        setExperimentDir={setExperimentDir}
+        baselineInput={baselineInput}
+        setBaselineInput={setBaselineInput}
+        baselineInvalid={baselineInvalid}
+        prefillSource={prefillSource}
+        windowsShellProfile={windowsShellProfile}
+        connectionTest={connectionTest}
+        setupError={setupError}
+        isStarting={isStarting}
+        activeRun={activeRun}
+        providerReady={providerReady}
+        agentConfigError={agentConfigError}
+        readiness={readiness}
+        handleResetToDefaults={handleResetToDefaults}
+        handlePickLocalWorkDir={handlePickLocalWorkDir}
+        handlePickExperimentDir={handlePickExperimentDir}
+        handleTestConnection={handleTestConnection}
+        handleSetupSubmit={handleSetupSubmit}
+        handleStart={handleStart}
+        handleViewActiveRun={handleViewActiveRun}
+        setShowRunList={setShowRunList}
+        onToggleSettings={() => useUIStore.getState().toggleSettings()}
+      />
     );
   }
 

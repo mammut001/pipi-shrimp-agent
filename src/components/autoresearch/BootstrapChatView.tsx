@@ -21,6 +21,7 @@ import { shouldAutoOpenAutoResearchTerminal } from '@/utils/windowsShellProfile'
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '@/store';
 import { BootstrapRecipeBuilder } from './BootstrapRecipeBuilder';
+import { RecipeTemplateChooser } from './recipe/RecipeTemplateChooser';
 import { type Recipe } from './bootstrapRecipePrompt';
 
 interface BootstrapChatViewProps {
@@ -506,44 +507,12 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         <div className="min-h-0 flex-1 flex flex-col bg-gray-50 px-5 py-5 overflow-y-auto w-full">
           {!hasStarted ? (
             <div className="space-y-6 flex-1 flex flex-col w-full">
-              {selectedTemplateId && !templatesExpanded ? (
-                <div className="flex items-center justify-between bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2.5 w-full">
-                  <div className="flex items-center gap-2 text-xs text-slate-700 font-sans">
-                    <span className="text-gray-400 font-semibold">{t('autoresearch.recipe.currentTemplate') || '当前模板'}:</span>
-                    <span className="font-bold text-slate-900">
-                      {selectedTemplateId === 'reproduce-paper' && (t('autoresearch.recipe.taskType.reproduce') || '复现论文')}
-                      {selectedTemplateId === 'beat-baseline' && (t('autoresearch.recipe.taskType.baseline') || '超越基线')}
-                      {selectedTemplateId === 'ablation' && (t('autoresearch.recipe.taskType.ablation') || '消融实验')}
-                      {selectedTemplateId === 'from-scratch' && (t('autoresearch.recipe.taskType.scratch') || '从零开始')}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setTemplatesExpanded(true)}
-                    className="text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors font-sans"
-                  >
-                    {t('autoresearch.recipe.changeTemplate') || '更换模板'}
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2 w-full">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold uppercase tracking-[0.12em] text-gray-400 font-sans">
-                      {t('autoresearch.recipe.selectTemplateTitle') || '选择启动模板'}
-                    </h3>
-                    {selectedTemplateId && (
-                      <button
-                        type="button"
-                        onClick={() => setTemplatesExpanded(false)}
-                        className="text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors font-sans"
-                      >
-                        {t('autoresearch.recipe.collapseTemplate') || '收起模板选择'}
-                      </button>
-                    )}
-                  </div>
-                  <BootstrapQuickStartCards selectedId={selectedTemplateId} onSelect={handleQuickStart} />
-                </div>
-              )}
+              <RecipeTemplateChooser
+                selectedTemplateId={selectedTemplateId}
+                templatesExpanded={templatesExpanded}
+                setTemplatesExpanded={setTemplatesExpanded}
+                onSelectTemplate={handleQuickStart}
+              />
 
               <div className="space-y-2 flex-1 flex flex-col min-h-0 w-full">
                 <h3 className="text-xs font-bold uppercase tracking-[0.12em] text-gray-400 font-sans">
