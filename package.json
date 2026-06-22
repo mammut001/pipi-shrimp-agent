@@ -46,7 +46,7 @@
     "zustand": "^4.4.0"
   },
   "devDependencies": {
-    "@jest/globals": "^30.3.0",
+    "@jest/globals": "^30.4.1",
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/cli": "^2.10.1",
     "@types/dompurify": "^3.0.5",
