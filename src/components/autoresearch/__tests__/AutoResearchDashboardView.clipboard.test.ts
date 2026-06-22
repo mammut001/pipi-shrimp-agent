@@ -138,7 +138,7 @@ describe('AutoResearchDashboardView clipboard actions', () => {
     await act(async () => {
       copyOneButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(writeText).toHaveBeenNthCalledWith(2, formatAutoResearchEventLine(run.events[1]));
+    expect(writeText).toHaveBeenNthCalledWith(2, '[2026-05-11T10:01:00.000Z] [PLAN_HYPOTHESIS] Iteration 1 started.');
 
     const debugButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Debug');
     expect(debugButton).not.toBeNull();

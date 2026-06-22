@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import React from 'react';
-import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import { BootstrapChatView } from '../BootstrapChatView';
@@ -27,12 +27,15 @@ jest.mock('@/services/autoresearch/setupFlow', () => ({
   logAutoResearchSetupFailure: jest.fn(() => 'failed'),
 }));
 
-jest.mock('@/components/chatInput/BlockComposer', () => ({
-  BlockComposer: ({ onSend, disabled }: { onSend: (val: string) => void; disabled?: boolean }) => (
+jest.mock('../BootstrapRecipeBuilder', () => ({
+  BootstrapRecipeBuilder: ({ onChange, recipe, onSend, disabled }: { onChange: (r: any) => void; recipe: any; onSend: (val: string) => void; disabled?: boolean }) => (
     <div>
-      <span>chat.blockComposerTitle</span>
+      <span>Configure Task Recipe</span>
+      <button data-testid="dirty-task" onClick={() => onChange({ ...recipe, researchGoal: { ...recipe.researchGoal, goalText: 'dirty' } })}>
+        Make Dirty
+      </button>
       <button data-testid="send-task" disabled={disabled} onClick={() => onSend('compiled prompt')}>
-        Send Task
+        Start Bootstrap Setup
       </button>
     </div>
   ),
@@ -69,13 +72,13 @@ describe('BootstrapChatView (Guided UI)', () => {
     document.body.removeChild(container);
   });
 
-  it('renders presets and block composer title initially', () => {
+  it('renders presets and recipe builder title initially', () => {
     act(() => {
       root.render(<BootstrapChatView />);
     });
     const html = container.innerHTML;
     expect(html).toContain('autoresearch.bootstrap.title');
-    expect(html).toContain('chat.blockComposerTitle');
+    expect(html).toContain('Configure Task Recipe');
   });
 
   it('does not auto-start run when readyResult is loaded', async () => {
@@ -162,5 +165,76 @@ describe('BootstrapChatView (Guided UI)', () => {
 
     expect(container.textContent).toContain('Bootstrap stopped by user');
     expect(container.textContent).toContain('Stopped');
+  });
+
+  it('confirms reset on template change if recipe is dirty', async () => {
+    const confirmSpy = jest.spyOn(window, 'confirm').mockImplementation(() => false);
+
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    // Make recipe dirty
+    act(() => {
+      const btn = container.querySelector('[data-testid="dirty-task"]') as HTMLButtonElement;
+      btn.click();
+    });
+
+    // Find a template button
+    const templates = Array.from(container.querySelectorAll('button'));
+    const templateBtn = templates.find((btn) => btn.textContent?.includes('autoresearch.bootstrap.card.scratch.title'));
+    expect(templateBtn).toBeTruthy();
+
+    act(() => {
+      templateBtn!.click();
+    });
+
+    // Since confirmSpy returned false, recipe should remain dirty, and window.confirm was called
+    expect(confirmSpy).toHaveBeenCalled();
+    
+    // Now mock confirm to return true
+    confirmSpy.mockImplementation(() => true);
+    act(() => {
+      templateBtn!.click();
+    });
+    // Should confirm and successfully update
+    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    
+    confirmSpy.mockRestore();
+  });
+
+  it('renders selected template bar and expands templates grid when clicking Change Template', async () => {
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    // Grid cards should render initially
+    expect(container.innerHTML).toContain('autoresearch.bootstrap.card.scratch.title');
+    expect(container.innerHTML).not.toContain('autoresearch.recipe.changeTemplate');
+
+    // Click From Scratch template
+    const scratchBtn = Array.from(container.querySelectorAll('button'))
+      .find((btn) => btn.textContent?.includes('autoresearch.bootstrap.card.scratch.title'));
+    expect(scratchBtn).toBeTruthy();
+
+    act(() => {
+      scratchBtn!.click();
+    });
+
+    // Grid should compress and show the template selection bar
+    expect(container.innerHTML).toContain('autoresearch.recipe.changeTemplate');
+    expect(container.innerHTML).not.toContain('autoresearch.bootstrap.card.scratch.title');
+
+    // Click Change Template
+    const changeTemplateBtn = Array.from(container.querySelectorAll('button'))
+      .find((btn) => btn.textContent?.includes('autoresearch.recipe.changeTemplate'));
+    expect(changeTemplateBtn).toBeTruthy();
+
+    act(() => {
+      changeTemplateBtn!.click();
+    });
+
+    // Should expand the template grid again
+    expect(container.innerHTML).toContain('autoresearch.bootstrap.card.scratch.title');
   });
 });
