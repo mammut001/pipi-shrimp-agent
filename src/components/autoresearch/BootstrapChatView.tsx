@@ -9,6 +9,7 @@ import {
 import type { AutoResearchBootstrapResult, ExtractedBaseline } from '@/services/autoresearch/bootstrap/types';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
 import { startAutoResearchRun, logAutoResearchSetupFailure } from '@/services/autoresearch/setupFlow';
+import { getAutoResearchDefaultConfig } from '@/services/autoresearch/defaultConfig';
 import type { SshConfig } from '@/store/autoresearchStore';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { useWorkflowStore } from '@/store/workflowStore';
@@ -180,8 +181,18 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   const [error, setError] = useState<string | null>(null);
   const [handoffSummary, setHandoffSummary] = useState<string | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<ConversationalTemplateOption['id'] | null>(null);
+  const [iterations, setIterations] = useState(() => getAutoResearchDefaultConfig().iterations);
   const bootstrappedAtRef = useRef<string | null>(null);
   const consoleScrollRef = useRef<HTMLDivElement>(null);
+  const bootstrapAbortRef = useRef<AbortController | null>(null);
+
+  const [stoppedByUser, setStoppedByUser] = useState(false);
+
+  const clearImportedFiles = useSettingsStore((state) => state.clearImportedFiles);
+
+  useEffect(() => {
+    clearImportedFiles();
+  }, [clearImportedFiles]);
 
   const currentStep = useBootstrapPlanStore((state) => state.currentStep);
   const warnings = useBootstrapPlanStore((state) => state.warnings);
@@ -212,7 +223,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     contextFiles: importedFiles.map((file) => file.path),
   }), [sshConfig, importedFiles]);
 
-  const handleReadyResult = useCallback(async (result: AutoResearchBootstrapResult) => {
+  const handleReadyResult = useCallback(async (result: AutoResearchBootstrapResult, runIterations: number) => {
     if (result.status !== 'ready' || bootstrappedAtRef.current === result.createdAt) {
       return;
     }
@@ -301,7 +312,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         experimentDir: remoteWorkDir,
         metric: result.plan.primaryMetric,
         direction,
-        iterations: 50,
+        iterations: runIterations,
         baseline,
       }, {
         setSshConfig: autoResearchState.setSshConfig,
@@ -375,11 +386,10 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       }
       setWarnings(parsed.data.warnings);
       setReadyResult(parsed.data);
-      await handleReadyResult(parsed.data);
     } catch {
       // Ignore malformed tool content and let the agent continue.
     }
-  }, [handleReadyResult, markMetricsStep, setReadyResult, setWarnings]);
+  }, [markMetricsStep, setReadyResult, setWarnings]);
 
   const handleAddFiles = useCallback(async () => {
     try {
@@ -409,15 +419,25 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     }
   }, [addImportedFiles]);
 
+  const handleStopBootstrap = useCallback(() => {
+    bootstrapAbortRef.current?.abort();
+    setStoppedByUser(true);
+    setIsStreaming(false);
+    setAgentLogs((prev) => prev + '\n[SYSTEM] Bootstrap stopped by user.\n');
+  }, []);
+
   const handleStartBootstrap = useCallback(async (compiledPrompt: string) => {
     if (isStreaming) {
       return;
     }
 
     setError(null);
+    setStoppedByUser(false);
     setHasStarted(true);
     setIsStreaming(true);
     setAgentLogs(`[SYSTEM] Initializing AutoResearch Bootstrap Setup...\n`);
+
+    bootstrapAbortRef.current = new AbortController();
 
     const workingFilesList = importedFiles.length > 0
       ? importedFiles.map((file) => `- ${file.name}: ${file.path}`).join('\n')
@@ -446,6 +466,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         initialMessages,
         systemPrompt,
         allowedTools: AUTORESEARCH_BOOTSTRAP_TEMPLATE.allowedTools,
+        signal: bootstrapAbortRef.current.signal,
         onTextDelta: (chunk) => {
           setAgentLogs((prev) => prev + chunk);
         },
@@ -461,8 +482,21 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
           await handleToolResult(name, result);
         },
       });
-      setAgentLogs((prev) => prev + `\n[SYSTEM] Headless Research Agent completed successfully.\n`);
+      if (bootstrapAbortRef.current.signal.aborted) {
+        return;
+      }
+      const ready = useBootstrapPlanStore.getState().readyResult;
+      if (!ready || ready.status !== 'ready') {
+        const warnMsg = 'Bootstrap agent finished but did not produce a bootstrap_finalize result.';
+        setError(warnMsg);
+        setAgentLogs((prev) => prev + `\n[WARNING] ${warnMsg}\n`);
+      } else {
+        setAgentLogs((prev) => prev + `\n[SYSTEM] Headless Research Agent completed successfully.\n`);
+      }
     } catch (runnerError) {
+      if (bootstrapAbortRef.current?.signal.aborted) {
+        return;
+      }
       const errMsg = runnerError instanceof Error ? runnerError.message : String(runnerError);
       setError(errMsg);
       setAgentLogs((prev) => prev + `\n[ERROR] Bootstrap execution error: ${errMsg}\n`);
@@ -478,18 +512,37 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }, []);
 
   const summaryCard = useMemo(() => {
-    if (!readyResult) {
+    if (!readyResult || handoffSummary) {
       return null;
     }
 
     return (
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm animate-fadeIn">
-        <p className="font-semibold">{t('autoresearch.bootstrap.readyTitle')}</p>
-        <p className="mt-1">{readyResult.plan.primaryMetric} · {readyResult.plan.scaffold.workDir}</p>
-        <p className="mt-1 text-xs text-emerald-800">{readyResult.plan.successCriteria}</p>
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm animate-fadeIn flex flex-col gap-2">
+        <div>
+          <p className="font-semibold">{t('autoresearch.bootstrap.readyTitle')}</p>
+          <p className="mt-1">{readyResult.plan.primaryMetric} · {readyResult.plan.scaffold.workDir}</p>
+          <p className="mt-1 text-xs text-emerald-800">{readyResult.plan.successCriteria}</p>
+        </div>
+        <div className="flex items-center gap-2 border-t border-emerald-200/50 pt-2 flex-wrap">
+          <label className="text-xs font-semibold text-emerald-800">Iterations:</label>
+          <input
+            type="number"
+            min={1}
+            max={1000}
+            value={iterations}
+            onChange={(e) => setIterations(parseInt(e.target.value, 10) || 1)}
+            className="w-16 rounded border border-emerald-300 bg-white px-2 py-1 text-xs text-emerald-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+          <button
+            onClick={() => handleReadyResult(readyResult, iterations)}
+            className="ml-auto rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 text-xs font-bold transition-all shadow-sm flex items-center gap-1"
+          >
+            <span>🚀</span> Start AutoResearch
+          </button>
+        </div>
       </div>
     );
-  }, [readyResult]);
+  }, [readyResult, iterations, handoffSummary, handleReadyResult]);
 
   return (
     <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -521,6 +574,8 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                   onChange={setComposerBlocks}
                   onSend={handleStartBootstrap}
                   context={composerContext}
+                  disabled={isStreaming}
+                  defaultMode="agent"
                 />
               </div>
             </div>
@@ -551,31 +606,52 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                     <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider ml-2">Developer Console</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    {!isStreaming && (
-                      <button
-                        onClick={() => {
-                          setHasStarted(false);
-                          setError(null);
-                        }}
-                        className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-all text-neutral-300"
-                      >
-                        ← Back to Composer
-                      </button>
-                    )}
                     {isStreaming ? (
                       <>
+                        <button
+                          type="button"
+                          onClick={handleStopBootstrap}
+                          className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-red-700 bg-red-900/40 hover:bg-red-800/60 hover:text-white transition-all text-red-200"
+                        >
+                          Stop bootstrap
+                        </button>
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                         <span className="text-[10px] text-neutral-400">Bootstrap in progress...</span>
                       </>
-                    ) : error ? (
-                      <>
-                        <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                        <span className="text-[10px] text-red-400 font-bold">Failed</span>
-                      </>
                     ) : (
                       <>
-                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                        <span className="text-[10px] text-emerald-400 font-bold">Finished</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHasStarted(false);
+                            setError(null);
+                            setStoppedByUser(false);
+                          }}
+                          className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-all text-neutral-300"
+                        >
+                          ← Back to Composer
+                        </button>
+                        {stoppedByUser ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                            <span className="text-[10px] text-amber-400 font-bold">Stopped</span>
+                          </>
+                        ) : error ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                            <span className="text-[10px] text-red-400 font-bold">Failed</span>
+                          </>
+                        ) : readyResult?.status === 'ready' ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <span className="text-[10px] text-emerald-400 font-bold">Finished</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                            <span className="text-[10px] text-amber-400 font-bold">Incomplete</span>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -600,9 +676,20 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
 
         {/* Literature & Reference Documents Section */}
         <aside className="rounded-[24px] border border-gray-200 bg-white p-5 flex flex-col min-w-0">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">
-            {t('autoresearch.bootstrap.referenceDocsTitle')}
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">
+              {t('autoresearch.bootstrap.referenceDocsTitle')}
+            </p>
+            {importedFiles.length > 0 && (
+              <button
+                onClick={clearImportedFiles}
+                className="text-[10px] text-gray-400 hover:text-red-500 font-bold uppercase transition-colors"
+                title="Clear all references"
+              >
+                Clear
+              </button>
+            )}
+          </div>
 
           <div className="mt-3 flex-1 overflow-y-auto space-y-2 max-h-[250px] min-h-[60px]">
             {importedFiles.length === 0 ? (

@@ -1,11 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { t } from '@/i18n';
 import {
   type ComposerBlock,
   type BlockType,
   COMPOSER_PRESETS,
 } from './blocks/types';
-import { buildPromptFromBlocks } from './blocks/promptBuilder';
+import { buildPromptFromBlocks, hasMeaningfulComposerContent } from './blocks/promptBuilder';
 import type { ExecutionModeId } from '@/services/executionMode';
 
 interface PromptContext {
@@ -21,6 +21,9 @@ interface BlockComposerProps {
   onUseAsMessage?: (compiledPrompt: string) => void;
   onSend: (compiledPrompt: string) => void;
   context?: PromptContext;
+  disabled?: boolean;
+  defaultMode?: ExecutionModeId;
+  density?: 'default' | 'compact';
 }
 
 export function BlockComposer({
@@ -30,7 +33,11 @@ export function BlockComposer({
   onUseAsMessage,
   onSend,
   context,
+  disabled = false,
+  defaultMode = 'agent',
+  density = 'default',
 }: BlockComposerProps) {
+  const isCompact = density === 'compact';
   const [showPreview, setShowPreview] = useState(false);
   const [activePreset, setActivePreset] = useState('');
 
@@ -49,7 +56,7 @@ export function BlockComposer({
       case 'context':
         return { id, type: 'context', paths: [], symbols: [], scope: 'selected_files' };
       case 'mode':
-        return { id, type: 'mode', executionMode: 'agent' };
+        return { id, type: 'mode', executionMode: defaultMode };
       case 'constraints':
         return {
           id,
@@ -164,14 +171,28 @@ export function BlockComposer({
     setActivePreset('');
   };
 
+  useEffect(() => {
+    if (!showPreview) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowPreview(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showPreview]);
+
   if (!Array.isArray(blocks)) {
     return null;
   }
 
   const compiledPrompt = buildPromptFromBlocks(blocks, context);
+  const canSendTask = hasMeaningfulComposerContent(blocks);
 
   return (
-    <div className="mb-4 rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4 shadow-sm transition-all animate-fadeIn">
+    <div className={`mb-4 border border-neutral-200 bg-neutral-50/60 shadow-sm transition-all animate-fadeIn ${isCompact ? 'p-2.5 mb-2 rounded-xl' : 'p-4 rounded-2xl'}`}>
       {/* Header Panel */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200/60 pb-3">
         <div>
@@ -187,6 +208,7 @@ export function BlockComposer({
         <div className="flex items-center gap-2 flex-wrap">
           {/* Preset Selector */}
           <select
+            aria-label={t('chat.loadPreset') || 'Load Template Preset'}
             value={activePreset}
             onChange={(e) => handlePresetSelect(e.target.value)}
             className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 focus:outline-none focus:ring-1 focus:ring-neutral-400"
@@ -208,7 +230,7 @@ export function BlockComposer({
               onClick={clearAll}
               className="px-2.5 py-1 text-xs rounded-lg border border-neutral-200 bg-white hover:bg-neutral-100 hover:text-red-600 transition-all font-medium text-neutral-600"
             >
-              Clear
+              {t('chat.clearComposer') || 'Clear'}
             </button>
           )}
 
@@ -219,6 +241,7 @@ export function BlockComposer({
               onClick={onClose}
               className="p-1 rounded-md text-neutral-400 hover:text-neutral-600 hover:bg-neutral-200/50 transition-colors"
               title={t('common.close') || 'Close'}
+              aria-label={t('common.close') || 'Close composer'}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -233,11 +256,11 @@ export function BlockComposer({
         <div className="py-8 flex flex-col items-center justify-center text-center">
           <span className="text-2xl mb-2 opacity-60">🥞</span>
           <p className="text-xs text-neutral-400 max-w-sm">
-            Canvas is empty. Select a preset template above or click any button below to add custom task blocks.
+            {t('chat.canvasEmpty') || 'Canvas is empty. Select a preset template above or click any button below to add custom task blocks.'}
           </p>
         </div>
       ) : (
-        <div className="grid gap-3.5 mt-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
+        <div className={`grid mt-3 ${isCompact ? 'grid-cols-1 gap-2.5 mt-2' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-3.5'}`}>
           {blocks.map((block, index) => {
             const isFirst = index === 0;
             const isLast = index === blocks.length - 1;
@@ -245,18 +268,20 @@ export function BlockComposer({
             return (
               <div
                 key={block.id}
-                className="group relative rounded-xl border border-neutral-200 bg-white p-3.5 shadow-sm transition-all duration-200 hover:shadow-md flex flex-col gap-2.5"
+                className={`group relative border border-neutral-200 bg-white shadow-sm transition-all duration-200 hover:shadow-md flex flex-col ${
+                  isCompact ? 'rounded-lg p-2.5 gap-2' : 'rounded-xl p-3.5 gap-2.5'
+                }`}
               >
                 {/* Block Header / Action Controls */}
                 <div className="flex items-center justify-between border-b border-neutral-100 pb-1.5">
                   <div className="flex items-center gap-1.5">
-                    {block.type === 'intent' && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-100">🎯 Intent</span>}
-                    {block.type === 'context' && <span className="text-xs px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 font-bold border border-orange-100">📁 Context</span>}
-                    {block.type === 'mode' && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-bold border border-purple-100">⚙️ Mode</span>}
-                    {block.type === 'constraints' && <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-bold border border-red-100">🛑 Constraints</span>}
-                    {block.type === 'output' && <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 font-bold border border-green-100">📄 Output</span>}
-                    {block.type === 'verification' && <span className="text-xs px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 font-bold border border-teal-100">✅ Verification</span>}
-                    {block.type === 'safety' && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-bold border border-amber-100">🛡️ Safety</span>}
+                    {block.type === 'intent' && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-100">🎯 {t('chat.blockLabel.intent') || 'Intent'}</span>}
+                    {block.type === 'context' && <span className="text-xs px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 font-bold border border-orange-100">📁 {t('chat.blockLabel.context') || 'Context'}</span>}
+                    {block.type === 'mode' && <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-bold border border-purple-100">⚙️ {t('chat.blockLabel.mode') || 'Mode'}</span>}
+                    {block.type === 'constraints' && <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-bold border border-red-100">🛑 {t('chat.blockLabel.constraints') || 'Constraints'}</span>}
+                    {block.type === 'output' && <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 font-bold border border-green-100">📄 {t('chat.blockLabel.output') || 'Output'}</span>}
+                    {block.type === 'verification' && <span className="text-xs px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 font-bold border border-teal-100">✅ {t('chat.blockLabel.verification') || 'Verification'}</span>}
+                    {block.type === 'safety' && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-bold border border-amber-100">🛡️ {t('chat.blockLabel.safety') || 'Safety'}</span>}
                   </div>
 
                   <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
@@ -266,7 +291,8 @@ export function BlockComposer({
                       disabled={isFirst}
                       onClick={() => moveUp(index)}
                       className="p-0.5 rounded hover:bg-neutral-100 text-neutral-500 disabled:opacity-30 disabled:hover:bg-transparent"
-                      title="Move Up"
+                      title={t('chat.moveUp') || 'Move Up'}
+                      aria-label={t('chat.moveUp') || 'Move block up'}
                     >
                       ▲
                     </button>
@@ -276,7 +302,8 @@ export function BlockComposer({
                       disabled={isLast}
                       onClick={() => moveDown(index)}
                       className="p-0.5 rounded hover:bg-neutral-100 text-neutral-500 disabled:opacity-30 disabled:hover:bg-transparent"
-                      title="Move Down"
+                      title={t('chat.moveDown') || 'Move Down'}
+                      aria-label={t('chat.moveDown') || 'Move block down'}
                     >
                       ▼
                     </button>
@@ -285,7 +312,8 @@ export function BlockComposer({
                       type="button"
                       onClick={() => removeBlock(block.id)}
                       className="ml-1 p-0.5 rounded hover:bg-red-50 text-neutral-400 hover:text-red-500"
-                      title="Remove Block"
+                      title={t('chat.removeBlock') || 'Remove Block'}
+                      aria-label={t('chat.removeBlock') || 'Remove block'}
                     >
                       ×
                     </button>
@@ -911,55 +939,57 @@ export function BlockComposer({
 
       {/* Block Picker Toolbar */}
       <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-neutral-200/60 pt-3">
-        <span className="text-[10px] font-bold text-neutral-400 select-none mr-1">ADD BLOCK:</span>
+        <span className="text-[10px] font-bold text-neutral-400 select-none mr-1">
+          {t('chat.addBlock') || 'ADD BLOCK:'}
+        </span>
         <button
           type="button"
           onClick={() => addBlock('intent')}
           className="px-2 py-1 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 transition-colors"
         >
-          + Intent
+          + {t('chat.blockLabel.intent') || 'Intent'}
         </button>
         <button
           type="button"
           onClick={() => addBlock('context')}
           className="px-2 py-1 rounded bg-orange-50 hover:bg-orange-100 text-orange-700 text-[10px] font-bold border border-orange-200 transition-colors"
         >
-          + Context
+          + {t('chat.blockLabel.context') || 'Context'}
         </button>
         <button
           type="button"
           onClick={() => addBlock('mode')}
           className="px-2 py-1 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 text-[10px] font-bold border border-purple-200 transition-colors"
         >
-          + Mode
+          + {t('chat.blockLabel.mode') || 'Mode'}
         </button>
         <button
           type="button"
           onClick={() => addBlock('constraints')}
           className="px-2 py-1 rounded bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-bold border border-red-200 transition-colors"
         >
-          + Constraints
+          + {t('chat.blockLabel.constraints') || 'Constraints'}
         </button>
         <button
           type="button"
           onClick={() => addBlock('output')}
           className="px-2 py-1 rounded bg-green-50 hover:bg-green-100 text-green-700 text-[10px] font-bold border border-green-200 transition-colors"
         >
-          + Output
+          + {t('chat.blockLabel.output') || 'Output'}
         </button>
         <button
           type="button"
           onClick={() => addBlock('verification')}
           className="px-2 py-1 rounded bg-teal-50 hover:bg-teal-100 text-teal-700 text-[10px] font-bold border border-teal-200 transition-colors"
         >
-          + Verification
+          + {t('chat.blockLabel.verification') || 'Verification'}
         </button>
         <button
           type="button"
           onClick={() => addBlock('safety')}
           className="px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-700 text-[10px] font-bold border border-amber-200 transition-colors"
         >
-          + Safety
+          + {t('chat.blockLabel.safety') || 'Safety'}
         </button>
       </div>
 
@@ -982,23 +1012,25 @@ export function BlockComposer({
             {showPreview ? 'Hide Compiled Prompt Preview' : 'Show Compiled Prompt Preview'}
           </button>
 
-          {blocks.length > 0 && (
+          {canSendTask && (
             <div className="flex items-center gap-2">
               {onUseAsMessage && (
                 <button
                   type="button"
+                  disabled={disabled}
                   onClick={() => onUseAsMessage(compiledPrompt)}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-neutral-200 hover:bg-neutral-100 text-neutral-700 transition-colors"
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-neutral-200 hover:bg-neutral-100 text-neutral-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Use as message
+                  {t('chat.useAsMessage') || 'Use as message'}
                 </button>
               )}
               <button
                 type="button"
+                disabled={disabled}
                 onClick={() => onSend(compiledPrompt)}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white shadow-sm transition-colors"
+                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Send task
+                {t('chat.sendTask') || 'Send task'}
               </button>
             </div>
           )}

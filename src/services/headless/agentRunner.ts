@@ -80,6 +80,7 @@ export interface HeadlessAgentRunnerInput {
   onToolResult?: (call: { id: string; name: string; result: string; durationMs: number }) => Promise<void> | void;
   allowToolExecution?: (call: { id: string; name: string; arguments: string }) => { allowed: boolean; reason?: string };
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface HeadlessAgentRunnerResult {
@@ -333,6 +334,10 @@ export async function runHeadlessAgentTurn(
   );
 
   for await (const event of engine) {
+    if (input.signal?.aborted) {
+      throw new DOMException('Headless agent turn aborted', 'AbortError');
+    }
+
     switch (event.type) {
       case 'text_delta':
         finalText += event.content;

@@ -99,10 +99,134 @@ describe('buildPromptFromBlocks', () => {
     expect(prompt).toContain('- **Context Notes**: Review performance here');
   });
 
-  it('should fallback to general rules on empty blocks list', () => {
+  it('should return empty string on empty blocks list', () => {
     const prompt = buildPromptFromBlocks([]);
-    expect(prompt).toContain('# TASK SPECIFICATION');
-    expect(prompt).toContain('## GENERAL RULES');
-    expect(prompt).toContain('Do not claim files changed unless you changed them.');
+    expect(prompt).toBe('');
+  });
+});
+
+describe('isCompiledTaskPrompt', () => {
+  const { isCompiledTaskPrompt, COMPILED_TASK_PROMPT_HEADER } = require('../promptBuilder');
+
+  it('detects compiled task prompts', () => {
+    expect(isCompiledTaskPrompt(`${COMPILED_TASK_PROMPT_HEADER}\n\n## INTENT`)).toBe(true);
+    expect(isCompiledTaskPrompt('  # TASK SPECIFICATION\n')).toBe(true);
+    expect(isCompiledTaskPrompt('plain message')).toBe(false);
+  });
+});
+
+describe('canSendFromComposer', () => {
+  const { canSendFromComposer } = require('../promptBuilder');
+
+  it('returns false when composer is empty and input is empty', () => {
+    expect(canSendFromComposer([], '')).toBe(false);
+    expect(canSendFromComposer([], '   ')).toBe(false);
+  });
+
+  it('returns true when input has text', () => {
+    expect(canSendFromComposer([], 'hello')).toBe(true);
+  });
+
+  it('returns false for mode-only blocks', () => {
+    expect(canSendFromComposer([
+      { id: 'm', type: 'mode', executionMode: 'ask' },
+    ], '')).toBe(false);
+  });
+});
+
+describe('resolveComposerSubmitMessage', () => {
+  const { resolveComposerSubmitMessage, COMPILED_TASK_PROMPT_HEADER } = require('../promptBuilder');
+
+  it('does not double-compile after Use as message flow', () => {
+    const compiled = `${COMPILED_TASK_PROMPT_HEADER}\n\n## INTENT\nDo thing`;
+    const message = resolveComposerSubmitMessage({
+      composerOpen: false,
+      composerBlocks: [],
+      input: compiled,
+    });
+    expect(message).toBe(compiled);
+    expect(message?.match(/# TASK SPECIFICATION/g)?.length).toBe(1);
+  });
+
+  it('Use as message then normal send simulation keeps single TASK SPECIFICATION', () => {
+    const blocks = [
+      { id: 'i', type: 'intent', intentType: 'implement', detail: 'write parser' },
+    ];
+    const compiled = resolveComposerSubmitMessage({
+      composerOpen: true,
+      composerBlocks: blocks,
+      input: '',
+    })!;
+    const afterUseAsMessage = resolveComposerSubmitMessage({
+      composerOpen: false,
+      composerBlocks: [],
+      input: compiled,
+    });
+    expect(afterUseAsMessage?.match(/# TASK SPECIFICATION/g)?.length).toBe(1);
+  });
+});
+
+describe('hasMeaningfulComposerContent', () => {
+  const { hasMeaningfulComposerContent } = require('../promptBuilder');
+
+  it('should return false on empty blocks list', () => {
+    expect(hasMeaningfulComposerContent([])).toBe(false);
+  });
+
+  it('should return false on empty intent block', () => {
+    expect(hasMeaningfulComposerContent([
+      {
+        id: 'test-intent',
+        type: 'intent',
+        intentType: 'implement',
+        detail: '   ',
+      }
+    ])).toBe(false);
+  });
+
+  it('should return true on non-empty intent block', () => {
+    expect(hasMeaningfulComposerContent([
+      {
+        id: 'test-intent',
+        type: 'intent',
+        intentType: 'implement',
+        detail: 'write a parser',
+      }
+    ])).toBe(true);
+  });
+
+  it('should return false on mode-only block', () => {
+    expect(hasMeaningfulComposerContent([
+      {
+        id: 'test-mode',
+        type: 'mode',
+        executionMode: 'ask',
+      }
+    ])).toBe(false);
+  });
+
+  it('should return true on preset with output block', () => {
+    expect(hasMeaningfulComposerContent([
+      {
+        id: 'test-intent',
+        type: 'intent',
+        intentType: 'question',
+        detail: '',
+      },
+      {
+        id: 'test-mode',
+        type: 'mode',
+        executionMode: 'ask',
+      },
+      {
+        id: 'test-output',
+        type: 'output',
+        outputType: 'answer',
+        includeFilesChanged: false,
+        includeCommandsRun: false,
+        includeRemainingRisks: false,
+        includeManualQA: false,
+      },
+    ])).toBe(true);
   });
 });

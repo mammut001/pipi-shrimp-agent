@@ -35,7 +35,9 @@ import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chat
 import type { ImageAttachment } from '@/types/vision';
 import { BlockComposer } from './chatInput/BlockComposer';
 import { type ComposerBlock } from './chatInput/blocks/types';
-import { buildPromptFromBlocks } from './chatInput/blocks/promptBuilder';
+import { canSendFromComposer, hasMeaningfulComposerContent, isCompiledTaskPrompt, resolveComposerSubmitMessage } from './chatInput/blocks/promptBuilder';
+import { BypassWarningDialog } from './chatInput/ExecutionModeDropdown';
+import { EXECUTION_MODES } from '@/services/executionMode';
 
 // AUDIT-FIX [audit-1#6] — Debounce window for localStorage writes. 300ms is
 // short enough that a navigation away from the tab will still flush the
@@ -72,7 +74,12 @@ function cleanupOldDrafts(): void {
 
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !key.startsWith(draftPrefix) || key.endsWith(timestampSuffix)) {
+      if (!key || key.endsWith(timestampSuffix)) {
+        continue;
+      }
+      const isTextDraft = key.startsWith('chat_draft_');
+      const isBlockDraft = key.startsWith('chat_blocks_draft_');
+      if (!isTextDraft && !isBlockDraft) {
         continue;
       }
       const value = localStorage.getItem(key);
@@ -147,6 +154,7 @@ export function ChatInput({
   const draftStorageKey = `chat_draft_${draftKey}`;
   const [composerOpen, setComposerOpen] = useState(defaultComposerOpen);
   const [composerBlocks, setComposerBlocks] = useState<ComposerBlock[]>(defaultBlocks ?? []);
+  const [pendingBypassBlocks, setPendingBypassBlocks] = useState<ComposerBlock[] | null>(null);
   const blockDraftStorageKey = `chat_blocks_draft_${draftKey}`;
   const isCompact = density === 'compact';
   const textareaMaxHeight = isCompact ? 96 : 200;
@@ -307,8 +315,10 @@ export function ChatInput({
       const isDirty = composerBlocks.length > 0;
       if (composerOpen && isDirty) {
         localStorage.setItem(blockDraftStorageKey, JSON.stringify(composerBlocks));
+        localStorage.setItem(`${blockDraftStorageKey}__ts`, String(Date.now()));
       } else {
         localStorage.removeItem(blockDraftStorageKey);
+        localStorage.removeItem(`${blockDraftStorageKey}__ts`);
       }
     }, DRAFT_PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
@@ -318,28 +328,57 @@ export function ChatInput({
   // 1. Sync from store/dropdown to composer
   useEffect(() => {
     if (!selectedExecutionModeId) return;
-    const modeBlockIdx = composerBlocks.findIndex((b) => b.type === 'mode');
-    if (modeBlockIdx !== -1) {
-      const modeBlock = composerBlocks[modeBlockIdx] as any;
-      if (modeBlock.executionMode !== selectedExecutionModeId) {
-        const nextBlocks = [...composerBlocks];
-        nextBlocks[modeBlockIdx] = {
-          ...modeBlock,
-          executionMode: selectedExecutionModeId,
-        };
-        setComposerBlocks(nextBlocks);
+    setComposerBlocks((prev) => {
+      const modeBlockIdx = prev.findIndex((b) => b.type === 'mode');
+      if (modeBlockIdx === -1) {
+        return prev;
       }
-    }
+      const modeBlock = prev[modeBlockIdx];
+      if (modeBlock.type !== 'mode' || modeBlock.executionMode === selectedExecutionModeId) {
+        return prev;
+      }
+      const nextBlocks = [...prev];
+      nextBlocks[modeBlockIdx] = {
+        ...modeBlock,
+        executionMode: selectedExecutionModeId,
+      };
+      return nextBlocks;
+    });
   }, [selectedExecutionModeId]);
 
   // 2. Sync from composer to store
   const handleComposerBlocksChange = useCallback((newBlocks: ComposerBlock[]) => {
-    setComposerBlocks(newBlocks);
     const modeBlock = newBlocks.find((b) => b.type === 'mode') as any;
-    if (modeBlock && modeBlock.executionMode !== selectedExecutionModeId && currentSessionId) {
-      void updateSessionExecutionMode(currentSessionId, modeBlock.executionMode);
+    if (modeBlock && modeBlock.executionMode === 'bypass' && selectedExecutionModeId !== 'bypass') {
+      setPendingBypassBlocks(newBlocks);
+    } else {
+      setComposerBlocks(newBlocks);
+      if (modeBlock && modeBlock.executionMode !== selectedExecutionModeId && currentSessionId) {
+        void updateSessionExecutionMode(currentSessionId, modeBlock.executionMode);
+      }
     }
   }, [selectedExecutionModeId, currentSessionId, updateSessionExecutionMode]);
+
+  const handleConfirmBypass = useCallback(() => {
+    if (!pendingBypassBlocks) return;
+    setComposerBlocks(pendingBypassBlocks);
+    if (currentSessionId) {
+      void updateSessionExecutionMode(currentSessionId, 'bypass');
+    }
+    setPendingBypassBlocks(null);
+  }, [pendingBypassBlocks, currentSessionId, updateSessionExecutionMode]);
+
+  const handleCancelBypass = useCallback(() => {
+    if (!pendingBypassBlocks) return;
+    const nextBlocks = pendingBypassBlocks.map((b) => {
+      if (b.type === 'mode') {
+        return { ...b, executionMode: selectedExecutionModeId };
+      }
+      return b;
+    });
+    setComposerBlocks(nextBlocks);
+    setPendingBypassBlocks(null);
+  }, [pendingBypassBlocks, selectedExecutionModeId]);
 
   // AUDIT-FIX [audit-1#6] — Persist the draft with a short debounce so
   // every keystroke (especially for large copy-pasted prompts) doesn't
@@ -488,32 +527,37 @@ export function ChatInput({
     }
   }, [clearInputDraft]);
 
-  /**
-   * Handle message submission
-   */
-  const handleSubmit = useCallback(async () => {
-    const rawMessage = input.trim();
-    let message = rawMessage;
-    if (composerOpen) {
-      const compiled = buildPromptFromBlocks(composerBlocks, {
-        projectFolder: projectDir ?? undefined,
-        pipiOutputDir: pipiOutputDir ?? undefined,
-      });
-      message = compiled + (rawMessage ? `\n\n# ADDITIONAL DETAILS\n${rawMessage}` : '');
+  const submitOutboundMessage = useCallback(async (compiledOverride?: string) => {
+    const promptContext = {
+      projectFolder: projectDir ?? undefined,
+      pipiOutputDir: pipiOutputDir ?? undefined,
+    };
+    const message = compiledOverride ?? resolveComposerSubmitMessage({
+      composerOpen,
+      composerBlocks,
+      input,
+      context: promptContext,
+    });
+
+    if (!message) {
+      return;
     }
 
+    const messageAttachments = compiledOverride !== undefined ? [] : attachments;
+    const rawInput = input.trim();
+
     if (submitMode === 'callback-only') {
-      if (!message || isSubmitting) {
+      if (isSubmitting) {
         return;
       }
 
       setIsSubmitting(true);
       try {
-        await onSend?.(message, attachments);
+        await onSend?.(message, messageAttachments);
         clearInputDraft();
       } catch (error) {
         console.error('[ChatInput] callback-only onSend failed, preserving input:', error);
-        setInput(rawMessage);
+        setInput(rawInput);
       } finally {
         setIsSubmitting(false);
       }
@@ -522,7 +566,7 @@ export function ChatInput({
 
     const decision = decideChatInputSubmission({
       input: message,
-      hasAttachments: attachments.length > 0,
+      hasAttachments: messageAttachments.length > 0,
       isStreaming,
       isSubmitting,
       isBrowserIntent: quickCheckBrowserIntent,
@@ -537,8 +581,34 @@ export function ChatInput({
       return;
     }
 
-    await sendAsRegularChat(decision.message, attachments, rawMessage);
-  }, [attachments, clearInputDraft, input, isStreaming, isSubmitting, onSend, sendAsRegularChat, submitMode, composerOpen, composerBlocks, projectDir, pipiOutputDir]);
+    await sendAsRegularChat(decision.message, messageAttachments, rawInput);
+  }, [
+    attachments,
+    clearInputDraft,
+    composerBlocks,
+    composerOpen,
+    input,
+    isStreaming,
+    isSubmitting,
+    onSend,
+    pipiOutputDir,
+    projectDir,
+    sendAsRegularChat,
+    submitMode,
+  ]);
+
+  /**
+   * Handle message submission
+   */
+  const handleSubmit = useCallback(async () => {
+    const rawMessage = input.trim();
+    const hasMeaningfulBlock = composerOpen && hasMeaningfulComposerContent(composerBlocks);
+    if (!rawMessage && attachments.length === 0 && !hasMeaningfulBlock) {
+      return;
+    }
+
+    await submitOutboundMessage();
+  }, [attachments.length, composerBlocks, composerOpen, input, submitOutboundMessage]);
 
   const handleConfirmBrowserIntent = useCallback(async () => {
     if (!browserIntentCandidate || isSubmitting) return;
@@ -548,17 +618,21 @@ export function ChatInput({
   const handleSendAsNormalMessage = useCallback(async () => {
     const message = browserIntentCandidate ?? input.trim();
     if (!message || isSubmitting) return;
-    let finalMessage = message;
     const rawInput = input.trim();
-    if (composerOpen && !message.startsWith('# TASK SPECIFICATION')) {
-      const compiled = buildPromptFromBlocks(composerBlocks, {
-        projectFolder: projectDir ?? undefined,
-        pipiOutputDir: pipiOutputDir ?? undefined,
-      });
-      finalMessage = compiled + (message ? `\n\n# ADDITIONAL DETAILS\n${message}` : '');
+    let finalMessage = message;
+    if (composerOpen && !isCompiledTaskPrompt(message)) {
+      finalMessage = resolveComposerSubmitMessage({
+        composerOpen,
+        composerBlocks,
+        input: message,
+        context: {
+          projectFolder: projectDir ?? undefined,
+          pipiOutputDir: pipiOutputDir ?? undefined,
+        },
+      }) ?? message;
     }
     await sendAsRegularChat(finalMessage, [], rawInput);
-  }, [browserIntentCandidate, input, isSubmitting, sendAsRegularChat, composerOpen, composerBlocks, projectDir, pipiOutputDir]);
+  }, [browserIntentCandidate, composerBlocks, composerOpen, input, isSubmitting, pipiOutputDir, projectDir, sendAsRegularChat]);
 
   const handleCancelBrowserIntent = useCallback(() => {
     if (isSubmitting) return;
@@ -698,14 +772,27 @@ export function ChatInput({
             onClose={() => setComposerOpen(false)}
             onUseAsMessage={(compiledPrompt) => {
               setInput(compiledPrompt);
+              setComposerBlocks([]);
+              setComposerOpen(false);
             }}
             onSend={(compiledPrompt) => {
-              void sendAsRegularChat(compiledPrompt, attachments, input.trim());
+              void submitOutboundMessage(compiledPrompt);
             }}
             context={{
               projectFolder: projectDir ?? undefined,
               pipiOutputDir: pipiOutputDir ?? undefined,
             }}
+            disabled={isDisabled}
+            defaultMode={selectedExecutionModeId}
+            density={density}
+          />
+        )}
+
+        {pendingBypassBlocks && (
+          <BypassWarningDialog
+            profile={EXECUTION_MODES.find((p) => p.id === 'bypass')!}
+            onCancel={handleCancelBypass}
+            onConfirm={handleConfirmBypass}
           />
         )}
 
@@ -1006,7 +1093,7 @@ export function ChatInput({
             ) : (
               <button
                 onClick={() => { void handleSubmit(); }}
-                disabled={isDisabled || (!input.trim() && !composerOpen && attachments.length === 0)}
+                disabled={isDisabled || (attachments.length === 0 && !canSendFromComposer(composerOpen ? composerBlocks : [], input))}
                 className={`${actionButtonClassName} bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
                 title={t('chat.send')}
               >

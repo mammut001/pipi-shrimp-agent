@@ -175,6 +175,21 @@ export type TranslationKeys = {
   'chat.blockComposerSubtitle': string;
   'chat.loadPreset': string;
   'chat.blockComposerToggle': string;
+  'chat.useAsMessage': string;
+  'chat.sendTask': string;
+  'chat.clearComposer': string;
+  'chat.addBlock': string;
+  'chat.canvasEmpty': string;
+  'chat.moveUp': string;
+  'chat.moveDown': string;
+  'chat.removeBlock': string;
+  'chat.blockLabel.intent': string;
+  'chat.blockLabel.context': string;
+  'chat.blockLabel.mode': string;
+  'chat.blockLabel.constraints': string;
+  'chat.blockLabel.output': string;
+  'chat.blockLabel.verification': string;
+  'chat.blockLabel.safety': string;
   'chat.composerLabel': string;
   'chat.binding': string;
   // Two-folder model — Project Folder (the user's repo).

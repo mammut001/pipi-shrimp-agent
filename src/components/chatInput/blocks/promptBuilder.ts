@@ -6,7 +6,95 @@ interface PromptContext {
   contextFiles?: string[];
 }
 
+export const COMPILED_TASK_PROMPT_HEADER = '# TASK SPECIFICATION';
+
+export function isCompiledTaskPrompt(message: string): boolean {
+  return message.trimStart().startsWith(COMPILED_TASK_PROMPT_HEADER);
+}
+
+function isSubstantiveComposerBlock(block: ComposerBlock): boolean {
+  switch (block.type) {
+    case 'intent':
+      return block.detail.trim().length > 0;
+    case 'mode':
+      return false;
+    case 'context':
+      return block.paths.length > 0
+        || block.symbols.length > 0
+        || Boolean(block.notes?.trim())
+        || block.scope !== 'selected_files';
+    case 'constraints':
+      return block.readOnly
+        || block.noBroadRefactor
+        || block.preservePublicApi
+        || block.noDestructiveCommands
+        || block.customConstraints.length > 0
+        || typeof block.maxFiles === 'number'
+        || typeof block.maxToolRounds === 'number'
+        || Boolean(block.language?.trim());
+    case 'output':
+      return true;
+    case 'verification':
+      return block.commands.length > 0
+        || Boolean(block.customVerification?.trim())
+        || block.requireBuild
+        || block.requireTests
+        || block.requireTypecheck
+        || block.requireI18nCheck;
+    case 'safety':
+      return block.forbiddenActions.length > 0
+        || block.confirmBefore.delete
+        || block.confirmBefore.network
+        || block.confirmBefore.external_write
+        || block.confirmBefore.dependency_install
+        || block.approvalMode !== 'ask_on_risky';
+    default:
+      return false;
+  }
+}
+
+export function hasMeaningfulComposerContent(blocks: ComposerBlock[]): boolean {
+  if (!blocks || blocks.length === 0) {
+    return false;
+  }
+  return blocks.some(isSubstantiveComposerBlock);
+}
+
+export function canSendFromComposer(blocks: ComposerBlock[], input: string): boolean {
+  if (input.trim()) {
+    return true;
+  }
+  return blocks.length > 0 && hasMeaningfulComposerContent(blocks);
+}
+
+export function resolveComposerSubmitMessage(options: {
+  composerOpen: boolean;
+  composerBlocks: ComposerBlock[];
+  input: string;
+  context?: PromptContext;
+}): string | null {
+  const rawMessage = options.input.trim();
+  const hasMeaningfulBlock = options.composerOpen && hasMeaningfulComposerContent(options.composerBlocks);
+
+  if (!rawMessage && !hasMeaningfulBlock) {
+    return null;
+  }
+
+  if (options.composerOpen && hasMeaningfulBlock) {
+    if (rawMessage && isCompiledTaskPrompt(rawMessage)) {
+      return rawMessage;
+    }
+    const compiled = buildPromptFromBlocks(options.composerBlocks, options.context);
+    return compiled + (rawMessage ? `\n\n# ADDITIONAL DETAILS\n${rawMessage}` : '');
+  }
+
+  return rawMessage || null;
+}
+
 export function buildPromptFromBlocks(blocks: ComposerBlock[], context?: PromptContext): string {
+  if (blocks.length === 0) {
+    return '';
+  }
   const parts: string[] = [];
 
   parts.push('# TASK SPECIFICATION');

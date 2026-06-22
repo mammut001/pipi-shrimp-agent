@@ -278,7 +278,7 @@ export function ExecutionModeDropdown({
   );
 }
 
-function BypassWarningDialog({
+export function BypassWarningDialog({
   profile,
   onCancel,
   onConfirm,

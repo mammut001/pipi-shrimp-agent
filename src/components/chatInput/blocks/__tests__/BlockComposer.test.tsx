@@ -8,6 +8,10 @@ import {
   type ComposerBlock,
 } from '../types';
 
+jest.mock('@/i18n', () => ({
+  t: (key: string) => key,
+}));
+
 function renderBlockComposer(props: {
   blocks: ComposerBlock[];
   onChange?: (blocks: ComposerBlock[]) => void;
@@ -31,7 +35,7 @@ function renderBlockComposer(props: {
 describe('BlockComposer (structural)', () => {
   it('renders canvas instruction when blocks list is empty', () => {
     const html = renderBlockComposer({ blocks: [] });
-    expect(html).toContain('Canvas is empty');
+    expect(html).toContain('chat.canvasEmpty');
     expect(html).toContain('⚡'); // Load preset indicator
   });
 
@@ -47,27 +51,27 @@ describe('BlockComposer (structural)', () => {
 
   it('renders add block buttons for toolbar', () => {
     const html = renderBlockComposer({ blocks: [] });
-    expect(html).toContain('+ Intent');
-    expect(html).toContain('+ Context');
-    expect(html).toContain('+ Mode');
-    expect(html).toContain('+ Constraints');
-    expect(html).toContain('+ Output');
-    expect(html).toContain('+ Verification');
-    expect(html).toContain('+ Safety');
+    expect(html).toContain('+ chat.blockLabel.intent');
+    expect(html).toContain('+ chat.blockLabel.context');
+    expect(html).toContain('+ chat.blockLabel.mode');
+    expect(html).toContain('+ chat.blockLabel.constraints');
+    expect(html).toContain('+ chat.blockLabel.output');
+    expect(html).toContain('+ chat.blockLabel.verification');
+    expect(html).toContain('+ chat.blockLabel.safety');
   });
 
   it('renders Intent, Mode, and Output cards from Ask Question preset', () => {
     const html = renderBlockComposer({ blocks: PRESET_ASK_QUESTION });
-    expect(html).toContain('🎯 Intent');
-    expect(html).toContain('⚙️ Mode');
-    expect(html).toContain('📄 Output');
-    expect(html).toContain('Use as message');
-    expect(html).toContain('Send task');
+    expect(html).toContain('🎯 chat.blockLabel.intent');
+    expect(html).toContain('⚙️ chat.blockLabel.mode');
+    expect(html).toContain('📄 chat.blockLabel.output');
+    expect(html).toContain('chat.useAsMessage');
+    expect(html).toContain('chat.sendTask');
   });
 
   it('renders Safety card with forbidden action details', () => {
     const html = renderBlockComposer({ blocks: PRESET_FAST_TRUSTED_EDIT });
-    expect(html).toContain('🛡️ Safety');
+    expect(html).toContain('🛡️ chat.blockLabel.safety');
     expect(html).toContain('Do not run large script migrations');
   });
 });
