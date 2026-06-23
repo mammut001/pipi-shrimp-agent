@@ -6,6 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import type { Recipe } from './bootstrapRecipePrompt';
 import { buildBootstrapPromptFromRecipe } from './bootstrapRecipePrompt';
 import { type ComposerBlock } from '@/components/chatInput/blocks/types';
+import { buildPromptFromBlocks } from '@/components/chatInput/blocks/promptBuilder';
 
 import {
   getRecipeReadiness,
@@ -193,7 +194,6 @@ export function BootstrapRecipeBuilder({
 
   const handleSubmit = () => {
     if (showAdvanced) {
-      const { buildPromptFromBlocks } = require('@/components/chatInput/blocks/promptBuilder');
       const compiled = buildPromptFromBlocks(composerBlocks, {
         projectFolder: sshConfig?.mode === 'ssh' ? sshConfig.remoteWorkDir : undefined,
         contextFiles: importedFiles.map((file) => file.path),

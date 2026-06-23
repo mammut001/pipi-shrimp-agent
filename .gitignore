@@ -73,5 +73,12 @@ TESTING.md
 # Project-local test temp dirs (created by jest integration tests)
 /src/services/autoresearch/__tests__/.tmp/
 /src/skills/resume/__tests__/.tmp/
-/scripts
+# /scripts used to be entirely ignored, which made `scripts/complexity-report.mjs`
+# invisible to `git ls-files` even though `npm run report:complexity` points at it.
+# Now we ignore only ad-hoc scratch scripts and explicitly re-include the
+# tracked repo tools.
+scripts/*.txt
+scripts/*.ps1
+scripts/*.sh
+!scripts/complexity-report.mjs
 /.tmp
