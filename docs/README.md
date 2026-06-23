@@ -14,6 +14,10 @@ maintainers who need deeper context.
 | AutoResearch | [`audits/auto-research.md`](./audits/auto-research.md) | Audit history, anchored fix log, design rationale, regression-test backlog | EN |
 | Full Codebase (10 rounds) | [`audits/full-codebase.md`](./audits/full-codebase.md) | 10-round audit summary (97 issues), fix log by P0/P1/P2/P3 priority, anchor index, backlog | EN |
 | Browser Automation | [`design/browser-automation.md`](./design/browser-automation.md) | Engine selection, action policy, vision fallback, observability, embedded surface, test map | EN |
+| Folders & Runs (concepts) | [`concepts/folders-and-runs.md`](./concepts/folders-and-runs.md) | Project Folder, PiPi Output Folder, Context Files, AutoResearch Workspace, Target Project, Scaffold Folder, Run Dir, Living Doc, Artifacts — owners, readers, writers, defaults, common mistakes | EN |
+| Execution Modes (concepts) | [`concepts/execution-modes.md`](./concepts/execution-modes.md) | Ask / Plan / Debug / Agent / Bypass — registry, allowed tools, hard-enforcement points, tests that protect each mode, UI↔enforcement honesty | EN |
+| AutoResearch Runtime (concepts) | [`concepts/autoresearch-runtime.md`](./concepts/autoresearch-runtime.md) | Guided vs manual bootstrap, local vs SSH, connection test, run lifecycle, artifacts / living doc / result.json, hard runtime vs prompt-only settings | EN |
+| Complexity Governance | [`architecture/complexity-governance.md`](./architecture/complexity-governance.md) | File-size thresholds, component / hook / pure-logic split rules, state-machine recommendation, PR size, required tests before extraction, how to run `npm run report:complexity` | EN |
 
 ---
 
@@ -132,6 +136,10 @@ rg "AUDIT-FIX \[audit-\d+-ar#" src/ -n
 |--------|------|------|------|
 | AutoResearch | [`audits/auto-research.md`](./audits/auto-research.md) | 审计历史、锚定修复日志、设计理由、回归测试清单 | 英文 |
 | 浏览器自动化 | [`design/browser-automation.md`](./design/browser-automation.md) | 引擎选择、动作策略、视觉回退、可观测性、嵌入式 WebView、测试矩阵 | 英文 |
+| 文件夹与运行（概念） | [`concepts/folders-and-runs.md`](./concepts/folders-and-runs.md) | Project Folder / PiPi Output Folder / Context Files / AutoResearch Workspace / Target Project / Scaffold Folder / Run Dir / Living Doc / Artifacts 的所有者、读者、写入者、默认值、常见错误 | 英文 |
+| 执行模式（概念） | [`concepts/execution-modes.md`](./concepts/execution-modes.md) | Ask / Plan / Debug / Agent / Bypass 的注册表、允许的工具、强制执行点、守护测试、UI 与执行层的一致性 | 英文 |
+| AutoResearch 运行时（概念） | [`concepts/autoresearch-runtime.md`](./concepts/autoresearch-runtime.md) | 向导式 vs 手动启动引导、本地 vs SSH、连接测试、运行生命周期、产物 / living doc / result.json、硬性运行时设置 vs 仅作为提示词的设置 | 英文 |
+| 复杂度治理 | [`architecture/complexity-governance.md`](./architecture/complexity-governance.md) | 文件大小阈值、组件 / Hook / 纯逻辑拆分规则、状态机建议、PR 规模、抽取前必写的测试、如何运行 `npm run report:complexity` | 英文 |
 
 ---
 

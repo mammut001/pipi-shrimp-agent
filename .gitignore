@@ -27,7 +27,17 @@ dist-ssr
 doc/
 .cowork-temp/
 node-scripts/.env
-/docs
+# /docs used to be entirely ignored. We now re-include the architecture-
+# governance and concept docs that ship with the repo. The historical
+# tracked files (README.md, audits/, design/, windows-terminal-profiles.md,
+# architecture/) continue to be reachable, and we whitelist the new
+# concepts/ subtree so it lands in git too.
+!/docs/README.md
+!/docs/audits/
+!/docs/design/
+!/docs/architecture/
+!/docs/concepts/
+!/docs/windows-terminal-profiles.md
 
 # Vite build cache files
 vite.config.ts.timestamp-*.mjs
