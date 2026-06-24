@@ -1,8 +1,8 @@
-# Architecture Complexity Governance
+﻿# Architecture Complexity Governance
 
 This document sets the size and complexity thresholds for the PiPi
 Shrimp Agent codebase, and the rules that follow from them. It is the
-companion to `scripts/complexity-report.mjs` — that script enforces the
+companion to `scripts/complexity-report.mjs` 鈥?that script enforces the
 file-size axis; this document covers the other axes and the refactor
 protocol.
 
@@ -16,7 +16,7 @@ The report is generated from `git ls-files` (so it reflects what is
 actually tracked, not the working tree), ignores `node_modules`,
 `dist`, `target`, `build`, and `coverage`, and only counts `.ts`,
 `.tsx`, `.js`, `.jsx`, and `.rs` files. It writes markdown to stdout
-and never fails the process — the goal is for the report to be safe
+and never fails the process 鈥?the goal is for the report to be safe
 to wire into CI later without breaking the build.
 
 ---
@@ -29,9 +29,9 @@ enforces.
 
 | Risk level | Range | What it means | Action |
 | --- | --- | --- | --- |
-| `low` | `< 300` LOC | Healthy. No action. | — |
-| `watch` | `300 – 500` LOC | Approaching the split threshold. | Add a refactor note in the next PR that touches the file. |
-| `split soon` | `500 – 800` LOC | Past the safe limit. | Plan a split in the current milestone. Do not add new features on top. |
+| `low` | `< 300` LOC | Healthy. No action. | 鈥?|
+| `watch` | `300 鈥?500` LOC | Approaching the split threshold. | Add a refactor note in the next PR that touches the file. |
+| `split soon` | `500 鈥?800` LOC | Past the safe limit. | Plan a split in the current milestone. Do not add new features on top. |
 | `requires refactor plan` | `> 800` LOC | Past the hard limit. | Open a refactor plan issue. Block new feature work on this file until the plan lands. |
 
 The "Files Requiring Refactor Plan (>800 LOC)" and "Files to Split
@@ -51,14 +51,14 @@ other axes are enforced by code review.
 
 | Metric | Safe | Watch | Refactor | Action |
 | --- | --- | --- | --- | --- |
-| **Component file** (`.tsx`) | `< 300` LOC | `300 – 500` LOC | `> 500` LOC | Component split: sub-views, form field blocks, and status displays must be extracted into their own files. The component file should only render layout and connect hooks. |
-| **Custom hook** (`.ts` exported `useXxx`) | `< 150` LOC | `150 – 250` LOC | `> 250` LOC | Hook split: pure calculation functions, formatting, and API handlers move to `utils/` or `services/`. The hook keeps React state and reactivity loops. |
-| **Pure helper / formatter** | unbounded by itself, but see the flow complexity row | — | — | If a helper holds its own state machine, the state machine should be its own file. |
-| **Flow complexity** (boolean flags driving a single UI) | `<= 2` flags | `3` flags | `> 3` flags | State machine. See §4. |
+| **Component file** (`.tsx`) | `< 300` LOC | `300 鈥?500` LOC | `> 500` LOC | Component split: sub-views, form field blocks, and status displays must be extracted into their own files. The component file should only render layout and connect hooks. |
+| **Custom hook** (`.ts` exported `useXxx`) | `< 150` LOC | `150 鈥?250` LOC | `> 250` LOC | Hook split: pure calculation functions, formatting, and API handlers move to `utils/` or `services/`. The hook keeps React state and reactivity loops. |
+| **Pure helper / formatter** | unbounded by itself, but see the flow complexity row | 鈥?| 鈥?| If a helper holds its own state machine, the state machine should be its own file. |
+| **Flow complexity** (boolean flags driving a single UI) | `<= 2` flags | `3` flags | `> 3` flags | State machine. See 搂4. |
 
 The 500-LOC component threshold lines up with the 500-LOC file-size
 "split soon" boundary. A component that hits 500 LOC is *also* in the
-file-size "split soon" bucket, which is the right outcome — the
+file-size "split soon" bucket, which is the right outcome 鈥?the
 report will surface it.
 
 ---
@@ -94,7 +94,7 @@ When a custom hook crosses 250 LOC:
 - The pure helpers must be unit-tested independently of React
   (`@jest/globals` + `jsdom` is not required, plain `node` test env
   is fine).
-- The hook file should fit on one screen (≈ 200 LOC) so a reviewer
+- The hook file should fit on one screen (鈮?200 LOC) so a reviewer
   can see the reactivity model without scrolling.
 
 ## 5. Pure logic extraction rules
@@ -110,11 +110,11 @@ component file becomes mostly JSX.
 
 Examples in this repo:
 - `src/components/autoresearch/recipe/recipeFormatting.ts` and
-  `recipeReadiness.ts` — pure formatters and readiness checks used
+  `recipeReadiness.ts` 鈥?pure formatters and readiness checks used
   by `BootstrapRecipeBuilder`.
 - `src/components/autoresearch/manual/manualFormatting.ts` and
-  `manualReadiness.ts` — the same shape for `ManualLaunchCockpit`.
-- `src/components/chatInput/blocks/promptBuilder.ts` — pure
+  `manualReadiness.ts` 鈥?the same shape for `ManualLaunchCockpit`.
+- `src/components/chatInput/blocks/promptBuilder.ts` 鈥?pure
   prompt-block compiler with no React import.
 
 ## 6. State machine recommendation
@@ -135,12 +135,11 @@ and orchestrate transitions with `useReducer`, a small state
 machine, or a `Set<Phase>` if the lifecycle is purely additive.
 Examples in this repo:
 
-- `LoopState` (`src/store/autoresearchStore.ts`) — `'idle' |
+- `LoopState` (`src/store/autoresearchStore.ts`) 鈥?`'idle' |
   'running' | 'paused' | 'stopped' | 'error'`.
 - `AutoResearchConnectionTestStatus` (`src/services/autoresearch/setupFlow.ts`)
-  — `'idle' | 'testing' | 'success' | 'error'`.
-- `AutoResearchRunStatus` (`src/services/autoresearch/history.ts`) —
-  the per-run lifecycle.
+  鈥?`'idle' | 'testing' | 'success' | 'error'`.
+- `AutoResearchRunStatus` (`src/services/autoresearch/history.ts`) 鈥?  the per-run lifecycle.
 
 If you find yourself reaching for a fourth boolean to describe a
 lifecycle that already has a state enum, the right fix is usually a
@@ -181,8 +180,8 @@ You **must** have unit tests for the code you are about to move
 
 If a piece of code has no test and you are about to extract it,
 *write the test first*, then extract. The refactor sequence is
-always: **add test → extract → re-run tests → commit**, never
-**extract → add test**.
+always: **add test 鈫?extract 鈫?re-run tests 鈫?commit**, never
+**extract 鈫?add test**.
 
 ---
 
@@ -215,5 +214,7 @@ pnpm test src/path/to/file
 - Folder model: [`../concepts/folders-and-runs.md`](../concepts/folders-and-runs.md).
 - Mode and tool gating: [`../concepts/execution-modes.md`](../concepts/execution-modes.md).
 - AutoResearch runtime: [`../concepts/autoresearch-runtime.md`](../concepts/autoresearch-runtime.md).
+- Per-anchor split roadmap for the `>800` LOC files surfaced by
+  the report: [`./refactor-plan.md`](./refactor-plan.md).
 - The script that produces the report:
   `scripts/complexity-report.mjs`.

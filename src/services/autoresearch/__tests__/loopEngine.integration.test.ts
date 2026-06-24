@@ -15,6 +15,7 @@ const mockGetDeterministicRecoveryDecision = jest.fn();
 const mockBuildFallbackReflectionDecision = jest.fn();
 const mockResolveTargetPath = jest.fn();
 const mockInspectAutoResearchEnvironment = jest.fn();
+const mockPrepareLoopStartupContext = jest.fn();
 const mockNotifier = {
   onExperimentComplete: jest.fn().mockResolvedValue(undefined),
   onLoopStopped: jest.fn().mockResolvedValue(undefined),
@@ -75,6 +76,7 @@ jest.mock('../reflection', () => {
 jest.mock('../preflight', () => ({
   resolveTargetPath: (...args: unknown[]) => mockResolveTargetPath(...args),
   inspectAutoResearchEnvironment: (...args: unknown[]) => mockInspectAutoResearchEnvironment(...args),
+  prepareLoopStartupContext: (...args: unknown[]) => mockPrepareLoopStartupContext(...args),
 }));
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
@@ -164,6 +166,7 @@ describe('loopEngine integration', () => {
     mockBuildFallbackReflectionDecision.mockReset();
     mockResolveTargetPath.mockReset();
     mockInspectAutoResearchEnvironment.mockReset();
+    mockPrepareLoopStartupContext.mockReset();
     mockResolveActiveAgentConfig.mockReturnValue(activeConfig);
     mockValidateResolvedAgentConfig.mockReturnValue([]);
     mockFormatAgentConfigValidationError.mockReturnValue('invalid config');
@@ -207,6 +210,75 @@ describe('loopEngine integration', () => {
       notesPath: `${experimentDir}/AUTORESEARCH.md`,
       recommendedRunCommand: 'python3 run_experiment.py',
     }));
+    mockPrepareLoopStartupContext.mockImplementation(async (store: { sshConfig?: { remoteWorkDir?: string; mode?: string; [k: string]: unknown }; experimentDir?: string; sessionFilePath?: string; id?: string }) => {
+      // The integration tests mock `resolveTargetPath` from
+      // `../preflight`. AG-02 PR2a moves the call into
+      // `runExperimentLoopPreflight` in
+      // `../loopEngine.preflightPhase`, which imports from
+      // `../preflight` — so the mock still applies. We just need
+      // to reproduce the same `LoopStartupContext` shape that
+      // `prepareLoopStartupContext` returns, while honouring any
+      // `mockResolveTargetPath` overrides and the side effect
+      // `updateRunPaths` that the real impl performs.
+      const sshConfig = (store.sshConfig ?? {}) as { remoteWorkDir?: string; mode?: string; [k: string]: unknown };
+      const cfgForResolve = { ...sshConfig };
+      let resolvedWorkDir: string;
+      try {
+        resolvedWorkDir = await mockResolveTargetPath(cfgForResolve, 'workdir', sshConfig.remoteWorkDir ?? workDir);
+      } catch (err) {
+        // Pass through failures (e.g. "could not resolve workdir")
+        // so the preflight surfaces them as `startup_failed`.
+        throw err;
+      }
+      const resolvedExperimentDir = await mockResolveTargetPath(cfgForResolve, 'experimentDir', store.experimentDir ?? resolvedWorkDir);
+      const sessionFile = store.sessionFilePath ?? sessionFilePath;
+      const resolvedSessionFilePath = await mockResolveTargetPath(cfgForResolve, 'sessionFilePath', sessionFile);
+      const livingDocPath = path.join(resolvedWorkDir, 'runs', store.id ?? 'session', 'autoresearch.md');
+      let sessionContent = '';
+      try {
+        const onDisk = await fs.readFile(resolvedSessionFilePath, 'utf8');
+        if (typeof onDisk === 'string' && onDisk.trim().length > 0) {
+          sessionContent = onDisk;
+        }
+      } catch {
+        // session file does not exist; write the initial content
+        // so subsequent reads (e.g. the test's `readFile` check)
+        // match what the real `prepareLoopStartupContext` would
+        // have written via `ensureSessionFileInitialized`.
+        sessionContent = `# AutoResearch Session\nInitialized at: ${new Date().toISOString()}\n`;
+        try {
+          await fs.mkdir(path.dirname(resolvedSessionFilePath), { recursive: true });
+          await fs.writeFile(resolvedSessionFilePath, sessionContent, 'utf8');
+        } catch {
+          // best-effort; some tests pre-write the file.
+        }
+      }
+      useAutoResearchStore.getState().updateRunPaths({
+        sshConfig: { ...sshConfig, remoteWorkDir: resolvedWorkDir } as never,
+        experimentDir: resolvedExperimentDir,
+        sessionFilePath: resolvedSessionFilePath,
+        livingDocPath,
+        terminalCwd: resolvedExperimentDir,
+      });
+      console.info('[AutoResearch] Startup paths', {
+        resolvedWorkdir: resolvedWorkDir,
+        experimentDir: resolvedExperimentDir,
+        sessionFilePath: resolvedSessionFilePath,
+        livingDocPath,
+        metricName: store.metricName,
+        direction: store.metricDirection,
+        iterations: store.maxIterations,
+        typeofSessionFilePath: typeof resolvedSessionFilePath,
+        typeofExperimentDir: typeof resolvedExperimentDir,
+      });
+      return {
+        artifactCfg: { ...sshConfig, remoteWorkDir: resolvedWorkDir } as never,
+        experimentCfg: { ...sshConfig, remoteWorkDir: resolvedExperimentDir } as never,
+        experimentDir: resolvedExperimentDir,
+        workDir: resolvedWorkDir,
+        sessionContent,
+      };
+    });
     await initGitRepo(workDir, {
       'train.py': 'print("train")\n',
       'session.md': '# Objective\nImprove validation loss.\n',

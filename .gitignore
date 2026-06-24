@@ -96,3 +96,4 @@ scripts/*.sh
 # Cursor IDE terminal session logs (not project source)
 /terminals/
 /agent-tools/
+docs/architecture/refactor-plan.md

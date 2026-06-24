@@ -8,12 +8,9 @@ import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 import { logExperiment } from './expLogger';
 import { rollback, getRemoteDiff } from './rollback';
 import { createNotifier } from './notifier';
-import { describeTarget, ensureSshpassAvailable } from '@/utils/remoteExec';
-import { assertSupportedPlatform } from './platformGuard';
+import { describeTarget } from '@/utils/remoteExec';
 import {
   appendIterationMetrics,
-  readAllMetrics,
-  summarize,
   type IterationMetrics,
 } from './metricsStore';
 import { parseMetricsArtifactPayload } from './metricsSchema';
@@ -21,13 +18,10 @@ import {
   captureCommitHash,
   createRunDir,
   promoteRunDirToBestBaseline,
-  getSessionRunPaths,
   pathExistsOnTarget,
   readTargetText,
   writeTargetText,
-  executeTargetCommand,
   type RunDir,
-  type SessionRunPaths,
 } from './runDir';
 import { readLivingDoc, rebuildLivingDoc } from './livingDoc';
 import { clearCurrentRunDir, setCurrentRunDir } from './terminalRunner';
@@ -45,14 +39,14 @@ import {
 } from './paths';
 import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEvents';
 import {
-  inspectAutoResearchEnvironment,
-  prepareLoopStartupContext,
   type AutoResearchEnvironmentSummary,
-  type LoopStartupContext,
 } from './preflight';
 import { formatAutoResearchToolCatalog, getAutoResearchToolProfile } from './toolCatalog';
 import { formatAutoResearchToolLanes } from './toolLanes';
-import { applyBootstrapIfPresent } from './bootstrap/applyBootstrap';
+import {
+  runExperimentLoopPreflight,
+  toExperimentEntry,
+} from './loopEngine.preflightPhase';
 import {
   normalizeParsedResult,
   parseAgentJsonResult,
@@ -413,19 +407,6 @@ function buildDirtyRepoMessage(summary: AutoResearchEnvironmentSummary): string 
   return `Experiment repository has ${summary.dirtyFileCount} uncommitted change(s). AutoResearch will not reset a dirty repository automatically. Commit or stash those changes before starting a run.`;
 }
 
-function toExperimentEntry(record: IterationMetrics): ExperimentEntry {
-  return {
-    iteration: record.iteration,
-    hypothesis: record.hypothesis,
-    change: record.change || 'Applied via Agent tool calls',
-    metricValue: record.metricValue,
-    status: record.status,
-    failReason: record.failReason,
-    reasoning: record.reasoning || '',
-    timestamp: record.finishedAt,
-    durationMs: record.durationMs,
-  };
-}
 
 function mergeArtifactPaths(...groups: Array<string[] | undefined>): string[] {
   return Array.from(new Set(groups.flatMap((group) => group ?? []).filter((value) => value.trim().length > 0)));
@@ -514,17 +495,6 @@ function isToolBudgetExhaustedReason(failReason: string | undefined): boolean {
     || normalized.includes('budget exhausted before evaluation');
 }
 
-async function hydrateSessionFromDisk(cfg: SshConfig, sessionId: string, direction: 'lower' | 'higher'): Promise<void> {
-  const metrics = await readAllMetrics(cfg, sessionId, direction);
-  const entries = metrics.map(toExperimentEntry);
-  const best = summarize(metrics, direction).best;
-  const lastIteration = metrics.reduce((max, entry) => Math.max(max, entry.iteration), 0);
-
-  useAutoResearchStore.getState().setExperiments(entries);
-  useAutoResearchStore.getState().setBestMetric(best?.metricValue ?? null);
-  useAutoResearchStore.getState().setCurrentIterationValue(lastIteration);
-}
-
 async function writeRunStatus(
   cfg: SshConfig,
   runDir: RunDir,
@@ -549,17 +519,6 @@ function getRunArtifactPaths(runDir: RunDir): string[] {
     `${runDir.logsDir}/stderr.log`,
     `${runDir.logsDir}/combined.log`,
   ];
-}
-
-async function assertRemoteLinux(cfg: SshConfig): Promise<void> {
-  if (cfg.mode !== 'ssh') {
-    return;
-  }
-  const result = await executeTargetCommand({ ...cfg, remoteWorkDir: '' }, 'uname -s', 30);
-  const platform = (result.stdout || '').trim();
-  if (platform !== 'Linux') {
-    throw new Error('Remote target must be Linux');
-  }
 }
 
 export async function startExperimentLoop(
@@ -589,146 +548,34 @@ export async function startExperimentLoop(
     }
   }
 
+  // AUDIT-FIX [AG-02 PR2a]: the preflight phase (ssh config check,
+  // platform support, run_started event, remote OS check, sshpass
+  // check, bootstrap apply, startup context, session paths, session
+  // hydration, living doc rebuild, environment inspection, dirty-repo
+  // check) was extracted to ./loopEngine.preflightPhase.ts. The
+  // helper returns a discriminated union; we map each failure kind
+  // back to the same user-facing error string the in-line code used
+  // to produce.
+  const preflight = await runExperimentLoopPreflight();
+  if (!preflight.ok) {
+    let message: string;
+    switch (preflight.kind) {
+      case 'no_ssh_config':
+        message = 'SSH config not set';
+        break;
+      default:
+        message = preflight.error;
+        break;
+    }
+    useAutoResearchStore.getState().setError(message);
+    clearActiveLoopHandle(abortController);
+    return;
+  }
+
+  const { cfg, notifier, sessionId, artifactCfg, experimentCfg, sessionPaths, sessionContent, environmentSummary, workDir } = preflight.ctx;
   const store = useAutoResearchStore.getState();
-
-  if (!store.sshConfig) {
-    useAutoResearchStore.getState().setError('SSH config not set');
-    clearActiveLoopHandle(abortController);
-    return;
-  }
-
-  const notifier = createNotifier(store.telegramConfig);
-  const sessionId = store.id;
-  const cfg = store.sshConfig;
-
-  try {
-    await assertSupportedPlatform(cfg);
-  } catch (error) {
-    useAutoResearchStore.getState().setError(formatError(error));
-    clearActiveLoopHandle(abortController);
-    return;
-  }
-
-  useAutoResearchStore.getState().setRunStatus('running', { summary: 'Run started.' });
-  useAutoResearchStore.getState().setCurrentPhase('INIT');
-  emitAutoResearchRuntimeEvent({
-    level: 'info',
-    phase: 'INIT',
-    type: 'run_started',
-    message: 'AutoResearch loop started.',
-    summary: 'Run started.',
-  });
-
-  try {
-    await assertRemoteLinux(cfg);
-  } catch (error) {
-    useAutoResearchStore.getState().setError(formatError(error));
-    clearActiveLoopHandle(abortController);
-    return;
-  }
-
-  if (cfg.mode === 'ssh' && cfg.authMode === 'password') {
-    const avail = await ensureSshpassAvailable();
-    if (!avail.ok) {
-      useAutoResearchStore.getState().setError(avail.hint ?? 'sshpass unavailable');
-      clearActiveLoopHandle(abortController);
-      return;
-    }
-  }
-
-  try {
-    await applyBootstrapIfPresent(cfg, sessionId);
-  } catch (error) {
-    useAutoResearchStore.getState().addRunEvent({
-      level: 'warn',
-      phase: 'preflight',
-      message: `Bootstrap metadata could not be applied: ${formatError(error)}`,
-    });
-  }
-
-  let startup: LoopStartupContext;
-  try {
-    startup = await prepareLoopStartupContext(store);
-  } catch (error) {
-    useAutoResearchStore.getState().setError(formatError(error));
-    clearActiveLoopHandle(abortController);
-    return;
-  }
-
-  const artifactCfg = startup.artifactCfg;
-  const experimentCfg = startup.experimentCfg;
-  let sessionPaths: SessionRunPaths;
-  try {
-    sessionPaths = getSessionRunPaths(artifactCfg, sessionId);
-  } catch (error) {
-    useAutoResearchStore.getState().setError(formatError(error));
-    clearActiveLoopHandle(abortController);
-    return;
-  }
-  const sessionContent = startup.sessionContent;
-  let environmentSummary: AutoResearchEnvironmentSummary;
-
-  try {
-    await hydrateSessionFromDisk(artifactCfg, sessionId, store.metricDirection);
-    await writeTargetText(artifactCfg, sessionPaths.sessionFilePath, sessionContent);
-    await rebuildLivingDoc(artifactCfg, sessionId, {
-      startedAt: store.startedAt,
-      workDir: startup.workDir,
-      metricName: store.metricName,
-      direction: store.metricDirection,
-    });
-    setAutoResearchPhase('READ_CONTEXT', {
-      summary: 'Run artifacts initialized.',
-      message: 'Run artifacts initialized.',
-      metadata: {
-        sessionDir: sessionPaths.sessionDir,
-      },
-    });
-  } catch (error) {
-    useAutoResearchStore.getState().setError(`Failed to initialize run artifacts: ${formatError(error)}`);
-    clearActiveLoopHandle(abortController);
-    return;
-  }
-
-  try {
-    environmentSummary = await inspectAutoResearchEnvironment(experimentCfg, startup.experimentDir);
-    if (environmentSummary.repoStatus !== 'clean') {
-      emitAutoResearchRuntimeEvent({
-        level: 'error',
-        phase: 'READ_CONTEXT',
-        type: 'provider_error',
-        message: buildDirtyRepoMessage(environmentSummary),
-        summary: 'Preflight failed because the repository is dirty.',
-        metadata: {
-          experimentDir: environmentSummary.experimentDir,
-          dirtyFileCount: environmentSummary.dirtyFileCount,
-        },
-      });
-      useAutoResearchStore.getState().setError(buildDirtyRepoMessage(environmentSummary));
-      clearActiveLoopHandle(abortController);
-      return;
-    }
-    emitAutoResearchRuntimeEvent({
-      level: 'info',
-      phase: 'READ_CONTEXT',
-      type: 'phase_started',
-      message: `Environment ready: ${environmentSummary.preferredPythonCommand}, git ${environmentSummary.repoStatus}.`,
-      summary: 'Environment ready.',
-      metadata: {
-        experimentDir: environmentSummary.experimentDir,
-        recommendedRunCommand: environmentSummary.recommendedRunCommand,
-        dirtyFileCount: environmentSummary.dirtyFileCount,
-      },
-    });
-  } catch (error) {
-    const where = experimentCfg.mode === 'local' ? 'local experiment directory' : 'remote target';
-    useAutoResearchStore.getState().setError(`Cannot reach ${where}: ${formatError(error)}`);
-    clearActiveLoopHandle(abortController);
-    return;
-  }
-
   let consecutiveRateLimitCount = 0;
-  let bestSnapshotDir = startup.experimentDir;
+  let bestSnapshotDir = preflight.ctx.bestSnapshotDir;
 
   try {
   while (true) {
@@ -1012,7 +859,7 @@ export async function startExperimentLoop(
         });
         await rebuildLivingDoc(artifactCfg, sessionId, {
           startedAt: state.startedAt,
-          workDir: startup.workDir,
+          workDir,
           metricName: state.metricName,
           direction: state.metricDirection,
         });
@@ -1192,7 +1039,7 @@ export async function startExperimentLoop(
         : { success: true, message: '' };
       await rebuildLivingDoc(artifactCfg, sessionId, {
         startedAt: state.startedAt,
-        workDir: startup.workDir,
+        workDir,
         metricName: state.metricName,
         direction: state.metricDirection,
       });
@@ -1480,7 +1327,7 @@ export async function startExperimentLoop(
       });
       await rebuildLivingDoc(artifactCfg, sessionId, {
         startedAt: useAutoResearchStore.getState().startedAt,
-        workDir: startup.workDir,
+        workDir,
         metricName: useAutoResearchStore.getState().metricName,
         direction: useAutoResearchStore.getState().metricDirection,
       });
