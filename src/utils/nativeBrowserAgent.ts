@@ -583,6 +583,7 @@ KEY RULES:
   await delay(1200, options.signal);
   await injectOverlay();
 
+  try {
   for (let step = 0; step < maxSteps && !isDone; step += 1) {
     assertNotAborted(options.signal);
     const stepStartedAt = Date.now();
@@ -987,6 +988,9 @@ KEY RULES:
   options.onRunSummary?.(summary);
 
   return finalResult;
+  } finally {
+    await removeOverlay();
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -1152,6 +1156,9 @@ async function executeEnvelope(args: {
         log('info', `[NativeAgent] Typing: "${text.slice(0, 80)}" into ${targetLabel}`);
         try {
           const result = await typeIntoBrowserElement(target, text);
+          if (payload.press_enter === true) {
+            await pressBrowserKey('Enter');
+          }
           return { ...base, success: true, targetLabel, elementCount: pageState?.elements.length ?? 0, errorMessage: result };
         } catch (error) {
           return {

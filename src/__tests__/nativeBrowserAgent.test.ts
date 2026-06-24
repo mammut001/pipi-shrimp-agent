@@ -10,8 +10,8 @@ jest.mock('../utils/browserSessionClient', () => ({
 
 jest.mock('../utils/browserActionClient', () => ({
   clickBrowserElement: jest.fn().mockResolvedValue('clicked'),
-  executeBrowserScript: jest.fn().mockResolvedValue('ok'),
-  pressBrowserKey: jest.fn().mockResolvedValue('pressed'),
+    executeBrowserScript: jest.fn(async () => 'ok'),
+  pressBrowserKey: jest.fn(async () => 'pressed'),
   scrollBrowser: jest.fn().mockResolvedValue('scrolled'),
   typeIntoBrowserElement: jest.fn().mockResolvedValue('typed'),
   waitForBrowser: jest.fn().mockResolvedValue('waited'),
@@ -54,7 +54,12 @@ jest.mock('../utils/browserFeatureFlags', () => ({
 import { invoke } from '@tauri-apps/api/core';
 
 import type { BrowserPageState } from '@/types/browserPageState';
-import { clickBrowserElement, typeIntoBrowserElement } from '@/utils/browserActionClient';
+import {
+  clickBrowserElement,
+  executeBrowserScript,
+  pressBrowserKey,
+  typeIntoBrowserElement,
+} from '@/utils/browserActionClient';
 import { navigateBrowserPage } from '@/utils/browserSessionClient';
 import { executeNativeBrowserTask } from '@/utils/nativeBrowserAgent';
 import { getBrowserPageState, getBrowserSemanticTree } from '@/utils/browserPageStateClient';
@@ -62,6 +67,16 @@ import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled } from '@/utils/
 
 const invokeMock = invoke as jest.MockedFunction<typeof invoke>;
 const clickBrowserElementMock = clickBrowserElement as jest.MockedFunction<typeof clickBrowserElement>;
+const executeBrowserScriptMock = executeBrowserScript as jest.MockedFunction<typeof executeBrowserScript>;
+const pressBrowserKeyMock = pressBrowserKey as jest.MockedFunction<typeof pressBrowserKey>;
+
+const countOverlayScriptCalls = (): { inject: number; remove: number } => {
+  const scripts = executeBrowserScriptMock.mock.calls.map(([script]) => String(script));
+  return {
+    inject: scripts.filter((script) => script.includes('__ppa_overlay__') && script.includes('appendChild')).length,
+    remove: scripts.filter((script) => script.includes('__ppa_overlay__') && script.includes('remove')).length,
+  };
+};
 const typeIntoBrowserElementMock = typeIntoBrowserElement as jest.MockedFunction<typeof typeIntoBrowserElement>;
 const navigateBrowserPageMock = navigateBrowserPage as jest.MockedFunction<typeof navigateBrowserPage>;
 const getBrowserPageStateMock = getBrowserPageState as jest.MockedFunction<typeof getBrowserPageState>;
@@ -101,6 +116,8 @@ describe('nativeBrowserAgent', () => {
     jest.useFakeTimers();
     invokeMock.mockReset();
     clickBrowserElementMock.mockClear();
+    executeBrowserScriptMock.mockClear();
+    pressBrowserKeyMock.mockClear();
     typeIntoBrowserElementMock.mockClear();
     navigateBrowserPageMock.mockClear();
     getBrowserPageStateMock.mockReset();
@@ -167,6 +184,161 @@ describe('nativeBrowserAgent', () => {
 
     const firstInvokeArgs = invokeMock.mock.calls[0]?.[1] as { messages: Array<{ content: string }> };
     expect(firstInvokeArgs.messages[0]?.content).toContain('CURRENT URL');
+  });
+
+  describe('selector targeting (R3-09)', () => {
+    it('click_with_selector_uses_resolved_element', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Use selector fallback.',
+            action: { click_element: { selector: 'button[type="submit"]' } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Done.',
+            action: { done: { text: 'Clicked', success: true } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Submit form', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Clicked');
+      expect(clickBrowserElementMock).toHaveBeenCalledWith({
+        elementId: 7,
+        backendNodeId: 88,
+        navigationId: 'nav-1',
+      });
+    });
+
+    it('invalid_selector_returns_safe_failure_feedback', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Try unknown selector.',
+            action: { click_element: { selector: '#missing-node' } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Give up.',
+            action: { done: { text: 'Could not click', success: false } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Click missing', 'api-key', 'model', {});
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Could not click');
+      expect(clickBrowserElementMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('press_enter wiring (R3-10)', () => {
+    it('input_text_press_enter_calls_pressBrowserKey', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Type and submit.',
+            action: { input_text: { id: 7, text: 'query', press_enter: true } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Submitted.',
+            action: { done: { text: 'Submitted', success: true } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Search', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Submitted');
+      expect(typeIntoBrowserElementMock).toHaveBeenCalled();
+      expect(pressBrowserKeyMock).toHaveBeenCalledWith('Enter');
+    });
+  });
+
+  describe('overlay cleanup (R3-07)', () => {
+    it('removes_overlay_after_successful_done', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock.mockResolvedValueOnce({
+        content: JSON.stringify({
+          thought: 'Done.',
+          action: { done: { text: 'All good', success: true } },
+        }),
+      });
+
+      const resultPromise = executeNativeBrowserTask('Finish task', 'api-key', 'model', {});
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('All good');
+      const overlayCalls = countOverlayScriptCalls();
+      expect(overlayCalls.inject).toBeGreaterThanOrEqual(1);
+      expect(overlayCalls.remove).toBeGreaterThanOrEqual(1);
+    });
+
+    it('removes_overlay_when_llm_call_fails', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock.mockImplementation((command: string) => {
+        if (command === 'send_claude_sdk_chat') {
+          return Promise.reject(new Error('LLM unavailable'));
+        }
+        return Promise.resolve('ok');
+      });
+
+      const resultPromise = executeNativeBrowserTask('Fail task', 'api-key', 'model', {});
+      const assertion = expect(resultPromise).rejects.toThrow('LLM unavailable');
+      await jest.runAllTimersAsync();
+      await assertion;
+      const overlayCalls = countOverlayScriptCalls();
+      expect(overlayCalls.inject).toBeGreaterThanOrEqual(1);
+      expect(overlayCalls.remove).toBeGreaterThanOrEqual(1);
+    });
+
+    it('removes_overlay_on_stop_without_duplicate_errors', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      let resolveLlm!: (value: { content: string }) => void;
+      const llmPromise = new Promise<{ content: string }>((resolve) => {
+        resolveLlm = resolve;
+      });
+      invokeMock.mockImplementation((command: string) => {
+        if (command === 'send_claude_sdk_chat') {
+          return llmPromise;
+        }
+        return Promise.resolve('ok');
+      });
+
+      const controller = new AbortController();
+      const resultPromise = executeNativeBrowserTask('Hold task open', 'api-key', 'model', {
+        signal: controller.signal,
+      });
+      const assertion = expect(resultPromise).rejects.toMatchObject({ name: 'AbortError' });
+
+      await jest.advanceTimersByTimeAsync(1200);
+      controller.abort();
+      resolveLlm({
+        content: JSON.stringify({
+          thought: 'Too late.',
+          action: { done: { text: 'Nope', success: true } },
+        }),
+      });
+      await jest.runAllTimersAsync();
+      await assertion;
+
+      const overlayCalls = countOverlayScriptCalls();
+      expect(overlayCalls.remove).toBeGreaterThanOrEqual(1);
+      expect(() => countOverlayScriptCalls()).not.toThrow();
+    });
   });
 
   describe('observe_only mode (R3-02)', () => {
