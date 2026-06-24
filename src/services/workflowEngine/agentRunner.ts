@@ -46,8 +46,22 @@ interface ResolvedConfig {
   apiFormat?: string;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Workflow agent retry sleep aborted', 'AbortError'));
+      return;
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new DOMException('Workflow agent retry sleep aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function buildSystemPrompt(agent: WorkflowAgent, model: string, override?: string): string {
@@ -273,7 +287,11 @@ async function executeSingleRound(
         // is preserved; the jitter is multiplicative.
         const base = retryPolicy.backoffMs * Math.pow(2, attempt);
         const jitter = base * 0.25 * (Math.random() * 2 - 1);
-        await sleep(Math.max(0, base + jitter));
+        // AUDIT-FIX [R6-03]: Pass the AbortSignal so a stop() during the
+        // exponential backoff between attempts can short-circuit
+        // immediately instead of waiting out the full backoff window
+        // (up to ~120s across 5 attempts).
+        await sleep(Math.max(0, base + jitter), context.signal);
       }
     }
   }
