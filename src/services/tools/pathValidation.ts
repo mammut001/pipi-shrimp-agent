@@ -17,17 +17,37 @@ export interface PathValidationResult {
   resolvedPath?: string;
 }
 
-// System directories that should never be accessed by tools
+// System directories that should never be accessed by tools.
+// AUDIT-FIX [R7-16]: Added Windows system directories (C:\Windows, C:\Program
+// Files, etc.) and macOS /Applications. The TS path check was Unix-only;
+// the Rust side already blocks these but the TS layer ran first for
+// previews / chat-side rendering.
 const BLOCKED_PREFIXES = [
+  // Unix system dirs
   '/etc/', '/usr/', '/sys/', '/proc/', '/dev/', '/boot/', '/sbin/', '/bin/',
-  '/var/log/', '/Library/', '/System/', '/private/etc/', '/private/var/',
+  '/var/log/', '/private/etc/', '/private/var/',
+  // macOS system dirs
+  '/Library/', '/System/', '/Applications/',
+  // Windows system dirs — case-insensitive at the file-system level but
+  // canonicalized to mixed-case here. Prefix-matched only when the input
+  // already uses backslash or starts with C:\.
+  'C:\\Windows\\', 'C:\\Program Files\\', 'C:\\Program Files (x86)\\',
+  'C:\\ProgramData\\', 'C:\\Users\\Default\\', 'C:\\Boot\\',
 ];
 
 // Sensitive files that should never be read
 const BLOCKED_FILES = [
   '/etc/shadow', '/etc/passwd', '/etc/sudoers',
   '/etc/ssh/sshd_config', '/etc/hosts',
+  // Windows equivalents. Lowercased because we compare lowercased.
+  'c:\\windows\\system32\\config\\sam',
+  'c:\\windows\\system32\\config\\security',
+  'c:\\windows\\system32\\config\\system',
+  'c:\\windows\\system32\\drivers\\etc\\hosts',
+  'c:\\boot.ini', 'c:\\pagefile.sys', 'c:\\hiberfil.sys',
 ];
+
+const WINDOWS_PATH = /^[a-zA-Z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*$/;
 
 /**
  * Normalize a path by resolving . and .. components.
@@ -72,7 +92,7 @@ export function validatePath(
 
   // Resolve relative paths against workDir
   let resolvedPath = trimmed;
-  if (workDir && !trimmed.startsWith('/')) {
+  if (workDir && !trimmed.startsWith('/') && !WINDOWS_PATH.test(trimmed)) {
     resolvedPath = normalizePath(workDir + '/' + trimmed);
   } else if (trimmed.startsWith('/')) {
     resolvedPath = normalizePath(trimmed);
@@ -90,16 +110,22 @@ export function validatePath(
     }
   }
 
-  // Check against blocked file list (exact match)
+  // Check against blocked file list (exact match). Windows paths are
+  // case-insensitive at the filesystem level so lower-case both sides for
+  // the Windows-flavored entries.
+  const isWindows = WINDOWS_PATH.test(resolvedPath);
+  const compare = (a: string, b: string) => (isWindows ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const comparePrefix = (a: string, b: string) => (isWindows ? a.toLowerCase().startsWith(b.toLowerCase()) : a.startsWith(b));
+
   for (const blocked of BLOCKED_FILES) {
-    if (resolvedPath === blocked) {
+    if (compare(resolvedPath, blocked)) {
       return { isValid: false, error: `Access to sensitive file is not allowed: ${blocked}` };
     }
   }
 
   // Check against blocked directory prefixes
   for (const prefix of BLOCKED_PREFIXES) {
-    if (resolvedPath.startsWith(prefix)) {
+    if (comparePrefix(resolvedPath, prefix)) {
       return { isValid: false, error: `Access to system directory is not allowed: ${prefix}` };
     }
   }
