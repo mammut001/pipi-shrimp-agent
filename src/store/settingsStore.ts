@@ -328,11 +328,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   /**
-   * Set Telegram token and persist via secureSecrets
+   * Set Telegram token and persist via secureSecrets. The active
+   * secure storage provider (localStorage or OS keychain — see
+   * AUDIT-FIX [R7-15]) is selected at runtime by
+   * `getSecureStorage()`.
    */
   setTelegramToken: async (token: string) => {
     try {
-      saveSecret('telegram-token', token);
+      await saveSecret('telegram-token', token);
       set({ telegramToken: token });
     } catch (error) {
       console.error('Failed to save Telegram token:', error);
@@ -555,7 +558,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
 // ========== Initialize from localStorage ==========
 
-const initializeSettings = () => {
+const initializeSettings = async () => {
   if (typeof localStorage === 'undefined') {
     return;
   }
@@ -586,12 +589,18 @@ const initializeSettings = () => {
       useSettingsStore.setState({ windowsShellProfile: storedShellProfile });
     }
 
-    // Load Telegram token (migrate from legacy key if needed)
-    let telegramToken = loadSecret('telegram-token');
+    // Load Telegram token (migrate from legacy key if needed).
+    // loadSecret / migrateLegacySecret are async because the active
+    // secure storage provider may be the OS keychain
+    // (AUDIT-FIX [R7-15]); awaiting them in the boot path lets the
+    // token be hydrated from whichever backend is in use.
+    const telegramToken = await loadSecret('telegram-token');
     if (!telegramToken) {
-      telegramToken = migrateLegacySecret(SETTINGS_STORAGE_KEYS.telegramToken, 'telegram-token');
-    }
-    if (telegramToken) {
+      const migrated = await migrateLegacySecret(SETTINGS_STORAGE_KEYS.telegramToken, 'telegram-token');
+      if (migrated) {
+        useSettingsStore.setState({ telegramToken: migrated });
+      }
+    } else {
       useSettingsStore.setState({ telegramToken });
     }
 
@@ -710,7 +719,10 @@ const initializeSettings = () => {
   }
 };
 
-// Initialize on module load
-initializeSettings();
+// Initialize on module load. Fire-and-forget — any error in
+// initialization must not block the rest of the app from booting.
+void initializeSettings().catch((err) => {
+  console.error('[settingsStore] initialize failed', err);
+});
 
 export type { ApiConfig } from '../types/settings';

@@ -129,37 +129,41 @@ function deobfuscate(value: string): string {
 }
 
 /**
- * Save a secret value to localStorage.
+ * Save a secret value. The active provider is selected by
+ * `getSecureStorage()`. In the default (localStorage) provider the
+ * value is XOR-obfuscated and persisted under `pipi_secret_v2_<key>`
+ * in localStorage. When the keychain provider is active (Tauri
+ * runtime + tauri-plugin-secure-store installed), the value is
+ * stored in the OS keychain and never touches localStorage.
+ *
+ * AUDIT-FIX [R7-15]: This shim keeps the existing function signature
+ * so all callers (settingsStore, telegramStore) keep working without
+ * changes, but the underlying storage is now pluggable.
  *
  * @param key - Unique identifier for the secret (e.g. 'telegram-token', 'api-key-config-123')
  * @param value - The plaintext secret to store
  */
-export function saveSecret(key: string, value: string): void {
+export async function saveSecret(key: string, value: string): Promise<void> {
   try {
-    const storageKey = SECRET_PREFIX + key;
-    if (!value) {
-      localStorage.removeItem(storageKey);
-      return;
-    }
-    localStorage.setItem(storageKey, obfuscate(value));
+    const { getSecureStorage } = await import('@/utils/secureStorage');
+    const storage = getSecureStorage();
+    await storage.save(key, value);
   } catch (error) {
     console.error(`Failed to save secret "${key}":`, error);
   }
 }
 
 /**
- * Load a secret value from localStorage.
+ * Load a secret value.
  *
  * @param key - Unique identifier for the secret
  * @returns The plaintext secret, or null if not found
  */
-export function loadSecret(key: string): string | null {
+export async function loadSecret(key: string): Promise<string | null> {
   try {
-    const storageKey = SECRET_PREFIX + key;
-    const raw = localStorage.getItem(storageKey);
-    if (raw === null) return null;
-    const decoded = deobfuscate(raw);
-    return decoded || null;
+    const { getSecureStorage } = await import('@/utils/secureStorage');
+    const storage = getSecureStorage();
+    return await storage.load(key);
   } catch (error) {
     console.error(`Failed to load secret "${key}":`, error);
     return null;
@@ -167,14 +171,15 @@ export function loadSecret(key: string): string | null {
 }
 
 /**
- * Delete a secret from localStorage.
+ * Delete a secret.
  *
  * @param key - Unique identifier for the secret
  */
-export function deleteSecret(key: string): void {
+export async function deleteSecret(key: string): Promise<void> {
   try {
-    const storageKey = SECRET_PREFIX + key;
-    localStorage.removeItem(storageKey);
+    const { getSecureStorage } = await import('@/utils/secureStorage');
+    const storage = getSecureStorage();
+    await storage.remove(key);
   } catch (error) {
     console.error(`Failed to delete secret "${key}":`, error);
   }
@@ -188,7 +193,7 @@ export function deleteSecret(key: string): void {
  * @param newKey - The new secureSecrets key (e.g. 'telegram-token')
  * @returns The migrated value, or null if no legacy value exists
  */
-export function migrateLegacySecret(legacyKey: string, newKey: string): string | null {
+export async function migrateLegacySecret(legacyKey: string, newKey: string): Promise<string | null> {
   try {
     const raw = localStorage.getItem(legacyKey);
     if (raw === null) return null;
@@ -196,12 +201,14 @@ export function migrateLegacySecret(legacyKey: string, newKey: string): string |
     // Decode the legacy value (may be v1 btoa or plaintext)
     const decoded = deobfuscate(raw);
 
-    // Save under new key with v2 XOR encoding
+    // Save under new key via the active secure storage provider
+    // (localStorage XOR or OS keychain — see AUDIT-FIX [R7-15]).
     if (decoded) {
-      saveSecret(newKey, decoded);
+      await saveSecret(newKey, decoded);
     }
 
-    // Remove legacy key
+    // Remove legacy key from localStorage regardless of which provider
+    // the new value lands in.
     localStorage.removeItem(legacyKey);
 
     return decoded || null;
@@ -229,3 +236,8 @@ export function obfuscateInline(value: string): string {
 export function deobfuscateInline(value: string): string {
   return deobfuscate(value);
 }
+
+// Re-export the underlying XOR primitives so the pluggable
+// secureStorage provider (R7-15) can call them without re-implementing
+// the cipher.
+export { obfuscate, deobfuscate };
