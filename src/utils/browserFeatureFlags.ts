@@ -1,3 +1,5 @@
+import type { BrowserActionPermissionMode } from '@/types/browserEngine';
+
 /**
  * Browser feature flags.
  *
@@ -164,8 +166,13 @@ export const getBrowserActionPermissionMode = (): string =>
 
 export const isValidBrowserActionPermissionMode = (
   value: string,
-): value is 'observe_only' | 'ask_each_action' | 'auto_safe' =>
+): value is BrowserActionPermissionMode =>
   ALLOWED_PERMISSION_MODES.has(value);
+
+export const resolveBrowserActionPermissionMode = (): BrowserActionPermissionMode => {
+  const raw = getBrowserActionPermissionMode();
+  return isValidBrowserActionPermissionMode(raw) ? raw : 'auto_safe';
+};
 
 export const writeBrowserFlag = (flag: BrowserFeatureFlagName, value: string | number | boolean) => {
   try {

@@ -135,6 +135,101 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(container.textContent).toContain('Failed');
   });
 
+  it('shows Bootstrapping phase chip while streaming', async () => {
+    let resolveTurn: (() => void) | undefined;
+    mockRunHeadlessAgentTurn.mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        resolveTurn = resolve;
+      });
+    });
+
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');
+    expect(chip?.getAttribute('data-phase')).toBe('bootstrapping');
+    expect(chip?.getAttribute('aria-label')).toBe('AutoResearch phase: Bootstrapping');
+
+    await act(async () => {
+      resolveTurn?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  });
+
+  it('shows Bootstrap ready phase chip when readyResult exists', async () => {
+    mockRunHeadlessAgentTurn.mockImplementation(async () => {
+      useBootstrapPlanStore.getState().setReadyResult({
+        status: 'ready',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        warnings: [],
+        unresolvedQuestions: [],
+        schemaVersion: 1,
+        plan: {
+          researchGoal: 'Goal text',
+          successCriteria: 'Criteria text',
+          primaryMetric: 'cv_accuracy',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [{
+            name: 'Baseline',
+            task: 'classification',
+            dataset: 'CIFAR10',
+            reportedMetrics: [{ name: 'cv_accuracy', value: 0.9 }],
+            method: { summary: 'Test baseline' },
+            reproducibility: { hasOfficialCode: false },
+          }],
+          scaffold: {
+            templateId: 'python-ml-baseline',
+            workDir: '/path/to/workdir',
+            language: 'python',
+            entryCommand: 'python3 run_experiment.py',
+            vars: { project_name: 'test' },
+            files: [{ path: 'run_experiment.py', purpose: 'entrypoint' }],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: 'from-scratch',
+        },
+      });
+    });
+
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');
+    expect(chip?.getAttribute('data-phase')).toBe('bootstrap_ready');
+    expect(chip?.getAttribute('aria-label')).toBe('AutoResearch phase: Bootstrap ready');
+  });
+
+  it('shows Failed phase chip when error exists', async () => {
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');
+    expect(chip?.getAttribute('data-phase')).toBe('failed');
+    expect(chip?.getAttribute('aria-label')).toBe('AutoResearch phase: Failed');
+  });
+
   it('shows Stop bootstrap while streaming and marks stopped', async () => {
     let resolveTurn: (() => void) | undefined;
     mockRunHeadlessAgentTurn.mockImplementation(async () => {

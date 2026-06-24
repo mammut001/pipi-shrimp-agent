@@ -162,6 +162,9 @@ export async function telegramSetCommandPrefix(prefix: string): Promise<void> {
  * Set allowed chats (for whitelist mode)
  */
 export async function telegramSetAllowedChats(chatIds: number[]): Promise<void> {
+  const { persistTelegramAllowedChatIds } = await import('@/services/telegram/connectorConfig');
+  persistTelegramAllowedChatIds(chatIds);
+
   try {
     await invoke('telegram_set_allowed_chats', { chatIds });
   } catch (error) {

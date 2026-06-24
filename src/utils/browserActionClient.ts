@@ -1,6 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import type { ToolExecutionSource } from '@/services/tools/toolExecutionPolicy';
 import type { BrowserActionTarget } from '@/types/browserPageState';
+
+export interface ExecuteBrowserScriptOptions {
+  source?: ToolExecutionSource;
+  sessionId?: string;
+  approvalToken?: string;
+  executionMode?: string;
+  toolCallId?: string;
+}
 
 export * from './browserSessionClient';
 export * from './browserPageStateClient';
@@ -46,6 +55,16 @@ export async function waitForBrowser(options?: {
   });
 }
 
-export async function executeBrowserScript(script: string): Promise<string> {
-  return invoke<string>('cdp_execute_script', { script });
+export async function executeBrowserScript(
+  script: string,
+  options: ExecuteBrowserScriptOptions = {},
+): Promise<string> {
+  return invoke<string>('cdp_execute_script', {
+    script,
+    source: options.source ?? 'headless_agent',
+    sessionId: options.sessionId ?? null,
+    approvalToken: options.approvalToken ?? null,
+    executionMode: options.executionMode ?? null,
+    toolCallId: options.toolCallId ?? null,
+  });
 }

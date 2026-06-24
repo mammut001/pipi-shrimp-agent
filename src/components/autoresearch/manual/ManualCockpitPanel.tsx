@@ -1,6 +1,9 @@
 import React from 'react';
 import { t, getCurrentLocale } from '@/i18n';
 import type { SshConfig } from '@/store/autoresearchStore';
+import type { AutoResearchRunStatus } from '@/services/autoresearch/history';
+import type { SetupPhaseLoopState } from '@/services/autoresearch/setupPhase';
+import { AutoResearchSetupPhaseChip } from '../AutoResearchSetupPhaseChip';
 import type { ManualSetupReadiness } from './manualReadiness';
 import { getManualSetupNextAction } from './manualReadiness';
 
@@ -23,6 +26,8 @@ interface ManualCockpitPanelProps {
   handleStart: () => void | Promise<void>;
   handleViewActiveRun: () => void;
   activeRunId: string | null;
+  loopState?: SetupPhaseLoopState | null;
+  activeRunStatus?: AutoResearchRunStatus | null;
 }
 
 export function ManualCockpitPanel({
@@ -44,6 +49,8 @@ export function ManualCockpitPanel({
   handleStart,
   handleViewActiveRun,
   activeRunId,
+  loopState = null,
+  activeRunStatus = null,
 }: ManualCockpitPanelProps) {
   const completedCount = readiness.completedCount;
   const nextAction = getManualSetupNextAction(readiness, connectionTestStatus);
@@ -132,7 +139,19 @@ export function ManualCockpitPanel({
   return (
     <div className="lg:sticky lg:top-6 space-y-4 h-fit font-sans">
       <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm space-y-4 font-sans">
-        <h3 className="text-sm font-bold text-gray-900 tracking-tight font-sans">启动面板 (Launch Cockpit)</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-gray-900 tracking-tight font-sans">启动面板 (Launch Cockpit)</h3>
+          <AutoResearchSetupPhaseChip
+            input={{
+              bootstrapKind: 'manual',
+              connectionStatus: connectionTestStatus,
+              startingRun: isStarting,
+              loopState,
+              activeRunStatus,
+              error: setupError,
+            }}
+          />
+        </div>
 
         {/* Readiness progress bar */}
         <div className="space-y-1">

@@ -241,6 +241,7 @@ export function AdvancedWorkdirSetup() {
     openTerminalPanel, setTerminalReady, setTerminalVisible,
   } = useAutoResearchStore();
   const lastUsedConfig = useAutoResearchStore((state) => state.lastUsedConfig);
+  const storeLoopState = useAutoResearchStore((state) => state.loopState);
   const setLastUsedConfig = useAutoResearchStore((state) => state.setLastUsedConfig);
   const clearLastUsedConfig = useAutoResearchStore((state) => state.clearLastUsedConfig);
   const selectedRunContext = useAutoResearchStore(getSelectedAutoResearchRunContext);
@@ -638,6 +639,8 @@ export function AdvancedWorkdirSetup() {
         setupError={setupError}
         isStarting={isStarting}
         activeRun={activeRun}
+        loopState={activeRunId ? storeLoopState : null}
+        activeRunStatus={activeRun?.status ?? null}
         providerReady={providerReady}
         agentConfigError={agentConfigError}
         readiness={readiness}

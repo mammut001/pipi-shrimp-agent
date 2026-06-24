@@ -195,6 +195,19 @@ and `LoopState`.
 If you need a finer lifecycle in a new feature, prefer to derive it
 from the existing fields rather than introduce a parallel enum.
 
+**Derived display helper (2026-06):** `src/services/autoresearch/setupPhase.ts`
+exports `deriveAutoResearchSetupPhase`, which maps the scattered inputs
+(`connectionStatus`, bootstrap flags, `loopState`, `activeRunStatus`,
+`error`, etc.) into the aspirational `AutoResearchSetupPhase` union.
+`AutoResearchSetupPhaseChip` in `src/components/autoresearch/` renders
+the derived label as a **display-only** status chip in the guided
+bootstrap console header and the manual launch cockpit panel.
+
+This helper does **not** own runtime state and does **not** control
+Start/Stop/Resume, connection-test gating, readiness validation, or loop
+transitions. The runtime source of truth remains `LoopState`,
+`AutoResearchRunStatus`, and `AutoResearchConnectionTestStatus`.
+
 ---
 
 ## 7. Artifacts, living doc, result.json

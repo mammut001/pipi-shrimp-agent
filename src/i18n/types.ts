@@ -1021,6 +1021,8 @@ export type TranslationKeys = {
   'browser.blockReason.unknown': string;
   'browser.blockReason.default': string;
   'browser.recommendation.authRequired': string;
+  'browser.authRequiredBeforeAgent': string;
+  'browser.surfaceMismatchBeforeAgent': string;
   'browser.recommendation.mfaRequired': string;
   'browser.recommendation.captchaRequired': string;
   'browser.recommendation.expired': string;
@@ -1462,6 +1464,16 @@ export type TranslationKeys = {
   'browserAgent.log.targetWebsite': string;
   'browserAgent.log.taskBlockedError': string;
   'browserAgent.log.noRunningTask': string;
+  'browserAgent.approval.title': string;
+  'browserAgent.approval.description': string;
+  'browserAgent.approval.allow': string;
+  'browserAgent.approval.deny': string;
+  'browserAgent.approval.allowed': string;
+  'browserAgent.approval.denied': string;
+  'browserAgent.log.observeOnlyModeActive': string;
+  'browserAgent.log.authRequiredBeforeAgent': string;
+  'browserAgent.log.surfaceMismatchBeforeAgent': string;
+  'browserAgent.log.surfaceCdpUrlUnavailable': string;
   'browserAgent.log.taskRunningCannotSwitch': string;
   'browserAgent.log.switchedToManual': string;
   'browserAgent.log.completeLoginFirst': string;

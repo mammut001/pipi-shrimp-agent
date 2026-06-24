@@ -182,6 +182,39 @@ If you add or change a mode:
 
 ---
 
+## Tool execution entry points
+
+Registry-backed tools (`read_file`, `write_file`, `execute_command`, SSH,
+bootstrap, etc.) must use `execute_single_tool` or `execute_tool_batch`. The
+legacy Tauri command `execute_tool` rejects registry tools (R2-01, 2026-06-24)
+and remains only for chat-scoped browser, Typst, and Skill tools, with Rust
+`execution_policy` enforcement.
+
+`execute_single_tool` requires an explicit `sessionId` for assistant/user
+originated calls so preview-issued approval tokens can be consumed against the
+correct chat session (R2-02).
+
+The Tauri command `cdp_execute_script` enforces the same Rust `execution_policy`
+before `Runtime.evaluate`: unknown sources are denied, trusted browser-agent
+overlay/URL probes are allowed without approval, and arbitrary JavaScript
+requires a matching preview approval token (R3-06).
+
+Browser CDP tasks read `PIPI_BROWSER_ACTION_PERMISSION_MODE` from localStorage
+(`observe_only` / `ask_each_action` / `auto_safe`) and pass it into the native
+agent policy layer. `observe_only` blocks mutating actions before any approval
+prompt (R3-02).
+
+CDP and legacy browser agent starts both pass `evaluateBrowserAgentStartGate`
+before `executeNativeBrowserTask`; `auth_required` (and related intervention
+states) block the autonomous agent until login or explicit
+`forceResumeWithoutAuth` (R3-03).
+
+CDP starts first compare the embedded/inspected preview URL with the live CDP tab
+URL (`getCurrentBrowserUrl`); a mismatch blocks the agent before any model or
+CDP action runs (R3-04).
+
+---
+
 ## Cross-references
 
 - Folder model: [`folders-and-runs.md`](./folders-and-runs.md).

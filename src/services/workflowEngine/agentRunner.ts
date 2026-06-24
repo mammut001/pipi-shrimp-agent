@@ -19,9 +19,16 @@ export type StreamChunkCallback = (agentId: string, chunk: string, fullContent: 
 
 export interface AgentRunContext {
   runId: string;
+  signal?: AbortSignal;
   onStreamChunk?: StreamChunkCallback;
   transcript: WorkflowTranscriptManager;
   systemPromptOverride?: string;
+}
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException('Workflow agent run aborted', 'AbortError');
+  }
 }
 
 interface ResolvedConfig {
@@ -166,6 +173,8 @@ async function invokeWithStreaming(
   config: ResolvedConfig,
   context: AgentRunContext,
 ): Promise<string> {
+  assertNotAborted(context.signal);
+
   // AUDIT-FIX [fix-5#13] — Use an array + `join('')`. The previous
   // `fullContent += payload.content` is O(N²) for long streams because
   // V8 must re-allocate the entire string each time. The join is O(N)
@@ -174,6 +183,13 @@ async function invokeWithStreaming(
   const sessionId = `workflow-${context.runId}-${agent.id}-${Date.now()}`;
   let unlistenToken: (() => void) | null = null;
   let unlistenToolUse: (() => void) | null = null;
+  const abortHandler = () => {
+    void invoke('stop_subprocess', { sessionId }).catch(() => undefined);
+  };
+
+  if (context.signal) {
+    context.signal.addEventListener('abort', abortHandler, { once: true });
+  }
 
   try {
     unlistenToken = await registerListenerIfAvailable<{ session_id: string; content: string }>(
@@ -214,6 +230,8 @@ async function invokeWithStreaming(
       apiFormat: config.apiFormat,
     });
 
+    assertNotAborted(context.signal);
+
     // Materialize the final string once. Subsequent concatenations (which
     // are not O(N²) at this point) are acceptable.
     const fullContent = contentChunks.join('');
@@ -223,6 +241,7 @@ async function invokeWithStreaming(
 
     return fullContent;
   } finally {
+    context.signal?.removeEventListener('abort', abortHandler);
     unlistenToken?.();
     unlistenToolUse?.();
   }
@@ -238,10 +257,14 @@ async function executeSingleRound(
   let lastError: unknown = new Error('Unknown workflow agent failure');
 
   for (let attempt = 0; attempt < retryPolicy.maxAttempts; attempt += 1) {
+    assertNotAborted(context.signal);
     const config = configSequence[Math.min(attempt, configSequence.length - 1)];
     try {
       return await invokeWithStreaming(agent, prompt, config, context);
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
+      }
       lastError = error;
       if (attempt < retryPolicy.maxAttempts - 1) {
         // AUDIT-FIX [fix-5#17] — Add ±25% jitter so that multiple
@@ -271,6 +294,7 @@ async function executeMultiRound(
   let shouldContinue = true;
 
   while (shouldContinue && round < maxRounds) {
+    assertNotAborted(context.signal);
     round += 1;
     lastOutput = await executeSingleRound(agent, inputPrompt, context);
 

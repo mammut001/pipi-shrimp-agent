@@ -17,6 +17,9 @@ use crate::browser::failure_snapshot::{
 };
 use crate::browser::observability::BrowserObservabilitySnapshot;
 use crate::browser::session::{BrowserConnectionState, BrowserSessionManager};
+use crate::commands::tools::resolve_execute_single_tool_session_id;
+use crate::tools::execution_policy;
+use crate::tools::ToolExecutionSource;
 use crate::utils::AppResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -671,8 +674,40 @@ pub async fn export_browser_benchmark_report(
 #[tauri::command]
 pub async fn cdp_execute_script(
     script: String,
+    source: Option<ToolExecutionSource>,
+    #[allow(non_snake_case)] sessionId: Option<String>,
+    #[allow(non_snake_case)] approvalToken: Option<String>,
+    #[allow(non_snake_case)] executionMode: Option<String>,
+    #[allow(non_snake_case)] toolCallId: Option<String>,
     state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
 ) -> Result<String, String> {
+    let source_value = source.unwrap_or(ToolExecutionSource::Unknown);
+    let tool_call_id = toolCallId.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let session_id = match resolve_execute_single_tool_session_id(
+        source_value,
+        sessionId.as_deref(),
+    ) {
+        Ok(value) => value.map(str::to_string),
+        Err(message) => return Err(message),
+    };
+
+    execution_policy::enforce_cdp_execute_script_policy(
+        &tool_call_id,
+        &script,
+        source_value,
+        session_id.as_deref(),
+        approvalToken.as_deref(),
+        executionMode.as_deref(),
+    )
+    .map_err(|error| {
+        let message = error.to_string();
+        if message.contains(&script) {
+            "Browser script execution denied by policy.".to_string()
+        } else {
+            message
+        }
+    })?;
+
     let manager = clone_manager_handle(&state).await;
     let page = {
         let manager_guard = manager.lock().await;

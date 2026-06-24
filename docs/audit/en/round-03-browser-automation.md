@@ -12,12 +12,12 @@ Chinese version: [../round-03-browser-automation.md](../round-03-browser-automat
 
 | ID | Sev | Location | Description | Suggested test | Status |
 | --- | --- | -------- | ----------- | -------------- | ------ |
-| R3-01 | Critical | `browserAgentStore.ts:850-898` | `executeCdpTask` does not pass `approveAction`; `ask` defaults to deny with no UI | Sensitive click should prompt approval | ❌ Open |
-| R3-02 | Critical | `browserAgentStore.ts` + flags | `observe_only` flag not passed to agent | localStorage `observe_only` should block actions | ❌ Open |
-| R3-03 | Critical | `browserAgentStore.ts:793-821` | CDP mode skips auth check | `auth_required` pages should not run agent directly | ❌ Open |
-| R3-04 | Critical | store + `nativeBrowserAgent.ts` | Embedded WebView ≠ external CDP Chrome (:9222) | Preview URL ≠ agent-operated URL | ❌ Open |
+| R3-01 | Critical | `browserAgentStore.ts:850-898` | `executeCdpTask` does not pass `approveAction`; `ask` defaults to deny with no UI | Sensitive click should prompt approval | ✅ Fixed 2026-06-24 |
+| R3-02 | Critical | `browserAgentStore.ts` + flags | `observe_only` flag not passed to agent | localStorage `observe_only` should block actions | ✅ Fixed 2026-06-24 |
+| R3-03 | Critical | `browserAgentStore.ts:793-821` | CDP mode skips auth check | `auth_required` pages should not run agent directly | ✅ Fixed 2026-06-24 |
+| R3-04 | Critical | store + `nativeBrowserAgent.ts` | Embedded WebView ≠ external CDP Chrome (:9222) | Preview URL ≠ agent-operated URL | ✅ Fixed 2026-06-24 |
 | R3-05 | Critical | `browserAgentStore.ts:1139-1156` | `stopTask` does not stop CDP loop | No further LLM/CDP calls after stop | ❌ Open |
-| R3-06 | Critical | `web.rs:669-696` | `cdp_execute_script` has no TS policy gate | Arbitrary JS should be deny-by-default | ❌ Open |
+| R3-06 | Critical | `web.rs:669-696` | `cdp_execute_script` has no TS policy gate | Arbitrary JS should be deny-by-default | ✅ Fixed 2026-06-24 |
 
 ## High (8)
 

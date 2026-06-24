@@ -90,9 +90,9 @@ Test backlog: [test-gaps-backlog.md](./test-gaps-backlog.md).
 | R2-02 | Rust | `execute_single_tool` missing sessionId — approval token not consumed | ❌ Open |
 | R2-03 | Rust | `session_memory` discards `validate_work_dir` errors | ❌ Open |
 | R2-04 | Rust | SSH local-mode shell injection | ❌ Open |
-| R3-04 | Browser | Embedded WebView vs external CDP Chrome split | ❌ Open |
+| R3-04 | Browser | Embedded WebView vs external CDP Chrome split | ✅ Fixed 2026-06-24 |
 | R3-05 | Browser | `stopTask` cannot stop native CDP loop | ❌ Open |
-| R3-06 | Browser | Rust `cdp_execute_script` no policy gate | ❌ Open |
+| R3-06 | Browser | Rust `cdp_execute_script` no policy gate | ✅ Fixed 2026-06-24 |
 | R4-01 | Store | `listenerGuard` ref-count unmount order leaked Tauri listener | ✅ Fixed |
 | R4-02 | Store | Workflow `stop()` left `engine.isRunning` true | ✅ Fixed |
 | R4-03 | Core | `QueryEngine` tool_batch no timeout | ✅ Fixed |

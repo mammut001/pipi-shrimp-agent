@@ -424,6 +424,131 @@ describe('WorkflowEngine snapshot behavior', () => {
     expect(addNotification).toHaveBeenCalledWith('error', expect.stringContaining('最大步数限制'));
   });
 
+  describe('createRunDirectory failure handling', () => {
+    function createRunnableEngine(overrides: {
+      createRunDirectory?: jest.Mock;
+      runAgent?: jest.Mock;
+      writeFile?: jest.Mock;
+      writeRunFile?: jest.Mock;
+    } = {}) {
+      const writer = createAgent({ id: 'writer', role: 'writer' });
+      const instance = createInstance('origin', [writer], []);
+      const store = installWorkflowStore([instance], instance.id);
+
+      const createRunDirectory = overrides.createRunDirectory ?? jest.fn(async () => '/tmp/workflow-run');
+      const runAgent = overrides.runAgent ?? jest.fn(async () => 'writer-output');
+      const writeFile = overrides.writeFile ?? jest.fn(async () => undefined);
+      const writeRunFile = overrides.writeRunFile ?? jest.fn(async () => '/tmp/workflow-run/output.md');
+
+      const engine = new WorkflowEngine({
+        createRunDirectory,
+        writeFile,
+        writeRunFile,
+        runAgent,
+        evaluateGoal: async ({ iteration }: { iteration: number }) => ({
+          iteration,
+          reached: true,
+          confidence: 1,
+          missingItems: [],
+          reasoning: 'done',
+          timestamp: iteration,
+        }),
+        notify: async () => undefined,
+        now: (() => {
+          let current = 1;
+          return () => current++;
+        })(),
+      });
+
+      return { engine, store, createRunDirectory, runAgent, writeFile, writeRunFile };
+    }
+
+    it('prevents step execution when createRunDirectory fails', async () => {
+      const { engine, runAgent } = createRunnableEngine({
+        createRunDirectory: jest.fn(async () => {
+          throw new Error('disk full');
+        }),
+      });
+
+      await engine.start();
+
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(engine.getIsRunning()).toBe(false);
+    });
+
+    it('marks the workflow run as failed with a run-directory error', async () => {
+      const { engine, store } = createRunnableEngine({
+        createRunDirectory: jest.fn(async () => {
+          throw new Error('permission denied');
+        }),
+      });
+
+      await engine.start();
+
+      expect(store.instances[0].workflowRuns[0]).toMatchObject({
+        status: 'error',
+        runDirectory: '',
+        reachedGoal: false,
+      });
+      expect(addNotification).toHaveBeenCalledWith(
+        'error',
+        expect.stringContaining('Failed to create workflow run directory: permission denied'),
+      );
+    });
+
+    it('clears running state after createRunDirectory failure', async () => {
+      const { engine, store } = createRunnableEngine({
+        createRunDirectory: jest.fn(async () => {
+          throw new Error('disk full');
+        }),
+      });
+
+      await engine.start();
+
+      expect(store.setRunning).toHaveBeenCalledWith(false, null);
+      expect(engine.getIsRunning()).toBe(false);
+      expect(engine.getCurrentRunId()).toBe('');
+    });
+
+    it('does not write artifacts when createRunDirectory fails', async () => {
+      const writeFile = jest.fn(async () => undefined);
+      const writeRunFile = jest.fn(async () => '/tmp/workflow-run/output.md');
+      const { engine } = createRunnableEngine({
+        createRunDirectory: jest.fn(async () => {
+          throw new Error('disk full');
+        }),
+        writeFile,
+        writeRunFile,
+      });
+
+      await engine.start();
+
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(writeRunFile).not.toHaveBeenCalled();
+    });
+
+    it('allows starting again after createRunDirectory failure', async () => {
+      let attempts = 0;
+      const createRunDirectory = jest.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('disk full');
+        }
+        return '/tmp/workflow-run-2';
+      });
+      const runAgent = jest.fn(async () => 'writer-output');
+      const { engine } = createRunnableEngine({ createRunDirectory, runAgent });
+
+      await engine.start();
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(engine.getIsRunning()).toBe(false);
+
+      await engine.start();
+      expect(runAgent).toHaveBeenCalled();
+      expect(engine.getIsRunning()).toBe(false);
+    });
+  });
+
   it('blocks start before creating a run when the workflow graph is invalid', async () => {
     const writer = createAgent({ id: 'writer', role: 'writer' });
     const instance = createInstance(
@@ -461,5 +586,237 @@ describe('WorkflowEngine snapshot behavior', () => {
     expect(store.instances[0].workflowRuns).toEqual([]);
     expect(store.setRunning).not.toHaveBeenCalled();
     expect(addNotification).toHaveBeenCalledWith('error', expect.stringContaining('不能连接到自己'));
+  });
+
+  describe('stop() cancels in-flight invoke (R6-02)', () => {
+    function createTwoAgentEngine(overrides: {
+      runAgent?: jest.Mock;
+      writeRunFile?: jest.Mock;
+      evaluateGoal?: jest.Mock;
+    } = {}) {
+      const writer = createAgent({ id: 'writer', role: 'writer' });
+      const developer = createAgent({
+        id: 'developer',
+        role: 'developer',
+        inputFrom: 'writer',
+      });
+      const instance = createInstance(
+        'origin',
+        [writer, developer],
+        [{
+          id: 'c1',
+          sourceAgentId: 'writer',
+          targetAgentId: 'developer',
+          condition: 'onComplete',
+          type: 'sequential',
+        }],
+      );
+      const store = installWorkflowStore([instance], instance.id);
+
+      const runAgent = overrides.runAgent ?? jest.fn(async (agent: WorkflowAgent) => `${agent.id}-output`);
+      const writeRunFile = overrides.writeRunFile ?? jest.fn(async () => '/tmp/workflow-run/output.md');
+      const evaluateGoal = overrides.evaluateGoal ?? jest.fn(async ({ iteration }: { iteration: number }) => ({
+        iteration,
+        reached: true,
+        confidence: 1,
+        missingItems: [],
+        reasoning: 'done',
+        timestamp: iteration,
+      }));
+
+      const engine = new WorkflowEngine({
+        createRunDirectory: async () => '/tmp/workflow-run',
+        writeRunFile,
+        runAgent,
+        evaluateGoal,
+        notify: async () => undefined,
+        now: (() => {
+          let current = 1;
+          return () => current++;
+        })(),
+      });
+
+      return { engine, store, instance, runAgent, writeRunFile, evaluateGoal };
+    }
+
+    it('stop_aborts_or_ignores_in_flight_invoke_result', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+
+      const runAgent = jest.fn((agent: WorkflowAgent) => (
+        agent.id === 'writer' ? firstAgentPromise : Promise.resolve('developer-output')
+      ));
+      const { engine, store } = createTwoAgentEngine({ runAgent });
+
+      const startPromise = engine.start();
+      await Promise.resolve();
+      await engine.stop();
+      resolveFirstAgent('late-writer-output');
+      await startPromise;
+
+      expect(store.instances[0].workflowRuns[0].agents.find((entry) => entry.agentId === 'writer')?.output).toBeUndefined();
+      expect(runAgent).toHaveBeenCalledTimes(1);
+    });
+
+    it('stop_prevents_next_step_start', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+
+      const runAgent = jest.fn((agent: WorkflowAgent) => (
+        agent.id === 'writer' ? firstAgentPromise : Promise.resolve('developer-output')
+      ));
+      const { engine } = createTwoAgentEngine({ runAgent });
+
+      const startPromise = engine.start();
+      await Promise.resolve();
+      await engine.stop();
+      resolveFirstAgent('writer-output');
+      await startPromise;
+
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(runAgent.mock.calls[0][0].id).toBe('writer');
+    });
+
+    it('stop_prevents_artifact_write_after_late_result', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+      const writeRunFile = jest.fn(async () => '/tmp/workflow-run/output.md');
+      const runAgent = jest.fn((agent: WorkflowAgent) => (
+        agent.id === 'writer' ? firstAgentPromise : Promise.resolve('developer-output')
+      ));
+      const { engine } = createTwoAgentEngine({ runAgent, writeRunFile });
+
+      const startPromise = engine.start();
+      await Promise.resolve();
+      await engine.stop();
+      resolveFirstAgent('late-writer-output');
+      await startPromise;
+
+      expect(writeRunFile).not.toHaveBeenCalled();
+    });
+
+    it('stop_keeps_run_status_stopped', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+      const runAgent = jest.fn((agent: WorkflowAgent) => (
+        agent.id === 'writer' ? firstAgentPromise : Promise.resolve('developer-output')
+      ));
+      const { engine, store } = createTwoAgentEngine({ runAgent });
+
+      const startPromise = engine.start();
+      await Promise.resolve();
+      await engine.stop();
+      resolveFirstAgent('late-writer-output');
+      await startPromise;
+
+      expect(store.instances[0].workflowRuns[0]).toMatchObject({
+        status: 'stopped',
+        reachedGoal: false,
+      });
+    });
+
+    it('stop_clears_isRunning', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+      const runAgent = jest.fn(() => firstAgentPromise);
+      const { engine } = createTwoAgentEngine({ runAgent });
+
+      const startPromise = engine.start();
+      await Promise.resolve();
+      await engine.stop();
+      expect(engine.getIsRunning()).toBe(false);
+      resolveFirstAgent('writer-output');
+      await startPromise;
+      expect(engine.getIsRunning()).toBe(false);
+    });
+
+    it('stop_is_idempotent', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+      const runAgent = jest.fn(() => firstAgentPromise);
+      const { engine, store } = createTwoAgentEngine({ runAgent });
+
+      const startPromise = engine.start();
+      await Promise.resolve();
+      await expect(engine.stop()).resolves.toBeUndefined();
+      await expect(engine.stop()).resolves.toBeUndefined();
+      resolveFirstAgent('writer-output');
+      await startPromise;
+
+      expect(store.instances[0].workflowRuns[0].status).toBe('stopped');
+      expect(engine.getIsRunning()).toBe(false);
+    });
+
+    it('success_path_unchanged', async () => {
+      const { engine, store } = createTwoAgentEngine();
+
+      await engine.start();
+
+      expect(store.instances[0].workflowRuns[0]).toMatchObject({
+        status: 'completed',
+        reachedGoal: true,
+      });
+      expect(engine.getIsRunning()).toBe(false);
+    });
+
+    it('can_start_again_after_stop', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+      const runAgent = jest.fn((agent: WorkflowAgent) => (
+        agent.id === 'writer' ? firstAgentPromise : Promise.resolve('developer-output')
+      ));
+      const { engine, store } = createTwoAgentEngine({ runAgent });
+
+      const firstStart = engine.start();
+      await Promise.resolve();
+      await engine.stop();
+      resolveFirstAgent('writer-output');
+      await firstStart;
+
+      await engine.start();
+
+      const runs = store.instances[0].workflowRuns;
+      expect(runs).toHaveLength(2);
+      expect(runs.find((run) => run.status === 'stopped')).toBeDefined();
+      expect(runs.find((run) => run.status === 'completed')).toMatchObject({
+        reachedGoal: true,
+      });
+      expect(engine.getIsRunning()).toBe(false);
+    });
+
+    it('signal_is_aborted_on_stop', async () => {
+      let resolveFirstAgent!: (value: string) => void;
+      const firstAgentPromise = new Promise<string>((resolve) => {
+        resolveFirstAgent = resolve;
+      });
+      let capturedSignal: AbortSignal | undefined;
+      const runAgent = jest.fn((_agent: WorkflowAgent, _prompt: string, context: { signal?: AbortSignal }) => {
+        capturedSignal = context.signal;
+        return firstAgentPromise;
+      });
+      const { engine } = createTwoAgentEngine({ runAgent });
+
+      const startPromise = engine.start();
+      await Promise.resolve();
+      expect(capturedSignal?.aborted).toBe(false);
+      await engine.stop();
+      expect(capturedSignal?.aborted).toBe(true);
+      resolveFirstAgent('writer-output');
+      await startPromise;
+    });
   });
 });

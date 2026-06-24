@@ -27,6 +27,25 @@ const PIPELINE_SINGLE_INVOKE_TOOL_NAMES = new Set([
   'execute_command',
 ]);
 
+/** Tools that still use legacy `execute_tool` (browser/Typst/Skill chat state). */
+const LEGACY_CHAT_ONLY_TOOL_NAMES = new Set([
+  'Skill',
+  'render_typst_to_svg',
+  'render_typst_to_pdf',
+  'compile_typst_file',
+  'get_current_workspace',
+  'browser_navigate',
+  'browser_get_page',
+  'browser_click',
+  'browser_type',
+  'browser_scroll',
+  'browser_get_text',
+  'browser_screenshot',
+  'browser_extract_content',
+  'browser_press_key',
+  'browser_wait',
+]);
+
 const AUTO_EDIT_SAFE_TOOLS = new Set([
   'read_file',
   'list_files',
@@ -58,6 +77,10 @@ const HIGH_RISK_TOOLS = new Set([
 
 export function isPipelineSingleInvokeTool(toolName: string): boolean {
   return PIPELINE_SINGLE_INVOKE_TOOL_NAMES.has(toolName);
+}
+
+export function isLegacyChatOnlyTool(toolName: string): boolean {
+  return LEGACY_CHAT_ONLY_TOOL_NAMES.has(toolName);
 }
 
 export function isMcpTool(toolName: string): boolean {

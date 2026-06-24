@@ -254,6 +254,11 @@ impl ToolRegistry {
         self.execute(req)
     }
 
+    /// Returns true when the tool is registered in the authoritative registry.
+    pub fn is_registered(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
     /// Check if a tool is concurrency-safe
     pub fn is_concurrency_safe(&self, name: &str) -> bool {
         self.tools
@@ -782,6 +787,103 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
         },
     );
 
+    // --- glob_search ---
+    registry.register(
+        "glob_search",
+        Arc::new(|args| {
+            let pattern = args
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing required parameter: pattern"))?;
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            let expanded_path = resolve_tool_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            let full_pattern = format!("{}/{}", expanded_path.display(), pattern);
+            let mut files = Vec::new();
+            for entry in glob::glob(&full_pattern)
+                .map_err(|e| anyhow::anyhow!("Invalid glob pattern: {}", e))?
+            {
+                if let Ok(path) = entry {
+                    if path.is_file() {
+                        files.push(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+            serde_json::to_string(&files)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize glob results: {}", e))
+        }),
+        ToolMetadata {
+            name: "glob_search".to_string(),
+            description: "Find files matching a glob pattern under the given directory.".to_string(),
+            is_read_only: true,
+            is_concurrency_safe: true,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string" },
+                    "path": { "type": "string" }
+                },
+                "required": ["pattern", "path"],
+                "additionalProperties": false
+            }),
+        },
+    );
+
+    // --- grep_files ---
+    registry.register(
+        "grep_files",
+        Arc::new(|args| {
+            let pattern = args
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing required parameter: pattern"))?;
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
+            let work_dir = args.get("work_dir").and_then(|v| v.as_str());
+            let expanded_path = resolve_tool_path(path, work_dir)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            let output = std::process::Command::new("grep")
+                .arg("-n")
+                .arg("--binary-files=without-match")
+                .arg("-r")
+                .arg(pattern)
+                .arg(&expanded_path)
+                .output()
+                .map_err(|e| anyhow::anyhow!("Cannot run grep: {}", e))?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            } else if output.status.code() == Some(1) {
+                Ok(format!("No matches found for '{}' in {}", pattern, path))
+            } else {
+                Err(anyhow::anyhow!(
+                    "grep error: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        }),
+        ToolMetadata {
+            name: "grep_files".to_string(),
+            description: "Search for a text pattern in files using grep.".to_string(),
+            is_read_only: true,
+            is_concurrency_safe: true,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string" },
+                    "path": { "type": "string" }
+                },
+                "required": ["pattern", "path"],
+                "additionalProperties": false
+            }),
+        },
+    );
+
     register_bootstrap_tool(
         registry,
         "pdf_read",
@@ -981,6 +1083,42 @@ mod tests {
         assert!(result.content.contains("python-ml-baseline"));
         assert!(work_dir.join("run_experiment.py").exists());
         assert!(work_dir.join("AUTORESEARCH.md").exists());
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    #[test]
+    fn registry_registers_glob_and_grep_tools() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+        assert!(registry.is_registered("glob_search"));
+        assert!(registry.is_registered("grep_files"));
+    }
+
+    #[tokio::test]
+    async fn modern_single_tool_path_still_executes_read_file() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        let work_dir = std::env::temp_dir().join(format!("pipi-registry-read-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+        let file_path = work_dir.join("sample.txt");
+        std::fs::write(&file_path, "hello registry").expect("sample file should exist");
+
+        let mut request = make_request(
+            "read_file",
+            serde_json::json!({ "path": "sample.txt" }),
+        );
+        request.work_dir = Some(work_dir.to_string_lossy().to_string());
+        request.source = super::super::ToolExecutionSource::AssistantToolCall;
+
+        let result = registry
+            .execute_with_context(&request, Some("session-modern"))
+            .await
+            .expect("read_file should execute through registry path");
+
+        assert!(!result.is_error);
+        assert_eq!(result.content, "hello registry");
 
         let _ = std::fs::remove_dir_all(work_dir);
     }

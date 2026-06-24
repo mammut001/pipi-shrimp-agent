@@ -298,6 +298,7 @@ describe('chatToolExecution', () => {
       toolCallId: 'tool-3',
       name: 'execute_command',
       workDir: '/tmp/workspace',
+      sessionId: 'session-1',
       source: 'assistant_tool_call',
     }));
     expect(results).toEqual([expect.objectContaining({
@@ -508,6 +509,7 @@ describe('chatToolExecution', () => {
     }));
     expect(invoke).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
       toolCallId: 'tool-5',
+      sessionId: 'session-1',
       approvalToken: 'approval-5',
       source: 'assistant_tool_call',
     }));

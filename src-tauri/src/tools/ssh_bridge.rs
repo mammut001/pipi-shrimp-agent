@@ -140,17 +140,22 @@ fn build_ssh_args(cfg: &SshConfig, binary: &str) -> anyhow::Result<(String, Stri
     Ok((parts.join(" "), env_prefix))
 }
 
+/// Build the shell command string for local or remote execution.
+///
+/// Local mode returns `remote_cmd` unchanged — the working directory is passed
+/// separately to `execute_bash_for_tool` so untrusted paths never appear in a
+/// `cd … &&` shell prefix (R2-04).
 fn build_remote_bash_command(cfg: &SshConfig, remote_cmd: &str) -> anyhow::Result<String> {
+    if cfg.mode == "local" {
+        return Ok(remote_cmd.to_string());
+    }
+
     let wd = if cfg.remote_work_dir.is_empty() {
         String::new()
     } else {
         format!("cd {} && ", shell_escape_path(&cfg.remote_work_dir)?)
     };
     let inner = format!("{}{}", wd, remote_cmd);
-
-    if cfg.mode == "local" {
-        return Ok(inner);
-    }
 
     let (prefix, env_prefix) = build_ssh_args(cfg, "ssh")?;
     Ok(format!(
@@ -209,17 +214,20 @@ pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<String> {
         .and_then(Value::as_str);
 
     let full_command = build_remote_bash_command(&cfg, command)?;
-    // AUDIT-FIX [fix-3#7] — Pin the local workdir to the system temp dir
-    // so the `ssh`/`sshpass` invocation is deterministic regardless of the
-    // caller's cwd. The previous `cwd=None` fell back to `"."` which the
-    // Tauri command resolves against the OS's notion of the current dir
-    // (varies across platforms and is influenced by file-association
-    // launches).
-    let pinned_workdir = Some(std::env::temp_dir().to_string_lossy().to_string());
+    // AUDIT-FIX [fix-3#7] — Pin the local workdir to the system temp dir for
+    // SSH client invocations so `ssh`/`sshpass` run from a deterministic cwd.
+    // Local mode instead passes `remote_work_dir` as the process cwd (R2-04).
+    let pinned_workdir = std::env::temp_dir().to_string_lossy().to_string();
+    let local_work_dir = if cfg.mode == "local" && !cfg.remote_work_dir.is_empty() {
+        Some(cfg.remote_work_dir.as_str())
+    } else {
+        None
+    };
+    let execution_work_dir = local_work_dir.unwrap_or(pinned_workdir.as_str());
     let result = execute_bash_for_tool(
         &full_command,
         None,
-        pinned_workdir.as_deref(),
+        Some(execution_work_dir),
         timeout_secs,
         execution_id,
         None,
@@ -335,4 +343,143 @@ pub fn execute_ssh_read_file(args: &Value) -> anyhow::Result<String> {
         "lineCount": result.stdout.lines().count(),
     }))
     .map_err(|e| anyhow::anyhow!("Failed to serialize SSH read result: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local_cfg(remote_work_dir: &str) -> SshConfig {
+        SshConfig {
+            mode: "local".to_string(),
+            host: String::new(),
+            user: String::new(),
+            port: 22,
+            auth_mode: "agent".to_string(),
+            key_path: String::new(),
+            password: String::new(),
+            remote_work_dir: remote_work_dir.to_string(),
+        }
+    }
+
+    fn ssh_cfg(remote_work_dir: &str) -> SshConfig {
+        SshConfig {
+            mode: "ssh".to_string(),
+            host: "example.com".to_string(),
+            user: "deploy".to_string(),
+            port: 22,
+            auth_mode: "agent".to_string(),
+            key_path: String::new(),
+            password: String::new(),
+            remote_work_dir: remote_work_dir.to_string(),
+        }
+    }
+
+    #[test]
+    fn shell_escape_simple_string() {
+        assert_eq!(shell_escape("abc").unwrap(), "'abc'");
+    }
+
+    #[test]
+    fn shell_escape_spaces() {
+        assert_eq!(shell_escape("a b").unwrap(), "'a b'");
+    }
+
+    #[test]
+    fn shell_escape_semicolon() {
+        assert_eq!(shell_escape("a;b").unwrap(), "'a;b'");
+    }
+
+    #[test]
+    fn shell_escape_dollar_sign() {
+        assert_eq!(shell_escape("a$b").unwrap(), "'a$b'");
+    }
+
+    #[test]
+    fn shell_escape_backtick() {
+        assert_eq!(shell_escape("a`b").unwrap(), "'a`b'");
+    }
+
+    #[test]
+    fn shell_escape_double_quote() {
+        assert_eq!(shell_escape("a\"b").unwrap(), "'a\"b'");
+    }
+
+    #[test]
+    fn shell_escape_single_quote() {
+        assert_eq!(shell_escape("a'b").unwrap(), "'a'\\''b'");
+    }
+
+    #[test]
+    fn shell_escape_empty_string() {
+        assert_eq!(shell_escape("").unwrap(), "''");
+    }
+
+    #[test]
+    fn shell_escape_path_with_parentheses() {
+        assert_eq!(
+            shell_escape_path("/tmp/(demo); echo PWNED").unwrap(),
+            "'/tmp/(demo); echo PWNED'"
+        );
+    }
+
+    #[test]
+    fn shell_escape_path_with_unicode() {
+        assert_eq!(shell_escape_path("/tmp/测试").unwrap(), "'/tmp/测试'");
+    }
+
+    #[test]
+    fn shell_escape_rejects_null_byte() {
+        assert!(shell_escape("a\0b").is_err());
+    }
+
+    #[test]
+    fn shell_escape_path_preserves_tilde_expansion() {
+        assert_eq!(shell_escape_path("~/work dir").unwrap(), "~/'work dir'");
+    }
+
+    #[test]
+    fn local_mode_does_not_embed_cd_prefix_for_workdir() {
+        let command = build_remote_bash_command(
+            &local_cfg("/tmp; echo PWNED"),
+            "echo SAFE",
+        )
+        .unwrap();
+        assert_eq!(command, "echo SAFE");
+        assert!(!command.contains("cd "));
+        assert!(!command.contains("PWNED"));
+    }
+
+    #[test]
+    fn ssh_mode_still_shell_escapes_workdir_and_command_wrapper() {
+        let command = build_remote_bash_command(&ssh_cfg("/remote/work"), "echo SAFE").unwrap();
+        assert!(command.contains("cd '/remote/work' && echo SAFE"));
+        assert!(command.contains("deploy@"));
+        assert!(command.contains("example.com"));
+    }
+
+    #[test]
+    fn local_upload_treats_injection_payload_as_single_path_argument() {
+        let command = build_upload_command(
+            &local_cfg("/work"),
+            "/tmp/foo; echo PWNED",
+            "/tmp/bar",
+        )
+        .unwrap();
+        assert_eq!(
+            command,
+            "cp -f '/tmp/foo; echo PWNED' '/tmp/bar'"
+        );
+    }
+
+    #[test]
+    fn local_read_file_treats_injection_payload_as_single_path_argument() {
+        let remote_cmd = format!(
+            "cat {}",
+            shell_escape_path("/etc/passwd; echo PWNED").unwrap()
+        );
+        let command = build_remote_bash_command(&local_cfg(""), &remote_cmd).unwrap();
+        assert_eq!(command, "cat '/etc/passwd; echo PWNED'");
+        assert!(!command.contains("cd "));
+    }
 }

@@ -114,9 +114,30 @@ type AgentLogger = (level: AgentLogLevel, message: string) => void;
 
 const PAGE_REFERENCE_ERROR_MARKERS = ['receiver is gone', 'send failed', 'No page'];
 
-const delay = (ms: number): Promise<void> => new Promise((resolve) => {
-  setTimeout(resolve, ms);
+const delay = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(new DOMException('Native browser task aborted', 'AbortError'));
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    signal?.removeEventListener('abort', onAbort);
+    resolve();
+  }, ms);
+
+  const onAbort = () => {
+    clearTimeout(timer);
+    reject(new DOMException('Native browser task aborted', 'AbortError'));
+  };
+
+  signal?.addEventListener('abort', onAbort, { once: true });
 });
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException('Native browser task aborted', 'AbortError');
+  }
+}
 
 const isPageReferenceError = (error: unknown): boolean => {
   const message = String(error);
@@ -441,6 +462,8 @@ export interface NativeAgentOptions {
   onStep?: (timing: NativeAgentStepTiming) => void;
   /** Called once when the run finishes with the full summary. */
   onRunSummary?: (summary: NativeAgentRunSummary) => void;
+  /** Cooperative cancellation for stopTask and diagnostics cancel hooks. */
+  signal?: AbortSignal;
 }
 
 export async function executeNativeBrowserTask(
@@ -464,11 +487,17 @@ export async function executeNativeBrowserTask(
     ...emptySummary(),
   };
 
+  assertNotAborted(options.signal);
+
   log('info', '[NativeAgent] Initializing CDP Connection...');
   try {
     await connectBrowserSession();
+    assertNotAborted(options.signal);
     log('success', '[NativeAgent] Browser connected via CDP!');
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw e;
+    }
     log('error', `[NativeAgent] Connection failed: ${e}`);
     throw new Error(`Failed to connect to local Chrome (is remote debugging enabled?)\nDetails: ${e}`);
   }
@@ -551,10 +580,11 @@ KEY RULES:
   } catch (e) {
     log('warning', `[NativeAgent] Navigation attempted: ${e}`);
   }
-  await delay(1200);
+  await delay(1200, options.signal);
   await injectOverlay();
 
   for (let step = 0; step < maxSteps && !isDone; step += 1) {
+    assertNotAborted(options.signal);
     const stepStartedAt = Date.now();
     const stepTiming: NativeAgentStepTiming = {
       step: step + 1,
@@ -671,6 +701,8 @@ KEY RULES:
       lastNavigationId = stepTiming.navigationId;
       lastUrl = stepTiming.url || lastUrl;
 
+      assertNotAborted(options.signal);
+
       // ── 2. Build prompt + call LLM ─────────────────────────────────────
       const pageContextBody = observation?.pageState
         ? formatBrowserPageStateForPrompt(observation.pageState)
@@ -699,8 +731,12 @@ KEY RULES:
           baseUrl: options.baseUrl || null,
           systemPrompt,
         });
+        assertNotAborted(options.signal);
         responseText = response.content;
       } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw error;
+        }
         llmFailed = true;
         log('error', `[NativeAgent] LLM error: ${error}`);
         throw error;
@@ -824,6 +860,7 @@ KEY RULES:
         pageState: observation?.pageState ?? null,
         log,
       });
+      assertNotAborted(options.signal);
       stepTiming.actionMs = Date.now() - execStartedAt;
       stepTiming.success = feedback.success;
       stepTiming.errorCode = feedback.errorCode;
@@ -848,7 +885,7 @@ KEY RULES:
       const waitStartedAt = Date.now();
       const postWait = shouldPostWait(envelope.actionName);
       if (postWait > 0) {
-        await delay(postWait);
+        await delay(postWait, options.signal);
       }
       stepTiming.postWaitMs = Date.now() - waitStartedAt;
 
@@ -898,6 +935,19 @@ KEY RULES:
       summary.steps.push(stepTiming);
       options.onStep?.(stepTiming);
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        stepTiming.success = false;
+        stepTiming.errorCode = 'aborted';
+        stepTiming.totalStepMs = Date.now() - stepStartedAt;
+        summary.steps.push(stepTiming);
+        options.onStep?.(stepTiming);
+        await removeOverlay();
+        summary.outcome = 'aborted';
+        summary.finishedAt = Date.now();
+        summary.totalMs = summary.finishedAt - summary.startedAt;
+        options.onRunSummary?.(summary);
+        throw error;
+      }
       stepTiming.success = false;
       stepTiming.errorCode = 'exception';
       stepTiming.totalStepMs = Date.now() - stepStartedAt;

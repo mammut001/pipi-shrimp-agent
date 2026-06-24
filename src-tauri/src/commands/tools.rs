@@ -6,10 +6,39 @@
 use crate::models::CancelToolExecutionResponse;
 use crate::tools::execution_policy::{self, ToolPolicyPreview};
 use crate::tools::process_manager;
-use crate::tools::{classify_tool_error_code, ToolCallRequest, ToolCallResult};
+use crate::tools::{classify_tool_error_code, ToolCallRequest, ToolCallResult, ToolExecutionSource};
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
+
+pub(crate) fn resolve_execute_single_tool_session_id(
+    source: ToolExecutionSource,
+    session_id: Option<&str>,
+) -> Result<Option<&str>, String> {
+    let trimmed = session_id.map(str::trim).filter(|value| !value.is_empty());
+
+    match source {
+        ToolExecutionSource::AssistantToolCall
+        | ToolExecutionSource::UserRequestedCommand
+        | ToolExecutionSource::ManualTerminal => trimmed
+            .ok_or_else(|| {
+                format!(
+                    "session_id is required for execute_single_tool from {}",
+                    source.as_str()
+                )
+            })
+            .map(Some),
+        ToolExecutionSource::AutoresearchPhase
+        | ToolExecutionSource::HeadlessAgent
+        | ToolExecutionSource::WorkflowAgent => Ok(trimmed),
+        ToolExecutionSource::Unknown => trimmed
+            .ok_or_else(|| {
+                "session_id is required for execute_single_tool with unknown execution source"
+                    .to_string()
+            })
+            .map(Some),
+    }
+}
 
 /// Shared state carrying the tool registry
 pub struct ToolRegistryState(pub Arc<Mutex<crate::tools::registry::ToolRegistry>>);
@@ -75,14 +104,32 @@ pub async fn execute_single_tool(
     >,
     #[allow(non_snake_case)] approvalToken: Option<String>,
     #[allow(non_snake_case)] executionMode: Option<String>,
+    #[allow(non_snake_case)] sessionId: Option<String>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<ToolCallResult, String> {
+    let source_value = source.unwrap_or_default();
+    let session_id_ref = match resolve_execute_single_tool_session_id(
+        source_value,
+        sessionId.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(message) => {
+            return Ok(ToolCallResult {
+                id: toolCallId.clone(),
+                name: name.clone(),
+                content: format!("Error: {}", message),
+                is_error: true,
+                error_code: Some("invalid_arguments".to_string()),
+            });
+        }
+    };
+
     let req = ToolCallRequest {
         id: toolCallId,
         name,
         arguments,
         work_dir: workDir,
-        source: source.unwrap_or_default(),
+        source: source_value,
         allowed_tools: allowedTools,
         api_key: apiKey,
         model,
@@ -95,7 +142,7 @@ pub async fn execute_single_tool(
     };
 
     let registry = state.0.lock().await;
-    match registry.execute_with_context(&req, None).await {
+    match registry.execute_with_context(&req, session_id_ref).await {
         Ok(result) => Ok(result),
         Err(error) => Ok(ToolCallResult {
             id: req.id,
@@ -132,4 +179,98 @@ pub async fn cancel_tool_execution(
             status: result.status,
             message: result.message,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::execution_policy::{enforce_request_policy, preview_request_policy};
+
+    #[test]
+    fn resolve_execute_single_tool_session_id_requires_assistant_session() {
+        let error = resolve_execute_single_tool_session_id(
+            ToolExecutionSource::AssistantToolCall,
+            None,
+        )
+        .expect_err("assistant tool calls must include session_id");
+
+        assert!(error.contains("session_id is required"));
+        assert!(error.contains("assistant_tool_call"));
+    }
+
+    #[test]
+    fn resolve_execute_single_tool_session_id_allows_autoresearch_optional() {
+        assert_eq!(
+            resolve_execute_single_tool_session_id(ToolExecutionSource::AutoresearchPhase, None)
+                .expect("autoresearch phase may omit session_id"),
+            None
+        );
+        assert_eq!(
+            resolve_execute_single_tool_session_id(
+                ToolExecutionSource::AutoresearchPhase,
+                Some("run-42"),
+            )
+            .expect("autoresearch phase accepts explicit session_id"),
+            Some("run-42")
+        );
+    }
+
+    #[test]
+    fn approval_token_consumption_requires_matching_session_id() {
+        let mut request = ToolCallRequest {
+            id: "tool-approval".to_string(),
+            name: "execute_command".to_string(),
+            arguments: serde_json::json!({
+                "command": "curl https://example.com",
+                "cwd": "/tmp/project"
+            })
+            .to_string(),
+            work_dir: Some("/tmp/project".to_string()),
+            source: ToolExecutionSource::AssistantToolCall,
+            allowed_tools: None,
+            api_key: None,
+            model: None,
+            base_url: None,
+            provider: None,
+            api_format: None,
+            provider_capabilities: None,
+            approval_token: None,
+            execution_mode: None,
+        };
+        let args = serde_json::json!({
+            "command": "curl https://example.com",
+            "cwd": "/tmp/project"
+        });
+
+        let preview = preview_request_policy(&request, &args, Some("session-a"))
+            .expect("preview should succeed");
+        let token = preview
+            .approval_token
+            .clone()
+            .expect("preview should issue approval token");
+
+        request.approval_token = Some(token.clone());
+        let wrong_session_error =
+            enforce_request_policy(&request, &args, Some("session-b")).expect_err(
+                "wrong session must not consume token",
+            );
+        assert!(wrong_session_error.to_string().contains("approval"));
+
+        request.approval_token = Some(token.clone());
+        enforce_request_policy(&request, &args, Some("session-a"))
+            .expect("matching session should consume token");
+
+        request.approval_token = Some(token);
+        let replay_error = enforce_request_policy(&request, &args, Some("session-a"))
+            .expect_err("token is single-use");
+        assert!(replay_error.to_string().contains("approval"));
+
+        let second_preview = preview_request_policy(&request, &args, Some("session-a"))
+            .expect("second preview should succeed");
+        request.approval_token = second_preview.approval_token;
+        let missing_session_error = enforce_request_policy(&request, &args, None).expect_err(
+            "missing session_id must not consume token",
+        );
+        assert!(missing_session_error.to_string().contains("approval"));
+    }
 }

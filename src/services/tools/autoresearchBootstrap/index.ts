@@ -47,12 +47,24 @@ function getParentDirectory(path: string): string {
   return index > 0 ? path.slice(0, index) : '.';
 }
 
+function resolveBootstrapSessionId(workDir?: string): string {
+  const normalized = workDir?.trim();
+  return normalized ? `autoresearch-bootstrap:${normalized}` : 'autoresearch-bootstrap';
+}
+
 async function invokeCoreTool(toolName: string, args: Record<string, unknown>, workDir?: string): Promise<string> {
-  return invoke<string>('execute_tool', {
-    toolName,
+  const result = await invoke<{ content: string; is_error: boolean }>('execute_single_tool', {
+    toolCallId: `bootstrap-${toolName}-${Date.now()}`,
+    name: toolName,
     arguments: JSON.stringify(args),
     workDir: workDir ?? null,
+    sessionId: resolveBootstrapSessionId(workDir),
+    source: 'autoresearch_phase',
   });
+  if (result.is_error) {
+    throw new Error(result.content);
+  }
+  return result.content;
 }
 
 async function ensureDirectory(path: string, workDir?: string): Promise<void> {

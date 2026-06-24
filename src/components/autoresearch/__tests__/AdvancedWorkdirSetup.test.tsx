@@ -15,6 +15,7 @@ var mockSettingsState = {
 
 var mockStoreState = {
   id: '',
+  loopState: 'idle' as 'idle' | 'running' | 'paused' | 'stopped' | 'error',
   sshConfig: null as any,
   runHistory: [] as any[],
   terminalVisible: false,
@@ -231,6 +232,7 @@ describe('AdvancedWorkdirSetup Expert Launch Cockpit UI Component', () => {
     root = createRoot(container);
     // Reset state before each test
     mockStoreState.id = '';
+    mockStoreState.loopState = 'idle';
     mockStoreState.sshConfig = null;
     mockStoreState.runHistory = [];
     mockSettingsState.activeConfigId = 'config-1';
@@ -349,6 +351,31 @@ describe('AdvancedWorkdirSetup Expert Launch Cockpit UI Component', () => {
     const text = container.textContent || '';
     // Connection status panel shows that connection is required
     expect(text).toContain('Test Connection first');
+  });
+
+  it('shows Configuring phase chip when idle with no active run', () => {
+    act(() => {
+      root.render(<AdvancedWorkdirSetup />);
+    });
+
+    const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');
+    expect(chip?.getAttribute('data-phase')).toBe('configuring');
+    expect(chip?.getAttribute('aria-label')).toBe('AutoResearch phase: 配置中');
+  });
+
+  it('shows Running phase chip when active run loopState is running', () => {
+    mockStoreState.id = 'run-active-1';
+    mockStoreState.loopState = 'running';
+    mockStoreState.runHistory = [];
+    mockGetSortedAutoResearchRuns.mockReturnValue([]);
+
+    act(() => {
+      root.render(<AdvancedWorkdirSetup />);
+    });
+
+    const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');
+    expect(chip?.getAttribute('data-phase')).toBe('running');
+    expect(chip?.getAttribute('aria-label')).toBe('AutoResearch phase: 运行中');
   });
 
   it('7. primary next action changes based on first missing field', () => {

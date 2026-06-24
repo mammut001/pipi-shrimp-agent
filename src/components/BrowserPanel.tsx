@@ -27,6 +27,7 @@ import {
   type BrowserPanelTone,
 } from './browserPanelModel';
 import { BrowserFailureRecovery } from './BrowserFailureRecovery';
+import { BrowserActionApprovalPrompt } from './BrowserActionApprovalPrompt';
 import { t } from '@/i18n';
 
 const QUICK_SITES = [
@@ -738,7 +739,8 @@ export const BrowserPanel: React.FC = () => {
         </div>
       )}
 
-      <div className="p-4 border-b border-gray-200 bg-white">
+      <div className="p-4 border-b border-gray-200 bg-white space-y-3">
+        <BrowserActionApprovalPrompt />
         <div className="flex gap-2">
           <input
             type="text"

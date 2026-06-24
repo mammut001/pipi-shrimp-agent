@@ -13,9 +13,22 @@
 | Test suites | 194，**24 failed** | **195 passed**，0 failed |
 | Tests | 1363，**34 failed** | **1381 passed**，1 skipped |
 
-**已修复 P0：** R1-01、R1-02、R1-03、R1-11、R4-01、R4-02、R4-03、R5-01、R5-03、R5-05、R7-07、R7-08、TS `pathValidation`（R7-01）
+**已修复 P0 / Critical（2026-06-24 检查点）：** 见 [p0-critical-checkpoint.md](./p0-critical-checkpoint.md)
 
-**尚未修复：** Rust R2-*、Browser R3-*、Workflow R6-01/02、Telegram R7-11 等 — 详见 [en/README.md](./en/README.md#remediation-post-audit)
+- 早期修复：R1-01–03、R4-01–03、R5-01/03/05、R7-01/07/08
+- 本轮修复：R2-01–04、R3-01–06、R6-01/02、R7-11
+
+**开放 Critical：** 0（backlog JSON）。下一阶段为 High 项（R3-07–10、R5-02、R7-04/06/12 等）与回归测试 — 详见检查点报告。
+
+## 修复路线图（Remediation backlog）
+
+从 10 轮审计提取的可执行 backlog，按 lane 分组、含 PR 执行顺序：
+
+| 文档 | 说明 |
+| ---- | ---- |
+| [p0-critical-checkpoint.md](./p0-critical-checkpoint.md) | P0/Critical 检查点报告（2026-06-24）：已修复清单、backlog 一致性、下一阶段 10 PR |
+| [remediation-roadmap.md](./remediation-roadmap.md) | 人类可读路线图：Recommended Next 10 PRs、Fixed/Verify 区、A–I lane |
+| [remediation-backlog.json](./remediation-backlog.json) | 机器可读 backlog（P0、Top 15 测试、开放安全项、AutoResearch、架构治理） |
 
 ## 审计范围
 

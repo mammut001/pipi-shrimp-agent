@@ -6,7 +6,7 @@
  *   - sensitive actions (checkout / pay / submit / send) ask
  *   - password / email / phone / address input fields ask
  *   - sensitive domains always ask
- *   - observe_only blocks everything
+ *   - observe_only blocks mutating actions
  */
 
 import {
@@ -192,14 +192,40 @@ describe('browserActionPolicy', () => {
   });
 
   describe('permission modes', () => {
-    it('observe_only blocks every action', () => {
-      const v = evaluateBrowserAction({
+    it('observe_only allows read-only observation actions', () => {
+      const waitVerdict = evaluateBrowserAction({
         actionName: 'wait',
         url: 'https://example.com',
         permissionMode: 'observe_only',
         payload: { milliseconds: 100 },
       });
-      expect(v.decision).toBe('block');
+      expect(waitVerdict.decision).toBe('allow');
+
+      const screenshotVerdict = evaluateBrowserAction({
+        actionName: 'screenshot_observe',
+        url: 'https://example.com',
+        permissionMode: 'observe_only',
+      });
+      expect(screenshotVerdict.decision).toBe('allow');
+    });
+
+    it('observe_only blocks mutating actions before approval', () => {
+      const clickVerdict = evaluateBrowserAction({
+        actionName: 'click_element',
+        url: 'https://example.com',
+        permissionMode: 'observe_only',
+        payload: { backend_node_id: 1 },
+      });
+      expect(clickVerdict.decision).toBe('block');
+      expect(clickVerdict.reason).toContain('Observe-only mode is enabled');
+
+      const navigateVerdict = evaluateBrowserAction({
+        actionName: 'navigate',
+        url: 'https://example.com',
+        permissionMode: 'observe_only',
+        payload: { url: 'https://other.example' },
+      });
+      expect(navigateVerdict.decision).toBe('block');
     });
 
     it('ask_each_action asks for every non-trivial action', () => {
@@ -220,6 +246,18 @@ describe('browserActionPolicy', () => {
         payload: { direction: 'up' },
       });
       expect(v.decision).toBe('allow');
+    });
+  });
+
+  describe('localStorage permission mode (R3-02)', () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    it('resolveBrowserActionPermissionMode reads observe_only from localStorage', async () => {
+      localStorage.setItem('PIPI_BROWSER_ACTION_PERMISSION_MODE', 'observe_only');
+      const { resolveBrowserActionPermissionMode } = await import('@/utils/browserFeatureFlags');
+      expect(resolveBrowserActionPermissionMode()).toBe('observe_only');
     });
   });
 

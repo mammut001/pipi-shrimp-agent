@@ -12,6 +12,7 @@ import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore'
 import { showBrowserWindow } from '@/utils/browserCommands';
 import { createTaskEnvelope } from '@/utils/browserTaskPlanner';
 import { BrowserDebugPanel } from './BrowserDebugPanel';
+import { BrowserActionApprovalPrompt } from './BrowserActionApprovalPrompt';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
 import {
   getBrowserPanelPrimaryActionKey,
@@ -604,6 +605,8 @@ export function BrowserMiniPreview() {
             )}
           </div>
         </div>
+
+        <BrowserActionApprovalPrompt />
 
         {showUserActionPrompt && (
           <div className="mt-2 flex flex-wrap gap-2">

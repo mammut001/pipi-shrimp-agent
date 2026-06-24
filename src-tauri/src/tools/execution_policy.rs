@@ -297,6 +297,18 @@ fn evaluate_request_policy(
         return evaluate_ssh_read_policy(req, args);
     }
 
+    if req.name == "cdp_execute_script" {
+        let script = args
+            .get("script")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        return Ok(evaluate_cdp_execute_script_policy(
+            req.source,
+            script,
+            req.execution_mode.as_deref(),
+        ));
+    }
+
     if is_mcp_tool(&req.name) {
         return Ok(match req.source {
             ToolExecutionSource::Unknown => {
@@ -605,6 +617,97 @@ pub fn preview_request_policy(
     })
 }
 
+fn is_trusted_browser_internal_script(script: &str) -> bool {
+    let trimmed = script.trim();
+    trimmed.contains("__ppa_overlay__")
+        || trimmed.contains("__ppa_style__")
+        || trimmed.contains("window.location.href")
+}
+
+fn evaluate_cdp_execute_script_policy(
+    source: ToolExecutionSource,
+    script: &str,
+    execution_mode: Option<&str>,
+) -> PolicyDecision {
+    if is_trusted_browser_internal_script(script) {
+        return match source {
+            ToolExecutionSource::Unknown | ToolExecutionSource::AutoresearchPhase => reject(
+                "Browser script execution denied by policy.",
+            ),
+            _ => allow(None),
+        };
+    }
+
+    let _ = execution_mode;
+    match source {
+        ToolExecutionSource::Unknown | ToolExecutionSource::AutoresearchPhase => {
+            reject("Browser script execution denied by policy.")
+        }
+        ToolExecutionSource::HeadlessAgent | ToolExecutionSource::WorkflowAgent => {
+            require_confirmation("Browser script execution requires approval.")
+        }
+        ToolExecutionSource::AssistantToolCall
+        | ToolExecutionSource::UserRequestedCommand
+        | ToolExecutionSource::ManualTerminal => {
+            require_confirmation("Browser script execution requires approval.")
+        }
+    }
+}
+
+pub fn enforce_cdp_execute_script_policy(
+    tool_call_id: &str,
+    script: &str,
+    source: ToolExecutionSource,
+    session_id: Option<&str>,
+    approval_token: Option<&str>,
+    execution_mode: Option<&str>,
+) -> AppResult<()> {
+    let decision = evaluate_cdp_execute_script_policy(source, script, execution_mode);
+    let arguments = serde_json::json!({ "script": script }).to_string();
+    let request = ToolCallRequest {
+        id: tool_call_id.to_string(),
+        name: "cdp_execute_script".to_string(),
+        arguments,
+        work_dir: None,
+        source,
+        allowed_tools: None,
+        api_key: None,
+        model: None,
+        base_url: None,
+        provider: None,
+        api_format: None,
+        provider_capabilities: None,
+        approval_token: approval_token.map(str::to_string),
+        execution_mode: execution_mode.map(str::to_string),
+    };
+
+    match decision.action {
+        PolicyAction::Allow => Ok(()),
+        PolicyAction::Reject => Err(AppError::SecurityError(
+            decision
+                .reason
+                .unwrap_or_else(|| "Browser script execution denied by policy.".to_string()),
+        )),
+        PolicyAction::RequireConfirmation => {
+            let Some(expected_session_id) = session_id else {
+                return Err(AppError::SecurityError(format!(
+                    "session_id is required for cdp_execute_script from {}",
+                    source.as_str()
+                )));
+            };
+            if consume_matching_approval(&request, Some(expected_session_id)) {
+                Ok(())
+            } else {
+                Err(AppError::SecurityError(
+                    decision
+                        .reason
+                        .unwrap_or_else(|| "Browser script execution requires approval.".to_string()),
+                ))
+            }
+        }
+    }
+}
+
 pub fn enforce_request_policy(
     req: &ToolCallRequest,
     args: &serde_json::Value,
@@ -878,6 +981,144 @@ mod tests {
             preview.decision, "awaiting_confirmation",
             "Bypass only relaxes AssistantToolCall; HeadlessAgent still requires approval"
         );
+    }
+
+    #[test]
+    fn cdp_execute_script_requires_policy_for_assistant_source() {
+        let error = enforce_cdp_execute_script_policy(
+            "tool-1",
+            "document.body.innerHTML = 'owned'",
+            ToolExecutionSource::AssistantToolCall,
+            None,
+            None,
+            None,
+        )
+        .expect_err("assistant arbitrary script without session should be rejected");
+
+        assert!(error.to_string().contains("session_id is required"));
+        assert!(!error.to_string().contains("owned"));
+    }
+
+    #[test]
+    fn cdp_execute_script_consumes_matching_approval_token() {
+        let script = "window.alert('probe')";
+        let args = serde_json::json!({ "script": script });
+        let mut request = make_request("cdp_execute_script");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.arguments = args.to_string();
+
+        let preview = preview_request_policy(&request, &args, Some("session-a"))
+            .expect("preview should succeed");
+        assert_eq!(preview.decision, "awaiting_confirmation");
+        let token = preview
+            .approval_token
+            .expect("preview should issue approval token");
+
+        let denied = enforce_cdp_execute_script_policy(
+            "tool-1",
+            script,
+            ToolExecutionSource::AssistantToolCall,
+            Some("session-a"),
+            None,
+            None,
+        )
+        .expect_err("missing token should be rejected");
+        assert!(denied.to_string().contains("approval"));
+        assert!(!denied.to_string().contains(script));
+
+        let wrong_session = enforce_cdp_execute_script_policy(
+            "tool-1",
+            script,
+            ToolExecutionSource::AssistantToolCall,
+            Some("session-b"),
+            Some(&token),
+            None,
+        )
+        .expect_err("token bound to another session should be rejected");
+        assert!(wrong_session.to_string().contains("approval"));
+
+        enforce_cdp_execute_script_policy(
+            "tool-1",
+            script,
+            ToolExecutionSource::AssistantToolCall,
+            Some("session-a"),
+            Some(&token),
+            None,
+        )
+        .expect("matching token should allow execution");
+
+        let replay = enforce_cdp_execute_script_policy(
+            "tool-1",
+            script,
+            ToolExecutionSource::AssistantToolCall,
+            Some("session-a"),
+            Some(&token),
+            None,
+        )
+        .expect_err("approval token must be single-use");
+        assert!(replay.to_string().contains("approval"));
+    }
+
+    #[test]
+    fn cdp_execute_script_denies_unknown_source() {
+        let error = enforce_cdp_execute_script_policy(
+            "tool-1",
+            "window.alert('x')",
+            ToolExecutionSource::Unknown,
+            Some("session-1"),
+            None,
+            None,
+        )
+        .expect_err("unknown source should be denied");
+
+        assert!(error.to_string().contains("denied by policy"));
+    }
+
+    #[test]
+    fn cdp_execute_script_allows_trusted_internal_overlay_for_headless_agent() {
+        enforce_cdp_execute_script_policy(
+            "tool-1",
+            "(function(){ if(document.getElementById('__ppa_overlay__'))return; })();",
+            ToolExecutionSource::HeadlessAgent,
+            None,
+            None,
+            None,
+        )
+        .expect("trusted overlay script should be allowed for headless agent");
+    }
+
+    #[test]
+    fn cdp_execute_script_manual_user_arbitrary_requires_approval() {
+        let error = enforce_cdp_execute_script_policy(
+            "tool-1",
+            "window.alert('manual')",
+            ToolExecutionSource::UserRequestedCommand,
+            Some("session-1"),
+            None,
+            None,
+        )
+        .expect_err("manual user arbitrary script without approval should be rejected");
+
+        assert!(error.to_string().contains("approval"));
+        assert!(!error.to_string().contains("manual"));
+    }
+
+    #[test]
+    fn cdp_execute_script_denies_secret_leak_in_error_message() {
+        let secret_script = "const token = 'super-secret-token'; token;";
+        let error = enforce_cdp_execute_script_policy(
+            "tool-1",
+            secret_script,
+            ToolExecutionSource::Unknown,
+            Some("session-1"),
+            None,
+            None,
+        )
+        .expect_err("unknown arbitrary script should be denied");
+
+        let message = error.to_string();
+        assert!(message.contains("denied by policy"));
+        assert!(!message.contains("super-secret-token"));
     }
 
     #[test]

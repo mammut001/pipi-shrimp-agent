@@ -10,7 +10,7 @@ import { runPostToolUseHooks, type PostHookContext } from '../../services/tools/
 import { runPreToolUseHooks } from '../../services/tools/preToolUseHooks';
 import {
   canAutoApproveTool,
-  isPipelineSingleInvokeTool,
+  isLegacyChatOnlyTool,
   type ToolPolicyPreviewResult,
   type PermissionMode,
 } from '../../services/tools/toolExecutionPolicy';
@@ -812,7 +812,19 @@ async function executeSerialTool(
     if (tool.name === 'agent_tool') {
       toolResultContent = await executeAgentTool(tool, effectiveArgs, activeSessionId, workDir, deps);
       toolDidFail = toolResultContent.startsWith('Error:');
-    } else if (isPipelineSingleInvokeTool(tool.name)) {
+    } else if (isLegacyChatOnlyTool(tool.name)) {
+      toolResultContent = await deps.invoke<string>('execute_tool', {
+        toolName: tool.name,
+        arguments: effectiveArgs,
+        workDir,
+        toolCallId: tool.id,
+        sessionId: activeSessionId,
+        approvalToken,
+        source: 'assistant_tool_call',
+        executionMode: executionModeId ?? null,
+      });
+      toolDidFail = toolResultContent.startsWith('Error:');
+    } else {
       const nativeResult = await deps.invoke<{
         content: string;
         is_error: boolean;
@@ -821,19 +833,13 @@ async function executeSerialTool(
         name: tool.name,
         arguments: effectiveArgs,
         workDir,
+        sessionId: activeSessionId,
         source: 'assistant_tool_call',
         approvalToken,
         executionMode: executionModeId ?? null,
       });
       toolResultContent = nativeResult.content;
       toolDidFail = Boolean(nativeResult.is_error);
-    } else {
-      toolResultContent = await deps.invoke<string>('execute_tool', {
-        toolName: tool.name,
-        arguments: effectiveArgs,
-        workDir,
-      });
-      toolDidFail = toolResultContent.startsWith('Error:');
     }
     finalStatus = resolveToolStepStatus(toolResultContent, toolDidFail);
     uiStore.updateTaskStep(tool.id, finalStatus);

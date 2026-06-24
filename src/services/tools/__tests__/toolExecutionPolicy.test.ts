@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { canAutoApproveTool } from '../toolExecutionPolicy';
+import { canAutoApproveTool, isLegacyChatOnlyTool } from '../toolExecutionPolicy';
 
 describe('toolExecutionPolicy', () => {
   it('Bypass mode auto-approves normal project-scoped tools', () => {
@@ -21,6 +21,19 @@ describe('toolExecutionPolicy', () => {
     expect(canAutoApproveTool('bypass', 'browser_click')).toBe(false);
     expect(canAutoApproveTool('bypass', 'browser_navigate')).toBe(false);
     expect(canAutoApproveTool('bypass', 'agent_tool')).toBe(false);
+  });
+
+  it('routes registry-backed tools away from legacy execute_tool', () => {
+    expect(isLegacyChatOnlyTool('read_file')).toBe(false);
+    expect(isLegacyChatOnlyTool('write_file')).toBe(false);
+    expect(isLegacyChatOnlyTool('execute_command')).toBe(false);
+    expect(isLegacyChatOnlyTool('glob_search')).toBe(false);
+  });
+
+  it('keeps browser and typst tools on the legacy chat-only path', () => {
+    expect(isLegacyChatOnlyTool('browser_click')).toBe(true);
+    expect(isLegacyChatOnlyTool('compile_typst_file')).toBe(true);
+    expect(isLegacyChatOnlyTool('Skill')).toBe(true);
   });
 
   it('keeps auto-edits limited to the safe allowlist', () => {

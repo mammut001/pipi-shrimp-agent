@@ -16,6 +16,7 @@ const mockSendTelegramText = jest.fn();
 const mockEnqueueTelegramTaskFromMessage = jest.fn();
 const mockGetTelegramTaskForReference = jest.fn();
 const mockGetTelegramBinding = jest.fn();
+const mockIsTelegramInboundChatAuthorized = jest.fn();
 
 jest.mock('@/store/telegramStore', () => ({
   useTelegramStore: {
@@ -42,6 +43,11 @@ jest.mock('@/services/telegram/taskOrchestrator', () => ({
 
 jest.mock('@/services/telegram/taskService', () => ({
   getTelegramBinding: (...args: unknown[]) => mockGetTelegramBinding(...args),
+}));
+
+jest.mock('@/services/telegram/chatAuthorization', () => ({
+  isTelegramInboundChatAuthorized: (...args: unknown[]) => mockIsTelegramInboundChatAuthorized(...args),
+  TELEGRAM_UNAUTHORIZED_CHAT_MESSAGE: '此聊天未授权使用该机器人。',
 }));
 
 function buildBinding(overrides: Partial<TelegramBinding> = {}): TelegramBinding {
@@ -93,6 +99,7 @@ describe('handleTelegramUpdate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     telegramStoreState.botInfo.username = 'PipiBot';
+    mockIsTelegramInboundChatAuthorized.mockResolvedValue(true);
     mockBuildTelegramHelpText.mockReturnValue('help');
     mockBuildTelegramTaskResultText.mockReturnValue('result');
     mockBuildTelegramTaskStatusText.mockReturnValue('status');
@@ -159,5 +166,34 @@ describe('handleTelegramUpdate', () => {
       'AutoResearch 的 Telegram 控制面还在下一阶段接入。',
       99,
     );
+  });
+
+  it('rejects unauthorized chats before command dispatch', async () => {
+    mockIsTelegramInboundChatAuthorized.mockResolvedValue(false);
+
+    const { handleTelegramUpdate } = await import('../commandRouter');
+    await handleTelegramUpdate(buildUpdate('/status'));
+
+    expect(mockIsTelegramInboundChatAuthorized).toHaveBeenCalledWith(42);
+    expect(mockRequireTelegramBindingForMode).not.toHaveBeenCalled();
+    expect(mockSendTelegramText).toHaveBeenCalledWith(
+      42,
+      '此聊天未授权使用该机器人。',
+      99,
+    );
+    expect(mockSendTelegramText.mock.calls[0][1]).not.toMatch(/\d{3,}/);
+  });
+
+  it('checks authorization before routing /task commands', async () => {
+    const binding = buildBinding();
+    const task = buildTask();
+    mockRequireTelegramBindingForMode.mockResolvedValue({ binding, created: false });
+    mockEnqueueTelegramTaskFromMessage.mockResolvedValue({ task, created: true });
+
+    const { handleTelegramUpdate } = await import('../commandRouter');
+    await handleTelegramUpdate(buildUpdate('/task review the latest changes'));
+
+    expect(mockIsTelegramInboundChatAuthorized).toHaveBeenCalledWith(42);
+    expect(mockEnqueueTelegramTaskFromMessage).toHaveBeenCalled();
   });
 });

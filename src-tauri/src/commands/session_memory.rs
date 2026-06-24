@@ -58,39 +58,42 @@ _一步一步，尝试了什么，做了什么？每一步非常简短的总结�
 // 路径工具
 // ============================================================================
 
+fn app_fallback_memory_dir() -> PathBuf {
+    dirs::document_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("PiPi-Shrimp")
+        .join(SESSION_MEMORY_APP_FALLBACK_DIR)
+}
+
+/// Resolve the validated `.pipi-shrimp` directory for session memory.
+///
+/// - `None` / empty → app-managed fallback under Documents|HOME
+/// - explicit `work_dir` → must pass `validate_work_dir` or the command fails
+fn validated_session_memory_dir(work_dir: Option<&str>) -> Result<PathBuf, String> {
+    match work_dir {
+        Some(d) if !d.is_empty() => {
+            let validated = validate_work_dir(Path::new(d))?;
+            Ok(validated.join(SESSION_MEMORY_DIR))
+        }
+        _ => Ok(app_fallback_memory_dir()),
+    }
+}
+
 /**
  * 获取 Session Memory 文件路径
  *
  * 优先级: {workDir}/.pipi-shrimp > {Documents|HOME}/PiPi-Shrimp/session-memory
  */
-fn get_memory_path(work_dir: Option<&str>) -> PathBuf {
-    get_memory_dir(work_dir).join(SESSION_MEMORY_FILENAME)
+fn get_memory_path(work_dir: Option<&str>) -> Result<PathBuf, String> {
+    Ok(validated_session_memory_dir(work_dir)?.join(SESSION_MEMORY_FILENAME))
 }
 
 /**
  * 获取 Session Memory 目录路径
  */
-fn get_memory_dir(work_dir: Option<&str>) -> PathBuf {
-    match work_dir {
-        Some(d) if !d.is_empty() => {
-            // AUDIT-FIX [fix-3#1] — Validate work_dir is inside a writable
-            // user root (HOME, /tmp, app data) so a malicious caller can't
-            // redirect the session memory path to e.g. `/etc/cron.daily/`
-            // and overwrite arbitrary files.
-            let dir = PathBuf::from(d);
-            // Discard the canonical form returned by `validate_work_dir`
-            // for now; just use it to log a warning if validation fails.
-            // The result is still used (joined below) so we use a
-            // reference for the validation call.
-            let _ = validate_work_dir(&dir);
-            dir.join(SESSION_MEMORY_DIR)
-        }
-        _ => dirs::document_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("PiPi-Shrimp")
-            .join(SESSION_MEMORY_APP_FALLBACK_DIR),
-    }
+fn get_memory_dir(work_dir: Option<&str>) -> Result<PathBuf, String> {
+    validated_session_memory_dir(work_dir)
 }
 
 /// AUDIT-FIX [fix-3#1] — Return the writable roots the user trusts. The
@@ -127,7 +130,7 @@ fn writable_roots() -> Vec<PathBuf> {
 fn validate_work_dir(work_dir: &Path) -> Result<PathBuf, String> {
     let canonical = work_dir.canonicalize().map_err(|e| {
         format!(
-            "Cannot resolve session memory work_dir '{}': {}",
+            "Invalid work directory for session memory: cannot resolve '{}': {}",
             work_dir.display(),
             e
         )
@@ -138,7 +141,7 @@ fn validate_work_dir(work_dir: &Path) -> Result<PathBuf, String> {
         .any(|root| crate::commands::path_security::is_within_dir(&canonical, root));
     if !allowed {
         return Err(format!(
-            "Refusing to use work_dir '{}' for session memory: outside writable roots",
+            "Invalid work directory for session memory: '{}' is outside writable roots",
             canonical.display()
         ));
     }
@@ -168,8 +171,8 @@ pub struct InitResult {
 
 #[tauri::command]
 pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, String> {
-    let dir = get_memory_dir(work_dir.as_deref());
-    let path = get_memory_path(work_dir.as_deref());
+    let dir = get_memory_dir(work_dir.as_deref())?;
+    let path = get_memory_path(work_dir.as_deref())?;
 
     // 创建目录（0o700）
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create session memory dir: {}", e))?;
@@ -216,7 +219,7 @@ pub fn init_session_memory(work_dir: Option<String>) -> Result<InitResult, Strin
  */
 #[tauri::command]
 pub fn get_session_memory(work_dir: Option<String>) -> Result<Option<String>, String> {
-    let path = get_memory_path(work_dir.as_deref());
+    let path = get_memory_path(work_dir.as_deref())?;
 
     if !path.exists() {
         return Ok(None);
@@ -243,7 +246,7 @@ pub fn get_session_memory(work_dir: Option<String>) -> Result<Option<String>, St
  */
 #[tauri::command]
 pub fn write_session_memory(content: String, work_dir: Option<String>) -> Result<(), String> {
-    let path = get_memory_path(work_dir.as_deref());
+    let path = get_memory_path(work_dir.as_deref())?;
 
     // 确保目录存在
     if let Some(parent) = path.parent() {
@@ -310,7 +313,7 @@ pub fn update_session_memory_section(
             MAX_BODY_BYTES
         ));
     }
-    let path = get_memory_path(work_dir.as_deref());
+    let path = get_memory_path(work_dir.as_deref())?;
     if !path.exists() {
         return Err("Session memory not initialized".to_string());
     }
@@ -390,7 +393,7 @@ pub fn update_session_memory_section(
  */
 #[tauri::command]
 pub fn is_session_memory_empty(work_dir: Option<String>) -> Result<bool, String> {
-    let path = get_memory_path(work_dir.as_deref());
+    let path = get_memory_path(work_dir.as_deref())?;
 
     if !path.exists() {
         return Ok(true);
@@ -405,29 +408,29 @@ pub fn is_session_memory_empty(work_dir: Option<String>) -> Result<bool, String>
  * 检查 Session Memory 是否存在
  */
 #[tauri::command]
-pub fn session_memory_exists(work_dir: Option<String>) -> bool {
-    let path = get_memory_path(work_dir.as_deref());
-    path.exists()
+pub fn session_memory_exists(work_dir: Option<String>) -> Result<bool, String> {
+    let path = get_memory_path(work_dir.as_deref())?;
+    Ok(path.exists())
 }
 
 /**
  * 获取 Session Memory 目录路径
  */
 #[tauri::command]
-pub fn get_session_memory_dir(work_dir: Option<String>) -> String {
-    get_memory_dir(work_dir.as_deref())
+pub fn get_session_memory_dir(work_dir: Option<String>) -> Result<String, String> {
+    Ok(get_memory_dir(work_dir.as_deref())?
         .to_string_lossy()
-        .to_string()
+        .to_string())
 }
 
 /**
  * 获取 Session Memory 文件路径
  */
 #[tauri::command]
-pub fn get_session_memory_path(work_dir: Option<String>) -> String {
-    get_memory_path(work_dir.as_deref())
+pub fn get_session_memory_path(work_dir: Option<String>) -> Result<String, String> {
+    Ok(get_memory_path(work_dir.as_deref())?
         .to_string_lossy()
-        .to_string()
+        .to_string())
 }
 
 /**
@@ -436,7 +439,7 @@ pub fn get_session_memory_path(work_dir: Option<String>) -> String {
  */
 #[tauri::command]
 pub fn get_session_memory_sections(work_dir: Option<String>) -> Result<Vec<String>, String> {
-    let path = get_memory_path(work_dir.as_deref());
+    let path = get_memory_path(work_dir.as_deref())?;
 
     if !path.exists() {
         return Err("Session memory not initialized".to_string());
@@ -503,7 +506,7 @@ pub struct SessionMemoryInfo {
 pub fn get_session_memory_info(
     work_dir: Option<String>,
 ) -> Result<Option<SessionMemoryInfo>, String> {
-    let path = get_memory_path(work_dir.as_deref());
+    let path = get_memory_path(work_dir.as_deref())?;
 
     if !path.exists() {
         return Ok(None);
@@ -547,4 +550,114 @@ pub fn get_session_memory_info(
         is_empty,
         sections,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn clean_temp_work_dir() -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("pipishrimp-session-memory-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&path).expect("create temp work dir");
+        path
+    }
+
+    fn disallowed_system_dir() -> PathBuf {
+        #[cfg(unix)]
+        {
+            PathBuf::from("/etc")
+        }
+        #[cfg(windows)]
+        {
+            PathBuf::from(r"C:\Windows")
+        }
+    }
+
+    #[test]
+    fn invalid_work_dir_returns_error() {
+        let invalid = disallowed_system_dir().to_string_lossy().into_owned();
+        let error = init_session_memory(Some(invalid)).expect_err("invalid work_dir must fail");
+        assert!(
+            error.contains("Invalid work directory for session memory"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn invalid_work_dir_does_not_write_memory() {
+        let invalid = disallowed_system_dir();
+        let blocked_path = invalid.join(SESSION_MEMORY_DIR).join(SESSION_MEMORY_FILENAME);
+        let existed_before = blocked_path.exists();
+
+        let error = init_session_memory(Some(invalid.to_string_lossy().into_owned()))
+            .expect_err("invalid work_dir must fail");
+        assert!(
+            error.contains("Invalid work directory for session memory"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            blocked_path.exists(),
+            existed_before,
+            "session memory must not be created under disallowed work_dir"
+        );
+    }
+
+    #[test]
+    fn valid_work_dir_still_writes_memory() {
+        let work_dir = clean_temp_work_dir();
+        let work_dir_str = work_dir.to_string_lossy().into_owned();
+
+        let result = init_session_memory(Some(work_dir_str.clone())).expect("valid work_dir");
+        assert!(result.is_new);
+
+        let memory_path = work_dir.join(SESSION_MEMORY_DIR).join(SESSION_MEMORY_FILENAME);
+        assert_eq!(result.path, memory_path.to_string_lossy());
+        assert!(memory_path.exists());
+
+        let _ = fs::remove_dir_all(&work_dir);
+    }
+
+    #[test]
+    fn missing_work_dir_uses_app_fallback() {
+        let dir = get_memory_dir(None).expect("fallback dir should resolve");
+        assert!(dir.ends_with(SESSION_MEMORY_APP_FALLBACK_DIR));
+    }
+
+    #[test]
+    fn read_path_propagates_invalid_work_dir() {
+        let invalid = disallowed_system_dir().to_string_lossy().into_owned();
+        let error = get_session_memory(Some(invalid)).expect_err("read must reject invalid work_dir");
+        assert!(
+            error.contains("Invalid work directory for session memory"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn write_path_propagates_invalid_work_dir() {
+        let invalid = disallowed_system_dir().to_string_lossy().into_owned();
+        let error = write_session_memory("updated".to_string(), Some(invalid))
+            .expect_err("write must reject invalid work_dir");
+        assert!(
+            error.contains("Invalid work directory for session memory"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn section_update_propagates_invalid_work_dir() {
+        let invalid = disallowed_system_dir().to_string_lossy().into_owned();
+        let error = update_session_memory_section(
+            "Current State".to_string(),
+            "blocked".to_string(),
+            Some(invalid),
+        )
+        .expect_err("section update must reject invalid work_dir");
+        assert!(
+            error.contains("Invalid work directory for session memory"),
+            "unexpected error: {error}"
+        );
+    }
 }

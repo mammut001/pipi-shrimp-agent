@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { t, getCurrentLocale } from '@/i18n';
+import type { AutoResearchRunStatus } from '@/services/autoresearch/history';
+import type { SetupPhaseLoopState } from '@/services/autoresearch/setupPhase';
 import type { SshConfig, AutoResearchRunRecord } from '@/store/autoresearchStore';
 import { AutoResearchActiveRunBanner } from '../AutoResearchSetupHelpers';
 import { ManualSectionCard } from './ManualSectionCard';
@@ -41,6 +43,8 @@ interface ManualLaunchCockpitProps {
   setupError: string | null;
   isStarting: boolean;
   activeRun: AutoResearchRunRecord | null;
+  loopState?: SetupPhaseLoopState | null;
+  activeRunStatus?: AutoResearchRunStatus | null;
   providerReady: boolean;
   agentConfigError: string;
   readiness: ManualSetupReadiness;
@@ -82,6 +86,8 @@ export function ManualLaunchCockpit({
   setupError,
   isStarting,
   activeRun,
+  loopState = null,
+  activeRunStatus = null,
   providerReady,
   agentConfigError,
   readiness,
@@ -401,6 +407,8 @@ export function ManualLaunchCockpit({
               handleStart={handleStart}
               handleViewActiveRun={handleViewActiveRun}
               activeRunId={activeRun ? activeRun.id : null}
+              loopState={loopState}
+              activeRunStatus={activeRunStatus}
             />
           </div>
         </div>

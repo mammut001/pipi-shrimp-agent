@@ -6,7 +6,7 @@
  * each tool call so the UI can pause the agent and surface an approval gate.
  *
  * Modes:
- *   - observe_only   — every action is blocked.
+ *   - observe_only   — mutating actions are blocked; read-only observation allowed.
  *   - ask_each_action — every non-trivial action prompts the user.
  *   - auto_safe      — safe actions run automatically; risky actions ask.
  *
@@ -250,6 +250,15 @@ const SAFE_ACTIONS = new Set([
   'ask_user',
 ]);
 
+/** Read-only actions allowed while observe_only is active. */
+export const OBSERVE_ONLY_ALLOWED_ACTIONS = new Set([
+  ...SAFE_ACTIONS,
+  'wait_for_selector',
+]);
+
+export const OBSERVE_ONLY_BLOCK_REASON =
+  'Observe-only mode is enabled; browser action was blocked.';
+
 const classify = (ctx: BrowserActionPolicyContext): { sensitive: boolean; reason: string; risk: BrowserActionPolicyRisk } => {
   if (isSensitiveDomain(ctx.url)) {
     return {
@@ -293,9 +302,17 @@ export const evaluateBrowserAction = (
   const mode: BrowserActionPermissionMode = ctx.permissionMode ?? 'auto_safe';
 
   if (mode === 'observe_only') {
+    if (OBSERVE_ONLY_ALLOWED_ACTIONS.has(ctx.actionName)) {
+      return {
+        decision: 'allow',
+        reason: 'Read-only observation action under observe_only mode.',
+        riskLevel: 'low',
+        reasonFromMode: true,
+      };
+    }
     return {
       decision: 'block',
-      reason: 'Observe-only mode is active. Actions are disabled.',
+      reason: OBSERVE_ONLY_BLOCK_REASON,
       riskLevel: 'high',
       reasonFromMode: true,
     };

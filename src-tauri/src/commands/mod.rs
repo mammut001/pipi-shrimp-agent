@@ -20,6 +20,7 @@ pub mod config;
 pub mod database_bridge; // SQLite persistence bridge commands
 pub mod doc; // Document management commands
 pub mod file;
+pub mod legacy_execute_tool;
 pub mod mcp; // MCP (Model Context Protocol) server management
 pub mod models;
 pub mod path_security; // Path validation - defense in depth

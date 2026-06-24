@@ -175,6 +175,8 @@ export class WorkflowEngine {
   private readonly agentOutputs = new Map<string, string>();
   private isRunning = false;
   private stopRequested = false;
+  private abortController: AbortController | null = null;
+  private runToken = 0;
   private totalSteps = 0;
   private workingDirectory = '';
   private currentRunId = '';
@@ -226,8 +228,11 @@ export class WorkflowEngine {
     }
 
     store.setRunning(false, null);
+    this.abortController?.abort();
+    this.abortController = null;
     this.isRunning = false;
     this.stopRequested = false;
+    this.runToken += 1;
     this.totalSteps = 0;
     this.agentOutputs.clear();
     this.transcripts.clear();
@@ -237,8 +242,14 @@ export class WorkflowEngine {
   }
 
   async stop(): Promise<void> {
+    if (this.stopRequested) {
+      this.abortController?.abort();
+      return;
+    }
+
     this.stopRequested = true;
     this.isRunning = false;
+    this.abortController?.abort();
     const store = useWorkflowStore.getState();
     if (this.currentRunId) {
       store.updateWorkflowRun(this.currentRunId, {
@@ -285,6 +296,7 @@ export class WorkflowEngine {
       prompt,
       {
         runId,
+        signal: this.abortController?.signal,
         onStreamChunk: options?.disableStreaming ? undefined : ((agentId, chunk, fullContent) => {
           if (!this.shouldAcceptRunMutation(runId)) return;
           this.onStreamChunk?.(agentId, chunk, fullContent);
@@ -532,9 +544,12 @@ ${output}
       successCriteria,
     });
     const localRunId = crypto.randomUUID();
+    const localRunToken = this.runToken + 1;
 
     this.isRunning = true;
     this.stopRequested = false;
+    this.abortController = new AbortController();
+    this.runToken = localRunToken;
     this.totalSteps = 0;
     this.currentRunId = localRunId;
     this.currentInstanceId = snapshot.instanceId;
@@ -560,14 +575,51 @@ ${output}
     try {
       this.workingDirectory = await this.deps.createRunDirectory(localRunId);
     } catch (error) {
-      // AUDIT-FIX [fix-5#1] — Surface the failure via the store's error
-      // channel so the user sees a clear message and the run is marked as
-      // failed. Previously the error was silently swallowed and the run
-      // continued with an empty working directory, which later caused
-      // confusing "file not found" errors deep in the agent pipeline.
+      const reason = error instanceof Error ? error.message : String(error);
+      const failureMessage = `Failed to create workflow run directory: ${reason}`;
       // eslint-disable-next-line no-console
       console.error('[workflow] createRunDirectory failed:', error);
+
+      const failedRun: WorkflowRun = {
+        id: localRunId,
+        title: `${projectGoal.slice(0, 60)}${projectGoal.length > 60 ? '...' : ''}`,
+        projectGoal,
+        successCriteria,
+        status: 'error',
+        startTime: this.deps.now(),
+        endTime: this.deps.now(),
+        agents: snapshot.agents.map((agent) => ({
+          agentId: agent.id,
+          agentName: agent.name,
+          status: 'pending',
+        })),
+        runDirectory: '',
+        currentIteration: 0,
+        goalEvaluations: [],
+        reachedGoal: false,
+      };
+      store.addWorkflowRun(failedRun, snapshot.instanceId);
+
+      updateDiagnosticsTask(localRunId, {
+        state: 'failed',
+        cancelable: false,
+        error: failureMessage,
+      });
+
+      useUIStore.getState().addNotification('error', `❌ 工作流失败：${failureMessage}`);
+
+      this.isRunning = false;
+      this.stopRequested = false;
+      if (this.runToken === localRunToken) {
+        this.abortController = null;
+      }
+      this.totalSteps = 0;
+      this.currentRunId = '';
+      this.currentInstanceId = '';
       this.workingDirectory = '';
+      store.setRunning(false, null);
+      store.setActiveRunId(null, snapshot.instanceId);
+      return;
     }
 
     const run: WorkflowRun = {
@@ -690,9 +742,10 @@ ${output}
       });
       useUIStore.getState().addNotification('error', `❌ 工作流失败：${errorMessage}`);
     } finally {
-      if (this.currentRunId === localRunId) {
+      if (this.currentRunId === localRunId && this.runToken === localRunToken) {
         this.isRunning = false;
         this.stopRequested = false;
+        this.abortController = null;
         this.totalSteps = 0;
         store.setRunning(false, null);
         this.currentRunId = '';

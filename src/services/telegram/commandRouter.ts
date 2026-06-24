@@ -8,6 +8,10 @@ import {
   requireTelegramBindingForMode,
 } from '@/services/telegram/bindings';
 import {
+  isTelegramInboundChatAuthorized,
+  TELEGRAM_UNAUTHORIZED_CHAT_MESSAGE,
+} from '@/services/telegram/chatAuthorization';
+import {
   buildTelegramHelpText,
   buildTelegramTaskResultText,
   buildTelegramTaskStatusText,
@@ -124,6 +128,16 @@ export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void
   const botUsername = useTelegramStore.getState().botInfo?.username;
   const normalizedCommand = normalizeTelegramCommand(parsedCommand.command, botUsername);
   if (!normalizedCommand) {
+    return;
+  }
+
+  const chatAuthorized = await isTelegramInboundChatAuthorized(message.chat.id);
+  if (!chatAuthorized) {
+    await sendTelegramText(
+      message.chat.id,
+      TELEGRAM_UNAUTHORIZED_CHAT_MESSAGE,
+      message.messageId,
+    );
     return;
   }
 

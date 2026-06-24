@@ -15,6 +15,12 @@ use crate::services::chat::session_service::{
     reset_token_estimate_service, save_message_to_db_service, send_message_service,
     start_session_service, update_session_cwd_service, update_session_title_service,
 };
+use crate::commands::legacy_execute_tool::{
+    build_legacy_tool_request, is_legacy_chat_only_tool, reject_legacy_execute_tool,
+    LEGACY_EXECUTE_TOOL_DISABLED_MSG,
+};
+use crate::commands::tools::ToolRegistryState;
+use crate::tools::ToolExecutionSource;
 use crate::utils::{AppError, AppResult};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -218,7 +224,10 @@ pub async fn update_session_cwd(_app: AppHandle, session_id: String, cwd: String
 }
 
 /**
- * Execute a tool (function call)
+ * Legacy chat-scoped tool entry point (browser, Typst, Skill).
+ *
+ * Registry-backed tools are rejected here (R2-01). Production callers must
+ * use `execute_single_tool` or `execute_tool_batch`.
  */
 #[tauri::command]
 pub async fn execute_tool(
@@ -227,6 +236,12 @@ pub async fn execute_tool(
     work_dir: Option<String>,
     browser_state: tauri::State<'_, Arc<Mutex<BrowserController>>>,
     font_state: tauri::State<'_, crate::FontDbState>,
+    state: tauri::State<'_, ToolRegistryState>,
+    #[allow(non_snake_case)] toolCallId: Option<String>,
+    #[allow(non_snake_case)] sessionId: Option<String>,
+    #[allow(non_snake_case)] approvalToken: Option<String>,
+    source: Option<ToolExecutionSource>,
+    #[allow(non_snake_case)] executionMode: Option<String>,
     #[allow(non_snake_case)] apiKey: Option<String>,
     model: Option<String>,
     #[allow(non_snake_case)] baseUrl: Option<String>,
@@ -236,224 +251,52 @@ pub async fn execute_tool(
         crate::claude::provider::ProviderCapabilities,
     >,
 ) -> AppResult<String> {
-    println!("🔧 Executing tool: {} with args: {}", tool_name, arguments);
-
-    // Parse arguments from JSON string
     let args: serde_json::Value = serde_json::from_str(&arguments)
         .map_err(|e| AppError::InternalError(format!("Invalid tool arguments: {}", e)))?;
 
-    // === Phase 6: Rust-side path/command validation (defense-in-depth) ===
-    // This is a backup to the TypeScript-side preToolUseHooks validation
-    use crate::commands::path_security;
+    let registry_contains_tool = {
+        let registry = state.0.lock().await;
+        registry.is_registered(&tool_name)
+    };
+    reject_legacy_execute_tool(&tool_name, registry_contains_tool)?;
 
-    match tool_name.as_str() {
-        "read_file" | "write_file" | "create_directory" | "path_exists" | "list_files" => {
-            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
-                    return Err(AppError::SecurityError(e.message.clone()));
-                }
-            }
-        }
-        "search_files" | "glob_search" | "grep_files" => {
-            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
-                    return Err(AppError::SecurityError(e.message.clone()));
-                }
-            }
-        }
-        "pdf_read" => {
-            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
-                    return Err(AppError::SecurityError(e.message.clone()));
-                }
-            }
-        }
-        "scaffold_generate" | "git_init_workdir" => {
-            if let Some(path) = args.get("workDir").and_then(|v| v.as_str()) {
-                if let Err(e) = path_security::validate_path(path, work_dir.as_deref()) {
-                    return Err(AppError::SecurityError(e.message.clone()));
-                }
-            }
-        }
-        "execute_command" => {
-            if let Some(command) = args.get("command").and_then(|v| v.as_str()) {
-                if let Err(e) = path_security::validate_command(command) {
-                    return Err(AppError::SecurityError(e.message.clone()));
-                }
-            }
-        }
-        _ => {}
-    }
+    debug_assert!(is_legacy_chat_only_tool(&tool_name));
+
+    let request = build_legacy_tool_request(
+        tool_name.clone(),
+        arguments,
+        work_dir.clone(),
+        toolCallId,
+        approvalToken,
+        source,
+        executionMode,
+        apiKey,
+        model,
+        baseUrl,
+        provider,
+        apiFormat,
+        providerCapabilities,
+    );
+    crate::tools::execution_policy::enforce_request_policy(
+        &request,
+        &args,
+        sessionId.as_deref(),
+    )
+    .map_err(|e| AppError::SecurityError(e.to_string()))?;
 
     if let Some(browser_call) = parse_browser_chat_tool_call(&tool_name, &args)? {
         let runtime = LiveBrowserChatRuntime { browser_state };
         return Ok(execute_browser_chat_tool_call(browser_call, &runtime).await);
     }
 
-    // Execute tool and convert result to JSON
     let result_json = match tool_name.as_str() {
-        "pdf_read"
-        | "paper_extract_meta"
-        | "baseline_extract"
-        | "arxiv_search"
-        | "scaffold_generate"
-        | "git_init_workdir"
-        | "bootstrap_finalize" => {
-            let provider_context = match (apiKey, model) {
-                (Some(api_key), Some(model_name)) if !api_key.trim().is_empty() && !model_name.trim().is_empty() => {
-                    Some(crate::tools::autoresearch_bootstrap::BootstrapProviderContext {
-                        api_key,
-                        model: model_name,
-                        base_url: baseUrl.filter(|value| !value.trim().is_empty()),
-                        provider: provider.filter(|value| !value.trim().is_empty()),
-                        api_format: apiFormat.filter(|value| !value.trim().is_empty()),
-                        provider_capabilities: providerCapabilities,
-                    })
-                }
-                _ => None,
-            };
-
-            let context = crate::tools::autoresearch_bootstrap::BootstrapExecutionContext {
-                work_dir: work_dir.clone(),
-                provider: provider_context,
-            };
-
-            match crate::tools::autoresearch_bootstrap::execute_tool(&tool_name, &args, &context)
-                .await?
-            {
-                Some(result) => result,
-                None => unreachable!("bootstrap tool should have been handled"),
-            }
-        }
-        "read_file" => {
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for read_file".to_string()))?;
-            match crate::commands::file::read_file_for_tool(path, work_dir.as_deref()) {
-                Ok(result) => serde_json::to_string(&result)
-                    .map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?,
-                Err(error) => serde_json::json!({
-                    "error": true,
-                    "error_kind": error.error_kind,
-                    "message": error.message,
-                    "path": error.path,
-                    "cause": error.cause,
-                }).to_string(),
-            }
-        }
-        "write_file" => {
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for write_file".to_string()))?;
-            let content = args.get("content")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'content' argument for write_file".to_string()))?;
-            match crate::commands::file::write_file_for_tool(path, content, work_dir.as_deref()) {
-                Ok(result) => serde_json::to_string(&result)
-                    .map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?,
-                Err(error) => serde_json::json!({
-                    "error": true,
-                    "error_kind": error.error_kind,
-                    "message": error.message,
-                    "path": error.path,
-                    "cause": error.cause,
-                }).to_string(),
-            }
-        }
-        "execute_command" => {
-            let command = args.get("command")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'command' argument for execute_command".to_string()))?;
-            let work_dir_override = args.get("cwd").and_then(|v| v.as_str());
-            let windows_shell_profile = args
-                .get("windowsShellProfile")
-                .cloned()
-                .map(serde_json::from_value::<crate::tools::shell_profile::WindowsShellProfile>)
-                .transpose()
-                .map_err(|e| AppError::InternalError(format!("Invalid windowsShellProfile: {}", e)))?;
-            let result = crate::commands::code::execute_bash_for_tool(
-                command,
-                work_dir_override,
-                work_dir.as_deref(),
-                None,
-                None,
-                windows_shell_profile,
-            )?;
-            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
-        }
-        "create_directory" => {
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for create_directory".to_string()))?;
-            match crate::commands::file::create_directory_for_tool(path, work_dir.as_deref()) {
-                Ok(result) => serde_json::to_string(&result)
-                    .map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?,
-                Err(error) => serde_json::json!({
-                    "error": true,
-                    "error_kind": error.error_kind,
-                    "message": error.message,
-                    "path": error.path,
-                    "cause": error.cause,
-                }).to_string(),
-            }
-        }
-        "path_exists" => {
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for path_exists".to_string()))?;
-            let result = crate::commands::file::path_exists(path.to_string(), work_dir.clone()).await?;
-            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
-        }
-        "list_files" => {
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for list_files".to_string()))?;
-            let pattern = args.get("pattern")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let result = crate::commands::file::list_files(path.to_string(), pattern, work_dir.clone()).await?;
-            serde_json::to_string(&result).map_err(|e| AppError::InternalError(format!("Failed to serialize: {}", e)))?
-        }
-        "search_files" => {
-            let pattern = args.get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'pattern' argument for search_files".to_string()))?;
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for search_files".to_string()))?;
-            let extensions = args.get("extensions")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect());
-            crate::commands::search::search_files(pattern.to_string(), path.to_string(), extensions, work_dir.clone()).await?
-        }
-        "glob_search" => {
-            let pattern = args.get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'pattern' argument for glob_search".to_string()))?;
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for glob_search".to_string()))?;
-            crate::commands::search::glob_search(pattern.to_string(), path.to_string(), work_dir.clone()).await?
-        }
-        "grep_files" => {
-            let pattern = args.get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'pattern' argument for grep_files".to_string()))?;
-            let path = args.get("path")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::InternalError("Missing 'path' argument for grep_files".to_string()))?;
-            crate::commands::search::grep_files(pattern.to_string(), path.to_string(), work_dir.clone()).await?
-        }
-        // get_current_workspace 由 TS 侧拦截（chatStore.ts executeTool），
-        // 直接从内存中的 session.workDir 返回，不会走到 Rust 这里。
-        // 这个分支是安全兜底：万一绕过 TS 直接调用 execute_tool，返回提示而不是崩溃。
         "get_current_workspace" => {
             serde_json::json!({
                 "error": false,
                 "message": "get_current_workspace is handled by the frontend. The workspace path is injected into the system prompt automatically."
-            }).to_string()
+            })
+            .to_string()
         }
-
         "Skill" => {
             let skill_name = args.get("skill")
                 .and_then(|v| v.as_str())
@@ -580,28 +423,11 @@ pub async fn execute_tool(
             }).to_string()
         }
 
-        // 第一层防御：unknown tool 返回合法 JSON，让 Claude 自己 fallback 到文本回复
         _ => {
-            let supported_tools = vec![
-                "read_file", "write_file", "append_file", "list_files", "path_exists",
-                "create_directory", "code_execution", "search_files", "glob_search",
-                "grep_files", "get_current_workspace",
-                "browser_navigate", "browser_get_page", "browser_click", "browser_type",
-                "browser_scroll", "browser_get_text", "browser_screenshot",
-                "browser_extract_content", "browser_press_key", "browser_wait",
-                "Skill", "render_typst_to_svg", "render_typst_to_pdf", "compile_typst_file"
-            ];
-            return Ok(serde_json::json!({
-                "error": true,
-                "error_kind": "tool_not_found",
-                "message": format!(
-                    "工具 '{}' 不存在或暂不支持。可用工具: {}",
-                    tool_name,
-                    supported_tools.join(", ")
-                ),
-                "tool": tool_name,
-                "cause": format!("Supported tools: {}", supported_tools.join(", "))
-            }).to_string());
+            return Err(AppError::SecurityError(format!(
+                "Tool '{}' is not supported by legacy execute_tool. {}",
+                tool_name, LEGACY_EXECUTE_TOOL_DISABLED_MSG
+            )));
         }
     };
 

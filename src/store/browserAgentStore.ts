@@ -35,6 +35,7 @@ import {
   isBrowserPageAgentLegacyEnabled,
   isBrowserVisionFallbackEnabled,
   getBrowserLivePreviewIntervalMs,
+  resolveBrowserActionPermissionMode,
 } from '../utils/browserFeatureFlags';
 import { resolveBrowserEngine } from '../utils/browserEngine';
 import type { BrowserAutomationEngine } from '../types/browserEngine';
@@ -52,7 +53,30 @@ import type {
   LogEntry,
 } from '../types/browser';
 // CDP mode: tiered dispatch for complex/authenticated tasks
-import { executeNativeBrowserTask as executeCdpTask } from '../utils/nativeBrowserAgent';
+import {
+  executeNativeBrowserTask as executeCdpTask,
+  type NativeAgentOptions,
+  type NativeAgentRunSummary,
+} from '../utils/nativeBrowserAgent';
+import type {
+  BrowserActionPolicyContext,
+  BrowserActionPolicyVerdict,
+} from '../utils/browserActionPolicy';
+import {
+  cancelAllPendingBrowserActionApprovals,
+  createBrowserActionApprovalId,
+  resolveBrowserActionApproval,
+  summarizeBrowserActionApproval,
+  waitForBrowserActionApproval,
+  type BrowserPendingActionApproval,
+} from './browser/browserActionApproval';
+import {
+  evaluateBrowserAgentStartGate,
+  evaluateCdpSurfaceMatchGate,
+  resolvePreviewSurfaceUrl,
+  type BrowserAgentStartGateResult,
+} from './browser/browserAgentStartGate';
+import { getCurrentBrowserUrl } from '../utils/browserPageStateClient';
 import {
   parseInspectionResult,
 } from '../utils/browserInspection';
@@ -121,6 +145,108 @@ let _completionTimerTaskId: string | null = null;
 let _errorTimerId: ReturnType<typeof setTimeout> | null = null;
 let _errorTimerTaskId: string | null = null;
 
+const createBrowserApproveAction = (
+  get: () => BrowserAgentState & BrowserAgentActions,
+  set: (partial: Partial<BrowserAgentState>) => void,
+  controller: AbortController,
+  localRunToken: number,
+  shouldAcceptTaskCompletion: () => boolean,
+): NonNullable<NativeAgentOptions['approveAction']> => {
+  return async (
+    verdict: BrowserActionPolicyVerdict,
+    context: BrowserActionPolicyContext,
+  ): Promise<boolean> => {
+    if (!shouldAcceptTaskCompletion() || controller.signal.aborted) {
+      return false;
+    }
+
+    const taskId = get().pendingTask?.id ?? 'browser-task';
+    const id = createBrowserActionApprovalId();
+    const summaryFields = summarizeBrowserActionApproval(verdict, context);
+
+    set({
+      pendingBrowserActionApproval: {
+        id,
+        taskId,
+        taskRunToken: localRunToken,
+        ...summaryFields,
+        createdAt: Date.now(),
+      },
+    });
+
+    try {
+      return await waitForBrowserActionApproval({
+        id,
+        signal: controller.signal,
+        isStillValid: () => (
+          shouldAcceptTaskCompletion()
+          && get().pendingBrowserActionApproval?.id === id
+          && get().pendingBrowserActionApproval?.taskRunToken === localRunToken
+        ),
+      });
+    } finally {
+      const pending = get().pendingBrowserActionApproval;
+      if (pending?.id === id) {
+        set({ pendingBrowserActionApproval: null });
+      }
+    }
+  };
+};
+
+const buildCdpTaskRunSummaryHandler = (
+  shouldAcceptTaskCompletion: () => boolean,
+  addLog: BrowserAgentActions['addLog'],
+): NonNullable<NativeAgentOptions['onRunSummary']> => (
+  summary: NativeAgentRunSummary,
+) => {
+  if (!shouldAcceptTaskCompletion()) {
+    return;
+  }
+  try {
+    const obs = useBrowserObservabilityStore.getState();
+    obs.setNativeRunStats({
+      total_steps: summary.steps.length,
+      full_snapshots: summary.fullSnapshots,
+      light_observations: summary.lightObservations,
+      interactive_observations: summary.interactiveObservations,
+      screenshots: summary.screenshots,
+      loop_detections: summary.loopDetections,
+      malformed_responses: summary.malformedResponses,
+      llm_retries: summary.llmRetries,
+      cache_hits: summary.cacheHits,
+      cache_misses: summary.cacheMisses,
+      policy_approvals: summary.policyApprovals,
+      policy_denials: summary.policyDenials,
+      average_step_ms: summary.steps.length > 0
+        ? Math.round(summary.steps.reduce((acc, step) => acc + step.totalStepMs, 0) / summary.steps.length)
+        : null,
+      slowest_step_ms: summary.steps.reduce((max, step) => Math.max(max, step.totalStepMs), 0) || null,
+      total_runtime_ms: summary.totalMs,
+      outcome: summary.outcome,
+      steps: summary.steps.map((step) => ({
+        step: step.step,
+        engine: step.engine,
+        url: step.url,
+        navigation_id: step.navigationId,
+        observation_level: step.observationLevel,
+        observation_ms: step.observationMs,
+        prompt_chars: step.promptChars,
+        llm_ms: step.llmMs,
+        action_name: step.actionName,
+        action_ms: step.actionMs,
+        post_wait_ms: step.postWaitMs,
+        screenshot_ms: step.screenshotMs,
+        total_step_ms: step.totalStepMs,
+        success: step.success,
+        error_code: step.errorCode ?? null,
+        reused_cache: step.reusedCache,
+      })),
+    });
+  } catch (error) {
+    addLog('warning', `[NativeAgent] Failed to publish run summary: ${error}`);
+  }
+};
+
 /**
  * Extended browser agent state interface
  */
@@ -150,6 +276,7 @@ interface BrowserAgentState {
   logs: LogEntry[];
   screenshots: string[];
   _abortController: AbortController | null;
+  _taskRunToken: number;
   _screenshotInterval: ReturnType<typeof setInterval> | null;
   _isLivePreviewEnabled: boolean;
 
@@ -161,6 +288,9 @@ interface BrowserAgentState {
 
   /** Guard against concurrent inspections — only one at a time */
   _isInspecting: boolean;
+
+  /** Pending sensitive-action approval surfaced to the browser panel UI (R3-01). */
+  pendingBrowserActionApproval: BrowserPendingActionApproval | null;
 }
 
 /**
@@ -175,6 +305,8 @@ interface BrowserAgentActions {
   executeTask: (task: string) => Promise<void>;
   executeTaskEnvelope: (envelope: BrowserTaskEnvelope) => Promise<void>;
   stopTask: () => void;
+  approveBrowserAction: (id?: string) => boolean;
+  rejectBrowserAction: (id?: string) => boolean;
   bindTask: (task: BrowserTaskEnvelope) => void;
   clearTask: () => void;
   resumePendingTask: () => Promise<void>;
@@ -240,11 +372,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   logs: [],
   screenshots: [],
   _abortController: null,
+  _taskRunToken: 0,
   _screenshotInterval: null,
   _isLivePreviewEnabled: true,
 
   // Inspection guard
   _isInspecting: false,
+  pendingBrowserActionApproval: null,
 
   // Presentation
   presentationMode: 'hidden',
@@ -790,39 +924,56 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       return;
     }
 
-    // Safety check - block only on clearly bad auth states (skip for CDP mode)
-    const { pendingTask } = get();
-    const useCdp = pendingTask?.executionMode === 'cdp';
+    const pendingTaskForStart = get().pendingTask ?? currentTask;
+    const useCdp = pendingTaskForStart?.executionMode === 'cdp';
 
-    if (!useCdp) {
-      const blockedStates: BrowserAuthState[] = ['auth_required', 'mfa_required', 'captcha_required', 'expired', 'unauthenticated'];
-      if (blockedStates.includes(authState)) {
-        addLog('error', t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState));
-        set({ status: 'error', error: t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState) });
-        updateDiagnosticsTask(currentTask.id, {
-          state: 'failed',
-          cancelable: false,
-          error: t('browserAgent.log.needLoginOrVerify').replace('{authState}', authState),
-        });
-        return;
-      }
-      // If inspection explicitly failed (safeForAgent=false with known block reason), block
-      // Use store authState (not inspection.authState) — executeTaskEnvelope may have reset it to 'unknown'
-      if (inspection && !inspection.safeForAgent && authState !== 'unknown') {
-        addLog('error', t('browserAgent.log.pageNotSafe'));
-        set({ status: 'error', error: t('browserAgent.log.pageNotSafe') });
-        updateDiagnosticsTask(currentTask.id, {
-          state: 'failed',
-          cancelable: false,
-          error: t('browserAgent.log.pageNotSafe'),
-        });
+    const rejectAgentStart = (gate: Extract<BrowserAgentStartGateResult, { allowed: false }>) => {
+      const errorMessage = t(gate.messageKey);
+      const logMessage = gate.logParams
+        ? t(gate.logKey).replace('{authState}', gate.logParams.authState)
+        : t(gate.logKey);
+      addLog('error', logMessage);
+      set({ status: 'error', error: errorMessage });
+      updateDiagnosticsTask(currentTask.id, {
+        state: 'failed',
+        cancelable: false,
+        error: errorMessage,
+      });
+    };
+
+    if (useCdp) {
+      const previewUrl = resolvePreviewSurfaceUrl(
+        inspection,
+        get().currentUrl,
+        pendingTaskForStart,
+      );
+      const surfaceGate = await evaluateCdpSurfaceMatchGate(previewUrl, getCurrentBrowserUrl);
+      if (!surfaceGate.allowed) {
+        rejectAgentStart(surfaceGate);
         return;
       }
     }
 
+    const startGate = evaluateBrowserAgentStartGate(authState, inspection);
+    if (!startGate.allowed) {
+      rejectAgentStart(startGate);
+      return;
+    }
+
+    const { pendingTask } = get();
+
     // Create abort controller for this task
     const controller = new AbortController();
-    set({ _abortController: controller, status: 'running' });
+    const localRunToken = get()._taskRunToken + 1;
+    const shouldAcceptTaskCompletion = (): boolean => (
+      get()._taskRunToken === localRunToken && get()._abortController === controller
+    );
+
+    set({
+      _abortController: controller,
+      _taskRunToken: localRunToken,
+      status: 'running',
+    });
     updateDiagnosticsTask(currentTask.id, {
       state: 'running',
       cancelable: true,
@@ -847,56 +998,28 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
         // CDP Tier: use external Chrome via nativeBrowserAgent
         addLog('info', t('browserAgent.log.cdpModeStart').replace('{task}', task.substring(0, 50)));
         const targetUrl = get().pendingTask?.targetUrl;
+        const permissionMode = resolveBrowserActionPermissionMode();
+        if (permissionMode === 'observe_only') {
+          addLog('info', t('browserAgent.log.observeOnlyModeActive'));
+        }
         const resultText = await executeCdpTask(task, config.apiKey, config.model || 'claude-3-5-sonnet-20241022', {
           baseUrl: config.baseUrl,
           onLog: addLog,
           targetUrl,
-          onRunSummary: (summary) => {
-            try {
-              const obs = useBrowserObservabilityStore.getState();
-              obs.setNativeRunStats({
-                total_steps: summary.steps.length,
-                full_snapshots: summary.fullSnapshots,
-                light_observations: summary.lightObservations,
-                interactive_observations: summary.interactiveObservations,
-                screenshots: summary.screenshots,
-                loop_detections: summary.loopDetections,
-                malformed_responses: summary.malformedResponses,
-                llm_retries: summary.llmRetries,
-                cache_hits: summary.cacheHits,
-                cache_misses: summary.cacheMisses,
-                policy_approvals: summary.policyApprovals,
-                policy_denials: summary.policyDenials,
-                average_step_ms: summary.steps.length > 0
-                  ? Math.round(summary.steps.reduce((acc, step) => acc + step.totalStepMs, 0) / summary.steps.length)
-                  : null,
-                slowest_step_ms: summary.steps.reduce((max, step) => Math.max(max, step.totalStepMs), 0) || null,
-                total_runtime_ms: summary.totalMs,
-                outcome: summary.outcome,
-                steps: summary.steps.map((step) => ({
-                  step: step.step,
-                  engine: step.engine,
-                  url: step.url,
-                  navigation_id: step.navigationId,
-                  observation_level: step.observationLevel,
-                  observation_ms: step.observationMs,
-                  prompt_chars: step.promptChars,
-                  llm_ms: step.llmMs,
-                  action_name: step.actionName,
-                  action_ms: step.actionMs,
-                  post_wait_ms: step.postWaitMs,
-                  screenshot_ms: step.screenshotMs,
-                  total_step_ms: step.totalStepMs,
-                  success: step.success,
-                  error_code: step.errorCode ?? null,
-                  reused_cache: step.reusedCache,
-                })),
-              });
-            } catch (error) {
-              addLog('warning', `[NativeAgent] Failed to publish run summary: ${error}`);
-            }
-          },
+          signal: controller.signal,
+          permissionMode,
+          approveAction: createBrowserApproveAction(
+            get,
+            set,
+            controller,
+            localRunToken,
+            shouldAcceptTaskCompletion,
+          ),
+          onRunSummary: buildCdpTaskRunSummaryHandler(shouldAcceptTaskCompletion, addLog),
         });
+        if (!shouldAcceptTaskCompletion()) {
+          return;
+        }
         addLog('success', t('browserAgent.log.cdpModeComplete').replace('{result}', resultText));
         const completedTaskId = get().pendingTask?.id || null;
         if (completedTaskId) {
@@ -906,7 +1029,12 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
             detail: resultText || undefined,
           });
         }
-        set({ status: 'completed', lastCompletedTaskId: completedTaskId, lastTaskResult: resultText || null });
+        set({
+          status: 'completed',
+          lastCompletedTaskId: completedTaskId,
+          lastTaskResult: resultText || null,
+          _abortController: null,
+        });
         return;
       }
 
@@ -924,7 +1052,19 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
           baseUrl: config.baseUrl,
           onLog: addLog,
           targetUrl: pendingTask?.targetUrl,
+          signal: controller.signal,
+          permissionMode: resolveBrowserActionPermissionMode(),
+          approveAction: createBrowserApproveAction(
+            get,
+            set,
+            controller,
+            localRunToken,
+            shouldAcceptTaskCompletion,
+          ),
         });
+        if (!shouldAcceptTaskCompletion()) {
+          return;
+        }
         const cdpTaskId = get().pendingTask?.id || null;
         if (cdpTaskId) {
           updateDiagnosticsTask(cdpTaskId, {
@@ -933,7 +1073,12 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
             detail: cdpResult || undefined,
           });
         }
-        set({ status: 'completed', lastCompletedTaskId: cdpTaskId, lastTaskResult: cdpResult || null });
+        set({
+          status: 'completed',
+          lastCompletedTaskId: cdpTaskId,
+          lastTaskResult: cdpResult || null,
+          _abortController: null,
+        });
         return;
       }
 
@@ -1136,22 +1281,57 @@ Complete the task efficiently and call "done" when finished.`;
     await get().confirmLoginAndResume();
   },
 
+  approveBrowserAction: (id?: string) => {
+    const pending = get().pendingBrowserActionApproval;
+    const targetId = id ?? pending?.id;
+    if (!targetId || !pending || pending.id !== targetId) {
+      return false;
+    }
+    if (pending.taskRunToken !== get()._taskRunToken || !get()._abortController) {
+      resolveBrowserActionApproval(targetId, false);
+      set({ pendingBrowserActionApproval: null });
+      return false;
+    }
+    const resolved = resolveBrowserActionApproval(targetId, true);
+    if (resolved) {
+      set({ pendingBrowserActionApproval: null });
+      get().addLog('info', t('browserAgent.approval.allowed'));
+    }
+    return resolved;
+  },
+
+  rejectBrowserAction: (id?: string) => {
+    const pending = get().pendingBrowserActionApproval;
+    const targetId = id ?? pending?.id;
+    if (!targetId || !pending || pending.id !== targetId) {
+      return false;
+    }
+    const resolved = resolveBrowserActionApproval(targetId, false);
+    if (resolved) {
+      set({ pendingBrowserActionApproval: null });
+      get().addLog('info', t('browserAgent.approval.denied'));
+    }
+    return resolved;
+  },
+
   stopTask: () => {
     const { addLog, _abortController } = get();
     const taskId = get().pendingTask?.id;
 
-    if (_abortController) {
-      _abortController.abort();
-      set({ _abortController: null });
-      addLog('info', t('browserAgent.log.stoppingTask'));
-      if (taskId) {
-        updateDiagnosticsTask(taskId, {
-          state: 'cancelled',
-          cancelable: false,
-        });
-      }
-    } else {
+    if (!_abortController) {
       addLog('info', t('browserAgent.log.noRunningTask'));
+      return;
+    }
+
+    cancelAllPendingBrowserActionApprovals();
+    _abortController.abort();
+    set({ _abortController: null, pendingBrowserActionApproval: null, status: 'idle' });
+    addLog('info', t('browserAgent.log.stoppingTask'));
+    if (taskId) {
+      updateDiagnosticsTask(taskId, {
+        state: 'cancelled',
+        cancelable: false,
+      });
     }
   },
 
