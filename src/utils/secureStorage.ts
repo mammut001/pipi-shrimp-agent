@@ -97,13 +97,12 @@ class KeychainProvider implements SecureStorageProvider {
       // The plugin is provided as `@tauri-apps/plugin-secure-store`
       // by tauri-plugin-secure-store. Until the project adds the
       // dep, this dynamic import will fail and we'll fall back to
-      // localStorage in the factory. The `@ts-expect-error` keeps
-      // tsc --noEmit clean while the optional dep is absent; the
-      // try/catch makes the runtime safe regardless.
-      const mod = (await import(
-        // @ts-expect-error optional tauri plugin dep, intentionally absent
-        /* @vite-ignore */ '@tauri-apps/plugin-secure-store'
-      )) as unknown as typeof this.plugin;
+      // localStorage in the factory. The `@vite-ignore` directive
+      // tells Rollup not to bundle the dep (it may not be
+      // installed); the module path is split into a const so the
+      // tsc + Rollup analyzers don't try to resolve it.
+      const moduleName = '@tauri-apps/plugin-secure-store';
+      const mod = (await import(/* @vite-ignore */ moduleName)) as unknown as typeof this.plugin;
       this.plugin = mod;
     } catch {
       this.plugin = null;
