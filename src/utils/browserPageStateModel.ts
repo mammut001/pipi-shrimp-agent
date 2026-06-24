@@ -134,14 +134,35 @@ export const resolveBrowserActionTarget = (
     };
   }
 
-  if (elementId == null) {
+  if (elementId != null) {
+    const matched = pageState?.elements.find((element) => element.index === elementId);
+    return {
+      elementId,
+      backendNodeId: matched?.backend_node_id,
+      navigationId,
+    };
+  }
+
+  const selector = typeof payload.selector === 'string' ? payload.selector.trim() : '';
+  if (!selector) {
     return null;
   }
 
-  const matched = pageState?.elements.find((element) => element.index === elementId);
+  const matchedBySelector = pageState?.elements.find((element) => {
+    const hint = element.selector_hint?.trim();
+    if (!hint) {
+      return false;
+    }
+    return hint === selector;
+  });
+
+  if (!matchedBySelector) {
+    return null;
+  }
+
   return {
-    elementId,
-    backendNodeId: matched?.backend_node_id,
+    elementId: matchedBySelector.index,
+    backendNodeId: matchedBySelector.backend_node_id,
     navigationId,
   };
 };

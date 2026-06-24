@@ -62,4 +62,16 @@ describe('browserPageStateModel', () => {
       navigationId: 'nav-1',
     });
   });
+
+  it('resolves selector to matching page element (R3-09)', () => {
+    expect(resolveBrowserActionTarget(pageState, { selector: 'button[data-provider="google"]' })).toEqual({
+      elementId: 7,
+      backendNodeId: 88,
+      navigationId: 'nav-1',
+    });
+  });
+
+  it('returns null for unknown selector without crashing (R3-09)', () => {
+    expect(resolveBrowserActionTarget(pageState, { selector: '#missing' })).toBeNull();
+  });
 });
