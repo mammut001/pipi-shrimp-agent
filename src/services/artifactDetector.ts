@@ -8,8 +8,10 @@
 
 import { useArtifactsStore, type ArtifactFileType } from '@/store/artifactsStore';
 import {
+  type ArtifactPathValidationOptions,
   type ArtifactRootOptions,
   validateArtifactPathWithinAllowedRoots,
+  validateArtifactPathWithinAllowedRootsAsync,
 } from '@/services/artifactPathPolicy';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
@@ -25,6 +27,7 @@ export {
   isPathInsideAnyArtifactRoot,
   normalizeLexicalPath,
   validateArtifactPathWithinAllowedRoots,
+  validateArtifactPathWithinAllowedRootsAsync,
 } from '@/services/artifactPathPolicy';
 
 /** File extensions → artifact type mapping */
@@ -179,23 +182,29 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
   const allowedExtensions = ['pdf', 'svg', 'png', 'jpg', 'jpeg', 'webp', 'html'];
   const rootOptions: ArtifactRootOptions = { workDir, outputDir };
 
-  const filteredPaths = paths.filter(p => {
-    // AUDIT-FIX R7-06/R7-05 — shared root policy for detected artifacts.
-    if (!validateArtifactPathWithinAllowedRoots(p, rootOptions).ok) {
-      return false;
+  const filteredPaths: string[] = [];
+  for (const p of paths) {
+    // AUDIT-FIX R7-02/R7-06/R7-05 — lexical + canonical containment for artifacts.
+    const validation = await validateArtifactPathWithinAllowedRootsAsync(p, rootOptions, {
+      mode: 'existing-file',
+    });
+    if (!validation.ok) {
+      continue;
     }
 
     if (toolName === 'write_file') {
-      return detectFileType(p) !== 'unknown';
+      if (detectFileType(p) === 'unknown') {
+        continue;
+      }
+    } else {
+      const ext = p.split('.').pop()?.toLowerCase() ?? '';
+      if (!allowedExtensions.includes(ext)) {
+        continue;
+      }
     }
 
-    const ext = p.split('.').pop()?.toLowerCase() ?? '';
-    if (!allowedExtensions.includes(ext) && toolName !== 'write_file') {
-      return false;
-    }
-
-    return allowedExtensions.includes(ext);
-  });
+    filteredPaths.push(validation.resolvedPath);
+  }
 
   if (filteredPaths.length > 0) {
     registerFileArtifacts(messageId, filteredPaths);
@@ -205,13 +214,17 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
 /**
  * Manually add a single file artifact (for direct use when you already know the path).
  */
-export function addFileArtifact(
+export async function addFileArtifact(
   messageId: string,
   filePath: string,
   name?: string,
   roots?: ArtifactRootOptions,
-): string {
-  const validation = validateArtifactPathWithinAllowedRoots(filePath, roots ?? {});
+  options?: Pick<ArtifactPathValidationOptions, 'mode' | 'resolveRealPath'>,
+): Promise<string> {
+  const validation = await validateArtifactPathWithinAllowedRootsAsync(filePath, roots ?? {}, {
+    mode: options?.mode ?? 'existing-file',
+    resolveRealPath: options?.resolveRealPath,
+  });
   if (!validation.ok) {
     throw new Error(validation.reason);
   }

@@ -594,7 +594,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R7-04 | artifactDetector no filter when workDir undefined | High | open | `artifactDetector.ts` | Reject absolute paths | `/etc/passwd` rejected |
 | R7-06 | `outputDir` unused in artifactDetector | High | fixed | `artifactDetector.ts`, `chatArtifacts.ts`, `chatToolExecution.ts` | Honor workDir + outputDir roots | artifactDetector + chatArtifacts tests |
 | R7-12 | telegram invoke / Rust handler parity | High | open | `telegramService.ts`, `lib.rs` | Register missing handlers | T-15 contract test |
-| R7-02 | `isWithinDir` no `..` normalization | Med | open | `pathValidation.ts` | Canonicalize paths | `../` escape |
+| R7-02 | Artifact path containment lexical only (symlink escape) | Med | fixed | `artifactPathPolicy.ts`, `path_security.rs` | Canonical/realpath containment | artifactPathPolicy.test.ts |
 | R7-03 | artifactDetector Unix-only paths | Med | open | `artifactDetector.ts` | Windows path support | `C:\` paths |
 | R7-05 | `addFileArtifact` no workDir check | Med | fixed | `artifactPathPolicy.ts`, `artifactDetector.ts` | Shared workDir/outputDir sandbox | addFileArtifact tests |
 | R7-09 | `ChatImage` arbitrary src | Med | open | `ChatImage.tsx` | Allowlist schemes | `javascript:` img blocked |

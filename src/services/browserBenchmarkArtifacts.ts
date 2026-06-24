@@ -36,7 +36,7 @@ export async function saveBrowserBenchmarkArtifact({
   });
 
   const messageId = `browser-benchmark:${sessionId ?? 'workspace'}`;
-  const artifactId = addFileArtifact(messageId, doc.path, doc.filename, { workDir });
+  const artifactId = await addFileArtifact(messageId, doc.path, doc.filename, { workDir });
 
   useArtifactsStore.getState().openPanel(messageId, artifactId);
 

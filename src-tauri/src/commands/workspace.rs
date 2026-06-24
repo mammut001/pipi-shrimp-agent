@@ -482,6 +482,21 @@ pub fn delete_session_work_dir(path: String) -> AppResult<bool> {
     Ok(true)
 }
 
+/// Canonicalize an artifact path against Project/PiPi output roots (R7-02).
+#[tauri::command]
+pub fn canonicalize_artifact_path(
+    path: String,
+    work_dir: Option<String>,
+    output_dir: Option<String>,
+) -> Result<String, String> {
+    crate::commands::path_security::canonicalize_artifact_path(
+        &path,
+        work_dir.as_deref(),
+        output_dir.as_deref(),
+    )
+    .map_err(|e| e.message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

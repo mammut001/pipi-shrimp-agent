@@ -321,6 +321,74 @@ pub fn validate_destination_path(
     Ok(())
 }
 
+const ARTIFACT_PATH_OUTSIDE_ROOTS: &str = "Artifact path is outside allowed roots.";
+
+fn canonicalize_existing_or_future_path(path_obj: &Path) -> Result<PathBuf, PathSecurityError> {
+    path_obj
+        .canonicalize()
+        .or_else(|_| {
+            let parent = path_obj.parent().ok_or_else(|| PathSecurityError {
+                message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+            })?;
+            let leaf = path_obj.file_name().ok_or_else(|| PathSecurityError {
+                message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+            })?;
+            let parent_canon = parent.canonicalize().map_err(|_| PathSecurityError {
+                message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+            })?;
+            Ok(parent_canon.join(leaf))
+        })
+        .map_err(|_| PathSecurityError {
+            message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+        })
+}
+
+fn canonicalize_artifact_root(path: &str) -> Result<PathBuf, PathSecurityError> {
+    let expanded = expand_home(path);
+    Path::new(&expanded)
+        .canonicalize()
+        .map_err(|_| PathSecurityError {
+            message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+        })
+}
+
+/// Canonicalize an artifact path and ensure it lies inside `work_dir` and/or
+/// `output_dir` after symlink resolution (R7-02).
+pub fn canonicalize_artifact_path(
+    path: &str,
+    work_dir: Option<&str>,
+    output_dir: Option<&str>,
+) -> Result<String, PathSecurityError> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(wd) = work_dir {
+        roots.push(canonicalize_artifact_root(wd)?);
+    }
+    if let Some(od) = output_dir {
+        roots.push(canonicalize_artifact_root(od)?);
+    }
+    if roots.is_empty() {
+        return Err(PathSecurityError {
+            message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+        });
+    }
+
+    let expanded = expand_home(path);
+    let path_obj = Path::new(&expanded);
+    let canonical = canonicalize_existing_or_future_path(path_obj)?;
+
+    let root_refs: Vec<&Path> = roots.iter().map(|p| p.as_path()).collect();
+    if !root_refs
+        .iter()
+        .any(|root| is_within_dir(&canonical, root))
+    {
+        return Err(PathSecurityError {
+            message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+        });
+    }
+
+    Ok(canonical.to_string_lossy().to_string())
+}
+
 /// Validate path is within work_dir (if provided) and doesn't traverse outside
 pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecurityError> {
     // Check for empty path

@@ -200,55 +200,56 @@ describe('artifactDetector', () => {
   });
 
   describe('addFileArtifact (R7-05)', () => {
-    it('addFileArtifact_accepts_path_under_workDir', () => {
-      const id = addFileArtifact(mockMessageId, '/project/report.pdf', 'report.pdf', {
+    it('addFileArtifact_accepts_path_under_workDir', async () => {
+      const id = await addFileArtifact(mockMessageId, '/project/report.pdf', 'report.pdf', {
         workDir: '/project',
-      });
+      }, { resolveRealPath: null });
       expect(id).toBe('artifact-id-1');
       expect(store.addArtifact).toHaveBeenCalledWith(expect.objectContaining({
         filePath: '/project/report.pdf',
       }));
     });
 
-    it('addFileArtifact_accepts_path_under_outputDir', () => {
-      addFileArtifact(mockMessageId, '/tmp/pipi-output/plan.md', 'plan.md', {
+    it('addFileArtifact_accepts_path_under_outputDir', async () => {
+      await addFileArtifact(mockMessageId, '/tmp/pipi-output/plan.md', 'plan.md', {
         outputDir: '/tmp/pipi-output',
-      });
+      }, { resolveRealPath: null });
       expect(store.addArtifact).toHaveBeenCalledWith(expect.objectContaining({
         filePath: '/tmp/pipi-output/plan.md',
       }));
     });
 
-    it('addFileArtifact_rejects_absolute_path_when_roots_undefined', () => {
-      expect(() => addFileArtifact(mockMessageId, '/etc/passwd')).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+    it('addFileArtifact_rejects_absolute_path_when_roots_undefined', async () => {
+      await expect(addFileArtifact(mockMessageId, '/etc/passwd', undefined, undefined, { resolveRealPath: null }))
+        .rejects.toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
       expect(store.addArtifact).not.toHaveBeenCalled();
     });
 
-    it('addFileArtifact_rejects_path_outside_both_roots', () => {
-      expect(() => addFileArtifact(mockMessageId, '/outside/report.md', undefined, {
+    it('addFileArtifact_rejects_path_outside_both_roots', async () => {
+      await expect(addFileArtifact(mockMessageId, '/outside/report.md', undefined, {
         workDir: '/project',
         outputDir: '/tmp/pipi-output',
-      })).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+      }, { resolveRealPath: null })).rejects.toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
       expect(store.addArtifact).not.toHaveBeenCalled();
     });
 
-    it('addFileArtifact_rejects_prefix_trick', () => {
-      expect(() => addFileArtifact(mockMessageId, '/tmp/outside/file.txt', undefined, {
+    it('addFileArtifact_rejects_prefix_trick', async () => {
+      await expect(addFileArtifact(mockMessageId, '/tmp/outside/file.txt', undefined, {
         outputDir: '/tmp/out',
-      })).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+      }, { resolveRealPath: null })).rejects.toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
     });
 
-    it('addFileArtifact_rejects_traversal_escape', () => {
-      expect(() => addFileArtifact(mockMessageId, '/tmp/output/../secret.txt', undefined, {
+    it('addFileArtifact_rejects_traversal_escape', async () => {
+      await expect(addFileArtifact(mockMessageId, '/tmp/output/../secret.txt', undefined, {
         outputDir: '/tmp/output',
-      })).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+      }, { resolveRealPath: null })).rejects.toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
     });
 
-    it('addFileArtifact_uses_session_pipiOutputDir', () => {
+    it('addFileArtifact_uses_session_pipiOutputDir', async () => {
       const pipiOutputDir = '/home/user/PiPi-Shrimp/chats/session-1';
-      addFileArtifact(mockMessageId, `${pipiOutputDir}/docs/report.md`, 'report.md', {
+      await addFileArtifact(mockMessageId, `${pipiOutputDir}/docs/report.md`, 'report.md', {
         outputDir: pipiOutputDir,
-      });
+      }, { resolveRealPath: null });
       expect(store.addArtifact).toHaveBeenCalledWith(expect.objectContaining({
         filePath: `${pipiOutputDir}/docs/report.md`,
       }));

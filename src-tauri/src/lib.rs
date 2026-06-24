@@ -262,6 +262,7 @@ pub fn run() {
             commands::open_folder_dialog,
             commands::init_pipi_shrimp,
             commands::get_next_output_dir,
+            commands::canonicalize_artifact_path,
             commands::get_app_default_dir,
             commands::get_app_autoresearch_dir,
             commands::get_app_memory_projects_dir,
