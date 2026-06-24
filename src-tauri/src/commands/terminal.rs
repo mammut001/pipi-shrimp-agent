@@ -13,6 +13,7 @@ use once_cell::sync::Lazy;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use tauri::Emitter;
 
+use crate::commands::path_security::validate_path;
 use crate::tools::shell_profile::{resolve_terminal_shell, WindowsShellProfile};
 
 /// Payload emitted to the frontend via `terminal-output` event.
@@ -61,6 +62,24 @@ pub async fn terminal_create(
 ) -> Result<(), String> {
     let rows = rows.unwrap_or(24);
     let cols = cols.unwrap_or(80);
+
+    // AUDIT-FIX [R7-13]: validate the requested cwd through path_security
+    // BEFORE we hand it to the shell process. Without this, the Tauri
+    // command would spawn a PTY whose cwd could be /etc, /sys, or
+    // C:\Windows\System32, giving the shell process (and through it, any
+    // tool that pipes through it) read access to system secrets.
+    if let Some(ref dir) = cwd {
+        if !dir.trim().is_empty() {
+            // No work_dir — we're starting from whatever the caller asked
+            // for. validate_path with no work_dir enforces:
+            //   - non-empty
+            //   - no path traversal (.. segments rejected)
+            //   - not inside a blocked system prefix (/etc/, /usr/, etc.)
+            //   - not inside a user-home sensitive dir (~/.ssh, etc.)
+            //   - Windows equivalents on Windows
+            validate_path(dir, None).map_err(|e| format!("Invalid cwd: {}", e))?;
+        }
+    }
 
     // If a session with this id already exists (e.g. from a stale mount /
     // StrictMode double-run), tear it down first so we can replace it cleanly.

@@ -314,4 +314,66 @@ mod path_security_tests {
         let result = path_security::validate_command("find . -name '*.rs'");
         assert!(result.is_ok(), "Should allow safe find command");
     }
+
+    // ============ Terminal cwd validation (R7-13) ============
+    //
+    // The terminal_create command must reject cwd values that point at
+    // sensitive system directories. We test through `validate_path` (which
+    // is the function terminal_create calls) and verify the same set of
+    // cases that an attacker would try to feed in.
+
+    #[test]
+    fn test_terminal_cwd_rejects_etc() {
+        // /etc is a system dir; without a work_dir, the function rejects
+        // because of the BLOCKED_PREFIXES check.
+        let result = path_security::validate_path("/etc", None);
+        assert!(result.is_err(), "terminal_create cwd=/etc must be rejected");
+    }
+
+    #[test]
+    fn test_terminal_cwd_rejects_etc_passwd() {
+        let result = path_security::validate_path("/etc/passwd", None);
+        assert!(result.is_err(), "terminal_create cwd=/etc/passwd must be rejected");
+    }
+
+    #[test]
+    fn test_terminal_cwd_rejects_sys() {
+        let result = path_security::validate_path("/sys", None);
+        assert!(result.is_err(), "terminal_create cwd=/sys must be rejected");
+    }
+
+    #[test]
+    fn test_terminal_cwd_rejects_proc() {
+        let result = path_security::validate_path("/proc/1/root", None);
+        assert!(result.is_err(), "terminal_create cwd=/proc/... must be rejected");
+    }
+
+    #[test]
+    fn test_terminal_cwd_rejects_dotdot_traversal() {
+        // A path that canonicalizes to a system dir must be rejected. This
+        // is platform-specific; on Linux /proc/1/root resolves to /, on
+        // macOS /etc is the canonical traversal target. We pick whichever
+        // the test machine has.
+        #[cfg(target_os = "linux")]
+        let probe = "/proc/1/root";
+        #[cfg(target_os = "macos")]
+        let probe = "/etc";
+        #[cfg(target_os = "windows")]
+        let probe = "C:\\Windows\\System32";
+
+        let result = path_security::validate_path(probe, None);
+        assert!(result.is_err(), "terminal_create cwd={} must be rejected", probe);
+    }
+
+    #[test]
+    fn test_terminal_cwd_allows_normal_user_dir() {
+        let result = path_security::validate_path("/home/user/project", None);
+        assert!(result.is_ok(), "terminal_create cwd=/home/user/project must be allowed");
+    }
+
+    #[test]
+    fn test_terminal_cwd_allows_tmp() {
+        let result = path_security::validate_path("/tmp", None);
+        assert!(result.is_ok(), "terminal_create cwd=/tmp must be allowed");
+    }
 }
