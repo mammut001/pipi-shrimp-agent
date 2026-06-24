@@ -401,7 +401,16 @@ export async function* runChatTurn(
         },
       } as EngineEvent;
 
-      const TOOL_BATCH_TIMEOUT_MS = 300_000;
+      // AUDIT-FIX [TOP-15-05 / T-03]: The previous code had no
+      // timeout, so a consumer that never resolved `_resolveAll`
+      // would hang the chat turn forever. Default is 5 minutes which
+      // matches the original audit fix (R4-03). The default is
+      // overridable via `process.env.PIPI_TOOL_BATCH_TIMEOUT_MS` so
+      // tests can use a tighter value.
+      const TOOL_BATCH_TIMEOUT_MS = Number.parseInt(
+        (typeof process !== 'undefined' && process.env?.PIPI_TOOL_BATCH_TIMEOUT_MS) || '300000',
+        10,
+      ) || 300_000;
       const allContent = await Promise.race([
         Promise.all(promises),
         new Promise<never>((_, reject) => {
