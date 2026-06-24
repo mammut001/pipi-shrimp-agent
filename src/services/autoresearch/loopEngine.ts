@@ -8,7 +8,7 @@ import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 import { logExperiment } from './expLogger';
 import { rollback, getRemoteDiff } from './rollback';
 import { createNotifier } from './notifier';
-import { describeTarget, ensureSshpassAvailable, shellEscapePath } from '@/utils/remoteExec';
+import { describeTarget, ensureSshpassAvailable } from '@/utils/remoteExec';
 import { assertSupportedPlatform } from './platformGuard';
 import {
   appendIterationMetrics,
@@ -46,8 +46,9 @@ import {
 import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEvents';
 import {
   inspectAutoResearchEnvironment,
-  resolveTargetPath,
+  prepareLoopStartupContext,
   type AutoResearchEnvironmentSummary,
+  type LoopStartupContext,
 } from './preflight';
 import { formatAutoResearchToolCatalog, getAutoResearchToolProfile } from './toolCatalog';
 import { formatAutoResearchToolLanes } from './toolLanes';
@@ -80,14 +81,6 @@ interface PromptInput {
   metricDirection: 'lower' | 'higher';
   metricName: string;
   maxIterations: number;
-}
-
-interface StartupContext {
-  artifactCfg: SshConfig;
-  experimentCfg: SshConfig;
-  experimentDir: string;
-  workDir: string;
-  sessionContent: string;
 }
 
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
@@ -558,97 +551,6 @@ function parseExperimentResult(agentOutput: string, metricName: string): ParsedI
   };
 }
 
-function assertNonEmptyString(fieldName: string, value: unknown): asserts value is string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`Invalid ${fieldName}: expected non-empty string`);
-  }
-}
-
-async function ensureTargetDirectory(cfg: SshConfig, directoryPath: string): Promise<void> {
-  const result = await executeTargetCommand(
-    { ...cfg, remoteWorkDir: '' },
-    `mkdir -p ${shellEscapePath(directoryPath)}`,
-    60,
-  );
-  if ((result.exit_code ?? 0) !== 0) {
-    throw new Error(result.stderr || `Failed to create workdir: ${directoryPath}`);
-  }
-}
-
-function buildInitialSessionContent(): string {
-  return `# AutoResearch Session\nInitialized at: ${new Date().toISOString()}\n`;
-}
-
-async function ensureSessionFileInitialized(cfg: SshConfig, sessionFilePath: string): Promise<string> {
-  const existing = await readTargetText(cfg, sessionFilePath);
-  if (existing !== null) {
-    return existing;
-  }
-
-  const initialContent = buildInitialSessionContent();
-  await writeTargetText(cfg, sessionFilePath, initialContent);
-  return initialContent;
-}
-
-async function prepareStartupContext(store: ReturnType<typeof useAutoResearchStore.getState>): Promise<StartupContext> {
-  const cfg = store.sshConfig;
-  if (!cfg) {
-    throw new Error('SSH config not set');
-  }
-
-  const workDirInput = cfg.remoteWorkDir;
-  const experimentDirInput = store.experimentDir;
-  const sessionFilePathInput = store.sessionFilePath || getAutoResearchSessionFilePathFromWorkDir(workDirInput);
-
-  assertNonEmptyString('workdir', workDirInput);
-  assertNonEmptyString('experimentDir', experimentDirInput);
-  assertNonEmptyString('sessionFilePath', sessionFilePathInput);
-
-  const resolvedWorkDir = await resolveTargetPath(cfg, 'workdir', workDirInput);
-  const resolvedExperimentDir = await resolveTargetPath(cfg, 'experimentDir', experimentDirInput);
-  const resolvedSessionFilePath = await resolveTargetPath(cfg, 'sessionFilePath', sessionFilePathInput);
-  const resolvedLivingDocPath = getAutoResearchLivingDocPathFromWorkDir(resolvedWorkDir, store.id);
-
-  const artifactCfg = { ...cfg, remoteWorkDir: resolvedWorkDir };
-  const experimentCfg = { ...cfg, remoteWorkDir: resolvedExperimentDir };
-
-  await ensureTargetDirectory(cfg, resolvedWorkDir);
-
-  if (!await pathExistsOnTarget({ ...cfg, remoteWorkDir: '' }, resolvedExperimentDir)) {
-    throw new Error(`Experiment directory does not exist: ${resolvedExperimentDir}`);
-  }
-
-  const sessionContent = await ensureSessionFileInitialized(artifactCfg, resolvedSessionFilePath);
-
-  console.info('[AutoResearch] Startup paths', {
-    resolvedWorkdir: resolvedWorkDir,
-    experimentDir: resolvedExperimentDir,
-    sessionFilePath: resolvedSessionFilePath,
-    livingDocPath: resolvedLivingDocPath,
-    metricName: store.metricName,
-    direction: store.metricDirection,
-    iterations: store.maxIterations,
-    typeofSessionFilePath: typeof resolvedSessionFilePath,
-    typeofExperimentDir: typeof resolvedExperimentDir,
-  });
-
-  useAutoResearchStore.getState().updateRunPaths({
-    sshConfig: artifactCfg,
-    experimentDir: resolvedExperimentDir,
-    sessionFilePath: resolvedSessionFilePath,
-    livingDocPath: resolvedLivingDocPath,
-    terminalCwd: resolvedExperimentDir,
-  });
-
-  return {
-    artifactCfg,
-    experimentCfg,
-    experimentDir: resolvedExperimentDir,
-    workDir: resolvedWorkDir,
-    sessionContent,
-  };
-}
-
 async function parseIterationMetrics(
   cfg: SshConfig,
   runDir: RunDir,
@@ -998,9 +900,9 @@ export async function startExperimentLoop(
     });
   }
 
-  let startup: StartupContext;
+  let startup: LoopStartupContext;
   try {
-    startup = await prepareStartupContext(store);
+    startup = await prepareLoopStartupContext(store);
   } catch (error) {
     useAutoResearchStore.getState().setError(formatError(error));
     clearActiveLoopHandle(abortController);
@@ -1865,6 +1767,11 @@ export async function startExperimentLoop(
     }
     clearActiveLoopHandle(abortController);
   }
+}
+
+/** Test-only accessor for abort-controller lifecycle assertions (R5-02). */
+export function getActiveLoopAbortControllerForTest(): AbortController | null {
+  return activeLoopAbortController;
 }
 
 export function stopExperimentLoop(): void {
