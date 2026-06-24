@@ -370,10 +370,19 @@ function AutoResearchView() {
   // Stop the in-flight AutoResearch loop if the user navigates away from
   // this page (e.g. back to Chat). Without this, the SSH session and the
   // next LLM call would keep running and burning tokens in the background.
+  //
+  // AUDIT-FIX [R5-04]: Stop on ANY non-terminal state. The set is
+  // sourced from the canonical `LoopState` type in autoresearchStore
+  // (idle | running | paused | stopped | error). Previously this only
+  // stopped when loopState === 'running', so a paused loop on a
+  // different page would keep its SSH session and reconnect on next
+  // visit. We now treat 'running' and 'paused' as live and the rest
+  // as terminal — 'stopped' is already stopped so calling stop again
+  // is a no-op but harmless.
   useEffect(() => {
     return () => {
       const state = useAutoResearchStore.getState();
-      if (state.loopState === 'running') {
+      if (state.loopState === 'running' || state.loopState === 'paused') {
         stopExperimentLoop();
       }
     };

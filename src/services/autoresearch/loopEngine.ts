@@ -157,6 +157,40 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Wait for the AutoResearch loop to either resume from 'paused' or be
+ * aborted via the AbortSignal. Used by the loop body's pause branch so
+ * the user clicking Stop during a paused loop doesn't have to wait for
+ * the next 1-second poll. Peeks the store every 250ms.
+ *
+ * AUDIT-FIX [R5-09]: replaces the previous bare `setTimeout(resolve,
+ * 1000)` so the abort path is signal-aware.
+ */
+function waitForResumeOrAbort(signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    let stopped = false;
+    const finish = () => {
+      if (stopped) return;
+      stopped = true;
+      signal?.removeEventListener('abort', onAbort);
+      clearInterval(interval);
+      resolve();
+    };
+    const onAbort = () => finish();
+    const interval = setInterval(() => {
+      const st = useAutoResearchStore.getState().loopState;
+      if (st !== 'paused') {
+        finish();
+      }
+    }, 250);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 function buildSystemPrompt({
   sessionContent,
   livingDoc,
@@ -1046,7 +1080,17 @@ export async function startExperimentLoop(
       break;
     }
     if (state.loopState === 'paused') {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // AUDIT-FIX [R5-09]: Wait for resume or stop, but honour the
+      // AbortSignal. The previous 1-second setTimeout had no signal
+      // awareness, so clicking Stop during a paused loop would wait
+      // up to a full second before the next iteration-check saw the
+      // 'stopped' state. We now poll the store every 250ms AND bail
+      // out immediately when the signal fires, so stop-during-pause
+      // returns within ~250ms.
+      await waitForResumeOrAbort(signal);
+      if (signal?.aborted) {
+        break;
+      }
       continue;
     }
 
