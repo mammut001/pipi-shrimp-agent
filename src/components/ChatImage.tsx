@@ -10,10 +10,46 @@ interface ChatImageProps {
   isSVG?: boolean;
 }
 
+/**
+ * AUDIT-FIX [R7-09]: allowlist of schemes that ChatImage will render as
+ * an `<img src=…>`. Rejects `javascript:`, `vbscript:`, `file:`, and any
+ * other scheme that could carry executable content. `data:` is allowed
+ * only for the `image/*` MIME family so an SVG payload can't smuggle in
+ * `<script>` via a `data:image/svg+xml;…` URL (we sanitise the SVG body
+ * separately via DOMPurify above, but defence in depth).
+ */
+export function isAllowedImageSrc(src: string): boolean {
+  if (!src) return false;
+  const trimmed = src.trim();
+  if (!trimmed) return false;
+  // Protocol-relative or relative URL — leave validation to the browser's
+  // own resolve path (these can't smuggle a script: payload).
+  if (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../')) {
+    return true;
+  }
+  // Bare URL without scheme — leave to browser.
+  if (!trimmed.includes(':')) {
+    return true;
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('http://') || lower.startsWith('https://')) return true;
+  if (lower.startsWith('https:') || lower.startsWith('http:')) return true;
+  // Tauri asset URLs (asset protocol) and blob URLs — safe by construction.
+  if (lower.startsWith('tauri:') || lower.startsWith('blob:')) return true;
+  // data: URLs only for image/* so an attacker can't smuggle text/html.
+  if (lower.startsWith('data:image/')) return true;
+  return false;
+}
+
 export const ChatImage = ({ src, alt, className = '', isSVG = false }: ChatImageProps) => {
+  // AUDIT-FIX [R7-09]: reject anything that isn't a known-safe image scheme.
+  // We refuse to render the `<img>` at all rather than letting the browser
+  // resolve `javascript:` etc. as an image source.
+  const allowed = isAllowedImageSrc(src);
+
   const [isOpen, setIsOpen] = useState(false);
-  const [hasError, setHasError] = useState(false);
-  const [isLoading, setIsLoading] = useState(!isSVG);
+  const [hasError, setHasError] = useState(!allowed);
+  const [isLoading, setIsLoading] = useState(!isSVG && allowed);
 
   const toggleOpen = useCallback(() => {
     setIsOpen(prev => !prev);
@@ -21,6 +57,7 @@ export const ChatImage = ({ src, alt, className = '', isSVG = false }: ChatImage
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!allowed) return;
     const link = document.createElement('a');
     link.href = src;
     link.download = alt || 'pipi-shrimp-image';
@@ -69,7 +106,7 @@ export const ChatImage = ({ src, alt, className = '', isSVG = false }: ChatImage
       );
     }
 
-    if (hasError) {
+    if (!allowed || hasError) {
       return (
         <div className="flex flex-col items-center justify-center p-8 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-400">
           <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
