@@ -9,7 +9,9 @@ import { t } from '@/i18n';
 import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
 import { isAuthConnectionError } from '@/services/settings/settingsConnection';
 import type { SshConfig } from '@/store/autoresearchStore';
+import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { shellEscapePath } from '@/utils/remoteExec';
 import { formatError } from '@/utils/errorFormat';
 import { shellEscape } from '@/utils/remoteExec';
 import {
@@ -21,7 +23,12 @@ import {
   getAutoResearchSessionFilePathFromWorkDir,
 } from './paths';
 import { ensureAutoResearchProjectReady } from './projectAdapter';
-import { executeTargetCommand, pathExistsOnTarget } from './runDir';
+import {
+  executeTargetCommand,
+  pathExistsOnTarget,
+  readTargetText,
+  writeTargetText,
+} from './runDir';
 
 export interface AutoResearchPreflightInput {
   sshConfig: SshConfig;
@@ -479,5 +486,107 @@ export async function runAutoResearchPreflight(
     sessionFilePath,
     livingDocPath,
     environmentSummary,
+  };
+}
+
+export interface LoopStartupContext {
+  artifactCfg: SshConfig;
+  experimentCfg: SshConfig;
+  experimentDir: string;
+  workDir: string;
+  sessionContent: string;
+}
+
+function assertNonEmptyString(fieldName: string, value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`Invalid ${fieldName}: expected non-empty string`);
+  }
+}
+
+async function ensureTargetDirectory(cfg: SshConfig, directoryPath: string): Promise<void> {
+  const result = await executeTargetCommand(
+    { ...cfg, remoteWorkDir: '' },
+    `mkdir -p ${shellEscapePath(directoryPath)}`,
+    60,
+  );
+  if ((result.exit_code ?? 0) !== 0) {
+    throw new Error(result.stderr || `Failed to create workdir: ${directoryPath}`);
+  }
+}
+
+function buildInitialSessionContent(): string {
+  return `# AutoResearch Session\nInitialized at: ${new Date().toISOString()}\n`;
+}
+
+async function ensureSessionFileInitialized(cfg: SshConfig, sessionFilePath: string): Promise<string> {
+  const existing = await readTargetText(cfg, sessionFilePath);
+  if (existing !== null) {
+    return existing;
+  }
+
+  const initialContent = buildInitialSessionContent();
+  await writeTargetText(cfg, sessionFilePath, initialContent);
+  return initialContent;
+}
+
+/** Loop-engine startup path resolution extracted from loopEngine.ts (AG-02). */
+export async function prepareLoopStartupContext(
+  store: ReturnType<typeof useAutoResearchStore.getState>,
+): Promise<LoopStartupContext> {
+  const cfg = store.sshConfig;
+  if (!cfg) {
+    throw new Error('SSH config not set');
+  }
+
+  const workDirInput = cfg.remoteWorkDir;
+  const experimentDirInput = store.experimentDir;
+  const sessionFilePathInput = store.sessionFilePath || getAutoResearchSessionFilePathFromWorkDir(workDirInput);
+
+  assertNonEmptyString('workdir', workDirInput);
+  assertNonEmptyString('experimentDir', experimentDirInput);
+  assertNonEmptyString('sessionFilePath', sessionFilePathInput);
+
+  const resolvedWorkDir = await resolveTargetPath(cfg, 'workdir', workDirInput);
+  const resolvedExperimentDir = await resolveTargetPath(cfg, 'experimentDir', experimentDirInput);
+  const resolvedSessionFilePath = await resolveTargetPath(cfg, 'sessionFilePath', sessionFilePathInput);
+  const resolvedLivingDocPath = getAutoResearchLivingDocPathFromWorkDir(resolvedWorkDir, store.id);
+
+  const artifactCfg = { ...cfg, remoteWorkDir: resolvedWorkDir };
+  const experimentCfg = { ...cfg, remoteWorkDir: resolvedExperimentDir };
+
+  await ensureTargetDirectory(cfg, resolvedWorkDir);
+
+  if (!await pathExistsOnTarget({ ...cfg, remoteWorkDir: '' }, resolvedExperimentDir)) {
+    throw new Error(`Experiment directory does not exist: ${resolvedExperimentDir}`);
+  }
+
+  const sessionContent = await ensureSessionFileInitialized(artifactCfg, resolvedSessionFilePath);
+
+  console.info('[AutoResearch] Startup paths', {
+    resolvedWorkdir: resolvedWorkDir,
+    experimentDir: resolvedExperimentDir,
+    sessionFilePath: resolvedSessionFilePath,
+    livingDocPath: resolvedLivingDocPath,
+    metricName: store.metricName,
+    direction: store.metricDirection,
+    iterations: store.maxIterations,
+    typeofSessionFilePath: typeof resolvedSessionFilePath,
+    typeofExperimentDir: typeof resolvedExperimentDir,
+  });
+
+  useAutoResearchStore.getState().updateRunPaths({
+    sshConfig: artifactCfg,
+    experimentDir: resolvedExperimentDir,
+    sessionFilePath: resolvedSessionFilePath,
+    livingDocPath: resolvedLivingDocPath,
+    terminalCwd: resolvedExperimentDir,
+  });
+
+  return {
+    artifactCfg,
+    experimentCfg,
+    experimentDir: resolvedExperimentDir,
+    workDir: resolvedWorkDir,
+    sessionContent,
   };
 }
