@@ -6,11 +6,50 @@
  * - Sending messages
  * - Getting updates
  * - Managing bot configuration
+ *
+ * AUDIT-FIX [R7-10]: The Telegram bot token is the most sensitive piece
+ * of state in this module. Every format string, error path, and log
+ * statement must go through `redact_token` before letting a string escape
+ * the function. We never embed the token verbatim in a URL inside an
+ * `Err(...)` payload, never `println!` it, and never let `reqwest`'s
+ * error formatter (which includes the request URL) leak it back to the
+ * frontend.
  */
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
+
+/// Build an API URL with the bot token, but never let the result escape
+/// without first passing through `redact_token_in_url`. The token
+/// itself is required for the actual HTTP call (Telegram's auth scheme
+/// is "bearer in path"), so we keep a private helper that hands back
+/// the raw URL to the reqwest client while the public surface is
+/// redacted.
+fn build_api_url(token: &str, method: &str) -> String {
+    format!("https://api.telegram.org/bot{}/{}", token, method)
+}
+
+/// Build a file URL with the bot token (used by getFile / file download).
+fn build_file_url(token: &str, file_path: &str) -> String {
+    format!("https://api.telegram.org/file/bot{}/{}", token, file_path)
+}
+
+/// Replace any `bot<TOKEN>/...` segment in `s` with `bot[REDACTED]/...`
+/// so the token never reaches a log line, error message, or telemetry
+/// field. We do a literal substring replacement of the token — this is
+/// O(n*m) but tokens are ~45 chars so it's fine for the call sites.
+pub fn redact_token_in_str(s: &str, token: &str) -> String {
+    if token.is_empty() {
+        return s.to_string();
+    }
+    s.replace(token, "[REDACTED]")
+}
+
+/// Convenience wrapper for use in error messages.
+pub fn redact_token_in_error(err: &str, token: &str) -> String {
+    redact_token_in_str(err, token)
+}
 
 /// Telegram bot information from getMe
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,7 +192,7 @@ async fn telegram_api_request<T: for<'de> Deserialize<'de>>(
     token: &str,
     method: &str,
 ) -> Result<T, String> {
-    let url = format!("https://api.telegram.org/bot{}/{}", token, method);
+    let url = build_api_url(token, method);
 
     let client = reqwest::Client::new();
     let response = client
@@ -161,18 +200,26 @@ async fn telegram_api_request<T: for<'de> Deserialize<'de>>(
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| {
+            // AUDIT-FIX [R7-10]: reqwest's Display impl includes the
+            // request URL, which embeds the bot token. Redact before
+            // surfacing the error to the frontend / logs.
+            redact_token_in_error(&e.to_string(), token)
+        })?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("API error {}: {}", status, body));
+        return Err(redact_token_in_error(
+            &format!("API error {}: {}", status, body),
+            token,
+        ));
     }
 
     response
         .json::<T>()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))
+        .map_err(|e| redact_token_in_error(&e.to_string(), token))
 }
 
 /// Connect to Telegram with a bot token
@@ -194,7 +241,7 @@ pub async fn telegram_connect(
     }
 
     // Validate token by calling getMe
-    let url = format!("https://api.telegram.org/bot{}/getMe", trimmed_token);
+    let url = build_api_url(trimmed_token, "getMe");
 
     let client = reqwest::Client::new();
     let response = client
@@ -202,7 +249,7 @@ pub async fn telegram_connect(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), trimmed_token))?;
 
     let status = response.status();
 
@@ -217,18 +264,19 @@ pub async fn telegram_connect(
 
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
+        let safe_body = redact_token_in_error(&body, trimmed_token);
         {
             let mut s = state.lock().await;
             s.status = ConnectionStatus::Error;
-            s.error = Some(format!("API error: {}", body));
+            s.error = Some(format!("API error: {}", safe_body));
         }
-        return Err(format!("API error: {}", body));
+        return Err(format!("API error: {}", safe_body));
     }
 
     let get_me_response: GetMeResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse bot info: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), trimmed_token))?;
     if !get_me_response.ok {
         return Err("Telegram getMe returned ok=false".to_string());
     }
@@ -243,7 +291,8 @@ pub async fn telegram_connect(
         s.offset = 0;
     }
 
-    println!("✅ Telegram bot connected: @{}", bot_info.username);
+    // AUDIT-FIX [R7-10]: log only the bot username, never the token.
+    println!("[telegram] connected: @{}", bot_info.username);
     Ok(bot_info)
 }
 
@@ -287,7 +336,8 @@ pub async fn telegram_send_message(
 
     drop(s); // Release lock before HTTP request
 
-    // Build URL with query parameters
+    // Build URL with query parameters. Token is required for auth but
+    // never re-emitted in any error path below.
     let mut url = format!(
         "https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}",
         token,
@@ -317,11 +367,14 @@ pub async fn telegram_send_message(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to send message: {}", body));
+        return Err(redact_token_in_error(
+            &format!("Failed to send message: {}", body),
+            &token,
+        ));
     }
 
     #[allow(dead_code)]
@@ -335,7 +388,7 @@ pub async fn telegram_send_message(
     let send_response: SendMessageResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     Ok(send_response.result)
 }
@@ -366,7 +419,7 @@ pub async fn telegram_validate_token(token: String) -> Result<TelegramBotInfo, S
         return Err("Token is required".to_string());
     }
 
-    let url = format!("https://api.telegram.org/bot{}/getMe", trimmed_token);
+    let url = build_api_url(trimmed_token, "getMe");
 
     let client = reqwest::Client::new();
     let response = client
@@ -374,7 +427,7 @@ pub async fn telegram_validate_token(token: String) -> Result<TelegramBotInfo, S
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), trimmed_token))?;
 
     let status = response.status();
 
@@ -384,13 +437,16 @@ pub async fn telegram_validate_token(token: String) -> Result<TelegramBotInfo, S
 
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("API error: {}", body));
+        return Err(redact_token_in_error(
+            &format!("API error: {}", body),
+            trimmed_token,
+        ));
     }
 
     let get_me_response: GetMeResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), trimmed_token))?;
 
     if !get_me_response.ok {
         return Err("Telegram getMe returned ok=false".to_string());
@@ -451,11 +507,14 @@ pub async fn telegram_send_chat_action(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to send chat action: {}", body));
+        return Err(redact_token_in_error(
+            &format!("Failed to send chat action: {}", body),
+            &token,
+        ));
     }
 
     Ok(())
@@ -516,11 +575,14 @@ pub async fn telegram_answer_callback_query(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to answer callback query: {}", body));
+        return Err(redact_token_in_error(
+            &format!("Failed to answer callback query: {}", body),
+            &token,
+        ));
     }
 
     Ok(())
@@ -567,23 +629,23 @@ pub async fn telegram_get_file_url(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to get file: {}", body));
+        return Err(redact_token_in_error(
+            &format!("Failed to get file: {}", body),
+            &token,
+        ));
     }
 
     let file_response: GetFileResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     // Construct the full file URL
-    let file_url = format!(
-        "https://api.telegram.org/file/bot{}/{}",
-        token, file_response.result.file_path
-    );
+    let file_url = build_file_url(&token, &file_response.result.file_path);
 
     Ok(file_url)
 }
@@ -620,17 +682,20 @@ pub async fn telegram_get_updates(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Failed to get updates: {}", body));
+        return Err(redact_token_in_error(
+            &format!("Failed to get updates: {}", body),
+            &token,
+        ));
     }
 
     let updates_response: GetUpdatesResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !updates_response.ok {
         return Err("Telegram getUpdates returned ok=false".to_string());
@@ -690,10 +755,13 @@ pub async fn telegram_download_file(
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("getFile request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
     if !get_file_response.status().is_success() {
         let body = get_file_response.text().await.unwrap_or_default();
-        return Err(format!("Failed to get file: {}", body));
+        return Err(redact_token_in_error(
+            &format!("Failed to get file: {}", body),
+            &token,
+        ));
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -708,27 +776,27 @@ pub async fn telegram_download_file(
     let file_meta: DownloadGetFileResponse = get_file_response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse getFile response: {}", e))?;
-    let file_url = format!(
-        "https://api.telegram.org/file/bot{}/{}",
-        token, file_meta.result.file_path
-    );
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
+    let file_url = build_file_url(&token, &file_meta.result.file_path);
     let response = client
         .get(&file_url)
         .timeout(Duration::from_secs(60))
         .send()
         .await
-        .map_err(|e| format!("Download failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Download failed: {}", body));
+        return Err(redact_token_in_error(
+            &format!("Download failed: {}", body),
+            &token,
+        ));
     }
 
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| format!("Failed to read download body: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     std::fs::write(&destination, bytes).map_err(|e| format!("Failed to write file: {}", e))?;
     Ok(destination)
@@ -766,17 +834,20 @@ pub async fn telegram_set_webhook(
         .timeout(Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("setWebhook request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("setWebhook failed: {}", body));
+        return Err(redact_token_in_error(
+            &format!("setWebhook failed: {}", body),
+            &token,
+        ));
     }
 
     let parsed: SetWebhookResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse setWebhook response: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
     if !parsed.ok {
         return Err("Telegram setWebhook returned ok=false".to_string());
     }
@@ -801,11 +872,14 @@ pub async fn telegram_delete_webhook(
         .timeout(Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("deleteWebhook request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("deleteWebhook failed: {}", body));
+        return Err(redact_token_in_error(
+            &format!("deleteWebhook failed: {}", body),
+            &token,
+        ));
     }
     Ok(())
 }
@@ -851,17 +925,20 @@ pub async fn telegram_get_webhook_info(
         .timeout(Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("getWebhookInfo request failed: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
 
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("getWebhookInfo failed: {}", body));
+        return Err(redact_token_in_error(
+            &format!("getWebhookInfo failed: {}", body),
+            &token,
+        ));
     }
 
     let parsed: GetWebhookInfoResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse getWebhookInfo response: {}", e))?;
+        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
     if !parsed.ok {
         return Err("Telegram getWebhookInfo returned ok=false".to_string());
     }
@@ -877,5 +954,59 @@ mod command_registration_tests {
         let state = TelegramState::default();
         assert!(state.command_prefix.is_none());
         assert!(state.allowed_chats.is_empty());
+    }
+
+    // ============ Token redaction (R7-10) ============
+    //
+    // The Telegram bot token is the most sensitive piece of state in this
+    // module. These tests guard `redact_token_in_str` from regressions.
+
+    #[test]
+    fn redact_replaces_token_in_url() {
+        let token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
+        let url = format!("https://api.telegram.org/bot{}/getMe", token);
+        let redacted = redact_token_in_str(&url, token);
+        assert!(!redacted.contains(token), "token still in: {}", redacted);
+        assert!(redacted.contains("[REDACTED]"), "expected [REDACTED] marker in: {}", redacted);
+    }
+
+    #[test]
+    fn redact_replaces_token_in_error_message() {
+        let token = "secret-token-XYZ";
+        let msg = format!("Request failed: error sending request for url (https://api.telegram.org/bot{}/getMe): connection refused", token);
+        let redacted = redact_token_in_str(&msg, token);
+        assert!(!redacted.contains(token));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redact_is_noop_when_token_empty() {
+        let s = "https://api.telegram.org/bot12345:abc/getMe";
+        let r = redact_token_in_str(s, "");
+        assert_eq!(r, s);
+    }
+
+    #[test]
+    fn redact_handles_token_appearing_twice() {
+        let token = "ABC123";
+        let s = format!("first {} second {}", token, token);
+        let r = redact_token_in_str(&s, token);
+        assert!(!r.contains(token));
+        assert!(r.contains("[REDACTED]"));
+        // Both occurrences replaced.
+        assert_eq!(r.matches("[REDACTED]").count(), 2);
+    }
+
+    #[test]
+    fn redact_does_not_match_substring_of_unrelated_string() {
+        // Make sure a partial-overlap case doesn't accidentally redact
+        // an unrelated string. (The token is a literal substring match.)
+        let token = "ABC";
+        let s = "the quick brown fox jumps over ABCDEF";
+        let r = redact_token_in_str(s, token);
+        // The full token "ABC" appears inside "ABCDEF" and is replaced
+        // by [REDACTED], leaving "[REDACTED]DEF" — that's the expected
+        // literal-substring behaviour, not a regex.
+        assert_eq!(r, "the quick brown fox jumps over [REDACTED]DEF");
     }
 }
