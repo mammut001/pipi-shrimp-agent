@@ -64,9 +64,14 @@ function getMimeType(filePath: string): string | undefined {
   return MIME_MAP[ext];
 }
 
-/** Extract file name from absolute path */
+/** Extract file name from absolute path. Handles Unix and Windows separators. */
 function fileName(filePath: string): string {
-  return filePath.split('/').pop() ?? filePath;
+  // Use the last separator that actually appears, so Windows paths like
+  // C:\Users\alice\foo.png split correctly without producing the drive
+  // letter as the "file name".
+  const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  if (lastSlash < 0) return filePath;
+  return filePath.slice(lastSlash + 1) || filePath;
 }
 
 /**
@@ -92,16 +97,41 @@ function getArtifactUrl(filePath: string): string {
  * Matches absolute paths that look like generated output files.
  */
 const FILE_PATH_PATTERNS = [
-  // Absolute paths ending with known extensions
+  // Unix absolute paths ending with known extensions
   /(?:^|\s|["'`])(\/.+?\.(?:png|jpg|jpeg|gif|webp|bmp|svg|pdf|html|typ))(?:\s|["'`]|$)/gim,
-  // "saved to /path/to/file" patterns
+  // Windows absolute paths (C:\..., D:\..., etc.) ending with known extensions
+  /(?:^|\s|["'`])([A-Za-z]:[\\\/].+?\.(?:png|jpg|jpeg|gif|webp|bmp|svg|pdf|html|typ))(?:\s|["'`]|$)/gim,
+  // WSL-style paths (/mnt/c/...) ending with known extensions
+  /(?:^|\s|["'`])(\/mnt\/[a-z]\/.+?\.(?:png|jpg|jpeg|gif|webp|bmp|svg|pdf|html|typ))(?:\s|["'`]|$)/gim,
+  // "saved to /path/to/file" patterns (Unix)
   /(?:saved?|wrote|written|created|generated|compiled|output)\s+(?:to|at|in)?\s*[:"]?\s*(\/.+?\.\w+)/gi,
+  // "saved to C:\path\to\file" patterns (Windows)
+  /(?:saved?|wrote|written|created|generated|compiled|output)\s+(?:to|at|in)?\s*[:"]?\s*([A-Za-z]:[\\\/].+?\.\w+)/gi,
   // "File: /path" patterns
   /(?:file|path|output):\s*(\/.+?\.\w+)/gi,
+  // "File: C:\path" patterns
+  /(?:file|path|output):\s*([A-Za-z]:[\\\/].+?\.\w+)/gi,
 ];
 
 /**
- * Extract file paths from tool result text
+ * True if `p` looks like a Windows-style absolute path
+ * (drive-letter C:\... or WSL /mnt/c/...). Excludes URL schemes like
+ * `file://C:/...` and `https://example.com/...` which can also start with
+ * `<letter>:/` but are not file paths.
+ */
+function looksLikeWindowsPath(p: string): boolean {
+  if (/^[A-Za-z]:[\\\/]/.test(p)) {
+    // Reject URLs: file://C:/... would have //C:/, but a real Windows
+    // drive path starts with a single letter + `:\` or `:/`.
+    return !/^[A-Za-z]:\/\//.test(p);
+  }
+  return /^\/mnt\/[a-z]\//.test(p);
+}
+
+/**
+ * Extract file paths from tool result text. Returns both Unix
+ * (`/path/...`) and Windows-style (`C:\path\...`, `/mnt/c/path/...`)
+ * absolute paths.
  */
 export function extractFilePaths(text: string): string[] {
   const paths = new Set<string>();
@@ -113,8 +143,12 @@ export function extractFilePaths(text: string): string[] {
     while ((match = pattern.exec(text)) !== null) {
       const p = match[1].trim().replace(/["'`]+$/g, '');
       // Only include paths that look like real files (not URLs, not too short)
-      if (p.startsWith('/') && p.length > 5 && !p.includes('://')) {
-        paths.add(p);
+      if (p.length > 5 && !p.includes('://') && !p.startsWith('//')) {
+        const isUnix = p.startsWith('/') && !looksLikeWindowsPath(p);
+        const isWin = looksLikeWindowsPath(p);
+        if (isUnix || isWin) {
+          paths.add(p);
+        }
       }
     }
   }
