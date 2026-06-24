@@ -129,6 +129,8 @@ pub struct TelegramState {
     pub token: Option<String>,
     pub offset: i64,
     pub error: Option<String>,
+    pub command_prefix: Option<String>,
+    pub allowed_chats: Vec<i64>,
 }
 
 impl Default for TelegramState {
@@ -139,6 +141,8 @@ impl Default for TelegramState {
             token: None,
             offset: 0,
             error: None,
+            command_prefix: None,
+            allowed_chats: Vec::new(),
         }
     }
 }
@@ -633,4 +637,245 @@ pub async fn telegram_get_updates(
     }
 
     Ok(updates_response.result)
+}
+
+/// Persist the bot command prefix in Rust-side connector state.
+#[tauri::command]
+pub async fn telegram_set_command_prefix(
+    prefix: String,
+    state: tauri::State<'_, Arc<Mutex<TelegramState>>>,
+) -> Result<(), String> {
+    let trimmed = prefix.trim();
+    if trimmed.is_empty() {
+        return Err("Command prefix cannot be empty".to_string());
+    }
+    let mut s = state.lock().await;
+    s.command_prefix = Some(trimmed.to_string());
+    Ok(())
+}
+
+/// Persist allowed chat IDs in Rust-side connector state (TS also mirrors to localStorage).
+#[tauri::command]
+pub async fn telegram_set_allowed_chats(
+    chat_ids: Vec<i64>,
+    state: tauri::State<'_, Arc<Mutex<TelegramState>>>,
+) -> Result<(), String> {
+    let mut s = state.lock().await;
+    s.allowed_chats = chat_ids;
+    Ok(())
+}
+
+/// Download a Telegram file to a local destination path.
+#[tauri::command]
+pub async fn telegram_download_file(
+    file_id: String,
+    destination: String,
+    state: tauri::State<'_, Arc<Mutex<TelegramState>>>,
+) -> Result<String, String> {
+    let token = {
+        let s = state.lock().await;
+        s.token
+            .clone()
+            .ok_or_else(|| "Not connected to Telegram".to_string())?
+    };
+
+    let client = reqwest::Client::new();
+    let get_file_url = format!(
+        "https://api.telegram.org/bot{}/getFile?file_id={}",
+        token,
+        urlencoding::encode(&file_id)
+    );
+    let get_file_response = client
+        .get(&get_file_url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("getFile request failed: {}", e))?;
+    if !get_file_response.status().is_success() {
+        let body = get_file_response.text().await.unwrap_or_default();
+        return Err(format!("Failed to get file: {}", body));
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DownloadFileResult {
+        file_path: String,
+    }
+    #[derive(Deserialize)]
+    struct DownloadGetFileResponse {
+        ok: bool,
+        result: DownloadFileResult,
+    }
+    let file_meta: DownloadGetFileResponse = get_file_response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse getFile response: {}", e))?;
+    let file_url = format!(
+        "https://api.telegram.org/file/bot{}/{}",
+        token, file_meta.result.file_path
+    );
+    let response = client
+        .get(&file_url)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| format!("Download failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("Download failed: {}", body));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read download body: {}", e))?;
+
+    std::fs::write(&destination, bytes).map_err(|e| format!("Failed to write file: {}", e))?;
+    Ok(destination)
+}
+
+#[derive(Debug, Deserialize)]
+struct SetWebhookResponse {
+    ok: bool,
+}
+
+/// Register a webhook URL (polling mode remains the default runtime path).
+#[tauri::command]
+pub async fn telegram_set_webhook(
+    url: String,
+    secret_token: Option<String>,
+    state: tauri::State<'_, Arc<Mutex<TelegramState>>>,
+) -> Result<(), String> {
+    let token = {
+        let s = state.lock().await;
+        s.token
+            .clone()
+            .ok_or_else(|| "Not connected to Telegram".to_string())?
+    };
+
+    let client = reqwest::Client::new();
+    let mut form = std::collections::HashMap::new();
+    form.insert("url", url);
+    if let Some(secret) = secret_token.filter(|value| !value.is_empty()) {
+        form.insert("secret_token", secret);
+    }
+
+    let response = client
+        .post(format!("https://api.telegram.org/bot{}/setWebhook", token))
+        .form(&form)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("setWebhook request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("setWebhook failed: {}", body));
+    }
+
+    let parsed: SetWebhookResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse setWebhook response: {}", e))?;
+    if !parsed.ok {
+        return Err("Telegram setWebhook returned ok=false".to_string());
+    }
+    Ok(())
+}
+
+/// Remove the active webhook and return to polling-friendly state.
+#[tauri::command]
+pub async fn telegram_delete_webhook(
+    state: tauri::State<'_, Arc<Mutex<TelegramState>>>,
+) -> Result<(), String> {
+    let token = {
+        let s = state.lock().await;
+        s.token
+            .clone()
+            .ok_or_else(|| "Not connected to Telegram".to_string())?
+    };
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("https://api.telegram.org/bot{}/deleteWebhook", token))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("deleteWebhook request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("deleteWebhook failed: {}", body));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramWebhookInfo {
+    pub url: Option<String>,
+    pub has_custom_certificate: bool,
+    pub pending_update_count: i64,
+    pub ip_address: Option<String>,
+    pub last_error_date: Option<i64>,
+    pub last_error_message: Option<String>,
+    pub last_synchronization_error_date: Option<i64>,
+    pub max_connections: Option<i64>,
+    pub allowed_updates: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetWebhookInfoResponse {
+    ok: bool,
+    result: TelegramWebhookInfo,
+}
+
+/// Fetch webhook metadata for diagnostics.
+#[tauri::command]
+pub async fn telegram_get_webhook_info(
+    state: tauri::State<'_, Arc<Mutex<TelegramState>>>,
+) -> Result<TelegramWebhookInfo, String> {
+    let token = {
+        let s = state.lock().await;
+        s.token
+            .clone()
+            .ok_or_else(|| "Not connected to Telegram".to_string())?
+    };
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!(
+            "https://api.telegram.org/bot{}/getWebhookInfo",
+            token
+        ))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("getWebhookInfo request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("getWebhookInfo failed: {}", body));
+    }
+
+    let parsed: GetWebhookInfoResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse getWebhookInfo response: {}", e))?;
+    if !parsed.ok {
+        return Err("Telegram getWebhookInfo returned ok=false".to_string());
+    }
+    Ok(parsed.result)
+}
+
+#[cfg(test)]
+mod command_registration_tests {
+    use super::*;
+
+    #[test]
+    fn telegram_state_defaults_include_connector_config_fields() {
+        let state = TelegramState::default();
+        assert!(state.command_prefix.is_none());
+        assert!(state.allowed_chats.is_empty());
+    }
 }

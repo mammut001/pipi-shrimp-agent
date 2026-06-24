@@ -325,6 +325,12 @@ pub fn run() {
             commands::telegram_answer_callback_query,
             commands::telegram_get_file_url,
             commands::telegram_get_updates,
+            commands::telegram_set_command_prefix,
+            commands::telegram_set_allowed_chats,
+            commands::telegram_download_file,
+            commands::telegram_set_webhook,
+            commands::telegram_delete_webhook,
+            commands::telegram_get_webhook_info,
             // Compact commands (Layer 1: Microcompact)
             commands::estimate_tokens,
             commands::estimate_messages_tokens,
