@@ -596,7 +596,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R7-12 | telegram invoke / Rust handler parity | High | open | `telegramService.ts`, `lib.rs` | Register missing handlers | T-15 contract test |
 | R7-02 | `isWithinDir` no `..` normalization | Med | open | `pathValidation.ts` | Canonicalize paths | `../` escape |
 | R7-03 | artifactDetector Unix-only paths | Med | open | `artifactDetector.ts` | Windows path support | `C:\` paths |
-| R7-05 | `addFileArtifact` no workDir check | Med | open | `artifactDetector.ts` | Sandbox check | outside workDir rejected |
+| R7-05 | `addFileArtifact` no workDir check | Med | fixed | `artifactPathPolicy.ts`, `artifactDetector.ts` | Shared workDir/outputDir sandbox | addFileArtifact tests |
 | R7-09 | `ChatImage` arbitrary src | Med | open | `ChatImage.tsx` | Allowlist schemes | `javascript:` img blocked |
 | R7-10 | Telegram token in URL logs | Med | open | `telegram.rs` | Redact in errors | log scan |
 | R7-13 | `terminal_create` cwd no path_security | Med | open | terminal commands | validate cwd | `/etc` rejected |

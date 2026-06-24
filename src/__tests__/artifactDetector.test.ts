@@ -1,17 +1,22 @@
 import { jest } from '@jest/globals';
 
 import {
+  addFileArtifact,
+  ARTIFACT_PATH_OUTSIDE_ROOTS,
   detectAndRegisterArtifacts,
   getAllowedArtifactRoots,
   isPathInsideAnyArtifactRoot,
+  validateArtifactPathWithinAllowedRoots,
 } from '../services/artifactDetector';
 import { useArtifactsStore } from '../store/artifactsStore';
 
 jest.mock('../store/artifactsStore', () => {
   const mockAddArtifacts = jest.fn();
+  const mockAddArtifact = jest.fn(() => 'artifact-id-1');
   const store = {
     items: [],
     addArtifacts: mockAddArtifacts,
+    addArtifact: mockAddArtifact,
   };
   return {
     useArtifactsStore: {
@@ -32,6 +37,7 @@ describe('artifactDetector', () => {
     store = useArtifactsStore.getState();
     store.items = [];
     if (store.addArtifacts.mockClear) store.addArtifacts.mockClear();
+    if (store.addArtifact.mockClear) store.addArtifact.mockClear();
   });
 
   it('should ignore read-only tools like read_file', async () => {
@@ -191,5 +197,72 @@ describe('artifactDetector', () => {
       workDir: '/project',
     });
     expect(store.addArtifacts).not.toHaveBeenCalled();
+  });
+
+  describe('addFileArtifact (R7-05)', () => {
+    it('addFileArtifact_accepts_path_under_workDir', () => {
+      const id = addFileArtifact(mockMessageId, '/project/report.pdf', 'report.pdf', {
+        workDir: '/project',
+      });
+      expect(id).toBe('artifact-id-1');
+      expect(store.addArtifact).toHaveBeenCalledWith(expect.objectContaining({
+        filePath: '/project/report.pdf',
+      }));
+    });
+
+    it('addFileArtifact_accepts_path_under_outputDir', () => {
+      addFileArtifact(mockMessageId, '/tmp/pipi-output/plan.md', 'plan.md', {
+        outputDir: '/tmp/pipi-output',
+      });
+      expect(store.addArtifact).toHaveBeenCalledWith(expect.objectContaining({
+        filePath: '/tmp/pipi-output/plan.md',
+      }));
+    });
+
+    it('addFileArtifact_rejects_absolute_path_when_roots_undefined', () => {
+      expect(() => addFileArtifact(mockMessageId, '/etc/passwd')).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+      expect(store.addArtifact).not.toHaveBeenCalled();
+    });
+
+    it('addFileArtifact_rejects_path_outside_both_roots', () => {
+      expect(() => addFileArtifact(mockMessageId, '/outside/report.md', undefined, {
+        workDir: '/project',
+        outputDir: '/tmp/pipi-output',
+      })).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+      expect(store.addArtifact).not.toHaveBeenCalled();
+    });
+
+    it('addFileArtifact_rejects_prefix_trick', () => {
+      expect(() => addFileArtifact(mockMessageId, '/tmp/outside/file.txt', undefined, {
+        outputDir: '/tmp/out',
+      })).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+    });
+
+    it('addFileArtifact_rejects_traversal_escape', () => {
+      expect(() => addFileArtifact(mockMessageId, '/tmp/output/../secret.txt', undefined, {
+        outputDir: '/tmp/output',
+      })).toThrow(ARTIFACT_PATH_OUTSIDE_ROOTS);
+    });
+
+    it('addFileArtifact_uses_session_pipiOutputDir', () => {
+      const pipiOutputDir = '/home/user/PiPi-Shrimp/chats/session-1';
+      addFileArtifact(mockMessageId, `${pipiOutputDir}/docs/report.md`, 'report.md', {
+        outputDir: pipiOutputDir,
+      });
+      expect(store.addArtifact).toHaveBeenCalledWith(expect.objectContaining({
+        filePath: `${pipiOutputDir}/docs/report.md`,
+      }));
+    });
+  });
+
+  describe('shared artifact path policy', () => {
+    it('artifactDetector_and_addFileArtifact_share_policy', () => {
+      const roots = { workDir: '/tmp/project', outputDir: '/tmp/pipi-output' };
+      const allowed = validateArtifactPathWithinAllowedRoots('/tmp/pipi-output/plan.md', roots);
+      const rejected = validateArtifactPathWithinAllowedRoots('/etc/passwd', roots);
+
+      expect(allowed).toEqual({ ok: true, rootKind: 'outputDir', resolvedPath: '/tmp/pipi-output/plan.md' });
+      expect(rejected).toEqual({ ok: false, reason: ARTIFACT_PATH_OUTSIDE_ROOTS });
+    });
   });
 });

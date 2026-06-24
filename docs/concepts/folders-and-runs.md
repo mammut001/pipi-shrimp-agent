@@ -48,7 +48,7 @@ user's repo.
 | App may write outputs there? | **Yes — this is its only purpose.** Generated docs, memory JSONL, plan-doc YAML, and AutoResearch artifacts must land here. Session memory commands fail closed when an explicit `work_dir` is outside writable roots (R2-03). |
 | Default / fallback | `get_app_default_dir` (Rust); session bootstrap auto-creates the folder on first project bind. |
 | Common mistakes | (1) Reading the PiPi Output Folder as if it were a tool cwd. (2) Putting a "preview" the model needs to read back into the Project Folder instead. (3) Assuming the PiPi Output Folder is empty by default — it is created lazily and may already contain memory from a previous session. |
-| Related tests | `src/store/__tests__/setSessionWorkDirFromPath.test.ts` (asserts `init_pipi_shrimp` runs against the PiPi Output Folder, not the Project Folder). `src/services/prompt/__tests__/defaultTemplate.test.ts` — see "defaultTemplate PiPi Output Folder section". Artifact detection accepts generated outputs under the PiPi Output Folder (`outputDir`) and project artifacts under the Project Folder (`workDir`); paths outside both roots are rejected. |
+| Related tests | `src/store/__tests__/setSessionWorkDirFromPath.test.ts` (asserts `init_pipi_shrimp` runs against the PiPi Output Folder, not the Project Folder). `src/services/prompt/__tests__/defaultTemplate.test.ts` — see "defaultTemplate PiPi Output Folder section". Artifact detection and direct artifact registration (`addFileArtifact`) share the same `workDir`/`outputDir` root policy; paths outside both roots are rejected. |
 
 ---
 

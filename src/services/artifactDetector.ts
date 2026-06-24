@@ -7,61 +7,25 @@
  */
 
 import { useArtifactsStore, type ArtifactFileType } from '@/store/artifactsStore';
-import { isWithinDir } from '@/utils/pathSecurity';
+import {
+  type ArtifactRootOptions,
+  validateArtifactPathWithinAllowedRoots,
+} from '@/services/artifactPathPolicy';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
-export type ArtifactRootKind = 'workDir' | 'outputDir';
-
-export interface ArtifactRoot {
-  kind: ArtifactRootKind;
-  path: string;
-}
-
-/** Normalize `.` / `..` segments lexically before root-boundary checks. */
-export function normalizeLexicalPath(p: string): string {
-  const usesBackslash = p.includes('\\');
-  const parts = p.split(/[/\\]/).filter(Boolean);
-  const resolved: string[] = [];
-  for (const part of parts) {
-    if (part === '.') continue;
-    if (part === '..') {
-      if (resolved.length > 0) resolved.pop();
-    } else {
-      resolved.push(part);
-    }
-  }
-
-  const winDrive = /^[A-Za-z]:/.exec(p)?.[0];
-  if (winDrive) {
-    const tail = resolved.slice(1).join(usesBackslash ? '\\' : '/');
-    return tail ? `${winDrive}${usesBackslash ? '\\' : '/'}${tail}` : winDrive;
-  }
-
-  const prefix = p.startsWith('/') ? '/' : '';
-  return prefix + resolved.join('/');
-}
-
-export function getAllowedArtifactRoots(options: {
-  workDir?: string;
-  outputDir?: string;
-}): ArtifactRoot[] {
-  const roots: ArtifactRoot[] = [];
-  const workDir = options.workDir?.trim();
-  const outputDir = options.outputDir?.trim();
-  if (workDir) {
-    roots.push({ kind: 'workDir', path: normalizeLexicalPath(workDir) });
-  }
-  if (outputDir) {
-    roots.push({ kind: 'outputDir', path: normalizeLexicalPath(outputDir) });
-  }
-  return roots;
-}
-
-export function isPathInsideAnyArtifactRoot(path: string, roots: ArtifactRoot[]): boolean {
-  if (roots.length === 0) return false;
-  const normalizedPath = normalizeLexicalPath(path);
-  return roots.some((root) => isWithinDir(normalizedPath, root.path));
-}
+export type {
+  ArtifactRoot,
+  ArtifactRootKind,
+  ArtifactRootOptions,
+  ArtifactPathValidationResult,
+} from '@/services/artifactPathPolicy';
+export {
+  ARTIFACT_PATH_OUTSIDE_ROOTS,
+  getAllowedArtifactRoots,
+  isPathInsideAnyArtifactRoot,
+  normalizeLexicalPath,
+  validateArtifactPathWithinAllowedRoots,
+} from '@/services/artifactPathPolicy';
 
 /** File extensions → artifact type mapping */
 const EXT_MAP: Record<string, ArtifactFileType> = {
@@ -213,13 +177,11 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
   if (paths.length === 0) return;
 
   const allowedExtensions = ['pdf', 'svg', 'png', 'jpg', 'jpeg', 'webp', 'html'];
-  const artifactRoots = getAllowedArtifactRoots({ workDir, outputDir });
+  const rootOptions: ArtifactRootOptions = { workDir, outputDir };
 
   const filteredPaths = paths.filter(p => {
-    // AUDIT-FIX R7-06 — honor PiPi Output Folder (`outputDir`) alongside
-    // Project Folder (`workDir`). Reject when neither root is set or when
-    // the path escapes both roots (including sibling-prefix and `..` tricks).
-    if (!isPathInsideAnyArtifactRoot(p, artifactRoots)) {
+    // AUDIT-FIX R7-06/R7-05 — shared root policy for detected artifacts.
+    if (!validateArtifactPathWithinAllowedRoots(p, rootOptions).ok) {
       return false;
     }
 
@@ -243,14 +205,25 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
 /**
  * Manually add a single file artifact (for direct use when you already know the path).
  */
-export function addFileArtifact(messageId: string, filePath: string, name?: string): string {
+export function addFileArtifact(
+  messageId: string,
+  filePath: string,
+  name?: string,
+  roots?: ArtifactRootOptions,
+): string {
+  const validation = validateArtifactPathWithinAllowedRoots(filePath, roots ?? {});
+  if (!validation.ok) {
+    throw new Error(validation.reason);
+  }
+
+  const resolvedPath = validation.resolvedPath;
   const store = useArtifactsStore.getState();
   return store.addArtifact({
-    name: name ?? fileName(filePath),
-    filePath,
-    url: getArtifactUrl(filePath),
-    fileType: detectFileType(filePath),
-    mimeType: getMimeType(filePath),
+    name: name ?? fileName(resolvedPath),
+    filePath: resolvedPath,
+    url: getArtifactUrl(resolvedPath),
+    fileType: detectFileType(resolvedPath),
+    mimeType: getMimeType(resolvedPath),
     messageId,
   });
 }

@@ -74,6 +74,7 @@ describe('saveBrowserBenchmarkArtifact', () => {
       'browser-benchmark:session-1',
       '/tmp/pipi/session-1/.pipi-shrimp/docs/019-browser-benchmark-report.md',
       '019-browser-benchmark-report.md',
+      { workDir: '/tmp/pipi/session-1' },
     );
     expect(openPanelMock).toHaveBeenCalledWith('browser-benchmark:session-1', 'artifact-1');
     expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: DOCS_CHANGED_EVENT }));
