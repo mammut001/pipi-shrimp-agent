@@ -165,7 +165,10 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
     // AUDIT-FIX [fix-1#1-fg] — Use `isWithinDir` to close the
     // sibling-prefix escape that the old `startsWith` allowed
     // (e.g. `/workdir-evil` slipping past `/workdir`).
-    if (workDir && !isWithinDir(p, workDir)) {
+    if (!workDir?.trim()) {
+      return false;
+    }
+    if (!isWithinDir(p, workDir)) {
       return false;
     }
 

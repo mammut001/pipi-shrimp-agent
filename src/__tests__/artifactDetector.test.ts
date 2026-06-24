@@ -63,6 +63,16 @@ describe('artifactDetector', () => {
     expect(store.addArtifacts).toHaveBeenCalled();
   });
 
+  it('should reject absolute paths when workDir is undefined (R7-04)', async () => {
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /etc/passwd',
+    });
+    expect(store.addArtifacts).not.toHaveBeenCalled();
+  });
+
   it('should reject paths outside workDir', async () => {
     await detectAndRegisterArtifacts({
       messageId: mockMessageId,
