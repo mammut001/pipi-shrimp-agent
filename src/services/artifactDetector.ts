@@ -10,6 +10,59 @@ import { useArtifactsStore, type ArtifactFileType } from '@/store/artifactsStore
 import { isWithinDir } from '@/utils/pathSecurity';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
+export type ArtifactRootKind = 'workDir' | 'outputDir';
+
+export interface ArtifactRoot {
+  kind: ArtifactRootKind;
+  path: string;
+}
+
+/** Normalize `.` / `..` segments lexically before root-boundary checks. */
+export function normalizeLexicalPath(p: string): string {
+  const usesBackslash = p.includes('\\');
+  const parts = p.split(/[/\\]/).filter(Boolean);
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (part === '.') continue;
+    if (part === '..') {
+      if (resolved.length > 0) resolved.pop();
+    } else {
+      resolved.push(part);
+    }
+  }
+
+  const winDrive = /^[A-Za-z]:/.exec(p)?.[0];
+  if (winDrive) {
+    const tail = resolved.slice(1).join(usesBackslash ? '\\' : '/');
+    return tail ? `${winDrive}${usesBackslash ? '\\' : '/'}${tail}` : winDrive;
+  }
+
+  const prefix = p.startsWith('/') ? '/' : '';
+  return prefix + resolved.join('/');
+}
+
+export function getAllowedArtifactRoots(options: {
+  workDir?: string;
+  outputDir?: string;
+}): ArtifactRoot[] {
+  const roots: ArtifactRoot[] = [];
+  const workDir = options.workDir?.trim();
+  const outputDir = options.outputDir?.trim();
+  if (workDir) {
+    roots.push({ kind: 'workDir', path: normalizeLexicalPath(workDir) });
+  }
+  if (outputDir) {
+    roots.push({ kind: 'outputDir', path: normalizeLexicalPath(outputDir) });
+  }
+  return roots;
+}
+
+export function isPathInsideAnyArtifactRoot(path: string, roots: ArtifactRoot[]): boolean {
+  if (roots.length === 0) return false;
+  const normalizedPath = normalizeLexicalPath(path);
+  return roots.some((root) => isWithinDir(normalizedPath, root.path));
+}
+
 /** File extensions → artifact type mapping */
 const EXT_MAP: Record<string, ArtifactFileType> = {
   // Images
@@ -149,7 +202,7 @@ export interface ArtifactDetectionContext {
 }
 
 export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext): Promise<void> {
-  const { messageId, toolName, toolResultText, workDir } = ctx;
+  const { messageId, toolName, toolResultText, workDir, outputDir } = ctx;
 
   const validTools = ['write_file', 'render_typst_to_pdf', 'compile_typst_file', 'execute_command', 'Skill', 'skill', 'execute_skill'];
   if (!validTools.includes(toolName)) {
@@ -160,15 +213,13 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
   if (paths.length === 0) return;
 
   const allowedExtensions = ['pdf', 'svg', 'png', 'jpg', 'jpeg', 'webp', 'html'];
+  const artifactRoots = getAllowedArtifactRoots({ workDir, outputDir });
 
   const filteredPaths = paths.filter(p => {
-    // AUDIT-FIX [fix-1#1-fg] — Use `isWithinDir` to close the
-    // sibling-prefix escape that the old `startsWith` allowed
-    // (e.g. `/workdir-evil` slipping past `/workdir`).
-    if (!workDir?.trim()) {
-      return false;
-    }
-    if (!isWithinDir(p, workDir)) {
+    // AUDIT-FIX R7-06 — honor PiPi Output Folder (`outputDir`) alongside
+    // Project Folder (`workDir`). Reject when neither root is set or when
+    // the path escapes both roots (including sibling-prefix and `..` tricks).
+    if (!isPathInsideAnyArtifactRoot(p, artifactRoots)) {
       return false;
     }
 

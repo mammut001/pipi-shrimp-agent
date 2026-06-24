@@ -12,6 +12,7 @@ export interface ArtifactDetectorModule {
     toolArgs: string;
     toolResultText: string;
     workDir?: string;
+    outputDir?: string;
   }) => void | Promise<void>;
 }
 
@@ -20,6 +21,7 @@ export async function registerArtifactsFromToolResults(
   messageId: string,
   results: ToolArtifactResult[],
   workDir?: string | null,
+  outputDir?: string | null,
 ): Promise<void> {
   const { detectAndRegisterArtifacts } = await loadDetector();
 
@@ -30,6 +32,7 @@ export async function registerArtifactsFromToolResults(
       toolArgs: result.toolArgs || '',
       toolResultText: result.content,
       workDir: workDir || undefined,
+      outputDir: outputDir || undefined,
     });
   }
 }

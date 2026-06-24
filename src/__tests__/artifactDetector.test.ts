@@ -1,6 +1,10 @@
 import { jest } from '@jest/globals';
 
-import { detectAndRegisterArtifacts } from '../services/artifactDetector';
+import {
+  detectAndRegisterArtifacts,
+  getAllowedArtifactRoots,
+  isPathInsideAnyArtifactRoot,
+} from '../services/artifactDetector';
 import { useArtifactsStore } from '../store/artifactsStore';
 
 jest.mock('../store/artifactsStore', () => {
@@ -52,7 +56,7 @@ describe('artifactDetector', () => {
     expect(store.addArtifacts).not.toHaveBeenCalled();
   });
 
-  it('should register for write_file inside workDir', async () => {
+  it('accepts_path_inside_workDir', async () => {
     await detectAndRegisterArtifacts({
       messageId: mockMessageId,
       toolName: 'write_file',
@@ -63,7 +67,29 @@ describe('artifactDetector', () => {
     expect(store.addArtifacts).toHaveBeenCalled();
   });
 
-  it('should reject absolute paths when workDir is undefined (R7-04)', async () => {
+  it('accepts_path_inside_outputDir', async () => {
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /tmp/pipi-output/plan.md',
+      outputDir: '/tmp/pipi-output',
+    });
+    expect(store.addArtifacts).toHaveBeenCalled();
+  });
+
+  it('accepts_outputDir_when_workDir_is_undefined', async () => {
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Generated /tmp/pipi-output/report.pdf',
+      outputDir: '/tmp/pipi-output',
+    });
+    expect(store.addArtifacts).toHaveBeenCalled();
+  });
+
+  it('rejects_absolute_path_when_both_roots_undefined (R7-04)', async () => {
     await detectAndRegisterArtifacts({
       messageId: mockMessageId,
       toolName: 'write_file',
@@ -73,15 +99,72 @@ describe('artifactDetector', () => {
     expect(store.addArtifacts).not.toHaveBeenCalled();
   });
 
-  it('should reject paths outside workDir', async () => {
+  it('rejects_path_outside_both_roots', async () => {
     await detectAndRegisterArtifacts({
       messageId: mockMessageId,
       toolName: 'write_file',
       toolArgs: '{}',
       toolResultText: 'Saved to /outside/report.md',
       workDir: '/project',
+      outputDir: '/tmp/pipi-output',
     });
     expect(store.addArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('rejects_prefix_trick', async () => {
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /tmp/outside/file.txt',
+      outputDir: '/tmp/out',
+    });
+    expect(store.addArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('rejects_traversal_escape_from_outputDir', async () => {
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /tmp/output/../secret.txt',
+      outputDir: '/tmp/output',
+    });
+    expect(store.addArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('allows_both_roots_without_confusion', async () => {
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /tmp/project/report.md',
+      workDir: '/tmp/project',
+      outputDir: '/tmp/pipi-output',
+    });
+    expect(store.addArtifacts).toHaveBeenCalled();
+    const projectCalls = store.addArtifacts.mock.calls[0][0];
+    expect(projectCalls[0].filePath).toBe('/tmp/project/report.md');
+
+    store.addArtifacts.mockClear();
+
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /tmp/pipi-output/plan.md',
+      workDir: '/tmp/project',
+      outputDir: '/tmp/pipi-output',
+    });
+    expect(store.addArtifacts).toHaveBeenCalled();
+    const outputCalls = store.addArtifacts.mock.calls[0][0];
+    expect(outputCalls[0].filePath).toBe('/tmp/pipi-output/plan.md');
+  });
+
+  it('accepts Windows-style paths under workDir root', () => {
+    const roots = getAllowedArtifactRoots({ workDir: 'C:\\project' });
+    expect(isPathInsideAnyArtifactRoot('C:\\project\\out.txt', roots)).toBe(true);
+    expect(isPathInsideAnyArtifactRoot('C:\\outside\\out.txt', roots)).toBe(false);
   });
 
   it('should register pdf and svg from compile_typst_file', async () => {

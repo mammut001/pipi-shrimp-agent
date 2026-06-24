@@ -592,7 +592,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | ID | Title | Sev | Status | Key files | Smallest PR | Tests |
 | --- | ----- | --- | ------ | --------- | ----------- | ----- |
 | R7-04 | artifactDetector no filter when workDir undefined | High | open | `artifactDetector.ts` | Reject absolute paths | `/etc/passwd` rejected |
-| R7-06 | `outputDir` unused in artifactDetector | High | open | `artifactDetector.ts` | Register pipiOutputDir artifacts | output dir files tracked |
+| R7-06 | `outputDir` unused in artifactDetector | High | fixed | `artifactDetector.ts`, `chatArtifacts.ts`, `chatToolExecution.ts` | Honor workDir + outputDir roots | artifactDetector + chatArtifacts tests |
 | R7-12 | telegram invoke / Rust handler parity | High | open | `telegramService.ts`, `lib.rs` | Register missing handlers | T-15 contract test |
 | R7-02 | `isWithinDir` no `..` normalization | Med | open | `pathValidation.ts` | Canonicalize paths | `../` escape |
 | R7-03 | artifactDetector Unix-only paths | Med | open | `artifactDetector.ts` | Windows path support | `C:\` paths |

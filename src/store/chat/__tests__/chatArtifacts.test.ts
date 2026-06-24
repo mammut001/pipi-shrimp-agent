@@ -10,6 +10,7 @@ describe('chatArtifacts', () => {
       'assistant-message',
       [{ id: 'tool-1', content: 'created /work/out.svg', toolName: 'write_file', toolArgs: '{"path":"out.svg"}' }],
       '/work',
+      '/pipi-output',
     );
 
     expect(detectAndRegisterArtifacts).toHaveBeenCalledWith({
@@ -18,6 +19,7 @@ describe('chatArtifacts', () => {
       toolArgs: '{"path":"out.svg"}',
       toolResultText: 'created /work/out.svg',
       workDir: '/work',
+      outputDir: '/pipi-output',
     });
   });
 
@@ -29,6 +31,7 @@ describe('chatArtifacts', () => {
       'assistant-message',
       [{ id: 'tool-1', content: 'ok' }],
       null,
+      null,
     );
 
     expect(detectAndRegisterArtifacts).toHaveBeenCalledWith({
@@ -37,6 +40,7 @@ describe('chatArtifacts', () => {
       toolArgs: '',
       toolResultText: 'ok',
       workDir: undefined,
+      outputDir: undefined,
     });
   });
 });

@@ -1042,11 +1042,14 @@ export async function handleToolBatchRequest(
   }
 
   try {
+    const sessionForArtifacts = get().sessions.find((session) => session.id === activeSessionId);
+    const pipiOutputDir = resolveSessionPipiOutputDirHelper(sessionForArtifacts);
     await deps.registerArtifactsFromToolResults(
       deps.loadArtifactDetector,
       assistantMessageId,
       allResults,
       workDir,
+      pipiOutputDir,
     );
   } catch {
     // artifact detection is best-effort
