@@ -179,7 +179,7 @@ describe('validateAutoResearchSetupDraft', () => {
       setSshConfig: jest.fn(),
       setLastUsedConfig: jest.fn(),
       initSession: jest.fn(),
-    })).rejects.toThrow('Another AutoResearch run is already in progress. Stop it or wait for it to finish before starting a new run.');
+    })).rejects.toThrow('AutoResearch is still running. Stop the active run before you start a new run.');
 
     mockStoreState.id = '';
     mockStoreState.loopState = 'idle';
@@ -344,6 +344,7 @@ describe('validateAutoResearchSetupDraft', () => {
       experimentDir: '/tmp/exp-original',
       workDir: '/tmp/work-original',
       sessionId: 'run-interrupted',
+      metricName: 'cv_accuracy',
       agentConfig: { configId: 'cfg-agent', provider: 'openai', model: 'gpt-4.1' },
     });
     expect(mockStoreState.setLastUsedConfig).toHaveBeenCalledWith({
@@ -368,15 +369,18 @@ describe('validateAutoResearchSetupDraft', () => {
     expect(mockCreateAutoResearchSendMessage).toHaveBeenCalledWith(
       '/tmp/exp-resolved',
       { configId: 'cfg-agent', provider: 'openai', model: 'gpt-4.1' },
-      {
+      expect.objectContaining({
         environmentSummary: 'python=3.12',
         metricName: 'cv_accuracy',
         direction: 'higher',
         maxIterations: 5,
         reflectionConfig: { configId: 'cfg-reflection', provider: 'openai', model: 'gpt-4.1-mini' },
-      },
+        signal: expect.any(AbortSignal),
+      }),
     );
-    expect(mockStartExperimentLoop).toHaveBeenCalledWith('send-message');
+    expect(mockStartExperimentLoop).toHaveBeenCalledWith('send-message', expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
     expect(result).toEqual(expect.objectContaining({
       sessionId: 'run-interrupted',
       pendingIteration: 3,

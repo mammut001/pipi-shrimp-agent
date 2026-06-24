@@ -14,6 +14,8 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { MainLayout } from '@/layout';
 import { ChatMessage, ChatInput, PermissionModal, QuestionnaireCard, TerminalPanel } from '@/components';
+import { ScrollToBottomButton } from '@/components/chat/ScrollToBottomButton';
+import { useChatMessageScroll } from '@/hooks/useChatMessageScroll';
 import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, processMessagesForDisplay } from '@/utils/chat';
@@ -24,13 +26,8 @@ import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
  * Chat page component
  */
 export function Chat() {
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [userScrolledUp, setUserScrolledUp] = useState(false);
   const [showFullHistory, setShowFullHistory] = useState(false);
   const [fallbackTerminalCwd, setFallbackTerminalCwd] = useState<string | undefined>();
-  // Debounce timer for scroll events to prevent rapid state updates during fast scrolling
-  const scrollDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     currentMessages,
@@ -122,23 +119,17 @@ export function Chat() {
   );
   const hiddenMessageCount = getHiddenMessageCount(displayMessages, visibleMessages);
   const hasMessages = displayMessages.length > 0;
+  const {
+    scrollContainerRef,
+    messagesEndRef,
+    userScrolledUp,
+    handleScroll,
+    scrollToBottom,
+  } = useChatMessageScroll(displayMessages);
 
   useEffect(() => {
     setShowFullHistory(false);
   }, [currentSessionData?.id]);
-
-  // Detect if user has scrolled up (away from bottom) - debounced to avoid rapid updates
-  const handleScroll = useCallback(() => {
-    if (scrollDebounceTimer.current) {
-      clearTimeout(scrollDebounceTimer.current);
-    }
-    scrollDebounceTimer.current = setTimeout(() => {
-      const el = scrollContainerRef.current;
-      if (!el) return;
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      setUserScrolledUp(distanceFromBottom > 100); // Consider user scrolled up if >100px from bottom
-    }, 100); // 100ms debounce
-  }, []);
 
   // Terminal panel drag-resize handler
   const handleTerminalDragStart = useCallback(
@@ -162,16 +153,6 @@ export function Chat() {
     [terminalPanelHeight, setTerminalPanelHeight]
   );
 
-  // Auto-scroll to bottom only when user is at bottom
-  useEffect(() => {
-    if (!userScrolledUp) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [displayMessages, userScrolledUp]);
-
-  /**
-   * Handle permission approval
-   */
   /**
    * Handle permission approval
    */
@@ -204,10 +185,11 @@ export function Chat() {
           {/* Chat area (fills remaining space above terminal) */}
           <div className="flex-1 flex flex-col min-h-0">
             {/* Messages List */}
+            <div className="relative flex-1 min-h-0">
             <div
               ref={scrollContainerRef}
               onScroll={handleScroll}
-              className="flex-1 overflow-y-auto max-w-full"
+              className="h-full overflow-y-auto max-w-full"
             >
             {hasMessages ? (
               <div className="divide-y divide-gray-100 max-w-full overflow-hidden">
@@ -256,6 +238,11 @@ export function Chat() {
                 </div>
               </div>
             )}
+          </div>
+          <ScrollToBottomButton
+            visible={userScrolledUp && hasMessages}
+            onClick={scrollToBottom}
+          />
           </div>
 
           {/* Error Banner — responsive: wraps on small windows */}

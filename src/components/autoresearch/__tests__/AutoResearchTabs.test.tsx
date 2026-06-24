@@ -9,6 +9,12 @@ import { act } from 'react-dom/test-utils';
 
 jest.mock('@/i18n', () => ({
   t: (key: string) => key,
+  getCurrentLocale: () => 'en-US',
+  setLocale: jest.fn(),
+  addLocaleChangeListener: jest.fn(() => jest.fn()),
+  getSupportedLocales: () => [{ value: 'en-US', label: 'English', flag: 'US' }],
+  convertOldLanguageCode: (code: string) => (code === 'en' ? 'en-US' : 'zh-CN'),
+  convertToOldLanguageCode: (locale: string) => (locale === 'en-US' ? 'en' : 'zh'),
 }));
 
 jest.mock('../BootstrapChatView', () => ({

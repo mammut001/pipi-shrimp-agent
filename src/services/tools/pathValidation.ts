@@ -9,6 +9,8 @@
  * Based on Claude Code's pathValidation.ts
  */
 
+import { isWithinDir } from '@/utils/pathSecurity';
+
 export interface PathValidationResult {
   isValid: boolean;
   error?: string;
@@ -79,9 +81,8 @@ export function validatePath(
   // Check for path traversal attempts
   if (trimmed.includes('..')) {
     if (workDir) {
-      // Allow .. only if it resolves within workDir
       const normalizedWorkDir = normalizePath(workDir);
-      if (!resolvedPath.startsWith(normalizedWorkDir + '/') && resolvedPath !== normalizedWorkDir) {
+      if (!isWithinDir(resolvedPath, normalizedWorkDir)) {
         return { isValid: false, error: `Path traversal outside working directory: ${inputPath}` };
       }
     } else {
@@ -103,10 +104,10 @@ export function validatePath(
     }
   }
 
-  // If workDir is set, ensure path is within it
+  // If workDir is set, ensure path is within it (strict boundary — no sibling-prefix escape)
   if (workDir) {
     const normalizedWorkDir = normalizePath(workDir);
-    if (!resolvedPath.startsWith(normalizedWorkDir + '/') && resolvedPath !== normalizedWorkDir) {
+    if (!isWithinDir(resolvedPath, normalizedWorkDir)) {
       return { isValid: false, error: `Path ${resolvedPath} is outside working directory ${workDir}` };
     }
   }

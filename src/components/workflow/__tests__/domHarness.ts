@@ -1,23 +1,8 @@
 import type { ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
-import { JSDOM } from 'jsdom';
 
-type DomGlobalKey =
-  | 'window'
-  | 'document'
-  | 'navigator'
-  | 'HTMLElement'
-  | 'Event'
-  | 'MouseEvent'
-  | 'KeyboardEvent'
-  | 'CustomEvent'
-  | 'Node'
-  | 'Text'
-  | 'getComputedStyle'
-  | 'requestAnimationFrame'
-  | 'cancelAnimationFrame'
-  | 'IS_REACT_ACT_ENVIRONMENT';
+type DomGlobalKey = 'IS_REACT_ACT_ENVIRONMENT';
 
 interface DomHarness {
   window: Window;
@@ -40,32 +25,20 @@ function installGlobal(
 }
 
 export function createDomHarness(): DomHarness {
-  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
-    url: 'http://localhost/',
-  });
-  const snapshots = new Map<DomGlobalKey, PropertyDescriptor | undefined>();
-  const { window } = dom;
+  if (typeof document === 'undefined' || typeof window === 'undefined') {
+    throw new Error('createDomHarness requires the jsdom test environment.');
+  }
 
-  installGlobal('window', window, snapshots);
-  installGlobal('document', window.document, snapshots);
-  installGlobal('navigator', window.navigator, snapshots);
-  installGlobal('HTMLElement', window.HTMLElement, snapshots);
-  installGlobal('Event', window.Event, snapshots);
-  installGlobal('MouseEvent', window.MouseEvent, snapshots);
-  installGlobal('KeyboardEvent', window.KeyboardEvent, snapshots);
-  installGlobal('CustomEvent', window.CustomEvent, snapshots);
-  installGlobal('Node', window.Node, snapshots);
-  installGlobal('Text', window.Text, snapshots);
-  installGlobal('getComputedStyle', window.getComputedStyle.bind(window), snapshots);
-  installGlobal(
-    'requestAnimationFrame',
-    (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0),
-    snapshots,
-  );
-  installGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id), snapshots);
+  const snapshots = new Map<DomGlobalKey, PropertyDescriptor | undefined>();
   installGlobal('IS_REACT_ACT_ENVIRONMENT', true, snapshots);
 
-  const container = window.document.getElementById('root') as HTMLDivElement;
+  let container = document.getElementById('root') as HTMLDivElement | null;
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'root';
+    document.body.appendChild(container);
+  }
+
   const root: Root = createRoot(container);
 
   return {
@@ -88,8 +61,6 @@ export function createDomHarness(): DomHarness {
           delete (globalThis as Record<string, unknown>)[key];
         }
       }
-
-      dom.window.close();
     },
   };
 }

@@ -1,5 +1,18 @@
+import DOMPurify from 'dompurify';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+function sanitizeMarkdownBody(body: string): string {
+  return DOMPurify.sanitize(body, { USE_PROFILES: { html: true } });
+}
+
+function isSafeMarkdownHref(href: string | undefined): boolean {
+  if (!href) return false;
+  const normalized = href.trim().toLowerCase();
+  return !normalized.startsWith('javascript:')
+    && !normalized.startsWith('data:')
+    && !normalized.startsWith('vbscript:');
+}
 
 const documentPreviewProseClassName = [
   'prose prose-stone prose-sm md:prose-base max-w-none',
@@ -16,9 +29,26 @@ const documentPreviewProseClassName = [
 ].join(' ');
 
 export function MarkdownDocumentPreview({ body }: { body: string }) {
+  const safeBody = sanitizeMarkdownBody(body);
   return (
     <article className={documentPreviewProseClassName}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a({ href, children, ...props }) {
+            if (!isSafeMarkdownHref(href)) {
+              return <span {...props}>{children}</span>;
+            }
+            return (
+              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {safeBody}
+      </ReactMarkdown>
     </article>
   );
 }

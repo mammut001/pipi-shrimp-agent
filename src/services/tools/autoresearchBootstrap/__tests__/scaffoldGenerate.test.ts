@@ -41,7 +41,7 @@ describe('renderKnownScaffoldTemplate', () => {
     for (const file of rendered.renderedFiles) {
       const expectedPath = path.join(FIXTURE_ROOT, file.path);
       const expectedContent = readFileSync(expectedPath, 'utf8');
-      expect(file.content).toBe(expectedContent);
+      expect(file.content.replace(/\r\n/g, '\n').trimEnd()).toBe(expectedContent.replace(/\r\n/g, '\n').trimEnd());
     }
   });
 });

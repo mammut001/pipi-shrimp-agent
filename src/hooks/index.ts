@@ -12,3 +12,5 @@ export { usePolling } from './usePolling';
 
 export { useResponsiveLayout } from './useResponsiveLayout';
 export type { ResponsiveLayout, LayoutTier } from './useResponsiveLayout';
+
+export { useChatMessageScroll } from './useChatMessageScroll';

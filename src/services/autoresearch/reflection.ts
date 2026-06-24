@@ -547,8 +547,12 @@ export function getDeterministicRecoveryDecision(
   if (stderr.includes('disabled for this AutoResearch run')) {
     const localLaneAllowed = setHasIntersection(allowedTools, LOCAL_ALLOWED_TOOLS) || isLocalLaneTool(failedToolResult.tool);
     const sshLaneAllowed = setHasIntersection(allowedTools, SSH_ALLOWED_TOOLS) || isSshLaneTool(failedToolResult.tool);
+    const allowedToolsAreLocalOnly = allowedTools.size > 0
+      && [...allowedTools].every((tool) => LOCAL_ALLOWED_TOOLS.has(tool));
+    const allowedToolsAreSshOnly = allowedTools.size > 0
+      && [...allowedTools].every((tool) => SSH_ALLOWED_TOOLS.has(tool));
 
-    if (localLaneAllowed && !sshLaneAllowed) {
+    if ((localLaneAllowed && !sshLaneAllowed) || (isSshLaneTool(failedToolResult.tool) && allowedToolsAreLocalOnly)) {
       return {
         action: 'retry_with_plan',
         summary: 'The previous attempt drifted onto SSH-only tools during a local AutoResearch run.',
@@ -559,7 +563,7 @@ export function getDeterministicRecoveryDecision(
       };
     }
 
-    if (sshLaneAllowed && !localLaneAllowed) {
+    if ((sshLaneAllowed && !localLaneAllowed) || (isLocalLaneTool(failedToolResult.tool) && allowedToolsAreSshOnly)) {
       return {
         action: 'retry_with_plan',
         summary: 'The previous attempt drifted onto local-only tools during an SSH AutoResearch run.',

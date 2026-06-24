@@ -25,7 +25,7 @@ import { useArtifactsStore } from './artifactsStore';
 import { createChatActionMethods } from './chat/chatActions';
 import { resetTransientSessionStateForNewChat } from './chat/sessionIsolation';
 import { filterSessionsByProject, selectCurrentMessages, selectCurrentSession } from './chat/chatSelectors';
-import { resolveStreamingOwnerSessionId } from './chat/chatStreaming';
+import { requestChatGenerationCancel, resolveStreamingOwnerSessionId } from './chat/chatStreaming';
 import { safeSetItem, safeRemoveItem, safeGetItem, safeMigrateKey } from '@/utils/safeStorage';
 import {
   clearNonCurrentSessionToolRuntime,
@@ -874,6 +874,7 @@ export const useChatStore = create<ChatState>()(
           get().isStreaming ? previousSessionId : null,
         );
         if (owningSessionId) {
+          requestChatGenerationCancel(owningSessionId);
           safeInvokeOrNull('stop_subprocess', { sessionId: owningSessionId });
         }
       }

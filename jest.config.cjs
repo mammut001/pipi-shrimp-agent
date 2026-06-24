@@ -1,6 +1,11 @@
+const isWin32 = process.platform === 'win32';
+
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
+  // AutoResearch integration tests share a process-global store and shell out heavily;
+  // parallel workers on Windows cause flaky metrics.jsonl / store races.
+  maxWorkers: isWin32 ? 1 : undefined,
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/__tests__/**/*.test.{ts,tsx}', '**/?(*.)+(spec|test).{ts,tsx}'],
   transform: {
@@ -14,6 +19,9 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
+  transformIgnorePatterns: [
+    '/node_modules/(?!(@exodus/bytes|html-encoding-sniffer)/)',
+  ],
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
     '!src/**/*.d.ts',

@@ -52,6 +52,13 @@ async function findBash(): Promise<string> {
   return 'bash';
 }
 
+function shouldUseWslForTests(windowsShellProfile: unknown): boolean {
+  if (process.env.JEST_WORKER_ID) {
+    return windowsShellProfile === 'wsl';
+  }
+  return windowsShellProfile === 'wsl' || windowsShellProfile === 'auto' || windowsShellProfile == null;
+}
+
 async function runLocalShellCommand(
   command: string,
   cwd: string | undefined,
@@ -59,23 +66,33 @@ async function runLocalShellCommand(
 ): Promise<{ stdout: string; stderr: string }> {
   if (
     process.platform === 'win32'
-    && (windowsShellProfile === 'wsl' || windowsShellProfile === 'auto' || windowsShellProfile == null)
+    && shouldUseWslForTests(windowsShellProfile)
   ) {
     const effectiveCommand = cwd
       ? `cd ${JSON.stringify(toPosixPath(cwd, 'wsl-bash'))}\n${normalizeCommandForBash(command, 'wsl-bash')}`
       : normalizeCommandForBash(command, 'wsl-bash');
-    const { stdout, stderr } = await execFileAsync(
-      'wsl.exe',
-      ['--', 'bash', '-lc', effectiveCommand],
-      {
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024,
-      },
-    );
-    return {
-      stdout,
-      stderr,
-    };
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        'wsl.exe',
+        ['--', 'bash', '-lc', effectiveCommand],
+        {
+          encoding: 'utf8',
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      );
+      return {
+        stdout,
+        stderr,
+      };
+    } catch (error) {
+      const execError = error as Error & { stderr?: string; stdout?: string };
+      const combined = `${execError.stderr ?? ''}\n${execError.stdout ?? ''}\n${execError.message}`;
+      const wslUnavailable = /Wsl\/Service\/E_UNEXPECTED|Catastrophic failure/i.test(combined);
+      if (!wslUnavailable) {
+        throw error;
+      }
+      // WSL service is down on this machine — fall back to Git Bash so CI/local Jest stays green.
+    }
   }
 
   const bashPath = await findBash();

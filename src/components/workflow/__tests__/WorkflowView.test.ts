@@ -1,3 +1,15 @@
+/** @jest-environment jsdom */
+
+jest.mock('@/i18n', () => ({
+  t: (key: string) => key,
+  getCurrentLocale: () => 'en-US',
+  setLocale: jest.fn(),
+  addLocaleChangeListener: jest.fn(() => jest.fn()),
+  getSupportedLocales: () => [{ value: 'en-US', label: 'English', flag: 'US' }],
+  convertOldLanguageCode: (code: string) => (code === 'en' ? 'en-US' : 'zh-CN'),
+  convertToOldLanguageCode: (locale: string) => (locale === 'en-US' ? 'en' : 'zh'),
+}));
+
 import { createElement, useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { clickElement, createDomHarness, flushEffects } from './domHarness';
@@ -53,10 +65,6 @@ const useWorkflowStoreMock = Object.assign(
     getState: () => workflowState,
   },
 );
-
-jest.mock('@/i18n', () => ({
-  t: (key: string) => key,
-}));
 
 jest.mock('@/store/workflowStore', () => ({
   useWorkflowStore: useWorkflowStoreMock,

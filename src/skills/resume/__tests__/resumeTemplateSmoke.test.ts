@@ -1,5 +1,5 @@
-import { afterAll, afterEach, describe, expect, it } from '@jest/globals';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from '@jest/globals';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   escapeTypstContent,
@@ -16,6 +16,10 @@ const PROJECT_TMP_DIR = path.resolve(process.cwd(), 'src/skills/resume/__tests__
 function projectTmpDir(): string {
   return PROJECT_TMP_DIR;
 }
+
+beforeAll(() => {
+  mkdirSync(projectTmpDir(), { recursive: true });
+});
 
 function createWorkDir(prefix: string): string {
   const workDir = mkdtempSync(path.join(projectTmpDir(), prefix));
@@ -78,7 +82,7 @@ describe('resume template smoke fixtures', () => {
     writeFileSync(filePath, content, 'utf8');
 
     expect(filePath.startsWith(path.resolve(workDir))).toBe(true);
-    expect(readFileSync(filePath, 'utf8')).toContain('主导搜索链路优化，延迟降低 [X%]，并负责上线落地');
+    expect(readFileSync(filePath, 'utf8')).toContain('主导搜索链路优化，延迟降低 \\[X%\\]，并负责上线落地');
   });
 
   it('writes a TOML-driven nabcv fixture with deterministic quoting', () => {

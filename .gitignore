@@ -92,3 +92,7 @@ scripts/*.ps1
 scripts/*.sh
 !scripts/complexity-report.mjs
 /.tmp
+
+# Cursor IDE terminal session logs (not project source)
+/terminals/
+/agent-tools/

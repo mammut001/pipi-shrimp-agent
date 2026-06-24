@@ -1,3 +1,5 @@
+/** @jest-environment jsdom */
+
 import { createElement, useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { clickElement, createDomHarness, flushEffects } from './domHarness';

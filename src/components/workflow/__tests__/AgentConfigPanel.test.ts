@@ -99,12 +99,14 @@ function createWorkflowState() {
 
 describe('AgentConfigPanel', () => {
   beforeEach(() => {
-    mockUseWorkflowStore.mockImplementation((selector: (state: ReturnType<typeof createWorkflowState>) => unknown) =>
-      selector(createWorkflowState())
-    );
-    mockUseSettingsStore.mockImplementation((selector: (state: { apiConfigs: Array<{ id: string; name: string; provider: string; model: string }>; availableModels: Record<string, string[]> }) => unknown) =>
-      selector({ apiConfigs: [], availableModels: {} })
-    );
+    mockUseWorkflowStore.mockImplementation((selector?: (state: ReturnType<typeof createWorkflowState>) => unknown) => {
+      const state = createWorkflowState();
+      return typeof selector === 'function' ? selector(state) : state;
+    });
+    mockUseSettingsStore.mockImplementation((selector?: (state: { apiConfigs: Array<{ id: string; name: string; provider: string; model: string }>; availableModels: Record<string, string[]> }) => unknown) => {
+      const state = { apiConfigs: [], availableModels: {} };
+      return typeof selector === 'function' ? selector(state) : state;
+    });
   });
 
   afterEach(() => {

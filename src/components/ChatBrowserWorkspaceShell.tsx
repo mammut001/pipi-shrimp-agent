@@ -33,6 +33,8 @@ import { t } from '@/i18n';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
 import { getHiddenMessageCount, getVisibleMessageWindow } from './chat/messageWindowing';
+import { ScrollToBottomButton } from './chat/ScrollToBottomButton';
+import { useChatMessageScroll } from '@/hooks/useChatMessageScroll';
 import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
 import { safeGetJSON, safeSetJSON } from '@/utils/safeStorage';
 
@@ -152,7 +154,7 @@ export function ChatBrowserWorkspaceShell() {
     };
   }, []);
   // Browser dock state
-  const { browserDockMode } = useUIStore();
+  const { browserDockMode, browserSplitFocus } = useUIStore();
   const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'preview'>('chat');
 
   // Permission modal state (Ask mode)
@@ -350,6 +352,13 @@ export function ChatBrowserWorkspaceShell() {
   );
   const hiddenMessageCount = getHiddenMessageCount(displayMessages, visibleMessages);
   const hasMessages = displayMessages.length > 0;
+  const {
+    scrollContainerRef,
+    messagesEndRef,
+    userScrolledUp,
+    handleScroll,
+    scrollToBottom,
+  } = useChatMessageScroll(displayMessages);
 
   useEffect(() => {
     setWorkspaceMode('chat');
@@ -448,7 +457,12 @@ export function ChatBrowserWorkspaceShell() {
         onExpandPanel={() => setAgentPanelTab('goal')}
       />
       {/* Messages List — min-h-0 allows this to shrink when terminal panel is open */}
-      <div className="flex-1 overflow-y-auto min-h-0 w-full">
+      <div className="relative flex-1 min-h-0 w-full">
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="h-full overflow-y-auto w-full"
+        >
         {hasMessages ? (
           <div className="divide-y divide-gray-100 w-full">
             {hiddenMessageCount > 0 && (
@@ -470,6 +484,7 @@ export function ChatBrowserWorkspaceShell() {
                 isStreaming={isStreaming && index === filtered.length - 1}
               />
             ))}
+            <div ref={messagesEndRef} />
           </div>
         ) : (
           /* Empty State */
@@ -491,6 +506,11 @@ export function ChatBrowserWorkspaceShell() {
             </div>
           </div>
         )}
+        </div>
+        <ScrollToBottomButton
+          visible={userScrolledUp && hasMessages}
+          onClick={scrollToBottom}
+        />
       </div>
 
       {/* Error Banner */}
@@ -620,11 +640,22 @@ export function ChatBrowserWorkspaceShell() {
       }
       rightPanelWidthClassName={previewWorkspaceActive ? 'w-[360px]' : undefined}
     >
-      {/* Split Mode: Browser takes full center area, right AgentPanel shows controls+logs */}
+      {/* Split Mode: browser + chat side by side; focusChatPane enlarges chat pane */}
       {isSplitMode ? (
         <div className="flex-1 flex min-h-0 min-w-0">
-          <div className="flex-1 min-w-0 bg-white">
+          <div
+            className={`min-w-0 bg-white ${
+              browserSplitFocus === 'browser' ? 'flex-[3]' : 'flex-[2]'
+            }`}
+          >
             <BrowserWorkspacePane />
+          </div>
+          <div
+            className={`flex min-h-0 min-w-0 flex-col border-l border-gray-200 ${
+              browserSplitFocus === 'chat' ? 'flex-[3]' : 'flex-[2]'
+            }`}
+          >
+            {renderChatPanel()}
           </div>
         </div>
       ) : (

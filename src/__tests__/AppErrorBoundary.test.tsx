@@ -163,7 +163,12 @@ describe('AppErrorBoundary', () => {
   });
 
   it('falls back to execCommand copy when clipboard write fails', async () => {
-    const execCommandSpy = jest.spyOn(document, 'execCommand').mockReturnValue(true);
+    const execCommandImpl = jest.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      value: execCommandImpl,
+      configurable: true,
+      writable: true,
+    });
     mockClipboardWriteText.mockRejectedValueOnce(new Error('clipboard unavailable'));
     const view = renderBoundary(() => true);
 
@@ -172,7 +177,7 @@ describe('AppErrorBoundary', () => {
       await Promise.resolve();
     });
 
-    expect(execCommandSpy).toHaveBeenCalledWith('copy');
+    expect(execCommandImpl).toHaveBeenCalledWith('copy');
     expect(view.container.textContent).toContain('errorBoundary.copySuccess');
   });
 

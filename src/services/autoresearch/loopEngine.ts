@@ -104,6 +104,12 @@ const MAX_CONSECUTIVE_RATE_LIMITS = 3;
  */
 let activeLoopAbortController: AbortController | null = null;
 
+function clearActiveLoopHandle(controller: AbortController): void {
+  if (activeLoopAbortController === controller) {
+    activeLoopAbortController = null;
+  }
+}
+
 export class AutoResearchAbortedError extends Error {
   constructor(message = 'AutoResearch loop was aborted by the user.') {
     super(message);
@@ -939,7 +945,7 @@ export async function startExperimentLoop(
 
   if (!store.sshConfig) {
     useAutoResearchStore.getState().setError('SSH config not set');
-    activeLoopAbortController = null;
+    clearActiveLoopHandle(abortController);
     return;
   }
 
@@ -951,6 +957,7 @@ export async function startExperimentLoop(
     await assertSupportedPlatform(cfg);
   } catch (error) {
     useAutoResearchStore.getState().setError(formatError(error));
+    clearActiveLoopHandle(abortController);
     return;
   }
 
@@ -968,6 +975,7 @@ export async function startExperimentLoop(
     await assertRemoteLinux(cfg);
   } catch (error) {
     useAutoResearchStore.getState().setError(formatError(error));
+    clearActiveLoopHandle(abortController);
     return;
   }
 
@@ -975,6 +983,7 @@ export async function startExperimentLoop(
     const avail = await ensureSshpassAvailable();
     if (!avail.ok) {
       useAutoResearchStore.getState().setError(avail.hint ?? 'sshpass unavailable');
+      clearActiveLoopHandle(abortController);
       return;
     }
   }
@@ -994,6 +1003,7 @@ export async function startExperimentLoop(
     startup = await prepareStartupContext(store);
   } catch (error) {
     useAutoResearchStore.getState().setError(formatError(error));
+    clearActiveLoopHandle(abortController);
     return;
   }
 
@@ -1004,6 +1014,7 @@ export async function startExperimentLoop(
     sessionPaths = getSessionRunPaths(artifactCfg, sessionId);
   } catch (error) {
     useAutoResearchStore.getState().setError(formatError(error));
+    clearActiveLoopHandle(abortController);
     return;
   }
   const sessionContent = startup.sessionContent;
@@ -1027,6 +1038,7 @@ export async function startExperimentLoop(
     });
   } catch (error) {
     useAutoResearchStore.getState().setError(`Failed to initialize run artifacts: ${formatError(error)}`);
+    clearActiveLoopHandle(abortController);
     return;
   }
 
@@ -1045,6 +1057,7 @@ export async function startExperimentLoop(
         },
       });
       useAutoResearchStore.getState().setError(buildDirtyRepoMessage(environmentSummary));
+      clearActiveLoopHandle(abortController);
       return;
     }
     emitAutoResearchRuntimeEvent({
@@ -1062,6 +1075,7 @@ export async function startExperimentLoop(
   } catch (error) {
     const where = experimentCfg.mode === 'local' ? 'local experiment directory' : 'remote target';
     useAutoResearchStore.getState().setError(`Cannot reach ${where}: ${formatError(error)}`);
+    clearActiveLoopHandle(abortController);
     return;
   }
 
@@ -1092,6 +1106,22 @@ export async function startExperimentLoop(
     const state = useAutoResearchStore.getState();
     const activeRun = state.runHistory.find((run) => run.id === state.id);
 
+    if (state.consecutiveFailures >= 3) {
+      await notifier.onLoopStopped('3 consecutive failures', state);
+      useAutoResearchStore.getState().setRunStatus('failed', {
+        summary: 'Stopped after 3 consecutive failures.',
+        endedAt: new Date().toISOString(),
+      });
+      emitAutoResearchRuntimeEvent({
+        level: 'error',
+        phase: 'FAILED',
+        type: 'run_completed',
+        message: 'Run stopped after 3 consecutive failures.',
+        summary: 'Run failed after 3 consecutive failures.',
+      });
+      useAutoResearchStore.getState().setLoopState('stopped');
+      break;
+    }
     if (state.loopState === 'stopped' || state.loopState === 'error') {
       break;
     }
@@ -1110,22 +1140,6 @@ export async function startExperimentLoop(
           summary: 'Run completed.',
         });
       }
-      useAutoResearchStore.getState().setLoopState('stopped');
-      break;
-    }
-    if (state.consecutiveFailures >= 3) {
-      await notifier.onLoopStopped('3 consecutive failures', state);
-      useAutoResearchStore.getState().setRunStatus('failed', {
-        summary: 'Stopped after 3 consecutive failures.',
-        endedAt: new Date().toISOString(),
-      });
-      emitAutoResearchRuntimeEvent({
-        level: 'error',
-        phase: 'FAILED',
-        type: 'run_completed',
-        message: 'Run stopped after 3 consecutive failures.',
-        summary: 'Run failed after 3 consecutive failures.',
-      });
       useAutoResearchStore.getState().setLoopState('stopped');
       break;
     }
@@ -1747,6 +1761,9 @@ export async function startExperimentLoop(
           endedAt: finishedAt,
           reason: failureMessage,
         });
+        if (isTerminalFailureError(error)) {
+          useAutoResearchStore.getState().setLoopState('stopped');
+        }
       }
       useAutoResearchStore.getState().addExperiment(entry);
       useAutoResearchStore.getState().completeIterationRecord({
@@ -1846,9 +1863,7 @@ export async function startExperimentLoop(
     if (externalAbortListener && externalSignal) {
       externalSignal.removeEventListener('abort', externalAbortListener);
     }
-    if (activeLoopAbortController === abortController) {
-      activeLoopAbortController = null;
-    }
+    clearActiveLoopHandle(abortController);
   }
 }
 

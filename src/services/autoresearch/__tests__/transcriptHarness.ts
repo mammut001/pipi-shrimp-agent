@@ -44,6 +44,25 @@ export function rewriteFixturePath(
     .replaceAll(sourceRunDir.metricsPath, targetRunDir.metricsPath);
 }
 
+function rewriteToolCallArguments(
+  toolName: string,
+  argumentsText: string,
+  sourceRunDir: TranscriptRunDirPaths,
+  targetRunDir: TranscriptRunDirPaths,
+): string {
+  if (toolName === 'write_file') {
+    const payload = parseWriteFilePayload(argumentsText);
+    if (payload) {
+      return JSON.stringify({
+        path: rewriteFixturePath(payload.path, sourceRunDir, targetRunDir),
+        content: rewriteFixturePath(payload.content, sourceRunDir, targetRunDir),
+      });
+    }
+  }
+
+  return rewriteFixturePath(argumentsText, sourceRunDir, targetRunDir);
+}
+
 export function materializeTranscriptFixture<T extends AutoResearchTranscriptFixture>(
   fixture: T,
   runDir: TranscriptRunDirPaths,
@@ -64,7 +83,7 @@ export function materializeTranscriptFixture<T extends AutoResearchTranscriptFix
             ...event,
             call: {
               ...event.call,
-              arguments: rewriteFixturePath(event.call.arguments, fixture.runDir, runDir),
+              arguments: rewriteToolCallArguments(event.call.name, event.call.arguments, fixture.runDir, runDir),
             },
           };
         }

@@ -2,6 +2,10 @@ import * as fs from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 
+function normalizeMemoryPath(value: string): string {
+  return value.replace(/\\/g, '/');
+}
+
 const mockInvoke = jest.fn();
 const mockGetActiveConfig = jest.fn();
 const mockPersistence = {
@@ -179,9 +183,9 @@ describe('Swarm memory path integration', () => {
       projectRoot: workDir,
     });
 
-    expect(teamMemory?.memoryDir).toBe(join(expectedBaseDir, team.id, 'team-memory'));
-    expect(leaderMemory?.memoryDir).toBe(join(expectedBaseDir, team.id, leader.id, 'memory'));
-    expect(memory?.memoryDir).toBe(join(expectedBaseDir, team.id, agent.id, 'memory'));
+    expect(normalizeMemoryPath(teamMemory?.memoryDir ?? '')).toBe(normalizeMemoryPath(join(expectedBaseDir, team.id, 'team-memory')));
+    expect(normalizeMemoryPath(leaderMemory?.memoryDir ?? '')).toBe(normalizeMemoryPath(join(expectedBaseDir, team.id, leader.id, 'memory')));
+    expect(normalizeMemoryPath(memory?.memoryDir ?? '')).toBe(normalizeMemoryPath(join(expectedBaseDir, team.id, agent.id, 'memory')));
 
     const teamMemoryFile = join(teamMemory!.memoryDir, 'MEMORY.md');
     const leaderMemoryFile = join(leaderMemory!.memoryDir, 'MEMORY.md');
@@ -195,8 +199,8 @@ describe('Swarm memory path integration', () => {
       .map(([, payload]) => (payload as InvokePayload | undefined)?.path)
       .filter((value): value is string => Boolean(value));
 
-    expect(writtenPaths.every((value) => value.startsWith(workDir))).toBe(true);
-    expect(writtenPaths.some((value) => value.includes(join('.pipi-shrimp', 'memory', 'swarm')))).toBe(true);
+    expect(writtenPaths.every((value) => normalizeMemoryPath(value).startsWith(normalizeMemoryPath(workDir)))).toBe(true);
+    expect(writtenPaths.some((value) => normalizeMemoryPath(value).includes(normalizeMemoryPath(join('.pipi-shrimp', 'memory', 'swarm'))))).toBe(true);
     expect(writtenPaths.some((value) => value.startsWith(join(homedir(), '.pipi-shrimp')))).toBe(false);
     expect(writtenPaths.some((value) => value.includes(`${sep}pipi-shrimp-memory${sep}default`))).toBe(false);
   });
@@ -233,8 +237,8 @@ describe('Swarm memory path integration', () => {
     const agentTopicFile = join(workerMemory!.memoryDir, 'topic-memories', 'project-swarm-path-contract.md');
     const teamTopicFile = join(teamMemory!.memoryDir, 'topic-memories', 'decision-keep-memory-local.md');
 
-    expect(savedAgentPaths).toEqual([agentTopicFile]);
-    expect(savedTeamPaths).toEqual([teamTopicFile]);
+    expect(savedAgentPaths.map(normalizeMemoryPath)).toEqual([normalizeMemoryPath(agentTopicFile)]);
+    expect(savedTeamPaths.map(normalizeMemoryPath)).toEqual([normalizeMemoryPath(teamTopicFile)]);
 
     await expect(fs.readFile(agentTopicFile, 'utf8')).resolves.toContain('Keep swarm memory inside the bound session workDir.');
     await expect(fs.readFile(teamTopicFile, 'utf8')).resolves.toContain('Team memory writes should stay in the active session workDir.');
@@ -246,10 +250,11 @@ describe('Swarm memory path integration', () => {
       .map(([, invokePayload]) => (invokePayload as InvokePayload).path)
       .filter((value): value is string => Boolean(value));
 
-    expect(writtenPaths).toContain(agentTopicFile);
-    expect(writtenPaths).toContain(teamTopicFile);
-    expect(writtenPaths).toContain(join(teamMemory!.memoryDir, 'MEMORY.md'));
-    expect(writtenPaths).toContain(join(workerMemory!.memoryDir, 'MEMORY.md'));
+    const normalizedWrittenPaths = writtenPaths.map(normalizeMemoryPath);
+    expect(normalizedWrittenPaths).toContain(normalizeMemoryPath(agentTopicFile));
+    expect(normalizedWrittenPaths).toContain(normalizeMemoryPath(teamTopicFile));
+    expect(normalizedWrittenPaths).toContain(normalizeMemoryPath(join(teamMemory!.memoryDir, 'MEMORY.md')));
+    expect(normalizedWrittenPaths).toContain(normalizeMemoryPath(join(workerMemory!.memoryDir, 'MEMORY.md')));
     expect(writtenPaths.every((value) => value.startsWith(workDir))).toBe(true);
     expect(writtenPaths.some((value) => value.startsWith(join(homedir(), '.pipi-shrimp')))).toBe(false);
     expect(writtenPaths.some((value) => value.includes(`${sep}pipi-shrimp-memory${sep}default`))).toBe(false);

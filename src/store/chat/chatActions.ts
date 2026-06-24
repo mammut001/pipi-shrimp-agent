@@ -40,9 +40,12 @@ import {
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
 import {
+  clearChatGenerationCancel,
+  consumeChatGenerationCancel,
   createStreamingAccumulator,
   flushBuffer,
   handleStreamChunk,
+  requestChatGenerationCancel,
   resolveStreamingOwnerSessionId,
   shouldFlushStreamingUpdate,
   STREAMING_TIMEOUT_MS,
@@ -124,8 +127,6 @@ function getAnyActiveChatDiagnosticsTaskId(): string | null {
   return last;
 }
 
-const cancellationRequestedSessions = new Set<string>();
-
 class ChatGenerationCancelledError extends Error {
   sessionId: string;
 
@@ -134,29 +135,6 @@ class ChatGenerationCancelledError extends Error {
     this.name = 'ChatGenerationCancelledError';
     this.sessionId = sessionId;
   }
-}
-
-function requestChatGenerationCancel(sessionId: string | null | undefined): void {
-  if (sessionId) {
-    cancellationRequestedSessions.add(sessionId);
-  }
-}
-
-function clearChatGenerationCancel(sessionId: string | null | undefined): void {
-  if (sessionId) {
-    cancellationRequestedSessions.delete(sessionId);
-  }
-}
-
-function consumeChatGenerationCancel(sessionId: string | null | undefined): boolean {
-  if (!sessionId) {
-    return false;
-  }
-  const requested = cancellationRequestedSessions.has(sessionId);
-  if (requested) {
-    cancellationRequestedSessions.delete(sessionId);
-  }
-  return requested;
 }
 
 function isChatGenerationCancelledError(error: unknown): error is ChatGenerationCancelledError {
@@ -1086,8 +1064,9 @@ export function createChatActionMethods({
     },
 
     updateLastMessage: async (content: string, artifacts?: Message['artifacts'], reasoning?: string, tokenUsage?: Message['token_usage']) => {
-      const { currentSessionId } = get();
-      if (!currentSessionId) {
+      const { streamingSessionId, currentSessionId } = get();
+      const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
+      if (!targetSessionId) {
         return;
       }
 
@@ -1095,7 +1074,7 @@ export function createChatActionMethods({
 
       set((state) => ({
         sessions: state.sessions.map((session) => {
-          if (session.id !== currentSessionId || session.messages.length === 0) {
+          if (session.id !== targetSessionId || session.messages.length === 0) {
             return session;
           }
 
@@ -1125,7 +1104,7 @@ export function createChatActionMethods({
 
       if (messageToUpdate) {
         try {
-          await safeInvoke('db_save_message', { message: messageToDb(messageToUpdate, currentSessionId) });
+          await safeInvoke('db_save_message', { message: messageToDb(messageToUpdate, targetSessionId) });
         } catch (error) {
           console.error('Failed to persist streaming update to database:', error);
         }
@@ -1176,12 +1155,13 @@ export function createChatActionMethods({
     },
 
     appendStreamingContent: (content: string) => {
-      const { currentSessionId, streamingContent, lastUiUpdateTime } = get();
+      const { streamingContent, streamingSessionId, currentSessionId, lastUiUpdateTime } = get();
+      const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
       const newContent = streamingContent + content;
       const now = Date.now();
       set({ streamingContent: newContent });
 
-      if (shouldFlushStreamingUpdate(now, lastUiUpdateTime) && currentSessionId) {
+      if (shouldFlushStreamingUpdate(now, lastUiUpdateTime) && targetSessionId) {
         const flushed = flushBuffer({
           content: newContent,
           reasoning: get().streamingReasoning,
@@ -1190,7 +1170,7 @@ export function createChatActionMethods({
         set((state) => ({
           lastUiUpdateTime: now,
           sessions: state.sessions.map((session) => {
-            if (session.id !== currentSessionId || session.messages.length === 0) {
+            if (session.id !== targetSessionId || session.messages.length === 0) {
               return session;
             }
             const messages = [...session.messages];
@@ -1207,10 +1187,11 @@ export function createChatActionMethods({
     },
 
     setStreaming: (streaming: boolean) => {
-      const { streamingTimeoutId, currentSessionId, streamingContent } = get();
+      const { streamingTimeoutId, streamingSessionId, currentSessionId, streamingContent } = get();
+      const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
       if (!streaming && streamingTimeoutId) {
         clearTimeout(streamingTimeoutId);
-        if (currentSessionId && streamingContent) {
+        if (targetSessionId && streamingContent) {
           const flushed = flushBuffer({
             content: streamingContent,
             reasoning: get().streamingReasoning,
@@ -1220,7 +1201,7 @@ export function createChatActionMethods({
             isStreaming: false,
             streamingTimeoutId: null,
             sessions: state.sessions.map((session) => {
-              if (session.id !== currentSessionId || session.messages.length === 0) {
+              if (session.id !== targetSessionId || session.messages.length === 0) {
                 return session;
               }
               const messages = [...session.messages];

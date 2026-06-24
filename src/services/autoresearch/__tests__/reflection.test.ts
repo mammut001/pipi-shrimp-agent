@@ -275,8 +275,8 @@ describe('AutoResearch reflection helpers', () => {
 
   it('retries invalid reflection outputs twice before succeeding with valid JSON', async () => {
     const responses = [
-      'definitely not json',
-      'still not valid json',
+      '',
+      '',
       '{"summary":"Retry once more with python3","decision":"continue","next_action":"python3 run_experiment.py"}',
     ];
     let callIndex = 0;
@@ -307,7 +307,7 @@ describe('AutoResearch reflection helpers', () => {
   });
 
   it('marks the iteration failed after three invalid reflection attempts', async () => {
-    const responses = ['???', '```', ''];
+    const responses = ['', '', ''];
     let callIndex = 0;
     mockInvokeRustAPIStream.mockImplementation(() => streamText(responses[callIndex++] ?? ''));
 

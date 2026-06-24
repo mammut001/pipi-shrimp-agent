@@ -569,6 +569,7 @@ const enUS: TranslationKeys = {
   'chat.enterHint': 'Press Enter to send',
   'chat.newLineHint': 'Shift + Enter for new line',
   'chat.showEarlierMessages': 'Show {count} earlier messages',
+  'chat.scrollToBottom': 'Scroll to bottom',
 
   // Tool execution
   'tool.executing': 'Executing tool...',

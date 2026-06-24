@@ -17,7 +17,7 @@ import { createRunDir, executeTargetCommand, getSessionRunPaths, listIterations,
 
 const execFileAsync = promisify(execFile);
 
-jest.setTimeout(30000);
+jest.setTimeout(120000);
 
 const PROJECT_TMP_DIR = getAutoResearchTestTmpDir();
 

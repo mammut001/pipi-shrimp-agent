@@ -80,11 +80,12 @@ describe('terminalRunner reflection failure handling', () => {
 
   it('stops waiting for terminal readiness when the run becomes reflection_failed', async () => {
     const promise = ensureAutoResearchTerminal(createLocalSshConfig(workDir), workDir);
+    const expectation = expect(promise).rejects.toThrow('Reflection did not provide a summary.');
 
     useAutoResearchStore.getState().setReflectionFailed('Reflection did not provide a summary.');
     await jest.advanceTimersByTimeAsync(250);
 
-    await expect(promise).rejects.toThrow('Reflection did not provide a summary.');
+    await expectation;
   });
 
   it('does not emit a fake timeout while the terminal watcher sees reflection_failed', async () => {
@@ -97,12 +98,13 @@ describe('terminalRunner reflection failure handling', () => {
       cwd: workDir,
       logsDir: `${workDir}/logs`,
     });
+    const expectation = expect(promise).rejects.toThrow('Reflection did not provide a summary.');
 
     await Promise.resolve();
     useAutoResearchStore.getState().setReflectionFailed('Reflection did not provide a summary.');
     await jest.advanceTimersByTimeAsync(250);
 
-    await expect(promise).rejects.toThrow('Reflection did not provide a summary.');
+    await expectation;
     expect(mockInvoke).toHaveBeenCalledWith('terminal_input', expect.objectContaining({
       sessionId: 'existing-terminal',
     }));

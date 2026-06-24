@@ -6,6 +6,13 @@ const mockReactMarkdown = jest.fn(({ children }: { children: string }) =>
 );
 const mockRemarkGfm = 'remark-gfm-plugin';
 
+jest.mock('dompurify', () => ({
+  __esModule: true,
+  default: {
+    sanitize: (value: string) => value,
+  },
+}));
+
 jest.mock('react-markdown', () => ({
   __esModule: true,
   default: (props: { children: string }) => mockReactMarkdown(props),
@@ -16,16 +23,16 @@ jest.mock('remark-gfm', () => ({
   default: mockRemarkGfm,
 }));
 
-import { DocMarkdownPreview } from '@/components/DocPanel';
+import { MarkdownDocumentPreview } from '@/components/document/MarkdownDocumentPreview';
 
-describe('DocMarkdownPreview', () => {
+describe('MarkdownDocumentPreview', () => {
   beforeEach(() => {
     mockReactMarkdown.mockClear();
   });
 
-  it('forwards markdown content and GFM plugin to the renderer', () => {
+  it('forwards sanitized markdown content and GFM plugin to the renderer', () => {
     const body = '# FocusApp\n\n- Ship docs preview\n- Keep metadata readable';
-    const markup = renderToStaticMarkup(createElement(DocMarkdownPreview, { body }));
+    const markup = renderToStaticMarkup(createElement(MarkdownDocumentPreview, { body }));
 
     expect(markup).toContain('data-testid="markdown-preview"');
     expect(markup).toContain('prose prose-stone');

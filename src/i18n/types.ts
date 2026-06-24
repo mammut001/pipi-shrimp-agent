@@ -218,6 +218,7 @@ export type TranslationKeys = {
   'chat.enterHint': string;
   'chat.newLineHint': string;
   'chat.showEarlierMessages': string;
+  'chat.scrollToBottom': string;
 
   // 工具执行
   'tool.executing': string;

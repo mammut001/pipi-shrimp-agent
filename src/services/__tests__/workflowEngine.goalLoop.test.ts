@@ -274,7 +274,7 @@ describe('WorkflowEngine goal loop', () => {
       'developer',
       'qa',
     ]);
-    expect(store.markAgentDirty).toHaveBeenCalledWith('developer');
+    expect(store.markAgentDirtyInInstance).toHaveBeenCalledWith(instance.id, 'developer');
     expect(instance.workflowRuns[0].goalEvaluations).toHaveLength(2);
   });
 

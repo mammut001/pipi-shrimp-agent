@@ -31,11 +31,39 @@ jest.mock('@/services/vision/imageAttachments', () => ({
 
 jest.mock('../ResumeTemplateCarousel', () => {
   const ReactRuntime = require('react');
-  const Component = ({ dataJson }: { dataJson?: string }) => ReactRuntime.createElement('div', { 'data-testid': 'resume-carousel' }, dataJson || '');
+  const Component = ({ dataJson }: { dataJson?: string }) =>
+    ReactRuntime.createElement('div', { 'data-testid': 'resume-carousel' }, dataJson || '');
   return {
     __esModule: true,
     default: Component,
     ResumeTemplateCarousel: Component,
+  };
+});
+
+jest.mock('react-markdown', () => {
+  const ReactRuntime = require('react');
+  return {
+    __esModule: true,
+    default: ({ components, children }: { components?: Record<string, unknown>; children?: React.ReactNode }) => {
+      const text = String(children ?? '');
+      const codeMatch = /```([a-zA-Z0-9_-]+)\n([\s\S]*?)```/m.exec(text);
+      if (codeMatch) {
+        const language = codeMatch[1];
+        const codeContent = codeMatch[2].replace(/\n$/, '');
+        const codeRenderer = (components as { code?: (props: { className?: string; children?: React.ReactNode }) => React.ReactNode } | undefined)?.code;
+        if (typeof codeRenderer === 'function') {
+          return ReactRuntime.createElement(
+            ReactRuntime.Fragment,
+            null,
+            codeRenderer({
+              className: `language-${language}`,
+              children: codeContent,
+            }),
+          );
+        }
+      }
+      return ReactRuntime.createElement('div', null, children);
+    },
   };
 });
 

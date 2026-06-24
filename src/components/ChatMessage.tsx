@@ -25,6 +25,14 @@ import { ChatImage } from './ChatImage';
 import { ArtifactsBadge } from './ArtifactsBadge';
 import { useUIStore } from '@/store';
 
+function isSafeMarkdownHref(href: string | undefined): boolean {
+  if (!href) return false;
+  const normalized = href.trim().toLowerCase();
+  return !normalized.startsWith('javascript:')
+    && !normalized.startsWith('data:')
+    && !normalized.startsWith('vbscript:');
+}
+
 // Lazy-loaded heavy components — split into separate chunks
 const LazyCodeBlock = lazy(() => import('./LazyCodeBlock'));
 const ResumeTemplateCarousel = lazy(() => import('./ResumeTemplateCarousel'));
@@ -272,6 +280,13 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                     },
                     // Custom link rendering
                     a({ href, children, ...props }) {
+                      if (!isSafeMarkdownHref(href)) {
+                        return (
+                          <span className="text-blue-600 break-all max-w-full inline-block" {...props}>
+                            {children}
+                          </span>
+                        );
+                      }
                       return (
                         <a
                           href={href}

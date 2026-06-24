@@ -16,8 +16,9 @@ jest.mock('@tauri-apps/api/core', () => ({
 
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
 import { appendIterationMetrics, readAllMetrics, summarize } from '../metricsStore';
-import { createRunDir } from '../runDir';
+import { createRunDir, readTargetText } from '../runDir';
 import { clearCurrentRunDir, setCurrentRunDir } from '../terminalRunner';
+import { useAutoResearchStore } from '@/store/autoresearchStore';
 
 describe('metricsStore', () => {
   let workDir: string;
@@ -31,6 +32,7 @@ describe('metricsStore', () => {
 
   afterEach(async () => {
     clearCurrentRunDir();
+    useAutoResearchStore.getState().resetSession();
     mockInvoke.mockReset();
     try {
       await fs.rm(workDir, { recursive: true, force: true });
@@ -49,6 +51,13 @@ describe('metricsStore', () => {
 
   it('round-trips append/read and writes the iteration metrics file for the active run', async () => {
     const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'session-1',
+      maxIterations: 5,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      sshConfig: cfg,
+    });
     const runDir = await createRunDir(cfg, 'session-1', 1);
     setCurrentRunDir(runDir);
 
@@ -86,7 +95,9 @@ describe('metricsStore', () => {
     expect(metrics[0].reasoning).toContain('smaller lr');
     expect(metrics[0].artifactPaths).toEqual(['/tmp/session-1/iter-1/plot.png']);
 
-    const metricsFile = JSON.parse(await fs.readFile(runDir.metricsPath, 'utf8'));
+    const metricsRaw = await readTargetText(cfg, runDir.metricsPath);
+    expect(metricsRaw).not.toBeNull();
+    const metricsFile = JSON.parse(metricsRaw!);
     expect(metricsFile.schemaVersion).toBe(1);
     expect(metricsFile.runId).toBe('session-1');
     expect(metricsFile.primaryMetric).toBe('val_loss');
@@ -95,7 +106,7 @@ describe('metricsStore', () => {
     expect(metricsFile.iteration).toBe(1);
     expect(metricsFile.metricValue).toBe(0.9);
     expect(metricsFile.change).toBe('lowered lr from 1e-3 to 5e-4');
-  });
+  }, 30_000);
 
   it('rejects malformed metrics artifacts before hydrating run history', async () => {
     const cfg = createLocalSshConfig(workDir);

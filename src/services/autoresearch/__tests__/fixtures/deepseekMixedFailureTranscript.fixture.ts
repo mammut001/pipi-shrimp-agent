@@ -194,6 +194,14 @@ export const deepseekMixedFailureTranscriptFixture: AutoResearchTranscriptFixtur
 };
 
 const budgetExhaustedMetricsJson = JSON.stringify({
+  schemaVersion: 1,
+  sessionId: 'autoresearch-budget-metrics-fixture',
+  runId: 'autoresearch-budget-metrics-fixture',
+  iteration: 1,
+  primaryMetric: 'cv_accuracy',
+  direction: 'higher',
+  timestamp: '2026-05-05T00:00:01.000Z',
+  generator: 'agent',
   metricName: 'cv_accuracy',
   metricValue: 0.9777,
   status: 'IMPROVED',

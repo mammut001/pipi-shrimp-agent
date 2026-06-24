@@ -146,11 +146,10 @@ describe('uiStoreMigration', () => {
 
       // Add a permission request
       store.getState().setPermissionRequest({
-        tool: 'read_file',
-        args: {},
-        sessionId: 'sess-1',
-        resolve: jest.fn(),
-        reject: jest.fn(),
+        id: 'perm-test-1',
+        toolName: 'read_file',
+        toolInput: '{}',
+        _resolve: jest.fn(),
       });
       expect(store.getState().permissionQueue.length).toBeGreaterThan(0);
 

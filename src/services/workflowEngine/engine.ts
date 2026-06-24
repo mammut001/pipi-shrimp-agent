@@ -238,6 +238,7 @@ export class WorkflowEngine {
 
   async stop(): Promise<void> {
     this.stopRequested = true;
+    this.isRunning = false;
     const store = useWorkflowStore.getState();
     if (this.currentRunId) {
       store.updateWorkflowRun(this.currentRunId, {

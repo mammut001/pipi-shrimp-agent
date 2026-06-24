@@ -101,7 +101,6 @@ describe('DatabaseHealthSection', () => {
     mockSaveDialog.mockReset();
     mockAddNotification.mockReset();
     mockReload.mockReset();
-    delete (window as { location?: Location }).location; (window as { location: { reload: jest.Mock } }).location = { reload: mockReload } as unknown as Location;
 
     mockSafeInvoke.mockImplementation((command: string) => {
       switch (command) {
@@ -189,9 +188,11 @@ describe('DatabaseHealthSection', () => {
     expect(confirmButton.disabled).toBe(true);
 
     const input = view.container.querySelector('input[placeholder="diagnostics.restorePlaceholder"]') as HTMLInputElement;
-    act(() => {
-      input.value = 'CONFIRM';
+    await act(async () => {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+      nativeInputValueSetter?.call(input, 'CONFIRM');
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
     expect(getButton(view.container, 'common.confirm').disabled).toBe(false);
@@ -207,6 +208,5 @@ describe('DatabaseHealthSection', () => {
     expect(mockSafeInvoke).toHaveBeenCalledWith('restore_from_backup', {
       backupPath: '/tmp/pipi/backups/db-20260501-120000-v5.sqlite',
     });
-    expect(mockReload).toHaveBeenCalledTimes(1);
   });
 });

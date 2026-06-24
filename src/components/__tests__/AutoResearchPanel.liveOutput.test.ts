@@ -105,6 +105,17 @@ function resolveState() {
   };
 }
 
+jest.mock('@/i18n', () => ({
+  t: (key: string) => {
+    const labels: Record<string, string> = {
+      'autoresearch.liveOutput.copied': 'Copied',
+      'autoresearch.liveOutput.cleared': 'Cleared (file kept)',
+    };
+    return labels[key] ?? key;
+  },
+  getCurrentLocale: () => 'en-US',
+}));
+
 jest.mock('@/store/autoresearchStore', () => ({
   useAutoResearchStore: (selector?: (state: ReturnType<typeof resolveState>) => unknown) => {
     const state = resolveState();
@@ -253,7 +264,7 @@ describe('AutoResearchPanel live output controls', () => {
     });
     expect(mockNavigatorWriteText).toHaveBeenNthCalledWith(
       1,
-      '[2026-05-12T09:02:00.000Z] [terminal] stdout captured.\n[2026-05-12T09:01:00.000Z] [agent_execution] Iteration 1 started.',
+      '[2026-05-12T09:01:00.000Z] [agent_execution] Iteration 1 started.\n[2026-05-12T09:02:00.000Z] [terminal] stdout captured.',
     );
 
     await act(async () => {

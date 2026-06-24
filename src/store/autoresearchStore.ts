@@ -30,6 +30,7 @@ import {
   persistAutoResearchLastUsedConfig,
   type AutoResearchDefaultConfig,
 } from '@/services/autoresearch/defaultConfig';
+import { stopExperimentLoop } from '@/services/autoresearch/loopEngine';
 import {
   createAutoResearchResumeToken,
   patchAutoResearchResumeToken,
@@ -535,7 +536,7 @@ function withActiveRunUpdate(
   };
 }
 
-export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
+export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
   ...createEmptySession(),
   runHistory: persistedHistory.runs,
   selectedRunId: persistedHistory.selectedRunId,
@@ -629,7 +630,15 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
     selectedExperiment: -1,
   })),
 
-  deleteRun: (runId) => set((state) => {
+  deleteRun: (runId) => {
+    const prior = get();
+    if (
+      prior.id === runId
+      && (prior.loopState === 'running' || prior.loopState === 'paused')
+    ) {
+      stopExperimentLoop();
+    }
+    set((state) => {
     const updatedHistory = state.runHistory.filter((run) => run.id !== runId);
     const wasActive = state.id === runId;
     const isSelected = state.selectedRunId === runId;
@@ -642,9 +651,18 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       selectedExperiment: isSelected ? -1 : state.selectedExperiment,
       ...(wasActive ? createEmptySession() : {}),
     };
-  }),
+  });
+  },
 
-  deleteRuns: (runIds) => set((state) => {
+  deleteRuns: (runIds) => {
+    const prior = get();
+    if (
+      runIds.includes(prior.id)
+      && (prior.loopState === 'running' || prior.loopState === 'paused')
+    ) {
+      stopExperimentLoop();
+    }
+    set((state) => {
     const updatedHistory = state.runHistory.filter((run) => !runIds.includes(run.id));
     const wasActiveDeleted = runIds.includes(state.id);
     const isSelectedDeleted = state.selectedRunId && runIds.includes(state.selectedRunId);
@@ -657,7 +675,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
       selectedExperiment: isSelectedDeleted ? -1 : state.selectedExperiment,
       ...(wasActiveDeleted ? createEmptySession() : {}),
     };
-  }),
+  });
+  },
 
   setLoopState: (loopState) => set({ loopState }),
 
@@ -1096,8 +1115,15 @@ export const useAutoResearchStore = create<AutoResearchStore>((set) => ({
   setTerminalCwd: (terminalCwd) => set({ terminalCwd }),
 
   setSshConfig: (cfg) => set({ sshConfig: withSshConfigDefaults(cfg) }),
-  setLastUsedConfig: (config) => set({ lastUsedConfig: buildAutoResearchDefaultConfig(config) }),
-  clearLastUsedConfig: () => set({ lastUsedConfig: null }),
+  setLastUsedConfig: (config) => {
+    const lastUsedConfig = buildAutoResearchDefaultConfig(config);
+    persistAutoResearchLastUsedConfig(lastUsedConfig);
+    set({ lastUsedConfig });
+  },
+  clearLastUsedConfig: () => {
+    persistAutoResearchLastUsedConfig(null);
+    set({ lastUsedConfig: null });
+  },
   setTelegramConfig: (cfg) => set((state) => ({
     telegramConfig: { ...state.telegramConfig, ...cfg },
   })),

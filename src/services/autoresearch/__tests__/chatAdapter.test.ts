@@ -509,7 +509,9 @@ describe('createAutoResearchSendMessage', () => {
   });
 
   it('does not retry an expensive experiment command more than once in one iteration', async () => {
-    mockRunHeadlessAgentTurn.mockImplementationOnce(async (input) => {
+    mockRunHeadlessAgentTurn.mockReset();
+    mockGetDeterministicRecoveryDecision.mockReturnValue(null);
+    mockRunHeadlessAgentTurn.mockImplementation(async (input) => {
       await input.onToolCall?.({
         id: 'tool-1',
         name: localCommandTool,
@@ -518,19 +520,11 @@ describe('createAutoResearchSendMessage', () => {
       await input.onToolResult?.({
         id: 'tool-1',
         name: localCommandTool,
-        result: '{"stdout":"","stderr":"training failed\n","exitCode":1}',
+        result: '{"stdout":"","stderr":"training failed\\n","exitCode":1}',
         durationMs: 42,
       });
       throw new Error('phase=agent_execution; message=training failed');
     });
-    mockGetDeterministicRecoveryDecision.mockReturnValue({
-      action: 'retry_with_plan',
-      summary: 'Patch the code and rerun the experiment.',
-      nextPlan: 'Modify the training script and rerun python3 run_experiment.py.',
-      shouldRetry: true,
-      confidence: 'medium',
-    });
-
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
     const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig, {
       environmentSummary: {
@@ -703,7 +697,7 @@ describe('createAutoResearchSendMessage', () => {
     const { createAutoResearchSendMessage } = await import('../chatAdapter');
     const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig);
 
-    await expect(sendMessage('system prompt', 'retry api failure')).resolves.toContain('Provider API request failed 3 times consecutively');
+    await expect(sendMessage('system prompt', 'retry api failure')).rejects.toThrow('Provider API request failed 3 times consecutively');
     expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(3);
     expect(mockAddRunEvent).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining('API request failed (3/3)'),

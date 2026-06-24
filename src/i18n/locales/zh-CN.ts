@@ -569,6 +569,7 @@ const zhCN: TranslationKeys = {
   'chat.enterHint': '回车发送',
   'chat.newLineHint': 'Shift + Enter 换行',
   'chat.showEarlierMessages': '显示前面的 {count} 条消息',
+  'chat.scrollToBottom': '回到底部',
 
   // 工具执行
   'tool.executing': '正在执行工具...',

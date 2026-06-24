@@ -175,7 +175,10 @@ function getLatestExperimentFailure(
     if (!failed) {
       continue;
     }
-    if (isExperimentRunCommand(result.command, environmentSummary)) {
+    if (
+      isExperimentRunCommand(result.command, environmentSummary)
+      || /\brun_experiment\.py\b/.test(result.command ?? '')
+    ) {
       return result;
     }
   }
@@ -704,6 +707,7 @@ export function createAutoResearchSendMessage(
           toolExecutionSource: 'autoresearch_phase',
           permissionMode: 'bypass',
           executionMode: 'bypass',
+          signal,
           onTextDelta: (chunk) => {
             useAutoResearchStore.getState().appendLiveOutput(chunk);
           },
@@ -930,13 +934,7 @@ export function createAutoResearchSendMessage(
           });
           if (consecutiveApiRequestFailures >= MAX_CONSECUTIVE_API_REQUEST_FAILURES) {
             const failReason = `Provider API request failed ${MAX_CONSECUTIVE_API_REQUEST_FAILURES} times consecutively: ${formatError(error)}`;
-            assistantText = buildIterationFailureOutput({
-              metricName: options.metricName ?? store.metricName,
-              failReason,
-              hypothesis: 'provider request repeatedly failed before execution completed',
-              reasoning: failReason,
-            });
-            lastError = undefined;
+            lastError = new Error(failReason);
             break;
           }
           continue;
@@ -996,6 +994,18 @@ export function createAutoResearchSendMessage(
 
         if (!decision && isToolRoundLimitError(error)) {
           decision = buildFallbackReflectionDecision(reflectionInput, error);
+        }
+
+        if (!decision && experimentFailure) {
+          assistantText = buildIterationFailureOutput({
+            metricName: options.metricName ?? storeState.metricName,
+            failReason: experimentFailure.stderr?.trim() || formatError(error),
+            hypothesis: 'experiment command failed before evaluation completed',
+            reasoning: experimentFailure.stderr?.trim() || formatError(error),
+            budgetExhausted: false,
+          });
+          lastError = undefined;
+          break;
         }
 
         if (decision) {

@@ -69,3 +69,28 @@ export function resolveStreamingOwnerSessionId(
 ): string | null {
   return streamingSessionId || currentSessionId;
 }
+
+const cancellationRequestedSessions = new Set<string>();
+
+export function requestChatGenerationCancel(sessionId: string | null | undefined): void {
+  if (sessionId) {
+    cancellationRequestedSessions.add(sessionId);
+  }
+}
+
+export function clearChatGenerationCancel(sessionId: string | null | undefined): void {
+  if (sessionId) {
+    cancellationRequestedSessions.delete(sessionId);
+  }
+}
+
+export function consumeChatGenerationCancel(sessionId: string | null | undefined): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  const requested = cancellationRequestedSessions.has(sessionId);
+  if (requested) {
+    cancellationRequestedSessions.delete(sessionId);
+  }
+  return requested;
+}

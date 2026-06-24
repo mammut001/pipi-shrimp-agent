@@ -401,7 +401,16 @@ export async function* runChatTurn(
         },
       } as EngineEvent;
 
-      const allContent = await Promise.all(promises);
+      const TOOL_BATCH_TIMEOUT_MS = 300_000;
+      const allContent = await Promise.race([
+        Promise.all(promises),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`Tool batch timed out after ${TOOL_BATCH_TIMEOUT_MS / 1000}s`)),
+            TOOL_BATCH_TIMEOUT_MS,
+          );
+        }),
+      ]);
       toolBudgetSummary = appendToolBudgetEntries(
         toolBudgetSummary,
         pendingToolCalls.map((tool, index) => ({
