@@ -599,9 +599,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   },
 
   closeWindow: async () => {
-    const { addLog } = get();
+    const { addLog, _abortController, status } = get();
 
     try {
+      if (_abortController || status === 'running') {
+        get().stopTask();
+      }
+
       addLog('info', t('browserAgent.log.closingBrowser'));
 
       // Stop live preview
