@@ -129,6 +129,23 @@ fn is_browser_mutation_tool(name: &str) -> bool {
     )
 }
 
+/// True when the session's execution mode auto-approves browser
+/// automation (Agent or Bypass). Agent mode (auto-edits) is the normal
+/// autonomous mode: once the user has chosen it and the assistant is
+/// driving a browser task, navigate/click/type should run without a
+/// per-call confirmation round-trip. The frontend already gates the
+/// session behind an explicit mode upgrade + Chrome-connection check,
+/// so the backend can treat Agent like Bypass for browser tools.
+fn mode_auto_approves_browser(execution_mode: Option<&str>) -> bool {
+    execution_mode
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value.eq_ignore_ascii_case("bypass") || value.eq_ignore_ascii_case("agent")
+        })
+        .unwrap_or(false)
+}
+
 fn is_read_tool(name: &str) -> bool {
     matches!(
         name,
@@ -319,6 +336,15 @@ fn evaluate_request_policy(
     }
 
     if is_browser_mutation_tool(&req.name) {
+        if mode_auto_approves_browser(req.execution_mode.as_deref())
+            && matches!(
+                req.source,
+                ToolExecutionSource::AssistantToolCall | ToolExecutionSource::AutoresearchPhase
+            )
+        {
+            return Ok(allow(None));
+        }
+
         return Ok(match req.source {
             ToolExecutionSource::AssistantToolCall
             | ToolExecutionSource::UserRequestedCommand
@@ -638,7 +664,15 @@ fn evaluate_cdp_execute_script_policy(
         };
     }
 
-    let _ = execution_mode;
+    if mode_auto_approves_browser(execution_mode)
+        && matches!(
+            source,
+            ToolExecutionSource::AssistantToolCall | ToolExecutionSource::AutoresearchPhase
+        )
+    {
+        return allow(None);
+    }
+
     match source {
         ToolExecutionSource::Unknown | ToolExecutionSource::AutoresearchPhase => {
             reject("Browser script execution denied by policy.")
@@ -981,6 +1015,115 @@ mod tests {
             preview.decision, "awaiting_confirmation",
             "Bypass only relaxes AssistantToolCall; HeadlessAgent still requires approval"
         );
+    }
+
+    #[test]
+    fn bypass_assistant_browser_mutation_allows_without_confirmation() {
+        let mut request = make_request("browser_navigate");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.execution_mode = Some("bypass".to_string());
+        request.arguments = serde_json::json!({
+            "url": "https://example.com"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({ "url": "https://example.com" }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(preview.decision, "allowed");
+        assert!(preview.approval_token.is_none());
+
+        enforce_request_policy(
+            &request,
+            &serde_json::json!({ "url": "https://example.com" }),
+            Some("session-1"),
+        )
+        .expect("bypass execution should not require approval token");
+    }
+
+    #[test]
+    fn agent_assistant_browser_mutation_allows_without_confirmation() {
+        let mut request = make_request("browser_navigate");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.execution_mode = Some("agent".to_string());
+        request.arguments = serde_json::json!({
+            "url": "https://example.com"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({ "url": "https://example.com" }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(preview.decision, "allowed");
+        assert!(preview.approval_token.is_none());
+
+        enforce_request_policy(
+            &request,
+            &serde_json::json!({ "url": "https://example.com" }),
+            Some("session-1"),
+        )
+        .expect("agent execution should not require approval token");
+    }
+
+    #[test]
+    fn standard_assistant_browser_mutation_still_requires_confirmation() {
+        let mut request = make_request("browser_navigate");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.execution_mode = Some("ask".to_string());
+        request.arguments = serde_json::json!({
+            "url": "https://example.com"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({ "url": "https://example.com" }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(preview.decision, "awaiting_confirmation");
+        assert!(preview.approval_token.is_some());
+    }
+
+    #[test]
+    fn bypass_assistant_cdp_execute_script_allows_without_confirmation() {
+        let script = "console.log('hello')";
+        let mut request = make_request("cdp_execute_script");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.execution_mode = Some("bypass".to_string());
+        request.arguments = serde_json::json!({
+            "script": script
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({ "script": script }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(preview.decision, "allowed");
+        assert!(preview.approval_token.is_none());
+
+        enforce_cdp_execute_script_policy(
+            "tool-1",
+            script,
+            ToolExecutionSource::AssistantToolCall,
+            Some("session-1"),
+            None,
+            Some("bypass"),
+        )
+        .expect("bypass execution should not require approval token");
     }
 
     #[test]

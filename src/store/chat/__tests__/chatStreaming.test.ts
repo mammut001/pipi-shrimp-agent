@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  clearStreamingRoundBuffers,
   createStreamingAccumulator,
   detectStreamEnd,
   flushBuffer,
@@ -69,6 +70,16 @@ describe('chatStreaming', () => {
 
     expect(state.content).toBe('AB');
     expect(state.reasoning).toBe('first second');
+  });
+
+  it('clears streamed text and reasoning between tool rounds', () => {
+    let state = handleStreamChunk(createStreamingAccumulator(), { type: 'reasoning_delta', content: 'round 1 plan' });
+    state = handleStreamChunk(state, { type: 'text_delta', content: 'draft answer' });
+    state = clearStreamingRoundBuffers(state);
+    state = handleStreamChunk(state, { type: 'reasoning_delta', content: 'round 2 plan' });
+
+    expect(state.reasoning).toBe('round 2 plan');
+    expect(state.content).toBe('');
   });
 
   it('detects terminal stream events', () => {

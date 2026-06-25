@@ -9,6 +9,8 @@ const mockUseBrowserObservabilityStore = jest.fn();
 
 jest.mock('@/i18n', () => ({
   t: (key: string) => key,
+  getCurrentLocale: () => 'zh',
+  convertToOldLanguageCode: (locale: string) => (locale === 'en-US' ? 'en' : 'zh'),
 }));
 
 jest.mock('@/store', () => {

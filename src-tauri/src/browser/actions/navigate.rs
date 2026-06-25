@@ -40,12 +40,27 @@ impl BrowserAction for NavigateAction {
             .map(ToOwned::to_owned);
 
         if let Some(url) = url.as_ref() {
-            page.goto(url)
+            let nav_timeout_ms = input
+                .timeout_ms
+                .unwrap_or_else(|| ActionTimeoutPolicy::default().timeout_ms);
+            let nav_timeout = std::time::Duration::from_millis(nav_timeout_ms);
+
+            tokio::time::timeout(nav_timeout, page.goto(url))
                 .await
+                .map_err(|_| {
+                    BrowserActionError::navigation_failed(format!(
+                        "goto 超时（{}ms），URL: {}",
+                        nav_timeout_ms, url
+                    ))
+                })?
                 .map_err(|error| BrowserActionError::navigation_failed(error.to_string()))?;
-            page.wait_for_navigation()
-                .await
-                .map_err(|error| BrowserActionError::navigation_failed(error.to_string()))?;
+
+            // wait_for_navigation 仅尽力而为：page.goto 已经发起并通常已完成导航。
+            // 某些站点（如 GitHub Turbo 这类带持久连接 / SPA 的页面）不会再触发
+            // 终态 load 事件，若在此硬等下一次导航会一直卡到超时并误报“导航失败”。
+            // 因此这里超时即视为已稳定，继续后续状态采集。
+            let settle_timeout = std::time::Duration::from_millis(nav_timeout_ms.min(8_000));
+            let _ = tokio::time::timeout(settle_timeout, page.wait_for_navigation()).await;
         }
 
         let waited_for_selector = if let Some(selector) = input

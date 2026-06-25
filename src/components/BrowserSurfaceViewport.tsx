@@ -15,6 +15,7 @@ import { useLayoutEffect, useRef, useCallback } from 'react';
 import { moveBrowserSurface } from '@/utils/browserCommands';
 import { useBrowserAgentStore } from '@/store';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
+import { isBrowserInputBlocked } from '@/services/browser/browserMarqueeActive';
 import { isBrowserLockSurfaceWhileRunningEnabled } from '@/utils/browserFeatureFlags';
 
 interface BrowserSurfaceViewportProps {
@@ -52,8 +53,7 @@ function shouldLockSurface(): boolean {
   if (!isBrowserLockSurfaceWhileRunningEnabled()) {
     return false;
   }
-  const { status } = useBrowserAgentStore.getState();
-  return status === 'running' || status === 'ready_for_agent' || status === 'inspecting';
+  return isBrowserInputBlocked();
 }
 
 export function BrowserSurfaceViewport({

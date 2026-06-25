@@ -70,6 +70,7 @@ const getInitialCurrentView = (): PersistedCurrentView => {
 
 // Promise resolver for the Chrome connect prompt (module-level, one at a time)
 let _chromePromptResolver: ((useCdp: boolean) => void) | null = null;
+let _executionModeUpgradeResolver: ((choice: 'agent' | 'bypass' | 'cancel') => void) | null = null;
 let _newChatProjectPickerResolver: ((projectId: string | null | undefined) => void) | null = null;
 
 // Questionnaire resolvers grouped by session so repeated tool calls resolve together.
@@ -114,6 +115,9 @@ export const useUIStore = create<UIState>((set) => ({
   // Chrome connect prompt
   chromePromptVisible: false,
   chromePromptTargetUrl: null,
+  executionModeUpgradeVisible: false,
+  executionModeUpgradeReason: 'general',
+  executionModeUpgradeMessagePreview: null,
   newChatProjectPickerVisible: false,
   newChatProjectPickerSource: null,
 
@@ -388,6 +392,29 @@ export const useUIStore = create<UIState>((set) => ({
     }
   },
 
+  showExecutionModeUpgradePrompt: (args) => {
+    return new Promise((resolve) => {
+      _executionModeUpgradeResolver = resolve;
+      set({
+        executionModeUpgradeVisible: true,
+        executionModeUpgradeReason: args.reason,
+        executionModeUpgradeMessagePreview: args.messagePreview,
+      });
+    });
+  },
+
+  resolveExecutionModeUpgradePrompt: (choice) => {
+    set({
+      executionModeUpgradeVisible: false,
+      executionModeUpgradeReason: 'general',
+      executionModeUpgradeMessagePreview: null,
+    });
+    if (_executionModeUpgradeResolver) {
+      _executionModeUpgradeResolver(choice);
+      _executionModeUpgradeResolver = null;
+    }
+  },
+
   showNewChatProjectPicker: (source: string): Promise<string | null | undefined> => {
     return new Promise((resolve) => {
       _newChatProjectPickerResolver = resolve;
@@ -501,6 +528,9 @@ export const useUIStore = create<UIState>((set) => ({
       activeQuestionnaireSessionId: null,
       chromePromptVisible: false,
       chromePromptTargetUrl: null,
+      executionModeUpgradeVisible: false,
+      executionModeUpgradeReason: 'general',
+      executionModeUpgradeMessagePreview: null,
       newChatProjectPickerVisible: false,
       newChatProjectPickerSource: null,
       browserDockMode: 'hidden' as BrowserDockMode,

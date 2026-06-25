@@ -17,13 +17,13 @@ export function BrowserWorkspacePane() {
   const hasFailureSnapshot = useBrowserObservabilityStore((state) => Boolean(state.activeFailureSnapshot));
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-visible">
       {hasFailureSnapshot && (
         <div className="p-3 border-b border-gray-200 bg-white">
           <BrowserFailureRecovery />
         </div>
       )}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden rounded-[inherit]">
         <BrowserSurfaceHost onCollapse={() => {
           useBrowserAgentStore.getState().collapseBrowser();
         }} />

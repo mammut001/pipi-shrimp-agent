@@ -135,13 +135,14 @@ describe('executionMode/guards: tool allow-list per mode', () => {
     expect(isToolAllowedForMode('debug', 'ssh_exec')).toBe(false);
   });
 
-  it('Agent mode allows shell but not browser / ssh', () => {
+  it('Agent mode allows shell + browser but not ssh', () => {
     expect(isToolAllowedForMode('agent', 'read_file')).toBe(true);
     expect(isToolAllowedForMode('agent', 'get_current_workspace')).toBe(true);
     expect(isToolAllowedForMode('agent', 'write_file')).toBe(true);
     expect(isToolAllowedForMode('agent', 'execute_command')).toBe(true);
     expect(isToolAllowedForMode('agent', 'run_in_terminal')).toBe(true);
-    expect(isToolAllowedForMode('agent', 'browser_click')).toBe(false);
+    expect(isToolAllowedForMode('agent', 'browser_click')).toBe(true);
+    expect(isToolAllowedForMode('agent', 'browser_navigate')).toBe(true);
     expect(isToolAllowedForMode('agent', 'ssh_exec')).toBe(false);
   });
 
@@ -151,6 +152,25 @@ describe('executionMode/guards: tool allow-list per mode', () => {
     expect(isToolAllowedForMode('bypass', 'execute_command')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'browser_click')).toBe(true);
     expect(isToolAllowedForMode('bypass', 'ssh_exec')).toBe(true);
+  });
+
+  it('respects allowBrowserTools option dynamically', () => {
+    // Ask mode: still false
+    expect(isToolAllowedForMode('ask', 'browser_click', true)).toBe(false);
+    expect(isToolAllowedForMode('ask', 'browser_get_page', true)).toBe(false);
+
+    // Plan mode: still false
+    expect(isToolAllowedForMode('plan', 'browser_click', true)).toBe(false);
+    expect(isToolAllowedForMode('plan', 'browser_get_page', true)).toBe(false);
+
+    // Debug mode: only read-only browser tools allowed
+    expect(isToolAllowedForMode('debug', 'browser_get_page', true)).toBe(true);
+    expect(isToolAllowedForMode('debug', 'browser_extract_content', true)).toBe(true);
+    expect(isToolAllowedForMode('debug', 'browser_click', true)).toBe(false);
+
+    // Agent mode: all browser tools allowed
+    expect(isToolAllowedForMode('agent', 'browser_click', true)).toBe(true);
+    expect(isToolAllowedForMode('agent', 'browser_get_page', true)).toBe(true);
   });
 });
 

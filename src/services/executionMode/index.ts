@@ -27,3 +27,10 @@ export {
   executionModeFromPermissionMode,
   hydrateSessionModes,
 } from './guards';
+
+export { detectAskModeToolNeed, type AskModeToolNeed, type AskModeToolNeedReason } from './askModeToolNeed';
+export {
+  isAskModeToolFailureText,
+  isGenericSafetyPolicyError,
+  shouldOfferExecutionModeUpgrade,
+} from './toolPolicyRecovery';

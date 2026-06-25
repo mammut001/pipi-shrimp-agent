@@ -51,6 +51,22 @@ export function flushBuffer(buffer: StreamingAccumulator): FlushedStreamingBuffe
   };
 }
 
+/**
+ * Reset streamed assistant text/reasoning after a tool batch completes.
+ * Agent turns may invoke the model multiple times; keeping only the
+ * latest round's buffers avoids repeating the same planning block in
+ * the live UI and in the persisted reasoning field.
+ */
+export function clearStreamingRoundBuffers(
+  state: StreamingAccumulator,
+): StreamingAccumulator {
+  return {
+    ...state,
+    content: '',
+    reasoning: '',
+  };
+}
+
 export function detectStreamEnd(chunk: EngineEvent): boolean {
   return chunk.type === 'turn_complete' || chunk.type === 'error' || chunk.type === 'api_response_complete';
 }

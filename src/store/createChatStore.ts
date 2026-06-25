@@ -543,6 +543,12 @@ export const useChatStore = create<ChatState>()(
         }
         if (savedSessionId && sessions.some((session) => session.id === savedSessionId)) {
           set({ currentSessionId: savedSessionId });
+        } else if (sessions.length > 0) {
+          const latestSession = sessions.reduce((latest, session) => (
+            session.updatedAt > latest.updatedAt ? session : latest
+          ));
+          set({ currentSessionId: latestSession.id });
+          safeSetItem(CURRENT_SESSION_ID_STORAGE_KEY, latestSession.id);
         } else {
           set({ currentSessionId: null });
         }

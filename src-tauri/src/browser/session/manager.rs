@@ -81,6 +81,10 @@ impl BrowserSessionManager {
         self.browser.is_some() && self.page.is_some()
     }
 
+    pub fn config(&self) -> &CdpConfig {
+        &self.config
+    }
+
     pub fn page_cloned(&self) -> Option<Page> {
         self.page.clone()
     }

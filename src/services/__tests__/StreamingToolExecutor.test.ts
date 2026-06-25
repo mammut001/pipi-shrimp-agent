@@ -29,7 +29,16 @@ jest.mock('@/services/tools/autoresearchBootstrap', () => ({
   AUTORESEARCH_BOOTSTRAP_TOOL_NAMES: ['pdf_read', 'paper_extract_meta', 'baseline_extract', 'arxiv_search'],
 }));
 
-import { StreamingToolExecutor } from '@/services/StreamingToolExecutor';
+import { StreamingToolExecutor, isReadOnlyTool } from '@/services/StreamingToolExecutor';
+
+describe('isReadOnlyTool', () => {
+  it('treats legacy browser observation tools as serial-only', () => {
+    expect(isReadOnlyTool('browser_extract_content')).toBe(false);
+    expect(isReadOnlyTool('browser_get_text')).toBe(false);
+    expect(isReadOnlyTool('browser_screenshot')).toBe(false);
+    expect(isReadOnlyTool('read_file')).toBe(true);
+  });
+});
 
 describe('StreamingToolExecutor.executeBatch', () => {
   beforeEach(() => {
@@ -276,6 +285,50 @@ describe('StreamingToolExecutor.executeBatch', () => {
         sanitized: true,
       }),
     ]);
+  });
+
+  it('routes legacy browser tools through execute_tool instead of execute_tool_batch', async () => {
+    mockInvoke.mockImplementation(async (command: string, payload?: any) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: payload?.toolCall?.id ?? 'browser-1',
+          toolName: payload?.toolCall?.name ?? 'browser_extract_content',
+          decision: 'allowed',
+        };
+      }
+      if (command === 'execute_tool') {
+        expect(payload).toMatchObject({
+          toolName: 'browser_extract_content',
+          sessionId: 'session-browser',
+          source: 'assistant_tool_call',
+        });
+        return 'Page title: Example\n\nMain content here.';
+      }
+      if (command === 'execute_tool_batch') {
+        throw new Error('browser tools must not use execute_tool_batch');
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      { id: 'browser-1', name: 'browser_extract_content', arguments: {} },
+    ], {
+      sessionId: 'session-browser',
+      source: 'assistant_tool_call',
+      permissionMode: 'auto-edits',
+      executionMode: 'agent',
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_tool', expect.objectContaining({
+      toolName: 'browser_extract_content',
+      sessionId: 'session-browser',
+    }));
+    expect(result.results[0]).toEqual(expect.objectContaining({
+      id: 'browser-1',
+      is_error: false,
+      content: 'Page title: Example\n\nMain content here.',
+    }));
   });
 
   it('auto-approves AutoResearch bypass commands without calling requestPermission', async () => {

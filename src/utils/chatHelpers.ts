@@ -74,16 +74,28 @@ export function safeJsonParse<T>(json: string | null | undefined, fallback: T): 
 
 /**
  * Merge multiple reasoning fragments into a single display string.
- * Keeps arrival order, removes empty entries, and de-dupes identical blocks.
+ * Keeps arrival order, removes empty entries, and de-dupes identical
+ * paragraphs (split on blank lines) so multi-round agent loops do not
+ * render the same planning block repeatedly.
  */
 export function mergeReasoningParts(...parts: Array<string | undefined | null>): string | undefined {
+  const seen = new Set<string>();
   const merged: string[] = [];
+
+  const pushParagraph = (paragraph: string) => {
+    const normalized = paragraph.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    merged.push(normalized);
+  };
 
   for (const part of parts) {
     const normalized = part?.trim();
     if (!normalized) continue;
-    if (!merged.includes(normalized)) {
-      merged.push(normalized);
+    for (const paragraph of normalized.split(/\n{2,}/)) {
+      pushParagraph(paragraph);
     }
   }
 

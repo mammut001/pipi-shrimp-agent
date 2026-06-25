@@ -28,6 +28,8 @@ import { AppModeRail } from '@/components/AppModeRail';
 
 // Lazy-loaded — rarely visible on first render
 const ChromeConnectPrompt = lazy(() => import('@/components/ChromeConnectPrompt'));
+const ExecutionModeUpgradeModal = lazy(() => import('@/components/ExecutionModeUpgradeModal'));
+const CdpConnectorModalHost = lazy(() => import('@/components/CdpConnectorModalHost'));
 const ArtifactsPanel = lazy(() => import('@/components/ArtifactsPanel'));
 
 /**
@@ -98,6 +100,8 @@ export function MainLayout({
       {/* Chrome connect prompt (shown for complex browser tasks) */}
       <Suspense fallback={null}>
         <ChromeConnectPrompt />
+        <CdpConnectorModalHost />
+        <ExecutionModeUpgradeModal />
       </Suspense>
 
       {/* Left Sidebar Shell — expanded sidebar or collapsed app rail */}

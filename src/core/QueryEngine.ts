@@ -8,7 +8,17 @@ import {
 } from '@/services/agentConfig';
 import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { isContextOverflowError } from '@/services/context/contextBudget';
-import { useChatStore, useSettingsStore } from '@/store';
+import { useChatStore, useSettingsStore, useUIStore } from '@/store';
+import { useCdpStore } from '@/store/cdpStore';
+import {
+  detectAskModeToolNeed,
+  isAskModeToolFailureText,
+  resolveSessionExecutionModeId,
+} from '@/services/executionMode';
+import {
+  BROWSER_NOT_CONNECTED_USER_MESSAGE,
+  isBrowserNotConnectedToolResult,
+} from '@/services/browser/browserConnectionGate';
 import { createMemoryHook } from '@/services/memory/memoryHooks';
 import {
   appendToolBudgetEntries,
@@ -461,12 +471,57 @@ export async function* runChatTurn(
         continue;
       }
       if (allFailed && !effectiveNoTools) {
+        const allBrowserDisconnected = allContentList.every(isBrowserNotConnectedToolResult);
+        if (allBrowserDisconnected) {
+          void useCdpStore.getState().requestChromeConnection();
+          yield {
+            type: 'error',
+            error: withToolBudgetSummary(
+              new Error(BROWSER_NOT_CONNECTED_USER_MESSAGE),
+              toolBudgetSummary,
+            ),
+          };
+          return;
+        }
+        const allAskBlocked = allContentList.every(isAskModeToolFailureText);
+        if (allAskBlocked) {
+          const currentSession = useChatStore.getState().sessions.find((s) => s.id === sessionId);
+          const currentModeId = resolveSessionExecutionModeId(currentSession);
+          if (currentModeId === 'ask' || currentModeId === 'plan') {
+            const lastUserMessage = [...currentMessages].reverse().find((message) => message.role === 'user');
+            const userContent = typeof lastUserMessage?.content === 'string' ? lastUserMessage.content : '';
+            const toolNeed = detectAskModeToolNeed(userContent);
+            if (toolNeed.needed) {
+              void useUIStore.getState().showExecutionModeUpgradePrompt({
+                reason: toolNeed.reason,
+                messagePreview: userContent.trim().slice(0, 240),
+              });
+            }
+          }
+          yield {
+            type: 'error',
+            error: withToolBudgetSummary(
+              new Error(
+                '当前为问答模式，无法执行工具。请在弹窗中切换到智能体或绕过模式，然后点击「重试」。',
+              ),
+              toolBudgetSummary,
+            ),
+          };
+          return;
+        }
+        const failureDetail = pendingToolCalls
+          .map((tool, index) => {
+            const raw = (allContentList[index] ?? '').trim();
+            const reason = raw.replace(/^\s*error:\s*/i, '').slice(0, 300) || '未知原因';
+            return `• ${tool.name}: ${reason}`;
+          })
+          .join('\n');
         yield {
           type: 'error',
           error: withToolBudgetSummary(
             new Error(
-              'Every tool call in the last round was rejected by the safety policy. '
-              + 'If this happened in Ask mode, switch to Agent or Bypass to run tools.',
+              `本轮所有工具调用都被拒绝。具体原因：\n${failureDetail}\n\n`
+              + '（如果显示 Ask 模式相关提示，请切换到 Agent 或 Bypass 模式后重试。）',
             ),
             toolBudgetSummary,
           ),

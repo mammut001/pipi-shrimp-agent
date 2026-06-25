@@ -11,16 +11,20 @@ describe('toolExecutionPolicy', () => {
     expect(canAutoApproveTool('bypass', 'run_in_terminal')).toBe(true);
   });
 
-  it('Bypass mode still requires confirmation for SSH / MCP / browser / agent tools', () => {
+  it('Bypass mode still requires confirmation for SSH / MCP / agent tools', () => {
     // These tool families target remote systems or external surfaces
     // that the hard safety hooks cannot generically classify as safe,
     // so the user-facing permission gate stays in place even in Bypass.
     expect(canAutoApproveTool('bypass', 'ssh_exec')).toBe(false);
     expect(canAutoApproveTool('bypass', 'ssh_upload_file')).toBe(false);
     expect(canAutoApproveTool('bypass', 'mcp__filesystem__write_file')).toBe(false);
-    expect(canAutoApproveTool('bypass', 'browser_click')).toBe(false);
-    expect(canAutoApproveTool('bypass', 'browser_navigate')).toBe(false);
     expect(canAutoApproveTool('bypass', 'agent_tool')).toBe(false);
+  });
+
+  it('Bypass mode auto-approves browser tools', () => {
+    // Browser tools auto-approve in Bypass mode for smooth browser automation.
+    expect(canAutoApproveTool('bypass', 'browser_click')).toBe(true);
+    expect(canAutoApproveTool('bypass', 'browser_navigate')).toBe(true);
   });
 
   it('routes registry-backed tools away from legacy execute_tool', () => {
@@ -42,5 +46,11 @@ describe('toolExecutionPolicy', () => {
     expect(canAutoApproveTool('auto-edits', 'get_current_workspace')).toBe(true);
     expect(canAutoApproveTool('auto-edits', 'execute_command')).toBe(false);
     expect(canAutoApproveTool('auto-edits', 'ssh_read_file')).toBe(false);
+  });
+
+  it('auto-approves browser mutation tools in Agent mode when browser intent is explicit', () => {
+    expect(canAutoApproveTool('auto-edits', 'browser_navigate', { browserIntent: true })).toBe(true);
+    expect(canAutoApproveTool('auto-edits', 'browser_navigate', { browserIntent: false })).toBe(false);
+    expect(canAutoApproveTool('auto-edits', 'execute_command', { browserIntent: true })).toBe(false);
   });
 });

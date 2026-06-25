@@ -246,8 +246,8 @@ where
                         browser_not_connected_message()
                     } else {
                         format!(
-                            "ERROR: 导航失败（{}s）。URL: {}。可能是网络问题或页面需要认证。",
-                            30, url
+                            "ERROR: 导航失败。URL: {}。原因: {}",
+                            url, error
                         )
                     }
                 }

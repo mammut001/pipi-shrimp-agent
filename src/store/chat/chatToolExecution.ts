@@ -8,6 +8,7 @@ import { getCurrentAgentContext } from '../../services/multiagent/agentContext';
 import { runAgentBackground, runAgentSync } from '../../services/multiagent/subagent';
 import { runPostToolUseHooks, type PostHookContext } from '../../services/tools/postToolUseHooks';
 import { runPreToolUseHooks } from '../../services/tools/preToolUseHooks';
+import { detectBrowserIntent } from '../../services/browser/browserIntent';
 import {
   canAutoApproveTool,
   isLegacyChatOnlyTool,
@@ -215,6 +216,14 @@ async function executeConcurrentTools(
   const uiStore = deps.uiStore.getState();
   const executableConcurrent: ToolRequest[] = [];
   const blockedResults: ToolArtifactResult[] = [];
+  const sessionForIntent = get().sessions.find((s) => s.id === activeSessionId);
+  const messagesForIntent = sessionForIntent?.messages || [];
+  const lastUserMsgForIntent = messagesForIntent.length > 0
+    ? [...messagesForIntent].reverse().find((m) => m.role === 'user')
+    : undefined;
+  const allowBrowserTools = lastUserMsgForIntent
+    ? detectBrowserIntent(lastUserMsgForIntent.content)
+    : false;
 
   for (const req of concurrent) {
     markSessionToolRunning(activeSessionId, req.id, req.name, set, get);
@@ -228,6 +237,7 @@ async function executeConcurrentTools(
       permissionMode,
       executionMode: executionModeId,
       sessionId: activeSessionId,
+      allowBrowserTools,
     });
 
     if (!hookResult.approved) {
@@ -293,6 +303,7 @@ async function executeConcurrentTools(
       source: 'assistant_tool_call',
       permissionMode,
       executionMode: executionModeId,
+      browserIntent: allowBrowserTools,
       requestPermission: async (request) => {
         // Bypass: auto-approve normal project-scoped tools without
         // showing the permission modal. Hard safety blocks still
@@ -301,7 +312,7 @@ async function executeConcurrentTools(
         // callback fires. SSH / browser / MCP tools still fall
         // through to the modal because canAutoApproveTool returns
         // false for them.
-        if (permissionMode === 'bypass' && canAutoApproveTool(permissionMode, request.name)) {
+        if (permissionMode === 'bypass' && canAutoApproveTool(permissionMode, request.name, { browserIntent: allowBrowserTools })) {
           return true;
         }
         uiStore.updateTaskStep(request.id, 'awaiting_confirmation');
@@ -396,6 +407,7 @@ async function resolveSerialToolPermission(
   workDir: string | null,
   requiresConfirmation: boolean,
   deps: ToolBatchExecutionDeps,
+  browserIntent = false,
   permissionContext?: {
     description?: string;
     source?: string;
@@ -415,14 +427,14 @@ async function resolveSerialToolPermission(
   // rejects, and for tools that the policy preview explicitly
   // rejected (caller already handled `rejected` separately).
   if (permissionMode === 'bypass') {
-    if (canAutoApproveTool(permissionMode, tool.name)) {
+    if (canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
       return true;
     }
     // SSH / browser / MCP fall through to the user-facing modal —
     // they keep their existing confirmation gate even in Bypass.
   }
 
-  if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name)) {
+  if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
     return true;
   }
 
@@ -691,6 +703,11 @@ async function executeSerialTool(
     return { id: tool.id, content: toolResultContent, toolName: tool.name, toolArgs: normalizedToolArgs };
   }
 
+  const session = get().sessions.find((s) => s.id === activeSessionId);
+  const messages = session?.messages || [];
+  const lastUserMsg = messages.length > 0 ? [...messages].reverse().find((m) => m.role === 'user') : undefined;
+  const allowBrowserTools = lastUserMsg ? detectBrowserIntent(lastUserMsg.content) : false;
+
   const hookResult = await deps.runPreToolUseHooks({
     toolName: tool.name,
     toolArgs: normalizedToolArgs,
@@ -698,6 +715,7 @@ async function executeSerialTool(
     permissionMode,
     executionMode: executionModeId,
     sessionId: activeSessionId,
+    allowBrowserTools,
   });
 
   let effectiveArgs = normalizedToolArgs;
@@ -757,13 +775,8 @@ async function executeSerialTool(
   }
 
   const requiresExplicitApproval = Boolean(hookResult.requiresConfirmation) || preview.decision === 'awaiting_confirmation';
-  // In Bypass mode for normal project-scoped tools we still want to
-  // mark the tool as auto-approved (not as "awaiting user input") so
-  // the UI doesn't render a yellow inline approval card behind the
-  // (now-skipped) permission modal.
-  const bypassAutoApproves = permissionMode === 'bypass'
-    && canAutoApproveTool(permissionMode, tool.name);
-  if (requiresExplicitApproval && !bypassAutoApproves) {
+  const autoApprovesWithoutPrompt = canAutoApproveTool(permissionMode, tool.name, { browserIntent: allowBrowserTools });
+  if (requiresExplicitApproval && !autoApprovesWithoutPrompt) {
     uiStore.updateTaskStep(tool.id, 'awaiting_confirmation');
     markSessionToolStatus(activeSessionId, tool.id, tool.name, 'awaiting_confirmation', set, get);
   }
@@ -779,6 +792,7 @@ async function executeSerialTool(
     workDir,
     requiresExplicitApproval,
     deps,
+    allowBrowserTools,
     {
       ...buildPermissionContext(tool.name, effectiveArgs, preview.reason, workDir),
       approvalToken,
@@ -789,13 +803,13 @@ async function executeSerialTool(
     resolveSessionTool(activeSessionId, tool.id, tool.name, 'rejected', deps.t('permission.deniedMessage'), set, get);
     return {
       id: tool.id,
-      content: deps.t('permission.deniedMessage'),
+      content: `Error: ${deps.t('permission.deniedMessage')}`,
       toolName: tool.name,
       toolArgs: effectiveArgs,
     };
   }
 
-  if (requiresExplicitApproval && !bypassAutoApproves) {
+  if (requiresExplicitApproval && !autoApprovesWithoutPrompt) {
     uiStore.updateTaskStep(tool.id, 'approved');
     markSessionToolStatus(activeSessionId, tool.id, tool.name, 'approved', set, get);
   }

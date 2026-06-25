@@ -17,6 +17,7 @@ import {
 } from './registry';
 import type { PermissionMode } from '@/services/tools/toolExecutionPolicy';
 import { PLAN_MODE_ALLOWED_TOOLS } from '@/services/planMode';
+import { BROWSER_TOOL_NAMES, BROWSER_READ_ONLY_TOOLS } from '../browser/browserTools';
 
 const READ_ONLY_TOOLS = new Set([
   'read_file',
@@ -167,14 +168,16 @@ export function hydrateSessionModes<T extends SessionModeSnapshot>(
 export function isToolAllowedForMode(
   modeId: ExecutionModeId | string | null | undefined,
   toolName: string,
+  allowBrowserTools?: boolean,
 ): boolean {
   const profile = getExecutionMode(modeId);
-  return isToolAllowedForProfile(profile, toolName);
+  return isToolAllowedForProfile(profile, toolName, allowBrowserTools);
 }
 
 export function isToolAllowedForProfile(
   profile: ExecutionModeProfile,
   toolName: string,
+  allowBrowserTools?: boolean,
 ): boolean {
   // Option A — `save_plan_doc` is intentionally NOT a model-callable
   // tool in any execution mode. The Rust tool registry has no
@@ -185,6 +188,27 @@ export function isToolAllowedForProfile(
   // per-policy switch.
   if (toolName === 'save_plan_doc') {
     return false;
+  }
+
+  // Handle browser tool routing
+  const isBrowserTool = BROWSER_TOOL_NAMES.includes(toolName);
+  if (isBrowserTool) {
+    if (profile.allowedToolPolicy === 'full') {
+      return true;
+    }
+    if (profile.allowedToolPolicy === 'none' || profile.allowedToolPolicy === 'plan') {
+      return false;
+    }
+    if (profile.allowedToolPolicy === 'shell') {
+      return true;
+    }
+    if (!allowBrowserTools) {
+      return false;
+    }
+    if (profile.allowedToolPolicy === 'read-only' || profile.allowedToolPolicy === 'edit') {
+      return BROWSER_READ_ONLY_TOOLS.has(toolName);
+    }
+    return true;
   }
 
   switch (profile.allowedToolPolicy) {
@@ -249,32 +273,48 @@ export function isToolAllowedForProfile(
  */
 export function getAllowedToolsForMode(
   modeId: ExecutionModeId | string | null | undefined,
+  allowBrowserTools?: boolean,
 ): string[] | undefined {
   const profile = getExecutionMode(modeId);
 
+  let tools: string[] | undefined;
   switch (profile.allowedToolPolicy) {
     case 'none':
       return [];
     case 'plan':
       return [...PLAN_MODE_ALLOWED_TOOLS];
     case 'read-only':
-      return dedupeTools(READ_ONLY_TOOLS);
+      tools = dedupeTools(READ_ONLY_TOOLS);
+      break;
     case 'edit':
-      return dedupeTools([
+      tools = dedupeTools([
         ...READ_ONLY_TOOLS,
         ...FILE_WRITE_TOOLS,
       ]);
+      break;
     case 'shell':
-      return dedupeTools([
+      tools = dedupeTools([
         ...READ_ONLY_TOOLS,
         ...FILE_WRITE_TOOLS,
         ...SHELL_TOOLS,
+        ...BROWSER_TOOL_NAMES,
       ]);
+      break;
     case 'full':
       return undefined;
     default:
       return undefined;
   }
+
+  if (allowBrowserTools && tools) {
+    if (profile.allowedToolPolicy === 'read-only' || profile.allowedToolPolicy === 'edit') {
+      tools = dedupeTools([...tools, ...Array.from(BROWSER_READ_ONLY_TOOLS)]);
+    } else if (profile.allowedToolPolicy === 'shell') {
+      tools = dedupeTools([...tools, ...BROWSER_TOOL_NAMES]);
+    }
+  }
+
+  return tools;
 }
 
 /**

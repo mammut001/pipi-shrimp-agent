@@ -72,7 +72,9 @@ describe('cdpStore', () => {
       connectionState: null,
       attachFailureReason: null,
       lastSyncedAt: null,
+      connectorModalOpen: false,
     });
+    useCdpStore.getState().dismissConnectorModal(false);
   });
 
   it('surfaces launch mode after launch_chrome_debug succeeds', async () => {
@@ -133,5 +135,21 @@ describe('cdpStore', () => {
     const commandTrace = useBrowserObservabilityStore.getState().recentCommands[0];
     expect(commandTrace?.method).toBe('launch_chrome_debug');
     expect(commandTrace?.status).toBe('error');
+  });
+
+  it('requestChromeConnection resolves immediately when already connected', async () => {
+    useCdpStore.setState({ status: 'connected' });
+
+    await expect(useCdpStore.getState().requestChromeConnection()).resolves.toBe(true);
+    expect(useCdpStore.getState().connectorModalOpen).toBe(false);
+  });
+
+  it('requestChromeConnection opens the modal and resolves on dismiss', async () => {
+    const pending = useCdpStore.getState().requestChromeConnection();
+    expect(useCdpStore.getState().connectorModalOpen).toBe(true);
+
+    useCdpStore.getState().dismissConnectorModal(true);
+    await expect(pending).resolves.toBe(true);
+    expect(useCdpStore.getState().connectorModalOpen).toBe(false);
   });
 });

@@ -329,6 +329,15 @@ export type TranslationKeys = {
   'executionMode.advancedSection': string;
   'executionMode.ask.label': string;
   'executionMode.ask.description': string;
+  'executionMode.upgrade.title': string;
+  'executionMode.upgrade.body.browser': string;
+  'executionMode.upgrade.body.workspace': string;
+  'executionMode.upgrade.body.general': string;
+  'executionMode.upgrade.agentButton': string;
+  'executionMode.upgrade.bypassButton': string;
+  'executionMode.upgrade.cancel': string;
+  'executionMode.upgrade.switchedToAgent': string;
+  'executionMode.upgrade.switchedToBypass': string;
   'executionMode.plan.label': string;
   'executionMode.plan.description': string;
   'executionMode.debug.label': string;
@@ -703,6 +712,7 @@ export type TranslationKeys = {
   // Browser Mini Preview
   'browserMiniPreview.cannotRunMissingContext': string;
   'browserMiniPreview.agentRunning': string;
+  'browser.doNotOperate': string;
   'browserMiniPreview.enterTargetUrl': string;
   'browserMiniPreview.loginInWindow': string;
   'browserMiniPreview.refreshAndCheck': string;

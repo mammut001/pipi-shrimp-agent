@@ -10,7 +10,6 @@ import { usePolling } from '@/hooks/usePolling';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
 import { invoke } from '@tauri-apps/api/core';
-import { CdpConnectorModal } from './CdpConnectorModal';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { DocPanel } from './DocPanel';
 import { ChatImage } from './ChatImage';
@@ -52,7 +51,7 @@ export const AgentPanel: React.FC = () => {
   const cdpStatus = useCdpStore(s => s.status);
   const cdpConnectionState = useCdpStore(s => s.connectionState);
   const setupCdpConnectionMonitor = useCdpStore(s => s.setupConnectionMonitor);
-  const [showCdpModal, setShowCdpModal] = useState(false);
+  const openConnectorModal = useCdpStore(s => s.openConnectorModal);
 
   // Get session-level working files for current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -584,7 +583,7 @@ export const AgentPanel: React.FC = () => {
                 <button
                   onClick={() => {
                     if (cdpStatus !== 'connected') {
-                      setShowCdpModal(true);
+                      openConnectorModal();
                     }
                   }}
                   className="w-full flex items-center justify-between p-2.5 bg-white border border-gray-200 rounded-xl shadow-sm hover:border-blue-200 transition-all group text-left"
@@ -667,14 +666,6 @@ export const AgentPanel: React.FC = () => {
         </div>
         <div className="opacity-60">v0.1.0-alpha</div>
       </div>
-
-      {showCdpModal && (
-        <CdpConnectorModal
-          onClose={() => {
-            setShowCdpModal(false);
-          }}
-        />
-      )}
     </div>
   );
 };

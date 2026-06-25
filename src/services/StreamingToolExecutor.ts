@@ -21,6 +21,7 @@ import {
 import {
   DEFAULT_TOOL_EXECUTION_SOURCE,
   canAutoApproveTool,
+  isLegacyChatOnlyTool,
   type ToolPolicyPreviewResult,
   type PermissionMode,
   type ToolExecutionSource,
@@ -28,6 +29,7 @@ import {
 import { runPreToolUseHooks } from '@/services/tools/preToolUseHooks';
 import { sanitizeToolExecutionContent } from '@/services/tools/outputSanitizer';
 import { withWindowsShellProfileArgs } from '@/utils/windowsShellProfile';
+import { BROWSER_TOOL_NAMES } from './browser/browserTools';
 
 /** Convert MCP ContentBlock array to a plain string for tool output */
 function contentBlocksToString(blocks: ContentBlock[]): string {
@@ -87,6 +89,8 @@ export interface ToolExecutionOptions {
   onProgress?: (completed: number, total: number, currentTool?: string) => void;
   concurrencyLimit?: number;
   timeoutMs?: number;
+  /** When true, browser mutation tools auto-approve in Agent mode. */
+  browserIntent?: boolean;
 }
 
 export interface BatchExecutionResult {
@@ -229,6 +233,13 @@ const SERIAL_ONLY_TOOLS = new Set([
  * Check if a tool is read-only (safe for concurrent execution)
  */
 export function isReadOnlyTool(toolName: string): boolean {
+  // Legacy chat-scoped tools (browser, Typst, Skill) are not in the
+  // Rust ToolRegistry and must run through `execute_tool`, not
+  // `execute_tool_batch`. They also share browser/font state and must
+  // not run concurrently with each other.
+  if (isLegacyChatOnlyTool(toolName)) {
+    return false;
+  }
   return READ_ONLY_TOOLS.has(toolName) && !SERIAL_ONLY_TOOLS.has(toolName);
 }
 
@@ -305,6 +316,7 @@ export class StreamingToolExecutor {
       executionMode,
       allowedTools,
       requestPermission,
+      browserIntent = false,
     } = options;
 
     if (toolRequests.length === 0) {
@@ -349,6 +361,7 @@ export class StreamingToolExecutor {
         permissionMode,
         executionMode,
         sessionId,
+        allowBrowserTools: allowedTools ? allowedTools.some(t => BROWSER_TOOL_NAMES.includes(t)) : true,
       });
 
       if (!hookResult.approved) {
@@ -362,7 +375,10 @@ export class StreamingToolExecutor {
       }
 
       if (hookResult.requiresConfirmation) {
-        if (!requestPermission) {
+        if (
+          !canAutoApproveTool(permissionMode, request.name, { browserIntent })
+          && !requestPermission
+        ) {
           prevalidatedResults.push(buildPolicyErrorResult(
             request,
             `Tool "${request.name}" requires confirmation before execution.`,
@@ -423,10 +439,7 @@ export class StreamingToolExecutor {
         // (dangerous-command / path-validation) have already run via
         // preToolUseHooks upstream, so we know the request isn't
         // destructive.
-        if (
-          permissionMode === 'bypass'
-          && canAutoApproveTool('bypass', request.name)
-        ) {
+        if (canAutoApproveTool(permissionMode, request.name, { browserIntent })) {
           executableRequests.push({
             ...request,
             approvalToken: preview.approvalToken,
@@ -541,6 +554,38 @@ export class StreamingToolExecutor {
   }
 
   /**
+   * Execute chat-scoped legacy tools (browser, Typst, Skill) that are not
+   * registered in the Rust ToolRegistry.
+   */
+  private async executeLegacyChatTool(
+    request: ToolRequest,
+    sessionId: string,
+    workDir: string | undefined,
+    source: ToolExecutionSource,
+    executionMode: string | undefined,
+    startTime: number,
+  ): Promise<ToolResult> {
+    const content = await invoke<string>('execute_tool', {
+      toolName: request.name,
+      arguments: JSON.stringify(request.arguments),
+      workDir: workDir ?? null,
+      toolCallId: request.id,
+      sessionId,
+      approvalToken: request.approvalToken ?? null,
+      source,
+      executionMode: executionMode ?? null,
+    });
+    const isError = content.startsWith('Error:');
+    return finalizeToolResult(request.name, {
+      id: request.id,
+      content,
+      is_error: isError,
+      error_message: isError ? content : undefined,
+      execution_time_ms: Date.now() - startTime,
+    } satisfies ToolResult);
+  }
+
+  /**
    * Execute Rust-backed tools via the authoritative batch scheduler.
    */
   private async executeNativeBatch(
@@ -557,54 +602,81 @@ export class StreamingToolExecutor {
     }
 
     const startTime = Date.now();
-    const { activeConfig, provider, providerCapabilities } = toolRequests.some((tool) => AUTORESEARCH_BOOTSTRAP_TOOL_SET.has(tool.name))
-      ? this.getBootstrapProviderContext()
-      : { activeConfig: null, provider: null, providerCapabilities: null };
+    const legacyRequests = toolRequests.filter((tool) => isLegacyChatOnlyTool(tool.name));
+    const registryRequests = toolRequests.filter((tool) => !isLegacyChatOnlyTool(tool.name));
+    const resultsById = new Map<string, ToolResult>();
 
     try {
-      const rawResults = await Promise.race([
-        invoke<any[]>('execute_tool_batch', {
-          toolCalls: toolRequests.map((tool) => ({
-            id: tool.id,
-            name: tool.name,
-            arguments: JSON.stringify(tool.arguments),
-            workDir: workDir ?? null,
-            source,
-            allowedTools: allowedTools?.length ? allowedTools : null,
-            approvalToken: tool.approvalToken ?? null,
-            apiKey: activeConfig?.apiKey ?? null,
-            model: activeConfig?.model ?? null,
-            baseUrl: activeConfig?.baseUrl || null,
-            provider,
-            apiFormat: activeConfig?.apiFormat || null,
-            providerCapabilities,
-            executionMode: executionMode ?? null,
-          })),
+      for (const request of legacyRequests) {
+        const result = await this.executeLegacyChatTool(
+          request,
           sessionId,
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Tool batch execution timeout: ${toolRequests.map((tool) => tool.name).join(', ')}`)),
-            this.timeoutMs * Math.max(1, toolRequests.length),
-          )
-        ),
-      ]);
-
-      const elapsed = Date.now() - startTime;
-      const results = rawResults.map((result) => {
-        const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-        return finalizeToolResult(result.name ?? 'unknown', {
-          id: result.id,
-          content,
-          is_error: Boolean(result.is_error),
-          error_message: result.is_error ? content : undefined,
-          execution_time_ms: elapsed,
-        } satisfies ToolResult);
-      });
-
-      for (const request of toolRequests) {
+          workDir,
+          source,
+          executionMode,
+          startTime,
+        );
+        resultsById.set(request.id, result);
         onProgress(request.name);
       }
+
+      if (registryRequests.length > 0) {
+        const { activeConfig, provider, providerCapabilities } = registryRequests.some((tool) => AUTORESEARCH_BOOTSTRAP_TOOL_SET.has(tool.name))
+          ? this.getBootstrapProviderContext()
+          : { activeConfig: null, provider: null, providerCapabilities: null };
+
+        const rawResults = await Promise.race([
+          invoke<any[]>('execute_tool_batch', {
+            toolCalls: registryRequests.map((tool) => ({
+              id: tool.id,
+              name: tool.name,
+              arguments: JSON.stringify(tool.arguments),
+              workDir: workDir ?? null,
+              source,
+              allowedTools: allowedTools?.length ? allowedTools : null,
+              approvalToken: tool.approvalToken ?? null,
+              apiKey: activeConfig?.apiKey ?? null,
+              model: activeConfig?.model ?? null,
+              baseUrl: activeConfig?.baseUrl || null,
+              provider,
+              apiFormat: activeConfig?.apiFormat || null,
+              providerCapabilities,
+              executionMode: executionMode ?? null,
+            })),
+            sessionId,
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`Tool batch execution timeout: ${registryRequests.map((tool) => tool.name).join(', ')}`)),
+              this.timeoutMs * Math.max(1, registryRequests.length),
+            )
+          ),
+        ]);
+
+        const elapsed = Date.now() - startTime;
+        for (const result of rawResults) {
+          const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+          resultsById.set(result.id, finalizeToolResult(result.name ?? 'unknown', {
+            id: result.id,
+            content,
+            is_error: Boolean(result.is_error),
+            error_message: result.is_error ? content : undefined,
+            execution_time_ms: elapsed,
+          } satisfies ToolResult));
+        }
+
+        for (const request of registryRequests) {
+          onProgress(request.name);
+        }
+      }
+
+      const results = toolRequests.map((request) => resultsById.get(request.id) ?? finalizeToolResult(request.name, {
+        id: request.id,
+        content: buildStructuredToolError(request.name, request.arguments, new Error(`Missing tool result: ${request.name}`)),
+        is_error: true,
+        error_message: `Missing tool result: ${request.name}`,
+        execution_time_ms: Date.now() - startTime,
+      } satisfies ToolResult));
 
       return {
         errors: results.filter((result) => result.is_error),
@@ -614,8 +686,10 @@ export class StreamingToolExecutor {
       const elapsed = Date.now() - startTime;
       const message = error instanceof Error ? error.message : 'Unknown error';
       const results = toolRequests.map((request) => {
-        onProgress(request.name);
-        return finalizeToolResult(request.name, {
+        if (!resultsById.has(request.id)) {
+          onProgress(request.name);
+        }
+        return resultsById.get(request.id) ?? finalizeToolResult(request.name, {
           id: request.id,
           content: buildStructuredToolError(request.name, request.arguments, error),
           is_error: true,

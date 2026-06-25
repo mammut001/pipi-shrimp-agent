@@ -416,120 +416,137 @@ async fn chrome_debug_port_ready() -> bool {
         .is_ok()
 }
 
-async fn ensure_chrome_debug_process() -> Result<ChromeDebugLaunchOutcome, String> {
+async fn ensure_chrome_debug_process(timeout: Duration) -> Result<ChromeDebugLaunchOutcome, String> {
+    if chrome_debug_port_ready().await {
+        return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
+    }
+
     #[cfg(target_os = "macos")]
     {
-        if chrome_debug_port_ready().await {
-            return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
-        }
-
-        let chrome_running = std::process::Command::new("pgrep")
-            .args(["-x", "Google Chrome"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        if chrome_running {
-            return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」，软件会自动以调试模式启动它。".to_string());
-        }
-
         let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "/tmp".to_string());
-        let real_profile = format!("{}/Library/Application Support/Google/Chrome", home);
+        let debug_profile = format!("{}/Library/Application Support/PipiShrimp/ChromeDebugProfile", home);
         let chrome_paths = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string(),
+            "/Applications/Chromium.app/Contents/MacOS/Chromium".to_string(),
+            format!("{}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", home),
+            format!("{}/Applications/Chromium.app/Contents/MacOS/Chromium", home),
         ];
 
+        let mut spawned = false;
         for path in &chrome_paths {
             if std::path::Path::new(path).exists() {
                 std::process::Command::new(path)
                     .args([
                         "--remote-debugging-port=9222",
-                        &format!("--user-data-dir={}", real_profile),
+                        &format!("--user-data-dir={}", debug_profile),
                         "--no-first-run",
                         "--no-default-browser-check",
+                        "about:blank",
                     ])
                     .spawn()
                     .map_err(|e| format!("启动 Chrome 失败: {}", e))?;
-                return Ok(ChromeDebugLaunchOutcome::Launched);
+                spawned = true;
+                break;
             }
         }
 
-        Err("未找到 Chrome 或 Chromium，请确认已安装在 /Applications 目录下".to_string())
+        if !spawned {
+            return Err("未找到 Chrome 或 Chromium，请确认已安装".to_string());
+        }
     }
 
     #[cfg(target_os = "windows")]
     {
-        if chrome_debug_port_ready().await {
-            return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
-        }
+        let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+        let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "C:\\Users\\User\\AppData\\Local".to_string());
 
-        let chrome_running = std::process::Command::new("tasklist")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("chrome.exe"))
-            .unwrap_or(false);
-
-        if chrome_running {
-            return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」。".to_string());
-        }
-
-        let appdata = std::env::var("LOCALAPPDATA")
-            .unwrap_or_else(|_| "C:\\Users\\User\\AppData\\Local".to_string());
-        let real_profile = format!("{}\\Google\\Chrome\\User Data", appdata);
         let chrome_paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            format!(r"{}\Google\Chrome\Application\chrome.exe", program_files),
+            format!(r"{}\Google\Chrome\Application\chrome.exe", program_files_x86),
+            format!(r"{}\Google\Chrome\Application\chrome.exe", local_appdata),
+            format!(r"{}\Chromium\Application\chrome.exe", program_files),
+            format!(r"{}\Chromium\Application\chrome.exe", program_files_x86),
+            format!(r"{}\Chromium\Application\chrome.exe", local_appdata),
         ];
 
+        let debug_profile = format!("{}\\PipiShrimp\\ChromeDebugProfile", local_appdata);
+
+        let mut spawned = false;
         for path in &chrome_paths {
             if std::path::Path::new(path).exists() {
                 std::process::Command::new(path)
                     .args([
                         "--remote-debugging-port=9222",
-                        &format!("--user-data-dir={}", real_profile),
+                        &format!("--user-data-dir={}", debug_profile),
                         "--no-first-run",
                         "--no-default-browser-check",
+                        "about:blank",
                     ])
                     .spawn()
                     .map_err(|e| format!("启动 Chrome 失败: {}", e))?;
-                return Ok(ChromeDebugLaunchOutcome::Launched);
+                spawned = true;
+                break;
             }
         }
 
-        Err("未找到 Chrome 安装路径".to_string())
+        if !spawned {
+            return Err("未找到 Chrome 或 Chromium，请确认已安装。".to_string());
+        }
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        if chrome_debug_port_ready().await {
-            return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
-        }
-
-        let chrome_running = std::process::Command::new("pgrep")
-            .args(["-x", "google-chrome"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        if chrome_running {
-            return Err("CHROME_NEEDS_RESTART: Chrome 正在运行但未开启调试端口。请退出 Chrome 后重新点击「连接 Chrome」。".to_string());
-        }
-
         let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "/tmp".to_string());
-        let real_profile = format!("{}/.config/google-chrome", home);
+        let debug_profile = format!("{}/.config/pipi-shrimp/chrome-debug-profile", home);
 
-        std::process::Command::new("google-chrome")
-            .args([
-                "--remote-debugging-port=9222",
-                &format!("--user-data-dir={}", real_profile),
-                "--no-first-run",
-                "--no-default-browser-check",
-            ])
-            .spawn()
-            .map_err(|e| format!("启动 Chrome 失败: {}", e))?;
+        let commands = [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ];
 
-        Ok(ChromeDebugLaunchOutcome::Launched)
+        let mut spawned = false;
+        for cmd in &commands {
+            match std::process::Command::new(cmd)
+                .args([
+                    "--remote-debugging-port=9222",
+                    &format!("--user-data-dir={}", debug_profile),
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "about:blank",
+                ])
+                .spawn()
+            {
+                Ok(_) => {
+                    spawned = true;
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(format!("启动 {} 失败: {}", cmd, e));
+                }
+            }
+        }
+
+        if !spawned {
+            return Err("未找到 Chrome/Chromium 浏览器，请确认已安装。".to_string());
+        }
     }
+
+    // After spawning Chrome, poll for the port to become ready
+    let start_time = std::time::Instant::now();
+    while !chrome_debug_port_ready().await {
+        if start_time.elapsed() >= timeout {
+            return Err("启动 Chrome 成功，但调试端口未能就绪，连接超时。请确认未占用 9222 端口，或尝试手动启动。".to_string());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+
+    Ok(ChromeDebugLaunchOutcome::Launched)
 }
 
 /// Launch Chrome with remote debugging enabled and connect through the shared session manager.
@@ -546,7 +563,12 @@ pub async fn launch_chrome_debug(
         }
     }
 
-    let launch_outcome = ensure_chrome_debug_process().await?;
+    let timeout = {
+        let manager_guard = manager.lock().await;
+        manager_guard.config().timeout
+    };
+
+    let launch_outcome = ensure_chrome_debug_process(timeout).await?;
     let mut manager_guard = manager.lock().await;
     let session = match launch_outcome {
         ChromeDebugLaunchOutcome::DebugPortReady => manager_guard.connect_attach().await,

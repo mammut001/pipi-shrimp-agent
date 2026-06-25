@@ -4,6 +4,7 @@ import type { Session } from '../../../types/chat';
 const mockInvoke = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const mockRunChatTurn = jest.fn();
 const mockAddNotification = jest.fn();
+const mockShowExecutionModeUpgradePrompt = jest.fn(async () => 'agent' as const);
 const mockClearTaskProgress = jest.fn();
 const mockSetTaskProgress = jest.fn();
 const mockSetActiveSkill = jest.fn();
@@ -54,7 +55,9 @@ jest.mock('../../uiStore', () => ({
       waitForPermission: jest.fn(async () => true),
       showQuestionnaire: jest.fn(async () => 'questionnaire response'),
       clearAllPermissions: jest.fn(),
+      permissionQueue: [],
       clearQuestionnaire: jest.fn(),
+      showExecutionModeUpgradePrompt: (...args: unknown[]) => mockShowExecutionModeUpgradePrompt(...args),
     }),
   },
 }));
@@ -255,6 +258,8 @@ describe('chatStore sendMessage integration', () => {
     mockInvoke.mockReset();
     mockRunChatTurn.mockReset();
     mockAddNotification.mockReset();
+    mockShowExecutionModeUpgradePrompt.mockReset();
+    mockShowExecutionModeUpgradePrompt.mockResolvedValue('agent');
     mockClearTaskProgress.mockReset();
     mockSetTaskProgress.mockReset();
     mockSetActiveSkill.mockReset();
@@ -727,13 +732,36 @@ describe('chatStore sendMessage integration', () => {
     resetChatState({ executionMode: 'ask', permissionMode: 'plan-only' });
     mockRunChatTurn.mockImplementation(() => streamAskModePseudoToolReply());
 
-    await useChatStore.getState().sendMessage('读取 README 并总结。');
+    await useChatStore.getState().sendMessage('介绍一下这个项目的大概方向。');
 
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
-      ['user', '读取 README 并总结。'],
-      ['assistant', 'Ask 模式这回合不能读取本地文件或调用工具，所以我现在不能直接打开 `README`。请切到 `Agent` 或 `Bypass` 模式后重试；如果你愿意，也可以把 `README` 内容贴到这里，我可以立刻帮你总结。'],
+      ['user', '介绍一下这个项目的大概方向。'],
+      ['assistant', 'Ask 模式这回合不能调用工具。如果你需要我读取文件、执行命令或操作 AutoResearch，请切到 `Agent` 或 `Bypass` 模式。'],
     ]);
+    expect(mockShowExecutionModeUpgradePrompt).not.toHaveBeenCalled();
+  });
+
+  it('upgrades Ask mode to Agent when a tool-requiring message is sent', async () => {
+    resetChatState({ executionMode: 'ask', permissionMode: 'plan-only' });
+
+    await useChatStore.getState().sendMessage('读取 README 并总结。');
+
+    expect(mockShowExecutionModeUpgradePrompt).toHaveBeenCalledWith({
+      reason: 'workspace',
+      messagePreview: '读取 README 并总结。',
+    });
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.executionMode).toBe('agent');
+    expect(mockRunChatTurn).not.toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Array),
+      expect.any(String),
+      undefined,
+      false,
+      undefined,
+      { noTools: true },
+    );
   });
 
   it('Agent mode passes a shell-lane allowlist without save_plan_doc', async () => {
@@ -750,7 +778,8 @@ describe('chatStore sendMessage integration', () => {
       'execute_command',
     ]));
     expect(seventh?.allowedTools).not.toContain('save_plan_doc');
-    expect(seventh?.allowedTools).not.toContain('browser_click');
+    expect(seventh?.allowedTools).toContain('browser_click');
+    expect(seventh?.allowedTools).toContain('browser_navigate');
     expect(seventh?.allowedTools).not.toContain('mcp__tool');
     expect(seventh?.allowedTools).not.toContain('agent_tool');
   });

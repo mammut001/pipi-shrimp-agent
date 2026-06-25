@@ -112,14 +112,28 @@ export function isHighRiskToolName(toolName: string): boolean {
     || isBrowserMutationTool(toolName);
 }
 
+export interface AutoApproveToolOptions {
+  /** When true, browser mutation tools auto-approve in Agent (auto-edits) mode. */
+  browserIntent?: boolean;
+}
+
 export function canAutoApproveTool(
   permissionMode: PermissionMode,
   toolName: string,
+  options?: AutoApproveToolOptions,
 ): boolean {
+  if (
+    options?.browserIntent
+    && isBrowserMutationTool(toolName)
+    && (permissionMode === 'bypass' || permissionMode === 'auto-edits')
+  ) {
+    return true;
+  }
+
   if (permissionMode === 'bypass') {
     // Bypass auto-approves normal project-scoped tools (read, write,
-    // shell, terminal). It does NOT auto-approve tools that touch
-    // remote systems, the browser DOM, external MCP servers, or
+    // shell, terminal, and browser automation). It does NOT auto-approve
+    // tools that touch remote systems, external MCP servers, or
     // agent-tool spawning — those keep their existing confirmation
     // gate because the hard safety hooks (dangerous-command /
     // path-validation) cannot express "is this safe" for them
@@ -127,7 +141,6 @@ export function canAutoApproveTool(
     // and team runs that the user should still explicitly approve.
     if (isSshTool(toolName)) return false;
     if (isMcpTool(toolName)) return false;
-    if (isBrowserMutationTool(toolName)) return false;
     if (toolName === 'agent_tool') return false;
     return true;
   }

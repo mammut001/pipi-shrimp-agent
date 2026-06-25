@@ -11,7 +11,6 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
-import { startNewChatFlow } from '@/services/newChatFlow';
 import { buildImageDataUrl, fileToImageAttachment } from '@/services/vision/imageAttachments';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
@@ -25,7 +24,6 @@ import { SessionFolderChip } from './chatInput/SessionFolderChip';
 import {
   decideChatInputSubmission,
   isStaleChatDraftValue,
-  resolveChatTargetSessionId,
   shouldClearDraftAfterBrowserWorkflow,
   shouldDismissBrowserIntentConfirm,
 } from './chatInputFlow';
@@ -482,16 +480,8 @@ export function ChatInput({
   const sendAsRegularChat = useCallback(async (message: string, messageAttachments: ImageAttachment[], rawInput?: string) => {
     setIsSubmitting(true);
     try {
-      const targetSessionId = await resolveChatTargetSessionId(
-        currentSessionId,
-        () => startNewChatFlow('chat-input'),
-      );
-      if (!targetSessionId) {
-        return;
-      }
-
       onSend?.(message);
-      await sendMessage(message, targetSessionId, { attachments: messageAttachments });
+      await sendMessage(message, currentSessionId ?? undefined, { attachments: messageAttachments });
       // Only clear draft after successful send
       clearInputDraft();
     } catch (error) {

@@ -98,6 +98,11 @@ describe('mergeReasoningParts', () => {
     expect(result).toBe('Same\n\nDifferent');
   });
 
+  it('should de-duplicate repeated paragraphs inside a single part', () => {
+    const result = mergeReasoningParts('Plan A\n\nPlan B\n\nPlan A', 'Plan B');
+    expect(result).toBe('Plan A\n\nPlan B');
+  });
+
   it('should return undefined for no arguments', () => {
     const result = mergeReasoningParts();
     expect(result).toBeUndefined();

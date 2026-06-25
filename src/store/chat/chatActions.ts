@@ -33,7 +33,13 @@ import {
   getAllowedToolsForMode,
   getExecutionMode,
   resolveSessionExecutionModeId,
+  detectAskModeToolNeed,
+  shouldOfferExecutionModeUpgrade,
 } from '@/services/executionMode';
+import { detectBrowserIntent } from '@/services/browser/browserIntent';
+import { BROWSER_TOOL_NAMES, BROWSER_READ_ONLY_TOOLS } from '@/services/browser/browserTools';
+import { startNewChatFlow } from '@/services/newChatFlow';
+import { useCdpStore } from '@/store/cdpStore';
 import {
   clearSessionToolRuntime,
   failUnresolvedSessionTools,
@@ -41,6 +47,7 @@ import {
 } from './toolRuntimeState';
 import {
   clearChatGenerationCancel,
+  clearStreamingRoundBuffers,
   consumeChatGenerationCancel,
   createStreamingAccumulator,
   flushBuffer,
@@ -160,11 +167,6 @@ const ASK_MODE_PSEUDO_TOOL_CALL_PATTERNS = [
   /\b(?:list_files|read_file|search_files|write_file|execute_command|browser_[a-z_]+|ssh_[a-z_]+|mcp_call)\b/i,
 ];
 
-const ASK_MODE_TOOL_REQUEST_PATTERNS = [
-  /\b(?:read|open|inspect|list|search|scan|summari[sz]e)\b/i,
-  /(?:读取|查看|检查|列出|搜索|扫描|总结|概括)/,
-];
-
 function looksLikeAskModePseudoToolCall(content: string): boolean {
   const trimmed = content.trim();
   if (!trimmed) return false;
@@ -172,11 +174,117 @@ function looksLikeAskModePseudoToolCall(content: string): boolean {
 }
 
 function buildAskModeToolUnavailableReply(userRequest: string): string {
-  const asksForWorkspaceAccess = ASK_MODE_TOOL_REQUEST_PATTERNS.some((pattern) => pattern.test(userRequest));
-  if (asksForWorkspaceAccess) {
+  const { reason } = detectAskModeToolNeed(userRequest);
+  if (reason === 'browser') {
+    return '当前 Ask 模式不能调用工具。请切换到 Agent 或 Bypass 模式后重试，我就可以使用已连接的 Chrome。';
+  }
+  if (reason === 'workspace') {
     return 'Ask 模式这回合不能读取本地文件或调用工具，所以我现在不能直接打开 `README`。请切到 `Agent` 或 `Bypass` 模式后重试；如果你愿意，也可以把 `README` 内容贴到这里，我可以立刻帮你总结。';
   }
   return 'Ask 模式这回合不能调用工具。如果你需要我读取文件、执行命令或操作 AutoResearch，请切到 `Agent` 或 `Bypass` 模式。';
+}
+
+async function ensureChatSessionForSend(
+  get: () => ChatState,
+  preferredSessionId?: string | null,
+): Promise<string | null> {
+  const state = get();
+  if (preferredSessionId && state.sessions.some((session) => session.id === preferredSessionId)) {
+    return preferredSessionId;
+  }
+  if (state.currentSessionId) {
+    return state.currentSessionId;
+  }
+  return startNewChatFlow('chat-input');
+}
+
+function pinChatSession(sessionId: string, get: () => ChatState): void {
+  if (get().currentSessionId !== sessionId) {
+    get().selectSession(sessionId);
+  }
+}
+
+async function rollbackToLastUserMessage(
+  activeSessionId: string,
+  get: () => ChatState,
+  set: ChatSetState,
+): Promise<{ content: string; attachments?: import('@/types/vision').ImageAttachment[] } | null> {
+  const session = get().sessions.find((candidate) => candidate.id === activeSessionId);
+  if (!session) {
+    return null;
+  }
+
+  const messages = session.messages;
+  const lastUserIndex = [...messages].reverse().findIndex((message) => message.role === 'user');
+  if (lastUserIndex === -1) {
+    return null;
+  }
+
+  const actualIndex = messages.length - 1 - lastUserIndex;
+  const lastUserMessage = messages[actualIndex];
+  const messagesToDelete = messages.slice(actualIndex);
+
+  set((state) => ({
+    error: null,
+    pendingToolCalls: 0,
+    pendingToolResults: [],
+    sessions: state.sessions.map((candidate) => (
+      candidate.id === activeSessionId
+        ? { ...candidate, messages: candidate.messages.slice(0, actualIndex) }
+        : candidate
+    )),
+  }));
+
+  await Promise.allSettled(messagesToDelete.map((message) => safeInvokeOrNull('db_delete_message', { messageId: message.id })));
+  return {
+    content: lastUserMessage.content,
+    attachments: lastUserMessage.attachments,
+  };
+}
+
+async function tryRecoverFromToolPolicyError(
+  errorMsg: string,
+  userContent: string,
+  activeSessionId: string,
+  get: () => ChatState,
+  set: ChatSetState,
+): Promise<boolean> {
+  const session = get().sessions.find((candidate) => candidate.id === activeSessionId);
+  const executionModeId = resolveSessionExecutionModeId(session);
+  if (!shouldOfferExecutionModeUpgrade(errorMsg, executionModeId, userContent)) {
+    return false;
+  }
+
+  const toolNeed = detectAskModeToolNeed(userContent);
+  const choice = await useUIStore.getState().showExecutionModeUpgradePrompt({
+    reason: toolNeed.reason,
+    messagePreview: userContent.trim().slice(0, 240),
+  });
+  if (choice === 'cancel') {
+    return false;
+  }
+
+  await get().updateSessionExecutionMode(activeSessionId, choice);
+  pinChatSession(activeSessionId, get);
+
+  get().setStreaming(false);
+  set({
+    streamingContent: '',
+    streamingReasoning: '',
+    streamingSessionId: null,
+    pendingToolCalls: 0,
+    pendingToolResults: [],
+  });
+
+  const lastUser = await rollbackToLastUserMessage(activeSessionId, get, set);
+  if (!lastUser) {
+    return false;
+  }
+
+  await get().sendMessage(lastUser.content, activeSessionId, {
+    attachments: lastUser.attachments,
+  });
+  return true;
 }
 
 export function createChatActionMethods({
@@ -330,22 +438,75 @@ export function createChatActionMethods({
         streamingSessionId,
       } = get();
 
-      const activeSessionId = targetSessionId || currentSessionId;
-      if (!activeSessionId) {
-        setError(CHAT_ERROR_MESSAGES.noActiveSession);
-        return;
-      }
+      let activeSessionId = targetSessionId || currentSessionId || null;
 
-      if (isStreaming && streamingSessionId === activeSessionId) {
+      if (activeSessionId && isStreaming && streamingSessionId === activeSessionId) {
         useUIStore.getState().addNotification('warning', '当前会话仍在处理中，请等待当前步骤完成后再发送。', activeSessionId);
         return;
       }
 
-      const sessionSnapshot = get().sessions.find((session) => session.id === activeSessionId);
-      const executionModeId = resolveSessionExecutionModeId(sessionSnapshot);
-      const executionModeProfile = getExecutionMode(executionModeId);
-      const isAskMode = executionModeId === 'ask';
-      const isPlanMode = executionModeId === 'plan';
+      let sessionSnapshot = activeSessionId
+        ? get().sessions.find((session) => session.id === activeSessionId)
+        : undefined;
+      let executionModeId = resolveSessionExecutionModeId(sessionSnapshot);
+      let executionModeProfile = getExecutionMode(executionModeId);
+      let isAskMode = executionModeId === 'ask';
+      let isPlanMode = executionModeId === 'plan';
+
+      if (isAskMode && !options?.goalLoopContinuation) {
+        const toolNeed = detectAskModeToolNeed(content);
+        if (toolNeed.needed) {
+          const choice = await useUIStore.getState().showExecutionModeUpgradePrompt({
+            reason: toolNeed.reason,
+            messagePreview: content.trim().slice(0, 240),
+          });
+          if (choice === 'cancel') {
+            return;
+          }
+
+          if (!activeSessionId) {
+            activeSessionId = await ensureChatSessionForSend(get, targetSessionId);
+            if (!activeSessionId) {
+              return;
+            }
+            sessionSnapshot = get().sessions.find((session) => session.id === activeSessionId);
+            executionModeId = resolveSessionExecutionModeId(sessionSnapshot);
+            executionModeProfile = getExecutionMode(executionModeId);
+            isAskMode = executionModeId === 'ask';
+            isPlanMode = executionModeId === 'plan';
+          }
+
+          pinChatSession(activeSessionId, get);
+          await get().updateSessionExecutionMode(activeSessionId, choice);
+          const refreshedSession = get().sessions.find((session) => session.id === activeSessionId);
+          executionModeId = resolveSessionExecutionModeId(refreshedSession);
+          executionModeProfile = getExecutionMode(executionModeId);
+          isAskMode = executionModeId === 'ask';
+          isPlanMode = executionModeId === 'plan';
+          useUIStore.getState().addNotification(
+            'info',
+            choice === 'bypass'
+              ? t('executionMode.upgrade.switchedToBypass')
+              : t('executionMode.upgrade.switchedToAgent'),
+            activeSessionId,
+          );
+        }
+      }
+
+      if (!activeSessionId) {
+        activeSessionId = await ensureChatSessionForSend(get, targetSessionId);
+        if (!activeSessionId) {
+          setError(CHAT_ERROR_MESSAGES.noActiveSession);
+          return;
+        }
+        sessionSnapshot = get().sessions.find((session) => session.id === activeSessionId);
+        executionModeId = resolveSessionExecutionModeId(sessionSnapshot);
+        executionModeProfile = getExecutionMode(executionModeId);
+        isAskMode = executionModeId === 'ask';
+        isPlanMode = executionModeId === 'plan';
+      }
+
+      pinChatSession(activeSessionId, get);
 
       const diagnosticsTaskId = `chat:${activeSessionId}:${Date.now()}`;
       setActiveChatDiagnosticsTaskId(activeSessionId, diagnosticsTaskId);
@@ -386,9 +547,6 @@ export function createChatActionMethods({
 
       try {
         const userMessage = createMessage('user', content, undefined, options?.attachments);
-        if (targetSessionId && targetSessionId !== get().currentSessionId) {
-          get().selectSession(targetSessionId);
-        }
         await addMessage(userMessage);
 
         const activeGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
@@ -580,11 +738,52 @@ export function createChatActionMethods({
           ? `${modeSystemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`
           : modeSystemPrompt;
 
-        const modeAllowedTools = isAskMode
+        const browserIntent = detectBrowserIntent(content);
+        const shouldAllowBrowserTools = Boolean(options?.allowBrowserTools || browserIntent);
+
+        let modeAllowedTools = isAskMode
           ? []
           : isPlanMode
             ? [...PLAN_MODE_ALLOWED_TOOLS]
             : getAllowedToolsForMode(executionModeId);
+
+        if (shouldAllowBrowserTools && !isAskMode && !isPlanMode) {
+          if (modeAllowedTools) {
+            if (executionModeId === 'agent') {
+              modeAllowedTools = [...new Set([...modeAllowedTools, ...BROWSER_TOOL_NAMES])];
+            } else if (executionModeId === 'debug') {
+              modeAllowedTools = [...new Set([...modeAllowedTools, ...Array.from(BROWSER_READ_ONLY_TOOLS)])];
+            } else {
+              modeAllowedTools = [...new Set([...modeAllowedTools, ...BROWSER_TOOL_NAMES])];
+            }
+          }
+        }
+
+        if (shouldAllowBrowserTools && !isAskMode && !isPlanMode) {
+          const { status, requestChromeConnection } = useCdpStore.getState();
+          if (status !== 'connected') {
+            const connected = await requestChromeConnection();
+            if (!connected) {
+              await get().updateLastMessage(
+                '需要先连接 Chrome 才能执行浏览器任务。连接成功后请重新发送你的请求。',
+              );
+              setStreaming(false);
+              set({
+                streamingContent: '',
+                streamingReasoning: '',
+                streamingSessionId: null,
+                pendingToolCalls: 0,
+                pendingToolResults: [],
+              });
+              updateDiagnosticsTask(diagnosticsTaskId, {
+                state: 'cancelled',
+                cancelable: false,
+              });
+              setActiveChatDiagnosticsTaskId(activeSessionId, null);
+              return;
+            }
+          }
+        }
 
         const engine = isAskMode
           ? runChatTurn(
@@ -620,7 +819,7 @@ export function createChatActionMethods({
               currentMessages(),
               finalSystemPrompt,
               sessionWorkDir,
-              options?.allowBrowserTools || false,
+              shouldAllowBrowserTools,
               undefined,
               modeAllowedTools?.length ? { allowedTools: modeAllowedTools } : undefined,
               sessionPipiOutputDir ?? undefined,
@@ -651,6 +850,8 @@ export function createChatActionMethods({
                 ensureSessionWorkDir: () => ensureSessionWorkDir(activeSessionId, set, get),
               },
             );
+            streamState = clearStreamingRoundBuffers(streamState);
+            set({ streamingReasoning: '', streamingContent: '' });
             if (consumeChatGenerationCancel(activeSessionId)) {
               throw new ChatGenerationCancelledError(activeSessionId);
             }
@@ -874,6 +1075,19 @@ export function createChatActionMethods({
 
         turnHadError = true;
         const errorMsg = normalizeCaughtErrorMessage(error, CHAT_ERROR_MESSAGES.sendFailed);
+
+        if (await tryRecoverFromToolPolicyError(errorMsg, content, activeSessionId, get, set)) {
+          setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+          updateDiagnosticsTask(diagnosticsTaskId, {
+            state: 'cancelled',
+            cancelable: false,
+          });
+          setActiveChatDiagnosticsTaskId(activeSessionId, null);
+          useUIStore.getState().setActiveSkill(null);
+          return;
+        }
+
         setError(errorMsg);
 
         const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
@@ -994,32 +1208,15 @@ export function createChatActionMethods({
         return;
       }
 
-      const messages = session.messages;
-      const lastUserIndex = [...messages].reverse().findIndex((message) => message.role === 'user');
-      if (lastUserIndex === -1) {
+      const lastUser = await rollbackToLastUserMessage(currentSessionId, get, set);
+      if (!lastUser) {
         set({ error: null });
         return;
       }
 
-      const actualIndex = messages.length - 1 - lastUserIndex;
-      const lastUserMessage = messages[actualIndex];
-      const messagesToDelete = messages.slice(actualIndex);
-
-      set((state) => ({
-        error: null,
-        pendingToolCalls: 0,
-        pendingToolResults: [],
-        sessions: state.sessions.map((candidate) => (
-          candidate.id === currentSessionId
-            ? { ...candidate, messages: candidate.messages.slice(0, actualIndex) }
-            : candidate
-        )),
-      }));
-
-      await Promise.allSettled(messagesToDelete.map((message) => safeInvokeOrNull('db_delete_message', { messageId: message.id })));
-        await get().sendMessage(lastUserMessage.content, undefined, {
-          attachments: lastUserMessage.attachments,
-        });
+      await get().sendMessage(lastUser.content, currentSessionId, {
+        attachments: lastUser.attachments,
+      });
     },
 
     addMessage: async (message: Message) => {

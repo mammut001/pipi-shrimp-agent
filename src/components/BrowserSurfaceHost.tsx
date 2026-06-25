@@ -6,7 +6,9 @@
  * AgentPanel's browser tab — this component is purely the viewport.
  */
 
+import { BrowserAgentBusyOverlay } from './BrowserAgentBusyOverlay';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
+import { useBrowserInputBlocked, useBrowserMarqueeActive } from '@/hooks/useBrowserMarqueeActive';
 
 interface BrowserSurfaceHostProps {
   /** Callback when user clicks collapse to return to mini mode */
@@ -17,8 +19,11 @@ interface BrowserSurfaceHostProps {
  * BrowserSurfaceHost - Full-screen browser viewport for expanded mode
  */
 export function BrowserSurfaceHost(_props: BrowserSurfaceHostProps) {
+  const showMarquee = useBrowserMarqueeActive();
+  const blockInput = useBrowserInputBlocked();
+
   return (
-    <div className="h-full w-full relative bg-white">
+    <div className={`h-full w-full relative bg-white${showMarquee ? ' agent-running-border' : ''}`}>
       <BrowserSurfaceViewport
         mode="expanded"
         className="absolute inset-0"
@@ -28,6 +33,7 @@ export function BrowserSurfaceHost(_props: BrowserSurfaceHostProps) {
           </div>
         }
       />
+      {blockInput && <BrowserAgentBusyOverlay />}
     </div>
   );
 }

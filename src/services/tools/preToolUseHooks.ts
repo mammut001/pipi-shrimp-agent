@@ -22,6 +22,8 @@ import {
   type PermissionMode,
 } from './toolExecutionPolicy';
 import { isToolAllowedForMode } from '../executionMode';
+import { BROWSER_TOOL_NAMES } from '../browser/browserTools';
+import { useCdpStore } from '@/store/cdpStore';
 import { PLAN_MODE_ALLOWED_TOOLS } from '../planMode';
 import { defaultClassifier, type PermissionRequest } from '../../utils/permissions/classifierDecision';
 import { classifyBashCommand } from '../../utils/permissions/bashClassifier';
@@ -44,6 +46,7 @@ export interface HookContext {
   sessionId: string;
   conversationHistory?: string[];
   previousToolCalls?: Array<{ toolName: string; approved: boolean }>;
+  allowBrowserTools?: boolean;
 }
 
 export interface HookResult {
@@ -141,7 +144,7 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   }
 
   if (ctx.executionMode === 'debug') {
-    if (!isToolAllowedForMode('debug', ctx.toolName)) {
+    if (!isToolAllowedForMode('debug', ctx.toolName, ctx.allowBrowserTools)) {
       return {
         approved: false,
         error: 'This tool is not allowed in Debug mode (read + small writes only).',
@@ -152,7 +155,11 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   }
 
   if (ctx.executionMode === 'agent') {
-    if (!isToolAllowedForMode('agent', ctx.toolName)) {
+    const isBrowserTool = BROWSER_TOOL_NAMES.includes(ctx.toolName);
+    if (isBrowserTool) {
+      return { approved: true, requiresConfirmation: !ctx.allowBrowserTools };
+    }
+    if (!isToolAllowedForMode('agent', ctx.toolName, ctx.allowBrowserTools)) {
       return {
         approved: false,
         error: 'This tool is not allowed in Agent mode for the current policy.',
@@ -164,6 +171,32 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
 
   // Bypass: no outer restriction; per-tool approval policy still applies
   // through the existing PermissionMode hooks.
+  return { approved: true };
+}
+
+/**
+ * Hook: Chrome CDP must be connected before browser chat tools run.
+ * Opens the global connector modal and waits for the user to connect.
+ */
+export async function browserConnectionCheck(ctx: HookContext): Promise<HookResult> {
+  if (!BROWSER_TOOL_NAMES.includes(ctx.toolName)) {
+    return { approved: true };
+  }
+
+  const { status, requestChromeConnection } = useCdpStore.getState();
+  if (status === 'connected') {
+    return { approved: true };
+  }
+
+  const connected = await requestChromeConnection();
+  if (!connected) {
+    return {
+      approved: false,
+      error: '浏览器未连接。请先连接 Chrome 后再重试此操作。',
+      blockedBy: 'browser-connection',
+    };
+  }
+
   return { approved: true };
 }
 
@@ -441,6 +474,7 @@ export async function runPreToolUseHooks(ctx: HookContext): Promise<HookResult> 
   const hooks = [
     dangerousCommandCheck,
     executionModeGuardCheck,
+    browserConnectionCheck,
     pathValidationCheck,
     typstRenderGuardCheck,
     permissionModeCheck,

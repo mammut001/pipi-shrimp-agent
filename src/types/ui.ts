@@ -142,6 +142,16 @@ export interface UIState {
   showChromePrompt: (targetUrl: string) => Promise<boolean>;
   resolveChromePrompt: (useCdp: boolean) => void;
 
+  // Ask → Agent/Bypass upgrade prompt
+  executionModeUpgradeVisible: boolean;
+  executionModeUpgradeReason: import('@/services/executionMode/askModeToolNeed').AskModeToolNeedReason;
+  executionModeUpgradeMessagePreview: string | null;
+  showExecutionModeUpgradePrompt: (args: {
+    reason: import('@/services/executionMode/askModeToolNeed').AskModeToolNeedReason;
+    messagePreview: string;
+  }) => Promise<'agent' | 'bypass' | 'cancel'>;
+  resolveExecutionModeUpgradePrompt: (choice: 'agent' | 'bypass' | 'cancel') => void;
+
   // New chat project picker
   newChatProjectPickerVisible: boolean;
   newChatProjectPickerSource: string | null;

@@ -7,6 +7,42 @@
 import React, { useState, useEffect } from 'react';
 import { useCdpStore } from '../store/cdpStore';
 
+interface CopyableCommandProps {
+  label: string;
+  command: string;
+}
+
+const CopyableCommand: React.FC<CopyableCommandProps> = ({ label, command }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <p className="text-[10px] text-gray-400 font-bold">{label}</p>
+        <button
+          onClick={handleCopy}
+          className="text-[10px] text-blue-500 hover:text-blue-600 active:text-blue-700 transition-colors flex items-center gap-1 font-medium select-none"
+        >
+          {copied ? '✓ 已复制' : '📋 复制'}
+        </button>
+      </div>
+      <code className="block text-[10px] bg-gray-900 text-green-400 p-2.5 rounded-xl font-mono leading-relaxed select-all break-all">
+        {command}
+      </code>
+    </div>
+  );
+};
+
 interface Props {
   onClose: () => void;
 }
@@ -117,10 +153,27 @@ export const CdpConnectorModal: React.FC<Props> = ({ onClose }) => {
 
         {mode === 'manual' && (
           <>
-            <p className="text-xs text-gray-500">完全退出 Chrome 后，在终端运行：</p>
-            <code className="block text-[10px] bg-gray-900 text-green-400 p-3 rounded-xl font-mono leading-relaxed select-all">
-              {`open -a "Google Chrome" --args --remote-debugging-port=9222`}
-            </code>
+            <p className="text-xs text-gray-500">
+              提示：使用独立的 <code>user-data-dir</code> 启动，<strong>无需关闭您正常使用的 Chrome 窗口</strong>。请在终端运行以下调试命令：
+            </p>
+            <div className="space-y-3 text-left">
+              <CopyableCommand
+                label="Windows (PowerShell)"
+                command={`Start-Process "$env:ProgramFiles\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--remote-debugging-port=9222", "--user-data-dir=$env:LOCALAPPDATA\\PipiShrimp\\ChromeDebugProfile", "--no-first-run", "--no-default-browser-check", "about:blank"`}
+              />
+              <CopyableCommand
+                label="Windows (CMD)"
+                command={`"%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\\PipiShrimp\\ChromeDebugProfile" --no-first-run --no-default-browser-check about:blank`}
+              />
+              <CopyableCommand
+                label="macOS (终端)"
+                command={`open -a "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir="$HOME/Library/Application Support/PipiShrimp/ChromeDebugProfile" --no-first-run --no-default-browser-check about:blank`}
+              />
+              <CopyableCommand
+                label="Linux (终端)"
+                command={`google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.config/pipi-shrimp/chrome-debug-profile" --no-first-run --no-default-browser-check about:blank`}
+              />
+            </div>
             <button
               onClick={connect}
               disabled={isLoading}

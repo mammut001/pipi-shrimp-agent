@@ -17,12 +17,15 @@ import {
   type CdpStatus,
 } from './browser/browserConnection';
 
+let _connectorModalResolver: ((connected: boolean) => void) | null = null;
+
 interface CdpState {
   status: CdpStatus;
   errorMessage: string | null;
   connectionState: BrowserConnectionStatePayload | null;
   attachFailureReason: AttachFailureReason | null;
   lastSyncedAt: number | null;
+  connectorModalOpen: boolean;
   // Internal monitor state (moved from module-level to fix AUDIT-007)
   _monitorRefCount: number;
   _monitorInterval: ReturnType<typeof setInterval> | null;
@@ -31,6 +34,15 @@ interface CdpState {
   disconnect: () => Promise<void>;
   launchChromeAndConnect: () => Promise<boolean>;
   syncConnectionState: () => Promise<BrowserConnectionStatePayload | null>;
+  /** Open the connector modal without blocking (e.g. sidebar click). */
+  openConnectorModal: () => void;
+  /** Close the modal and resolve any pending `requestChromeConnection` waiter. */
+  dismissConnectorModal: (connected: boolean) => void;
+  /**
+   * Show the connector modal and wait until the user connects or dismisses it.
+   * Resolves immediately with `true` when already connected.
+   */
+  requestChromeConnection: () => Promise<boolean>;
 }
 
 const fetchConnectionState = async (): Promise<BrowserConnectionStatePayload | null> => {
@@ -101,15 +113,42 @@ export const useCdpStore = create<CdpState>((set, get) => {
     }
   };
 
+  const finishConnectorModal = (connected: boolean) => {
+    set({ connectorModalOpen: false });
+    if (_connectorModalResolver) {
+      _connectorModalResolver(connected);
+      _connectorModalResolver = null;
+    }
+  };
+
   return {
     status: 'disconnected',
     errorMessage: null,
     connectionState: null,
     attachFailureReason: null,
     lastSyncedAt: null,
+    connectorModalOpen: false,
     // Internal monitor state (moved from module-level to fix AUDIT-007)
     _monitorRefCount: 0,
     _monitorInterval: null,
+
+    openConnectorModal: () => {
+      set({ connectorModalOpen: true });
+    },
+
+    dismissConnectorModal: (connected: boolean) => {
+      finishConnectorModal(connected);
+    },
+
+    requestChromeConnection: (): Promise<boolean> => {
+      if (get().status === 'connected') {
+        return Promise.resolve(true);
+      }
+      return new Promise((resolve) => {
+        _connectorModalResolver = resolve;
+        set({ connectorModalOpen: true });
+      });
+    },
 
     setupConnectionMonitor: () => {
       const newRefCount = get()._monitorRefCount + 1;
@@ -151,6 +190,10 @@ export const useCdpStore = create<CdpState>((set, get) => {
         errorMessage: connectionState.last_error ?? (connectionState.connected ? null : state.errorMessage),
         attachFailureReason: inferAttachFailureReason(connectionState.last_error),
       }));
+
+      if (connectionState.connected && get().connectorModalOpen) {
+        finishConnectorModal(true);
+      }
 
       return connectionState;
     },

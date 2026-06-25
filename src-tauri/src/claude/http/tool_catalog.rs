@@ -39,6 +39,16 @@ const BROWSER_TOOLS_GUIDE: &str = r#"
 ## Browser Tools (Chrome CDP Connected)
 
 You have access to browser tools for web automation. Use these when the user asks you to browse websites, search for information, interact with web pages, or perform any web-based task.
+
+When browser tools are available:
+- If the user asks to browse, open a site, search the web, interact with a page, click, type, fill forms, or summarize webpage content, use browser tools.
+- Do not claim you cannot access or control Chrome unless a browser tool actually fails.
+- Start with `browser_navigate` for URLs or search engines.
+- Use `browser_get_page` before clicking or typing so you can identify element IDs.
+- Use `browser_click` and `browser_type` with element_id/backend_node_id/navigation_id from `browser_get_page`.
+- After every action, observe again with `browser_get_page`, `browser_get_text`, or `browser_extract_content`.
+- For search tasks, navigate to a search engine, type the query, press Enter, wait, then extract content.
+- Report actual results from the page, not hypothetical instructions.
 "#;
 
 const WINDOWS_SHELL_GUIDE: &str = r#"

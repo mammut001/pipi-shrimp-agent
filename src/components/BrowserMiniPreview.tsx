@@ -8,6 +8,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useBrowserAgentStore, useUIStore, useCdpStore } from '@/store';
+import { useBrowserInputBlocked, useBrowserMarqueeActive } from '@/hooks/useBrowserMarqueeActive';
+import { BrowserAgentBusyOverlay } from './BrowserAgentBusyOverlay';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { showBrowserWindow } from '@/utils/browserCommands';
 import { createTaskEnvelope } from '@/utils/browserTaskPlanner';
@@ -386,6 +388,8 @@ export function BrowserMiniPreview() {
   };
 
   const isExpanded = presentationMode === 'expanded';
+  const showMarquee = useBrowserMarqueeActive();
+  const blockBrowserInput = useBrowserInputBlocked();
   const isAgentRunning = status === 'running';
   const hasSurfaceContext = isWindowOpen || cdpConnected || Boolean(pendingTask);
   const showUserActionPrompt = status === 'needs_login' || status === 'waiting_user_resume' || status.startsWith('blocked_');
@@ -413,7 +417,12 @@ export function BrowserMiniPreview() {
 
       <div className="p-3 space-y-3 flex-shrink-0">
         {!isExpanded ? (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden" style={{ position: 'relative' }}>
+          <div
+            className={`bg-white rounded-lg border border-gray-200 overflow-visible${
+              showMarquee ? ' agent-running-border' : ' overflow-hidden'
+            }`}
+            style={{ position: 'relative' }}
+          >
             <BrowserSurfaceViewport
               mode="mini"
               className="aspect-video bg-gray-100 relative"
@@ -423,6 +432,10 @@ export function BrowserMiniPreview() {
                 </div>
               }
             />
+
+            {blockBrowserInput && (
+              <BrowserAgentBusyOverlay className="rounded-t-lg" stripeSize="sm" />
+            )}
 
             <div className="p-2 border-t border-gray-100">
               <div className="flex items-center gap-2">

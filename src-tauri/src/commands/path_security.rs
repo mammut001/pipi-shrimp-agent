@@ -324,23 +324,19 @@ pub fn validate_destination_path(
 const ARTIFACT_PATH_OUTSIDE_ROOTS: &str = "Artifact path is outside allowed roots.";
 
 fn canonicalize_existing_or_future_path(path_obj: &Path) -> Result<PathBuf, PathSecurityError> {
-    path_obj
-        .canonicalize()
-        .or_else(|_| {
-            let parent = path_obj.parent().ok_or_else(|| PathSecurityError {
-                message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
-            })?;
-            let leaf = path_obj.file_name().ok_or_else(|| PathSecurityError {
-                message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
-            })?;
-            let parent_canon = parent.canonicalize().map_err(|_| PathSecurityError {
-                message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
-            })?;
-            Ok(parent_canon.join(leaf))
-        })
-        .map_err(|_| PathSecurityError {
-            message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
-        })
+    if let Ok(canon) = path_obj.canonicalize() {
+        return Ok(canon);
+    }
+    let parent = path_obj.parent().ok_or_else(|| PathSecurityError {
+        message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+    })?;
+    let leaf = path_obj.file_name().ok_or_else(|| PathSecurityError {
+        message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+    })?;
+    let parent_canon = parent.canonicalize().map_err(|_| PathSecurityError {
+        message: ARTIFACT_PATH_OUTSIDE_ROOTS.to_string(),
+    })?;
+    Ok(parent_canon.join(leaf))
 }
 
 fn canonicalize_artifact_root(path: &str) -> Result<PathBuf, PathSecurityError> {

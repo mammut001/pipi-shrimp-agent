@@ -32,22 +32,7 @@ export function formatTokenCount(count: number): string {
   return count.toString();
 }
 
-/**
- * Merge multiple reasoning parts, deduplicating and preserving order
- */
-export function mergeReasoningParts(...parts: Array<string | undefined | null>): string | undefined {
-  const merged: string[] = [];
-
-  for (const part of parts) {
-    const normalized = part?.trim();
-    if (!normalized) continue;
-    if (!merged.includes(normalized)) {
-      merged.push(normalized);
-    }
-  }
-
-  return merged.length > 0 ? merged.join('\n\n') : undefined;
-}
+export { mergeReasoningParts } from './chatHelpers';
 
 /**
  * Check if a message should be rendered (filter out internal tool-result messages)
