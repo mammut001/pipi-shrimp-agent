@@ -19,6 +19,7 @@ import {
   updateDiagnosticsTask,
 } from './taskRegistryStore';
 import { useUIStore } from './uiStore';
+import { useCdpStore } from './cdpStore';
 import { useBrowserObservabilityStore } from './browserObservabilityStore';
 import {
   openEmbeddedSurface,
@@ -1480,6 +1481,23 @@ Complete the task efficiently and call "done" when finished.`;
 
   expandBrowser: () => {
     const { addLog, presentationMode } = get();
+
+    const cdpState = useCdpStore.getState();
+    const isCdpBackedSession =
+      cdpState.status === 'connected' ||
+      get().pendingTask?.executionMode === 'cdp';
+
+    if (isCdpBackedSession) {
+      if (presentationMode === 'expanded') {
+        addLog('info', t('browserAgent.log.alreadyExpanded'));
+        return;
+      }
+      useUIStore.getState().expandBrowserToSplit();
+      useUIStore.getState().setAgentPanelTab('browser');
+      set({ presentationMode: 'expanded' });
+      addLog('info', t('browserAgent.log.expandedToMain'));
+      return;
+    }
 
     if (presentationMode === 'expanded') {
       addLog('info', t('browserAgent.log.alreadyExpanded'));

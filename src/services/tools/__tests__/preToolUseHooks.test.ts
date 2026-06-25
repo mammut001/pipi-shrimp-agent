@@ -100,7 +100,7 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
     expect(browser.approved).toBe(false);
   });
 
-  it('Agent mode allows shell, blocks browser / ssh', async () => {
+  it('Agent mode allows shell and gates browser tools behind confirmation', async () => {
     const shell = await executionModeGuardCheck(
       ctx({ executionMode: 'agent', toolName: 'execute_command' }),
     );
@@ -109,7 +109,8 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
     const browser = await executionModeGuardCheck(
       ctx({ executionMode: 'agent', toolName: 'browser_click' }),
     );
-    expect(browser.approved).toBe(false);
+    expect(browser.approved).toBe(true);
+    expect(browser.requiresConfirmation).toBe(true);
   });
 
   it('Bypass mode does not add an outer restriction (hooks stay responsible for risk gating)', async () => {

@@ -1,39 +1,47 @@
 /**
- * BrowserSurfaceHost - Expanded live browser surface (full-screen)
+ * BrowserSurfaceHost - Expanded browser workspace content
  *
- * This component renders the browser surface taking the full available area.
- * All controls (URL, status, collapse, window, task, logs) are in the right
- * AgentPanel's browser tab — this component is purely the viewport.
+ * Renders either the legacy embedded WebView viewport or the CDP external
+ * Chrome status panel depending on the active browser runtime.
  */
 
 import { BrowserAgentBusyOverlay } from './BrowserAgentBusyOverlay';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
+import { CdpBrowserSurfacePanel } from './CdpBrowserSurfacePanel';
 import { useBrowserInputBlocked, useBrowserMarqueeActive } from '@/hooks/useBrowserMarqueeActive';
+import { useBrowserSurfaceKind } from '@/hooks/useBrowserSurfaceKind';
+import { t } from '@/i18n';
 
 interface BrowserSurfaceHostProps {
   /** Callback when user clicks collapse to return to mini mode */
   onCollapse?: () => void;
 }
 
-/**
- * BrowserSurfaceHost - Full-screen browser viewport for expanded mode
- */
 export function BrowserSurfaceHost(_props: BrowserSurfaceHostProps) {
+  const surfaceKind = useBrowserSurfaceKind();
   const showMarquee = useBrowserMarqueeActive();
   const blockInput = useBrowserInputBlocked();
 
   return (
     <div className={`h-full w-full relative bg-white${showMarquee ? ' agent-running-border' : ''}`}>
-      <BrowserSurfaceViewport
-        mode="expanded"
-        className="absolute inset-0"
-        emptyState={
-          <div className="flex items-center justify-center h-full text-gray-400">
-            <span>No browser surface yet</span>
-          </div>
-        }
-      />
-      {blockInput && <BrowserAgentBusyOverlay />}
+      {surfaceKind === 'embedded_webview' ? (
+        <BrowserSurfaceViewport
+          mode="expanded"
+          className="absolute inset-0"
+          emptyState={
+            <div className="flex items-center justify-center h-full text-gray-400">
+              <span>{t('browser.noBrowserSurface')}</span>
+            </div>
+          }
+        />
+      ) : surfaceKind === 'cdp_external' ? (
+        <CdpBrowserSurfacePanel variant="expanded" className="absolute inset-0 overflow-auto" />
+      ) : (
+        <div className="flex h-full items-center justify-center px-6 text-center text-sm text-gray-500">
+          <span>{t('browser.surface.noEmbeddedSurface')}</span>
+        </div>
+      )}
+      {blockInput && surfaceKind === 'embedded_webview' && <BrowserAgentBusyOverlay />}
     </div>
   );
 }

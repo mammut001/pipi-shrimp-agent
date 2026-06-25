@@ -3,6 +3,7 @@
  */
 
 import type { Session, Message } from '@/types/chat';
+import { mergeReasoningParts } from './chatHelpers';
 
 /**
  * Calculate total token usage for a session
@@ -32,7 +33,7 @@ export function formatTokenCount(count: number): string {
   return count.toString();
 }
 
-export { mergeReasoningParts } from './chatHelpers';
+export { mergeReasoningParts };
 
 /**
  * Check if a message should be rendered (filter out internal tool-result messages)

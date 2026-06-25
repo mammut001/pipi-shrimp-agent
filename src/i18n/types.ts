@@ -608,6 +608,13 @@ export type TranslationKeys = {
   'browser.recentActivity': string;
   'browser.noActiveTask': string;
   'browser.noBrowserSurface': string;
+  'browser.surface.externalChromeTitle': string;
+  'browser.surface.externalChromeDescription': string;
+  'browser.surface.cdpConnected': string;
+  'browser.surface.cdpDisconnected': string;
+  'browser.surface.openExternalChrome': string;
+  'browser.surface.expandConsole': string;
+  'browser.surface.noEmbeddedSurface': string;
   'browser.loginRequired': string;
   'browser.loggedIn': string;
   'browser.notLoggedIn': string;

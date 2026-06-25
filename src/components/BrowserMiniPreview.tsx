@@ -15,7 +15,13 @@ import { showBrowserWindow } from '@/utils/browserCommands';
 import { createTaskEnvelope } from '@/utils/browserTaskPlanner';
 import { BrowserDebugPanel } from './BrowserDebugPanel';
 import { BrowserActionApprovalPrompt } from './BrowserActionApprovalPrompt';
+import { CdpBrowserSurfacePanel } from './CdpBrowserSurfacePanel';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
+import { useBrowserSurfaceKind } from '@/hooks/useBrowserSurfaceKind';
+import {
+  getBrowserExpandLabelKey,
+  getBrowserOpenWindowLabelKey,
+} from '@/utils/browserSurfaceKind';
 import {
   getBrowserPanelPrimaryActionKey,
   getBrowserPanelStatusInfo,
@@ -360,9 +366,12 @@ export function BrowserMiniPreview() {
     }
   };
 
+  const surfaceKind = useBrowserSurfaceKind();
   const cdpCurrentUrl = cdpConnectionState?.current_url ?? null;
   const cdpHealthStatus = cdpConnectionState?.health_status ?? null;
   const cdpLaunchMode = cdpConnectionState?.launch_mode ?? null;
+  const expandLabelKey = getBrowserExpandLabelKey(surfaceKind, presentationMode === 'expanded');
+  const openWindowLabelKey = getBrowserOpenWindowLabelKey(surfaceKind);
 
   const handleOpenLiveWindow = async () => {
     try {
@@ -423,17 +432,27 @@ export function BrowserMiniPreview() {
             }`}
             style={{ position: 'relative' }}
           >
-            <BrowserSurfaceViewport
-              mode="mini"
-              className="aspect-video bg-gray-100 relative"
-              emptyState={
-                <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-                  <span>{t('browser.noBrowserSurface')}</span>
-                </div>
-              }
-            />
+            {surfaceKind === 'embedded_webview' ? (
+              <BrowserSurfaceViewport
+                mode="mini"
+                className="aspect-video bg-gray-100 relative"
+                emptyState={
+                  <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                    <span>{t('browser.noBrowserSurface')}</span>
+                  </div>
+                }
+              />
+            ) : surfaceKind === 'cdp_external' ? (
+              <div className="aspect-video relative overflow-hidden bg-gray-100">
+                <CdpBrowserSurfacePanel variant="compact" className="h-full" />
+              </div>
+            ) : (
+              <div className="aspect-video flex items-center justify-center bg-gray-100 text-gray-500 text-sm px-4 text-center">
+                <span>{t('browser.surface.noEmbeddedSurface')}</span>
+              </div>
+            )}
 
-            {blockBrowserInput && (
+            {blockBrowserInput && surfaceKind === 'embedded_webview' && (
               <BrowserAgentBusyOverlay className="rounded-t-lg" stripeSize="sm" />
             )}
 
@@ -503,17 +522,19 @@ export function BrowserMiniPreview() {
             }}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
           >
-            {presentationMode === 'expanded' ? t('browser.collapseToMini') : t('browser.expandToSplit')}
+            {t(expandLabelKey)}
           </button>
 
           <button
             onClick={async () => {
-              openBrowserExternal();
+              if (surfaceKind !== 'cdp_external') {
+                openBrowserExternal();
+              }
               await handleOpenLiveWindow();
             }}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
           >
-            {t('browser.openNewWindow')}
+            {t(openWindowLabelKey)}
           </button>
 
           <button

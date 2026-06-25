@@ -54,7 +54,12 @@ export interface HookResult {
   modifiedArgs?: string;
   error?: string;
   requiresConfirmation?: boolean;
-  blockedBy?: 'dangerous-command' | 'path-validation' | 'hook' | 'permission-mode';
+  blockedBy?:
+    | 'dangerous-command'
+    | 'path-validation'
+    | 'hook'
+    | 'permission-mode'
+    | 'browser-connection';
   severity?: 'critical' | 'high' | 'medium';
 }
 

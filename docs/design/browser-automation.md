@@ -22,6 +22,18 @@ that surround them. It complements the source-level JSDoc in
 5. The embedded WebView is a **display / manual-handoff** surface; heavy CDP
    work happens in Rust, not in the WebView.
 
+### Expanded split layout (CDP vs embedded)
+
+| Runtime | Mini preview | Expanded split (main pane) |
+|---------|--------------|----------------------------|
+| **CDP Native** (default) | `CdpBrowserSurfacePanel` — URL, health, task, logs | Same panel at full width; **not** an empty WebView |
+| **Legacy PageAgent** | `BrowserSurfaceViewport` (embedded WebView) | `BrowserSurfaceHost` → embedded viewport |
+
+Surface selection is centralized in `src/utils/browserSurfaceKind.ts`
+(`resolveBrowserSurfaceKind`). CDP connection state takes precedence over
+`isWindowOpen`, so a connected external Chrome session never shows
+“No browser surface yet” in the main workspace.
+
 ---
 
 ## 🧠 Engines
