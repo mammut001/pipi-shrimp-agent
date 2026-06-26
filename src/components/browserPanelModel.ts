@@ -6,6 +6,86 @@ import type {
 
 export type BrowserPanelTone = 'slate' | 'blue' | 'green' | 'amber' | 'red';
 
+export const browserPanelToneClasses: Record<
+  BrowserPanelTone,
+  { container: string; title: string; body: string; icon: string }
+> = {
+  slate: {
+    container: 'border-gray-200 bg-gray-50',
+    title: 'text-gray-900',
+    body: 'text-gray-600',
+    icon: 'bg-white text-gray-500',
+  },
+  blue: {
+    container: 'border-blue-200 bg-blue-50',
+    title: 'text-blue-900',
+    body: 'text-blue-700',
+    icon: 'bg-white text-blue-600',
+  },
+  green: {
+    container: 'border-green-200 bg-green-50',
+    title: 'text-green-900',
+    body: 'text-green-700',
+    icon: 'bg-white text-green-600',
+  },
+  amber: {
+    container: 'border-amber-200 bg-amber-50',
+    title: 'text-amber-900',
+    body: 'text-amber-700',
+    icon: 'bg-white text-amber-600',
+  },
+  red: {
+    container: 'border-red-200 bg-red-50',
+    title: 'text-red-900',
+    body: 'text-red-700',
+    icon: 'bg-white text-red-600',
+  },
+};
+
+export function getBrowserPanelToneIcon(tone: BrowserPanelTone): string {
+  switch (tone) {
+    case 'green':
+      return 'OK';
+    case 'blue':
+      return '...';
+    case 'amber':
+      return '!';
+    case 'red':
+      return 'X';
+    default:
+      return '.';
+  }
+}
+
+export function getBrowserPanelLogColor(level: string): string {
+  switch (level) {
+    case 'success':
+      return 'text-green-400';
+    case 'error':
+      return 'text-red-400';
+    case 'warning':
+    case 'thinking':
+      return 'text-yellow-400';
+    case 'info':
+      return 'text-blue-400';
+    default:
+      return 'text-gray-300';
+  }
+}
+
+export function formatBrowserPanelLogTime(timestamp: string): string {
+  if (timestamp.includes(':') && timestamp.length <= 8) {
+    return timestamp;
+  }
+
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export interface BrowserPanelStatusInfo {
   tone: BrowserPanelTone;
   titleKey: string;

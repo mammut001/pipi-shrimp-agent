@@ -454,7 +454,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     const error = await iterator.next();
     expect(error.value.type).toBe('error');
     const message = (error.value.error as Error).message;
-    expect(message).toMatch(/Every tool call in the last round was rejected/i);
+    expect(message).toMatch(/本轮所有工具调用都被拒绝/);
     expect(message).toMatch(/Ask mode/i);
     expect(message).toMatch(/Agent or Bypass/i);
 

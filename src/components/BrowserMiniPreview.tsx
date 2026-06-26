@@ -1,21 +1,19 @@
 /**
- * BrowserMiniPreview - Compact live browser surface in right panel browser tab
+ * BrowserMiniPreview - Browser tab content in the right panel
  *
- * This component hosts the same embedded browser surface used by the expanded view.
- * The actual webview is positioned by the backend into the preview viewport bounds,
- * so the user can interact with the real browser session directly in mini mode.
+ * Embedded mode hosts the compact WebView surface. CDP Native mode renders an
+ * external Chrome controller because the controlled browser lives outside the app.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { useBrowserAgentStore, useUIStore, useCdpStore } from '@/store';
+import { useBrowserAgentStore, useUIStore } from '@/store';
 import { useBrowserInputBlocked, useBrowserMarqueeActive } from '@/hooks/useBrowserMarqueeActive';
 import { BrowserAgentBusyOverlay } from './BrowserAgentBusyOverlay';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { showBrowserWindow } from '@/utils/browserCommands';
-import { createTaskEnvelope } from '@/utils/browserTaskPlanner';
 import { BrowserDebugPanel } from './BrowserDebugPanel';
 import { BrowserActionApprovalPrompt } from './BrowserActionApprovalPrompt';
-import { CdpBrowserSurfacePanel } from './CdpBrowserSurfacePanel';
+import { CdpBrowserControllerPanel } from './CdpBrowserControllerPanel';
 import { BrowserSurfaceViewport } from './BrowserSurfaceViewport';
 import { useBrowserSurfaceKind } from '@/hooks/useBrowserSurfaceKind';
 import {
@@ -23,8 +21,12 @@ import {
   getBrowserOpenWindowLabelKey,
 } from '@/utils/browserSurfaceKind';
 import {
+  browserPanelToneClasses,
+  formatBrowserPanelLogTime,
+  getBrowserPanelLogColor,
   getBrowserPanelPrimaryActionKey,
   getBrowserPanelStatusInfo,
+  getBrowserPanelToneIcon,
   isBrowserPanelTaskInputDisabled,
   type BrowserPanelTone,
 } from './browserPanelModel';
@@ -35,57 +37,6 @@ interface InlineNotice {
   titleKey: string;
   descriptionKey: string;
 }
-
-const toneClasses: Record<
-  BrowserPanelTone,
-  { container: string; title: string; body: string; icon: string }
-> = {
-  slate: {
-    container: 'border-gray-200 bg-gray-50',
-    title: 'text-gray-900',
-    body: 'text-gray-600',
-    icon: 'bg-white text-gray-500',
-  },
-  blue: {
-    container: 'border-blue-200 bg-blue-50',
-    title: 'text-blue-900',
-    body: 'text-blue-700',
-    icon: 'bg-white text-blue-600',
-  },
-  green: {
-    container: 'border-green-200 bg-green-50',
-    title: 'text-green-900',
-    body: 'text-green-700',
-    icon: 'bg-white text-green-600',
-  },
-  amber: {
-    container: 'border-amber-200 bg-amber-50',
-    title: 'text-amber-900',
-    body: 'text-amber-700',
-    icon: 'bg-white text-amber-600',
-  },
-  red: {
-    container: 'border-red-200 bg-red-50',
-    title: 'text-red-900',
-    body: 'text-red-700',
-    icon: 'bg-white text-red-600',
-  },
-};
-
-const getToneIcon = (tone: BrowserPanelTone) => {
-  switch (tone) {
-    case 'green':
-      return '✓';
-    case 'blue':
-      return '…';
-    case 'amber':
-      return '!';
-    case 'red':
-      return '×';
-    default:
-      return '•';
-  }
-};
 
 export function BrowserMiniPreview() {
   useEffect(() => {
@@ -129,12 +80,9 @@ export function BrowserMiniPreview() {
   const [activityView, setActivityView] = useState<'logs' | 'debug'>('logs');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [inlineNotice, setInlineNotice] = useState<InlineNotice | null>(null);
-  const [cdpUrl, setCdpUrl] = useState('');
   const logsEndRef = useRef<HTMLDivElement>(null);
   const submittedTaskRef = useRef<string | null>(null);
 
-  const cdpConnected = useCdpStore((state) => state.status === 'connected');
-  const cdpConnectionState = useCdpStore((state) => state.connectionState);
   const debugPanelEnabled = useBrowserObservabilityStore((state) => state.debugPanelEnabled);
 
   useEffect(() => {
@@ -152,7 +100,7 @@ export function BrowserMiniPreview() {
   const handleCopyLogs = async () => {
     if (logs.length === 0) return;
     const logText = logs
-      .map((log) => `[${formatTime(log.timestamp)}] [${log.level.toUpperCase()}] ${log.message}`)
+      .map((log) => `[${formatBrowserPanelLogTime(log.timestamp)}] [${log.level.toUpperCase()}] ${log.message}`)
       .join('\n');
 
     try {
@@ -272,31 +220,6 @@ export function BrowserMiniPreview() {
     }
   };
 
-  const getLogColor = (level: string) => {
-    switch (level) {
-      case 'success':
-        return 'text-green-400';
-      case 'error':
-        return 'text-red-400';
-      case 'warning':
-        return 'text-yellow-400';
-      case 'thinking':
-        return 'text-yellow-400';
-      case 'info':
-        return 'text-blue-400';
-      default:
-        return 'text-gray-300';
-    }
-  };
-
-  const formatTime = (timestamp: string) => {
-    if (timestamp.includes(':') && timestamp.length <= 8) {
-      return timestamp;
-    }
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-  };
-
   const handleRunTask = async () => {
     const submittedTask = taskInput.trim();
     if (!submittedTask || isExecuting) return;
@@ -313,29 +236,6 @@ export function BrowserMiniPreview() {
           userIntent: submittedTask,
           executionPrompt: submittedTask,
         });
-        return;
-      }
-
-      if (cdpConnected) {
-        // Use explicit cdpUrl input, or fall back to the current page URL from CDP connection state
-        const effectiveUrl = cdpUrl.trim() || cdpConnectionState?.current_url || '';
-        if (!effectiveUrl) {
-          setInlineNotice({
-            tone: 'amber',
-            titleKey: 'browser.notice.enterTargetUrlTitle',
-            descriptionKey: 'browser.notice.enterTargetUrlDescription',
-          });
-          addLog?.('warning', t('browser.notice.enterTargetUrlDescription'));
-          submittedTaskRef.current = null;
-          return;
-        }
-
-        const url = effectiveUrl.startsWith('http')
-          ? effectiveUrl
-          : `https://${effectiveUrl}`;
-        const envelope = createTaskEnvelope(url, submittedTask, submittedTask);
-        envelope.executionMode = 'cdp';
-        await executeTaskEnvelope(envelope);
         return;
       }
 
@@ -367,9 +267,6 @@ export function BrowserMiniPreview() {
   };
 
   const surfaceKind = useBrowserSurfaceKind();
-  const cdpCurrentUrl = cdpConnectionState?.current_url ?? null;
-  const cdpHealthStatus = cdpConnectionState?.health_status ?? null;
-  const cdpLaunchMode = cdpConnectionState?.launch_mode ?? null;
   const expandLabelKey = getBrowserExpandLabelKey(surfaceKind, presentationMode === 'expanded');
   const openWindowLabelKey = getBrowserOpenWindowLabelKey(surfaceKind);
 
@@ -400,13 +297,13 @@ export function BrowserMiniPreview() {
   const showMarquee = useBrowserMarqueeActive();
   const blockBrowserInput = useBrowserInputBlocked();
   const isAgentRunning = status === 'running';
-  const hasSurfaceContext = isWindowOpen || cdpConnected || Boolean(pendingTask);
+  const hasSurfaceContext = isWindowOpen || Boolean(pendingTask);
   const showUserActionPrompt = status === 'needs_login' || status === 'waiting_user_resume' || status.startsWith('blocked_');
   const statusInfo = inlineNotice ?? getBrowserPanelStatusInfo({
     isWindowOpen: hasSurfaceContext,
     status,
   });
-  const statusToneClass = toneClasses[statusInfo.tone];
+  const statusToneClass = browserPanelToneClasses[statusInfo.tone];
   const currentTaskText = taskInput.trim() || pendingTask?.executionPrompt || '';
   const primaryActionKey = getBrowserPanelPrimaryActionKey(status);
   const taskInputDisabled = isBrowserPanelTaskInputDisabled(status);
@@ -414,6 +311,10 @@ export function BrowserMiniPreview() {
   const primaryButtonClass = showUserActionPrompt
     ? 'bg-amber-600 hover:bg-amber-700'
     : 'bg-green-600 hover:bg-green-700';
+
+  if (surfaceKind === 'cdp_external') {
+    return <CdpBrowserControllerPanel />;
+  }
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
@@ -442,10 +343,6 @@ export function BrowserMiniPreview() {
                   </div>
                 }
               />
-            ) : surfaceKind === 'cdp_external' ? (
-              <div className="aspect-video relative overflow-hidden bg-gray-100">
-                <CdpBrowserSurfacePanel variant="compact" className="h-full" />
-              </div>
             ) : (
               <div className="aspect-video flex items-center justify-center bg-gray-100 text-gray-500 text-sm px-4 text-center">
                 <span>{t('browser.surface.noEmbeddedSurface')}</span>
@@ -475,12 +372,6 @@ export function BrowserMiniPreview() {
                   </span>
                 )}
               </div>
-              {showAdvanced && cdpConnected && cdpConnectionState && (
-                <div className="mt-2 grid grid-cols-1 gap-1 text-[10px] text-gray-500">
-                  <p className="truncate">CDP URL: {cdpCurrentUrl || t('browser.pendingPageMetadata')}</p>
-                  <p>Mode: {cdpLaunchMode || t('browser.status.unknown')} · Health: {cdpHealthStatus || t('browser.status.unknown')}</p>
-                </div>
-              )}
             </div>
           </div>
         ) : (
@@ -503,11 +394,6 @@ export function BrowserMiniPreview() {
                 </span>
               )}
             </div>
-            {showAdvanced && cdpConnected && cdpConnectionState && (
-              <div className="mt-2 text-[10px] text-gray-500">
-                {cdpLaunchMode || t('browser.status.unknown')} · {cdpHealthStatus || t('browser.status.unknown')} · {cdpCurrentUrl || t('browser.pendingPageMetadata')}
-              </div>
-            )}
           </div>
         )}
 
@@ -527,9 +413,7 @@ export function BrowserMiniPreview() {
 
           <button
             onClick={async () => {
-              if (surfaceKind !== 'cdp_external') {
-                openBrowserExternal();
-              }
+              openBrowserExternal();
               await handleOpenLiveWindow();
             }}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
@@ -552,7 +436,7 @@ export function BrowserMiniPreview() {
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0 flex-1">
               <span className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold ${statusToneClass.icon}`}>
-                {getToneIcon(statusInfo.tone)}
+                {getBrowserPanelToneIcon(statusInfo.tone)}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
@@ -594,20 +478,6 @@ export function BrowserMiniPreview() {
         </div>
 
         <div className="flex flex-col gap-2">
-          {cdpConnected && !pendingTask && (
-            <input
-              type="text"
-              value={cdpUrl}
-              onChange={(e) => {
-                setInlineNotice(null);
-                setCdpUrl(e.target.value);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={t('browserMiniPreview.enterTargetUrl')}
-              className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-blue-400"
-            />
-          )}
-
           <div className="flex gap-2">
             <input
               type="text"
@@ -697,18 +567,6 @@ export function BrowserMiniPreview() {
                   </span>
                 </div>
               </div>
-              {cdpConnected && (
-                <>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-gray-400">CDP</p>
-                    <p className="mt-1 break-words">{cdpLaunchMode || t('browser.status.unknown')}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-gray-400">Health</p>
-                    <p className="mt-1 break-words">{cdpHealthStatus || t('browser.status.unknown')}</p>
-                  </div>
-                </>
-              )}
             </div>
           </div>
 
@@ -777,9 +635,9 @@ export function BrowserMiniPreview() {
                     {logs.map((log, index) => (
                       <p
                         key={index}
-                        className={`text-[10px] font-mono leading-relaxed ${getLogColor(log.level)}`}
+                        className={`text-[10px] font-mono leading-relaxed ${getBrowserPanelLogColor(log.level)}`}
                       >
-                        [{formatTime(log.timestamp)}] {log.message}
+                        [{formatBrowserPanelLogTime(log.timestamp)}] {log.message}
                       </p>
                     ))}
                     <div ref={logsEndRef} />

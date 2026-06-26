@@ -123,7 +123,7 @@ describe('Bypass mode does not collapse the two-folder model', () => {
     // pre-tool policy uses, so SSH / browser / MCP / agent_tool still
     // gate even in Bypass.
     expect(source).toMatch(/permissionMode\s*===\s*'bypass'/);
-    expect(source).toMatch(/canAutoApproveTool\(permissionMode,\s*(?:req|tool)\.name\)/);
+    expect(source).toMatch(/canAutoApproveTool\(permissionMode,\s*(?:req|request|tool)\.name/);
   });
 
   it('Bypass mode write_file inside PiPi Output Folder does NOT silently treat it as Project Folder', () => {

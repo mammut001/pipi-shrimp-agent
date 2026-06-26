@@ -587,13 +587,13 @@ describe('G. Tool allow-list per mode (outer guard)', () => {
     expect(isToolAllowedForMode('debug', 'agent_tool')).toBe(false);
   });
 
-  it('Agent allows shell but still blocks ssh/browser/mcp/agent_tool', () => {
+  it('Agent allows shell and browser but still blocks ssh/mcp/agent_tool', () => {
     expect(isToolAllowedForMode('agent', 'read_file')).toBe(true);
     expect(isToolAllowedForMode('agent', 'write_file')).toBe(true);
     expect(isToolAllowedForMode('agent', 'execute_command')).toBe(true);
     expect(isToolAllowedForMode('agent', 'run_in_terminal')).toBe(true);
     expect(isToolAllowedForMode('agent', 'ssh_exec')).toBe(false);
-    expect(isToolAllowedForMode('agent', 'browser_click')).toBe(false);
+    expect(isToolAllowedForMode('agent', 'browser_click')).toBe(true);
     expect(isToolAllowedForMode('agent', 'mcp__tool')).toBe(false);
     expect(isToolAllowedForMode('agent', 'agent_tool')).toBe(false);
   });
