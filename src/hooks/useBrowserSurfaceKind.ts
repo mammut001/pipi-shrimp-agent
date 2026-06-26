@@ -8,12 +8,14 @@ import {
 
 export function useBrowserSurfaceSnapshot(): BrowserSurfaceSnapshot {
   const cdpStatus = useCdpStore((state) => state.status);
+  const cdpRuntime = useCdpStore((state) => state.runtime);
   const pendingTaskExecutionMode = useBrowserAgentStore((state) => state.pendingTask?.executionMode ?? null);
   const isWindowOpen = useBrowserAgentStore((state) => state.isWindowOpen);
   const presentationMode = useBrowserAgentStore((state) => state.presentationMode);
 
   return {
     cdpStatus,
+    cdpRuntime,
     pendingTaskExecutionMode,
     isWindowOpen,
     presentationMode,

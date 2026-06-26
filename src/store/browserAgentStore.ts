@@ -1002,6 +1002,7 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
       if (useCdp) {
         // CDP Tier: use external Chrome via nativeBrowserAgent
         addLog('info', t('browserAgent.log.cdpModeStart').replace('{task}', task.substring(0, 50)));
+        void useCdpStore.getState().refreshCdpRuntimeState();
         const targetUrl = get().pendingTask?.targetUrl;
         const permissionMode = resolveBrowserActionPermissionMode();
         if (permissionMode === 'observe_only') {
@@ -1034,8 +1035,19 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
             detail: resultText || undefined,
           });
         }
+        const cdpStore = useCdpStore.getState();
+        void cdpStore.refreshCdpRuntimeState();
+        const resolvedUrl = cdpStore.runtime.currentUrl || get().currentUrl;
+        cdpStore.setCdpRuntimeTaskCompleted({
+          result: resultText || t('browser.guidance.completedDescription'),
+          currentUrl: resolvedUrl,
+        });
+        if (completedTaskId) {
+          useBrowserObservabilityStore.getState().dismissFailureSnapshot?.(completedTaskId);
+        }
         set({
           status: 'completed',
+          currentUrl: resolvedUrl,
           lastCompletedTaskId: completedTaskId,
           lastTaskResult: resultText || null,
           _abortController: null,
@@ -1078,8 +1090,19 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
             detail: cdpResult || undefined,
           });
         }
+        const cdpStore = useCdpStore.getState();
+        void cdpStore.refreshCdpRuntimeState();
+        const resolvedUrl = cdpStore.runtime.currentUrl || get().currentUrl;
+        cdpStore.setCdpRuntimeTaskCompleted({
+          result: cdpResult || t('browser.guidance.completedDescription'),
+          currentUrl: resolvedUrl,
+        });
+        if (cdpTaskId) {
+          useBrowserObservabilityStore.getState().dismissFailureSnapshot?.(cdpTaskId);
+        }
         set({
           status: 'completed',
+          currentUrl: resolvedUrl,
           lastCompletedTaskId: cdpTaskId,
           lastTaskResult: cdpResult || null,
           _abortController: null,
@@ -1110,8 +1133,14 @@ Complete the task efficiently and call "done" when finished.`;
       // The browser window will emit completion events via Tauri event listener
       // Status will be updated by the event listener in setupEventListeners()
     } catch (error) {
+      const pendingTaskForFailure = get().pendingTask ?? currentTask;
+      const useCdpFailure = pendingTaskForFailure?.executionMode === 'cdp';
+
       if ((error as Error).name === 'AbortError') {
         addLog('info', t('browserAgent.log.taskStopped'));
+        if (useCdpFailure) {
+          void useCdpStore.getState().refreshCdpRuntimeState();
+        }
         set({ status: 'idle', _abortController: null });
         updateDiagnosticsTask(currentTask.id, {
           state: 'cancelled',
@@ -1121,6 +1150,14 @@ Complete the task efficiently and call "done" when finished.`;
       }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       addLog('error', t('browserAgent.log.executionFailed').replace('{error}', errorMessage));
+      if (useCdpFailure) {
+        const cdpStore = useCdpStore.getState();
+        void cdpStore.refreshCdpRuntimeState();
+        cdpStore.setCdpRuntimeTaskFailed({
+          error: errorMessage,
+          currentUrl: cdpStore.runtime.currentUrl || get().currentUrl,
+        });
+      }
       set({ status: 'error', error: errorMessage, _abortController: null });
       updateDiagnosticsTask(currentTask.id, {
         state: 'failed',
@@ -1164,6 +1201,12 @@ Complete the task efficiently and call "done" when finished.`;
     if (mode === 'cdp') {
       // CDP Tier: connect to external Chrome, bypass embedded WebView
       addLog('info', t('browserAgent.log.cdpModeConnecting'));
+      const cdpStore = useCdpStore.getState();
+      cdpStore.setCdpRuntimeTaskStarted({
+        label: envelope.executionPrompt,
+        targetUrl: envelope.targetUrl,
+      });
+      void cdpStore.refreshCdpRuntimeState();
       set({
         isWindowOpen: true,     // mock so executeTask gate passes
         currentUrl: envelope.targetUrl,

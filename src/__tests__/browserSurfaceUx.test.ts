@@ -109,7 +109,19 @@ describe('browser surface UX', () => {
       selector({
         status: 'disconnected',
         connectionState: null,
+        runtime: {
+          currentUrl: null,
+          healthStatus: null,
+          launchMode: null,
+          taskStatus: 'idle',
+          activeTaskLabel: null,
+          lastError: null,
+          lastResult: null,
+          lastUpdatedAt: null,
+          lastFailedAction: null,
+        },
         syncConnectionState: jest.fn(),
+        refreshCdpRuntimeState: jest.fn(),
       }),
     );
     mockUseBrowserObservabilityStore.mockImplementation((selector: (state: Record<string, unknown>) => unknown) =>
@@ -144,6 +156,11 @@ describe('browser surface UX', () => {
 
   it('BrowserMiniPreview_cdp_mode_does_not_show_no_surface', () => {
     mockUseBrowserSurfaceKind.mockReturnValue('cdp_external');
+    mockUseBrowserAgentStore.mockReturnValue(createBrowserState({
+      currentUrl: '',
+      status: 'uninitialized',
+      isWindowOpen: false,
+    }));
     mockUseCdpStore.mockImplementation((selector: (state: Record<string, unknown>) => unknown) =>
       selector({
         status: 'connected',
@@ -152,14 +169,31 @@ describe('browser surface UX', () => {
           launch_mode: 'attach',
           health_status: 'healthy',
         },
+        runtime: {
+          currentUrl: 'https://github.com/example/repo',
+          healthStatus: 'healthy',
+          launchMode: 'attach',
+          taskStatus: 'completed',
+          activeTaskLabel: null,
+          lastError: null,
+          lastResult: '42 stars',
+          lastUpdatedAt: Date.now(),
+          lastFailedAction: null,
+        },
         syncConnectionState: jest.fn(),
+        refreshCdpRuntimeState: jest.fn(),
       }),
     );
 
     const markup = renderToStaticMarkup(createElement(BrowserMiniPreview));
 
-    expect(markup).toContain('data-testid="cdp-panel"');
+    expect(markup).toContain('data-testid="cdp-browser-controller"');
     expect(markup).not.toContain('browser.noBrowserSurface');
+    expect(markup).not.toContain('browser.unknownSite');
+    expect(markup).not.toContain('browser.status.uninitialized');
+    expect(markup).not.toContain('browser.guidance.idleTitle');
+    expect(markup).toContain('browser.surface.externalChromeControllerDescription');
+    expect(markup).toContain('browser.surface.currentChromePage');
     expect(markup).toContain('browser.surface.expandConsole');
     expect(markup).toContain('browser.surface.openExternalChrome');
   });
@@ -191,5 +225,50 @@ describe('browser surface UX', () => {
 
     mockUseBrowserSurfaceKind.mockReturnValue('embedded_webview');
     expect(renderToStaticMarkup(createElement(BrowserMiniPreview))).toContain('browser.openNewWindow');
+  });
+
+  it('BrowserMiniPreview_shows_cdp_state_when_cdp_runtime_active', () => {
+    mockUseBrowserSurfaceKind.mockReturnValue('cdp_external');
+    mockUseBrowserAgentStore.mockReturnValue(createBrowserState({
+      currentUrl: '',
+      status: 'uninitialized',
+      isWindowOpen: false,
+    }));
+    mockUseCdpStore.mockImplementation((selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        status: 'disconnected',
+        connectionState: null,
+        runtime: {
+          currentUrl: 'https://github.com/example/repo',
+          healthStatus: 'healthy',
+          launchMode: 'attach',
+          taskStatus: 'completed',
+          activeTaskLabel: 'Check stars',
+          lastError: null,
+          lastResult: '42 stars',
+          lastUpdatedAt: Date.now(),
+          lastFailedAction: null,
+        },
+        syncConnectionState: jest.fn(),
+        refreshCdpRuntimeState: jest.fn(),
+      }),
+    );
+
+    const markup = renderToStaticMarkup(createElement(BrowserMiniPreview));
+
+    expect(markup).not.toContain('browser.guidance.openWindowTitle');
+    expect(markup).not.toContain('browser.status.uninitialized');
+    expect(markup).toContain('browser.surface.externalChromeTitle');
+    expect(markup).toContain('https://github.com/example/repo');
+  });
+
+  it('BrowserSurfaceHost_shows_cdp_panel_when_cdp_runtime_active', () => {
+    mockUseBrowserSurfaceKind.mockReturnValue('cdp_external');
+
+    const markup = renderToStaticMarkup(createElement(BrowserSurfaceHost));
+
+    expect(markup).toContain('data-testid="cdp-panel"');
+    expect(markup).not.toContain('browser.noBrowserSurface');
+    expect(markup).not.toContain('browser.surface.noEmbeddedSurface');
   });
 });

@@ -26,13 +26,20 @@ that surround them. It complements the source-level JSDoc in
 
 | Runtime | Mini preview | Expanded split (main pane) |
 |---------|--------------|----------------------------|
-| **CDP Native** (default) | `CdpBrowserSurfacePanel` — URL, health, task, logs | Same panel at full width; **not** an empty WebView |
+| **CDP Native** (default) | External Chrome controller - connection, page URL, task input, logs | `CdpBrowserSurfacePanel` status console; **not** a live WebView |
 | **Legacy PageAgent** | `BrowserSurfaceViewport` (embedded WebView) | `BrowserSurfaceHost` → embedded viewport |
 
 Surface selection is centralized in `src/utils/browserSurfaceKind.ts`
-(`resolveBrowserSurfaceKind`). CDP connection state takes precedence over
-`isWindowOpen`, so a connected external Chrome session never shows
-“No browser surface yet” in the main workspace.
+(`resolveBrowserSurfaceKind`). CDP connection state and the CDP runtime snapshot
+in `src/store/cdpStore.ts` take precedence over `isWindowOpen`, so a connected
+or recently active external Chrome session never shows "No browser surface yet"
+in the main workspace. CDP task execution publishes runtime state (URL, task
+status, last result/error) through `cdpStore.runtime`; the expanded split and
+right mini panel read that state instead of legacy embedded WebView flags. CDP
+display copy is resolved through `src/utils/cdpBrowserDisplayState.ts` so
+"connected", "page observed", "task failed", and "target URL ready" are
+distinct states instead of reusing the legacy embedded WebView `isWindowOpen`
+wording.
 
 ---
 

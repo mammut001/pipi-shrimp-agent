@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
+import { INITIAL_CDP_RUNTIME } from '@/store/cdpRuntime';
 import {
   getBrowserExpandLabelKey,
   getBrowserOpenWindowLabelKey,
@@ -9,6 +10,7 @@ import {
 
 const baseSnapshot = (): BrowserSurfaceSnapshot => ({
   cdpStatus: 'disconnected',
+  cdpRuntime: { ...INITIAL_CDP_RUNTIME },
   pendingTaskExecutionMode: null,
   isWindowOpen: false,
   presentationMode: 'mini',
@@ -47,6 +49,22 @@ describe('browserSurfaceKind', () => {
 
   it('returns none when neither CDP nor embedded surface is active', () => {
     expect(resolveBrowserSurfaceKind(baseSnapshot())).toBe('none');
+  });
+
+  it('treats recent CDP runtime state as cdp_external even when cdpStatus is disconnected', () => {
+    const snapshot: BrowserSurfaceSnapshot = {
+      ...baseSnapshot(),
+      cdpRuntime: {
+        ...INITIAL_CDP_RUNTIME,
+        taskStatus: 'completed',
+        currentUrl: 'https://github.com/example/repo',
+        lastResult: 'done',
+        lastUpdatedAt: Date.now(),
+      },
+    };
+
+    expect(isCdpBackedSession(snapshot)).toBe(true);
+    expect(resolveBrowserSurfaceKind(snapshot)).toBe('cdp_external');
   });
 
   it('uses context-aware expand and open labels', () => {

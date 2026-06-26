@@ -16,6 +16,12 @@ import {
   type BrowserConnectionStatePayload,
   type CdpStatus,
 } from './browser/browserConnection';
+import {
+  INITIAL_CDP_RUNTIME,
+  mergeCdpRuntimeSnapshot,
+  type CdpRuntimeSnapshot,
+} from './cdpRuntime';
+import { getCurrentBrowserUrl } from '../utils/browserPageStateClient';
 
 let _connectorModalResolver: ((connected: boolean) => void) | null = null;
 
@@ -26,6 +32,7 @@ interface CdpState {
   attachFailureReason: AttachFailureReason | null;
   lastSyncedAt: number | null;
   connectorModalOpen: boolean;
+  runtime: CdpRuntimeSnapshot;
   // Internal monitor state (moved from module-level to fix AUDIT-007)
   _monitorRefCount: number;
   _monitorInterval: ReturnType<typeof setInterval> | null;
@@ -34,6 +41,11 @@ interface CdpState {
   disconnect: () => Promise<void>;
   launchChromeAndConnect: () => Promise<boolean>;
   syncConnectionState: () => Promise<BrowserConnectionStatePayload | null>;
+  setCdpRuntimeConnected: (patch?: Partial<CdpRuntimeSnapshot>) => void;
+  setCdpRuntimeTaskStarted: (task: { label: string; targetUrl?: string | null }) => void;
+  setCdpRuntimeTaskCompleted: (result: { result: string; currentUrl?: string | null }) => void;
+  setCdpRuntimeTaskFailed: (error: { error: string; currentUrl?: string | null; action?: string | null }) => void;
+  refreshCdpRuntimeState: () => Promise<CdpRuntimeSnapshot>;
   /** Open the connector modal without blocking (e.g. sidebar click). */
   openConnectorModal: () => void;
   /** Close the modal and resolve any pending `requestChromeConnection` waiter. */
@@ -121,6 +133,21 @@ export const useCdpStore = create<CdpState>((set, get) => {
     }
   };
 
+  const applyConnectionToRuntime = (
+    connectionState: BrowserConnectionStatePayload | null,
+    runtime: CdpRuntimeSnapshot,
+  ): CdpRuntimeSnapshot => {
+    if (!connectionState) {
+      return runtime;
+    }
+
+    return mergeCdpRuntimeSnapshot(runtime, {
+      currentUrl: connectionState.current_url ?? runtime.currentUrl,
+      healthStatus: connectionState.health_status ?? runtime.healthStatus,
+      launchMode: connectionState.launch_mode ?? runtime.launchMode,
+    });
+  };
+
   return {
     status: 'disconnected',
     errorMessage: null,
@@ -128,6 +155,7 @@ export const useCdpStore = create<CdpState>((set, get) => {
     attachFailureReason: null,
     lastSyncedAt: null,
     connectorModalOpen: false,
+    runtime: { ...INITIAL_CDP_RUNTIME },
     // Internal monitor state (moved from module-level to fix AUDIT-007)
     _monitorRefCount: 0,
     _monitorInterval: null,
@@ -189,6 +217,7 @@ export const useCdpStore = create<CdpState>((set, get) => {
         status: toCdpStatus(connectionState, state.status),
         errorMessage: connectionState.last_error ?? (connectionState.connected ? null : state.errorMessage),
         attachFailureReason: inferAttachFailureReason(connectionState.last_error),
+        runtime: applyConnectionToRuntime(connectionState, state.runtime),
       }));
 
       if (connectionState.connected && get().connectorModalOpen) {
@@ -196,6 +225,78 @@ export const useCdpStore = create<CdpState>((set, get) => {
       }
 
       return connectionState;
+    },
+
+    setCdpRuntimeConnected: (patch = {}) => {
+      set((state) => ({
+        runtime: mergeCdpRuntimeSnapshot(
+          applyConnectionToRuntime(state.connectionState, state.runtime),
+          patch,
+        ),
+      }));
+    },
+
+    setCdpRuntimeTaskStarted: ({ label, targetUrl }) => {
+      set((state) => ({
+        runtime: mergeCdpRuntimeSnapshot(state.runtime, {
+          taskStatus: 'running',
+          activeTaskLabel: label,
+          lastError: null,
+          lastFailedAction: null,
+          currentUrl: targetUrl ?? state.runtime.currentUrl,
+        }),
+      }));
+    },
+
+    setCdpRuntimeTaskCompleted: ({ result, currentUrl }) => {
+      set((state) => ({
+        runtime: mergeCdpRuntimeSnapshot(state.runtime, {
+          taskStatus: 'completed',
+          activeTaskLabel: null,
+          lastResult: result,
+          lastError: null,
+          lastFailedAction: null,
+          currentUrl: currentUrl ?? state.runtime.currentUrl,
+        }),
+      }));
+    },
+
+    setCdpRuntimeTaskFailed: ({ error, currentUrl, action }) => {
+      set((state) => ({
+        runtime: mergeCdpRuntimeSnapshot(state.runtime, {
+          taskStatus: 'failed',
+          activeTaskLabel: null,
+          lastError: error,
+          lastFailedAction: action ?? state.runtime.lastFailedAction,
+          currentUrl: currentUrl ?? state.runtime.currentUrl,
+        }),
+      }));
+    },
+
+    refreshCdpRuntimeState: async () => {
+      try {
+        const connectionState = await get().syncConnectionState();
+        let observedUrl = connectionState?.current_url ?? null;
+
+        if (!observedUrl && connectionState?.connected) {
+          try {
+            observedUrl = await getCurrentBrowserUrl();
+          } catch {
+            observedUrl = null;
+          }
+        }
+
+        set((state) => ({
+          runtime: mergeCdpRuntimeSnapshot(
+            applyConnectionToRuntime(connectionState, state.runtime),
+            observedUrl ? { currentUrl: observedUrl } : {},
+          ),
+        }));
+      } catch {
+        // Best-effort sync — callers should not fail task completion on UI refresh errors.
+      }
+
+      return get().runtime;
     },
 
     connect: async () => {
@@ -224,6 +325,11 @@ export const useCdpStore = create<CdpState>((set, get) => {
         connectionState: null,
         attachFailureReason: null,
         lastSyncedAt: Date.now(),
+        runtime: {
+          ...get().runtime,
+          healthStatus: null,
+          launchMode: null,
+        },
       });
 
       try {

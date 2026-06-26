@@ -1,5 +1,6 @@
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
+import { isCdpRuntimeActive, type CdpRuntimeSnapshot } from '@/store/cdpRuntime';
 import type { BrowserPresentationMode } from '@/types/browser';
 import type { CdpStatus } from '@/store/browser/browserConnection';
 
@@ -10,6 +11,7 @@ export type BrowserSurfaceKind =
 
 export interface BrowserSurfaceSnapshot {
   cdpStatus: CdpStatus;
+  cdpRuntime: CdpRuntimeSnapshot;
   pendingTaskExecutionMode?: string | null;
   isWindowOpen: boolean;
   presentationMode: BrowserPresentationMode;
@@ -21,6 +23,7 @@ export function readBrowserSurfaceSnapshot(): BrowserSurfaceSnapshot {
 
   return {
     cdpStatus: cdp.status,
+    cdpRuntime: cdp.runtime,
     pendingTaskExecutionMode: browser.pendingTask?.executionMode ?? null,
     isWindowOpen: browser.isWindowOpen,
     presentationMode: browser.presentationMode,
@@ -31,7 +34,8 @@ export function readBrowserSurfaceSnapshot(): BrowserSurfaceSnapshot {
 export function isCdpBackedSession(snapshot: BrowserSurfaceSnapshot): boolean {
   return snapshot.cdpStatus === 'connected'
     || snapshot.cdpStatus === 'connecting'
-    || snapshot.pendingTaskExecutionMode === 'cdp';
+    || snapshot.pendingTaskExecutionMode === 'cdp'
+    || isCdpRuntimeActive(snapshot.cdpRuntime);
 }
 
 /**
