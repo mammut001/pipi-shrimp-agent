@@ -26,6 +26,8 @@ fn allowed_roots() -> Vec<PathBuf> {
     }
     // Also allow /tmp for temporary file operations
     roots.push(PathBuf::from("/tmp"));
+    // macOS surfaces temp files under /var/folders, not /tmp
+    roots.push(std::env::temp_dir());
     roots
 }
 

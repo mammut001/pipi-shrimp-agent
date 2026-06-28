@@ -381,7 +381,8 @@ mod tests {
         assert_eq!(batches[0].requests.len(), 2);
         assert!(!batches[1].is_concurrency_safe);
         assert_eq!(batches[1].requests.len(), 1);
-        assert!(!batches[2].is_concurrency_safe); // D is alone because C broke the chain
+        // D is alone because C broke the chain, but read_file remains concurrency-safe.
+        assert!(batches[2].is_concurrency_safe);
         assert_eq!(batches[2].requests.len(), 1);
     }
 

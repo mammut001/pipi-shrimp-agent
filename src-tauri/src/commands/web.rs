@@ -720,6 +720,7 @@ pub async fn cdp_execute_script(
         session_id.as_deref(),
         approvalToken.as_deref(),
         executionMode.as_deref(),
+        None,
     )
     .map_err(|error| {
         let message = error.to_string();

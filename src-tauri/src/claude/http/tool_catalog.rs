@@ -641,8 +641,8 @@ mod tests {
         // action (see `PLAN_MODE_SYSTEM_PROMPT` in
         // `src/services/planMode.ts`) so the model never calls a tool
         // the Rust registry does not implement.
-        assert_eq!(get_tools(false).len(), 14);
-        assert_eq!(get_tools(true).len(), 24);
+        assert_eq!(get_tools(false).len(), 25);
+        assert_eq!(get_tools(true).len(), 35);
     }
 
     #[test]

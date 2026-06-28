@@ -695,6 +695,7 @@ pub fn enforce_cdp_execute_script_policy(
     session_id: Option<&str>,
     approval_token: Option<&str>,
     execution_mode: Option<&str>,
+    work_dir: Option<&str>,
 ) -> AppResult<()> {
     let decision = evaluate_cdp_execute_script_policy(source, script, execution_mode);
     let arguments = serde_json::json!({ "script": script }).to_string();
@@ -702,7 +703,6 @@ pub fn enforce_cdp_execute_script_policy(
         id: tool_call_id.to_string(),
         name: "cdp_execute_script".to_string(),
         arguments,
-        work_dir: None,
         source,
         allowed_tools: None,
         api_key: None,
@@ -713,6 +713,7 @@ pub fn enforce_cdp_execute_script_policy(
         provider_capabilities: None,
         approval_token: approval_token.map(str::to_string),
         execution_mode: execution_mode.map(str::to_string),
+        work_dir: work_dir.map(str::to_string),
     };
 
     match decision.action {
@@ -1122,6 +1123,7 @@ mod tests {
             Some("session-1"),
             None,
             Some("bypass"),
+            None,
         )
         .expect("bypass execution should not require approval token");
     }
@@ -1132,6 +1134,7 @@ mod tests {
             "tool-1",
             "document.body.innerHTML = 'owned'",
             ToolExecutionSource::AssistantToolCall,
+            None,
             None,
             None,
             None,
@@ -1164,6 +1167,7 @@ mod tests {
             Some("session-a"),
             None,
             None,
+            request.work_dir.as_deref(),
         )
         .expect_err("missing token should be rejected");
         assert!(denied.to_string().contains("approval"));
@@ -1176,6 +1180,7 @@ mod tests {
             Some("session-b"),
             Some(&token),
             None,
+            request.work_dir.as_deref(),
         )
         .expect_err("token bound to another session should be rejected");
         assert!(wrong_session.to_string().contains("approval"));
@@ -1187,6 +1192,7 @@ mod tests {
             Some("session-a"),
             Some(&token),
             None,
+            request.work_dir.as_deref(),
         )
         .expect("matching token should allow execution");
 
@@ -1197,6 +1203,7 @@ mod tests {
             Some("session-a"),
             Some(&token),
             None,
+            request.work_dir.as_deref(),
         )
         .expect_err("approval token must be single-use");
         assert!(replay.to_string().contains("approval"));
@@ -1209,6 +1216,7 @@ mod tests {
             "window.alert('x')",
             ToolExecutionSource::Unknown,
             Some("session-1"),
+            None,
             None,
             None,
         )
@@ -1226,6 +1234,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .expect("trusted overlay script should be allowed for headless agent");
     }
@@ -1237,6 +1246,7 @@ mod tests {
             "window.alert('manual')",
             ToolExecutionSource::UserRequestedCommand,
             Some("session-1"),
+            None,
             None,
             None,
         )
@@ -1254,6 +1264,7 @@ mod tests {
             secret_script,
             ToolExecutionSource::Unknown,
             Some("session-1"),
+            None,
             None,
             None,
         )

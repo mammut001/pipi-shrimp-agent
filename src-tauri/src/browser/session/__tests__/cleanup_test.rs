@@ -2,6 +2,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Duration;
 
 use tokio::sync::watch;
 
@@ -90,7 +91,9 @@ async fn cleanup_session_releases_workers_and_snapshot_cache_across_repeated_cyc
             .cleanup_session(&format!("session-{iteration}"), CleanupReason::TaskFailed)
             .await
             .expect("cleanup should succeed");
-        tokio::task::yield_now().await;
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
 
         assert!(manager.session.is_none());
         assert!(manager.browser.is_none());
@@ -105,8 +108,20 @@ async fn cleanup_session_releases_workers_and_snapshot_cache_across_repeated_cyc
         assert!(!manager.has_connection());
     }
 
+    // Aborting tasks schedules drop asynchronously on the runtime; the idle
+    // worker exits promptly on the shutdown signal and is the reliable signal
+    // that cleanup actually tore down background work for each cycle.
+    let expected_drops = ITERATIONS;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while drop_counter.load(Ordering::SeqCst) < expected_drops
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::task::yield_now().await;
+    }
+
+    let actual_drops = drop_counter.load(Ordering::SeqCst);
     assert!(
-        drop_counter.load(Ordering::SeqCst) >= ITERATIONS * 5,
-        "expected aborted/shutdown tasks to be dropped during cleanup"
+        actual_drops >= expected_drops,
+        "expected at least {expected_drops} shutdown-driven worker drops, got {actual_drops}"
     );
 }

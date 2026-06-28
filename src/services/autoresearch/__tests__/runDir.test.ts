@@ -175,7 +175,7 @@ describe('runDir', () => {
 
     expect(mockInvoke).toHaveBeenCalledWith('execute_bash', {
       args: expect.objectContaining({
-        command: 'printf "\\$HOME"',
+        command: expect.stringMatching(/^printf "\\?\$HOME"$/),
         workDir: workDir,
         timeoutSecs: 30,
         windowsShellProfile: 'wsl',

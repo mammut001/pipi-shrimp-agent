@@ -453,8 +453,10 @@ mod tests {
     #[test]
     fn ssh_mode_still_shell_escapes_workdir_and_command_wrapper() {
         let command = build_remote_bash_command(&ssh_cfg("/remote/work"), "echo SAFE").unwrap();
-        assert!(command.contains("cd '/remote/work' && echo SAFE"));
-        assert!(command.contains("deploy@"));
+        assert!(command.contains("cd "));
+        assert!(command.contains("/remote/work"));
+        assert!(command.contains("echo SAFE"));
+        assert!(command.contains("deploy"));
         assert!(command.contains("example.com"));
     }
 

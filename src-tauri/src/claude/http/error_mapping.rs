@@ -208,10 +208,16 @@ fn extract_retry_after(body: Option<&str>) -> Option<u64> {
 }
 
 pub fn sanitize_provider_message(message: &str) -> String {
-    let redacted = message
-        .replace("sk-ant-", "[redacted]-")
-        .replace("sk-", "[redacted]-")
-        .replace("Bearer ", "Bearer [redacted]");
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static API_KEY_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bsk-[a-z0-9_-]{8,}\b").expect("api key redaction regex should compile")
+    });
+
+    let redacted = API_KEY_RE
+        .replace_all(message, "[redacted]")
+        .replace("Bearer ", "Bearer [redacted] ");
 
     redacted
         .lines()

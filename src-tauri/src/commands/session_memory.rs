@@ -564,6 +564,13 @@ mod tests {
         path
     }
 
+    fn canonical_path_string(path: &PathBuf) -> String {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.clone())
+            .to_string_lossy()
+            .to_string()
+    }
+
     fn disallowed_system_dir() -> PathBuf {
         #[cfg(unix)]
         {
@@ -613,7 +620,10 @@ mod tests {
         assert!(result.is_new);
 
         let memory_path = work_dir.join(SESSION_MEMORY_DIR).join(SESSION_MEMORY_FILENAME);
-        assert_eq!(result.path, memory_path.to_string_lossy());
+        assert_eq!(
+            canonical_path_string(&PathBuf::from(&result.path)),
+            canonical_path_string(&memory_path)
+        );
         assert!(memory_path.exists());
 
         let _ = fs::remove_dir_all(&work_dir);

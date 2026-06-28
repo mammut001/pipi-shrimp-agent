@@ -31,7 +31,9 @@ const BLOCKED_PREFIXES: &[&str] = &[
     "/Library/",
     "/System/",
     "/private/etc/",
-    "/private/var/",
+    "/private/var/log/",
+    "/private/var/root/",
+    "/private/var/db/",
     // Windows equivalents
     "C:\\Windows\\",
     "C:\\Program Files\\",
@@ -93,7 +95,10 @@ fn resolve_path(path: &str, work_dir: Option<&str>) -> Result<String, PathSecuri
         expanded
     } else if let Some(wd) = work_dir {
         let wd_expanded = expand_home(wd);
-        format!("{}/{}", wd_expanded, path)
+        Path::new(&wd_expanded)
+            .join(path_obj)
+            .to_string_lossy()
+            .into_owned()
     } else {
         return Err(PathSecurityError {
             message: format!("Relative path '{}' requires work_dir", path),
@@ -144,35 +149,53 @@ pub fn is_within_dir(child: &Path, parent: &Path) -> bool {
     }
     // Canonicalize both sides if possible; fall back to the raw (lexical) form
     // for the parts of the tree that don't yet exist on disk.
-    let child_canon = child
-        .canonicalize()
-        .unwrap_or_else(|_| normalize_path(child));
-    let parent_canon = parent
-        .canonicalize()
-        .unwrap_or_else(|_| normalize_path(parent));
+    let child_canon = harmonize_macos_var_alias(canonical_or_normalize(child));
+    let parent_canon = harmonize_macos_var_alias(canonical_or_normalize(parent));
     if child_canon == parent_canon {
         return true;
     }
-    // Trailing-separator style containment check on the lexical form.
-    let parent_with_sep = ensure_trailing_separator(&parent_canon);
-    child_canon.starts_with(&parent_with_sep)
+    let child_s = child_canon.to_string_lossy();
+    let parent_s = parent_canon.to_string_lossy();
+    let parent_prefix = if parent_s.ends_with('/') {
+        parent_s.to_string()
+    } else {
+        format!("{parent_s}/")
+    };
+    child_s.starts_with(parent_prefix.as_str())
 }
 
-/// Append a trailing separator to `p` if it doesn't already have one. We use
-/// the platform-appropriate separator so that Windows drive roots
-/// (`C:\`) are preserved correctly.
-fn ensure_trailing_separator(p: &Path) -> PathBuf {
-    let mut s = p.to_path_buf();
-    let raw = s.to_string_lossy();
-    if !raw.ends_with(std::path::MAIN_SEPARATOR) && !raw.ends_with('/') {
-        // AUDIT-FIX [fix-7-pre] — Push a single-character OsStr (not a
-        // `char`) because `OsString::push` does not implement
-        // `AsRef<OsStr>` for `char`. Previously this compiled in
-        // isolation but failed when the path was reached.
-        let sep: std::ffi::OsString = std::path::MAIN_SEPARATOR_STR.into();
-        s.push(sep);
+/// On macOS, temp paths are often surfaced as `/var/...` while canonicalize
+/// returns `/private/var/...`. Harmonize both aliases before containment checks.
+fn harmonize_macos_var_alias(path: PathBuf) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let lossy = path.to_string_lossy();
+        if let Some(rest) = lossy.strip_prefix("/var/") {
+            return PathBuf::from(format!("/private/var/{rest}"));
+        }
     }
-    s
+    path
+}
+
+/// Canonicalize when possible; otherwise resolve via the nearest existing
+/// parent so macOS `/var` vs `/private/var` aliases do not break containment.
+fn canonical_or_normalize(p: &Path) -> PathBuf {
+    let canon = if let Ok(canon) = p.canonicalize() {
+        canon
+    } else if let Some(parent) = p.parent() {
+        if let Ok(parent_canon) = parent.canonicalize() {
+            if let Some(name) = p.file_name() {
+                parent_canon.join(name)
+            } else {
+                normalize_path(p)
+            }
+        } else {
+            normalize_path(p)
+        }
+    } else {
+        normalize_path(p)
+    };
+    harmonize_macos_var_alias(canon)
 }
 
 /// Normalize a path lexically by collapsing `.` / `..` components without
@@ -205,8 +228,15 @@ pub fn is_within_or_matches_blocked_prefix(path: &str) -> bool {
     let lower = path.to_lowercase();
     for prefix in BLOCKED_PREFIXES {
         // Unix-style prefixes in BLOCKED_PREFIXES are already lowercase ASCII.
-        if !prefix.contains('\\') && path.starts_with(prefix) {
-            return true;
+        if !prefix.contains('\\') {
+            if path.starts_with(prefix) {
+                return true;
+            }
+            // Also block the directory itself (e.g. `/etc` for prefix `/etc/`).
+            let trimmed = prefix.trim_end_matches('/');
+            if !trimmed.is_empty() && path == trimmed {
+                return true;
+            }
         }
     }
     for prefix in WINDOWS_BLOCKED_PREFIXES {
@@ -410,12 +440,7 @@ pub fn validate_path(path: &str, work_dir: Option<&str>) -> Result<(), PathSecur
     // trailing separator boundary for the work_dir check (fix-1#6).
     if let Some(wd) = work_dir {
         let wd_expanded_str = expand_home(wd);
-        let wd_canonical =
-            Path::new(&wd_expanded_str)
-                .canonicalize()
-                .map_err(|e| PathSecurityError {
-                    message: format!("Cannot resolve work directory '{}': {}", wd, e),
-                })?;
+        let wd_canonical = canonical_or_normalize(Path::new(&wd_expanded_str));
         let child = Path::new(&canonical_str);
         if !is_within_dir(child, &wd_canonical) {
             return Err(PathSecurityError {
@@ -612,8 +637,8 @@ mod tests {
         fs::create_dir_all(&project).expect("project dir should exist");
         fs::write(&outside, "outside").expect("outside file should exist");
 
-        let project_path = project.to_string_lossy();
-        let work_dir = Some(project_path.as_ref());
+        let project_path = project.to_string_lossy().to_string();
+        let work_dir = Some(project_path.as_str());
         assert!(validate_path("../outside.txt", work_dir).is_err());
         assert!(validate_path(outside.to_string_lossy().as_ref(), work_dir).is_err());
 
@@ -659,18 +684,22 @@ mod tests {
     /// the work directory but shares its prefix must be rejected.
     #[test]
     fn test_is_within_dir_rejects_sibling_prefix_escape() {
-        let parent = Path::new("/Users/alice/project");
-        // `/Users/alice/project2` starts with `/Users/alice/project` but is
-        // NOT inside `project` — the old `starts_with` check would let it
-        // through.
-        let sibling = Path::new("/Users/alice/project2");
+        let root = create_temp_root("sibling-prefix");
+        let parent = root.join("project");
+        let sibling = root.join("project2");
+        let nested = parent.join("src").join("main.rs");
+        fs::create_dir_all(parent.join("src")).expect("nested dir should exist");
+        fs::create_dir_all(&sibling).expect("sibling dir should exist");
+        fs::write(&nested, "fn main() {}\n").expect("nested file should exist");
+
+        // `project2` shares a string prefix with `project` but is NOT inside it.
         assert!(
-            !is_within_dir(sibling, parent),
+            !is_within_dir(&sibling, &parent),
             "sibling prefix escape must be rejected"
         );
-        let exact = Path::new("/Users/alice/project");
-        assert!(is_within_dir(exact, parent));
-        let nested = Path::new("/Users/alice/project/src/main.rs");
-        assert!(is_within_dir(nested, parent));
+        assert!(is_within_dir(&parent, &parent));
+        assert!(is_within_dir(&nested, &parent));
+
+        fs::remove_dir_all(root).expect("temp root should be removed");
     }
 }

@@ -288,14 +288,15 @@ pub fn execute_bash_for_tool(
     requested_execution_id: Option<&str>,
     windows_shell_profile: Option<WindowsShellProfile>,
 ) -> AppResult<ExecuteCodeResponse> {
-    let resolved_cwd = resolve_command_cwd(cwd.map(str::to_string), work_dir)?;
-
     // AUDIT-FIX [fix-1#12] — `check_command_safety` already calls
     // `path_security::validate_command` and then layers a second pass. We
     // now call them explicitly instead of via a single wrapper to make the
     // ordering and intent obvious, and so the dangerous-pattern list is
-    // checked exactly once.
+    // checked exactly once. Run safety checks before cwd resolution so a
+    // dangerous command is rejected even when the working directory is invalid.
     check_command_safety(command)?;
+
+    let resolved_cwd = resolve_command_cwd(cwd.map(str::to_string), work_dir)?;
 
     let shell_plan =
         resolve_command_shell(windows_shell_profile, Some(resolved_cwd.as_str()), command)?;
@@ -956,7 +957,28 @@ pub async fn execute_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
     use uuid::Uuid;
+
+    fn canonical_path_string(path: &Path) -> String {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string()
+    }
+
+    fn assert_cwd_matches(result_cwd: Option<&str>, expected: &Path) {
+        assert_eq!(
+            result_cwd.map(|value| canonical_path_string(Path::new(value))),
+            Some(canonical_path_string(expected))
+        );
+    }
+
+    fn temp_work_dir(label: &str) -> PathBuf {
+        let work_dir = std::env::temp_dir().join(format!("{label}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir should exist");
+        work_dir
+    }
 
     #[test]
     fn execute_bash_for_tool_returns_structured_timeout_result() {
@@ -1000,10 +1022,7 @@ mod tests {
         assert_eq!(result.execution_id, "smoke-command-json");
         assert_eq!(result.status, ToolExecutionStatus::Succeeded);
         assert_eq!(result.exit_code, 0);
-        assert_eq!(
-            result.cwd.as_deref(),
-            Some(work_dir.to_string_lossy().as_ref())
-        );
+        assert_cwd_matches(result.cwd.as_deref(), &work_dir);
         assert!(result.sanitized);
         assert!(result.stdout.contains("Authorization: [redacted]"));
         assert!(result.stdout.contains("OPENAI_API_KEY=[redacted]"));
@@ -1033,7 +1052,12 @@ mod tests {
         )
         .expect_err("dangerous command should be blocked");
 
-        assert!(error.to_string().contains("Command blocked for safety"));
+        let message = error.to_string();
+        assert!(
+            message.contains("Command blocked for safety")
+                || message.contains("Dangerous command blocked"),
+            "unexpected error: {message}"
+        );
 
         let _ = std::fs::remove_dir_all(work_dir);
     }

@@ -1079,7 +1079,7 @@ mod tests {
             .await
             .expect("execution should succeed");
 
-        assert!(!result.is_error);
+        assert!(!result.is_error, "scaffold_generate failed: {}", result.content);
         assert!(result.content.contains("python-ml-baseline"));
         assert!(work_dir.join("run_experiment.py").exists());
         assert!(work_dir.join("AUTORESEARCH.md").exists());

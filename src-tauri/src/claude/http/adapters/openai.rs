@@ -203,6 +203,23 @@ impl ProviderAdapter for OpenAIAdapter {
         if let Some(choices) = json.get("choices").and_then(|value| value.as_array()) {
             for choice in choices {
                 if let Some(delta) = choice.get("delta") {
+                    // Provider-native reasoning fields (e.g. DeepSeek reasoning_content)
+                    // must be processed before visible content so reasoning events
+                    // are not reordered behind token chunks in the same delta.
+                    if let Some(thinking) = delta
+                        .get("thinking")
+                        .and_then(|value| value.as_str())
+                        .or_else(|| {
+                            delta
+                                .get("reasoning_content")
+                                .and_then(|value| value.as_str())
+                        })
+                    {
+                        ctx.reasoning.push_str(thinking);
+                        ctx.emit_reasoning(thinking);
+                        events.push(StreamEvent::Reasoning(thinking.to_string()));
+                    }
+
                     if let Some(text) = delta.get("content").and_then(|value| value.as_str()) {
                         for (segment, is_reasoning) in
                             split_think_content(text, &mut ctx.in_think_tag)
@@ -221,20 +238,6 @@ impl ProviderAdapter for OpenAIAdapter {
                                 events.push(StreamEvent::Token(segment));
                             }
                         }
-                    }
-
-                    if let Some(thinking) = delta
-                        .get("thinking")
-                        .and_then(|value| value.as_str())
-                        .or_else(|| {
-                            delta
-                                .get("reasoning_content")
-                                .and_then(|value| value.as_str())
-                        })
-                    {
-                        ctx.reasoning.push_str(thinking);
-                        ctx.emit_reasoning(thinking);
-                        events.push(StreamEvent::Reasoning(thinking.to_string()));
                     }
 
                     if let Some(tool_calls) =

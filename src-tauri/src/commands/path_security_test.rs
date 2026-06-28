@@ -9,6 +9,19 @@
 #[cfg(test)]
 mod path_security_tests {
     use crate::commands::path_security;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn create_temp_root(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough for tests")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("pipi-path-security-test-{}-{}", label, unique));
+        fs::create_dir_all(&root).expect("temp root should be created");
+        root
+    }
 
     // ============ Path Traversal Tests ============
 
@@ -40,16 +53,33 @@ mod path_security_tests {
 
     #[test]
     fn test_allowed_path_within_workdir() {
-        let work_dir = Some("/home/user/project");
+        let root = create_temp_root("allowed-relative");
+        let src_dir = root.join("src");
+        let nested = src_dir.join("main.rs");
+        fs::create_dir_all(&src_dir).expect("src dir should exist");
+        fs::write(&nested, "fn main() {}\n").expect("nested file should exist");
+
+        let root_path = root.to_string_lossy().to_string();
+        let work_dir = Some(root_path.as_str());
         let result = path_security::validate_path("src/main.rs", work_dir);
         assert!(result.is_ok(), "Should allow paths within workdir");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn test_allowed_absolute_within_workdir() {
-        let work_dir = Some("/home/user/project");
-        let result = path_security::validate_path("/home/user/project/file.txt", work_dir);
+        let root = create_temp_root("allowed-absolute");
+        let file_path = root.join("file.txt");
+        fs::write(&file_path, "hello").expect("file should exist");
+
+        let root_path = root.to_string_lossy().to_string();
+        let work_dir = Some(root_path.as_str());
+        let file_path_str = file_path.to_string_lossy().to_string();
+        let result = path_security::validate_path(file_path_str.as_str(), work_dir);
         assert!(result.is_ok(), "Should allow absolute paths within workdir");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     // ============ System Directory Tests ============
@@ -61,8 +91,11 @@ mod path_security_tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().message;
         assert!(
-            err_msg.contains("/etc/") || err_msg.contains("system"),
-            "Error should mention /etc/ or system"
+            err_msg.contains("/etc/")
+                || err_msg.contains("/private/etc/")
+                || err_msg.contains("system")
+                || err_msg.contains("not allowed"),
+            "Error should mention blocked system path: {err_msg}"
         );
     }
 
@@ -367,8 +400,10 @@ mod path_security_tests {
 
     #[test]
     fn test_terminal_cwd_allows_normal_user_dir() {
-        let result = path_security::validate_path("/home/user/project", None);
-        assert!(result.is_ok(), "terminal_create cwd=/home/user/project must be allowed");
+        let root = create_temp_root("terminal-cwd-user");
+        let result = path_security::validate_path(root.to_string_lossy().as_ref(), None);
+        assert!(result.is_ok(), "terminal_create cwd in a normal user dir must be allowed");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
