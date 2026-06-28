@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            label: macos-aarch64
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            label: macos-x86_64
+          - platform: windows-latest
+            args: ''
+            label: windows-x64
+
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ad-hoc sign macOS artifacts so Apple Silicon downloads are not marked damaged.
+          APPLE_SIGNING_IDENTITY: '-'
+        with:
+          tagName: __VERSION__
+          releaseName: __VERSION__
+          releaseBody: |
+            ## pipi-shrimp-agent v__VERSION__
+
+            ### Downloads
+            - **macOS Apple Silicon (M1+)**: `*_aarch64.dmg`
+            - **macOS Intel**: `*_x64.dmg`
+            - **Windows**: `*_x64-setup.exe` / `*_x64_en-US.msi`
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
