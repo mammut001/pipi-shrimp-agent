@@ -27,6 +27,8 @@ import {
 import { useSettingsStore } from '@/store';
 import { useUIStore } from '../uiStore';
 import { createToolTaskSteps } from '../taskLifecycle';
+import { coerceRenderableText } from '@/utils/coerceRenderableText';
+import { normalizeQuestionnaireFields } from '@/utils/questionnaireNormalize';
 import { registerArtifactsFromToolResults, type ArtifactDetectorModule, type ToolArtifactResult } from './chatArtifacts';
 import { normalizeCompileTypstArgs, normalizeResumeWorkspaceToolArgs } from './chatResumeTools';
 import { applyWindowsShellProfileToArgsJson } from '@/utils/windowsShellProfile';
@@ -120,12 +122,14 @@ function buildPermissionContext(
     commandPreview = null;
   }
 
+  const normalizedReason = reason ? coerceRenderableText(reason) : null;
+
   return {
-    description: reason || `Approve execution for ${toolName}?`,
+    description: normalizedReason || `Approve execution for ${toolName}?`,
     source: 'assistant_tool_call',
     workingDirectory: workDir,
     commandPreview,
-    riskReason: reason || null,
+    riskReason: normalizedReason,
   };
 }
 
@@ -676,9 +680,9 @@ async function executeSerialTool(
       const args = JSON.parse(normalizedToolArgs);
       toolResultContent = await uiStore.showQuestionnaire(activeSessionId, {
         toolCallId: tool.id,
-        title: args.title || 'Information Needed',
-        description: args.description || '',
-        fields: args.fields || [],
+        title: coerceRenderableText(args.title, 'Information Needed'),
+        description: coerceRenderableText(args.description),
+        fields: normalizeQuestionnaireFields(args.fields),
       });
     } catch (error) {
       toolResultContent = `Error: ${error instanceof Error ? error.message : String(error)}`;

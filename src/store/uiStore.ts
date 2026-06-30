@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { getCurrentLocale } from '@/i18n';
 import type { UIState, PermissionRequest, Notification, BrowserDockMode, SplitFocus, QuestionnaireData } from '../types/ui';
+import { coerceRenderableText } from '@/utils/coerceRenderableText';
 import { NOTIFICATION_HISTORY_LIMIT, NOTIFICATION_TIMEOUT } from '../types/ui';
 import { normalizePersistedCurrentView, type PersistedCurrentView } from '@/utils/storageMigrations';
 import { addOrReplaceTaskStep, dedupeTaskSteps, updateTaskStepStatus } from './taskLifecycle';
@@ -272,7 +273,19 @@ export const useUIStore = create<UIState>((set) => ({
    */
   addNotification: (type, message, sessionId, action) => {
     const id = crypto.randomUUID();
-    const entry: Notification = { id, type, message, timestamp: Date.now(), sessionId, action };
+    const entry: Notification = {
+      id,
+      type,
+      message: coerceRenderableText(message),
+      timestamp: Date.now(),
+      sessionId,
+      action: action
+        ? {
+            ...action,
+            label: coerceRenderableText(action.label, 'Action'),
+          }
+        : undefined,
+    };
 
     set((state) => ({
       notifications: [...state.notifications, entry],

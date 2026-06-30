@@ -18,6 +18,7 @@ import { FileIcon } from './ui/FileIcon';
 import { SessionGoalPanel } from './SessionGoalPanel';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { t } from '@/i18n';
+import { coerceRenderableText } from '@/utils/coerceRenderableText';
 
 type SyncedWorkspaceEntry = {
   name: string;
@@ -376,7 +377,7 @@ export const AgentPanel: React.FC = () => {
                               step.status === 'cancelled' || step.status === 'timed_out' || step.status === 'rejected' || step.status === 'failed' ? 'text-red-600' :
                                 step.status === 'done' ? 'text-gray-500' : 'text-gray-400'
                         }`}>
-                        {step.label}
+                        {coerceRenderableText(step.label, step.id)}
                       </p>
                       {step.status === 'running' && step.executionId && (
                         <button

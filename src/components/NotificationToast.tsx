@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import type { Notification } from '@/types/ui';
+import { coerceRenderableText } from '@/utils/coerceRenderableText';
 
 function formatTimestamp(timestamp?: number) {
   if (!timestamp) return '';
@@ -145,7 +146,7 @@ function NotificationHistoryPanel({
             <div className="mt-0.5 flex-shrink-0">{getTypeIcon(notification.type)}</div>
             <div className="min-w-0 flex-1 pr-6">
               <div className="flex items-start justify-between gap-3">
-                <p className="text-sm font-medium leading-5">{notification.message}</p>
+                <p className="text-sm font-medium leading-5">{coerceRenderableText(notification.message)}</p>
                 <span className="whitespace-nowrap text-[11px] font-medium opacity-70">
                   {formatTimestamp(notification.timestamp)}
                 </span>
@@ -193,7 +194,7 @@ function ToastItem({ notification }: { notification: Notification }) {
         {getTypeIcon(notification.type)}
       </div>
       <div className="text-sm font-medium pr-4">
-        {notification.message}
+        {coerceRenderableText(notification.message)}
       </div>
       {notification.action ? (
         <button
@@ -211,7 +212,7 @@ function ToastItem({ notification }: { notification: Notification }) {
           className="flex-shrink-0 ml-auto rounded-md border border-current/30 px-2.5 py-1 text-xs font-semibold hover:bg-black/5 active:bg-black/10 transition-colors"
           data-testid="notification-action"
         >
-          {notification.action.label}
+          {coerceRenderableText(notification.action.label, 'Action')}
         </button>
       ) : (
         <button

@@ -11,6 +11,7 @@
 import type { Locale, TranslationKeys } from './types';
 import zhCN from './locales/zh-CN';
 import enUS from './locales/en-US';
+import { coerceRenderableText } from '@/utils/coerceRenderableText';
 
 /** 所有翻译 */
 const translations: Record<Locale, TranslationKeys> = {
@@ -81,7 +82,7 @@ export function t(key: keyof TranslationKeys, options?: Record<string, string | 
       text = text.replace(`{${k}}`, String(v));
     });
   }
-  return text;
+  return typeof text === 'string' ? text : coerceRenderableText(text, String(key));
 }
 
 /**

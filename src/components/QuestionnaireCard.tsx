@@ -8,6 +8,7 @@
 import { useState, useCallback } from 'react';
 import type { QuestionnaireData, QuestionnaireField } from '@/types/ui';
 import { t } from '@/i18n';
+import { coerceRenderableText, normalizeSelectOption } from '@/utils/coerceRenderableText';
 
 interface QuestionnaireCardProps {
   data: QuestionnaireData;
@@ -68,8 +69,8 @@ export function QuestionnaireCard({ data, onSubmit, onCancel }: QuestionnaireCar
               </svg>
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">{data.title}</h2>
-              <p className="text-sm text-gray-500">{data.description}</p>
+              <h2 className="text-lg font-semibold text-gray-900">{coerceRenderableText(data.title, 'Information Needed')}</h2>
+              <p className="text-sm text-gray-500">{coerceRenderableText(data.description)}</p>
             </div>
           </div>
         </div>
@@ -121,7 +122,7 @@ function FieldInput({
 }) {
   const labelEl = (
     <label className="block text-sm font-medium text-gray-700 mb-1">
-      {field.label}
+      {coerceRenderableText(field.label)}
       {field.required && <span className="text-red-500 ml-1">*</span>}
     </label>
   );
@@ -177,11 +178,15 @@ function FieldInput({
             className={inputClass}
           >
             <option value="">{field.placeholder || t('questionnaire.selectPlaceholder')}</option>
-            {field.options?.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
+            {field.options?.map((opt, optionIndex) => {
+              const optionLabel = normalizeSelectOption(opt);
+              const optionKey = `${optionLabel}-${optionIndex}`;
+              return (
+              <option key={optionKey} value={optionLabel}>
+                {optionLabel}
               </option>
-            ))}
+              );
+            })}
           </select>
           {errorEl}
         </div>
@@ -197,7 +202,7 @@ function FieldInput({
             className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
           />
           <label className="text-sm font-medium text-gray-700">
-            {field.label}
+            {coerceRenderableText(field.label)}
             {field.required && <span className="text-red-500 ml-1">*</span>}
           </label>
           {errorEl}

@@ -11,6 +11,7 @@
 import { useState } from 'react';
 import type { PermissionRequest } from '@/types/ui';
 import { t } from '@/i18n';
+import { coerceRenderableText } from '@/utils/coerceRenderableText';
 
 /**
  * Props for PermissionModal component
@@ -92,7 +93,7 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {t('common.description')}
               </label>
-              <p className="text-sm text-gray-600">{permission.description}</p>
+              <p className="text-sm text-gray-600">{coerceRenderableText(permission.description)}</p>
             </div>
           )}
 
@@ -134,7 +135,7 @@ export function PermissionModal({ permission, onApprove, onDeny }: PermissionMod
                     Risk Reason
                   </label>
                   <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
-                    {permission.riskReason}
+                    {coerceRenderableText(permission.riskReason)}
                   </div>
                 </div>
               )}

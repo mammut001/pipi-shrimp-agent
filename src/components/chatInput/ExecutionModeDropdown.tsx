@@ -21,6 +21,7 @@ import {
   type ExecutionModeProfile,
 } from '@/services/executionMode';
 import { t } from '@/i18n';
+import { coerceRenderableText } from '@/utils/coerceRenderableText';
 
 export interface ExecutionModeDropdownProps {
   selectedModeId: ExecutionModeId | string;
@@ -173,7 +174,7 @@ export function ExecutionModeDropdown({
         className={`inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed ${riskColor}`}
       >
         <TriggerIcon className="h-3 w-3" />
-        <span>{t(selected.labelKey)}</span>
+        <span>{coerceRenderableText(t(selected.labelKey))}</span>
         <svg className="h-3 w-3 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path
             fillRule="evenodd"
@@ -218,7 +219,7 @@ export function ExecutionModeDropdown({
                 <Icon className={`mt-0.5 h-3.5 w-3.5 flex-shrink-0 ${RISK_COLOR_MAP[profile.riskLevel]}`} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className={`font-semibold ${RISK_COLOR_MAP[profile.riskLevel]}`}>{t(profile.labelKey)}</span>
+                    <span className={`font-semibold ${RISK_COLOR_MAP[profile.riskLevel]}`}>{coerceRenderableText(t(profile.labelKey))}</span>
                     {profile.experimentalNoteKey && (
                       <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700">
                         Limited
@@ -230,7 +231,7 @@ export function ExecutionModeDropdown({
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] text-gray-500 leading-snug">{t(profile.descriptionKey)}</div>
+                  <div className="text-[11px] text-gray-500 leading-snug">{coerceRenderableText(t(profile.descriptionKey))}</div>
                   {profile.experimentalNoteKey && (
                     <div className="mt-0.5 text-[10px] italic text-amber-600">
                       {t(profile.experimentalNoteKey)}

@@ -66,6 +66,7 @@ import {
 import { t } from '@/i18n';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { stripGoalMarkers } from '@/services/sessionGoal/goalEvaluator';
+import { stripProviderStreamArtifacts } from '@/utils/streamSanitizer';
 import { decideGoalLoopAfterTurn, shouldRunGoalLoop } from '@/services/sessionGoal/goalLoop';
 
 export function shouldRemoveEmptyAssistantPlaceholder(message: Message | undefined): boolean {
@@ -149,6 +150,7 @@ function isChatGenerationCancelledError(error: unknown): error is ChatGeneration
 }
 
 const ASK_MODE_PSEUDO_TOOL_CALL_PATTERNS = [
+  /<]minimax\[>/i,
   /<tool_call>/i,
   /<\/tool_call>/i,
   /<tool_calls?>/i,
@@ -1354,7 +1356,7 @@ export function createChatActionMethods({
     appendStreamingContent: (content: string) => {
       const { streamingContent, streamingSessionId, currentSessionId, lastUiUpdateTime } = get();
       const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
-      const newContent = streamingContent + content;
+      const newContent = streamingContent + stripProviderStreamArtifacts(content);
       const now = Date.now();
       set({ streamingContent: newContent });
 

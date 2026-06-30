@@ -7,6 +7,7 @@
 
 import type { Session, Message, Project } from '../types/chat';
 import { hydrateSessionModes } from '@/services/executionMode';
+import { stripProviderStreamArtifacts } from './streamSanitizer';
 
 // ─── Database types ──────────────────────────────────────────────────────────
 
@@ -144,6 +145,7 @@ export function parseThinkContent(
 
   // Strip orphaned </think> closing tags
   cleanContent = cleanContent.replace(/<\/think>/g, '').trim();
+  cleanContent = stripProviderStreamArtifacts(cleanContent);
 
   return {
     content: cleanContent,
