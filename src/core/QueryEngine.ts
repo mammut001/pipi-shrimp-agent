@@ -27,6 +27,11 @@ import {
 } from '@/services/tools/toolBudget';
 import { buildProviderExecutionCapabilities } from '@/services/llm/capabilities';
 import { sanitizeToolResultForModel } from '@/services/tools/toolResultSanitizer';
+import {
+  buildToolBatchFailureHint,
+  isToolFailureText,
+  shouldShortCircuitFailedToolBatch,
+} from '@/services/tools/toolFailureClassification';
 import { prepareMessagesForVision } from '@/services/vision/visionMessagePrep';
 import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
 import { toError } from '@/utils/errorFormat';
@@ -437,13 +442,11 @@ export async function* runChatTurn(
           content: allContent[index] ?? 'Error: no result returned for tool',
         })),
       );
-      // AUDIT-FIX: short-circuit if every tool in this batch failed.
-      // Without this, a permission-denied `wc -l` could be re-emitted
-      // by the model in Ask-mode Q&A, hit `rejected` again, and burn
-      // 25 model rounds before we yield the error to the user.
+      // AUDIT-FIX: short-circuit if every tool in this batch failed with a
+      // policy/infrastructure block. Recoverable operational failures (e.g.
+      // ENOENT) are fed back to the model so it can try another path.
       const allContentList = pendingToolCalls.map((_, index) => allContent[index] ?? 'Error: no result returned for tool');
-      const allFailed = allContentList.length > 0
-        && allContentList.every((content) => /^\s*(error|tool execution blocked|permission denied)/i.test(content));
+      const allFailed = allContentList.length > 0 && allContentList.every(isToolFailureText);
       const allRejectedByAllowedLane = allContentList.length > 0
         && allContentList.every((content) => {
           const normalized = content.toLowerCase();
@@ -470,7 +473,7 @@ export async function* runChatTurn(
         };
         continue;
       }
-      if (allFailed && !effectiveNoTools) {
+      if (allFailed && !effectiveNoTools && shouldShortCircuitFailedToolBatch(allContentList)) {
         const allBrowserDisconnected = allContentList.every(isBrowserNotConnectedToolResult);
         if (allBrowserDisconnected) {
           void useCdpStore.getState().requestChromeConnection();
@@ -516,12 +519,14 @@ export async function* runChatTurn(
             return `• ${tool.name}: ${reason}`;
           })
           .join('\n');
+        const currentSession = useChatStore.getState().sessions.find((s) => s.id === sessionId);
+        const currentModeId = resolveSessionExecutionModeId(currentSession);
         yield {
           type: 'error',
           error: withToolBudgetSummary(
             new Error(
               `本轮所有工具调用都被拒绝。具体原因：\n${failureDetail}\n\n`
-              + '（如果显示 Ask 模式相关提示，请切换到 Agent 或 Bypass 模式后重试。）',
+              + `（${buildToolBatchFailureHint(currentModeId)}）`,
             ),
             toolBudgetSummary,
           ),

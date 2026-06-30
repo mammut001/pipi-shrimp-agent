@@ -463,6 +463,71 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     const next = await iterator.next();
     expect(next.done).toBe(true);
   });
+
+  it('feeds recoverable file-not-found errors back to the model instead of aborting', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* missingReadmeTurn() {
+        yield {
+          type: 'tool_call',
+          tool: { id: 'tool-1', name: 'read_file', arguments: '{"path":"README.md"}' },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      })
+      .mockImplementationOnce(async function* recoveredTurn() {
+        yield { type: 'text_delta', content: 'Found NOTICE.md instead.' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 2, output_tokens: 3 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const iterator = runChatTurn(
+      'session-recover-1',
+      [{ role: 'user', content: 'Read the FocusApp README and summarize it.' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    );
+
+    const status = await iterator.next();
+    expect(status.value).toEqual({
+      type: 'status_update',
+      message: 'Executing 1 tool(s): read_file',
+    });
+
+    const batch = await iterator.next();
+    expect(batch.value.type).toBe('tool_batch_request');
+    batch.value._resolveAll([
+      {
+        id: 'tool-1',
+        content: "Error: Failed to read file '/Users/dogecoin/Documents/GitHub/FocusApp/README.md': os error 2",
+      },
+    ]);
+
+    let completeEvent = await iterator.next();
+    while (completeEvent.value?.type === 'text_delta') {
+      completeEvent = await iterator.next();
+    }
+
+    expect(completeEvent.value.type).toBe('turn_complete');
+    expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(2);
+    expect(mockBuildResolvedChatRequest).toHaveBeenNthCalledWith(
+      2,
+      resolvedConfig,
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('__TOOL_RESULT__:tool-1:'),
+          }),
+        ]),
+      }),
+    );
+  });
 });
 
 describe('QueryEngine Ask-mode noTools contract', () => {
