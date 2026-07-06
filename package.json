@@ -21,7 +21,7 @@
     "report:complexity": "node scripts/complexity-report.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
@@ -48,7 +48,7 @@
   "devDependencies": {
     "@jest/globals": "^30.3.0",
     "@tailwindcss/typography": "^0.5.19",
-    "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/cli": "^2.11.4",
     "@testing-library/react": "^16.3.2",
     "@types/dompurify": "^3.0.5",
     "@types/jest": "^30.0.0",
