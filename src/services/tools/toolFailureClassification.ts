@@ -69,7 +69,12 @@ export function isPolicyToolFailureText(text: string): boolean {
   }
 
   if (structured && typeof structured.error_kind === 'string') {
-    if (structured.error_kind === 'permission_denied' || structured.error_kind === 'tool_disabled') {
+    if (
+      structured.error_kind === 'permission_denied'
+      || structured.error_kind === 'tool_disabled'
+      || structured.error_kind === 'confirmation_required'
+      || structured.error_kind === 'dangerous_command'
+    ) {
       return true;
     }
   }

@@ -140,6 +140,18 @@ function isMalformedToolCallError(error: unknown): boolean {
   return toError(error, 'Chat request failed').message.includes('malformed_tool_call');
 }
 
+/** User-facing error after structured-tool retries are exhausted (not a silent drop). */
+export function buildExhaustedMalformedToolCallError(error: unknown): Error {
+  const detail = toError(error, 'Chat request failed').message;
+  return new Error(
+    'The model kept emitting text-form or XML tool calls instead of structured tool_calls '
+    + `after ${MALFORMED_TOOL_CALL_RETRY_NOTES.length} automatic retries. `
+    + 'This turn stopped with an explicit reason (not a silent interrupt). '
+    + 'Try a different model/provider that supports structured tools, or rephrase the request. '
+    + `Detail: ${detail}`,
+  );
+}
+
 export interface RunChatTurnOptions {
   noTools?: boolean;
   allowedTools?: string[];
@@ -316,23 +328,30 @@ export async function* runChatTurn(
 
         if (
           injectOpenAIToolProtocol
-          && malformedToolCallRetryCount < MALFORMED_TOOL_CALL_RETRY_NOTES.length
           && isMalformedToolCallError(e)
         ) {
-          malformedToolCallRetryCount += 1;
-          currentMessages.push({
-            role: 'user',
-            content: MALFORMED_TOOL_CALL_RETRY_NOTES[Math.min(
-              malformedToolCallRetryCount - 1,
-              MALFORMED_TOOL_CALL_RETRY_NOTES.length - 1,
-            )],
-          });
+          if (malformedToolCallRetryCount < MALFORMED_TOOL_CALL_RETRY_NOTES.length) {
+            malformedToolCallRetryCount += 1;
+            currentMessages.push({
+              role: 'user',
+              content: MALFORMED_TOOL_CALL_RETRY_NOTES[Math.min(
+                malformedToolCallRetryCount - 1,
+                MALFORMED_TOOL_CALL_RETRY_NOTES.length - 1,
+              )],
+            });
+            yield {
+              type: 'status_update',
+              message: buildMalformedToolCallRetryMessage(malformedToolCallRetryCount),
+            };
+            retryDueToMalformedToolCall = true;
+            break;
+          }
+
           yield {
-            type: 'status_update',
-            message: buildMalformedToolCallRetryMessage(malformedToolCallRetryCount),
+            type: 'error',
+            error: buildExhaustedMalformedToolCallError(e),
           };
-          retryDueToMalformedToolCall = true;
-          break;
+          return;
         }
 
         yield { type: 'error', error: toError(e, 'Chat request failed') };

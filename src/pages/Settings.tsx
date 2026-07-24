@@ -19,6 +19,8 @@ import {
   resolveDraftApiKeyValue,
   resolveAgentConfig,
   sanitizeApiKeyValue,
+  validateApiKeyForConnection,
+  formatApiKeyLengthHint,
 } from '@/services/agentConfig';
 import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
 import { formatError } from '@/utils/errorFormat';
@@ -71,6 +73,7 @@ export function Settings() {
     removeApiConfig,
     fetchAvailableModels,
     setActiveConfig,
+    getActiveConfig,
     setTheme,
     setLanguage,
     updateAgentSettings,
@@ -137,34 +140,40 @@ export function Settings() {
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [hydratedConfigId, setHydratedConfigId] = useState<string | null>(null);
+  const resolvedActiveConfigId = getActiveConfig()?.id ?? null;
 
-  // Load settings on mount
   useEffect(() => {
     setOtherSettings({
       theme,
       language: getCurrentLocale(),
     });
+    setIsLoading(false);
+  }, [theme]);
 
-    // If there are configs, select the active one for editing
-    if (apiConfigs.length > 0 && activeConfigId) {
-      const active = apiConfigs.find((c) => c.id === activeConfigId);
-      if (active) {
-        setEditingConfigId(active.id);
-        setFormData({
-          name: active.name,
-          provider: active.provider,
-          apiKey: active.apiKey,
-          baseUrl: active.baseUrl || '',
-          model: active.model,
-          apiFormat: (active.apiFormat || '') as '' | 'anthropic' | 'openai',
-          pricing: active.pricing || {},
-        });
-        setShowPricingSection(!!active.pricing);
-      }
+  useEffect(() => {
+    if (apiConfigs.length === 0) {
+      return;
     }
 
-    setIsLoading(false);
-  }, []);
+    const active = getActiveConfig();
+    if (!active || hydratedConfigId === active.id) {
+      return;
+    }
+
+    setEditingConfigId(active.id);
+    setFormData({
+      name: active.name,
+      provider: active.provider,
+      apiKey: active.apiKey,
+      baseUrl: active.baseUrl || '',
+      model: active.model,
+      apiFormat: (active.apiFormat || '') as '' | 'anthropic' | 'openai',
+      pricing: active.pricing || {},
+    });
+    setShowPricingSection(!!active.pricing);
+    setHydratedConfigId(active.id);
+  }, [apiConfigs, activeConfigId, hydratedConfigId, getActiveConfig]);
 
   const getEditingConfig = () => (
     editingConfigId
@@ -182,7 +191,7 @@ export function Settings() {
       apiKey: resolveDraftApiKeyValue(formData.apiKey, formData.provider, existingConfig),
       baseUrl: formData.baseUrl || undefined,
       model: formData.model,
-      modelProviderId: existingConfig?.modelProviderId ?? formData.provider,
+      modelProviderId: formData.provider,
       apiFormat: (formData.apiFormat || undefined) as ApiConfig['apiFormat'],
       pricing: Object.keys(formData.pricing).length > 0 ? formData.pricing : undefined,
     };
@@ -231,6 +240,14 @@ export function Settings() {
    */
   const handleRefreshModels = async () => {
     const draftConfig = buildDraftConfig();
+    if (isApiKeyRequired(draftConfig.provider)) {
+      const keyCheck = validateApiKeyForConnection(draftConfig.apiKey);
+      if (!keyCheck.ok) {
+        setErrors((prev) => ({ ...prev, apiKey: keyCheck.error }));
+        addNotification('error', keyCheck.error);
+        return;
+      }
+    }
     const prereqErrors = validateFetchModelsPrereqs(
       draftConfig.provider,
       draftConfig.apiKey,
@@ -411,6 +428,7 @@ export function Settings() {
         apiKey: draftConfig.apiKey,
         baseUrl: draftConfig.baseUrl,
         model: draftConfig.model,
+        modelProviderId: draftConfig.modelProviderId,
         apiFormat: draftConfig.apiFormat,
         pricing: draftConfig.pricing,
       };
@@ -481,6 +499,16 @@ export function Settings() {
       return;
     }
 
+    if (isApiKeyRequired(draftConfig.provider)) {
+      const keyCheck = validateApiKeyForConnection(draftConfig.apiKey);
+      if (!keyCheck.ok) {
+        setErrors((prev) => ({ ...prev, apiKey: keyCheck.error }));
+        setTestResult({ success: false, message: keyCheck.error });
+        addNotification('error', keyCheck.error);
+        return;
+      }
+    }
+
     if (!formData.model.trim()) {
       setErrors((prev) => ({ ...prev, model: t('settings.modelRequired') }));
       return;
@@ -494,12 +522,9 @@ export function Settings() {
     try {
       const resolvedConfig = resolveAgentConfig(draftConfig);
 
-      // Debug: Log what's being sent to Rust for API testing
+      // Debug: non-secret length only (no raw key material)
       console.info('[Settings Test] API Key debug', {
         keyLength: resolvedConfig.apiKey?.length ?? 0,
-        keyPreview: resolvedConfig.apiKey
-          ? `${resolvedConfig.apiKey.substring(0, 6)}...${resolvedConfig.apiKey.substring(resolvedConfig.apiKey.length - 4)} (${resolvedConfig.apiKey.length} chars)`
-          : '<EMPTY>',
         provider: resolvedConfig.provider,
         model: resolvedConfig.model,
         baseUrl: resolvedConfig.baseUrl,
@@ -638,13 +663,13 @@ export function Settings() {
                         handleActivate(config.id);
                       }}
                       className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                        activeConfigId === config.id
+                        resolvedActiveConfigId === config.id
                           ? 'border-green-500 bg-green-500'
                           : 'border-gray-300 hover:border-green-400'
                       }`}
-                      title={activeConfigId === config.id ? t('settings.active') : t('settings.clickToActivate')}
+                      title={resolvedActiveConfigId === config.id ? t('settings.active') : t('settings.clickToActivate')}
                     >
-                      {activeConfigId === config.id && (
+                      {resolvedActiveConfigId === config.id && (
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-white" viewBox="0 0 20 20" fill="currentColor">
                           <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                         </svg>
@@ -745,6 +770,13 @@ export function Settings() {
                     {showApiKey ? '🙈' : '👁️'}
                   </button>
                 </div>
+                <p className="mt-1 text-xs text-gray-500" data-testid="api-key-length-hint">
+                  {formatApiKeyLengthHint(formData.apiKey)}
+                  {sanitizeApiKeyValue(formData.apiKey).length > 0
+                    && sanitizeApiKeyValue(formData.apiKey).length < 8
+                    ? ' — key may be truncated; paste the full secret'
+                    : ''}
+                </p>
                 {errors.apiKey && <p className="mt-1 text-xs text-red-500">{errors.apiKey}</p>}
               </div>
               )}

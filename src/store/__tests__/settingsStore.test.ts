@@ -131,6 +131,31 @@ describe('settingsStore AutoResearch mutation guard', () => {
     expect(useAutoResearchStore.getState().statusMessage).toBeUndefined();
   });
 
+  it('skips configs without API keys when resolving the active config fallback', async () => {
+    const keyedConfig = createConfig({ id: 'cfg-keyed', apiKey: 'secret-key' });
+    const emptyConfig = createConfig({ id: 'cfg-empty', apiKey: '', name: 'Empty Draft' });
+
+    useSettingsStore.setState({
+      apiConfigs: [emptyConfig, keyedConfig],
+      activeConfigId: 'missing-active-id',
+      apiConfig: null,
+    });
+
+    expect(useSettingsStore.getState().getActiveConfig()?.id).toBe('cfg-keyed');
+  });
+
+  it('returns null active config when no keyed configs exist', async () => {
+    const emptyConfig = createConfig({ id: 'cfg-empty', apiKey: '' });
+
+    useSettingsStore.setState({
+      apiConfigs: [emptyConfig],
+      activeConfigId: null,
+      apiConfig: null,
+    });
+
+    expect(useSettingsStore.getState().getActiveConfig()).toBeNull();
+  });
+
   it('persists the Windows shell profile selection', async () => {
     useSettingsStore.getState().setWindowsShellProfile('wsl');
 

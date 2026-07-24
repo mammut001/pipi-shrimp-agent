@@ -262,5 +262,8 @@ describe('local AutoResearch smoke', () => {
     );
 
     console.log('AUTO_RESEARCH_TS_SMOKE_PASS');
+    // Bare marker file so smoke shell scripts do not depend on jest's
+    // indented console.log formatting (see tools/smoke-autoresearch-local.sh).
+    await fs.writeFile(path.join(resultsDir, 'AUTO_RESEARCH_TS_SMOKE_PASS'), 'ok\n', 'utf8');
   });
 });

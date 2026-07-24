@@ -11,7 +11,7 @@
  * listeners) and exercise the store directly.
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { useUIStore } from '@/store/uiStore';
 import type { Notification } from '@/types/ui';
 
@@ -33,7 +33,13 @@ function lastHistoryEntry(): Notification {
 
 describe('useUIStore.addNotification — action payload', () => {
   beforeEach(() => {
+    jest.useFakeTimers();
     useUIStore.setState({ notifications: [], notificationHistory: [] });
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
   });
 
   it('preserves an action payload on the live notification and the history', () => {

@@ -374,6 +374,24 @@ pub fn validate_messages(messages: Vec<Message>, surface: &str) -> AppResult<Vec
         )));
     }
 
+    // AUDIT-FIX — `normalize_messages` only *warns* on unclosed tool calls
+    // (an assistant message with tool_calls but no matching tool results).
+    // Sending such a sequence to the API causes a provider 400 / protocol
+    // error, which surfaces as an opaque "Chat request failed". Promote the
+    // unclosed-tool-call warning to a hard error so the caller gets a clear,
+    // actionable message instead. Other warnings stay non-fatal.
+    let unclosed: Vec<&String> = validation
+        .warnings
+        .iter()
+        .filter(|w| w.contains("Unclosed tool calls"))
+        .collect();
+    if !unclosed.is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "Message validation failed: {}",
+            unclosed.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        )));
+    }
+
     if !validation.warnings.is_empty() {
         eprintln!(
             "[{}] Validation warnings: {:?}",
@@ -452,5 +470,56 @@ mod tests {
         assert!(response.content.is_empty());
         assert_eq!(response.usage.input_tokens, 0);
         assert!(response.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn validate_messages_rejects_unclosed_tool_calls() {
+        use crate::claude::message::ToolCall;
+        let assistant_with_tools = Message {
+            role: "assistant".to_string(),
+            content: String::new(),
+            attachments: None,
+            tool_calls: Some(vec![ToolCall {
+                tool_call_id: "call_1".to_string(),
+                name: "read_file".to_string(),
+                arguments: "{}".to_string(),
+            }]),
+            tool_call_id: None,
+        };
+        // No matching tool result follows → unclosed tool call.
+        let messages = vec![assistant_with_tools];
+
+        let result = validate_messages(messages, "test");
+        assert!(
+            result.is_err(),
+            "unclosed tool calls must be rejected before hitting the provider"
+        );
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Unclosed tool calls"));
+    }
+
+    #[test]
+    fn validate_messages_accepts_closed_tool_chain() {
+        use crate::claude::message::ToolCall;
+        let assistant_with_tools = Message {
+            role: "assistant".to_string(),
+            content: String::new(),
+            attachments: None,
+            tool_calls: Some(vec![ToolCall {
+                tool_call_id: "call_1".to_string(),
+                name: "read_file".to_string(),
+                arguments: "{}".to_string(),
+            }]),
+            tool_call_id: None,
+        };
+        let tool_result = Message {
+            role: "user".to_string(),
+            content: "__TOOL_RESULT__:call_1:file contents".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: Some("call_1".to_string()),
+        };
+        let messages = vec![assistant_with_tools, tool_result];
+        assert!(validate_messages(messages, "test").is_ok());
     }
 }

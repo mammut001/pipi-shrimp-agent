@@ -128,18 +128,61 @@ describe('BootstrapChatView (Guided UI)', () => {
     await act(async () => {
       const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
       btn.click();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // First turn + automatic finalize-nudge turn
+      await new Promise((resolve) => setTimeout(resolve, 200));
     });
+
+    // End-of-turn nudge must run when first turn omits finalize
+    expect(mockRunHeadlessAgentTurn.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const nudgeCall = mockRunHeadlessAgentTurn.mock.calls
+      .map((call) => (call as any[])[0])
+      .find((input) => String(input?.initialMessages?.[0]?.content ?? '').includes('bootstrap_finalize now'));
+    expect(nudgeCall).toBeTruthy();
+    expect(nudgeCall.systemPrompt).toMatch(/HARD REQUIREMENT: bootstrap_finalize/);
+    expect(nudgeCall.initialMessages?.[0]?.content).toMatch(/bootstrap_finalize/);
 
     expect(container.textContent).toContain('Bootstrap agent finished but did not produce a bootstrap_finalize result.');
     expect(container.textContent).toContain('Failed');
+    // Recovery path: not a dead-end — Retry + Back to Recipe are offered
+    expect(container.querySelector('[data-testid="retry-bootstrap"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="back-to-recipe-from-error"]')).toBeTruthy();
+    expect(container.textContent).toMatch(/Retry bootstrap|Back to Recipe/i);
+  });
+
+  it('retry bootstrap re-invokes headless agent with the same compiled prompt', async () => {
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      // first turn + finalize nudge
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    // 2 calls: primary + finalize nudge (still missing finalize)
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(2);
+    expect((mockRunHeadlessAgentTurn.mock.calls[0] as any[])[0]?.initialMessages?.[0]?.content).toBe('compiled prompt');
+
+    await act(async () => {
+      const retry = container.querySelector('[data-testid="retry-bootstrap"]') as HTMLButtonElement;
+      expect(retry).toBeTruthy();
+      retry.click();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    // Retry starts another primary+nudge pair
+    expect(mockRunHeadlessAgentTurn.mock.calls.length).toBeGreaterThanOrEqual(4);
+    const retryPrimary = (mockRunHeadlessAgentTurn.mock.calls[2] as any[])[0]?.initialMessages?.[0]?.content;
+    expect(retryPrimary).toBe('compiled prompt');
   });
 
   it('shows Bootstrapping phase chip while streaming', async () => {
-    let resolveTurn: (() => void) | undefined;
+    const resolvers: Array<() => void> = [];
     mockRunHeadlessAgentTurn.mockImplementation(async () => {
       await new Promise<void>((resolve) => {
-        resolveTurn = resolve;
+        resolvers.push(resolve);
       });
     });
 
@@ -158,8 +201,11 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(chip?.getAttribute('aria-label')).toBe('AutoResearch phase: Bootstrapping');
 
     await act(async () => {
-      resolveTurn?.();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Resolve all pending headless turns (primary + optional nudge)
+      while (resolvers.length > 0) {
+        resolvers.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     });
   });
 
@@ -222,7 +268,8 @@ describe('BootstrapChatView (Guided UI)', () => {
     await act(async () => {
       const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
       btn.click();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // primary turn + finalize nudge (~50ms each in default mock)
+      await new Promise((resolve) => setTimeout(resolve, 250));
     });
 
     const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');

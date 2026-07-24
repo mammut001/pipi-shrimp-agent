@@ -737,11 +737,17 @@ export class StreamingToolExecutor {
   private async executeMCPTool(request: ToolRequest, startTime: number): Promise<ToolResult> {
     const parsed = parseMCPToolName(request.name);
     if (!parsed) {
+      const errorMessage = `Invalid MCP tool name: ${request.name}`;
       return {
         id: request.id,
-        content: '',
+        content: buildStructuredToolError(
+          request.name,
+          request.arguments,
+          new Error(errorMessage),
+          'tool_not_found',
+        ),
         is_error: true,
-        error_message: `Invalid MCP tool name: ${request.name}`,
+        error_message: errorMessage,
         execution_time_ms: 0,
       };
     }
@@ -751,11 +757,17 @@ export class StreamingToolExecutor {
     const runtime = runtimes.find(r => sanitizeName(r.name) === parsed.serverName);
 
     if (!runtime) {
+      const errorMessage = `MCP server '${parsed.serverName}' is not connected`;
       return {
         id: request.id,
-        content: '',
+        content: buildStructuredToolError(
+          request.name,
+          request.arguments,
+          new Error(errorMessage),
+          'transient_failure',
+        ),
         is_error: true,
-        error_message: `MCP server '${parsed.serverName}' is not connected`,
+        error_message: errorMessage,
         execution_time_ms: Date.now() - startTime,
       };
     }
@@ -782,11 +794,17 @@ export class StreamingToolExecutor {
         execution_time_ms: Date.now() - startTime,
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'MCP tool execution failed';
       return {
         id: request.id,
-        content: '',
+        content: buildStructuredToolError(
+          request.name,
+          request.arguments,
+          new Error(errorMessage),
+          'transient_failure',
+        ),
         is_error: true,
-        error_message: error instanceof Error ? error.message : 'MCP tool execution failed',
+        error_message: errorMessage,
         execution_time_ms: Date.now() - startTime,
       };
     }

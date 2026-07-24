@@ -62,9 +62,7 @@ function resolvePreferredActiveConfigId(
     return candidateId;
   }
 
-  return configs.find((config) => hasConfiguredApiKey(config))?.id
-    ?? configs[0]?.id
-    ?? null;
+  return configs.find((config) => hasConfiguredApiKey(config))?.id ?? null;
 }
 
 function sanitizeAutoResearchLlmSettings(
@@ -589,6 +587,49 @@ const initializeSettings = async () => {
       useSettingsStore.setState({ windowsShellProfile: storedShellProfile });
     }
 
+    // Load API configs before any async secret hydration so Settings can
+    // render the persisted active config on first paint.
+    const storedConfigs = localStorage.getItem(SETTINGS_STORAGE_KEYS.apiConfigs);
+    const storedActiveId = localStorage.getItem(SETTINGS_STORAGE_KEYS.activeConfig);
+
+    if (storedConfigs) {
+      const raw = loadPersistedApiConfigs();
+      const configs = raw.map((c) => ({
+        ...c,
+        modelProviderId: c.modelProviderId ?? c.provider,
+      }));
+      const activeId = resolvePreferredActiveConfigId(configs, storedActiveId);
+      const activeConfig = activeId
+        ? configs.find((c) => c.id === activeId) || null
+        : null;
+
+      useSettingsStore.setState({
+        apiConfigs: configs,
+        activeConfigId: activeId,
+        apiConfig: activeConfig,
+      });
+    } else {
+      const legacyStored = localStorage.getItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
+      if (legacyStored) {
+        const legacyConfig = JSON.parse(legacyStored) as Omit<ApiConfig, 'id' | 'name'>;
+        const migratedConfig: ApiConfig = {
+          ...legacyConfig,
+          id: generateSettingsConfigId(),
+          name: legacyConfig.provider.charAt(0).toUpperCase() + legacyConfig.provider.slice(1),
+        };
+
+        const configs = [migratedConfig];
+        useSettingsStore.setState({
+          apiConfigs: configs,
+          activeConfigId: resolvePreferredActiveConfigId(configs, migratedConfig.id),
+          apiConfig: migratedConfig,
+        });
+
+        persistApiConfigs(configs, migratedConfig.id);
+        localStorage.removeItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
+      }
+    }
+
     // Load Telegram token (migrate from legacy key if needed).
     // loadSecret / migrateLegacySecret are async because the active
     // secure storage provider may be the OS keychain
@@ -654,52 +695,6 @@ const initializeSettings = async () => {
         });
       } catch (error) {
         console.error('Failed to parse vision settings:', error);
-      }
-    }
-
-    // Load API configs (new format)
-    const storedConfigs = localStorage.getItem(SETTINGS_STORAGE_KEYS.apiConfigs);
-    const storedActiveId = localStorage.getItem(SETTINGS_STORAGE_KEYS.activeConfig);
-
-    if (storedConfigs) {
-      // New multi-config format — deobfuscate API keys
-      const raw = loadPersistedApiConfigs();
-      // Back-fill modelProviderId for configs saved before P1-1 migration
-      const configs = raw.map((c) => ({
-        ...c,
-        modelProviderId: c.modelProviderId ?? c.provider,
-      }));
-      const activeId = resolvePreferredActiveConfigId(configs, storedActiveId);
-      const activeConfig = activeId
-        ? configs.find((c) => c.id === activeId) || null
-        : null;
-
-      useSettingsStore.setState({
-        apiConfigs: configs,
-        activeConfigId: activeId,
-        apiConfig: activeConfig,
-      });
-    } else {
-      // Try migrating from legacy single-config format
-      const legacyStored = localStorage.getItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
-      if (legacyStored) {
-        const legacyConfig = JSON.parse(legacyStored) as Omit<ApiConfig, 'id' | 'name'>;
-        const migratedConfig: ApiConfig = {
-          ...legacyConfig,
-          id: generateSettingsConfigId(),
-          name: legacyConfig.provider.charAt(0).toUpperCase() + legacyConfig.provider.slice(1),
-        };
-
-        const configs = [migratedConfig];
-        useSettingsStore.setState({
-          apiConfigs: configs,
-          activeConfigId: resolvePreferredActiveConfigId(configs, migratedConfig.id),
-          apiConfig: migratedConfig,
-        });
-
-        // Persist in new format and clean up legacy
-        persistApiConfigs(configs, migratedConfig.id);
-        localStorage.removeItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
       }
     }
 

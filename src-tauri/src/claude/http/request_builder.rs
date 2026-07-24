@@ -218,6 +218,11 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<Value> {
                     "tool_call_id": tool_call_id,
                     "content": content,
                 }));
+            } else {
+                eprintln!(
+                    "[request_builder] Dropping unparseable tool result (content_prefix={:?})",
+                    message.content.chars().take(80).collect::<String>()
+                );
             }
             continue;
         }
@@ -370,7 +375,17 @@ fn extract_tool_result(message: &Message) -> (Option<String>, Option<String>) {
 }
 
 pub fn build_anthropic_url(base_url: &str) -> String {
-    format!("{}/v1/messages", sanitize_endpoint(base_url))
+    // The Anthropic endpoint is always <host>/v1/messages. Some callers supply
+    // the conventional "https://api.anthropic.com/v1" base URL (with a trailing
+    // "/v1"), which would otherwise produce a doubled "/v1/v1/messages" path.
+    // Strip a trailing "/v1" so both "https://api.anthropic.com" and
+    // "https://api.anthropic.com/v1" resolve to the same correct endpoint.
+    let base = sanitize_endpoint(base_url);
+    let base = base
+        .strip_suffix("/v1")
+        .map(str::to_string)
+        .unwrap_or(base);
+    format!("{}/v1/messages", base)
 }
 
 pub fn build_openai_url(config: &ResolvedProviderConfig) -> String {
@@ -510,11 +525,16 @@ pub fn build_openai_body(
     }
 
     if !no_tools {
+        let tool_strict = config.capabilities.supports_response_format_json_schema;
         body["tools"] = serde_json::json!(convert_tools_to_openai_format(
             &get_tools(allow_browser_tools),
-            config.capabilities.supports_response_format_json_schema
+            tool_strict,
         ));
         body["tool_choice"] = serde_json::json!("auto");
+    }
+
+    if config.provider_id == ProviderId::MiniMax && config.capabilities.supports_reasoning {
+        body["reasoning_split"] = serde_json::json!(true);
     }
 
     body
@@ -642,6 +662,21 @@ mod tests {
             build_anthropic_url("https://api.anthropic.com/"),
             "https://api.anthropic.com/v1/messages"
         );
+        // Callers that supply the conventional ".../v1" base URL must NOT end
+        // up with a doubled "/v1/v1/messages" path.
+        assert_eq!(
+            build_anthropic_url("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            build_anthropic_url("https://api.anthropic.com/v1/"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        // A proxy mounted under a subpath is still handled correctly.
+        assert_eq!(
+            build_anthropic_url("https://proxy.example.com/anthropic/v1"),
+            "https://proxy.example.com/anthropic/v1/messages"
+        );
         assert!(build_anthropic_headers("sk-ant-test", true).is_ok());
     }
 
@@ -742,5 +777,47 @@ mod tests {
             .is_some_and(|tools| !tools.is_empty()));
         let system_text = body["messages"][0]["content"].as_str().unwrap_or_default();
         assert!(system_text.contains("OpenAI function-calling channel named tool_calls"));
+    }
+
+    #[test]
+    fn builds_minimax_m3_body_with_reasoning_split() {
+        let config = ResolvedProviderConfig::resolve(
+            "minimax-m3",
+            "token",
+            Some("https://api.minimaxi.com/v1"),
+            Some(ProviderId::MiniMax),
+        );
+
+        let body = build_openai_body(
+            &config,
+            &[sample_message("user", "ping")],
+            None,
+            false,
+            true,
+            true,
+        );
+
+        assert_eq!(body["reasoning_split"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn builds_openai_body_with_strict_tools_when_supported() {
+        let config = ResolvedProviderConfig::resolve("gpt-4o", "sk-test", None, None);
+
+        let body = build_openai_body(
+            &config,
+            &[sample_message("user", "ping")],
+            None,
+            false,
+            false,
+            true,
+        );
+
+        let tools = body["tools"].as_array().expect("tools array");
+        assert!(!tools.is_empty());
+        assert!(
+            tools.iter().all(|tool| tool["function"]["strict"] == serde_json::json!(true)),
+            "OpenAI provider should emit strict tool definitions"
+        );
     }
 }

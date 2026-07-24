@@ -30,12 +30,11 @@ use super::provider::ResolvedProviderConfig;
 pub fn parse_sse_data_line(line: &str) -> Option<String> {
     let line = line.trim();
 
-    // Must start with "data: "
-    if !line.starts_with("data: ") {
-        return None;
-    }
-
-    let data_str = &line[6..]; // Remove "data: " prefix
+    // SSE allows "data:" with an optional single space before the payload.
+    // Some providers emit "data:{...}" without a space; accept both so a
+    // format difference does not silently drop every streamed chunk.
+    let data_str = line.strip_prefix("data:")?;
+    let data_str = data_str.strip_prefix(' ').unwrap_or(data_str);
 
     // Empty or [DONE] marker
     if data_str.is_empty() || data_str == "[DONE]" {
@@ -284,6 +283,12 @@ mod tests {
             parse_sse_data_line("  data: hello  "),
             Some("hello".to_string())
         );
+        // SSE allows "data:" without a space — must still parse.
+        assert_eq!(
+            parse_sse_data_line("data:{\"foo\":1}"),
+            Some("{\"foo\":1}".to_string())
+        );
+        assert_eq!(parse_sse_data_line("data:[DONE]"), None);
     }
 
     #[test]

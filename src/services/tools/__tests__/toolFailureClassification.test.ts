@@ -66,6 +66,29 @@ describe('toolFailureClassification', () => {
     expect(buildToolBatchFailureHint('ask')).toMatch(/问答/);
   });
 
+  it('treats confirmation_required and dangerous_command as policy blocks', () => {
+    const confirmationRequired = JSON.stringify({
+      error: true,
+      error_kind: 'confirmation_required',
+      message: 'Tool "ssh_exec" requires confirmation before execution.',
+      tool: 'ssh_exec',
+      cause: 'Tool "ssh_exec" requires confirmation before execution.',
+    });
+    const dangerousCommand = JSON.stringify({
+      error: true,
+      error_kind: 'dangerous_command',
+      message: 'Blocked: Attempting to delete root filesystem',
+      tool: 'execute_command',
+      cause: 'Blocked: Attempting to delete root filesystem',
+    });
+
+    expect(isPolicyToolFailureText(confirmationRequired)).toBe(true);
+    expect(isRecoverableToolFailureText(confirmationRequired)).toBe(false);
+    expect(isPolicyToolFailureText(dangerousCommand)).toBe(true);
+    expect(isRecoverableToolFailureText(dangerousCommand)).toBe(false);
+    expect(shouldShortCircuitFailedToolBatch([confirmationRequired])).toBe(true);
+  });
+
   it('short-circuits only all-policy batches', () => {
     expect(shouldShortCircuitFailedToolBatch([
       'Error: Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',

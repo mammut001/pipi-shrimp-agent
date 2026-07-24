@@ -45,21 +45,31 @@ export function resolveConfigBaseUrl(provider: string, inputBaseUrl: string): st
 
 /**
  * Resolve the API format for a config.
- * Explicit user / saved value wins; otherwise falls back to the provider's default.
+ *
+ * For first-party providers (anthropic/openai/minimax/gemini/deepseek) the
+ * wire format is fixed by the provider's endpoint, so we always return ''
+ * and let the Rust backend auto-detect. This deliberately IGNORES any
+ * saved `currentApiFormat` for first-party providers — a config that says
+ * `provider=minimax + apiFormat=anthropic` would otherwise be sent to the
+ * MiniMax OpenAI-compatible endpoint with Anthropic /v1/messages wire format
+ * and fail every request.
+ *
+ * For `-compatible` providers the format is pinned to the declared default
+ * (the user cannot change it).
  */
 export function resolveConfigApiFormat(
   provider: string,
   currentApiFormat: string,
 ): ApiFormat | '' {
-  if (currentApiFormat === 'anthropic' || currentApiFormat === 'openai') {
-    return currentApiFormat;
-  }
-  // For compatible providers, pin to the declared format
-  const providerDef = getProvider(provider);
+  // Compatible providers: pin to the declared format.
   if (provider === 'anthropic-compatible') return 'anthropic';
   if (provider === 'openai-compatible') return 'openai';
-  // First-party providers: leave empty (auto-detected by backend)
+
+  const providerDef = getProvider(provider);
+  // First-party providers: always auto-detect on the backend. Ignore any
+  // saved apiFormat so a stale/mismatched value can't break the request.
   if (providerDef && !provider.includes('compatible')) return '';
+
   return providerDef?.defaultApiFormat ?? '';
 }
 

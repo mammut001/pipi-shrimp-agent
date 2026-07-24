@@ -64,6 +64,8 @@ struct ToolCallTracker {
     pending_calls: Vec<String>,
     /// All tool call IDs we've seen (for orphan detection)
     all_calls: Vec<String>,
+    /// Tool call IDs that already received a result
+    completed_results: Vec<String>,
 }
 
 impl ToolCallTracker {
@@ -71,6 +73,7 @@ impl ToolCallTracker {
         Self {
             pending_calls: Vec::new(),
             all_calls: Vec::new(),
+            completed_results: Vec::new(),
         }
     }
 
@@ -82,12 +85,19 @@ impl ToolCallTracker {
 
     /// Record a tool result - returns true if valid, false if orphan
     fn add_result(&mut self, tool_call_id: &str) -> bool {
+        self.completed_results.push(tool_call_id.to_string());
         if let Some(pos) = self.pending_calls.iter().position(|id| id == tool_call_id) {
             self.pending_calls.remove(pos);
             true
         } else {
             false
         }
+    }
+
+    fn has_result(&self, tool_call_id: &str) -> bool {
+        self.completed_results
+            .iter()
+            .any(|id| id == tool_call_id)
     }
 
     /// Check if a tool call ID is orphaned (no matching call was ever made)
@@ -165,7 +175,18 @@ pub fn normalize_messages(messages: &[Message]) -> (Vec<Message>, ValidationResu
     let mut result = ValidationResult::default();
     let mut normalized = Vec::new();
 
+    const ALLOWED_ROLES: &[&str] = &["user", "assistant"];
+
     for (index, msg) in messages.iter().enumerate() {
+        if !ALLOWED_ROLES.contains(&msg.role.as_str()) {
+            result.warnings.push(format!(
+                "Dropping message at index {} with unsupported role '{}'",
+                index, msg.role
+            ));
+            result.dropped_indices.push(index);
+            continue;
+        }
+
         // Track tool calls in assistant messages
         if msg.role == "assistant" && msg.tool_calls.is_some() {
             let tool_call_ids = extract_tool_call_ids(msg);
@@ -181,18 +202,34 @@ pub fn normalize_messages(messages: &[Message]) -> (Vec<Message>, ValidationResu
 
         // Handle tool results
         if is_tool_result(msg) {
-            if let Some(result_id) = extract_tool_result_id(msg) {
-                if tracker.is_orphan_result(&result_id) {
-                    // Orphaned result - skip it with a warning
-                    result.warnings.push(format!(
-                        "Dropping orphaned tool_result at index {} (id: {})",
-                        index, result_id
-                    ));
-                    result.dropped_indices.push(index);
-                    continue;
-                }
-                tracker.add_result(&result_id);
+            let Some(result_id) = extract_tool_result_id(msg) else {
+                result.warnings.push(format!(
+                    "Dropping tool_result at index {} with unparseable tool_call_id",
+                    index
+                ));
+                result.dropped_indices.push(index);
+                continue;
+            };
+
+            if tracker.has_result(&result_id) {
+                result.warnings.push(format!(
+                    "Dropping duplicate tool_result at index {} (id: {})",
+                    index, result_id
+                ));
+                result.dropped_indices.push(index);
+                continue;
             }
+
+            if tracker.is_orphan_result(&result_id) {
+                result.warnings.push(format!(
+                    "Dropping orphaned tool_result at index {} (id: {})",
+                    index, result_id
+                ));
+                result.dropped_indices.push(index);
+                continue;
+            }
+
+            tracker.add_result(&result_id);
             normalized.push(msg.clone());
             continue;
         }
@@ -426,6 +463,54 @@ mod tests {
         let messages = vec![make_message("user", "__TOOL_RESULT__:call_999:orphan")];
 
         assert!(check_tool_chain_integrity(&messages).is_err());
+    }
+
+    #[test]
+    fn test_normalize_drops_unparseable_tool_result() {
+        let messages = vec![
+            make_message("assistant", "").with_tool_calls(vec![make_tool_call(
+                "call_1",
+                "read_file",
+                "{}",
+            )]),
+            make_message("user", "__TOOL_RESULT__::{\"content\":\"bad\"}"),
+        ];
+
+        let (normalized, result) = normalize_messages(&messages);
+        assert!(result.warnings.iter().any(|warning| warning.contains("unparseable")));
+        assert_eq!(normalized.len(), 1);
+    }
+
+    #[test]
+    fn test_normalize_drops_duplicate_tool_result() {
+        let messages = vec![
+            make_message("assistant", "").with_tool_calls(vec![make_tool_call(
+                "call_1",
+                "read_file",
+                "{}",
+            )]),
+            make_message("user", "__TOOL_RESULT__:call_1:first"),
+            make_message("user", "__TOOL_RESULT__:call_1:second"),
+        ];
+
+        let (normalized, result) = normalize_messages(&messages);
+        assert!(result.warnings.iter().any(|warning| warning.contains("duplicate")));
+        assert_eq!(normalized.len(), 2);
+    }
+
+    #[test]
+    fn test_normalize_drops_unsupported_roles() {
+        let messages = vec![
+            make_message("system", "You are helpful."),
+            make_message("user", "Hello"),
+            make_message("assistant", "Hi there!"),
+        ];
+
+        let (normalized, result) = normalize_messages(&messages);
+        assert!(result.warnings.iter().any(|warning| warning.contains("unsupported role")));
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0].role, "user");
+        assert_eq!(normalized[1].role, "assistant");
     }
 
     #[test]

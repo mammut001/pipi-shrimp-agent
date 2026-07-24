@@ -26,7 +26,6 @@ import {
 } from './toolRuntimeState';
 import { useSettingsStore } from '@/store';
 import { useUIStore } from '../uiStore';
-import { createToolTaskSteps } from '../taskLifecycle';
 import { coerceRenderableText } from '@/utils/coerceRenderableText';
 import { normalizeQuestionnaireFields } from '@/utils/questionnaireNormalize';
 import { registerArtifactsFromToolResults, type ArtifactDetectorModule, type ToolArtifactResult } from './chatArtifacts';
@@ -45,14 +44,73 @@ type ChatSetState = (
 
 const WORKSPACE_TOOL_NAMES = new Set([
   'get_current_workspace',
+  'list_files',
+  'search_files',
   'write_file',
   'create_directory',
+  'delete_file',
   'execute_command',
   'compile_typst_file',
   'render_typst_to_pdf',
 ]);
 
 const CANCELLABLE_TOOL_NAMES = new Set(['execute_command', 'ssh_exec']);
+
+const NO_PROJECT_FOLDER_MESSAGE =
+  'No Project Folder is bound to this session. Set a Project Folder (the user\'s repo) before running workspace tools like list_files, write_file, create_directory, execute_command, or compile_typst_file.';
+
+function buildNoProjectFolderToolError(toolName: string): string {
+  return JSON.stringify({
+    error: true,
+    error_kind: 'permission_denied',
+    message: NO_PROJECT_FOLDER_MESSAGE,
+    tool: toolName,
+    cause: NO_PROJECT_FOLDER_MESSAGE,
+  });
+}
+
+/**
+ * Decide whether workspace tools may run for this batch.
+ * Pure helper — used by handleToolBatchRequest and unit-tested directly.
+ *
+ * - Prefer the session Project Folder (`projectDir` / legacy workDir).
+ * - Never treat the PiPi Output Folder as a project workspace.
+ * - When unbound, block tools in WORKSPACE_TOOL_NAMES so the model gets a
+ *   clear preflight error instead of multi-round path failures.
+ */
+export function resolveWorkspaceToolPreflight(input: {
+  projectDir: string | null | undefined;
+  pipiOutputDir: string | null | undefined;
+  ensureResult: string | null | undefined;
+  toolNames: string[];
+}): {
+  workDir: string | null;
+  blockWorkspaceTools: boolean;
+  needsWorkspaceTools: boolean;
+} {
+  const needsWorkspaceTools = input.toolNames.some((name) => WORKSPACE_TOOL_NAMES.has(name));
+  let workDir = typeof input.projectDir === 'string' && input.projectDir.trim()
+    ? input.projectDir.trim()
+    : null;
+
+  if (!workDir && typeof input.ensureResult === 'string' && input.ensureResult.trim()) {
+    const candidate = input.ensureResult.trim();
+    const pipi = typeof input.pipiOutputDir === 'string' ? input.pipiOutputDir.trim() : '';
+    if (!pipi || candidate !== pipi) {
+      workDir = candidate;
+    }
+  }
+
+  if (workDir && input.pipiOutputDir && workDir === input.pipiOutputDir.trim()) {
+    workDir = null;
+  }
+
+  return {
+    workDir,
+    needsWorkspaceTools,
+    blockWorkspaceTools: needsWorkspaceTools && !workDir,
+  };
+}
 
 export interface ToolBatchExecutionContext {
   chunk: ToolBatchChunk;
@@ -926,51 +984,55 @@ export async function handleToolBatchRequest(
   // policy. Falls back to legacy PermissionMode behavior when the
   // session was created before the 5-mode system shipped.
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
+  const blockedWorkspaceToolIds = new Set<string>();
+  const preBlockedResults: ToolArtifactResult[] = [];
 
-  if (!workDir) {
+  // Preflight: if any tool needs a Project Folder and none is bound,
+  // try ensureSessionWorkDir once, then block workspace tools with a
+  // clear error instead of multi-round path failures.
+  {
     const needsWorkDir = chunk.tools.some((tool) => WORKSPACE_TOOL_NAMES.has(tool.name));
-    if (needsWorkDir) {
-      const fallback = await ensureSessionWorkDir();
+    let ensureResult: string | null = null;
+    if (!workDir && needsWorkDir) {
+      ensureResult = await ensureSessionWorkDir();
       currentSession = get().sessions.find((session) => session.id === activeSessionId);
-      const sessionPipiOutputDir = resolveSessionPipiOutputDirHelper(currentSession);
-      // Reject the fallback if it landed on the PiPi Output Folder —
-      // tools that mutate project state have no business running
-      // inside the app-owned output root.
-      if (fallback && sessionPipiOutputDir && fallback === sessionPipiOutputDir) {
-        const errorMessage = 'No Project Folder is bound to this session. Set a Project Folder (the user\'s repo) before running workspace tools like write_file, create_directory, execute_command, or compile_typst_file.';
-        for (const tool of chunk.tools) {
-          if (!WORKSPACE_TOOL_NAMES.has(tool.name)) continue;
-          markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
-          uiStore.updateTaskStep(tool.id, 'failed');
-          markSessionToolStatus(activeSessionId, tool.id, tool.name, 'failed', set, get);
-          resolveSessionTool(
-            activeSessionId,
-            tool.id,
-            tool.name,
-            'failed',
-            // AUDIT: keep the message English; localized copy lives in
-            // the chat input toast that fires on bind, not in tool
-            // results (the model needs a deterministic string to react
-            // to).
-            errorMessage,
-            set,
-            get,
-          );
-        }
-        // Surface the error to the model via the batch result so it
-        // can prompt the user to bind a Project Folder before retrying.
-        const blockedResults = chunk.tools
-          .filter((tool) => WORKSPACE_TOOL_NAMES.has(tool.name))
-          .map((tool) => ({
-            id: tool.id,
-            content: errorMessage,
-            toolName: tool.name,
-            toolArgs: tool.arguments,
-          }));
-        chunk._resolveAll(blockedResults.map(({ id, content }) => ({ id, content })));
-        return blockedResults;
+      // Re-resolve after ensure — may have set projectDir or only pipi output.
+      workDir = resolveSessionProjectDir(currentSession) ?? null;
+    }
+
+    const sessionPipiOutputDir = resolveSessionPipiOutputDirHelper(currentSession);
+    const preflight = resolveWorkspaceToolPreflight({
+      projectDir: workDir,
+      pipiOutputDir: sessionPipiOutputDir,
+      ensureResult,
+      toolNames: chunk.tools.map((tool) => tool.name),
+    });
+    workDir = preflight.workDir;
+
+    if (preflight.blockWorkspaceTools) {
+      for (const tool of chunk.tools) {
+        if (!WORKSPACE_TOOL_NAMES.has(tool.name)) continue;
+        const errorContent = buildNoProjectFolderToolError(tool.name);
+        blockedWorkspaceToolIds.add(tool.id);
+        markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
+        uiStore.updateTaskStep(tool.id, 'failed');
+        markSessionToolStatus(activeSessionId, tool.id, tool.name, 'failed', set, get);
+        resolveSessionTool(
+          activeSessionId,
+          tool.id,
+          tool.name,
+          'failed',
+          errorContent,
+          set,
+          get,
+        );
+        preBlockedResults.push({
+          id: tool.id,
+          content: errorContent,
+          toolName: tool.name,
+          toolArgs: tool.arguments,
+        });
       }
-      workDir = fallback ?? workDir;
     }
   }
 
@@ -987,8 +1049,14 @@ export async function handleToolBatchRequest(
     }
   }
 
-  seedSessionToolRuntime(activeSessionId, chunk.tools, set, get);
-  uiStore.setTaskProgress(createToolTaskSteps(chunk.tools));
+  // Only seed tools that will still run. Pre-blocked workspace tools were
+  // already resolveSessionTool(failed); re-seeding them would put their IDs
+  // back into unresolvedIds and wipe UI steps back to pending.
+  const executableTools = chunk.tools.filter((tool) => !blockedWorkspaceToolIds.has(tool.id));
+  seedSessionToolRuntime(activeSessionId, executableTools, set, get);
+  // Prefer runtime-synced progress (includes pre-blocked failed steps). If
+  // there are only pre-blocked tools, seed is a no-op and sync already
+  // reported pendingToolCalls=0 with failed steps.
 
   // Always resolve the normalization cwd through the canonical helper
   // so a session that only has `workDir` (legacy mirror) still picks
@@ -996,7 +1064,7 @@ export async function handleToolBatchRequest(
   // directly here — that was the bug.
   const projectFolderForNormalization = workDir ?? resolveSessionProjectDir(currentSession);
   const normalizedToolArgsById = new Map<string, string>();
-  for (const tool of chunk.tools) {
+  for (const tool of executableTools) {
     let normalizedArgs = deps.normalizeResumeWorkspaceToolArgs(
       tool.name,
       tool.arguments,
@@ -1012,7 +1080,7 @@ export async function handleToolBatchRequest(
     normalizedToolArgsById.set(tool.id, normalizedArgs);
   }
 
-  const toolRequests: ToolRequest[] = chunk.tools.map((tool) => {
+  const toolRequests: ToolRequest[] = executableTools.map((tool) => {
     let parsedArgs: Record<string, unknown> = {};
     try {
       parsedArgs = JSON.parse(normalizedToolArgsById.get(tool.id) ?? tool.arguments) as Record<string, unknown>;
@@ -1040,7 +1108,7 @@ export async function handleToolBatchRequest(
     )));
   }
 
-  for (const tool of chunk.tools) {
+  for (const tool of executableTools) {
     if (!serialIds.has(tool.id)) {
       continue;
     }
@@ -1073,6 +1141,7 @@ export async function handleToolBatchRequest(
     // artifact detection is best-effort
   }
 
-  chunk._resolveAll(allResults.map(({ id, content }) => ({ id, content })));
-  return allResults;
+  const mergedResults = [...preBlockedResults, ...allResults];
+  chunk._resolveAll(mergedResults.map(({ id, content }) => ({ id, content })));
+  return mergedResults;
 }

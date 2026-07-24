@@ -8,6 +8,11 @@ import {
 } from '@/services/autoresearch/bootstrap/conversationalTemplates';
 import type { AutoResearchBootstrapResult, ExtractedBaseline } from '@/services/autoresearch/bootstrap/types';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
+import {
+  BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE,
+  buildBootstrapSystemPromptWithFinalizeRequirement,
+  shouldRunBootstrapFinalizeNudge,
+} from '@/services/autoresearch/bootstrap/finalizeNudge';
 import { startAutoResearchRun, logAutoResearchSetupFailure } from '@/services/autoresearch/setupFlow';
 import { getAutoResearchDefaultConfig } from '@/services/autoresearch/defaultConfig';
 import type { SshConfig } from '@/store/autoresearchStore';
@@ -29,6 +34,10 @@ interface BootstrapChatViewProps {
   onReady?: () => void;
   sshConfig?: SshConfig;
 }
+
+/** Shared copy for tests + UI when headless turn omits bootstrap_finalize. */
+export const BOOTSTRAP_MISSING_FINALIZE_MESSAGE =
+  'Bootstrap agent finished but did not produce a bootstrap_finalize result.';
 
 function guessMetricDirection(metricName: string): 'higher' | 'lower' {
   const lowered = metricName.toLowerCase();
@@ -94,6 +103,9 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   const bootstrapAbortRef = useRef<AbortController | null>(null);
 
   const [stoppedByUser, setStoppedByUser] = useState(false);
+  /** Last compiled prompt — used to offer Retry after missing bootstrap_finalize. */
+  const lastCompiledPromptRef = useRef<string | null>(null);
+  const [missingFinalize, setMissingFinalize] = useState(false);
 
   const clearImportedFiles = useSettingsStore((state) => state.clearImportedFiles);
 
@@ -316,7 +328,9 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       return;
     }
 
+    lastCompiledPromptRef.current = compiledPrompt;
     setError(null);
+    setMissingFinalize(false);
     setStoppedByUser(false);
     setHasStarted(true);
     setIsStreaming(true);
@@ -332,10 +346,12 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       ? `\n\n## Context Files / Literature & Reference Documents\n\nThe user has attached the following files as references:\n${workingFilesList}\n\nRules:\n- Use these files as references for the research target, code design, baseline, or paper details.\n- Read a file by its exact path using 'pdf_read' (for PDFs) or 'read_file' (for code/text files) before discussing its contents. Do not assume you know its contents. Do not invent details.`
       : '';
 
-    const systemPrompt = [
-      AUTORESEARCH_BOOTSTRAP_TEMPLATE.soulPrompt,
-      AUTORESEARCH_BOOTSTRAP_TEMPLATE.taskInstruction,
-    ].filter(Boolean).join('\n\n') + contextFilesSection;
+    const systemPrompt = buildBootstrapSystemPromptWithFinalizeRequirement(
+      [
+        AUTORESEARCH_BOOTSTRAP_TEMPLATE.soulPrompt,
+        AUTORESEARCH_BOOTSTRAP_TEMPLATE.taskInstruction,
+      ].filter(Boolean).join('\n\n') + contextFilesSection,
+    );
 
     const initialMessages = [
       {
@@ -344,14 +360,14 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       },
     ];
 
-    try {
-      setAgentLogs((prev) => prev + `[SYSTEM] Spawning Headless Research Agent with custom prompt blocks...\n\n`);
+    const runBootstrapTurn = async (messages: typeof initialMessages, label: string) => {
+      setAgentLogs((prev) => prev + `[SYSTEM] ${label}\n\n`);
       await runHeadlessAgentTurn({
         sessionId: `autoresearch-bootstrap-${Date.now()}`,
-        initialMessages,
+        initialMessages: messages,
         systemPrompt,
         allowedTools: AUTORESEARCH_BOOTSTRAP_TEMPLATE.allowedTools,
-        signal: bootstrapAbortRef.current.signal,
+        signal: bootstrapAbortRef.current!.signal,
         onTextDelta: (chunk) => {
           setAgentLogs((prev) => prev + chunk);
         },
@@ -367,15 +383,51 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
           await handleToolResult(name, result);
         },
       });
+    };
+
+    try {
+      await runBootstrapTurn(
+        initialMessages,
+        'Spawning Headless Research Agent with custom prompt blocks...',
+      );
       if (bootstrapAbortRef.current.signal.aborted) {
         return;
       }
-      const ready = useBootstrapPlanStore.getState().readyResult;
-      if (!ready || ready.status !== 'ready') {
-        const warnMsg = 'Bootstrap agent finished but did not produce a bootstrap_finalize result.';
-        setError(warnMsg);
-        setAgentLogs((prev) => prev + `\n[WARNING] ${warnMsg}\n`);
+
+      let ready = useBootstrapPlanStore.getState().readyResult;
+      // End-of-turn nudge: if the first turn omitted bootstrap_finalize, run one
+      // short forced-finalize turn before treating this as a hard failure.
+      if (shouldRunBootstrapFinalizeNudge(ready)) {
+        setAgentLogs(
+          (prev) =>
+            prev
+            + '\n[SYSTEM] bootstrap_finalize missing after first turn — running finalize nudge turn...\n',
+        );
+        await runBootstrapTurn(
+          [{ role: 'user', content: BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE }],
+          'Finalize-nudge headless turn (must call bootstrap_finalize)...',
+        );
+        if (bootstrapAbortRef.current.signal.aborted) {
+          return;
+        }
+        ready = useBootstrapPlanStore.getState().readyResult;
+      }
+
+      if (shouldRunBootstrapFinalizeNudge(ready)) {
+        const warnMsg = BOOTSTRAP_MISSING_FINALIZE_MESSAGE;
+        setMissingFinalize(true);
+        setError(
+          `${warnMsg} Use “Retry bootstrap” to run again with the same recipe, `
+          + 'or “Back to Recipe” to adjust goals/workspace, then start again.',
+        );
+        setAgentLogs(
+          (prev) =>
+            prev
+            + `\n[WARNING] ${warnMsg}\n`
+            + '[RECOVERY] Next steps: Retry bootstrap (same prompt) or Back to Recipe to edit setup.\n',
+        );
       } else {
+        setMissingFinalize(false);
         setAgentLogs((prev) => prev + `\n[SYSTEM] Headless Research Agent completed successfully.\n`);
       }
     } catch (runnerError) {
@@ -383,12 +435,21 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         return;
       }
       const errMsg = runnerError instanceof Error ? runnerError.message : String(runnerError);
+      setMissingFinalize(false);
       setError(errMsg);
       setAgentLogs((prev) => prev + `\n[ERROR] Bootstrap execution error: ${errMsg}\n`);
     } finally {
       setIsStreaming(false);
     }
   }, [handleToolResult, isStreaming, noteTool, importedFiles]);
+
+  const handleRetryBootstrap = useCallback(() => {
+    const prompt = lastCompiledPromptRef.current;
+    if (!prompt || isStreaming) {
+      return;
+    }
+    void handleStartBootstrap(prompt);
+  }, [handleStartBootstrap, isStreaming]);
 
   const handleQuickStart = useCallback((templateId: ConversationalTemplateOption['id']) => {
     if (recipeDirty) {
@@ -546,8 +607,36 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                 </div>
               )}
               {error && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm font-sans">
-                  {error}
+                <div
+                  className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm font-sans"
+                  data-testid="bootstrap-error-panel"
+                >
+                  <p>{error}</p>
+                  {(missingFinalize || error.includes(BOOTSTRAP_MISSING_FINALIZE_MESSAGE)) && !isStreaming && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        data-testid="retry-bootstrap"
+                        onClick={handleRetryBootstrap}
+                        className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-bold transition-all shadow-sm"
+                      >
+                        Retry bootstrap
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="back-to-recipe-from-error"
+                        onClick={() => {
+                          setHasStarted(false);
+                          setError(null);
+                          setMissingFinalize(false);
+                          setStoppedByUser(false);
+                        }}
+                        className="rounded-lg border border-red-300 bg-white hover:bg-red-50 text-red-800 px-3 py-1.5 text-xs font-bold transition-all"
+                      >
+                        Back to Recipe
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -705,11 +705,12 @@ describe('loopEngine integration', () => {
     await startExperimentLoop(sendMessage);
 
     const runs = await listIterations(cfg, 'autoresearch-cv-accuracy');
-    expect(runs).toHaveLength(2);
+    expect(runs.map((entry) => entry.iter)).toEqual([1, 2]);
 
-    const secondRun = runs[1];
-    const hypothesis = await readTargetText(cfg, secondRun.hypothesisPath);
-    const metricsJson = await readTargetText(cfg, secondRun.metricsPath);
+    const secondRun = runs.find((entry) => entry.iter === 2);
+    expect(secondRun).toBeDefined();
+    const hypothesis = await readTargetText(cfg, secondRun!.hypothesisPath);
+    const metricsJson = await readTargetText(cfg, secondRun!.metricsPath);
     expect(hypothesis?.trim().length).toBeGreaterThan(0);
     expect(metricsJson).toContain('"metricName": "cv_accuracy"');
     expect(metricsJson).toContain('"metricValue": 0.9684');
@@ -1206,8 +1207,17 @@ describe('loopEngine integration', () => {
 
     const store = useAutoResearchStore.getState();
     const run = store.runHistory.find((entry) => entry.id === 'autoresearch-budget-continue');
+    // Prefer iteration numbers over hard-coded list index — list order was
+    // previously assumed as runs[1] === iter 2, which flaked when the array
+    // was shorter or sorted differently under parallel FS noise.
     const runs = await listIterations(cfg, 'autoresearch-budget-continue');
-    const rolledBackCode = await readTargetText(cfg, path.join(runs[1].iterDir, 'code', 'run_experiment.py'));
+    expect(runs.map((entry) => entry.iter)).toEqual([1, 2, 3]);
+    const failedBudgetIter = runs.find((entry) => entry.iter === 2);
+    expect(failedBudgetIter).toBeDefined();
+    const rolledBackCode = await readTargetText(
+      cfg,
+      path.join(failedBudgetIter!.iterDir, 'code', 'run_experiment.py'),
+    );
 
     expect(store.experiments.map((entry) => entry.status)).toEqual(['IMPROVED', 'FAILED', 'IMPROVED']);
     expect(rolledBackCode).toBe('print("baseline")\n');

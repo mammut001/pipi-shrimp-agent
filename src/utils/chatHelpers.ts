@@ -197,38 +197,33 @@ export interface ApiMessage {
 /**
  * Build API-safe messages for OpenAI-compatible endpoints.
  *
- * If an assistant message contains tool_calls, it must be followed by matching
- * tool result messages. Malformed blocks are dropped entirely.
+ * Mirrors Rust `normalize_messages`: assistant tool_calls are always kept;
+ * orphan and duplicate tool results are dropped.
  */
 export function buildApiMessages(messages: Message[]): ApiMessage[] {
   const apiMessages: ApiMessage[] = [];
+  const seenToolCallIds: string[] = [];
+  const completedResultIds = new Set<string>();
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
+  const pushToolResult = (toolCallId: string, result: string) => {
+    if (completedResultIds.has(toolCallId)) {
+      return;
+    }
+    if (!seenToolCallIds.includes(toolCallId)) {
+      return;
+    }
+    completedResultIds.add(toolCallId);
+    apiMessages.push({
+      role: 'user',
+      content: `__TOOL_RESULT__:${toolCallId}:${result}`,
+    });
+  };
 
+  for (const msg of messages) {
     if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-      const resultMessages: Array<{ message: Message; parsed: ParsedToolResult }> = [];
-      let cursor = i + 1;
-
-      while (cursor < messages.length) {
-        const parsed = parseToolResultMessage(messages[cursor]);
-        if (!parsed) break;
-        resultMessages.push({ message: messages[cursor], parsed });
-        cursor += 1;
+      for (const toolCall of msg.tool_calls) {
+        seenToolCallIds.push(toolCall.id);
       }
-
-      const resultById = new Map(resultMessages.map(({ parsed }) => [parsed.toolCallId, parsed.result]));
-      const expectedIds = msg.tool_calls.map((tc) => tc.id);
-      const allExpectedPresent = expectedIds.every((id) => resultById.has(id));
-      const noExtraResults = resultMessages.length === expectedIds.length
-        && resultMessages.every(({ parsed }) => expectedIds.includes(parsed.toolCallId));
-
-      if (!allExpectedPresent || !noExtraResults) {
-        // Drop malformed tool-call block
-        i = cursor - 1;
-        continue;
-      }
-
       apiMessages.push({
         role: 'assistant',
         content: msg.content || '',
@@ -238,21 +233,20 @@ export function buildApiMessages(messages: Message[]): ApiMessage[] {
           arguments: tc.arguments,
         })),
       });
-
-      for (const toolCall of msg.tool_calls) {
-        apiMessages.push({
-          role: 'user',
-          content: `__TOOL_RESULT__:${toolCall.id}:${resultById.get(toolCall.id) ?? ''}`,
-        });
-      }
-
-      i = cursor - 1;
       continue;
     }
 
     const parsedToolResult = parseToolResultMessage(msg);
     if (parsedToolResult) {
-      // Skip orphan tool results
+      pushToolResult(parsedToolResult.toolCallId, parsedToolResult.result);
+      continue;
+    }
+
+    if (msg.role === 'user' && msg.tool_call_id) {
+      const result = msg.content.startsWith('__TOOL_RESULT__:')
+        ? msg.content.replace(/^__TOOL_RESULT__:\S+?:/, '')
+        : msg.content;
+      pushToolResult(msg.tool_call_id, result);
       continue;
     }
 
@@ -260,7 +254,6 @@ export function buildApiMessages(messages: Message[]): ApiMessage[] {
       role: msg.role as 'user' | 'assistant' | 'system',
       content: msg.content,
       ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
-      ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
     });
   }
 

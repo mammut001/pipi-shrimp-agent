@@ -117,6 +117,35 @@ describe('StreamingToolExecutor.executeBatch', () => {
     expect(result.results[2]).toMatchObject({ content: '{"paper":"ok"}', is_error: false });
   });
 
+  it('writes structured failures into MCP tool content when execution cannot proceed', async () => {
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-mcp',
+          toolName: 'mcp__bad',
+          decision: 'allowed',
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      { id: 'tool-mcp', name: 'mcp__bad', arguments: { query: 'x' } },
+    ], {
+      sessionId: 'session-1',
+      source: 'assistant_tool_call',
+    });
+
+    expect(result.results[0]).toEqual(expect.objectContaining({
+      id: 'tool-mcp',
+      is_error: true,
+      content: expect.stringMatching(/"error":true/),
+    }));
+    expect(result.results[0]?.content).toMatch(/Invalid MCP tool name/i);
+    expect(result.results[0]?.content.trim().length).toBeGreaterThan(0);
+  });
+
   it('requires backend-approved confirmation before executing MCP tools', async () => {
     mockInvoke.mockImplementation(async (command: string) => {
       if (command === 'preview_tool_policy') {

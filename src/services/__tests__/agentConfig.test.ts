@@ -15,6 +15,9 @@ import {
   resolveDraftApiKeyValue,
   resolveActiveAgentConfig,
   sanitizeApiKeyValue,
+  validateApiKeyForConnection,
+  formatApiKeyLengthHint,
+  MIN_API_KEY_LENGTH,
   validateResolvedAgentConfig,
 } from '@/services/agentConfig';
 
@@ -125,5 +128,28 @@ describe('agentConfig resolver', () => {
 
   it('sanitizes bearer-prefixed keys before resolving config usage', () => {
     expect(sanitizeApiKeyValue('  Bearer mini-secret\t\n')).toBe('mini-secret');
+  });
+
+  it('rejects empty, masked, and truncated keys before connection test', () => {
+    expect(validateApiKeyForConnection('').ok).toBe(false);
+    expect(validateApiKeyForConnection('   ').ok).toBe(false);
+    expect(validateApiKeyForConnection('••••••••').ok).toBe(false);
+    expect(validateApiKeyForConnection('short').ok).toBe(false);
+    if (!validateApiKeyForConnection('short').ok) {
+      expect(validateApiKeyForConnection('short').error).toMatch(/truncated/i);
+    }
+
+    const good = validateApiKeyForConnection('  Bearer sk-live-abcdefghij\n');
+    expect(good).toEqual({
+      ok: true,
+      sanitized: 'sk-live-abcdefghij',
+      length: 'sk-live-abcdefghij'.length,
+    });
+    expect(good.length).toBeGreaterThanOrEqual(MIN_API_KEY_LENGTH);
+  });
+
+  it('formats a non-secret length hint for the Settings UI', () => {
+    expect(formatApiKeyLengthHint('')).toBe('0 characters');
+    expect(formatApiKeyLengthHint('  Bearer abcd1234  ')).toBe('8 characters');
   });
 });

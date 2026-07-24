@@ -25,6 +25,10 @@ describe('swarm lifecycle', () => {
     await repo.clearAll();
   });
 
+  afterEach(async () => {
+    await repo.flushPendingSaveForTests();
+  });
+
   it('reassigns a working agent to the newest task and records the reassignment', () => {
     repo.createAgent({
       id: 'agent-1',

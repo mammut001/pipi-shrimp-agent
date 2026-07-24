@@ -202,7 +202,7 @@ describe('buildApiMessages', () => {
     expect(result[2].content).toContain('tc-1');
   });
 
-  it('should drop malformed tool-call blocks (missing results)', () => {
+  it('should keep assistant tool_calls when results are incomplete', () => {
     const messages: Message[] = [
       { id: '1', role: 'user', content: 'Hello', timestamp: 1 },
       {
@@ -224,9 +224,28 @@ describe('buildApiMessages', () => {
       },
     ];
     const result = buildApiMessages(messages);
-    // The malformed block should be dropped, only the user message remains
-    expect(result).toHaveLength(1);
+    expect(result).toHaveLength(3);
     expect(result[0].role).toBe('user');
+    expect(result[1].role).toBe('assistant');
+    expect(result[1].tool_calls).toHaveLength(2);
+    expect(result[2].content).toContain('tc-1');
+  });
+
+  it('should drop duplicate tool results', () => {
+    const messages: Message[] = [
+      {
+        id: '1',
+        role: 'assistant',
+        content: '',
+        timestamp: 1,
+        tool_calls: [{ id: 'tc-1', name: 'read_file', arguments: '{}' }],
+      },
+      { id: '2', role: 'user', content: '__TOOL_RESULT__:tc-1:first', timestamp: 2 },
+      { id: '3', role: 'user', content: '__TOOL_RESULT__:tc-1:duplicate', timestamp: 3 },
+    ];
+    const result = buildApiMessages(messages);
+    expect(result).toHaveLength(2);
+    expect(result[1].content).toContain('first');
   });
 
   it('should skip orphan tool results', () => {

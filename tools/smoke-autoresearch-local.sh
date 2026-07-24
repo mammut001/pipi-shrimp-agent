@@ -79,7 +79,17 @@ pnpm test -- --runTestsByPath \
   src/services/headless/__tests__/agentRunner.test.ts \
   --runInBand 2>&1 | tee "$TS_LOG"
 
-grep -q '^AUTO_RESEARCH_TS_SMOKE_PASS$' "$TS_LOG"
+# Jest prints console.log as an indented line under a "console.log" header, e.g.
+# "      AUTO_RESEARCH_TS_SMOKE_PASS" — not necessarily at column 0. Also accept a
+# bare marker file written by the smoke test when present.
+if [[ -f "$RESULTS_DIR/AUTO_RESEARCH_TS_SMOKE_PASS" ]]; then
+  :
+elif grep -qE '[[:space:]]*AUTO_RESEARCH_TS_SMOKE_PASS[[:space:]]*$' "$TS_LOG"; then
+  :
+else
+  printf 'Missing AUTO_RESEARCH_TS_SMOKE_PASS marker in %s\n' "$TS_LOG" >&2
+  exit 1
+fi
 [[ -s "$RESULTS_DIR/metrics-valid.json" ]]
 [[ -s "$RESULTS_DIR/metrics-invalid.json" ]]
 [[ -s "$RESULTS_DIR/parse-output.log" ]]
@@ -88,7 +98,29 @@ grep -q 'run_status=completed' "$RESULTS_DIR/smoke-summary.txt"
 grep -q 'iteration_status=IMPROVED' "$RESULTS_DIR/smoke-summary.txt"
 grep -q 'Current AutoResearch uses sessionId as runId.' "$RESULTS_DIR/parse-output.log"
 
-cargo test --manifest-path src-tauri/Cargo.toml execute_bash_for_tool_returns_sanitized_structured_response -- --exact --nocapture 2>&1 | tee "$RUST_CMD_LOG"
+# Use --lib + fully-qualified test names. Plain function-name filters with
+# `--exact` match 0 tests because Rust registers them as
+# `commands::<mod>::tests::<fn>` (not bare `<fn>`).
+run_rust_smoke_test() {
+  local filter="$1"
+  local log_file="$2"
+  shift 2
+  cargo test --manifest-path src-tauri/Cargo.toml --lib "$filter" -- --exact "$@" 2>&1 | tee "$log_file"
+  # Fail fast if the filter resolved to zero tests (common when names drift).
+  if grep -qE 'running 0 tests' "$log_file"; then
+    printf 'Rust smoke filter matched 0 tests: %s\n' "$filter" >&2
+    exit 1
+  fi
+  if ! grep -qE 'test result: ok\.' "$log_file"; then
+    printf 'Rust smoke test did not report ok: %s\n' "$filter" >&2
+    exit 1
+  fi
+}
+
+run_rust_smoke_test \
+  'commands::code::tests::execute_bash_for_tool_returns_sanitized_structured_response' \
+  "$RUST_CMD_LOG" \
+  --nocapture
 grep '^SMOKE_COMMAND_RESULT_JSON=' "$RUST_CMD_LOG" | tail -n 1 | sed 's/^SMOKE_COMMAND_RESULT_JSON=//' > "$RESULTS_DIR/command-result.json"
 [[ -s "$RESULTS_DIR/command-result.json" ]]
 grep -q '"sanitized":true' "$RESULTS_DIR/command-result.json"
@@ -102,6 +134,12 @@ if grep -q 'sk-abc12345' "$RESULTS_DIR/command-result.json"; then
   exit 1
 fi
 
-cargo test --manifest-path src-tauri/Cargo.toml execute_bash_for_tool_rejects_dangerous_commands -- --exact 2>&1 | tee "$RUST_DANGER_LOG"
-cargo test --manifest-path src-tauri/Cargo.toml write_file_rejects_paths_outside_bound_work_dir -- --exact 2>&1 | tee "$RUST_FILE_LOG"
-cargo test --manifest-path src-tauri/Cargo.toml test_dangerous_commands -- --exact 2>&1 | tee "$RUST_PATH_LOG"
+run_rust_smoke_test \
+  'commands::code::tests::execute_bash_for_tool_rejects_dangerous_commands' \
+  "$RUST_DANGER_LOG"
+run_rust_smoke_test \
+  'commands::file::tests::write_file_rejects_paths_outside_bound_work_dir' \
+  "$RUST_FILE_LOG"
+run_rust_smoke_test \
+  'commands::path_security::tests::test_dangerous_commands' \
+  "$RUST_PATH_LOG"

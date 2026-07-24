@@ -191,9 +191,11 @@ fn deepseek_model_is_reasoning(model_lower: &str) -> bool {
 }
 
 fn minimax_model_is_reasoning(model_lower: &str) -> bool {
-    model_lower.contains("reasoning")
-        || model_lower.contains("minimax-m3")
-        || model_lower.contains("minimax-m4")
+    // MiniMax currently ships one reasoning model: MiniMax-M3 (adaptive thinking).
+    // M2.x models are non-reasoning. Do NOT speculate about unreleased model
+    // numbers (e.g. M4/M5) — match the real model id or an explicit "reasoning"
+    // tag in the model name instead.
+    model_lower.contains("reasoning") || model_lower.contains("minimax-m3")
 }
 
 impl ResolvedProviderConfig {
@@ -537,6 +539,52 @@ mod tests {
         assert!(!v4_pro.capabilities.supports_tool_calls);
         assert!(!v4_pro.capabilities.supports_tool_openai);
         assert!(v4_pro.capabilities.supports_reasoning);
+    }
+
+    #[test]
+    fn test_resolve_minimax_reasoning_capabilities_by_model() {
+        // MiniMax-M3 is the current reasoning model (adaptive thinking).
+        let m3 = ResolvedProviderConfig::resolve(
+            "MiniMax-M3",
+            "sk-...",
+            Some("https://api.minimaxi.com/v1"),
+            Some(ProviderId::MiniMax),
+        );
+        assert_eq!(m3.provider_id, ProviderId::MiniMax);
+        assert!(m3.capabilities.supports_reasoning);
+        assert!(m3.capabilities.supports_reasoning_stream);
+        assert!(m3.capabilities.supports_tool_calls);
+        assert!(m3.capabilities.supports_tool_openai);
+
+        // M2.x are non-reasoning models.
+        let m27 = ResolvedProviderConfig::resolve(
+            "MiniMax-M2.7",
+            "sk-...",
+            Some("https://api.minimaxi.com/v1"),
+            Some(ProviderId::MiniMax),
+        );
+        assert!(!m27.capabilities.supports_reasoning);
+        assert!(!m27.capabilities.supports_reasoning_stream);
+        assert!(m27.capabilities.supports_tool_calls);
+
+        // An unreleased/speculative model number must NOT be misclassified as
+        // reasoning. Only the real M3 id or an explicit "reasoning" tag counts.
+        let m4 = ResolvedProviderConfig::resolve(
+            "MiniMax-M4",
+            "sk-...",
+            Some("https://api.minimaxi.com/v1"),
+            Some(ProviderId::MiniMax),
+        );
+        assert!(!m4.capabilities.supports_reasoning);
+
+        // Explicit "reasoning" in the name still flips reasoning on.
+        let reasoning_tag = ResolvedProviderConfig::resolve(
+            "MiniMax-M3-reasoning",
+            "sk-...",
+            Some("https://api.minimaxi.com/v1"),
+            Some(ProviderId::MiniMax),
+        );
+        assert!(reasoning_tag.capabilities.supports_reasoning);
     }
 
     #[test]

@@ -371,6 +371,15 @@ function scheduleSave(): void {
   }, 500);
 }
 
+/** Flush debounced persistence — for tests only. */
+export async function flushPendingSaveForTests(): Promise<void> {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  await saveToStorage();
+}
+
 export async function saveToStorage(): Promise<void> {
   try {
     const snapshot: SwarmSnapshot = {

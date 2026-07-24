@@ -79,6 +79,134 @@ pub fn merge_system_prompt(user_prompt: Option<&str>, allow_browser_tools: bool)
     }
 }
 
+fn strict_paper_reference_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "source": { "type": "string" },
+            "title": { "type": "string" },
+            "authors": { "type": "array", "items": { "type": "string" } },
+            "year": { "type": "number" },
+            "venue": { "type": "string" },
+            "filePath": { "type": "string" },
+            "originalUrl": { "type": "string" },
+            "abstract": { "type": "string" },
+            "citationKey": { "type": "string" }
+        },
+        "required": ["source", "title"],
+        "additionalProperties": false
+    })
+}
+
+fn strict_bootstrap_finalize_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "researchGoal": { "type": "string" },
+            "successCriteria": { "type": "string" },
+            "primaryMetric": { "type": "string" },
+            "secondaryMetrics": { "type": "array", "items": { "type": "string" } },
+            "papers": {
+                "type": "array",
+                "items": strict_paper_reference_schema()
+            },
+            "baselines": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "paper": strict_paper_reference_schema(),
+                        "task": { "type": "string" },
+                        "dataset": { "type": "string" },
+                        "reportedMetrics": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "value": { "type": "number" },
+                                    "unit": { "type": "string" }
+                                },
+                                "required": ["name", "value"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "method": {
+                            "type": "object",
+                            "properties": {
+                                "summary": { "type": "string" },
+                                "keyHyperparams": {
+                                    "type": "string",
+                                    "description": "Optional JSON object string of hyperparameters"
+                                }
+                            },
+                            "required": ["summary"],
+                            "additionalProperties": false
+                        },
+                        "reproducibility": {
+                            "type": "object",
+                            "properties": {
+                                "hasOfficialCode": { "type": "boolean" },
+                                "repoUrl": { "type": "string" },
+                                "notes": { "type": "string" }
+                            },
+                            "required": ["hasOfficialCode"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "required": ["name", "task", "dataset", "reportedMetrics", "method", "reproducibility"],
+                    "additionalProperties": false
+                }
+            },
+            "scaffold": {
+                "type": "object",
+                "properties": {
+                    "templateId": { "type": "string", "enum": ["python-ml-baseline", "node-eval-harness"] },
+                    "workDir": { "type": "string" },
+                    "language": { "type": "string" },
+                    "entryCommand": { "type": "string" },
+                    "vars": {
+                        "type": "object",
+                        "properties": {
+                            "project_name": { "type": "string" },
+                            "research_goal": { "type": "string" },
+                            "success_criteria": { "type": "string" },
+                            "primary_metric": { "type": "string" },
+                            "baseline_name": { "type": "string" },
+                            "dataset_name": { "type": "string" },
+                            "train_command": { "type": "string" },
+                            "eval_command": { "type": "string" },
+                            "requirements_extra": { "type": "string" },
+                            "node_eval_command": { "type": "string" }
+                        },
+                        "additionalProperties": false
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string" },
+                                "purpose": { "type": "string" }
+                            },
+                            "required": ["path", "purpose"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["templateId", "workDir", "language", "entryCommand", "vars", "files"],
+                "additionalProperties": false
+            },
+            "gitInitialized": { "type": "boolean" },
+            "initialCommitSha": { "type": "string" },
+            "conversationalTemplateId": { "type": "string", "enum": ["reproduce-paper", "beat-baseline", "ablation", "from-scratch"] }
+        },
+        "required": ["researchGoal", "successCriteria", "primaryMetric", "papers", "baselines", "scaffold", "gitInitialized", "conversationalTemplateId"],
+        "additionalProperties": false
+    })
+}
+
 fn get_browser_tools() -> Vec<Value> {
     vec![
         serde_json::json!({
@@ -256,7 +384,7 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
         }),
         serde_json::json!({
             "name": "ssh_upload_file",
-            "description": "Upload a local file or inline content to the target. Provide exactly one of localPath or content. In local mode this becomes a direct local copy; in ssh mode it uses SCP semantics.",
+            "description": "Upload a local file or inline content to the target. Provide exactly one of localPath or content (not both). In local mode this becomes a direct local copy; in ssh mode it uses SCP semantics.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -273,10 +401,6 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
                     "remoteWorkDir": { "type": "string" }
                 },
                 "required": ["remotePath"],
-                "oneOf": [
-                    { "required": ["localPath", "remotePath"] },
-                    { "required": ["content", "remotePath"] }
-                ],
                 "additionalProperties": false
             }
         }),
@@ -407,23 +531,7 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
         serde_json::json!({
             "name": "bootstrap_finalize",
             "description": "Validate and persist the final AutoResearch bootstrap plan. Returns a structured bootstrap result.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "researchGoal": { "type": "string" },
-                    "successCriteria": { "type": "string" },
-                    "primaryMetric": { "type": "string" },
-                    "secondaryMetrics": { "type": "array", "items": { "type": "string" } },
-                    "papers": { "type": "array", "items": { "type": "object" } },
-                    "baselines": { "type": "array", "items": { "type": "object" } },
-                    "scaffold": { "type": "object" },
-                    "gitInitialized": { "type": "boolean" },
-                    "initialCommitSha": { "type": "string" },
-                    "conversationalTemplateId": { "type": "string", "enum": ["reproduce-paper", "beat-baseline", "ablation", "from-scratch"] }
-                },
-                "required": ["researchGoal", "successCriteria", "primaryMetric", "papers", "baselines", "scaffold", "gitInitialized", "conversationalTemplateId"],
-                "additionalProperties": false
-            }
+            "input_schema": strict_bootstrap_finalize_schema()
         }),
         serde_json::json!({
             "name": "path_exists",
@@ -721,5 +829,21 @@ mod tests {
             "Filtering by the unknown save_plan_doc name must produce an empty tool list; \
              the model must never see a tool it cannot execute."
         );
+    }
+
+    #[test]
+    fn strict_openai_tool_schemas_avoid_one_of() {
+        let tools = get_tools(false);
+        for tool in &tools {
+            let schema = tool
+                .get("input_schema")
+                .expect("tool input_schema")
+                .to_string();
+            assert!(
+                !schema.contains("\"oneOf\"") && !schema.contains("\"anyOf\""),
+                "tool {:?} schema must not use oneOf/anyOf for OpenAI strict mode",
+                tool.get("name")
+            );
+        }
     }
 }

@@ -38,7 +38,15 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
 });
 
-import { handleToolBatchRequest, type ToolBatchExecutionDeps } from '../chatToolExecution';
+import { isPolicyToolFailureText, isToolFailureText } from '@/services/tools/toolFailureClassification';
+import {
+  handleToolBatchRequest,
+  resolveWorkspaceToolPreflight,
+  type ToolBatchExecutionDeps,
+} from '../chatToolExecution';
+import {
+  resetAllSessionToolRuntime,
+} from '../toolRuntimeState';
 import type { ChatState } from '../../../types/chat';
 import type { EngineEvent } from '../../../core/types';
 
@@ -1292,6 +1300,53 @@ describe('chatToolExecution', () => {
     });
   });
 
+  describe('resolveWorkspaceToolPreflight (pure)', () => {
+    it('blocks workspace tools when no project folder is bound', () => {
+      const result = resolveWorkspaceToolPreflight({
+        projectDir: null,
+        pipiOutputDir: '/out',
+        ensureResult: null,
+        toolNames: ['list_files', 'write_file'],
+      });
+      expect(result.workDir).toBeNull();
+      expect(result.needsWorkspaceTools).toBe(true);
+      expect(result.blockWorkspaceTools).toBe(true);
+    });
+
+    it('rejects ensureResult that equals the PiPi Output Folder', () => {
+      const result = resolveWorkspaceToolPreflight({
+        projectDir: undefined,
+        pipiOutputDir: '/out',
+        ensureResult: '/out',
+        toolNames: ['execute_command'],
+      });
+      expect(result.workDir).toBeNull();
+      expect(result.blockWorkspaceTools).toBe(true);
+    });
+
+    it('allows workspace tools when projectDir is bound', () => {
+      const result = resolveWorkspaceToolPreflight({
+        projectDir: '/repo',
+        pipiOutputDir: '/out',
+        ensureResult: null,
+        toolNames: ['list_files'],
+      });
+      expect(result.workDir).toBe('/repo');
+      expect(result.blockWorkspaceTools).toBe(false);
+    });
+
+    it('does not block non-workspace tools when unbound', () => {
+      const result = resolveWorkspaceToolPreflight({
+        projectDir: null,
+        pipiOutputDir: '/out',
+        ensureResult: null,
+        toolNames: ['AskUserQuestion'],
+      });
+      expect(result.needsWorkspaceTools).toBe(false);
+      expect(result.blockWorkspaceTools).toBe(false);
+    });
+  });
+
   // Two-folder model regression: workspace tools MUST NOT fall back
   // to the PiPi Output Folder when the Project Folder is missing.
   // The old `ensureSessionWorkDir()` fallback used to paper over the
@@ -1301,7 +1356,117 @@ describe('chatToolExecution', () => {
   // guard the fallback: if `ensureSessionWorkDir` returns the
   // session's `pipiOutputDir` we surface a hard error instead.
   describe('two-folder model — no fallback to PiPi Output Folder for tool cwd', () => {
-    it('returns a hard error for write_file when ensureSessionWorkDir lands on the PiPi Output Folder', async () => {
+    it('pre-blocks list_files when Project Folder is unbound and ensure returns null', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        partitionTools: jest.fn(() => ({ concurrent: [], serial: [] })),
+      });
+      const state = createChatState();
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].projectDir = undefined;
+      state.sessions[0].pipiOutputDir = '/out/session-1';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [{
+          id: 'tool-list',
+          name: 'list_files',
+          arguments: '{"path":"."}',
+        }],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      expect(results).toEqual([
+        expect.objectContaining({
+          id: 'tool-list',
+          toolName: 'list_files',
+          content: expect.stringMatching(/No Project Folder is bound/i),
+        }),
+      ]);
+      expect(resolved).toHaveBeenCalledWith([
+        expect.objectContaining({
+          id: 'tool-list',
+          content: expect.stringMatching(/No Project Folder is bound/i),
+        }),
+      ]);
+    });
+
+    it('blocked-only preflight batch leaves pendingToolCalls/unresolved at 0 with failed step status', async () => {
+      resetAllSessionToolRuntime();
+      const resolved = jest.fn();
+      const deps = createDeps({
+        partitionTools: jest.fn(() => ({ concurrent: [], serial: [] })),
+      });
+      const mockUi = (deps.uiStore as { getState: () => {
+        updateTaskStep: jest.Mock;
+        setTaskProgress: jest.Mock;
+      } }).getState();
+      const state = createChatState();
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].projectDir = undefined;
+      state.sessions[0].pipiOutputDir = '/out/session-1';
+      const set = jest.fn((updater: any) => {
+        const patch = typeof updater === 'function' ? updater(state) : updater;
+        Object.assign(state, patch);
+      });
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [
+          {
+            id: 'tool-list',
+            name: 'list_files',
+            arguments: '{"path":"."}',
+          },
+          {
+            id: 'tool-write',
+            name: 'write_file',
+            arguments: '{"path":"a.ts","content":"x"}',
+          },
+        ],
+        _resolveAll: resolved,
+      };
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set,
+        ensureSessionWorkDir: async () => null,
+      }, deps);
+
+      // Must not leave sticky unresolved/pending after pre-block
+      expect(state.pendingToolCalls).toBe(0);
+      expect(state.pendingToolResults).toHaveLength(2);
+      expect(state.pendingToolResults.every((r) => /No Project Folder is bound/i.test(r.result))).toBe(true);
+      // Failed steps recorded via updateTaskStep
+      expect(mockUi.updateTaskStep).toHaveBeenCalledWith('tool-list', 'failed');
+      expect(mockUi.updateTaskStep).toHaveBeenCalledWith('tool-write', 'failed');
+      // Must not re-seed full batch as pending task steps via createToolTaskSteps
+      const pendingOnlyProgress = mockUi.setTaskProgress.mock.calls.some((call) => {
+        const steps = call[0] as Array<{ id: string; status: string }>;
+        return Array.isArray(steps)
+          && steps.length >= 2
+          && steps.every((s) => s.status === 'pending')
+          && steps.some((s) => s.id === 'tool-list');
+      });
+      expect(pendingOnlyProgress).toBe(false);
+      expect(resolved).toHaveBeenCalledWith([
+        expect.objectContaining({ id: 'tool-list' }),
+        expect.objectContaining({ id: 'tool-write' }),
+      ]);
+      resetAllSessionToolRuntime();
+    });
+
+    it('returns a structured policy error for write_file when ensureSessionWorkDir lands on the PiPi Output Folder', async () => {
       const resolved = jest.fn();
       const deps = createDeps({
         partitionTools: jest.fn(() => ({
@@ -1352,11 +1517,82 @@ describe('chatToolExecution', () => {
           content: expect.stringMatching(/No Project Folder is bound/i),
         }),
       ]);
+      const blockedContent = results[0]?.content ?? '';
+      expect(isToolFailureText(blockedContent)).toBe(true);
+      expect(isPolicyToolFailureText(blockedContent)).toBe(true);
       expect(resolved).toHaveBeenCalledWith([
         expect.objectContaining({
           id: 'tool-write',
           content: expect.stringMatching(/No Project Folder is bound/i),
         }),
+      ]);
+    });
+
+    it('still executes non-workspace tools in the same batch when workspace tools are blocked', async () => {
+      const resolved = jest.fn();
+      const deps = createDeps({
+        createExecutor: () => ({
+          executeBatch: jest.fn(async () => ({
+            results: [{ id: 'tool-read', content: 'tool output', is_error: false }],
+            totalExecutionTime: 1,
+            errors: [],
+          })),
+        }),
+        partitionTools: jest.fn(() => ({
+          concurrent: [{
+            id: 'tool-read',
+            name: 'read_file',
+            arguments: { path: 'C:/absolute/path/to/file.ts' },
+          }],
+          serial: [{
+            id: 'tool-write',
+            name: 'write_file',
+            arguments: { path: 'src/foo.ts', content: 'export const x = 1;\n' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      state.sessions[0].workDir = undefined;
+      state.sessions[0].projectDir = undefined;
+      state.sessions[0].pipiOutputDir = '/home/user/.local/share/PiPi-Shrimp/chats/session-1';
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        tools: [
+          {
+            id: 'tool-write',
+            name: 'write_file',
+            arguments: '{"path":"src/foo.ts","content":"export const x = 1;\\n"}',
+          },
+          {
+            id: 'tool-read',
+            name: 'read_file',
+            arguments: '{"path":"C:/absolute/path/to/file.ts"}',
+          },
+        ],
+        _resolveAll: resolved,
+      };
+
+      const results = await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/home/user/.local/share/PiPi-Shrimp/chats/session-1',
+      }, deps);
+
+      expect(results).toHaveLength(2);
+      const writeResult = results.find((result) => result.id === 'tool-write');
+      const readResult = results.find((result) => result.id === 'tool-read');
+      expect(writeResult?.content).toMatch(/No Project Folder is bound/i);
+      expect(isToolFailureText(writeResult?.content ?? '')).toBe(true);
+      expect(readResult?.content).toBe('tool output');
+      expect(resolved).toHaveBeenCalledWith([
+        expect.objectContaining({
+          id: 'tool-write',
+          content: expect.stringMatching(/No Project Folder is bound/i),
+        }),
+        { id: 'tool-read', content: 'tool output' },
       ]);
     });
 

@@ -291,6 +291,49 @@ describe('QueryEngine context overflow fallback', () => {
     );
   });
 
+  it('surfaces an explicit user-facing error after malformed_tool_call retries are exhausted', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* malformedOnce() {
+        throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');
+      })
+      .mockImplementationOnce(async function* malformedTwice() {
+        throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');
+      })
+      .mockImplementationOnce(async function* malformedThrice() {
+        throw new Error('malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.');
+      });
+
+    const events = [];
+    for await (const event of runChatTurn(
+      'session-malformed-exhausted',
+      [{ role: 'user', content: 'use tools' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    )) {
+      events.push(event);
+    }
+
+    expect(events.slice(0, 2)).toEqual([
+      {
+        type: 'status_update',
+        message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+      },
+      {
+        type: 'status_update',
+        message: 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.',
+      },
+    ]);
+    const errorEvent = events[events.length - 1];
+    expect(errorEvent.type).toBe('error');
+    expect(errorEvent.error).toBeInstanceOf(Error);
+    expect(errorEvent.error.message).toMatch(/after 2 automatic retries/i);
+    expect(errorEvent.error.message).toMatch(/not a silent interrupt/i);
+    expect(errorEvent.error.message).toMatch(/malformed_tool_call/);
+    expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(3);
+  });
+
   it('retries twice when the model repeatedly emits text-form tool calls before recovering', async () => {
     mockInvokeRustAPIStream
       .mockImplementationOnce(async function* malformedOnce() {

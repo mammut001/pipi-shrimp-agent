@@ -55,6 +55,9 @@ function normalizeErrorKind(errorKind: string | null | undefined): ToolBudgetCat
     case 'tool_not_found':
       return 'tool_not_found';
     case 'tool_disabled':
+    case 'confirmation_required':
+    case 'dangerous_command':
+    case 'permission_denied':
       return 'tool_disabled';
     case 'argument_invalid':
       return 'argument_invalid';

@@ -71,6 +71,37 @@ describe('resolvedChatRequest', () => {
     })).toBe('https://api.example.com/v1/chat/completions');
   });
 
+  it('strips a trailing /v1 from anthropic base URLs to avoid /v1/v1/messages', () => {
+    const anthropicBase = {
+      ...minimaxConfig,
+      configId: 'cfg-anthropic',
+      name: 'Anthropic',
+      provider: 'anthropic' as const,
+      model: 'claude-sonnet-4-5',
+      apiFormat: 'anthropic' as const,
+    };
+
+    expect(buildEndpointPreview({
+      ...anthropicBase,
+      baseUrl: 'https://api.anthropic.com/v1',
+    })).toBe('https://api.anthropic.com/v1/messages');
+
+    expect(buildEndpointPreview({
+      ...anthropicBase,
+      baseUrl: 'https://api.anthropic.com/v1/',
+    })).toBe('https://api.anthropic.com/v1/messages');
+
+    expect(buildEndpointPreview({
+      ...anthropicBase,
+      baseUrl: 'https://api.anthropic.com',
+    })).toBe('https://api.anthropic.com/v1/messages');
+
+    expect(buildEndpointPreview({
+      ...anthropicBase,
+      baseUrl: 'https://proxy.example.com/anthropic/v1',
+    })).toBe('https://proxy.example.com/anthropic/v1/messages');
+  });
+
   it('passes Authorization-capable diagnostics when apiKey exists', async () => {
     mockInvokeRustAPIStream.mockImplementation(async function* stream() {
       yield { type: 'text_delta', content: 'OK' };

@@ -176,6 +176,69 @@ export function sanitizeApiKeyValue(value: string): string {
   return withoutBearer.replace(/[\s\u0000-\u001F\u007F-\u009F]/g, '');
 }
 
+/** Minimum length for a real API key after sanitize (guards paste truncation / empty). */
+export const MIN_API_KEY_LENGTH = 8;
+
+export type ApiKeyValidationResult =
+  | { ok: true; sanitized: string; length: number }
+  | { ok: false; error: string; sanitized: string; length: number };
+
+/**
+ * Local pre-network validation for Test Connection / Fetch models.
+ * Rejects empty, whitespace-only, masked placeholders, and obviously short keys.
+ */
+export function validateApiKeyForConnection(
+  rawValue: string,
+  options?: { required?: boolean; minLength?: number },
+): ApiKeyValidationResult {
+  const required = options?.required !== false;
+  const minLength = options?.minLength ?? MIN_API_KEY_LENGTH;
+  const sanitized = sanitizeApiKeyValue(rawValue);
+  const length = sanitized.length;
+
+  if (!required && length === 0) {
+    return { ok: true, sanitized, length };
+  }
+
+  if (length === 0) {
+    return {
+      ok: false,
+      error: 'API key is required. Paste your full key (empty or whitespace-only values are rejected).',
+      sanitized,
+      length,
+    };
+  }
+
+  if (looksLikeMaskedSecret(rawValue)) {
+    return {
+      ok: false,
+      error: 'API key still looks like a masked placeholder (••••). Re-paste the full secret before testing.',
+      sanitized,
+      length,
+    };
+  }
+
+  if (length < minLength) {
+    return {
+      ok: false,
+      error: `API key looks truncated (${length} characters; need at least ${minLength}). Re-paste the full key.`,
+      sanitized,
+      length,
+    };
+  }
+
+  return { ok: true, sanitized, length };
+}
+
+/** Non-secret length label for Settings UI. */
+export function formatApiKeyLengthHint(rawValue: string): string {
+  const length = sanitizeApiKeyValue(rawValue).length;
+  if (length === 0) {
+    return '0 characters';
+  }
+  return `${length} characters`;
+}
+
 export function preserveApiKeyValue(inputValue: string, existingValue?: string): string {
   if (!existingValue) {
     return sanitizeApiKeyValue(inputValue);

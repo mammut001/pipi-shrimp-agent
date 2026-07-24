@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 use tokio::fs;
 use tokio::process::Command;
@@ -65,8 +65,27 @@ struct ReportedMetric {
 #[serde(rename_all = "camelCase")]
 struct BaselineMethod {
     summary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_optional_json_map", skip_serializing_if = "Option::is_none")]
     key_hyperparams: Option<Map<String, Value>>,
+}
+
+fn deserialize_optional_json_map<'de, D>(
+    deserializer: D,
+) -> Result<Option<Map<String, Value>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(Value::Object(map)) => Ok(Some(map)),
+        Some(Value::String(raw)) => serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected object or JSON string for keyHyperparams, got {other}"
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

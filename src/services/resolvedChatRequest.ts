@@ -96,13 +96,21 @@ function getEndpointHost(endpoint: string): string | null {
 }
 
 export function buildEndpointPreview(config: ResolvedAgentConfig): string {
-  const base = sanitizeEndpoint(config.baseUrl);
+  let base = sanitizeEndpoint(config.baseUrl);
   const suffix = config.apiFormat === 'anthropic'
     ? '/v1/messages'
     : '/chat/completions';
 
   if (!base) {
     return suffix;
+  }
+
+  // The Anthropic endpoint is always <host>/v1/messages. If the base URL
+  // already carries a trailing "/v1" (the conventional Anthropic default),
+  // strip it so the preview does not show a doubled "/v1/v1/messages" path.
+  // This mirrors the Rust helper `build_anthropic_url`.
+  if (config.apiFormat === 'anthropic' && base.endsWith('/v1')) {
+    base = base.slice(0, -3);
   }
 
   return base.endsWith(suffix)

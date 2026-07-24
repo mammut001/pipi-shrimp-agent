@@ -55,7 +55,11 @@ function isDeepSeekReasoningModel(modelLower: string): boolean {
 }
 
 function isMiniMaxReasoningModel(modelLower: string): boolean {
-  return /minimax-m[3-9]/i.test(modelLower) || modelLower.includes('reasoning');
+  // MiniMax currently ships one reasoning model: MiniMax-M3 (adaptive thinking).
+  // M2.x models are non-reasoning. Keep this in sync with the Rust helper
+  // `minimax_model_is_reasoning` in src-tauri/src/claude/provider.rs — do not
+  // speculate about unreleased model numbers (M4/M5/...).
+  return modelLower.includes('minimax-m3') || modelLower.includes('reasoning');
 }
 
 const PROVIDER_CAPABILITIES: Record<ProviderCapabilityId, ProviderCapability> = {
