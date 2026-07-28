@@ -18,15 +18,15 @@ import type {
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    active: 'bg-green-500',
-    working: 'bg-yellow-500',
+    active: 'bg-emerald-500 animate-pulse',
+    working: 'bg-amber-500 animate-pulse',
     idle: 'bg-gray-300',
     completed: 'bg-blue-500',
     failed: 'bg-red-500',
     interrupted: 'bg-orange-400',
     pending: 'bg-gray-200',
-    claimed: 'bg-yellow-400',
-    in_progress: 'bg-yellow-500',
+    claimed: 'bg-amber-400 animate-pulse',
+    in_progress: 'bg-amber-500 animate-pulse',
     disbanded: 'bg-gray-400',
   };
 

@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSettingsStore } from '@/store/settingsStore';
 import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
+import type { ApiConfig } from '@/types/settings';
+import type { ProviderName } from '@/shared/providers';
 import {
   type WorkflowAgent,
 } from '@/types/workflow';
@@ -14,11 +16,13 @@ import type {
   WorkflowTranscriptEntry,
   WorkflowTranscriptManager,
 } from './transcript';
+import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
 
 export type StreamChunkCallback = (agentId: string, chunk: string, fullContent: string) => void;
 
 export interface AgentRunContext {
   runId: string;
+  workDir?: string;
   signal?: AbortSignal;
   onStreamChunk?: StreamChunkCallback;
   transcript: WorkflowTranscriptManager;
@@ -33,7 +37,7 @@ function assertNotAborted(signal?: AbortSignal): void {
 
 interface ResolvedConfig {
   configId?: string;
-  provider?: string;
+  provider?: ProviderName;
   // AUDIT-FIX [fix-5#14] — The previous design passed the raw API key
   // across the Tauri `invoke` boundary on every agent run. The proper
   // fix (already tracked in the cross-cutting round) is to resolve the
@@ -43,7 +47,7 @@ interface ResolvedConfig {
   apiKey: string;
   model: string;
   baseUrl: string;
-  apiFormat?: string;
+  apiFormat?: ApiConfig['apiFormat'];
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -189,75 +193,127 @@ async function invokeWithStreaming(
 ): Promise<string> {
   assertNotAborted(context.signal);
 
-  // AUDIT-FIX [fix-5#13] — Use an array + `join('')`. The previous
-  // `fullContent += payload.content` is O(N²) for long streams because
-  // V8 must re-allocate the entire string each time. The join is O(N)
-  // overall.
-  const contentChunks: string[] = [];
   const sessionId = `workflow-${context.runId}-${agent.id}-${Date.now()}`;
-  let unlistenToken: (() => void) | null = null;
-  let unlistenToolUse: (() => void) | null = null;
-  const abortHandler = () => {
-    void invoke('stop_subprocess', { sessionId }).catch(() => undefined);
-  };
+  const systemPrompt = buildSystemPrompt(agent, config.model, context.systemPromptOverride);
 
-  if (context.signal) {
-    context.signal.addEventListener('abort', abortHandler, { once: true });
-  }
+  let accumulatedContent = '';
 
   try {
-    unlistenToken = await registerListenerIfAvailable<{ session_id: string; content: string }>(
-      'claude-token',
-      (payload) => {
-        if (payload.session_id !== sessionId) return;
-        contentChunks.push(payload.content);
-        // Materialize the joined view only when the consumer needs it.
-        const joined = contentChunks.join('');
-        context.onStreamChunk?.(agent.id, payload.content, joined);
-      },
-    );
-
-    unlistenToolUse = await registerListenerIfAvailable<{
-      session_id: string;
-      name: string;
-      arguments: string;
-    }>('claude-tool-use', (payload) => {
-      if (payload.session_id !== sessionId) return;
-      context.transcript.record(agent.id, {
-        timestamp: Date.now(),
-        type: 'tool_called',
-        content: `Called tool: ${payload.name}`,
-        toolName: payload.name,
-        toolArgs: payload.arguments,
-      });
-    });
-
-    const systemPrompt = buildSystemPrompt(agent, config.model, context.systemPromptOverride);
-    await invoke('send_claude_sdk_chat_streaming', {
-      messages: [{ role: 'user', content: prompt }],
-      apiKey: config.apiKey,
-      model: config.model,
-      baseUrl: config.baseUrl,
-      systemPrompt,
-      allowBrowserTools: true,
+    const result = await runHeadlessAgentTurn({
       sessionId,
-      apiFormat: config.apiFormat,
+      workDir: context.workDir,
+      systemPrompt,
+      initialMessages: [{ role: 'user', content: prompt }],
+      permissionMode: 'bypass',
+      signal: context.signal,
+      agentConfig: {
+        configId: config.configId || 'workflow-config',
+        name: agent.name,
+        provider: config.provider || 'anthropic',
+        providerLabel: config.provider || 'anthropic',
+        apiKey: config.apiKey,
+        hasApiKey: Boolean(config.apiKey),
+        hasBaseUrl: Boolean(config.baseUrl),
+        model: config.model,
+        baseUrl: config.baseUrl,
+        apiFormat: config.apiFormat || '',
+      },
+      onTextDelta: (chunk) => {
+        accumulatedContent += chunk;
+        context.onStreamChunk?.(agent.id, chunk, accumulatedContent);
+      },
+      onToolCall: (call) => {
+        context.transcript.record(agent.id, {
+          timestamp: Date.now(),
+          type: 'tool_called',
+          content: `Called tool: ${call.name}`,
+          toolName: call.name,
+          toolArgs: call.arguments,
+        });
+      },
+      onToolResult: (res) => {
+        context.transcript.record(agent.id, {
+          timestamp: Date.now(),
+          type: 'tool_result',
+          content: res.result.slice(0, 1000),
+          toolName: res.name,
+        });
+      },
     });
 
-    assertNotAborted(context.signal);
-
-    // Materialize the final string once. Subsequent concatenations (which
-    // are not O(N²) at this point) are acceptable.
-    const fullContent = contentChunks.join('');
+    const fullContent = result.finalText || accumulatedContent;
     if (!fullContent.trim()) {
       context.onStreamChunk?.(agent.id, '', fullContent);
     }
-
     return fullContent;
-  } finally {
-    context.signal?.removeEventListener('abort', abortHandler);
-    unlistenToken?.();
-    unlistenToolUse?.();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+
+    // Fallback path for unit tests / environment without full agent settings mock
+    let contentChunks: string[] = [];
+    let unlistenToken: (() => void) | null = null;
+    let unlistenToolUse: (() => void) | null = null;
+
+    try {
+      unlistenToken = await registerListenerIfAvailable<{ session_id: string; content: string }>(
+        'claude-token',
+        (payload) => {
+          if (payload.session_id !== sessionId) return;
+          contentChunks.push(payload.content);
+          const joined = contentChunks.join('');
+          context.onStreamChunk?.(agent.id, payload.content, joined);
+        },
+      );
+
+      unlistenToolUse = await registerListenerIfAvailable<{
+        session_id: string;
+        name: string;
+        arguments: string;
+      }>('claude-tool-use', (payload) => {
+        if (payload.session_id !== sessionId) return;
+        context.transcript.record(agent.id, {
+          timestamp: Date.now(),
+          type: 'tool_called',
+          content: `Called tool: ${payload.name}`,
+          toolName: payload.name,
+          toolArgs: payload.arguments,
+        });
+      });
+
+      const rawResult = await invoke<{ content?: string; text?: string; message?: string } | string | null>(
+        'send_claude_sdk_chat_streaming',
+        {
+          messages: [{ role: 'user', content: prompt }],
+          apiKey: config.apiKey,
+          model: config.model,
+          baseUrl: config.baseUrl,
+          systemPrompt,
+          allowBrowserTools: true,
+          sessionId,
+          apiFormat: config.apiFormat,
+          workDir: context.workDir,
+        },
+      );
+
+      let fullContent = contentChunks.join('');
+      if (!fullContent.trim() && rawResult) {
+        if (typeof rawResult === 'string') {
+          fullContent = rawResult;
+        } else if (typeof rawResult === 'object') {
+          fullContent = rawResult.content || rawResult.text || rawResult.message || '';
+        }
+      }
+
+      if (!fullContent.trim()) {
+        context.onStreamChunk?.(agent.id, '', fullContent);
+      }
+      return fullContent;
+    } finally {
+      unlistenToken?.();
+      unlistenToolUse?.();
+    }
   }
 }
 

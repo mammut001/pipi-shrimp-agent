@@ -411,7 +411,16 @@ pub async fn browser_get_text(
 // ============= CDP Connector UI Commands =============
 
 async fn chrome_debug_port_ready() -> bool {
-    reqwest::get("http://127.0.0.1:9222/json/version")
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client
+        .get("http://127.0.0.1:9222/json/version")
+        .send()
         .await
         .is_ok()
 }
@@ -537,10 +546,11 @@ async fn ensure_chrome_debug_process(timeout: Duration) -> Result<ChromeDebugLau
         }
     }
 
-    // After spawning Chrome, poll for the port to become ready
+    // After spawning Chrome, poll for the port to become ready (max 8s poll to prevent main loop latency)
     let start_time = std::time::Instant::now();
+    let poll_timeout = std::time::Duration::from_secs(8).min(timeout);
     while !chrome_debug_port_ready().await {
-        if start_time.elapsed() >= timeout {
+        if start_time.elapsed() >= poll_timeout {
             return Err("启动 Chrome 成功，但调试端口未能就绪，连接超时。请确认未占用 9222 端口，或尝试手动启动。".to_string());
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;

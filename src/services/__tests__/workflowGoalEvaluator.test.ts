@@ -107,4 +107,22 @@ describe('workflowGoalEvaluator', () => {
     expect(result.reasoning).toContain('回退到规则判定');
     expect(result.missingItems.length).toBeGreaterThan(0);
   });
+
+  it('rule evaluator rejects lazy planning stubs when no real execution occurred', () => {
+    const agents = [createAgent('writer', 'writer'), createAgent('developer', 'developer')];
+    const outputs = new Map([
+      ['writer', 'doc [[WORKFLOW:PASS]]'],
+      ['developer', 'Let me first check the current workspace, then implement the full pipeline.'],
+    ]);
+
+    const result = evaluateGoalWithRules({
+      instance: createInstance({ agents }),
+      agents,
+      agentOutputs: outputs,
+      iteration: 1,
+    });
+
+    expect(result.reached).toBe(false);
+    expect(result.missingItems).toContain('部分 Agent 仅输出了计划说明而未产生真实执行与产物。');
+  });
 });

@@ -428,6 +428,7 @@ async fn run_json_bootstrap_inference(
         provider.provider_capabilities.clone(),
         Some(json!({ "type": "json_object" })),
         None,
+        None,
     )
     .await
     .map_err(|error| AppError::InternalError(format!("Bootstrap inference failed: {error}")))?;

@@ -48,6 +48,49 @@ import { workflowRunFileService } from '@/services/workflow/runFileService';
 
 const MAX_TOTAL_STEPS = 50;
 
+export function extractCodeBlockArtifacts(text: string): Array<{ relativePath: string; content: string }> {
+  const artifacts: Array<{ relativePath: string; content: string }> = [];
+  const seenPaths = new Set<string>();
+
+  // Pattern 1: ```lang:filepath or ```lang filepath or ```filepath
+  // Example: ```python 02_scaffold.py or ```json:02_scaffold.json
+  const codeBlockRegex = /```[ \t]*([a-zA-Z0-9_+\-#]+)?[: \t]+([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[ \t]*\r?\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    const relativePath = match[2].trim();
+    const content = match[3];
+    if (relativePath && !seenPaths.has(relativePath) && !relativePath.startsWith('http') && !relativePath.includes('://')) {
+      seenPaths.add(relativePath);
+      artifacts.push({ relativePath, content });
+    }
+  }
+
+  // Pattern 2: ```lang filename="filepath" or filename=filepath
+  const filenameAttrRegex = /```[a-zA-Z0-9_+\-#]*[ \t]+filename=["']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)["']?[ \t]*\r?\n([\s\S]*?)```/g;
+  while ((match = filenameAttrRegex.exec(text)) !== null) {
+    const relativePath = match[1].trim();
+    const content = match[2];
+    if (relativePath && !seenPaths.has(relativePath)) {
+      seenPaths.add(relativePath);
+      artifacts.push({ relativePath, content });
+    }
+  }
+
+  // Pattern 3: Header followed by code block: ### 02_scaffold.py or **02_scaffold.py**
+  const headerBlockRegex = /(?:###|\*\*|File:)[ \t]*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?[ \t]*\r?\n+```[a-zA-Z0-9_+\-#]*[ \t]*\r?\n([\s\S]*?)```/g;
+  while ((match = headerBlockRegex.exec(text)) !== null) {
+    const relativePath = match[1].trim();
+    const content = match[2];
+    if (relativePath && !seenPaths.has(relativePath)) {
+      seenPaths.add(relativePath);
+      artifacts.push({ relativePath, content });
+    }
+  }
+
+  return artifacts;
+}
+
 interface WorkflowEngineDeps {
   createRunDirectory: (runId: string) => Promise<string>;
   writeFile?: (path: string, content: string) => Promise<void>;
@@ -296,6 +339,7 @@ export class WorkflowEngine {
       prompt,
       {
         runId,
+        workDir: this.workingDirectory,
         signal: this.abortController?.signal,
         onStreamChunk: options?.disableStreaming ? undefined : ((agentId, chunk, fullContent) => {
           if (!this.shouldAcceptRunMutation(runId)) return;
@@ -320,6 +364,18 @@ export class WorkflowEngine {
     }
 
     return null;
+  }
+
+  private async persistOutputCodeArtifacts(output: string): Promise<void> {
+    if (!this.workingDirectory) return;
+    const artifacts = extractCodeBlockArtifacts(output);
+    for (const artifact of artifacts) {
+      try {
+        await this.writeRunFile(artifact.relativePath, artifact.content);
+      } catch (err) {
+        console.warn(`Failed to persist output code artifact ${artifact.relativePath}:`, err);
+      }
+    }
   }
 
   private async saveOutputToFile(agent: WorkflowAgent, artifactBaseName: string, output: string, runId: string): Promise<string | null> {
@@ -369,20 +425,37 @@ ${output}
     await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'running', runId);
 
     try {
-      const result = await this.deps.evaluateGoal(
-        {
-          instance: evaluationInstance,
-          agents: snapshot.agents,
-          agentOutputs: this.agentOutputs,
-          iteration,
-        },
-        {
-          runAgent: (agent, prompt, options) => this.executeAgent(agent, prompt, {
-            disableStreaming: true,
-            systemPromptOverride: options?.systemPromptOverride,
-          }),
-        },
-      );
+      const evaluateGoalWithTimeout = async (): Promise<GoalEvaluationResult> => {
+        const GOAL_EVAL_TIMEOUT_MS = 120_000;
+        const goalEvalPromise = this.deps.evaluateGoal(
+          {
+            instance: evaluationInstance,
+            agents: snapshot.agents,
+            agentOutputs: this.agentOutputs,
+            iteration,
+          },
+          {
+            runAgent: (agent, prompt, options) => this.executeAgent(agent, prompt, {
+              disableStreaming: true,
+              systemPromptOverride: options?.systemPromptOverride,
+            }),
+          },
+        );
+
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`Goal evaluation timed out after ${GOAL_EVAL_TIMEOUT_MS / 1000}s`)),
+            GOAL_EVAL_TIMEOUT_MS,
+          );
+          if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+            (timer as unknown as { unref: () => void }).unref();
+          }
+        });
+
+        return Promise.race([goalEvalPromise, timeoutPromise]);
+      };
+
+      const result = await evaluateGoalWithTimeout();
 
       await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'completed', runId);
       return result;
@@ -451,11 +524,18 @@ ${output}
     });
 
     try {
+      const agentStart = this.deps.now();
       const output = await this.executeAgent(agent, prompt);
+      const agentDuration = this.deps.now() - agentStart;
+      if (agentDuration > 30_000) {
+        // eslint-disable-next-line no-console
+        console.warn(`[workflow] Agent "${agent.name}" (${agent.id}) took ${agentDuration}ms`);
+      }
       if (!this.shouldAcceptRunMutation(runId)) {
         return;
       }
 
+      await this.persistOutputCodeArtifacts(output);
       const artifactBaseName = buildAgentArtifactBaseName(agent);
       this.agentOutputs.set(agent.id, output);
       const outputFilePath = await this.saveOutputToFile(agent, artifactBaseName, output, runId);

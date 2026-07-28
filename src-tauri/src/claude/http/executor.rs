@@ -77,7 +77,9 @@ pub async fn send_request_impl(
     provider_capabilities: Option<super::ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
     allowed_tools: Option<&[String]>,
+    work_dir: Option<&str>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
+    let _ = work_dir;
     let config = resolve_provider_config(
         api_key,
         model,
@@ -287,6 +289,7 @@ pub async fn send_streaming_request(
     provider_capabilities: Option<super::ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
     allowed_tools: Option<&[String]>,
+    work_dir: Option<&str>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     let cancel_token = CancellationToken::new();
     {
@@ -336,6 +339,7 @@ pub async fn send_streaming_request(
             provider_capabilities,
             response_format,
             allowed_tools,
+            work_dir,
         ) => response,
     };
 

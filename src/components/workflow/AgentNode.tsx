@@ -11,7 +11,7 @@
  * - Status indicator with animation
  */
 
-import React, { memo, useState, useRef, useEffect } from 'react';
+import React, { memo, useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import type { WorkflowAgent, RouteCondition } from '@/types/workflow';
@@ -100,13 +100,33 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
   };
 
   // Group models by provider
-  const modelsByProvider = configuredProviders.map((provider) => {
-    const fetchedModels = availableModels[provider];
-    const models = fetchedModels && fetchedModels.length > 0 
-      ? fetchedModels 
-      : getProviderDefaultModelIds(provider);
-    return [provider, models] as [string, string[]];
-  }).filter(([, models]) => models.length > 0);
+  const modelsByProvider: Array<[string, string[]]> = useMemo(() => {
+    return configuredProviders.map((provider) => {
+      const modelSet = new Set<string>();
+
+      // 1. Add model ID configured directly on user's API configs for this provider
+      apiConfigs
+        .filter((c) => c.provider === provider)
+        .forEach((c) => {
+          if (c.model?.trim()) modelSet.add(c.model.trim());
+        });
+
+      // 2. Add remote fetched availableModels
+      const fetchedModels = availableModels[provider];
+      if (fetchedModels && fetchedModels.length > 0) {
+        fetchedModels.forEach((m) => {
+          if (m?.trim()) modelSet.add(m.trim());
+        });
+      }
+
+      // 3. Add default models for this provider
+      getProviderDefaultModelIds(provider).forEach((m) => {
+        if (m?.trim()) modelSet.add(m.trim());
+      });
+
+      return [provider, Array.from(modelSet)] as [string, string[]];
+    }).filter(([, models]) => models.length > 0);
+  }, [configuredProviders, apiConfigs, availableModels]);
 
   const handleSelectModel = (provider: string, modelId: string) => {
     onUpdateModel(agent.id, provider as 'anthropic' | 'openai' | 'minimax' | 'anthropic-compatible' | 'openai-compatible', modelId);
@@ -371,6 +391,19 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {currentProvider && (
+                    <button
+                      onClick={() => {
+                        onUpdateModel(agent.id, undefined as any, '');
+                        setShowModelSelector(false);
+                        setExpandedProvider(null);
+                      }}
+                      className="w-full text-left px-2 py-1.5 text-[10px] text-blue-600 hover:bg-blue-50 border-b border-gray-100 font-medium flex items-center gap-1"
+                    >
+                      <span>↺</span>
+                      <span>{t('workflow.usingGlobalConfig')}</span>
+                    </button>
+                  )}
                   {modelsByProvider.length === 0 ? (
                     <div className="px-3 py-2 text-[10px] text-gray-500 text-center">
                       {configuredProviders.length === 0 

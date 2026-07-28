@@ -640,29 +640,28 @@ export const BrowserPanel: React.FC = () => {
           </div>
         )}
 
-        {showAdvanced && (
-          <div className="mt-3">
-            <div className="mb-1.5 text-[10px] font-medium text-gray-500 uppercase tracking-wide">
-              {t('browser.quickSites')}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {QUICK_SITES.map((site) => (
-                <button
-                  key={site.url}
-                  onClick={() => void handleQuickSite(site.url)}
-                  className={`px-2 py-1 text-[10px] rounded-md border transition-colors flex items-center gap-1 ${
-                    currentUrl === site.url
-                      ? 'bg-blue-100 border-blue-300 text-blue-700'
-                      : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
-                  }`}
-                >
-                  <span>{site.icon}</span>
-                  <span>{t(site.nameKey as Parameters<typeof t>[0])}</span>
-                </button>
-              ))}
-            </div>
+        <div className="mt-3">
+          <div className="mb-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+            {t('browser.quickSites')}
           </div>
-        )}
+          <div className="flex flex-wrap gap-1.5">
+            {QUICK_SITES.map((site) => (
+              <button
+                type="button"
+                key={site.url}
+                onClick={() => void handleQuickSite(site.url)}
+                className={`px-2 py-1 text-[10px] font-medium rounded-lg border transition-all flex items-center gap-1 ${
+                  currentUrl === site.url
+                    ? 'bg-blue-50 border-blue-300 text-blue-700 shadow-sm'
+                    : 'bg-white border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600 hover:shadow-sm'
+                }`}
+              >
+                <span>{site.icon}</span>
+                <span>{t(site.nameKey as Parameters<typeof t>[0])}</span>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="px-4 py-4 border-b border-gray-200 bg-white">

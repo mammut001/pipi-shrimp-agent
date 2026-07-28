@@ -100,7 +100,7 @@ function shouldInjectOpenAIToolProtocol(
   }
 
   // Empty allowedTools is equivalent to "no tools this turn" — don't
-  // inject the OpenAI "MUST invoke tools" protocol, otherwise the
+  // inject the tool calling protocol, otherwise the
   // model would loop back into tool calls we already told it to skip.
   if (options?.allowedTools && options.allowedTools.length === 0) {
     return false;
@@ -112,7 +112,7 @@ function shouldInjectOpenAIToolProtocol(
     model: config.model,
   });
 
-  return capabilities.supportsToolCalls && capabilities.supportsToolOpenAI;
+  return capabilities.supportsToolCalls;
 }
 
 function buildEffectiveSystemPrompt(
@@ -379,7 +379,7 @@ export async function* runChatTurn(
       // output planning text ("我先读取...", "Let me explore...") instead of calling tools.
       if (
         !effectiveNoTools
-        && looksLikeLazyToolCallResponse(assistantMessageContent, round, injectOpenAIToolProtocol)
+        && looksLikeLazyToolCallResponse(assistantMessageContent, round, !effectiveNoTools)
       ) {
         // Don't save the lazy response — pop it and nudge the model
         currentMessages.pop();
@@ -445,15 +445,28 @@ export async function* runChatTurn(
         (typeof process !== 'undefined' && process.env?.PIPI_TOOL_BATCH_TIMEOUT_MS) || '300000',
         10,
       ) || 300_000;
-      const allContent = await Promise.race([
-        Promise.all(promises),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error(`Tool batch timed out after ${TOOL_BATCH_TIMEOUT_MS / 1000}s`)),
-            TOOL_BATCH_TIMEOUT_MS,
-          );
-        }),
-      ]);
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Tool batch timed out after ${TOOL_BATCH_TIMEOUT_MS / 1000}s`)),
+          TOOL_BATCH_TIMEOUT_MS,
+        );
+        if (typeof timeoutId === 'object' && timeoutId !== null && 'unref' in timeoutId) {
+          (timeoutId as unknown as { unref: () => void }).unref();
+        }
+      });
+
+      let allContent: string[];
+      try {
+        allContent = await Promise.race([
+          Promise.all(promises),
+          timeoutPromise,
+        ]);
+      } finally {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+      }
       toolBudgetSummary = appendToolBudgetEntries(
         toolBudgetSummary,
         pendingToolCalls.map((tool, index) => ({

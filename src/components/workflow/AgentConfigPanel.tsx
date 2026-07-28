@@ -134,11 +134,32 @@ export function AgentConfigPanel({
   const roleHint = getRoleModelHint(formData.role);
   const selectedConfig = apiConfigs.find((config) => config.id === formData.configId) || null;
   const effectiveProvider = selectedConfig?.provider || formData.provider;
-  const modelOptions = effectiveProvider
-    ? availableModels[effectiveProvider] && availableModels[effectiveProvider].length > 0
-      ? availableModels[effectiveProvider]
-      : getProviderDefaultModelIds(effectiveProvider)
-    : [];
+  const modelOptions = useMemo(() => {
+    if (!effectiveProvider) return [];
+    const modelSet = new Set<string>();
+
+    if (selectedConfig?.model?.trim()) {
+      modelSet.add(selectedConfig.model.trim());
+    }
+    apiConfigs
+      .filter((c) => c.provider === effectiveProvider)
+      .forEach((c) => {
+        if (c.model?.trim()) modelSet.add(c.model.trim());
+      });
+
+    const fetched = availableModels[effectiveProvider];
+    if (fetched && fetched.length > 0) {
+      fetched.forEach((m) => {
+        if (m?.trim()) modelSet.add(m.trim());
+      });
+    }
+
+    getProviderDefaultModelIds(effectiveProvider).forEach((m) => {
+      if (m?.trim()) modelSet.add(m.trim());
+    });
+
+    return Array.from(modelSet);
+  }, [effectiveProvider, selectedConfig, apiConfigs, availableModels]);
   const otherAgents = allAgents.filter((item) => item.id !== agentId);
   const connections = selectAgentIncomingConnections(currentInstance, agentId);
   const outputRoutes = selectAgentOutputRoutes(currentInstance, agentId);

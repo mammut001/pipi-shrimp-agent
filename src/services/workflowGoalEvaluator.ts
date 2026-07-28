@@ -95,20 +95,30 @@ function extractMissingItemsFromOutputs(outputs: Map<string, string>): string[] 
   return Array.from(items);
 }
 
+const LAZY_STUB_REGEX = /(?:let me|i'll|i will|i am going to|first, i|我先|让我|我来|我会|首先).*(?:check|read|explore|look|examine|analyze|查看|了解|检查|探索|阅读)/i;
+
 export function evaluateGoalWithRules(
   context: GoalEvaluationContext,
 ): GoalEvaluationResult {
   const outputs = Array.from(context.agentOutputs.values());
-  const allAgentsCompleted = context.agents
-    .filter((agent) => agent.role !== 'goal-evaluator')
-    .every((agent) => Boolean(context.agentOutputs.get(agent.id)));
+  const executableAgents = context.agents.filter((agent) => agent.role !== 'goal-evaluator');
+  const allAgentsCompleted = executableAgents.every((agent) => Boolean(context.agentOutputs.get(agent.id)));
 
   const hasFailureMarker = outputs.some((output) => (
     parseWorkflowMarkers(output).some((marker) => marker !== 'PASS')
   ));
 
+  const hasLazyOutput = Array.from(context.agentOutputs.entries()).some(([_id, output]) => {
+    const trimmed = output.trim();
+    return trimmed.length < 300 && LAZY_STUB_REGEX.test(trimmed);
+  });
+
   const missingItems = extractMissingItemsFromOutputs(context.agentOutputs);
-  const reached = allAgentsCompleted && !hasFailureMarker;
+  if (hasLazyOutput) {
+    missingItems.push('部分 Agent 仅输出了计划说明而未产生真实执行与产物。');
+  }
+
+  const reached = allAgentsCompleted && !hasFailureMarker && !hasLazyOutput;
 
   return {
     iteration: context.iteration,
@@ -117,6 +127,8 @@ export function evaluateGoalWithRules(
     missingItems: reached ? [] : missingItems,
     reasoning: reached
       ? '所有 Agent 已完成且未检测到未达成目标的失败标记。'
+      : hasLazyOutput
+      ? '检测到部分 Agent 仅给出计划口头说明，尚未产生实际执行与代码产物。'
       : '检测到未达成目标的显式标记，或仍有 Agent 输出提示需要继续跟进。',
     timestamp: Date.now(),
   };

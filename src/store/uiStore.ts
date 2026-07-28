@@ -288,16 +288,20 @@ export const useUIStore = create<UIState>((set) => ({
     };
 
     set((state) => ({
-      notifications: [...state.notifications, entry],
+      notifications: [...state.notifications, entry].slice(-5),
       notificationHistory: [entry, ...state.notificationHistory].slice(0, NOTIFICATION_HISTORY_LIMIT),
     }));
 
     // Auto-remove notification after timeout
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       set((state) => ({
         notifications: state.notifications.filter((n) => n.id !== id),
       }));
     }, NOTIFICATION_TIMEOUT);
+
+    if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+      (timer as unknown as { unref: () => void }).unref();
+    }
   },
 
   /**
@@ -328,7 +332,7 @@ export const useUIStore = create<UIState>((set) => ({
   toggleRightPanel: () => set((state) => ({ rightPanelVisible: !state.rightPanelVisible })),
   setAgentInstructions: (agentInstructions) => {
     set({ agentInstructions });
-    localStorage.setItem(AGENT_INSTRUCTIONS_STORAGE_KEY, agentInstructions);
+    safeLocalStorageSet(AGENT_INSTRUCTIONS_STORAGE_KEY, agentInstructions);
   },
 
   // Active skill action

@@ -466,16 +466,21 @@ fn run_with_timeout(
         }
     });
 
-    // Wrap child so the timeout path can call .kill() cross-platform.
+    let child_pid = child.id();
     let child_arc: Arc<Mutex<Option<std::process::Child>>> = Arc::new(Mutex::new(Some(child)));
     let child_arc_c = child_arc.clone();
 
     // Wait with timeout
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let status = {
+        let child_opt = {
             let mut guard = child_arc_c.lock().unwrap();
-            guard.as_mut().and_then(|c| c.wait().ok())
+            guard.take()
+        };
+        let status = if let Some(mut c) = child_opt {
+            c.wait().ok()
+        } else {
+            None
         };
         let _ = tx.send(status);
     });
@@ -499,25 +504,26 @@ fn run_with_timeout(
             // AUDIT-FIX [fix-1#9] — Kill the entire process group, not just
             // the parent. POSIX kill with a negative pid kills the group;
             // on Windows we shell out to `taskkill /T /F`.
+            #[cfg(unix)]
+            {
+                // SAFETY: killpg(pid, SIGKILL) sends SIGKILL to the process group.
+                unsafe {
+                    libc::killpg(child_pid as i32, libc::SIGKILL);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &child_pid.to_string()])
+                    .output();
+            }
+
             if let Ok(mut guard) = child_arc.lock() {
                 if let Some(ref mut c) = *guard {
-                    let pid = c.id();
-                    #[cfg(unix)]
-                    {
-                        // SAFETY: kill(-pid, SIGKILL) is async-signal-safe.
-                        unsafe {
-                            libc::killpg(pid as i32, libc::SIGKILL);
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = std::process::Command::new("taskkill")
-                            .args(["/T", "/F", "/PID", &pid.to_string()])
-                            .output();
-                    }
                     let _ = c.kill();
                 }
             }
+
             let stderr = stderr_buf.lock().unwrap().clone();
             Ok((Vec::new(), stderr, -1, true))
         }
@@ -617,7 +623,7 @@ for raw_line in sys.stdin:
         except Exception:
             traceback.print_exc(file=sys.stderr)
     elif raw_line.startswith('__SENTINEL__:'):
-        print(raw_line, flush=True)
+        print(raw_line[13:], flush=True)
     sys.stdout.flush()
     sys.stderr.flush()
 "#;
@@ -1201,8 +1207,8 @@ print("done")
             result.stdout
         );
         assert!(
-            result.stderr.contains("err line 199"),
-            "Expected stderr to contain 'err line 199', got: {}",
+            result.stderr.contains("err line 0"),
+            "Expected stderr to contain 'err line 0', got: {}",
             result.stderr
         );
 

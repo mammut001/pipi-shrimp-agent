@@ -137,7 +137,8 @@ function getEndpointHost(baseUrl: string): string | null {
 
 export function getAgentAdapterName(config: ResolvedAgentConfig): string {
   if (config.provider.endsWith('compatible')) {
-    return `${config.apiFormat === 'anthropic' ? 'anthropic' : 'openai'}-compatible`;
+    const effectiveFormat = config.apiFormat || (config.provider === 'anthropic-compatible' ? 'anthropic' : 'openai');
+    return `${effectiveFormat}-compatible`;
   }
 
   const capability = getCapability(config.provider);

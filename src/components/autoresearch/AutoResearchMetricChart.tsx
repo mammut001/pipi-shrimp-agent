@@ -182,10 +182,10 @@ export function AutoResearchMetricChart({
         <rect x={padding.left} y={padding.top} width={chartWidth - padding.left - padding.right} height={chartHeight - padding.top - padding.bottom} rx="10" fill={theme.plotBg} />
         <line x1={padding.left} y1={padding.top} x2={padding.left} y2={chartHeight - padding.bottom} stroke={theme.axisLine} />
         <line x1={padding.left} y1={chartHeight - padding.bottom} x2={chartWidth - padding.right} y2={chartHeight - padding.bottom} stroke={theme.axisLine} />
-        {[minValue, (minValue + maxValue) / 2, maxValue].map((value) => {
+        {[minValue, (minValue + maxValue) / 2, maxValue].map((value, idx) => {
           const y = yForValue(value, minValue, maxValue);
           return (
-            <g key={value}>
+            <g key={`y-grid-${value}-${idx}`}>
               <line x1={padding.left} y1={y} x2={chartWidth - padding.right} y2={y} stroke={theme.gridLine} />
               <text x={padding.left - 10} y={y + 4} textAnchor="end" fill={theme.axisText} className="text-[11px]">
                 {formatMetricValue(value)}

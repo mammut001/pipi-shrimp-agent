@@ -267,9 +267,27 @@ export function AutoResearchDocumentReport({
       onBack={onBack}
       onOpen={onOpen}
       openLabel={t('autoresearch.detail.open')}
-      onClose={onClose}
-      headerActions={headerActions}
-      className={className}
+      headerActions={(
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleCopy(document.markdown)}
+            className="rounded-xl border border-slate-200 bg-white/90 px-3 py-1.5 text-[12px] font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:border-slate-300"
+          >
+            Copy Report
+          </button>
+          {displayedLiveOutput && (
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="rounded-xl border border-slate-200 bg-white/90 px-3 py-1.5 text-[12px] font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:border-slate-300"
+            >
+              Download Live Log
+            </button>
+          )}
+          {headerActions}
+        </div>
+      )}
       sidebar={(
         <DocumentMetadataSidebar
           createdAt={document.createdAt}

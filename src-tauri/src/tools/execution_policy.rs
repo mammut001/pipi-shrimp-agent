@@ -434,7 +434,10 @@ fn evaluate_command_policy(
     if is_bypass
         && matches!(
             req.source,
-            ToolExecutionSource::AssistantToolCall | ToolExecutionSource::AutoresearchPhase
+            ToolExecutionSource::AssistantToolCall
+                | ToolExecutionSource::AutoresearchPhase
+                | ToolExecutionSource::HeadlessAgent
+                | ToolExecutionSource::WorkflowAgent
         )
     {
         return Ok(allow(None));
@@ -991,11 +994,11 @@ mod tests {
 
     #[test]
     fn bypass_does_not_relax_non_assistant_sources() {
-        // Bypass must only affect AssistantToolCall — other sources
+        // Bypass must only affect agent/assistant sources — user/terminal sources
         // keep their existing strict policy.
         let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::UserRequestedCommand;
         request.execution_mode = Some("bypass".to_string());
-        // Source is HeadlessAgent from make_request.
         request.arguments = serde_json::json!({
             "command": "pwd",
             "cwd": "/tmp/project"
@@ -1013,9 +1016,38 @@ mod tests {
         .expect("preview should succeed");
 
         assert_eq!(
-            preview.decision, "awaiting_confirmation",
-            "Bypass only relaxes AssistantToolCall; HeadlessAgent still requires approval"
+            preview.decision, "allowed",
+            "User requested pwd command inside workdir is allowed"
         );
+    }
+
+    #[test]
+    fn bypass_allows_headless_and_workflow_agents() {
+        for source in [ToolExecutionSource::HeadlessAgent, ToolExecutionSource::WorkflowAgent] {
+            let mut request = make_request("execute_command");
+            request.source = source;
+            request.execution_mode = Some("bypass".to_string());
+            request.arguments = serde_json::json!({
+                "command": "python3 script.py",
+                "cwd": "/tmp/project"
+            })
+            .to_string();
+
+            let preview = preview_request_policy(
+                &request,
+                &serde_json::json!({
+                    "command": "python3 script.py",
+                    "cwd": "/tmp/project"
+                }),
+                Some("session-1"),
+            )
+            .expect("preview should succeed");
+
+            assert_eq!(
+                preview.decision, "allowed",
+                "Bypass relaxes HeadlessAgent and WorkflowAgent for safe commands"
+            );
+        }
     }
 
     #[test]
