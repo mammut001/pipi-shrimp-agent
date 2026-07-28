@@ -67,27 +67,19 @@ export function MainLayout({
   showRightPanel,
   rightPanelContent,
   defaultRightPanelContent = <AgentPanel />,
-  rightPanelWidthClassName = 'w-[320px]',
+  rightPanelWidthClassName = 'w-[280px]',
 }: MainLayoutProps) {
   const { sidebarVisible, rightPanelVisible, toggleSidebar, toggleRightPanel } = useUIStore();
   const artifactsPanelOpen = useArtifactsStore((s) => s.panelOpen);
   const { forceHideRightPanel, forceCollapseSidebar } = useResponsiveLayout();
-  // On very narrow viewports the expanded sidebar (300px) would consume most
-  // of the screen, so we force-collapse it to the 68px rail regardless of the
-  // persisted `sidebarVisible` preference.
+  // On very narrow viewports the expanded sidebar would consume most
+  // of the screen, so we force-collapse it to the 64px rail.
   const sidebarExpanded = showSidebar && sidebarVisible && !forceCollapseSidebar;
-  // Resolve the actual right-panel content. An explicit `rightPanelContent` (incl.
-  // `null`) wins; otherwise we fall back to the page's default (the AgentPanel).
-  // The sentinel `undefined` is what we use to mean "no override", and `null` is
-  // a valid override meaning "render no panel at all".
   const effectiveRightPanelContent = rightPanelContent === undefined
     ? defaultRightPanelContent
     : rightPanelContent;
-  // Right panel hides itself when the viewport can't fit sidebar + main +
-  // panel without crushing the main column, unless the page explicitly opts
-  // in (e.g. Workflow, AutoResearch) via `showRightPanel === true`.
   const shouldShowRightPanel = (showRightPanel ?? rightPanelVisible) && !forceHideRightPanel;
-  const sidebarShellWidth = sidebarExpanded ? 300 : 68;
+  const sidebarShellWidth = sidebarExpanded ? 240 : 64;
 
   return (
     <div className="h-screen flex overflow-hidden bg-gray-50">

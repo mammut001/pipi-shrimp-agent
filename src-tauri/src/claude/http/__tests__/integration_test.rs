@@ -155,6 +155,7 @@ async fn send_request_parses_openai_response_from_mock_server() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("mocked request should succeed");
@@ -195,6 +196,7 @@ async fn send_request_retries_retryable_http_failures() {
         None,
         Some("openai"),
         Some("openai"),
+        None,
         None,
         None,
         None,
@@ -253,6 +255,7 @@ async fn send_request_forwards_openai_response_format() {
         Some(json!({
             "type": "json_object"
         })),
+        None,
         None,
     )
     .await
@@ -314,6 +317,7 @@ async fn send_request_uses_explicit_capability_hints_for_anthropic() {
             thinking_budget: None,
             max_output_tokens: None,
         }),
+        None,
         None,
         None,
     )
@@ -398,6 +402,7 @@ async fn send_request_filters_deepseek_tools_and_omits_unsupported_fields() {
         }),
         Some(json!({ "type": "json_object" })),
         Some(&allowed_tools),
+        None,
     )
     .await
     .expect("deepseek request should preserve filtered tools");
@@ -458,6 +463,7 @@ async fn send_request_parses_openai_tool_calls_from_mock_server() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("tool call response should parse");
@@ -493,6 +499,7 @@ async fn send_request_maps_openai_4xx_into_validation_error() {
         None,
         Some("openai"),
         Some("openai"),
+        None,
         None,
         None,
         None,
@@ -536,6 +543,7 @@ async fn send_request_finalizes_truncated_openai_stream() {
         Some("stream-truncated"),
         Some("openai"),
         Some("openai"),
+        None,
         None,
         None,
         None,
@@ -610,6 +618,7 @@ async fn send_request_skips_response_format_when_capability_disables_it() {
             max_output_tokens: Some(8192),
         }),
         Some(json!({ "type": "json_object" })),
+        None,
         None,
     )
     .await

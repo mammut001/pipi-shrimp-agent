@@ -172,10 +172,22 @@ impl ProviderAdapter for AnthropicAdapter {
                         let id = content_block["id"].as_str().unwrap_or("").to_string();
                         let name = content_block["name"].as_str().unwrap_or("").to_string();
 
+                        let initial_args = if let Some(input) = content_block.get("input") {
+                            if input.is_object() {
+                                serde_json::to_string(input).unwrap_or_default()
+                            } else if let Some(s) = input.as_str() {
+                                s.to_string()
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+
                         ctx.tool_calls.push(ToolCall {
                             tool_call_id: id,
                             name,
-                            arguments: String::new(),
+                            arguments: initial_args,
                         });
                     }
                 }
@@ -190,6 +202,9 @@ impl ProviderAdapter for AnthropicAdapter {
                 }
             }
             "message_stop" => {
+                if ctx.has_unfinalized_tool_calls() {
+                    events.extend(ctx.emit_pending_tool_calls()?);
+                }
                 events.push(StreamEvent::Done);
             }
             _ => {}
@@ -203,6 +218,7 @@ impl ProviderAdapter for AnthropicAdapter {
         mut ctx: StreamContext,
         _config: &ResolvedProviderConfig,
     ) -> AppResult<ChatResponse> {
+        let _ = ctx.emit_pending_tool_calls();
         let artifacts = detect_artifacts(&ctx.content);
 
         if ctx.usage.input_tokens == 0 {

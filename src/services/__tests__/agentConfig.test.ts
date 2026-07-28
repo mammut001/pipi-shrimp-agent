@@ -152,4 +152,29 @@ describe('agentConfig resolver', () => {
     expect(formatApiKeyLengthHint('')).toBe('0 characters');
     expect(formatApiKeyLengthHint('  Bearer abcd1234  ')).toBe('8 characters');
   });
+
+  it('resolves anthropic-compatible adapter name with fallback default', () => {
+    mockGetActiveConfig.mockReturnValue({
+      id: 'cfg-anthropic-compat',
+      name: 'Anthropic Proxy',
+      provider: 'anthropic-compatible',
+      apiKey: 'sk-ant-proxy-key',
+      model: 'qwen3.7-max',
+      baseUrl: 'https://proxy.example.com',
+    });
+
+    const config = resolveActiveAgentConfig();
+    expect(config).toMatchObject({
+      provider: 'anthropic-compatible',
+      apiFormat: 'anthropic',
+      model: 'qwen3.7-max',
+    });
+
+    expect(getAgentConfigDiagnostics(config!)).toMatchObject({
+      selectedProvider: 'anthropic-compatible',
+      selectedModel: 'qwen3.7-max',
+      apiFormat: 'anthropic',
+      adapterName: 'anthropic-compatible',
+    });
+  });
 });

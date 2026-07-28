@@ -314,7 +314,12 @@ impl ProviderAdapter for OpenAIAdapter {
                 if let Some(finish_reason) =
                     choice.get("finish_reason").and_then(|value| value.as_str())
                 {
-                    if finish_reason == "tool_calls" {
+                    if (finish_reason == "tool_calls"
+                        || finish_reason == "stop"
+                        || finish_reason == "function_call"
+                        || finish_reason == "tool_use")
+                        && ctx.has_unfinalized_tool_calls()
+                    {
                         events.extend(ctx.emit_pending_tool_calls()?);
                     }
                 }
@@ -557,6 +562,70 @@ mod tests {
     }
 
     #[test]
+    fn minimax_streaming_tool_call_with_finish_reason_stop() {
+        let adapter = OpenAIAdapter::minimax();
+        let mut ctx = StreamContext::new(6, None, Some("session-minimax".to_string()));
+
+        let first_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_minimax_1",
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": ""
+                        }
+                    }]
+                }
+            }]
+        });
+        let second_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "arguments": "{\"path\":\"02_scaffold.py\",\"content\":\"print(1)\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        adapter
+            .parse_stream_chunk(&first_chunk.to_string(), &mut ctx)
+            .expect("first chunk should parse");
+        let events = adapter
+            .parse_stream_chunk(&second_chunk.to_string(), &mut ctx)
+            .expect("second chunk should parse");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ToolCall { id, name, arguments }
+                if id == "call_minimax_1"
+                && name == "write_file"
+                && arguments == "{\"path\":\"02_scaffold.py\",\"content\":\"print(1)\"}"
+        )));
+
+        let response = adapter
+            .finalize_stream(ctx, &deepseek_config())
+            .expect("stream should finalize cleanly");
+
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.tool_calls[0].tool_call_id, "call_minimax_1");
+        assert_eq!(response.tool_calls[0].name, "write_file");
+        assert_eq!(
+            response.tool_calls[0].arguments,
+            "{\"path\":\"02_scaffold.py\",\"content\":\"print(1)\"}"
+        );
+    }
+
+    #[test]
     fn generates_fallback_id_only_after_streamed_tool_call_finalizes() {
         let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
         let mut ctx = StreamContext::new(4, None, Some("session-generated-id".to_string()));
@@ -671,7 +740,7 @@ mod tests {
     #[test]
     fn rejects_stream_end_when_tool_calls_never_reach_finish_reason() {
         let adapter = OpenAIAdapter::new(ProviderId::DeepSeek);
-        let mut ctx = StreamContext::new(4, None, Some("session-no-finish".to_string()));
+        let mut ctx = StreamContext::new(5, None, Some("session-no-finish".to_string()));
 
         let chunk = serde_json::json!({
             "choices": [{
@@ -686,8 +755,7 @@ mod tests {
                             "arguments": "{\"path\":\"README.md\"}"
                         }
                     }]
-                },
-                "finish_reason": "stop"
+                }
             }]
         });
 

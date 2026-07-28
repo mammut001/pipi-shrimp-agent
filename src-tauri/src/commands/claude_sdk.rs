@@ -61,6 +61,7 @@ pub async fn send_claude_sdk_chat_streaming(
     #[allow(non_snake_case)] providerCapabilities: Option<ProviderCapabilities>,
     #[allow(non_snake_case)] responseFormat: Option<serde_json::Value>,
     #[allow(non_snake_case)] allowedTools: Option<Vec<String>>,
+    #[allow(non_snake_case)] workDir: Option<String>,
     state: tauri::State<'_, Arc<Mutex<ClaudeState>>>,
     window: Window,
 ) -> Result<ChatResponse, String> {
@@ -89,6 +90,7 @@ pub async fn send_claude_sdk_chat_streaming(
             providerCapabilities,
             responseFormat,
             allowedTools,
+            workDir,
         )
         .await
         .map_err(|e| e.to_string())

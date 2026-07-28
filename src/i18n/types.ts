@@ -484,6 +484,7 @@ export type TranslationKeys = {
   'workflow.goalStatus.reached': string;
   'workflow.goalStatus.notReached': string;
   'workflow.goalStatus.inProgress': string;
+  'workflow.goalStatus.notStarted': string;
   'workflow.goalStatus.noMissingItems': string;
   'workflow.canvas.emptyState': string;
 

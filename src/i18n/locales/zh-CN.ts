@@ -835,6 +835,7 @@ const zhCN: TranslationKeys = {
   'workflow.goalStatus.reached': '已达成',
   'workflow.goalStatus.notReached': '未达成',
   'workflow.goalStatus.inProgress': '评估中',
+  'workflow.goalStatus.notStarted': '未开始',
   'workflow.goalStatus.noMissingItems': '当前没有缺失项',
   'workflow.canvas.emptyState': '添加 Agent 后将在这里显示工作流画布',
 

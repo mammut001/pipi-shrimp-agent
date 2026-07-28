@@ -187,6 +187,14 @@ export function getSessionBaselineDir(cfg: SshConfig, sessionId: string): string
   return joinTargetPath(getSessionRunPaths(cfg, sessionId).sessionDir, 'best-baseline');
 }
 
+function resolveDefaultLocalCwd(targetPath?: string): string {
+  if (targetPath && targetPath.trim()) {
+    return targetPath.trim();
+  }
+  const isWindows = typeof process !== 'undefined' && process.platform === 'win32';
+  return isWindows ? '.' : '/tmp';
+}
+
 export async function executeTargetCommand(
   cfg: SshConfig,
   command: string,
@@ -194,6 +202,7 @@ export async function executeTargetCommand(
 ): Promise<RawBashResult> {
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
   const isLocalTarget = cfg.mode === 'local';
+  const targetCwd = resolveDefaultLocalCwd(cfg.remoteWorkDir);
   const shellResolution = resolveWindowsShellProfile(windowsShellProfile, cfg.remoteWorkDir);
   const effectiveCommand = isLocalTarget && shellResolution.isWindows && shellResolution.resolved === 'wsl'
     ? escapeDollarsForLocalWsl(command)

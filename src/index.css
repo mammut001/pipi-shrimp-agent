@@ -4,7 +4,18 @@
 
 @layer base {
   body {
-    @apply antialiased text-gray-900;
+    @apply antialiased text-slate-800 bg-slate-50/50 selection:bg-indigo-500/15 selection:text-indigo-900;
+    font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: -0.011em;
+  }
+
+  code, kbd, samp, pre {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  /* Compact form controls baseline */
+  input, button, select, textarea {
+    font-family: inherit;
   }
 
   /* Prevent horizontal overflow from any element */
@@ -208,3 +219,29 @@
 .animate-stripes {
   animation: stripes-move 1.2s linear infinite;
 }
+
+/* Glassmorphism & High-end UI Compact Utilities */
+.glass-panel {
+  @apply bg-white/80 backdrop-blur-md border border-slate-200/80 shadow-sm shadow-slate-200/50;
+}
+
+.glass-panel-dark {
+  @apply bg-slate-900/90 backdrop-blur-md border border-slate-800 shadow-lg shadow-slate-950/20 text-slate-100;
+}
+
+.compact-card {
+  @apply rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-sm hover:border-slate-300 transition-all duration-200;
+}
+
+.subtle-border {
+  @apply border border-slate-200/70;
+}
+
+.badge-compact {
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium tracking-tight;
+}
+
+.btn-compact {
+  @apply px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-150 active:scale-[0.98];
+}
+

@@ -79,7 +79,7 @@ const MetricsArtifactBaseObjectSchema = z.object({
   metricName: z.string().min(1),
   metricValue: z.number().finite().nullable(),
   status: StatusSchema,
-  failReason: z.string().min(1).optional(),
+  failReason: OptionalNonEmptyStringSchema,
   hypothesis: z.string().min(1),
   change: OptionalNonEmptyStringSchema,
   reasoning: OptionalNonEmptyStringSchema,

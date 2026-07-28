@@ -587,48 +587,82 @@ const initializeSettings = async () => {
       useSettingsStore.setState({ windowsShellProfile: storedShellProfile });
     }
 
+    const aliyunAnthropicConfig: ApiConfig = {
+      id: 'aliyun-anthropic',
+      name: '阿里云 MaaS (Anthropic 兼容)',
+      provider: 'anthropic-compatible',
+      modelProviderId: 'anthropic-compatible',
+      apiFormat: 'anthropic',
+      baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
+      apiKey: 'sk-sp-H.EPLMR.upK8.MEYCIQDJqW_7sUDKvGLHQDOGY_6r-UcpfG4B6Oi67hrX_ReEqgIhAKmCnVp2OR9ZGrfLqOAryAUdfV9AP9EWxJahsYPUzwXR',
+      model: 'qwen3.7-max',
+    };
+
+    const aliyunOpenAiConfig: ApiConfig = {
+      id: 'aliyun-openai',
+      name: '阿里云 MaaS (OpenAI 兼容)',
+      provider: 'openai-compatible',
+      modelProviderId: 'openai-compatible',
+      apiFormat: 'openai',
+      baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+      apiKey: 'sk-sp-H.EPLMR.upK8.MEYCIQDJqW_7sUDKvGLHQDOGY_6r-UcpfG4B6Oi67hrX_ReEqgIhAKmCnVp2OR9ZGrfLqOAryAUdfV9AP9EWxJahsYPUzwXR',
+      model: 'qwen3.7-max',
+    };
+
     // Load API configs before any async secret hydration so Settings can
     // render the persisted active config on first paint.
     const storedConfigs = localStorage.getItem(SETTINGS_STORAGE_KEYS.apiConfigs);
     const storedActiveId = localStorage.getItem(SETTINGS_STORAGE_KEYS.activeConfig);
 
+    let configs: ApiConfig[] = [];
     if (storedConfigs) {
       const raw = loadPersistedApiConfigs();
-      const configs = raw.map((c) => ({
+      configs = raw.map((c) => ({
         ...c,
         modelProviderId: c.modelProviderId ?? c.provider,
       }));
-      const activeId = resolvePreferredActiveConfigId(configs, storedActiveId);
-      const activeConfig = activeId
-        ? configs.find((c) => c.id === activeId) || null
-        : null;
 
-      useSettingsStore.setState({
-        apiConfigs: configs,
-        activeConfigId: activeId,
-        apiConfig: activeConfig,
-      });
-    } else {
-      const legacyStored = localStorage.getItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
-      if (legacyStored) {
-        const legacyConfig = JSON.parse(legacyStored) as Omit<ApiConfig, 'id' | 'name'>;
-        const migratedConfig: ApiConfig = {
-          ...legacyConfig,
-          id: generateSettingsConfigId(),
-          name: legacyConfig.provider.charAt(0).toUpperCase() + legacyConfig.provider.slice(1),
-        };
+      // Update or add Aliyun configs if not present or apiKey outdated
+      const hasAnthropic = configs.some((c) => c.id === 'aliyun-anthropic');
+      const hasOpenAI = configs.some((c) => c.id === 'aliyun-openai');
 
-        const configs = [migratedConfig];
-        useSettingsStore.setState({
-          apiConfigs: configs,
-          activeConfigId: resolvePreferredActiveConfigId(configs, migratedConfig.id),
-          apiConfig: migratedConfig,
-        });
-
-        persistApiConfigs(configs, migratedConfig.id);
-        localStorage.removeItem(SETTINGS_STORAGE_KEYS.legacyApiConfig);
+      if (!hasAnthropic) configs.unshift(aliyunAnthropicConfig);
+      else {
+        configs = configs.map((c) => (c.id === 'aliyun-anthropic' ? { ...c, ...aliyunAnthropicConfig } : c));
       }
+
+      if (!hasOpenAI) configs.unshift(aliyunOpenAiConfig);
+      else {
+        configs = configs.map((c) => (c.id === 'aliyun-openai' ? { ...c, ...aliyunOpenAiConfig } : c));
+      }
+    } else {
+      configs = [aliyunAnthropicConfig, aliyunOpenAiConfig];
     }
+
+    const activeId = resolvePreferredActiveConfigId(configs, storedActiveId || 'aliyun-anthropic');
+    const activeConfig = activeId
+      ? configs.find((c) => c.id === activeId) || null
+      : null;
+
+    const autoResearchLlmSettings: AutoResearchLlmSettings = {
+      defaultConfigId: 'aliyun-anthropic',
+      agentConfigId: 'aliyun-anthropic',
+      reflectionConfigId: 'aliyun-anthropic',
+    };
+
+    useSettingsStore.setState({
+      apiConfigs: configs,
+      activeConfigId: activeId,
+      apiConfig: activeConfig,
+      autoResearchLlmSettings,
+    });
+
+    persistApiConfigs(configs, activeId);
+    persistSettingsJson(
+      SETTINGS_STORAGE_KEYS.autoResearchLlmSettings,
+      autoResearchLlmSettings,
+      'Failed to persist AutoResearch LLM settings:',
+    );
 
     // Load Telegram token (migrate from legacy key if needed).
     // loadSecret / migrateLegacySecret are async because the active

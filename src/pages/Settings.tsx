@@ -10,7 +10,7 @@
  * - Loading states
  */
 
-import { lazy, Suspense, useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
 import { usePromptStore } from '@/store/promptStore';
 import type { ApiConfig, ModelPricing } from '@/types/settings';
@@ -150,6 +150,7 @@ export function Settings() {
     });
     setIsLoading(false);
   }, [theme]);
+
 
   useEffect(() => {
     if (apiConfigs.length === 0) {
@@ -584,12 +585,19 @@ export function Settings() {
     }
   };
 
-  /**
-   * Handle close modal
-   */
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     toggleSettings();
-  };
+  }, [toggleSettings]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleClose]);
 
   if (isLoading) {
     return (
@@ -600,31 +608,33 @@ export function Settings() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
+      <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm transition-opacity" onClick={handleClose} />
 
       {/* Modal Content */}
-      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-xl max-h-[85vh] overflow-y-auto animate-in">
         {/* Close Button */}
         <button
           type="button"
           onClick={handleClose}
-          className="absolute top-4 right-4 p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors z-10"
+          className="absolute top-3.5 right-4 p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors z-10"
           title={t('common.close')}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4.5 w-4.5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
           </svg>
         </button>
 
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h1 className="text-xl font-bold text-gray-900">{t('settings.title')}</h1>
-          <p className="text-gray-500 mt-1 text-sm">{t('settings.subtitle')}</p>
+        <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+          <div>
+            <h1 className="text-base font-bold text-slate-900 tracking-tight">{t('settings.title')}</h1>
+            <p className="text-slate-500 text-[11px] mt-0.5">{t('settings.subtitle')}</p>
+          </div>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-5 space-y-5">
 
           {/* ====== API Configurations Section ====== */}
           <div>

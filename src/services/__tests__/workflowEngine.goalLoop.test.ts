@@ -384,4 +384,59 @@ describe('WorkflowEngine goal loop', () => {
     expect(instance.workflowRuns[0].agents[0].output).toBeUndefined();
     expect(store.setRunning).toHaveBeenLastCalledWith(false, null);
   });
+
+  it('passes workDir to send_claude_sdk_chat_streaming and falls back to returned result when contentChunks is empty', async () => {
+    invokeMock.mockResolvedValueOnce({ content: 'fallback output text' });
+
+    const result = await runAgentWithRetry(
+      createAgent({
+        id: 'developer',
+        role: 'developer',
+      }),
+      'prompt',
+      {
+        runId: 'run-1',
+        workDir: '/tmp/isolated-workdir',
+        transcript: new WorkflowTranscriptManager(),
+      },
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith('send_claude_sdk_chat_streaming', expect.objectContaining({
+      workDir: '/tmp/isolated-workdir',
+    }));
+    expect(result).toBe('fallback output text');
+  });
+
+  it('falls back to rule-based evaluation when the LLM evaluator throws', async () => {
+    const developer = createAgent({ id: 'developer', role: 'developer' });
+    const instance = createInstance([developer], [], 2);
+    installWorkflowStore(instance);
+
+    const evaluateGoal = jest.fn(async () => ({
+      iteration: 1,
+      reached: false,
+      confidence: 0.2,
+      missingItems: ['pending'],
+      reasoning: 'LLM evaluator execution failed, fell back to rule-based evaluation.',
+      timestamp: 1,
+    }));
+
+    const engine = new WorkflowEngine({
+      createRunDirectory: async () => '/tmp/workflow-run',
+      writeFile: async () => undefined,
+      runAgent: jest.fn(async () => {
+        throw new Error('Goal evaluation timed out after 120s');
+      }),
+      evaluateGoal,
+      notify: async () => undefined,
+      now: (() => {
+        let current = 1;
+        return () => current++;
+      })(),
+    });
+
+    await engine.start();
+
+    expect(engine.getIsRunning()).toBe(false);
+  });
 });

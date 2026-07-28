@@ -195,10 +195,13 @@ export function Sidebar() {
    * Stops any in-progress execution first to avoid stale state.
    */
   const handleNewWorkflow = useCallback(async () => {
-    const { clearCanvas, addWorkflowRun, setRunning } = useWorkflowStore.getState();
+    const { clearCanvas, addWorkflowRun, setRunning, createInstance, currentInstanceId, instances } = useWorkflowStore.getState();
     // Stop any in-progress run first so we don't leave isRunning/currentRunningAgentId stale
     if (workflowEngine.getIsRunning()) {
       await workflowEngine.stop();
+    }
+    if (!currentInstanceId || instances.length === 0) {
+      createInstance();
     }
     clearCanvas();
     setRunning(false, null);

@@ -52,6 +52,7 @@ impl ClaudeClient {
             None,
             response_format,
             None,
+            None,
         )
         .await
         .map_err(Into::into)
@@ -74,6 +75,7 @@ impl ClaudeClient {
         provider_capabilities: Option<ProviderCapabilities>,
         response_format: Option<serde_json::Value>,
         allowed_tools: Option<Vec<String>>,
+        work_dir: Option<String>,
     ) -> AppResult<ChatResponse> {
         let normalized = validate_messages(messages, "chat_streaming")?;
 
@@ -93,6 +95,7 @@ impl ClaudeClient {
             provider_capabilities,
             response_format,
             allowed_tools.as_deref(),
+            work_dir.as_deref(),
         )
         .await
         .map_err(Into::into)
@@ -117,6 +120,7 @@ pub async fn send_request(
     provider_capabilities: Option<ProviderCapabilities>,
     response_format: Option<serde_json::Value>,
     allowed_tools: Option<&[String]>,
+    work_dir: Option<&str>,
 ) -> Result<ChatResponse, ClaudeHttpError> {
     send_request_impl(
         client,
@@ -135,6 +139,7 @@ pub async fn send_request(
         provider_capabilities,
         response_format,
         allowed_tools,
+        work_dir,
     )
     .await
 }

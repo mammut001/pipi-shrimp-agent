@@ -230,7 +230,7 @@ pub fn get_session_memory(work_dir: Option<String>) -> Result<Option<String>, St
         .map_err(|e| format!("Failed to read session memory: {}", e))
 }
 
-/**
+/*
  * 写入 Session Memory 完整内容
  *
  * 源码参考: writeFile(memoryPath, content) 在 sessionMemory.ts

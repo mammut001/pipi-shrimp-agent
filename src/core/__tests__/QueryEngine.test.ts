@@ -860,4 +860,47 @@ describe('QueryEngine Ask-mode noTools contract', () => {
       }),
     );
   });
+
+  it('clears tool batch timeout handle after execution to prevent open handle hangs', async () => {
+    const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* toolTurn() {
+        yield {
+          type: 'tool_call',
+          tool: { id: 'tool-cleanup-1', name: 'read_file', arguments: '{"path":"README.md"}' },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      })
+      .mockImplementationOnce(async function* summaryTurn() {
+        yield { type: 'text_delta', content: 'Done.' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const iterator = runChatTurn(
+      'session-cleanup-test',
+      [{ role: 'user', content: 'hello' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    );
+
+    await iterator.next(); // status_update
+    const toolBatchEvent = await iterator.next();
+    toolBatchEvent.value._resolveAll([{ id: 'tool-cleanup-1', content: 'Content' }]);
+
+    let completeEvent = await iterator.next();
+    while (completeEvent.value?.type === 'text_delta') {
+      completeEvent = await iterator.next();
+    }
+
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
+  });
 });

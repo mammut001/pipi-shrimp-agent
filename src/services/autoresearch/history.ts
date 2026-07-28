@@ -511,9 +511,23 @@ function normalizeRunRecord(record: unknown): AutoResearchRunRecord | null {
 
   const runId = record.id;
   const configRecord = isRecord(record.config) ? record.config : {};
-  const iterations = Array.isArray(record.iterations)
+  const runStatus = typeof record.status === 'string' ? record.status as AutoResearchRunStatus : 'draft';
+  const rawIterations = Array.isArray(record.iterations)
     ? record.iterations.map((item, index) => normalizeIterationRecord(item, runId, index + 1))
     : [];
+  const isTerminalOrInterrupted = ['interrupted', 'failed', 'completed', 'stopped'].includes(runStatus);
+  const iterations = isTerminalOrInterrupted
+    ? rawIterations.map((iter) => {
+      if (iter.status === 'running') {
+        return {
+          ...iter,
+          status: 'failed' as const,
+          error: iter.error || 'Run interrupted or stopped after app restart.',
+        };
+      }
+      return iter;
+    })
+    : rawIterations;
   const events = Array.isArray(record.events)
     ? record.events
       .map((item, index) => normalizeEvent(item, runId, index + 1))
@@ -523,7 +537,7 @@ function normalizeRunRecord(record: unknown): AutoResearchRunRecord | null {
   return {
     id: runId,
     title: typeof record.title === 'string' ? truncateString(record.title, MAX_TITLE_CHARS) : runId,
-    status: typeof record.status === 'string' ? record.status as AutoResearchRunStatus : 'draft',
+    status: runStatus,
     createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date(0).toISOString(),
     updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : new Date(0).toISOString(),
     startedAt: typeof record.startedAt === 'string' ? record.startedAt : undefined,
@@ -777,6 +791,16 @@ export function loadPersistedAutoResearchHistory(now = new Date().toISOString())
         updatedAt: now,
         endedAt: run.endedAt ?? now,
         summary: run.summary || 'Interrupted after app restart.',
+        iterations: run.iterations.map((iter) => {
+          if (iter.status === 'running') {
+            return {
+              ...iter,
+              status: 'failed' as const,
+              error: iter.error || 'Run interrupted after app restart.',
+            };
+          }
+          return iter;
+        }),
         resumeToken: run.resumeToken
           ? {
             ...run.resumeToken,

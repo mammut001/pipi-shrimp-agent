@@ -27,7 +27,7 @@ mod tests {
     #[tokio::test]
     async fn test_timeout_wrapper_returns_timeout_error() {
         let result = run_with_timeout("pending-op", Duration::from_millis(10), async {
-            tokio::time::sleep(Duration::from_millis(30)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
             42_u8
         })
         .await;

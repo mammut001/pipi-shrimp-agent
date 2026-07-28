@@ -288,6 +288,16 @@ export function TerminalPanel({
     terminalRef.current?.clear();
   }, []);
 
+  const handleCopy = useCallback(() => {
+    if (!terminalRef.current) return;
+    terminalRef.current.selectAll();
+    const selection = terminalRef.current.getSelection();
+    if (selection) {
+      void navigator.clipboard.writeText(selection);
+      terminalRef.current.clearSelection();
+    }
+  }, []);
+
   const statusLabel =
     status === 'connecting'
       ? 'Connecting'
@@ -350,6 +360,18 @@ export function TerminalPanel({
         </div>
         <div className="flex items-center gap-1">
           <button
+            type="button"
+            onClick={handleCopy}
+            className="px-2 h-6 text-[11px] text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors flex items-center gap-1"
+            title="Copy terminal content"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <span>Copy</span>
+          </button>
+          <button
+            type="button"
             onClick={handleClear}
             className="px-2 h-6 text-[11px] text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors flex items-center gap-1"
             title="Clear terminal"
@@ -361,6 +383,7 @@ export function TerminalPanel({
           </button>
           {onClose && (
             <button
+              type="button"
               onClick={onClose}
               className="px-2 h-6 text-[11px] text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors flex items-center gap-1"
               title="Close Terminal"

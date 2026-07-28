@@ -311,6 +311,8 @@ export async function runHeadlessAgentTurn(
   const constrainedSystemPrompt = input.allowedTools?.length
     ? buildAllowedToolsSystemPrompt(input.systemPrompt, input.allowedTools)
     : input.systemPrompt;
+  const turnDeadlineMs = input.timeoutMs ?? 120_000;
+
   const engine = runChatTurn(
     input.sessionId,
     input.initialMessages,
@@ -333,12 +335,21 @@ export async function runHeadlessAgentTurn(
     useSettingsStore.getState().agentSettings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds,
   );
 
-  for await (const event of engine) {
-    if (input.signal?.aborted) {
-      throw new DOMException('Headless agent turn aborted', 'AbortError');
-    }
+  const turnDeadlineMs = input.timeoutMs ?? 120_000;
+  let turnTimedOut = false;
+  const timeoutId = setTimeout(() => { turnTimedOut = true; }, turnDeadlineMs);
 
-    switch (event.type) {
+  try {
+    for await (const event of engine) {
+      if (turnTimedOut) {
+        throw new Error(`Headless agent turn timed out after ${turnDeadlineMs}ms`);
+      }
+
+      if (input.signal?.aborted) {
+        throw new DOMException('Headless agent turn aborted', 'AbortError');
+      }
+
+      switch (event.type) {
       case 'text_delta':
         finalText += event.content;
         assistantTurnBuffer += event.content;

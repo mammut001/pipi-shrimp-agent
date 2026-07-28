@@ -313,7 +313,8 @@ async function parseIterationMetrics(
 
   if (metricsContent) {
     try {
-      const raw = JSON.parse(metricsContent) as unknown;
+      const sanitizedMetricsContent = metricsContent.replace(/:\s*NaN\b/g, ': null').replace(/:\s*Infinity\b/g, ': null');
+      const raw = JSON.parse(sanitizedMetricsContent) as unknown;
       const artifact = parseMetricsArtifactPayload(raw, {
         expectedSessionId: runDir.sessionId,
         expectedRunId: runDir.sessionId,

@@ -86,7 +86,7 @@ export interface ResumeAutoResearchRunResult {
 
 export function parseOptionalBaseline(value: string): number | null {
   const trimmed = value.trim();
-  if (!trimmed) {
+  if (!trimmed || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) {
     return null;
   }
   const parsed = Number(trimmed);

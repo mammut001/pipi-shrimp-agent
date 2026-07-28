@@ -200,6 +200,15 @@ export function AutoResearchRunHistoryCard({
     }
   };
 
+  const isRunning = run.status === 'running';
+  const statusDotClass = isRunning
+    ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse'
+    : run.status === 'completed'
+    ? 'bg-indigo-500'
+    : run.status === 'interrupted'
+    ? 'bg-amber-500'
+    : 'bg-rose-500';
+
   return (
     <div
       role="button"
@@ -215,12 +224,12 @@ export function AutoResearchRunHistoryCard({
           }
         }
       }}
-      className={`relative group rounded-3xl border p-4 text-left shadow-sm transition-all cursor-pointer select-none outline-none ${
+      className={`relative group rounded-2xl border p-4 text-left shadow-sm transition-all duration-200 cursor-pointer select-none outline-none ${
         isChecked
-          ? 'border-neutral-900 bg-neutral-50/50 ring-2 ring-neutral-100'
+          ? 'border-indigo-500 bg-indigo-50/40 ring-2 ring-indigo-500/20'
           : isSelected
-          ? 'border-neutral-400 bg-white ring-2 ring-neutral-100'
-          : 'border-gray-200 bg-white hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md'
+          ? 'border-slate-400 bg-white ring-2 ring-slate-200'
+          : 'border-slate-200/80 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md'
       }`}
     >
       {/* Checkbox overlay */}
@@ -230,15 +239,15 @@ export function AutoResearchRunHistoryCard({
             e.stopPropagation();
             onToggleSelect?.(e);
           }}
-          className={`absolute -top-2 -left-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border shadow-sm transition-all ${
+          className={`absolute -top-2 -left-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border shadow-sm transition-all ${
             isChecked
-              ? 'border-neutral-900 bg-neutral-900 text-white'
-              : 'border-gray-300 bg-white hover:border-gray-400 text-transparent'
+              ? 'border-indigo-600 bg-indigo-600 text-white'
+              : 'border-slate-300 bg-white hover:border-slate-400 text-transparent'
           } ${
             isSelectMode ? 'opacity-100 scale-100' : 'opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100'
           }`}
         >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
           </svg>
         </div>
@@ -252,7 +261,7 @@ export function AutoResearchRunHistoryCard({
             e.stopPropagation();
             onDelete(e);
           }}
-          className="absolute -top-2 -right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400 shadow-sm transition-all hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100"
+          className="absolute -top-2 -right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm transition-all hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100"
           title={t('common.delete')}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -261,48 +270,41 @@ export function AutoResearchRunHistoryCard({
         </button>
       )}
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${getStatusClasses(run.status)}`}>
+      {/* Top Bar: Status dot + Badge & Iterations */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`h-2 w-2 rounded-full shrink-0 ${statusDotClass}`} />
+          <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold tracking-tight ${getStatusClasses(run.status)}`}>
             {formatRunStatusLabel(run.status)}
           </span>
           {isActive && (
-            <span className="rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-teal-700">
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
               {t('autoresearch.badgeActive')}
             </span>
           )}
         </div>
-        <span className="font-mono text-[11px] text-gray-500">{run.currentIteration}/{run.config.iterations}</span>
+        <span className="font-mono text-[11px] text-slate-500 font-medium shrink-0">
+          {run.currentIteration}/{run.config.iterations} 轮
+        </span>
       </div>
 
-      <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-gray-900">{run.title}</h3>
+      {/* Title */}
+      <h3 className="mt-2.5 line-clamp-1 text-xs font-bold text-slate-900 tracking-tight" title={run.title}>
+        {run.title}
+      </h3>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600">
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">{t('autoresearch.labelPhase')}</div>
-          <div className="mt-1 truncate">{formatPhaseLabel(run.currentPhase)}</div>
-        </div>
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">{t('autoresearch.labelBest')}</div>
-          <div className="mt-1 truncate">{run.config.metric}: {bestMetric}</div>
-        </div>
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">{t('autoresearch.labelExperiment')}</div>
-          <div className="mt-1 truncate">{basename(run.config.experimentDir || run.config.workdir || run.title)}</div>
-        </div>
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">{t('autoresearch.labelUpdated')}</div>
-          <div className="mt-1 truncate">{formatTimestamp(run.updatedAt)}</div>
-        </div>
+      {/* Metric Highlight Badge */}
+      <div className="mt-2.5 flex items-center justify-between gap-2 rounded-xl bg-slate-50 border border-slate-100 px-2.5 py-1.5 text-xs">
+        <span className="text-[11px] text-slate-500 font-medium truncate">{run.config.metric}</span>
+        <span className="font-mono font-bold text-slate-800 text-[11px] shrink-0">
+          {bestMetric !== 'N/A' ? bestMetric : '无基线'}
+        </span>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500">
-        <span className="truncate">{modelLabel}</span>
-        {typeof run.config.gpuTemperatureC === 'number' && (
-          <span className="rounded-full bg-gray-100 px-2 py-1 font-medium text-gray-700">
-            GPU {formatMetricValue(run.config.gpuTemperatureC)}C
-          </span>
-        )}
+      {/* Footer Info: Model & Update Time */}
+      <div className="mt-2.5 flex items-center justify-between gap-2 text-[11px] text-slate-500 pt-2 border-t border-slate-100/80">
+        <span className="truncate max-w-[65%] font-medium text-slate-600">{modelLabel}</span>
+        <span className="shrink-0 text-slate-400 text-[10px]">{formatTimestamp(run.updatedAt)}</span>
       </div>
     </div>
   );

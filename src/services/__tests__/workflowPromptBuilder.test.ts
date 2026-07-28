@@ -49,6 +49,7 @@ describe('workflowPromptBuilder', () => {
     expect(prompt).toContain('The workflow still loses output after refresh.');
     expect(prompt).toContain('Fix stale stream guard');
     expect(prompt).toContain('Double-check stop handling.');
+    expect(prompt).toContain('如需编写代码、建立文件或执行命令，请直接调用工具（如 write_file, execute_command）将产物真实落盘写入当前工作区');
     expect(prompt).toContain('[[WORKFLOW:PASS]]');
     expect(prompt).toContain('[[STATUS]]');
   });

@@ -118,10 +118,10 @@ describe('AutoResearchSetupHelpers', () => {
     );
 
     expect(container.textContent).toContain('Active');
-    expect(container.textContent).toContain('Best');
-    expect(container.textContent).toContain('Experiment');
-    expect(container.textContent).toContain('GPU 49C');
-    expect(container.textContent).toContain('val_acc: 0.9132');
+    expect(container.textContent).toContain('val_acc');
+    expect(container.textContent).toContain('0.9132');
+    expect(container.textContent).toContain('openai');
+    expect(container.textContent).toContain('gpt-5');
 
     act(() => {
       root.unmount();
