@@ -1149,7 +1149,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             connections: [],
             dirtyAgentIds: [],
           }),
+          activeRunId: null,
         })),
+        selectedRunId: null,
       };
       saveToStorage(newState);
       return newState;

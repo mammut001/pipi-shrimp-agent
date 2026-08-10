@@ -182,14 +182,35 @@ export function selectReentryAgents(params: {
   connections: WorkflowConnection[];
   agentOutputs: Map<string, string>;
 }): string[] {
+  if (params.evaluation.reached) {
+    return [];
+  }
+
+  const unexecutedAgent = params.agents.find(
+    (agent) => agent.role !== 'goal-evaluator' && !params.agentOutputs.has(agent.id),
+  );
+
+  if (unexecutedAgent) {
+    return [unexecutedAgent.id];
+  }
+
   const triggered = collectTriggeredLoopTargets(
     params.agents,
     params.connections,
     params.agentOutputs,
   );
 
-  if (params.evaluation.nextAgentIdHint) {
-    triggered.unshift(params.evaluation.nextAgentIdHint);
+  const hint = params.evaluation.nextAgentIdHint;
+  if (hint) {
+    const hintIsAlreadyExecuted = params.agentOutputs.has(hint);
+    if (!hintIsAlreadyExecuted) {
+      triggered.unshift(hint);
+    }
+  }
+
+  const unexecutedTriggered = triggered.filter((id) => !params.agentOutputs.has(id));
+  if (unexecutedTriggered.length > 0) {
+    return Array.from(new Set(unexecutedTriggered));
   }
 
   if (triggered.length > 0) {

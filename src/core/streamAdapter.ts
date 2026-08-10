@@ -26,6 +26,8 @@ interface InvokeParams {
   apiFormat?: string;
   providerCapabilities?: ProviderExecutionCapabilities;
   responseFormat?: { type: 'json_object' };
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 /** Default INACTIVITY timeout for a streaming API call (120s).
@@ -38,7 +40,7 @@ interface InvokeParams {
  * final answer — would be killed mid-stream. The backend HTTP client already
  * enforces a 300s per-request timeout; here we only need to detect a *stalled*
  * stream (no events at all for 120s). */
-const STREAM_IDLE_TIMEOUT_MS = 120_000;
+const STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 interface InactivityTimeoutHandle<T> {
   promise: Promise<T>;
@@ -92,6 +94,27 @@ export async function* invokeRustAPIStream(
   let isDone = false;
   let error: Error | null = null;
   let resolveNext: (() => void) | null = null;
+  let abortHandler: (() => void) | null = null;
+
+  const idleTimeoutMs = params.timeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+
+  if (params.signal) {
+    if (params.signal.aborted) {
+      throw new DOMException('Streaming request aborted', 'AbortError');
+    } else {
+      abortHandler = () => {
+        error = new DOMException('Streaming request aborted', 'AbortError');
+        isDone = true;
+        streamTimeout?.clear();
+        if (resolveNext) {
+          const r = resolveNext;
+          resolveNext = null;
+          r();
+        }
+      };
+      params.signal.addEventListener('abort', abortHandler, { once: true });
+    }
+  }
 
   // Inactivity timer handle — reset on every streamed event so a long but
   // healthy stream is not killed, while a truly stalled stream still errors.
@@ -102,8 +125,9 @@ export async function* invokeRustAPIStream(
     queue.push(event);
     streamTimeout?.resetTimer();
     if (resolveNext) {
-      resolveNext();
+      const r = resolveNext;
       resolveNext = null;
+      r();
     }
   }
 
@@ -133,24 +157,32 @@ export async function* invokeRustAPIStream(
     // Fire off the background Rust operation without `await`ing it yet.
     // That way, we can start draining the events it fires via `yield`.
     // The inactivity timeout resets on every streamed event, so it only
-    // rejects if the stream truly stalls (no tokens for STREAM_IDLE_TIMEOUT_MS).
+    // rejects if the stream truly stalls (no tokens for idleTimeoutMs).
     streamTimeout = withInactivityTimeout(
       invoke('send_claude_sdk_chat_streaming', params),
-      STREAM_IDLE_TIMEOUT_MS,
-      `Streaming call stalled — no events for ${STREAM_IDLE_TIMEOUT_MS / 1000}s`,
+      idleTimeoutMs,
+      `Streaming call stalled — no events for ${idleTimeoutMs / 1000}s`,
     );
     const requestPromise = streamTimeout.promise
       .then((finalResponse: any) => {
         isDone = true;
         streamTimeout?.clear();
-        if (resolveNext) resolveNext();
+        if (resolveNext) {
+          const r = resolveNext;
+          resolveNext = null;
+          r();
+        }
         return finalResponse;
       })
       .catch((err) => {
         error = toError(err, 'Streaming request failed');
         isDone = true;
         streamTimeout?.clear();
-        if (resolveNext) resolveNext();
+        if (resolveNext) {
+          const r = resolveNext;
+          resolveNext = null;
+          r();
+        }
       });
 
     // Continuously yield from queue until Rust signifies it is "done"
@@ -169,12 +201,17 @@ export async function* invokeRustAPIStream(
     
     // Yield the final result to capture token usage, artifacts, etc.
     const finalResponse = await requestPromise;
+    // eslint-disable-next-line no-console
+    console.info(`[streamAdapter] IPC streaming complete for session ${sessionId}`);
     yield { type: 'api_response_complete', response: finalResponse } as any;
   } finally {
+    if (params.signal && abortHandler) {
+      params.signal.removeEventListener('abort', abortHandler);
+    }
     // Critical: Clean up listeners regardless of success/fail/abort so they don't leak
     streamTimeout?.clear();
-    unlistenToken();
-    unlistenReasoning();
-    unlistenToolUse();
+    unlistenToken?.();
+    unlistenReasoning?.();
+    unlistenToolUse?.();
   }
 }

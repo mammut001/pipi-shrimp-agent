@@ -46,10 +46,15 @@ export function normalizeWorkflowMarkerToken(token: string): string | null {
   return `[[WORKFLOW:${normalizedLabel}]]`;
 }
 
+function stripCodeBlocks(text: string): string {
+  return text.replace(/```[\s\S]*?```/g, '');
+}
+
 export function extractWorkflowMarkerTokens(text: string): string[] {
+  const cleanText = stripCodeBlocks(text);
   const normalizedTokens = new Set<string>();
 
-  for (const match of text.matchAll(MARKER_TOKEN_REGEX)) {
+  for (const match of cleanText.matchAll(MARKER_TOKEN_REGEX)) {
     const rawToken = match[0];
     const normalizedToken = normalizeWorkflowMarkerToken(rawToken);
     if (normalizedToken) {
@@ -61,9 +66,10 @@ export function extractWorkflowMarkerTokens(text: string): string[] {
 }
 
 export function parseWorkflowMarkers(text: string): WorkflowMarkerCode[] {
+  const cleanText = stripCodeBlocks(text);
   const detectedCodes = new Set<WorkflowMarkerCode>();
 
-  for (const match of text.matchAll(MARKER_TOKEN_REGEX)) {
+  for (const match of cleanText.matchAll(MARKER_TOKEN_REGEX)) {
     const rawLabel = match[1] || match[2];
     const normalizedLabel = normalizeMarkerLabel(rawLabel);
     const code = WORKFLOW_MARKER_ALIASES[normalizedLabel];

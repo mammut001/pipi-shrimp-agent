@@ -604,4 +604,92 @@ describe('runHeadlessAgentTurn', () => {
     });
     expect(bootstrapRejectPayload.message).toContain('Tool "execute_command" is disabled for this AutoResearch run.');
   });
+
+  it('times out and cleans up when the underlying stream never resolves', async () => {
+    const mockReturn = jest.fn().mockResolvedValue({ done: true, value: undefined });
+    let passedSignal: AbortSignal | undefined;
+    const iterator = {
+      next: () => new Promise<IteratorResult<unknown>>(() => {}),
+      return: mockReturn,
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+    mockRunChatTurn.mockImplementation((_a, _b, _c, _d, _e, _f, options) => {
+      passedSignal = options?.signal;
+      return iterator;
+    });
+
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+
+    const promise = runHeadlessAgentTurn({
+      sessionId: 'session-never-resolving',
+      initialMessages: [{ role: 'user', content: 'Stalled' }],
+      systemPrompt: 'system prompt',
+      timeoutMs: 50,
+    });
+
+    await expect(promise).rejects.toThrow('Headless agent turn timed out after 50ms');
+    expect(mockReturn).toHaveBeenCalled();
+    expect(passedSignal?.aborted).toBe(true);
+  });
+
+  it('aborts immediately when AbortSignal triggers during a never-resolving stream', async () => {
+    const mockReturn = jest.fn().mockResolvedValue({ done: true, value: undefined });
+    const iterator = {
+      next: () => new Promise<IteratorResult<unknown>>(() => {}),
+      return: mockReturn,
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+    mockRunChatTurn.mockReturnValue(iterator);
+
+    const controller = new AbortController();
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+
+    const promise = runHeadlessAgentTurn({
+      sessionId: 'session-never-resolving-abort',
+      initialMessages: [{ role: 'user', content: 'Abort test' }],
+      systemPrompt: 'system prompt',
+      timeoutMs: 10000,
+      signal: controller.signal,
+    });
+
+    setTimeout(() => {
+      controller.abort();
+    }, 20);
+
+    await expect(promise).rejects.toThrow('Headless agent turn aborted');
+    expect(mockReturn).toHaveBeenCalled();
+  });
+
+  it('aborts signal when getNextEngineEvent timeout promise rejects during never resolving next', async () => {
+    const mockReturn = jest.fn().mockResolvedValue({ done: true, value: undefined });
+    let passedSignal: AbortSignal | undefined;
+    const iterator = {
+      next: () => new Promise<IteratorResult<unknown>>(() => {}), // never resolving next
+      return: mockReturn,
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+    };
+    mockRunChatTurn.mockImplementation((_a, _b, _c, _d, _e, _f, options) => {
+      passedSignal = options?.signal;
+      return iterator;
+    });
+
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+
+    const promise = runHeadlessAgentTurn({
+      sessionId: 'session-never-resolving-catch-test',
+      initialMessages: [{ role: 'user', content: 'Never resolving next' }],
+      systemPrompt: 'system prompt',
+      timeoutMs: 30,
+    });
+
+    await expect(promise).rejects.toThrow('Headless agent turn timed out after 30ms');
+    expect(passedSignal?.aborted).toBe(true);
+    expect(mockReturn).toHaveBeenCalled();
+  });
 });

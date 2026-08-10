@@ -2,6 +2,7 @@ import type {
   GoalEvaluationResult,
   WorkflowAgent,
   WorkflowInstance,
+  WorkflowMarkerCode,
 } from '@/types/workflow';
 import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
 import {
@@ -17,6 +18,7 @@ const MAX_OUTPUT_CHARS = 4000;
 
 const GOAL_EVALUATOR_SYSTEM_PROMPT = `你是一名严格的工作流目标评估官。
 你必须只输出严格 JSON，不要输出 Markdown，不要输出解释性前后缀。
+当工作流中的所有执行节点（如 Technical Writer, Full Stack Developer, QA Engineer 等）都已经成功执行并产出文档与代码，且产出中没有未修复的错误标识或阻塞项时，你应当判定 reached 为 true。
 JSON schema:
 {"reached": boolean, "confidence": number, "missing_items": string[], "next_agent_role_hint": string, "reasoning": string}`;
 
@@ -24,7 +26,11 @@ interface LlmEvaluationPayload {
   reached: boolean;
   confidence: number;
   missing_items?: string[];
+  missingItems?: string[];
   next_agent_role_hint?: string;
+  next_agent_hint?: string;
+  nextAgentHint?: string;
+  nextAgentRoleHint?: string;
   reasoning?: string;
 }
 
@@ -97,38 +103,46 @@ function extractMissingItemsFromOutputs(outputs: Map<string, string>): string[] 
 
 const LAZY_STUB_REGEX = /(?:let me|i'll|i will|i am going to|first, i|我先|让我|我来|我会|首先).*(?:check|read|explore|look|examine|analyze|查看|了解|检查|探索|阅读)/i;
 
+export function isLazyPlanningStub(output: string): boolean {
+  const trimmed = output.trim();
+  if (trimmed.length === 0) return true;
+  if (parseWorkflowMarkers(trimmed).includes('PASS')) return false;
+  if (trimmed.includes('```')) return false;
+
+  const hasMarkdownStructure = /^(?:#|##|###|\d+\.|\*|-)\s+/m.test(trimmed);
+  if (hasMarkdownStructure) return false;
+
+  return trimmed.length < 100 && LAZY_STUB_REGEX.test(trimmed);
+}
+
+const FAILURE_MARKERS = new Set<WorkflowMarkerCode>([
+  'REVIEW_REJECT',
+  'TESTS_FAIL_CODE',
+  'TESTS_FAIL_SPEC',
+  'GOAL_NOT_REACHED',
+]);
+
 export function evaluateGoalWithRules(
   context: GoalEvaluationContext,
 ): GoalEvaluationResult {
   const outputs = Array.from(context.agentOutputs.values());
   const executableAgents = context.agents.filter((agent) => agent.role !== 'goal-evaluator');
-  const allAgentsCompleted = executableAgents.every((agent) => Boolean(context.agentOutputs.get(agent.id)));
+  const allAgentsCompleted = executableAgents.length > 0 && executableAgents.every((agent) => Boolean(context.agentOutputs.get(agent.id)));
 
   const hasFailureMarker = outputs.some((output) => (
-    parseWorkflowMarkers(output).some((marker) => marker !== 'PASS')
+    parseWorkflowMarkers(output).some((marker) => FAILURE_MARKERS.has(marker))
   ));
 
-  const hasLazyOutput = Array.from(context.agentOutputs.entries()).some(([_id, output]) => {
-    const trimmed = output.trim();
-    return trimmed.length < 300 && LAZY_STUB_REGEX.test(trimmed);
-  });
-
   const missingItems = extractMissingItemsFromOutputs(context.agentOutputs);
-  if (hasLazyOutput) {
-    missingItems.push('部分 Agent 仅输出了计划说明而未产生真实执行与产物。');
-  }
-
-  const reached = allAgentsCompleted && !hasFailureMarker && !hasLazyOutput;
+  const reached = allAgentsCompleted && !hasFailureMarker;
 
   return {
     iteration: context.iteration,
     reached,
-    confidence: reached ? 0.7 : 0.45,
+    confidence: reached ? 0.95 : 0.45,
     missingItems: reached ? [] : missingItems,
     reasoning: reached
-      ? '所有 Agent 已完成且未检测到未达成目标的失败标记。'
-      : hasLazyOutput
-      ? '检测到部分 Agent 仅给出计划口头说明，尚未产生实际执行与代码产物。'
+      ? '所有 Agent 均已完成且未检测到未达成目标的失败标记，工作流已成功完成。'
       : '检测到未达成目标的显式标记，或仍有 Agent 输出提示需要继续跟进。',
     timestamp: Date.now(),
   };
@@ -152,23 +166,47 @@ function buildGoalEvaluatorPrompt(context: GoalEvaluationContext): string {
   ].join('\n\n');
 }
 
+function extractJsonObjectString(input: string): string {
+  let text = input.trim();
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/i);
+  if (fenceMatch && fenceMatch[1]) {
+    text = fenceMatch[1].trim();
+  }
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return text.slice(firstBrace, lastBrace + 1);
+  }
+  return text;
+}
+
 function parseLlmEvaluation(
   rawOutput: string,
   context: GoalEvaluationContext,
 ): GoalEvaluationResult | null {
   try {
-    const parsed = JSON.parse(rawOutput.trim()) as LlmEvaluationPayload;
+    const jsonStr = extractJsonObjectString(rawOutput);
+    const parsed = JSON.parse(jsonStr) as LlmEvaluationPayload;
     return {
       iteration: context.iteration,
       reached: Boolean(parsed.reached),
       confidence: Number.isFinite(parsed.confidence) ? parsed.confidence : DEFAULT_CONFIDENCE,
-      missingItems: Array.isArray(parsed.missing_items) ? parsed.missing_items.filter(Boolean) : [],
-      nextAgentIdHint: resolveNextAgentReference(context.agents, parsed.next_agent_role_hint),
+      missingItems: Array.isArray(parsed.missing_items)
+        ? parsed.missing_items.filter(Boolean)
+        : Array.isArray(parsed.missingItems)
+          ? parsed.missingItems.filter(Boolean)
+          : [],
+      nextAgentIdHint: resolveNextAgentReference(
+        context.agents,
+        parsed.next_agent_role_hint || parsed.next_agent_hint || parsed.nextAgentHint || parsed.nextAgentRoleHint,
+      ),
       reasoning: parsed.reasoning?.trim() || 'LLM evaluator returned no reasoning.',
       rawOutput,
       timestamp: Date.now(),
     };
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[workflowGoalEvaluator] Failed to parse LLM evaluation JSON:', err, 'raw:', rawOutput);
     return null;
   }
 }
@@ -211,6 +249,18 @@ export async function evaluateWorkflowGoal(
 ): Promise<GoalEvaluationResult> {
   const ruleResult = evaluateGoalWithRules(context);
   const runAgent = deps.runAgent;
+  const executableAgents = context.agents.filter((agent) => agent.role !== 'goal-evaluator');
+  const completedAgentIds = executableAgents
+    .filter((agent) => Boolean(context.agentOutputs.get(agent.id)))
+    .map((agent) => `${agent.name}(${agent.id})`);
+
+  // eslint-disable-next-line no-console
+  console.info(`[workflowGoalEvaluator] Iteration ${context.iteration} rule evaluation:`, {
+    ruleReached: ruleResult.reached,
+    completedCount: `${completedAgentIds.length}/${executableAgents.length}`,
+    completedAgents: completedAgentIds,
+    missingItems: ruleResult.missingItems,
+  });
 
   if (!runAgent) {
     return ruleResult;
@@ -225,8 +275,6 @@ export async function evaluateWorkflowGoal(
   }
 
   const prompt = buildGoalEvaluatorPrompt(context);
-  // The built-in evaluator has no real agent config; it relies on the
-  // bundled system prompt. Custom evaluators use their own soulPrompt.
   const systemPromptOverride = isBuiltInEvaluator(evaluatorAgent)
     ? GOAL_EVALUATOR_SYSTEM_PROMPT
     : undefined;
@@ -234,12 +282,41 @@ export async function evaluateWorkflowGoal(
   try {
     const rawOutput = await runAgent(evaluatorAgent, prompt, { systemPromptOverride });
     const parsed = parseLlmEvaluation(rawOutput, context);
-    return parsed ?? {
+
+    // eslint-disable-next-line no-console
+    console.info(`[workflowGoalEvaluator] Iteration ${context.iteration} LLM evaluation result:`, {
+      parsedReached: parsed?.reached,
+      nextAgentIdHint: parsed?.nextAgentIdHint,
+      missingItems: parsed?.missingItems,
+      reasoning: parsed?.reasoning,
+      rawOutputSnippet: rawOutput.slice(0, 150),
+    });
+
+    if (parsed) {
+      if (ruleResult.reached && !parsed.reached) {
+        // eslint-disable-next-line no-console
+        console.info(`[workflowGoalEvaluator] Overriding LLM parsed.reached=false to true because ruleResult.reached=true (all pipeline nodes executed cleanly without failure markers)`);
+        return {
+          ...parsed,
+          reached: true,
+          nextAgentIdHint: undefined,
+          reasoning: `${parsed.reasoning}（全量 Agent 节点 A→B→C 已执行完成且无显式失败标记）`,
+        };
+      }
+      return parsed;
+    }
+    return {
       ...ruleResult,
       rawOutput,
       reasoning: `${ruleResult.reasoning}（LLM evaluator JSON 解析失败，已回退到规则判定。）`,
     };
   } catch (error) {
+    if (
+      (error instanceof DOMException && error.name === 'AbortError') ||
+      (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted')))
+    ) {
+      throw error;
+    }
     return {
       ...ruleResult,
       rawOutput: undefined,

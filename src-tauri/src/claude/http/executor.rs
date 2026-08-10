@@ -254,6 +254,7 @@ pub async fn send_request_impl(
             window,
             estimated_input,
             session_id.map(|value| value.to_string()),
+            no_tools,
         )
         .await
         .map_err(|error| map_app_error(provider_label(config.provider_id), error))

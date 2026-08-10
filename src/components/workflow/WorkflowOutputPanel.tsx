@@ -58,11 +58,13 @@ export function WorkflowOutputPanel() {
   const [files, setFiles] = useState<FileInfo[]>([]);
   const addNotification = useUIStore((state) => state.addNotification);
 
-  // Use the explicitly selected run, or fall back to the latest run
-  const activeRun = selectedRunId
-    ? workflowRuns.find((r) => r.id === selectedRunId) ?? workflowRuns[0]
-    : workflowRuns[0];
+  // Prefer active run from current instance, or explicitly selected run, or latest run
+  const activeRun = (activeRunId ? workflowRuns.find((r) => r.id === activeRunId) : null)
+    ?? (selectedRunId ? workflowRuns.find((r) => r.id === selectedRunId) : null)
+    ?? workflowRuns[0]
+    ?? null;
   const runDirectory = activeRun?.runDirectory || '';
+  const targetDirectory = runDirectory || workflowEngine.getWorkingDirectory?.() || '';
 
   // AUDIT-011 FIX: Properly handle the fallback chain for displayAgents.
   // Previously: activeRun?.agents.map() ?? agents.map() — this doesn't work because
@@ -98,15 +100,9 @@ export function WorkflowOutputPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    const shouldLoadPersistedOutputs = !isRunning || activeRun?.id !== activeRunId;
-
     async function loadHistoricalOutputs(): Promise<void> {
       if (!activeRun) {
         setAgentOutputs(new Map());
-        return;
-      }
-
-       if (!shouldLoadPersistedOutputs) {
         return;
       }
 
@@ -151,25 +147,28 @@ export function WorkflowOutputPanel() {
 
   // Refresh file list
   const refreshFiles = useCallback(async () => {
-    if (!runDirectory) return;
+    const dir = targetDirectory;
+    if (!dir) {
+      setFiles([]);
+      return;
+    }
     try {
-      const entries = await workflowService.listDirectory(runDirectory);
+      const entries = await workflowService.listDirectory(dir);
       setFiles(entries.filter((f) => !f.is_directory));
     } catch {
-      // directory may not exist yet
+      setFiles([]);
     }
-  }, [runDirectory]);
+  }, [targetDirectory]);
 
-  // Periodic refresh while running (pauses when tab is hidden)
-  usePolling(refreshFiles, 2000, isRunning);
-
-  // Extra refresh when run completes
+  // Auto-refresh file list whenever target directory, active run, or completion state changes
   useEffect(() => {
-    if (!isRunning && runDirectory) {
-      const t = setTimeout(refreshFiles, 500);
-      return () => clearTimeout(t);
-    }
-  }, [isRunning, runDirectory, refreshFiles]);
+    if (!targetDirectory) return;
+
+    void refreshFiles();
+
+    const timer = setInterval(refreshFiles, 2000);
+    return () => clearInterval(timer);
+  }, [targetDirectory, activeRun?.id, isRunning, refreshFiles]);
 
   const toggleExpand = (agentId: string) => {
     setExpandedAgents((prev) => {
@@ -185,13 +184,13 @@ export function WorkflowOutputPanel() {
   };
 
   const openRunDirectoryInFinder = async () => {
-    if (!runDirectory) {
+    if (!targetDirectory) {
       addNotification('warning', t('workflow.output.noWorkDir'));
       return;
     }
 
     try {
-      await invoke('reveal_in_finder', { path: runDirectory });
+      await invoke('reveal_in_finder', { path: targetDirectory });
     } catch (error) {
       console.error('Failed to reveal workflow directory in Finder:', error);
       addNotification('error', t('workflow.output.cannotOpenWorkDir').replace('{error}', String(error)));
@@ -224,9 +223,9 @@ export function WorkflowOutputPanel() {
         </button>
         <button
           onClick={openRunDirectoryInFinder}
-          disabled={!runDirectory}
+          disabled={!targetDirectory}
           className="ml-2 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          title={runDirectory || t('workflow.output.noWorkDir')}
+          title={targetDirectory || t('workflow.output.noWorkDir')}
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -304,7 +303,7 @@ export function WorkflowOutputPanel() {
         ) : (
           /* ===== Files tab ===== */
           <div className="flex flex-col h-full">
-            {!runDirectory ? (
+            {!targetDirectory ? (
               <div className="flex items-center justify-center h-full text-gray-400 text-sm">
                 {t('workflow.output.runAfter')}
               </div>
@@ -339,8 +338,8 @@ export function WorkflowOutputPanel() {
                     </button>
                   ))
                 )}
-                <div className="px-4 py-2 text-[10px] text-gray-400 truncate" title={runDirectory}>
-                  {runDirectory}
+                <div className="px-4 py-2 text-[10px] text-gray-400 truncate" title={targetDirectory}>
+                  {targetDirectory}
                 </div>
               </div>
             )}

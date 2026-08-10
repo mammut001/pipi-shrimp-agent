@@ -70,9 +70,10 @@ pub async fn stream_response(
     window: Option<Window>,
     estimated_input: i32,
     session_id: Option<String>,
+    no_tools: bool,
 ) -> AppResult<super::message::ChatResponse> {
     let adapter = get_adapter_for_config(config);
-    let mut ctx = StreamContext::new(estimated_input, window, session_id);
+    let mut ctx = StreamContext::new_with_no_tools(estimated_input, window, session_id, no_tools);
 
     // Stream response body
     let mut stream = response.bytes_stream();

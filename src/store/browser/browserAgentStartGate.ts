@@ -40,7 +40,12 @@ export function normalizeBrowserSurfaceUrl(raw: string | null | undefined): stri
       pathname = pathname.slice(0, -1);
     }
     url.pathname = pathname || '/';
-    return `${url.origin}${url.pathname}${url.search}`;
+    let hostname = url.hostname.toLowerCase();
+    if (hostname.startsWith('www.')) {
+      hostname = hostname.slice(4);
+    }
+    const protocol = url.protocol.toLowerCase();
+    return `${protocol}//${hostname}${url.pathname}${url.search}`;
   } catch {
     return null;
   }

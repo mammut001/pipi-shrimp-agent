@@ -7,8 +7,14 @@ jest.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
+const resyncBrowserPageMock = jest.fn<() => Promise<string>>();
+
 jest.mock('../../utils/browserPageStateClient', () => ({
   getCurrentBrowserUrl: () => getCurrentBrowserUrlMock(),
+}));
+
+jest.mock('../../utils/browserSessionClient', () => ({
+  resyncBrowserPage: () => resyncBrowserPageMock(),
 }));
 
 describe('cdp runtime state bridge', () => {
@@ -16,6 +22,7 @@ describe('cdp runtime state bridge', () => {
     jest.resetModules();
     invokeMock.mockReset();
     getCurrentBrowserUrlMock.mockReset();
+    resyncBrowserPageMock.mockReset();
   });
 
   it('cdp_task_started_updates_browser_runtime_state', async () => {

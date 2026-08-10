@@ -835,6 +835,7 @@ const enUS: TranslationKeys = {
   'workflow.goalStatus.reached': 'Reached',
   'workflow.goalStatus.notReached': 'Not Reached',
   'workflow.goalStatus.inProgress': 'In Progress',
+  'workflow.goalStatus.evaluating': 'Evaluating',
   'workflow.goalStatus.notStarted': 'Not Started',
   'workflow.goalStatus.noMissingItems': 'No missing items',
   'workflow.canvas.emptyState': 'Add agents to display the workflow canvas here',

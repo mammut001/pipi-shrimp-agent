@@ -22,6 +22,7 @@ import {
   type CdpRuntimeSnapshot,
 } from './cdpRuntime';
 import { getCurrentBrowserUrl } from '../utils/browserPageStateClient';
+import { resyncBrowserPage } from '../utils/browserSessionClient';
 
 let _connectorModalResolver: ((connected: boolean) => void) | null = null;
 
@@ -275,6 +276,13 @@ export const useCdpStore = create<CdpState>((set, get) => {
 
     refreshCdpRuntimeState: async () => {
       try {
+        if (get().status === 'connected') {
+          try {
+            await resyncBrowserPage();
+          } catch {
+            // Best-effort resync
+          }
+        }
         const connectionState = await get().syncConnectionState();
         let observedUrl = connectionState?.current_url ?? null;
 

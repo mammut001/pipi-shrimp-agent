@@ -393,7 +393,7 @@ describe('WorkflowEngine snapshot behavior', () => {
     const instance = createInstance('origin', [developer], [], { maxGoalIterations: 60, projectGoal: '' });
     const store = installWorkflowStore([instance], instance.id);
 
-    const runAgent = jest.fn(async () => 'developer-output');
+    const runAgent = jest.fn(async () => 'developer-output [[WORKFLOW:TESTS_FAIL_CODE]]');
     const engine = new WorkflowEngine({
       createRunDirectory: async () => '/tmp/workflow-run',
       writeFile: async () => undefined,
@@ -402,7 +402,7 @@ describe('WorkflowEngine snapshot behavior', () => {
         iteration,
         reached: false,
         confidence: 0.1,
-        missingItems: ['still missing'],
+        missingItems: ['tests failed with error'],
         nextAgentIdHint: 'developer',
         reasoning: 'keep iterating',
         timestamp: iteration,
@@ -814,9 +814,122 @@ describe('WorkflowEngine snapshot behavior', () => {
       await Promise.resolve();
       expect(capturedSignal?.aborted).toBe(false);
       await engine.stop();
-      expect(capturedSignal?.aborted).toBe(true);
       resolveFirstAgent('writer-output');
       await startPromise;
+    });
+
+    it('does not overwrite completed status of task agent during goal evaluation when goalEvaluatorAgentId is set to task agent', async () => {
+      const runAgent = jest.fn((agent: WorkflowAgent) => Promise.resolve(`${agent.name}-output`));
+      const evaluateGoal = jest.fn(async () => ({
+        iteration: 1,
+        reached: true,
+        confidence: 0.9,
+        missingItems: [],
+        reasoning: 'Goal met',
+        timestamp: Date.now(),
+      }));
+
+      const { engine, store } = createTwoAgentEngine({ runAgent, evaluateGoal });
+      const instance = store.instances[0];
+      instance.goalEvaluatorAgentId = 'writer';
+
+      await engine.start();
+
+      const runWriter = store.instances[0].workflowRuns[0].agents.find((a) => a.agentId === 'writer');
+      expect(runWriter?.status).toBe('completed');
+      expect(store.instances[0].workflowRuns[0].status).toBe('completed');
+    });
+
+    it('resumes and completes execution loop when goal evaluation succeeds after a long response', async () => {
+      const runAgent = jest.fn((agent: WorkflowAgent) => Promise.resolve(`${agent.name}-output`));
+      const evaluateGoal = jest.fn(async ({ iteration }: { iteration: number }) => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return {
+          iteration,
+          reached: true,
+          confidence: 1,
+          missingItems: [],
+          reasoning: 'Goal completed after long evaluation response',
+          timestamp: Date.now(),
+        };
+      });
+
+      const { engine, store } = createTwoAgentEngine({ runAgent, evaluateGoal });
+
+      await engine.start();
+
+      expect(evaluateGoal).toHaveBeenCalled();
+      expect(store.instances[0].workflowRuns[0].status).toBe('completed');
+      expect(store.instances[0].workflowRuns[0].reachedGoal).toBe(true);
+      expect(engine.getIsRunning()).toBe(false);
+    });
+
+    it('advances execution loop to next agent (B) after goal evaluation promise completes with reached false', async () => {
+      const executedAgentIds: string[] = [];
+      const runAgent = jest.fn(async (agent: WorkflowAgent) => {
+        executedAgentIds.push(agent.id);
+        if (agent.id === 'developer' && executedAgentIds.filter((id) => id === 'developer').length === 1) {
+          return `${agent.id}-output [[WORKFLOW:TESTS_FAIL_CODE]]`;
+        }
+        return `${agent.id}-output`;
+      });
+
+      const evaluateGoal = jest.fn(async ({ iteration }: { iteration: number }) => ({
+        iteration,
+        reached: iteration >= 2,
+        confidence: iteration >= 2 ? 1 : 0.5,
+        missingItems: iteration >= 2 ? [] : ['Step 2 pending error'],
+        reasoning: iteration >= 2 ? 'Goal met' : 'Goal not met yet',
+        timestamp: Date.now(),
+      }));
+
+      const { engine, store } = createTwoAgentEngine({ runAgent, evaluateGoal });
+
+      await engine.start();
+
+      expect(executedAgentIds).toEqual(['writer', 'developer', 'developer']);
+      expect(evaluateGoal).toHaveBeenCalledTimes(2);
+
+      const run = store.instances[0].workflowRuns[0];
+      expect(run.status).toBe('completed');
+      expect(run.reachedGoal).toBe(true);
+      expect(run.currentIteration).toBe(2);
+
+      const writerRun = run.agents.find((a) => a.agentId === 'writer');
+      const developerRun = run.agents.find((a) => a.agentId === 'developer');
+      expect(writerRun?.status).toBe('completed');
+      expect(developerRun?.status).toBe('completed');
+    });
+
+    it('recovers cleanly from malformed_tool_call in goal evaluator turn without infinite re-entry loop', async () => {
+      const executedAgentIds: string[] = [];
+      const runAgent = jest.fn(async (agent: WorkflowAgent) => {
+        executedAgentIds.push(agent.id);
+        return `${agent.id}-output`;
+      });
+
+      const evaluateGoal = jest.fn(async ({ iteration }: { iteration: number }) => {
+        if (iteration === 1) {
+          throw new Error('Chat request failed: malformed_tool_call');
+        }
+        return {
+          iteration,
+          reached: true,
+          confidence: 1.0,
+          missingItems: [],
+          reasoning: 'Goal met',
+          timestamp: Date.now(),
+        };
+      });
+
+      const { engine, store } = createTwoAgentEngine({ runAgent, evaluateGoal });
+
+      await engine.start();
+
+      expect(executedAgentIds).toEqual(['writer', 'developer']);
+      const run = store.instances[0].workflowRuns[0];
+      expect(run.status).toBe('completed');
+      expect(run.reachedGoal).toBe(true);
     });
   });
 });

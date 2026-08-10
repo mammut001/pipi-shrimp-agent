@@ -41,10 +41,22 @@ export function WorkflowExecutionBar() {
       addNotification('error', validationResult.firstError?.message ?? '当前 Workflow 配置无效，无法运行。');
       return;
     }
-    if (!canRun || startingRef.current || workflowEngine.getIsRunning()) return;
+    if (workflowEngine.getIsRunning() || isRunning) {
+      // eslint-disable-next-line no-console
+      console.warn('[WorkflowExecutionBar] Blocked start: engine or store is currently running', {
+        engineIsRunning: workflowEngine.getIsRunning(),
+        storeIsRunning: isRunning,
+      });
+      addNotification('warning', '当前 Workflow 正在运行中，请等待完成或点击停止。');
+      return;
+    }
+    if (startingRef.current) return;
     startingRef.current = true;
     try {
       await workflowEngine.start();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[WorkflowExecutionBar] Exception during workflowEngine.start():', err);
     } finally {
       startingRef.current = false;
     }
@@ -98,12 +110,16 @@ export function WorkflowExecutionBar() {
           />
           {isRunning ? (
             <span className="flex min-w-0 items-center gap-1.5">
-              {runningAgentIndex >= 0 && (
+              {runningAgentIndex >= 0 ? (
                 <span className="font-medium text-blue-600">
                   {`${runningAgentIndex + 1}/${agents.length}`}
                 </span>
+              ) : (
+                <span className="font-medium text-amber-600">
+                  [评估中]
+                </span>
               )}
-              <span className="truncate">{currentAgentName || '工作流执行中'}</span>
+              <span className="truncate">{currentAgentName || '工作流目标评估中...'}</span>
             </span>
           ) : (
             <span className="truncate">

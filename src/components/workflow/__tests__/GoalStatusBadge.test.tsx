@@ -51,10 +51,17 @@ describe('GoalStatusBadge', () => {
     expect(screen.getByText('workflow.goalStatus.notStarted')).toBeTruthy();
   });
 
-  it('renders In Progress status when workflow is running', () => {
-    useWorkflowStore.setState({ isRunning: true });
+  it('renders In Progress status when agent is executing', () => {
+    useWorkflowStore.setState({ isRunning: true, currentRunningAgentId: 'agent-1' });
+    render(<GoalStatusBadge />);
+    expect(screen.getByText('⚡')).toBeTruthy();
+    expect(screen.getByText('workflow.goalStatus.inProgress')).toBeTruthy();
+  });
+
+  it('renders Evaluating status when goal evaluation is running', () => {
+    useWorkflowStore.setState({ isRunning: true, currentRunningAgentId: null });
     render(<GoalStatusBadge />);
     expect(screen.getByText('⏳')).toBeTruthy();
-    expect(screen.getByText('workflow.goalStatus.inProgress')).toBeTruthy();
+    expect(screen.getByText('workflow.goalStatus.evaluating')).toBeTruthy();
   });
 });

@@ -12,6 +12,7 @@ jest.mock('@tauri-apps/api/core', () => ({
 }));
 
 import {
+  getCurrentBrowserUrl,
   getBrowserLightObservation,
   captureBrowserScreenshotOptions,
   getBrowserPageState,
@@ -23,24 +24,33 @@ beforeEach(() => {
 });
 
 describe('browserPageStateClient', () => {
-  describe('getBrowserLightObservation', () => {
-    it('invokes get_page_observation_light', async () => {
+  describe('getCurrentBrowserUrl', () => {
+    it('returns URL from getBrowserLightObservation when available', async () => {
       const fake = {
-        url: 'https://example.com',
-        title: 'Example',
-        navigation_id: 'nav-1',
+        url: 'https://www.wikipedia.org/',
+        title: 'Wikipedia',
         ready_state: 'complete',
-        text_excerpt: 'hello',
-        active_element: 'BODY',
-        timestamp_ms: Date.now(),
       };
       mockInvoke.mockResolvedValueOnce(fake);
 
-      const result = await getBrowserLightObservation();
+      const url = await getCurrentBrowserUrl();
 
       expect(mockInvoke).toHaveBeenCalledWith('get_page_observation_light');
-      expect(result.url).toBe('https://example.com');
-      expect(result.ready_state).toBe('complete');
+      expect(url).toBe('https://www.wikipedia.org/');
+    });
+
+    it('falls back to cdp_execute_script when getBrowserLightObservation fails', async () => {
+      mockInvoke
+        .mockRejectedValueOnce(new Error('CDP light observation failed'))
+        .mockResolvedValueOnce('https://fallback.wikipedia.org/');
+
+      const url = await getCurrentBrowserUrl();
+
+      expect(mockInvoke).toHaveBeenNthCalledWith(1, 'get_page_observation_light');
+      expect(mockInvoke).toHaveBeenNthCalledWith(2, 'cdp_execute_script', expect.objectContaining({
+        script: '(function() { return window.location.href; })()',
+      }));
+      expect(url).toBe('https://fallback.wikipedia.org/');
     });
   });
 
