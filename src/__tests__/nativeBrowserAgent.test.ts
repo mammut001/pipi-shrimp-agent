@@ -21,7 +21,7 @@ jest.mock('../utils/browserPageStateClient', () => ({
   getBrowserPageState: jest.fn(),
   getBrowserSemanticTree: jest.fn().mockResolvedValue('[]'),
   getBrowserText: jest.fn().mockResolvedValue('body text'),
-  getCurrentBrowserUrl: jest.fn().mockResolvedValue('https://example.com/login'),
+  getCurrentBrowserUrl: jest.fn().mockResolvedValue('about:blank'),
 }));
 
 jest.mock('../utils/browserFeatureFlags', () => ({
@@ -62,13 +62,14 @@ import {
 } from '@/utils/browserActionClient';
 import { navigateBrowserPage } from '@/utils/browserSessionClient';
 import { executeNativeBrowserTask } from '@/utils/nativeBrowserAgent';
-import { getBrowserPageState, getBrowserSemanticTree } from '@/utils/browserPageStateClient';
+import { getBrowserPageState, getBrowserSemanticTree, getCurrentBrowserUrl } from '@/utils/browserPageStateClient';
 import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled } from '@/utils/browserFeatureFlags';
 
 const invokeMock = invoke as jest.MockedFunction<typeof invoke>;
 const clickBrowserElementMock = clickBrowserElement as jest.MockedFunction<typeof clickBrowserElement>;
 const executeBrowserScriptMock = executeBrowserScript as jest.MockedFunction<typeof executeBrowserScript>;
 const pressBrowserKeyMock = pressBrowserKey as jest.MockedFunction<typeof pressBrowserKey>;
+const getCurrentBrowserUrlMock = getCurrentBrowserUrl as jest.MockedFunction<typeof getCurrentBrowserUrl>;
 
 const countOverlayScriptCalls = (): { inject: number; remove: number } => {
   const scripts = executeBrowserScriptMock.mock.calls.map(([script]) => String(script));
@@ -122,6 +123,8 @@ describe('nativeBrowserAgent', () => {
     navigateBrowserPageMock.mockClear();
     getBrowserPageStateMock.mockReset();
     getBrowserSemanticTreeMock.mockClear();
+    getCurrentBrowserUrlMock.mockReset();
+    getCurrentBrowserUrlMock.mockResolvedValue('about:blank');
     actionsFlagMock.mockReturnValue(true);
     pageStateFlagMock.mockReturnValue(true);
   });
@@ -590,6 +593,31 @@ describe('nativeBrowserAgent', () => {
       });
       await jest.runAllTimersAsync();
       await assertion;
+    });
+
+    it('skips redundant navigation when CDP is already on target URL', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      getCurrentBrowserUrlMock.mockResolvedValue('https://www.wikipedia.org/');
+      invokeMock.mockImplementation(async (command: string) => {
+        if (command === 'send_claude_sdk_chat') {
+          return {
+            content: JSON.stringify({
+              thought: 'Read title',
+              action: { done: { text: 'Wikipedia', success: true } },
+            }),
+          };
+        }
+        return null;
+      });
+
+      const { navigateBrowserPage } = jest.requireMock('../utils/browserSessionClient');
+      navigateBrowserPage.mockClear();
+
+      const taskPromise = executeNativeBrowserTask('Read current page title', 'api-key', 'model');
+      await jest.advanceTimersByTimeAsync(1200);
+      await jest.runAllTimersAsync();
+      await expect(taskPromise).resolves.toBe('Wikipedia');
+      expect(navigateBrowserPage).not.toHaveBeenCalled();
     });
   });
 });

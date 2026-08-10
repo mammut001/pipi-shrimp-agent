@@ -57,6 +57,8 @@ export interface HeadlessAgentRunnerInput {
   pipiOutputDir?: string;
   agentConfig?: ResolvedAgentConfig;
   allowedTools?: string[];
+  noTools?: boolean;
+  maxToolRounds?: number;
   toolExecutionSource?: ToolExecutionSource;
   /**
    * Permission mode for tool execution. When set to 'bypass', tools like
@@ -296,10 +298,51 @@ async function executeToolBatch(
   return results;
 }
 
+async function getNextEngineEvent<T>(
+  generator: AsyncGenerator<T, void, unknown>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<IteratorResult<T, void>> {
+  if (signal?.aborted) {
+    throw new DOMException('Headless agent turn aborted', 'AbortError');
+  }
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let abortListener: (() => void) | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`Headless agent turn timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  const abortPromise = new Promise<never>((_, reject) => {
+    if (signal) {
+      abortListener = () => {
+        reject(new DOMException('Headless agent turn aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', abortListener, { once: true });
+    }
+  });
+
+  try {
+    return await Promise.race([
+      generator.next(),
+      timeoutPromise,
+      abortPromise,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal && abortListener) {
+      signal.removeEventListener('abort', abortListener);
+    }
+  }
+}
+
 export async function runHeadlessAgentTurn(
   input: HeadlessAgentRunnerInput,
 ): Promise<HeadlessAgentRunnerResult> {
-  const executor = new StreamingToolExecutor({ timeoutMs: input.timeoutMs ?? 120_000 });
+  const executor = new StreamingToolExecutor({ timeoutMs: input.timeoutMs ?? 300_000 });
   const allowedTools = input.allowedTools?.length
     ? new Set(input.allowedTools)
     : undefined;
@@ -311,7 +354,18 @@ export async function runHeadlessAgentTurn(
   const constrainedSystemPrompt = input.allowedTools?.length
     ? buildAllowedToolsSystemPrompt(input.systemPrompt, input.allowedTools)
     : input.systemPrompt;
-  const turnDeadlineMs = input.timeoutMs ?? 120_000;
+  const turnDeadlineMs = input.timeoutMs ?? 300_000;
+
+  const turnAbortController = new AbortController();
+  let onInputAbort: (() => void) | null = null;
+  if (input.signal) {
+    if (input.signal.aborted) {
+      turnAbortController.abort();
+    } else {
+      onInputAbort = () => turnAbortController.abort();
+      input.signal.addEventListener('abort', onInputAbort, { once: true });
+    }
+  }
 
   const engine = runChatTurn(
     input.sessionId,
@@ -321,7 +375,11 @@ export async function runHeadlessAgentTurn(
     false,
     input.agentConfig,
     {
+      noTools: input.noTools ?? (input.allowedTools?.length === 0 ? true : undefined),
       allowedTools: input.allowedTools,
+      maxToolRounds: input.maxToolRounds,
+      signal: turnAbortController.signal,
+      timeoutMs: input.timeoutMs,
     },
     input.pipiOutputDir,
   );
@@ -335,19 +393,31 @@ export async function runHeadlessAgentTurn(
     useSettingsStore.getState().agentSettings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds,
   );
 
-  const turnDeadlineMs = input.timeoutMs ?? 120_000;
-  let turnTimedOut = false;
-  const timeoutId = setTimeout(() => { turnTimedOut = true; }, turnDeadlineMs);
+  const startTime = Date.now();
 
   try {
-    for await (const event of engine) {
-      if (turnTimedOut) {
+    while (true) {
+      const remainingMs = turnDeadlineMs - (Date.now() - startTime);
+      if (remainingMs <= 0) {
+        turnAbortController.abort();
         throw new Error(`Headless agent turn timed out after ${turnDeadlineMs}ms`);
       }
-
-      if (input.signal?.aborted) {
+      if (turnAbortController.signal.aborted) {
         throw new DOMException('Headless agent turn aborted', 'AbortError');
       }
+
+      let step: IteratorResult<any, void>;
+      try {
+        step = await getNextEngineEvent(engine, Math.max(1, remainingMs), turnAbortController.signal);
+      } catch (err) {
+        turnAbortController.abort();
+        throw err;
+      }
+      if (step.done) {
+        break;
+      }
+
+      const event = step.value;
 
       switch (event.type) {
       case 'text_delta':
@@ -468,7 +538,14 @@ export async function runHeadlessAgentTurn(
 
       default:
         break;
+      }
     }
+  } finally {
+    if (input.signal && onInputAbort) {
+      input.signal.removeEventListener('abort', onInputAbort);
+    }
+    turnAbortController.abort();
+    await engine.return?.().catch(() => {});
   }
 
   return {

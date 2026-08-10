@@ -231,6 +231,9 @@ describe('WorkflowEngine goal loop', () => {
     const runAgent = jest.fn(async (agent: WorkflowAgent) => {
       const nextCount = (agentCallCounts.get(agent.id) ?? 0) + 1;
       agentCallCounts.set(agent.id, nextCount);
+      if (agent.id === 'developer' && nextCount === 1) {
+        return `${agent.id}-${nextCount} [[WORKFLOW:TESTS_FAIL_CODE]]`;
+      }
       return `${agent.id}-${nextCount}`;
     });
     const evaluateGoal = jest
@@ -239,7 +242,7 @@ describe('WorkflowEngine goal loop', () => {
         iteration: 1,
         reached: false,
         confidence: 0.5,
-        missingItems: ['fix code'],
+        missingItems: ['fix code error'],
         nextAgentIdHint: 'developer',
         reasoning: 'need another pass',
         timestamp: 1,
@@ -283,12 +286,12 @@ describe('WorkflowEngine goal loop', () => {
     const instance = createInstance([developer], [], 2);
     installWorkflowStore(instance);
 
-    const runAgent = jest.fn(async () => 'developer-output');
+    const runAgent = jest.fn(async () => 'developer-output [[WORKFLOW:TESTS_FAIL_CODE]]');
     const evaluateGoal = jest.fn(async ({ iteration }: { iteration: number }) => ({
       iteration,
       reached: false,
       confidence: 0.2,
-      missingItems: ['still missing'],
+      missingItems: ['still missing error'],
       nextAgentIdHint: 'developer',
       reasoning: 'keep iterating',
       timestamp: iteration,
@@ -321,7 +324,7 @@ describe('WorkflowEngine goal loop', () => {
       tokenHandler?.({
         payload: {
           session_id: params.sessionId,
-          content: callCount === 1 ? 'round-1 output' : 'round-2 [[WORKFLOW:PASS]]',
+          content: callCount === 1 ? 'round-1 output [[WORKFLOW:TESTS_FAIL_CODE]]' : 'round-2 [[WORKFLOW:PASS]]',
         },
       });
       return undefined;

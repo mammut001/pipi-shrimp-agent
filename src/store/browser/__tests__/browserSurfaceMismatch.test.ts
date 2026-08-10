@@ -152,6 +152,27 @@ describe('browserAgentStore surface mismatch gate (R3-04)', () => {
     expect(useBrowserAgentStore.getState().status).toBe('completed');
   });
 
+  it('www_subdomain_variant_allows_cdp_start', async () => {
+    getCurrentBrowserUrlMock.mockResolvedValue('https://www.iana.org/');
+    useBrowserAgentStore.setState({
+      currentUrl: 'https://iana.org/',
+      inspection: {
+        ...baseStoreState.inspection,
+        url: 'https://iana.org/',
+      },
+      pendingTask: {
+        ...baseStoreState.pendingTask,
+        targetUrl: 'https://iana.org/',
+      },
+    });
+    executeCdpTaskMock.mockResolvedValueOnce('done');
+
+    await useBrowserAgentStore.getState().executeTask('Inspect page');
+
+    expect(executeCdpTaskMock).toHaveBeenCalledTimes(1);
+    expect(useBrowserAgentStore.getState().status).toBe('completed');
+  });
+
   it('unknown_cdp_url_blocks', async () => {
     getCurrentBrowserUrlMock.mockRejectedValueOnce(new Error('CDP disconnected'));
 

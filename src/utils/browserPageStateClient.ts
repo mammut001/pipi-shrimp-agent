@@ -24,6 +24,15 @@ export async function extractBrowserContent(): Promise<string> {
 }
 
 export async function getCurrentBrowserUrl(): Promise<string> {
+  try {
+    const obs = await getBrowserLightObservation();
+    if (obs?.url) {
+      return obs.url;
+    }
+  } catch {
+    // Fall back to script execution if light observation is unavailable
+  }
+
   return invoke<string>('cdp_execute_script', {
     script: '(function() { return window.location.href; })()',
     source: 'headless_agent',

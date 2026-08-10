@@ -42,8 +42,12 @@ fn contains_xml_tool_call_text(content: &str) -> bool {
         || lower.contains("<parameter name=")
 }
 
-fn validate_structured_tool_call_content(content: &str, tool_calls: &[ToolCall]) -> AppResult<()> {
-    if tool_calls.is_empty() && contains_xml_tool_call_text(content) {
+fn validate_structured_tool_call_content(
+    content: &str,
+    tool_calls: &[ToolCall],
+    no_tools: bool,
+) -> AppResult<()> {
+    if !no_tools && tool_calls.is_empty() && contains_xml_tool_call_text(content) {
         return Err(AppError::ProcessError(
             "malformed_tool_call: Assistant emitted text-form tool calls instead of structured tool_calls.".to_string(),
         ));
@@ -174,7 +178,8 @@ impl ProviderAdapter for OpenAIAdapter {
         }
 
         let artifacts = detect_artifacts(&content);
-        validate_structured_tool_call_content(&content, &tool_calls)?;
+        let no_tools = body.get("tools").is_none();
+        validate_structured_tool_call_content(&content, &tool_calls, no_tools)?;
 
         Ok(ChatResponse {
             content,
@@ -255,7 +260,7 @@ impl ProviderAdapter for OpenAIAdapter {
                                 .to_string();
                             let args = tool_call["function"]["arguments"]
                                 .as_str()
-                                .unwrap_or("{}")
+                                .unwrap_or("")
                                 .to_string();
 
                             if let Some(index) = index {
@@ -363,7 +368,7 @@ impl ProviderAdapter for OpenAIAdapter {
                 + crate::utils::token::estimate_tokens(&ctx.reasoning);
         }
 
-        validate_structured_tool_call_content(&ctx.content, &ctx.tool_calls)?;
+        validate_structured_tool_call_content(&ctx.content, &ctx.tool_calls, ctx.no_tools)?;
 
         Ok(ChatResponse {
             content: ctx.content,

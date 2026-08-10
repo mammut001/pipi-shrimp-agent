@@ -155,6 +155,9 @@ export function buildExhaustedMalformedToolCallError(error: unknown): Error {
 export interface RunChatTurnOptions {
   noTools?: boolean;
   allowedTools?: string[];
+  maxToolRounds?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export async function* runChatTurn(
@@ -168,7 +171,7 @@ export async function* runChatTurn(
   pipiOutputDir?: string,
 ): AsyncGenerator<EngineEvent, void, unknown> {
   const settings = useSettingsStore.getState().agentSettings;
-  const maxToolBudget = settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
+  const maxToolBudget = options?.maxToolRounds ?? settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
   const toolBudgetReserve = maxToolBudget > 4 ? 2 : 1;
   const maxModelRounds = Math.max(maxToolBudget + 8, 25);
   
@@ -273,7 +276,11 @@ export async function* runChatTurn(
         noTools: effectiveOptions.noTools ?? false,
         allowedTools: effectiveOptions.allowedTools,
       });
-      const stream = invokeRustAPIStream(request.params);
+      const stream = invokeRustAPIStream({
+        ...request.params,
+        signal: options?.signal,
+        timeoutMs: options?.timeoutMs ?? 300_000,
+      });
 
       hasToolCalls = false;
       pendingToolCalls = [];
@@ -284,6 +291,9 @@ export async function* runChatTurn(
       try {
         // Consume the chunks stream
         for await (const chunk of stream) {
+          if (options?.signal?.aborted) {
+            throw new DOMException('Chat turn aborted', 'AbortError');
+          }
           if (chunk.type === 'text_delta') {
             assistantMessageContent += chunk.content;
             yield { type: 'text_delta', content: chunk.content };
@@ -304,6 +314,8 @@ export async function* runChatTurn(
             }
           }
         }
+        // eslint-disable-next-line no-console
+        console.info(`[QueryEngine] Stream finished for session ${sessionId}`);
         break;
       } catch (e) {
         if (
@@ -326,18 +338,29 @@ export async function* runChatTurn(
           return;
         }
 
-        if (
-          injectOpenAIToolProtocol
-          && isMalformedToolCallError(e)
-        ) {
+        if (isMalformedToolCallError(e)) {
+          if (effectiveNoTools) {
+            // On noTools turns (e.g. goal evaluation), tool calling is disabled by contract.
+            // If the LLM returned pseudo-tool text or XML tags in its response,
+            // treat the streamed text as a valid text turn_complete instead of throwing an error.
+            if (assistantMessageContent.trim().length > 0) {
+              isTurnComplete = true;
+              yield { type: 'turn_complete', tokenUsage };
+              return;
+            }
+          }
+
           if (malformedToolCallRetryCount < MALFORMED_TOOL_CALL_RETRY_NOTES.length) {
             malformedToolCallRetryCount += 1;
+            const retryNote = effectiveNoTools
+              ? 'HARD RULE: Tool calls are disabled for this turn. Do NOT emit text-form or XML tool calls or <tool_call> tags. Return strict text or JSON response only.'
+              : MALFORMED_TOOL_CALL_RETRY_NOTES[Math.min(
+                  malformedToolCallRetryCount - 1,
+                  MALFORMED_TOOL_CALL_RETRY_NOTES.length - 1,
+                )];
             currentMessages.push({
               role: 'user',
-              content: MALFORMED_TOOL_CALL_RETRY_NOTES[Math.min(
-                malformedToolCallRetryCount - 1,
-                MALFORMED_TOOL_CALL_RETRY_NOTES.length - 1,
-              )],
+              content: retryNote,
             });
             yield {
               type: 'status_update',

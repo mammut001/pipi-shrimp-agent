@@ -164,7 +164,8 @@ export function validateWorkflowForRun(
     });
   }
 
-  if (!Number.isInteger(instance.maxGoalIterations) || instance.maxGoalIterations <= 0) {
+  const maxGoalIterations = instance.maxGoalIterations ?? 5;
+  if (!Number.isInteger(maxGoalIterations) || maxGoalIterations <= 0) {
     errors.push({
       code: 'invalid-max-iterations',
       message: '最大 Goal 迭代次数必须是大于 0 的整数。',

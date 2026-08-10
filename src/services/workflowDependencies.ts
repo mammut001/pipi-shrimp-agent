@@ -160,6 +160,7 @@ function chooseByFailureMarker(
         ?? findFirstAgentByRole(agents, 'writer')
         ?? findFirstAgentByRole(agents, 'qa')
         ?? findFirstAgentByRole(agents, 'planner')
+        ?? agents.find((agent) => agent.role !== 'goal-evaluator')
       );
     }
   }
@@ -172,17 +173,28 @@ export function findReentryAgent(
   agents: WorkflowAgent[],
   agentOutputs: Map<string, string>,
 ): WorkflowAgent | null {
-  if (evaluation.nextAgentIdHint) {
-    return agents.find((agent) => agent.id === evaluation.nextAgentIdHint) ?? null;
-  }
-
   const markerDriven = chooseByFailureMarker(agents, agentOutputs);
   if (markerDriven) {
     return markerDriven;
   }
 
+  const unexecutedAgent = agents.find((agent) => agent.role !== 'goal-evaluator' && !agentOutputs.has(agent.id));
+  if (unexecutedAgent) {
+    return unexecutedAgent;
+  }
+
+  if (evaluation.nextAgentIdHint) {
+    const hintIsAlreadyExecuted = agentOutputs.has(evaluation.nextAgentIdHint);
+    if (!hintIsAlreadyExecuted) {
+      const hinted = agents.find((agent) => agent.id === evaluation.nextAgentIdHint);
+      if (hinted) {
+        return hinted;
+      }
+    }
+  }
+
   if (evaluation.missingItems.length > 0) {
-    return (
+    const fallback = (
       findFirstAgentByRole(agents, 'developer')
       ?? findFirstAgentByRole(agents, 'writer')
       ?? findFirstAgentByRole(agents, 'qa')
@@ -191,6 +203,9 @@ export function findReentryAgent(
       ?? agents.find((agent) => agent.role !== 'goal-evaluator')
       ?? null
     );
+    if (fallback && !agentOutputs.has(fallback.id)) {
+      return fallback;
+    }
   }
 
   return null;

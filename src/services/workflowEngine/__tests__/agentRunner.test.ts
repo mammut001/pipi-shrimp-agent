@@ -51,6 +51,7 @@ import { WorkflowTranscriptManager } from '../transcript';
 describe('workflowEngine agentRunner', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRunHeadlessAgentTurn.mockReset();
     mockRunHeadlessAgentTurn.mockResolvedValue({
       finalText: 'Agent execution finished successfully',
       finalReasoning: '',
@@ -127,5 +128,31 @@ describe('workflowEngine agentRunner', () => {
         model: 'claude-3-5-sonnet',
       }),
     );
+  });
+
+  it('passes maxToolRounds into runHeadlessAgentTurn from agent execution configuration or fallback default', async () => {
+    const agent: WorkflowAgent = {
+      id: 'agent-capped',
+      name: 'Capped Agent',
+      position: { x: 0, y: 0 },
+      status: 'idle',
+      outputRoutes: [],
+      execution: { mode: 'single' },
+    };
+
+    const transcript = new WorkflowTranscriptManager();
+    await runAgentWithRetry(
+      agent,
+      'Execute capped task',
+      {
+        runId: 'run-789',
+        transcript,
+        maxToolRounds: 4,
+      },
+    );
+
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
+    const callArg = mockRunHeadlessAgentTurn.mock.calls[0][0];
+    expect(callArg.maxToolRounds).toBe(4);
   });
 });

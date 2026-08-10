@@ -39,6 +39,7 @@ import {
   resolveBrowserActionTarget,
 } from './browserPageStateModel';
 import { connectBrowserSession, navigateBrowserPage, resyncBrowserPage } from './browserSessionClient';
+import { browserSurfaceUrlsMatch } from '@/store/browser/browserAgentStartGate';
 import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled, getBrowserMaxAgentSteps } from './browserFeatureFlags';
 import type { BrowserPageState } from '@/types/browserPageState';
 import type { ObservationLevel } from '@/types/browserEngine';
@@ -562,23 +563,32 @@ KEY RULES:
   const LOOP_WINDOW = 4;
   const LOOP_TRIGGER = 3;
 
+  log('info', `[NativeAgent] Starting task: ${task}`);
+  const currentBrowserUrl = await getCurrentBrowserUrl().catch(() => null);
+
   const resolveStartUrl = (): string => {
     if (options.targetUrl) return options.targetUrl;
     const urlMatch = task.match(/https?:\/\/[^\s，。！？]+/);
     if (urlMatch) return urlMatch[0];
     const domainMatch = task.match(/(?:^|\s)([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s，。！？]*)?)/);
     if (domainMatch) return `https://${domainMatch[1]}`;
+    if (currentBrowserUrl && currentBrowserUrl !== 'about:blank') {
+      return currentBrowserUrl;
+    }
     return 'https://www.google.com';
   };
 
-  log('info', `[NativeAgent] Starting task: ${task}`);
   const startUrl = resolveStartUrl();
-  log('info', `[NativeAgent] Navigating to: ${startUrl}`);
-  try {
-    await navigateBrowserPage(startUrl);
-    log('success', `[NativeAgent] Page loaded: ${startUrl}`);
-  } catch (e) {
-    log('warning', `[NativeAgent] Navigation attempted: ${e}`);
+  if (currentBrowserUrl && browserSurfaceUrlsMatch(currentBrowserUrl, startUrl)) {
+    log('info', `[NativeAgent] Already on target surface (${startUrl}), skipping redundant navigation.`);
+  } else {
+    log('info', `[NativeAgent] Navigating to: ${startUrl}`);
+    try {
+      await navigateBrowserPage(startUrl);
+      log('success', `[NativeAgent] Page loaded: ${startUrl}`);
+    } catch (e) {
+      log('warning', `[NativeAgent] Navigation attempted: ${e}`);
+    }
   }
   await delay(1200, options.signal);
   await injectOverlay();

@@ -78,6 +78,7 @@ import {
   type BrowserAgentStartGateResult,
 } from './browser/browserAgentStartGate';
 import { getCurrentBrowserUrl } from '../utils/browserPageStateClient';
+import { resyncBrowserPage } from '../utils/browserSessionClient';
 import {
   parseInspectionResult,
 } from '../utils/browserInspection';

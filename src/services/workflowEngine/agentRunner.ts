@@ -11,7 +11,7 @@ import {
   DEFAULT_EXECUTION_CONFIG,
   DEFAULT_RETRY_POLICY,
 } from '@/services/workflow/defaults';
-import { hasWorkflowCompletionMarker } from '@/services/workflow/templates/markers';
+import { hasWorkflowCompletionMarker, parseWorkflowMarkers } from '@/services/workflow/templates/markers';
 import type {
   WorkflowTranscriptEntry,
   WorkflowTranscriptManager,
@@ -27,6 +27,9 @@ export interface AgentRunContext {
   onStreamChunk?: StreamChunkCallback;
   transcript: WorkflowTranscriptManager;
   systemPromptOverride?: string;
+  noTools?: boolean;
+  allowedTools?: string[];
+  maxToolRounds?: number;
 }
 
 function assertNotAborted(signal?: AbortSignal): void {
@@ -206,6 +209,10 @@ async function invokeWithStreaming(
       initialMessages: [{ role: 'user', content: prompt }],
       permissionMode: 'bypass',
       signal: context.signal,
+      timeoutMs: 300_000,
+      noTools: context.noTools ?? (agent.role === 'goal-evaluator' ? true : undefined),
+      allowedTools: context.allowedTools ?? (agent.role === 'goal-evaluator' ? [] : undefined),
+      maxToolRounds: context.maxToolRounds ?? (agent.execution?.maxRounds || 3),
       agentConfig: {
         configId: config.configId || 'workflow-config',
         name: agent.name,
@@ -247,7 +254,10 @@ async function invokeWithStreaming(
     }
     return fullContent;
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (
+      (error instanceof DOMException && error.name === 'AbortError') ||
+      (error instanceof Error && error.message.includes('timed out'))
+    ) {
       throw error;
     }
 
@@ -373,9 +383,12 @@ async function executeMultiRound(
     lastOutput = await executeSingleRound(agent, inputPrompt, context);
 
     switch (roundCondition) {
-      case 'untilComplete':
-        shouldContinue = !hasWorkflowCompletionMarker(lastOutput);
+      case 'untilComplete': {
+        const failureMarkers = parseWorkflowMarkers(lastOutput).filter((m) => m !== 'PASS');
+        const hasCompletion = hasWorkflowCompletionMarker(lastOutput);
+        shouldContinue = !hasCompletion && failureMarkers.length > 0;
         break;
+      }
       case 'fixed':
         shouldContinue = round < maxRounds;
         break;

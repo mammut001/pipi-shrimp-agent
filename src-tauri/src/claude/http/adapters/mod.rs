@@ -49,10 +49,20 @@ pub struct StreamContext {
     pub session_id: Option<String>,
     pub in_think_tag: bool,
     pub emitted_tool_calls: usize,
+    pub no_tools: bool,
 }
 
 impl StreamContext {
     pub fn new(estimated_input: i32, window: Option<Window>, session_id: Option<String>) -> Self {
+        Self::new_with_no_tools(estimated_input, window, session_id, false)
+    }
+
+    pub fn new_with_no_tools(
+        estimated_input: i32,
+        window: Option<Window>,
+        session_id: Option<String>,
+        no_tools: bool,
+    ) -> Self {
         Self {
             estimated_input,
             window,
@@ -68,6 +78,7 @@ impl StreamContext {
             session_id,
             in_think_tag: false,
             emitted_tool_calls: 0,
+            no_tools,
         }
     }
 

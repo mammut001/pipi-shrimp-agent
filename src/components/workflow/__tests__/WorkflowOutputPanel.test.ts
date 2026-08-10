@@ -99,6 +99,7 @@ jest.mock('@/store/uiStore', () => ({
 jest.mock('@/services/workflowEngine', () => ({
   workflowEngine: {
     setStreamChunkCallback: (...args: unknown[]) => mockSetStreamChunkCallback(...args),
+    getWorkingDirectory: () => '/tmp/run-dir',
   },
 }));
 
@@ -264,5 +265,21 @@ describe('WorkflowOutputPanel', () => {
     expect(harness.container.textContent).toContain('Current Agent');
     expect(harness.container.textContent).toContain('workflow.output.noOutput');
     expect(harness.container.textContent).not.toContain('legacy-status');
+  });
+
+  it('automatically lists files when switching to files tab after run completion', async () => {
+    mockListDirectory.mockResolvedValue([
+      { name: 'A-output.md', path: '/tmp/run-dir/A-output.md', is_directory: false, size: 100, modified: 1 },
+      { name: 'B-output.md', path: '/tmp/run-dir/B-output.md', is_directory: false, size: 200, modified: 2 },
+    ]);
+
+    await harness.render(createElement(WorkflowOutputPanel));
+    await flushEffects();
+    await clickElement(findButtonByText(harness.container, 'workflow.output.files'), harness.window);
+    await flushEffects();
+
+    expect(mockListDirectory).toHaveBeenCalledWith('/tmp/run-dir');
+    expect(harness.container.textContent).toContain('A-output.md');
+    expect(harness.container.textContent).toContain('B-output.md');
   });
 });

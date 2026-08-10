@@ -23,7 +23,7 @@ import {
   buildEntryAgentPrompt,
   type UpstreamOutput,
 } from '@/services/workflowPromptBuilder';
-import { evaluateWorkflowGoal } from '@/services/workflowGoalEvaluator';
+import { evaluateGoalWithRules, evaluateWorkflowGoal } from '@/services/workflowGoalEvaluator';
 import { readAgentInbox, notifyOnComplete } from '@/services/workflowNotifier';
 import {
   getBlockingFailures,
@@ -330,9 +330,28 @@ export class WorkflowEngine {
   private async executeAgent(
     agent: WorkflowAgent,
     prompt: string,
-    options?: { systemPromptOverride?: string; disableStreaming?: boolean },
+    options?: { systemPromptOverride?: string; disableStreaming?: boolean; signal?: AbortSignal; noTools?: boolean; allowedTools?: string[] },
   ): Promise<string> {
     const runId = this.currentRunId;
+
+    let effectiveSignal = this.abortController?.signal;
+    if (options?.signal) {
+      if (!effectiveSignal) {
+        effectiveSignal = options.signal;
+      } else if (typeof AbortSignal.any === 'function') {
+        effectiveSignal = AbortSignal.any([effectiveSignal, options.signal]);
+      } else {
+        const composite = new AbortController();
+        const onAbort = () => composite.abort();
+        if (effectiveSignal.aborted || options.signal.aborted) {
+          composite.abort();
+        } else {
+          effectiveSignal.addEventListener('abort', onAbort, { once: true });
+          options.signal.addEventListener('abort', onAbort, { once: true });
+        }
+        effectiveSignal = composite.signal;
+      }
+    }
 
     return this.deps.runAgent(
       agent,
@@ -340,7 +359,9 @@ export class WorkflowEngine {
       {
         runId,
         workDir: this.workingDirectory,
-        signal: this.abortController?.signal,
+        signal: effectiveSignal,
+        noTools: options?.noTools,
+        allowedTools: options?.allowedTools,
         onStreamChunk: options?.disableStreaming ? undefined : ((agentId, chunk, fullContent) => {
           if (!this.shouldAcceptRunMutation(runId)) return;
           this.onStreamChunk?.(agentId, chunk, fullContent);
@@ -371,8 +392,11 @@ export class WorkflowEngine {
     const artifacts = extractCodeBlockArtifacts(output);
     for (const artifact of artifacts) {
       try {
-        await this.writeRunFile(artifact.relativePath, artifact.content);
+        const savedPath = await this.writeRunFile(artifact.relativePath, artifact.content);
+        // eslint-disable-next-line no-console
+        console.info(`[workflow] Persisted code artifact: ${artifact.relativePath} -> ${savedPath ?? 'none'}`);
       } catch (err) {
+        // eslint-disable-next-line no-console
         console.warn(`Failed to persist output code artifact ${artifact.relativePath}:`, err);
       }
     }
@@ -388,7 +412,10 @@ Run ID: ${runId}
 
 ${output}
 `;
-    return this.writeRunFile(`${artifactBaseName}-output.md`, content);
+    const savedPath = await this.writeRunFile(`${artifactBaseName}-output.md`, content);
+    // eslint-disable-next-line no-console
+    console.info(`[workflow] Saved output file for agent "${agent.name}" (${agent.id}): ${savedPath ?? 'none'}`);
+    return savedPath;
   }
 
   private async saveTranscriptToFile(agent: WorkflowAgent, artifactBaseName: string, runId: string): Promise<string | null> {
@@ -396,7 +423,10 @@ ${output}
     const entries = this.transcripts.get(agent.id);
     if (entries.length === 0) return null;
     const content = renderTranscriptFile(agent.id, runId, entries);
-    return this.writeRunFile(`${artifactBaseName}-transcript.md`, content);
+    const savedPath = await this.writeRunFile(`${artifactBaseName}-transcript.md`, content);
+    // eslint-disable-next-line no-console
+    console.info(`[workflow] Saved transcript file for agent "${agent.name}" (${agent.id}): ${savedPath ?? 'none'}`);
+    return savedPath;
   }
 
   private async updateGoalEvaluatorStatus(
@@ -408,6 +438,11 @@ ${output}
     if (!evaluatorAgentId) return;
     if (!this.shouldAcceptRunMutation(runId)) return;
     const store = useWorkflowStore.getState();
+    const instance = store.instances.find((item) => item.id === instanceId);
+    const evaluatorAgent = instance?.agents.find((agent) => agent.id === evaluatorAgentId);
+    if (evaluatorAgent && evaluatorAgent.role !== 'goal-evaluator') {
+      return;
+    }
     store.setAgentStatusInInstance(instanceId, evaluatorAgentId, status);
     store.updateRunAgent(runId, evaluatorAgentId, {
       status: status === 'completed' ? 'completed' : status === 'running' ? 'running' : 'error',
@@ -415,51 +450,93 @@ ${output}
     });
   }
 
-  private async performGoalEvaluation(
+  private async evaluateGoalStep(
     snapshot: WorkflowRunSnapshot,
     iteration: number,
   ): Promise<GoalEvaluationResult> {
     const runId = this.currentRunId;
     const evaluationInstance = buildGoalEvaluationInstance(snapshot);
 
+    // eslint-disable-next-line no-console
+    console.info(`[workflow] Entering evaluateGoalStep (iter ${iteration}), runId=${runId}, evaluator=${snapshot.goalEvaluatorAgentId ?? 'builtin'}`);
+    const store = useWorkflowStore.getState();
+    store.setRunning(true, snapshot.goalEvaluatorAgentId ?? null);
     await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'running', runId);
 
     try {
       const evaluateGoalWithTimeout = async (): Promise<GoalEvaluationResult> => {
-        const GOAL_EVAL_TIMEOUT_MS = 120_000;
-        const goalEvalPromise = this.deps.evaluateGoal(
-          {
+        const GOAL_EVAL_TIMEOUT_MS = 300_000;
+        const evalAbortController = new AbortController();
+        const mainSignal = this.abortController?.signal;
+
+        const onMainAbort = () => evalAbortController.abort();
+        if (mainSignal) {
+          if (mainSignal.aborted) {
+            evalAbortController.abort();
+          } else {
+            mainSignal.addEventListener('abort', onMainAbort, { once: true });
+          }
+        }
+
+        const timer = setTimeout(() => {
+          evalAbortController.abort();
+        }, GOAL_EVAL_TIMEOUT_MS);
+        if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+          (timer as unknown as { unref: () => void }).unref();
+        }
+
+        try {
+          const result = await this.deps.evaluateGoal(
+            {
+              instance: evaluationInstance,
+              agents: snapshot.agents,
+              agentOutputs: this.agentOutputs,
+              iteration,
+            },
+            {
+              runAgent: (agent, prompt, options) => this.executeAgent(agent, prompt, {
+                disableStreaming: true,
+                systemPromptOverride: options?.systemPromptOverride,
+                signal: evalAbortController.signal,
+                noTools: true,
+                allowedTools: [],
+              }),
+            },
+          );
+          return result;
+        } catch (err) {
+          if (mainSignal?.aborted) {
+            throw err;
+          }
+          const ruleResult = evaluateGoalWithRules({
             instance: evaluationInstance,
             agents: snapshot.agents,
             agentOutputs: this.agentOutputs,
             iteration,
-          },
-          {
-            runAgent: (agent, prompt, options) => this.executeAgent(agent, prompt, {
-              disableStreaming: true,
-              systemPromptOverride: options?.systemPromptOverride,
-            }),
-          },
-        );
-
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error(`Goal evaluation timed out after ${GOAL_EVAL_TIMEOUT_MS / 1000}s`)),
-            GOAL_EVAL_TIMEOUT_MS,
-          );
-          if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
-            (timer as unknown as { unref: () => void }).unref();
+          });
+          // eslint-disable-next-line no-console
+          console.warn(`[workflow] Goal evaluation failed or timed out (${err instanceof Error ? err.message : String(err)}). Falling back to rule evaluation.`, ruleResult);
+          return {
+            ...ruleResult,
+            reasoning: `${ruleResult.reasoning}（LLM evaluator 超时/异常，已回退到规则判定。）`,
+          };
+        } finally {
+          clearTimeout(timer);
+          if (mainSignal) {
+            mainSignal.removeEventListener('abort', onMainAbort);
           }
-        });
-
-        return Promise.race([goalEvalPromise, timeoutPromise]);
+        }
       };
 
       const result = await evaluateGoalWithTimeout();
+      // eslint-disable-next-line no-console
+      console.info(`[workflow] Exiting evaluateGoalStep (iter ${iteration}): reached=${result.reached}, hint=${result.nextAgentIdHint ?? 'none'}, reasoning="${result.reasoning.slice(0, 100)}"`);
 
       await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'completed', runId);
       return result;
     } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error(`[workflow] Exiting evaluateGoalStep (iter ${iteration}) with error:`, error);
       await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'error', runId);
       throw error;
     }
@@ -737,6 +814,8 @@ ${output}
       const maxIterations = snapshot.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS;
 
       for (let iteration = 1; iteration <= maxIterations && !this.stopRequested; iteration += 1) {
+        // eslint-disable-next-line no-console
+        console.info(`[workflow] Loop iter ${iteration}/${maxIterations}: starting plan build with dirtyAgentIds=[${dirtyAgentIds.join(', ')}]`);
         store.updateWorkflowRun(localRunId, { currentIteration: iteration });
         for (const dirtyAgentId of dirtyAgentIds) {
           store.clearAgentDirtyInInstance(snapshot.instanceId, dirtyAgentId);
@@ -744,9 +823,13 @@ ${output}
 
         const executionPlan = buildExecutionPlan(executableAgents, snapshot.connections, dirtyAgentIds);
         dirtyAgentIds = [];
+        // eslint-disable-next-line no-console
+        console.info(`[workflow] Loop iter ${iteration}: executionPlan=[${executionPlan.map((a) => `${a.name}(${a.id})`).join(', ')}]`);
 
         for (const agent of executionPlan) {
           if (this.stopRequested) break;
+          // eslint-disable-next-line no-console
+          console.info(`[workflow] Starting execution of agent "${agent.name}" (${agent.id}) in iter ${iteration}`);
           await this.runPlannedAgent(
             agent,
             snapshot,
@@ -754,19 +837,27 @@ ${output}
             lastEvaluation,
             failedAgents,
           );
+          // eslint-disable-next-line no-console
+          console.info(`[workflow] Completed execution of agent "${agent.name}" (${agent.id}) in iter ${iteration}`);
         }
 
         if (this.stopRequested) {
+          // eslint-disable-next-line no-console
+          console.info(`[workflow] Stop requested after agent execution in iter ${iteration}`);
           break;
         }
 
-        lastEvaluation = await this.performGoalEvaluation(snapshot, iteration);
+        lastEvaluation = await this.evaluateGoalStep(snapshot, iteration);
         if (!this.shouldAcceptRunMutation(localRunId)) {
+          // eslint-disable-next-line no-console
+          console.info(`[workflow] Run mutation no longer accepted for runId=${localRunId} after evaluateGoalStep`);
           break;
         }
         store.appendGoalEvaluation(localRunId, lastEvaluation);
 
         if (lastEvaluation.reached) {
+          // eslint-disable-next-line no-console
+          console.info(`[workflow] Goal reached in iter ${iteration}! Breaking loop.`);
           reachedGoal = true;
           break;
         }
@@ -778,7 +869,12 @@ ${output}
           agentOutputs: this.agentOutputs,
         });
 
+        // eslint-disable-next-line no-console
+        console.info(`[workflow] Reentry agents selected for iter ${iteration + 1}: [${reentryAgentIds.join(', ')}]`);
+
         if (reentryAgentIds.length === 0) {
+          // eslint-disable-next-line no-console
+          console.info(`[workflow] No reentry agents selected. Workflow loop ending at iter ${iteration}.`);
           break;
         }
 
@@ -787,6 +883,9 @@ ${output}
           store.markAgentDirtyInInstance(snapshot.instanceId, agentId);
         }
       }
+
+      // eslint-disable-next-line no-console
+      console.info(`[workflow] Loop finished: finalStatus=${this.stopRequested ? 'stopped' : 'completed'}, reachedGoal=${reachedGoal}`);
 
       const finalStatus = this.stopRequested ? 'stopped' : 'completed';
       store.updateWorkflowRun(localRunId, {
@@ -822,15 +921,15 @@ ${output}
       });
       useUIStore.getState().addNotification('error', `❌ 工作流失败：${errorMessage}`);
     } finally {
-      if (this.currentRunId === localRunId && this.runToken === localRunToken) {
+      if (this.currentRunId === localRunId || this.runToken === localRunToken || this.isRunning) {
         this.isRunning = false;
         this.stopRequested = false;
         this.abortController = null;
         this.totalSteps = 0;
-        store.setRunning(false, null);
         this.currentRunId = '';
         this.currentInstanceId = '';
         this.workingDirectory = '';
+        store.setRunning(false, null);
       }
     }
   }
