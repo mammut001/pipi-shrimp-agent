@@ -301,8 +301,11 @@ pub async fn execute_tool(
             let skill_name = args.get("skill")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'skill' argument for Skill".to_string()))?;
+            let skill_args = args.get("args")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
-            match crate::commands::skill::execute_skill(skill_name.to_string(), work_dir.clone()).await {
+            match crate::commands::skill::execute_skill(skill_name.to_string(), skill_args, work_dir.clone()).await {
                 Ok(res) => {
                     if res.success {
                         // Return the SKILL.md content directly so the AI can read and follow it

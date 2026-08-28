@@ -160,8 +160,8 @@ export function ChatInput({
     ? 'bg-white'
     : 'border-t border-gray-200 bg-white p-4';
   const inputShellClassName = isCompact
-    ? 'relative bg-gray-50 rounded-xl border transition-all px-3'
-    : 'relative bg-gray-50 rounded-xl border transition-all px-4';
+    ? 'relative overflow-visible bg-gray-50 rounded-xl border transition-all px-3'
+    : 'relative overflow-visible bg-gray-50 rounded-xl border transition-all px-4';
   const textareaClassName = isCompact
     ? 'flex-1 bg-transparent px-0 py-2 max-h-[96px] resize-none focus:outline-none text-sm text-gray-900 placeholder-gray-400 disabled:opacity-50'
     : 'flex-1 bg-transparent px-0 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50';

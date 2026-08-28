@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import {
   EXECUTION_MODES,
   getExecutionMode,
@@ -16,18 +17,32 @@ export interface ExecutionModeDropdownProps {
 }
 
 const VISIBLE_MODES = EXECUTION_MODES;
+const MENU_WIDTH_PX = 288;
 
 function modeLabel(profile: ExecutionModeProfile): string {
-  return profile.id === 'danger'
-    ? 'Danger'
-    : coerceRenderableText(t(profile.labelKey));
+  return coerceRenderableText(t(profile.labelKey));
 }
 
 function modeDescription(profile: ExecutionModeProfile): string {
-  if (profile.id === 'danger') {
-    return 'Full tool access with risky-action approvals and destructive-operation double-checks.';
-  }
   return coerceRenderableText(t(profile.descriptionKey));
+}
+
+function computeMenuStyle(trigger: HTMLElement): CSSProperties {
+  const rect = trigger.getBoundingClientRect();
+  const margin = 8;
+  let left = rect.right - MENU_WIDTH_PX;
+  if (left < margin) left = margin;
+  if (left + MENU_WIDTH_PX > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - margin - MENU_WIDTH_PX);
+  }
+  return {
+    position: 'fixed',
+    left,
+    width: MENU_WIDTH_PX,
+    minWidth: MENU_WIDTH_PX,
+    bottom: window.innerHeight - rect.top + 8,
+    zIndex: 80,
+  };
 }
 
 export function ExecutionModeDropdown({
@@ -39,8 +54,10 @@ export function ExecutionModeDropdown({
   const [open, setOpen] = useState(false);
   const [pendingDanger, setPendingDanger] = useState<ExecutionModeProfile | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   // getExecutionMode performs conservative legacy migration:
   // debug/agent -> Plan, bypass -> Danger.
@@ -49,13 +66,25 @@ export function ExecutionModeDropdown({
     [selectedModeId],
   );
 
+  const syncMenuPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    setMenuStyle(computeMenuStyle(triggerRef.current));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    syncMenuPosition();
+  }, [open, syncMenuPosition]);
+
   useEffect(() => {
     if (!open) return;
     const onPointer = (event: MouseEvent | TouchEvent) => {
       const target = event.target as Node | null;
-      if (target && rootRef.current && !rootRef.current.contains(target)) {
-        setOpen(false);
+      if (!target) return;
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
       }
+      setOpen(false);
     };
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('touchstart', onPointer);
@@ -67,8 +96,20 @@ export function ExecutionModeDropdown({
 
   useEffect(() => {
     if (!open) return;
+    const onReposition = () => syncMenuPosition();
+    window.addEventListener('resize', onReposition);
+    window.addEventListener('scroll', onReposition, true);
+    return () => {
+      window.removeEventListener('resize', onReposition);
+      window.removeEventListener('scroll', onReposition, true);
+    };
+  }, [open, syncMenuPosition]);
+
+  useEffect(() => {
+    if (!open) return;
     const index = VISIBLE_MODES.findIndex((profile) => profile.id === selected.id);
     if (index >= 0) setActiveIndex(index);
+    requestAnimationFrame(() => menuRef.current?.focus());
   }, [open, selected.id]);
 
   const commit = useCallback((profile: ExecutionModeProfile) => {
@@ -123,6 +164,63 @@ export function ExecutionModeDropdown({
     }
   }, [activeIndex, requestSelect]);
 
+  const menu = open && typeof document !== 'undefined'
+    ? createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={t('executionMode.label')}
+          tabIndex={-1}
+          onKeyDown={handleMenuKeyDown}
+          data-testid={`${testId}-menu`}
+          style={menuStyle}
+          className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg ring-1 ring-black/5 focus:outline-none"
+        >
+          {VISIBLE_MODES.map((profile, index) => {
+            const isSelected = profile.id === selected.id;
+            const isActive = index === activeIndex;
+            return (
+              <button
+                key={profile.id}
+                role="menuitem"
+                type="button"
+                tabIndex={-1}
+                aria-checked={isSelected}
+                data-testid={`${testId}-item-${profile.id}`}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => requestSelect(profile)}
+                className={`flex w-full min-h-[52px] cursor-pointer items-start gap-2 px-3 py-2.5 text-left text-[12px] transition-colors ${isActive ? 'bg-gray-100' : 'bg-white hover:bg-gray-50'}`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${profile.id === 'danger' ? 'bg-rose-600' : profile.id === 'plan' ? 'bg-blue-500' : 'bg-gray-400'}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`whitespace-nowrap ${profile.id === 'danger' ? 'font-semibold text-rose-700' : 'font-semibold text-gray-800'}`}>
+                      {modeLabel(profile)}
+                    </span>
+                    {profile.id === 'danger' && (
+                      <span className="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-rose-700">
+                        {t('executionMode.danger.badge')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 break-words text-[11px] leading-snug text-gray-500">
+                    {modeDescription(profile)}
+                  </div>
+                </div>
+                <div className="mt-0.5 h-4 w-4 shrink-0 text-gray-700">
+                  {isSelected ? '✓' : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )
+    : null;
+
   return (
     <div ref={rootRef} className="relative inline-block" data-testid={testId}>
       <button
@@ -150,66 +248,13 @@ export function ExecutionModeDropdown({
           aria-hidden="true"
           className={`h-1.5 w-1.5 rounded-full ${selected.id === 'danger' ? 'bg-rose-600' : selected.id === 'plan' ? 'bg-blue-500' : 'bg-gray-400'}`}
         />
-        <span>{modeLabel(selected)}</span>
+        <span className="whitespace-nowrap">{modeLabel(selected)}</span>
         <svg className="h-3 w-3 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 011.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
         </svg>
       </button>
 
-      {open && (
-        <div
-          role="menu"
-          aria-label={t('executionMode.label')}
-          tabIndex={-1}
-          onKeyDown={handleMenuKeyDown}
-          data-testid={`${testId}-menu`}
-          className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg ring-1 ring-black/5 focus:outline-none"
-        >
-          {VISIBLE_MODES.map((profile, index) => {
-            const isSelected = profile.id === selected.id;
-            const isActive = index === activeIndex;
-            return (
-              <button
-                key={profile.id}
-                role="menuitem"
-                type="button"
-                tabIndex={-1}
-                aria-checked={isSelected}
-                data-testid={`${testId}-item-${profile.id}`}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => requestSelect(profile)}
-                ref={(node) => {
-                  if (isActive && node) node.focus();
-                }}
-                className={`flex w-full items-start gap-2 px-3 py-2.5 text-left text-[12px] transition-colors ${isActive ? 'bg-gray-100' : 'bg-white hover:bg-gray-50'}`}
-              >
-                <span
-                  aria-hidden="true"
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${profile.id === 'danger' ? 'bg-rose-600' : profile.id === 'plan' ? 'bg-blue-500' : 'bg-gray-400'}`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className={profile.id === 'danger' ? 'font-semibold text-rose-700' : 'font-semibold text-gray-800'}>
-                      {modeLabel(profile)}
-                    </span>
-                    {profile.id === 'danger' && (
-                      <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-rose-700">
-                        DANGER
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 text-[11px] leading-snug text-gray-500">
-                    {modeDescription(profile)}
-                  </div>
-                </div>
-                <div className="mt-0.5 h-4 w-4 shrink-0 text-gray-700">
-                  {isSelected ? '✓' : null}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {menu}
 
       {pendingDanger && (
         <DangerWarningDialog
@@ -231,7 +276,7 @@ export function ExecutionModeDropdown({
 }
 
 export function DangerWarningDialog({
-  profile,
+  profile: _profile,
   onCancel,
   onConfirm,
 }: {
@@ -239,6 +284,7 @@ export function DangerWarningDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  void _profile;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onCancel();
@@ -258,10 +304,10 @@ export function DangerWarningDialog({
     >
       <div className="w-full max-w-sm rounded-2xl border border-rose-200 bg-white p-5 shadow-2xl">
         <h3 id="execution-mode-danger-warning-title" className="text-sm font-semibold text-rose-700">
-          Danger mode
+          {t('executionMode.danger.warningTitle')}
         </h3>
         <p id="execution-mode-danger-warning-body" className="mt-2 text-[12px] leading-relaxed text-gray-700">
-          {modeLabel(profile)} can use the full tool surface. Risky operations still keep approval gates, and destructive actions must be double-checked before execution.
+          {t('executionMode.danger.warningBody')}
         </p>
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
@@ -270,7 +316,7 @@ export function DangerWarningDialog({
             data-testid="execution-mode-danger-warning-cancel"
             className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50"
           >
-            {t('executionMode.bypass.warningCancel')}
+            {t('executionMode.danger.warningCancel')}
           </button>
           <button
             type="button"
@@ -278,7 +324,7 @@ export function DangerWarningDialog({
             data-testid="execution-mode-danger-warning-confirm"
             className="rounded-md bg-rose-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-rose-700"
           >
-            {t('executionMode.bypass.warningConfirm')}
+            {t('executionMode.danger.warningConfirm')}
           </button>
         </div>
       </div>

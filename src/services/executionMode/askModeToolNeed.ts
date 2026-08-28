@@ -4,7 +4,10 @@ export type AskModeToolNeedReason = 'browser' | 'workspace' | 'general';
 
 const ASK_MODE_TOOL_REQUEST_PATTERNS = [
   /\b(?:read|open|inspect|list|search|scan|summari[sz]e)\b/i,
-  /(?:读取|查看|检查|列出|搜索|扫描|总结|概括)/,
+  /(?:读取|阅读|读一下|读文件|查看|看看|看一下|打开|检查|列出|搜索|扫描|总结|概括)/,
+  /(?:文件内容|这个文件|源码|代码库)/,
+  /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|swift|md|json|yml|yaml|toml|css|html)\b/i,
+  /(?:^|[\s`'"(])(?:src|lib|app|docs|tests?)\//i,
 ];
 
 const ASK_MODE_COMMAND_PATTERNS = [

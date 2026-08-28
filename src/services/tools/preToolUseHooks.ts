@@ -21,7 +21,7 @@ import {
   isHighRiskToolName,
   type PermissionMode,
 } from './toolExecutionPolicy';
-import { isToolAllowedForMode } from '../executionMode';
+import { isToolAllowedForMode, normalizeExecutionModeId } from '../executionMode';
 import { BROWSER_TOOL_NAMES } from '../browser/browserTools';
 import { useCdpStore } from '@/store/cdpStore';
 import { PLAN_MODE_ALLOWED_TOOLS } from '../planMode';
@@ -112,10 +112,12 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   // primary defense against "simple Q&A falls into an Agent/Bypass
   // tool loop" — even if the backend reports `allowed` for the
   // tool, the 5-mode outer guard vetoes it.
-  if (ctx.executionMode === 'ask') {
+  const mode = normalizeExecutionModeId(ctx.executionMode);
+
+  if (mode === 'ask') {
     return {
       approved: false,
-      error: 'Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+      error: 'Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.',
       blockedBy: 'permission-mode',
     };
   }
@@ -125,7 +127,7 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
   // everything else, including `save_plan_doc` — that tool is
   // intentionally NOT exposed to the model; plan-doc persistence is
   // an app-side post-turn action.
-  if (ctx.executionMode === 'plan') {
+  if (mode === 'plan') {
     // Defense-in-depth: even though `save_plan_doc` is no longer in
     // PLAN_MODE_ALLOWED_TOOLS, hard-block it here so a future
     // regression that adds it back to the allowlist still fails
@@ -148,34 +150,16 @@ export async function executionModeGuardCheck(ctx: HookContext): Promise<HookRes
     };
   }
 
-  if (ctx.executionMode === 'debug') {
-    if (!isToolAllowedForMode('debug', ctx.toolName, ctx.allowBrowserTools)) {
-      return {
-        approved: false,
-        error: 'This tool is not allowed in Debug mode (read + small writes only).',
-        blockedBy: 'permission-mode',
-      };
-    }
-    return { approved: true };
+  // Danger (and the legacy Bypass alias): no outer catalog restriction.
+  // Risky-action approval still flows through PermissionMode hooks.
+  if (mode === 'danger' && !isToolAllowedForMode('danger', ctx.toolName, ctx.allowBrowserTools)) {
+    return {
+      approved: false,
+      error: 'This tool is not allowed in Danger mode for the current policy.',
+      blockedBy: 'permission-mode',
+    };
   }
 
-  if (ctx.executionMode === 'agent') {
-    const isBrowserTool = BROWSER_TOOL_NAMES.includes(ctx.toolName);
-    if (isBrowserTool) {
-      return { approved: true, requiresConfirmation: !ctx.allowBrowserTools };
-    }
-    if (!isToolAllowedForMode('agent', ctx.toolName, ctx.allowBrowserTools)) {
-      return {
-        approved: false,
-        error: 'This tool is not allowed in Agent mode for the current policy.',
-        blockedBy: 'permission-mode',
-      };
-    }
-    return { approved: true };
-  }
-
-  // Bypass: no outer restriction; per-tool approval policy still applies
-  // through the existing PermissionMode hooks.
   return { approved: true };
 }
 
@@ -264,7 +248,7 @@ export async function permissionModeCheck(ctx: HookContext): Promise<HookResult>
   if (ctx.executionMode === 'ask') {
     return {
       approved: false,
-      error: 'Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+      error: 'Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.',
       blockedBy: 'permission-mode',
     };
   }

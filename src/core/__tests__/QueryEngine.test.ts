@@ -490,7 +490,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     // Simulate the consumer rejecting both tool calls (e.g. Ask
     // mode outer guard, dangerous-command hook, etc.).
     batch.value._resolveAll([
-      { id: 'tool-1', content: 'Error: Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.' },
+      { id: 'tool-1', content: 'Error: Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.' },
       { id: 'tool-2', content: 'Error: Blocked: Attempting to delete root filesystem' },
     ]);
 
@@ -499,7 +499,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     const message = (error.value.error as Error).message;
     expect(message).toMatch(/本轮所有工具调用都被拒绝/);
     expect(message).toMatch(/Ask mode/i);
-    expect(message).toMatch(/Agent or Bypass/i);
+    expect(message).toMatch(/Plan or Danger/i);
 
     // The short-circuit must NOT make a second model call.
     expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(1);

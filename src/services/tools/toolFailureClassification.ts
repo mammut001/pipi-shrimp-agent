@@ -134,9 +134,9 @@ export function isRecoverableToolFailureText(text: string): boolean {
  */
 export function buildToolBatchFailureHint(executionModeId: ExecutionModeId | string): string {
   if (executionModeId === 'ask' || executionModeId === 'plan') {
-    return '当前为问答/规划模式，部分工具会被拦截。请切换到智能体或绕过模式后重试。';
+    return '当前为问答/规划模式，部分工具会被拦截。请切换到规划或危险模式后重试。';
   }
-  if (executionModeId === 'bypass' || executionModeId === 'agent' || executionModeId === 'debug') {
+  if (executionModeId === 'bypass' || executionModeId === 'danger' || executionModeId === 'agent' || executionModeId === 'debug') {
     return '工具执行被策略或权限规则拒绝。请检查路径、命令或项目文件夹范围后重试。';
   }
   return '工具执行被拒绝。请检查当前执行模式、路径或权限设置后重试。';

@@ -72,7 +72,7 @@ export function ExecutionModeUpgradeModal() {
             </p>
           )}
           <p className="mt-3 text-[11px] leading-relaxed text-gray-500">
-            Plan can inspect read-only. Danger can execute with the full tool surface, while risky actions retain approval gates and destructive actions are double-checked.
+            {t('executionMode.upgrade.hint')}
           </p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <button
@@ -97,7 +97,7 @@ export function ExecutionModeUpgradeModal() {
               data-testid="execution-mode-upgrade-danger"
               className="rounded-lg bg-rose-600 px-3 py-2 text-[12px] font-semibold text-white hover:bg-rose-700"
             >
-              Danger
+              {t('executionMode.danger.label')}
             </button>
           </div>
         </div>

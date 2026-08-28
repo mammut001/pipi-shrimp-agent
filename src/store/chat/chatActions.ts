@@ -178,12 +178,12 @@ function looksLikeAskModePseudoToolCall(content: string): boolean {
 function buildAskModeToolUnavailableReply(userRequest: string): string {
   const { reason } = detectAskModeToolNeed(userRequest);
   if (reason === 'browser') {
-    return '当前 Ask 模式不能调用工具。请切换到 Agent 或 Bypass 模式后重试，我就可以使用已连接的 Chrome。';
+    return '当前问答模式不能调用工具。请切到规划或危险模式后重试，我就可以使用已连接的 Chrome。';
   }
   if (reason === 'workspace') {
-    return 'Ask 模式这回合不能读取本地文件或调用工具，所以我现在不能直接打开 `README`。请切到 `Agent` 或 `Bypass` 模式后重试；如果你愿意，也可以把 `README` 内容贴到这里，我可以立刻帮你总结。';
+    return '问答模式这回合不能读取本地文件或调用工具。请切到规划（只读检查）或危险（可执行）后重试；如果你愿意，也可以把文件内容贴到这里。';
   }
-  return 'Ask 模式这回合不能调用工具。如果你需要我读取文件、执行命令或操作 AutoResearch，请切到 `Agent` 或 `Bypass` 模式。';
+  return '问答模式这回合不能调用工具。如果需要读取文件、执行命令或改动代码，请切到规划或危险模式。';
 }
 
 async function ensureChatSessionForSend(
@@ -488,8 +488,8 @@ export function createChatActionMethods({
           useUIStore.getState().addNotification(
             'info',
             choice === 'bypass'
-              ? t('executionMode.upgrade.switchedToBypass')
-              : t('executionMode.upgrade.switchedToAgent'),
+              ? t('executionMode.upgrade.switchedToDanger')
+              : t('executionMode.upgrade.switchedToPlan'),
             activeSessionId,
           );
         }

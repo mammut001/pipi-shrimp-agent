@@ -374,7 +374,7 @@ async function executeConcurrentTools(
         // callback fires. SSH / browser / MCP tools still fall
         // through to the modal because canAutoApproveTool returns
         // false for them.
-        if (permissionMode === 'bypass' && canAutoApproveTool(permissionMode, request.name, { browserIntent: allowBrowserTools })) {
+        if (canAutoApproveTool(permissionMode, request.name, { browserIntent: allowBrowserTools })) {
           return true;
         }
         uiStore.updateTaskStep(request.id, 'awaiting_confirmation');
@@ -488,15 +488,7 @@ async function resolveSerialToolPermission(
   // SSH / browser / MCP tools which `canAutoApproveTool` still
   // rejects, and for tools that the policy preview explicitly
   // rejected (caller already handled `rejected` separately).
-  if (permissionMode === 'bypass') {
-    if (canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
-      return true;
-    }
-    // SSH / browser / MCP fall through to the user-facing modal —
-    // they keep their existing confirmation gate even in Bypass.
-  }
-
-  if (!requiresConfirmation && canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
+  if (canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
     return true;
   }
 

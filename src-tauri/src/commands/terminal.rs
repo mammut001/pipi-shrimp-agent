@@ -44,16 +44,41 @@ static TERMINAL_SESSIONS: Lazy<Mutex<HashMap<String, TerminalSession>>> =
 
 /// Detect the user's preferred shell on Unix-like hosts.
 ///
-/// Respect SHELL when the environment provides it. Minimal Linux containers
-/// frequently do not ship zsh, so fall back to the POSIX `sh` available via
-/// PATH instead of assuming `/bin/zsh` exists. Windows terminals are resolved
-/// by `resolve_terminal_shell` before this fallback is reached.
+/// Prefer `SHELL` when it points at a real executable. GUI-launched macOS
+/// apps often have an empty or relative PATH, so fall back through absolute
+/// candidates instead of spawning a bare `sh` that portable-pty cannot find.
+/// Windows terminals are resolved by `resolve_terminal_shell` before this
+/// fallback is reached.
 fn detect_shell() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .map(|shell| shell.trim().to_string())
-        .filter(|shell| !shell.is_empty())
-        .unwrap_or_else(|| "sh".to_string())
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(shell) = std::env::var("SHELL") {
+        let trimmed = shell.trim();
+        if !trimmed.is_empty() {
+            candidates.push(trimmed.to_string());
+        }
+    }
+    candidates.extend(
+        ["/bin/zsh", "/usr/bin/zsh", "/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh"]
+            .iter()
+            .map(|path| (*path).to_string()),
+    );
+
+    for candidate in candidates {
+        let path = std::path::Path::new(&candidate);
+        if path.is_absolute() && path.is_file() {
+            return candidate;
+        }
+        if !path.is_absolute() {
+            for dir in ["/bin", "/usr/bin"] {
+                let full = std::path::Path::new(dir).join(&candidate);
+                if full.is_file() {
+                    return full.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+
+    "/bin/sh".to_string()
 }
 
 /// Create a new PTY terminal session.
@@ -259,5 +284,18 @@ pub fn close_all_terminals() {
         for (_, mut session) in sessions.drain() {
             let _ = session.child.kill();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_shell_returns_an_absolute_existing_path() {
+        let shell = detect_shell();
+        let path = std::path::Path::new(&shell);
+        assert!(path.is_absolute(), "shell should be an absolute path, got {shell}");
+        assert!(path.is_file(), "shell should exist on disk, got {shell}");
     }
 }
