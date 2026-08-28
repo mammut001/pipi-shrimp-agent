@@ -35,9 +35,9 @@ function normalizeCriterion(item: string): string {
 }
 
 /**
- * Normalize any legacy/new success-criteria representation into Goal Core's
- * canonical string[] shape. This is intentionally safe for persisted data
- * written by older pipi-shrimp versions.
+ * Normalize legacy text or canonical arrays into Goal Core's string[] shape.
+ * This is deliberately tolerant at persistence boundaries so workflows saved
+ * by older pipi-shrimp versions migrate without user intervention.
  */
 export function normalizeSuccessCriteria(input: GoalSuccessCriteriaInput): GoalSuccessCriteria {
   const items = typeof input === 'string'
@@ -52,15 +52,9 @@ export function normalizeSuccessCriteria(input: GoalSuccessCriteriaInput): GoalS
     .filter(Boolean);
 }
 
-/** @deprecated Use normalizeSuccessCriteria. */
-export const parseSuccessCriteria = normalizeSuccessCriteria;
-
-/** Render canonical criteria for textareas/prompts without changing storage. */
+/** Render canonical criteria for textareas and LLM prompts; never for storage. */
 export function formatSuccessCriteria(input: GoalSuccessCriteriaInput): string {
   return normalizeSuccessCriteria(input)
     .map((item) => `- ${item}`)
     .join('\n');
 }
-
-/** @deprecated UI/prompt adapter only; Goal Core storage is string[]. */
-export const serializeSuccessCriteria = formatSuccessCriteria;
