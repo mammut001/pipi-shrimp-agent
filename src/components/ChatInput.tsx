@@ -120,9 +120,8 @@ interface ChatInputProps {
   submitMode?: 'chat-store' | 'callback-only';
   /** Visual density. Compact is intended for embedded/modal surfaces. */
   density?: 'default' | 'compact';
-  /** Default block composer open state */
+  /** Legacy block-composer props are retained for compatibility only. */
   defaultComposerOpen?: boolean;
-  /** Default block composer blocks */
   defaultBlocks?: ComposerBlock[];
 }
 
@@ -134,8 +133,6 @@ export function ChatInput({
   draftKey = 'default',
   submitMode = 'chat-store',
   density = 'default',
-  defaultComposerOpen = false,
-  defaultBlocks,
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
@@ -150,8 +147,10 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const draftStorageKey = `chat_draft_${draftKey}`;
-  const [composerOpen, setComposerOpen] = useState(defaultComposerOpen);
-  const [composerBlocks, setComposerBlocks] = useState<ComposerBlock[]>(defaultBlocks ?? []);
+  // Main chat no longer exposes the block composer. Keep inert state while
+  // shared BlockComposer remains available to AutoResearch.
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerBlocks, setComposerBlocks] = useState<ComposerBlock[]>([]);
   const [pendingBypassBlocks, setPendingBypassBlocks] = useState<ComposerBlock[] | null>(null);
   const blockDraftStorageKey = `chat_blocks_draft_${draftKey}`;
   const isCompact = density === 'compact';
@@ -264,7 +263,7 @@ export function ChatInput({
   const projectDir = currentSession?.projectDir ?? currentSession?.workDir;
   const pipiOutputDir = currentSession?.pipiOutputDir;
 
-  // Selected 5-mode execution mode. Resolve from persisted id or legacy
+  // Selected execution mode. Resolve from persisted id or legacy
   // permission_mode so the dropdown matches what chatActions will use.
   const selectedExecutionModeId: ExecutionModeId = resolveSessionExecutionModeId(currentSession);
   const handleExecutionModeSelect = useCallback(
@@ -282,30 +281,15 @@ export function ChatInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftStorageKey]);
 
-  // Restore block draft on draftKey switch
+  // Main-chat block composer was removed. Clear any legacy hidden draft so a
+  // stale composer payload can never affect a normal send after the UI is gone.
   useEffect(() => {
-    const saved = localStorage.getItem(blockDraftStorageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setComposerBlocks(parsed);
-          setComposerOpen(true);
-        } else {
-          // Legacy format or corrupt data
-          setComposerBlocks(defaultBlocks ?? []);
-          setComposerOpen(defaultComposerOpen);
-          localStorage.removeItem(blockDraftStorageKey);
-        }
-      } catch (error) {
-        setComposerBlocks(defaultBlocks ?? []);
-        setComposerOpen(defaultComposerOpen);
-      }
-    } else {
-      setComposerBlocks(defaultBlocks ?? []);
-      setComposerOpen(defaultComposerOpen);
-    }
-  }, [blockDraftStorageKey, defaultBlocks, defaultComposerOpen]);
+    localStorage.removeItem(blockDraftStorageKey);
+    localStorage.removeItem(`${blockDraftStorageKey}__ts`);
+    setComposerBlocks([]);
+    setComposerOpen(false);
+    setPendingBypassBlocks(null);
+  }, [blockDraftStorageKey]);
 
   // Persist block draft
   useEffect(() => {
@@ -755,37 +739,6 @@ export function ChatInput({
           />
         )}
 
-        {composerOpen && (
-          <BlockComposer
-            blocks={composerBlocks}
-            onChange={handleComposerBlocksChange}
-            onClose={() => setComposerOpen(false)}
-            onUseAsMessage={(compiledPrompt) => {
-              setInput(compiledPrompt);
-              setComposerBlocks([]);
-              setComposerOpen(false);
-            }}
-            onSend={(compiledPrompt) => {
-              void submitOutboundMessage(compiledPrompt);
-            }}
-            context={{
-              projectFolder: projectDir ?? undefined,
-              pipiOutputDir: pipiOutputDir ?? undefined,
-            }}
-            disabled={isDisabled}
-            defaultMode={selectedExecutionModeId}
-            density={density}
-          />
-        )}
-
-        {pendingBypassBlocks && (
-          <BypassWarningDialog
-            profile={EXECUTION_MODES.find((p) => p.id === 'bypass')!}
-            onCancel={handleCancelBypass}
-            onConfirm={handleConfirmBypass}
-          />
-        )}
-
         <div
           className={`${inputShellClassName} ${
           isFocused
@@ -890,7 +843,7 @@ export function ChatInput({
               onChange={(e) => { void handleFileSelection(e); }}
             />
 
-            {/* Execution mode dropdown (Ask / Plan / Debug / Agent / Multitask / Bypass) */}
+            {/* Execution mode dropdown */}
             <ExecutionModeDropdownErrorBoundary>
               <ExecutionModeDropdown
                 selectedModeId={selectedExecutionModeId}
@@ -898,22 +851,6 @@ export function ChatInput({
                 disabled={isDisabled}
               />
             </ExecutionModeDropdownErrorBoundary>
-
-            {/* Toggle Block Composer button */}
-            <button
-              type="button"
-              onClick={() => setComposerOpen(!composerOpen)}
-              disabled={isDisabled}
-              className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                composerOpen
-                  ? 'border-gray-900 bg-gray-900 text-white hover:bg-gray-800'
-                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-              }`}
-              title={t('chat.blockComposerToggle') || 'Toggle Block Composer'}
-            >
-              <span>🧩</span>
-              <span>{t('chat.composerLabel') || 'Composer'}</span>
-            </button>
 
             {/* Goal button and Popover */}
             <div className="relative" ref={goalPopoverRef}>
