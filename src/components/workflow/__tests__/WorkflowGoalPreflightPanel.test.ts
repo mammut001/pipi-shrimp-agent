@@ -47,8 +47,8 @@ jest.mock('@/store/workflowStore', () => ({
 import {
   GoalPreflightResultSchema,
   tryParseGoalPreflightResult,
-  serializeSuccessCriteria,
 } from '@/services/goal/preflight/schema';
+import { formatSuccessCriteria } from '@/services/goal/types';
 
 const sampleResult = {
   status: 'ready' as const,
@@ -69,8 +69,8 @@ const sampleResult = {
 };
 
 describe('WorkflowGoalPreflightPanel — apply behavior', () => {
-  it('produces a serializable success-criteria string suitable for updateInstanceMeta', () => {
-    const criteriaText = serializeSuccessCriteria(sampleResult.successCriteria);
+  it('formats canonical success criteria for textarea/prompt display', () => {
+    const criteriaText = formatSuccessCriteria(sampleResult.successCriteria);
     expect(criteriaText.split('\n')).toHaveLength(3);
     expect(criteriaText).toContain('- Email is validated client-side');
   });
