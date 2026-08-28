@@ -40,6 +40,18 @@ interface KeyboardShortcutsModalProps {
 }
 
 export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsModalProps) {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const categories = ['navigation', 'chat', 'workflow', 'general'] as const;
@@ -112,6 +124,22 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
   );
 }
 
+function focusSessionSearch(): void {
+  const ui = useUIStore.getState();
+  if (!ui.sidebarVisible) {
+    ui.toggleSidebar();
+  }
+
+  // Sidebar already owns the canonical session-search state. Focus that
+  // existing input rather than introducing a second command-palette/search
+  // implementation just for Cmd/Ctrl+K.
+  requestAnimationFrame(() => {
+    const input = document.querySelector<HTMLInputElement>('aside input[type="text"]');
+    input?.focus();
+    input?.select();
+  });
+}
+
 /**
  * Hook to handle global keyboard shortcuts
  */
@@ -120,13 +148,20 @@ export function useKeyboardShortcuts() {
   const { toggleSidebar } = useUIStore();
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape' && showShortcuts) {
+      e.preventDefault();
+      setShowShortcuts(false);
+      return;
+    }
+
     handleKeyboardShortcut(e, {
       toggleShortcuts: () => setShowShortcuts((prev) => !prev),
       toggleSidebar,
       toggleSettings: () => useUIStore.getState().toggleSettings(),
       startNewChat: () => startNewChatFlow('keyboard-shortcut'),
+      focusSessionSearch,
     });
-  }, [toggleSidebar]);
+  }, [showShortcuts, toggleSidebar]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -143,14 +178,23 @@ export function handleKeyboardShortcut(
     toggleSidebar: () => void;
     toggleSettings: () => void;
     startNewChat: () => unknown;
+    focusSessionSearch?: () => void;
   },
 ): void {
+  const isMeta = e.metaKey || e.ctrlKey;
+
+  // Search is a global navigation shortcut and should work even while the
+  // message composer or another editable control has focus.
+  if (isMeta && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    handlers.focusSessionSearch?.();
+    return;
+  }
+
   const target = e.target as HTMLElement;
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
     return;
   }
-
-  const isMeta = e.metaKey || e.ctrlKey;
 
   if (e.key === '?' && !isMeta) {
     e.preventDefault();
