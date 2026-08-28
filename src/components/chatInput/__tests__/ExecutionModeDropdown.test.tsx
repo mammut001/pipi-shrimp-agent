@@ -1,88 +1,70 @@
-/**
- * ExecutionModeDropdown structural test.
- *
- * Renders the dropdown with `react-dom/server` to a static HTML string
- * and asserts on its structure. The interactive state machine (Escape,
- * ArrowDown, Bypass warning) is exercised by the existing registry +
- * guards tests in `src/services/executionMode/__tests__/registry.test.ts`
- * — keeping the component test framework-free so we don't have to
- * juggle jest-environment-jsdom under ts-jest ESM.
- */
-
 import { describe, expect, it } from '@jest/globals';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
-import { ExecutionModeDropdown } from '../ExecutionModeDropdown';
-import {
-  EXECUTION_MODES,
-  getDefaultExecutionMode,
-  getExecutionMode,
-  type ExecutionModeId,
-} from '@/services/executionMode';
+import { DangerWarningDialog, ExecutionModeDropdown } from '../ExecutionModeDropdown';
+import { EXECUTION_MODES, getExecutionMode } from '@/services/executionMode';
 
 function render(modeId: string, options: { disabled?: boolean } = {}): string {
   return renderToStaticMarkup(
     createElement(ExecutionModeDropdown, {
       selectedModeId: modeId,
-      onSelect: () => {},
+      onSelect: () => undefined,
       disabled: options.disabled,
+      testId: 'mode-test',
     }),
   );
 }
 
-describe('ExecutionModeDropdown (structural)', () => {
-  it('renders the trigger with the currently selected mode label and correct aria attributes', () => {
-    const html = render('plan');
-    expect(html).toContain('data-testid="execution-mode-dropdown-trigger"');
-    expect(html).toContain('aria-haspopup="menu"');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('executionMode.plan.label');
+describe('ExecutionModeDropdown three-mode surface', () => {
+  it('registry backing the dropdown contains only Ask, Plan, Danger', () => {
+    expect(EXECUTION_MODES.map((mode) => mode.id)).toEqual(['ask', 'plan', 'danger']);
   });
 
-  it('renders the Ask mode label when Ask is the selected mode', () => {
+  it('renders Ask as the default selected label', () => {
     const html = render('ask');
-    expect(html).toContain('executionMode.ask.label');
+    expect(html).toContain('data-testid="mode-test-trigger"');
+    expect(html).toContain('Ask');
   });
 
-  it('falls back to the default mode label when given an unknown id', () => {
-    const html = render('not-a-real-mode');
-    const fallbackLabel = getDefaultExecutionMode().labelKey;
-    expect(html).toContain(fallbackLabel);
-    // The default is now Ask, so the fallback should land on Ask.
-    expect(fallbackLabel).toBe('executionMode.ask.label');
+  it('renders Danger explicitly instead of the legacy Bypass product name', () => {
+    const html = render('danger');
+    expect(html).toContain('Danger');
+    expect(html).not.toContain('Bypass');
   });
 
-  it('honors the disabled prop on the trigger', () => {
-    const html = render('agent', { disabled: true });
-    // The trigger button has the `disabled` attribute when disabled.
-    expect(html).toMatch(/<button[^>]*\bdisabled\b/);
+  it('normalizes historical Agent selection to Plan', () => {
+    expect(getExecutionMode('agent').id).toBe('plan');
+    const html = render('agent');
+    expect(html).toContain('Plan');
+    expect(html).not.toContain('Agent');
   });
 
-  it('lists every registered mode as a menu item with the right id', () => {
-    // The component renders items when open; verify the registry we read
-    // from exposes all 5 ids in the expected order, and that the dropdown
-    // module's import surface references them.
-    const ids: ExecutionModeId[] = EXECUTION_MODES.map((m) => m.id);
-    expect(ids).toEqual(['ask', 'plan', 'debug', 'agent', 'bypass']);
-    for (const id of ids) {
-      // The registry exports a non-null profile for each id.
-      const profile = getExecutionMode(id);
-      expect(profile.id).toBe(id);
-    }
+  it('normalizes historical Bypass selection to Danger', () => {
+    expect(getExecutionMode('bypass').id).toBe('danger');
+    const html = render('bypass');
+    expect(html).toContain('Danger');
+    expect(html).not.toContain('Bypass');
   });
 
-  it('flags Bypass as advanced and the only mode that requires a warning', () => {
-    const bypass = getExecutionMode('bypass');
-    expect(bypass.isAdvanced).toBe(true);
-    expect(bypass.requiresWarning).toBe(true);
-    expect(bypass.riskLevel).toBe('dangerous');
+  it('honors disabled state', () => {
+    const html = render('ask', { disabled: true });
+    expect(html).toContain('disabled=""');
   });
+});
 
-  it('marks Ask as the default mode (chat-only, no warning gate)', () => {
-    const ask = getExecutionMode('ask');
-    expect(ask.isDefault).toBe(true);
-    expect(ask.requiresWarning).toBe(false);
-    expect(ask.riskLevel).toBe('safe');
+describe('DangerWarningDialog', () => {
+  it('explains the full-tool + double-check contract', () => {
+    const profile = getExecutionMode('danger');
+    const html = renderToStaticMarkup(
+      createElement(DangerWarningDialog, {
+        profile,
+        onCancel: () => undefined,
+        onConfirm: () => undefined,
+      }),
+    );
+    expect(html).toContain('Danger mode');
+    expect(html).toContain('full tool surface');
+    expect(html).toContain('double-checked');
   });
 });

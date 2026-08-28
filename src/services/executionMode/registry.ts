@@ -1,95 +1,80 @@
 /**
  * Chat execution mode registry.
  *
- * Single source of truth for the 5-mode composer dropdown.
- * Each mode describes:
- *  - its user-facing label / icon / description
- *  - its risk level (drives visual treatment + Bypass warning gate)
- *  - the underlying PermissionMode it maps to for tool execution
- *  - the system-prompt suffix it injects
- *  - the approval / confirmation policy
- *  - the allowed tool policy
- *  - whether it is the default and whether it requires an extra warning gate
+ * Product-facing modes are intentionally limited to three:
+ *  - Ask: chat-only Q&A.
+ *  - Plan: read-only investigation and planning.
+ *  - Danger: full agent/tool surface with explicit destructive-action discipline.
  *
- * Bypass is intentionally NOT the default. Bypass is visually separated and
- * requires an explicit confirmation in the dropdown.
+ * Historical `debug`, `agent`, and `bypass` ids remain accepted only as
+ * compatibility aliases so persisted sessions can be hydrated safely. They are
+ * never exposed in the composer dropdown.
  */
 
 import type { PermissionMode } from '@/services/tools/toolExecutionPolicy';
 import type { TranslationKeys } from '@/i18n/types';
 
-export type ExecutionModeId =
-  | 'ask'
-  | 'plan'
-  | 'debug'
-  | 'agent'
-  | 'bypass';
+export type ActiveExecutionModeId = 'ask' | 'plan' | 'danger';
+export type LegacyExecutionModeId = 'debug' | 'agent' | 'bypass';
+export type ExecutionModeId = ActiveExecutionModeId | LegacyExecutionModeId;
 
 export type RiskLevel = 'safe' | 'moderate' | 'elevated' | 'dangerous';
 
 /**
  * What kinds of tool calls the mode allows.
- * - 'none': no tools at all (chat only, like Ask mode)
- * - 'plan': read-only inspection of the bound workspace — Plan mode.
- *   The exact tool list lives in `PLAN_MODE_ALLOWED_TOOLS` so the
- *   registry, the model-facing tool catalog, and the chat engine
- *   `allowedTools` filter stay in sync. Plan-document persistence
- *   is an app-side post-turn action (see `PLAN_MODE_SYSTEM_PROMPT`),
- *   NOT a model-callable tool.
- * - 'read-only': only read tools
- * - 'edit': read + write tools, but no shell/browser
- * - 'shell': read + write + shell
- * - 'full': read + write + shell + browser + mcp + ssh
+ * - 'none': no tools at all.
+ * - 'plan': read-only workspace inspection.
+ * - 'read-only'/'edit'/'shell': retained for compatibility with the guard layer.
+ * - 'full': complete tool catalog; the PermissionMode still decides approvals.
  */
 export type AllowedToolPolicy = 'none' | 'plan' | 'read-only' | 'edit' | 'shell' | 'full';
 
 export type ApprovalPolicy =
-  | 'always-ask'        // every tool call requires explicit confirmation
-  | 'ask-on-risky'      // safe tools auto-approve, risky tools confirm
-  | 'auto-safe-only'    // only explicitly safe tools auto-approve (debug)
-  | 'auto-everything';  // Bypass — auto-resolve all
+  | 'always-ask'
+  | 'ask-on-risky'
+  | 'auto-safe-only'
+  | 'auto-everything';
 
 export interface ExecutionModeProfile {
-  /** Stable id, used as the enum value in the store and as an i18n key suffix. */
-  id: ExecutionModeId;
-  /** Localized label key. Resolved with t('executionMode.<id>.label') */
+  id: ActiveExecutionModeId;
   labelKey: keyof TranslationKeys;
-  /** Localized description key. Resolved with t('executionMode.<id>.description') */
   descriptionKey: keyof TranslationKeys;
-  /** Visual icon name. The dropdown renders a switch on this. */
   icon: 'plan' | 'bug' | 'agent' | 'bypass' | 'ask';
-  /** Risk level drives color, ordering, and warning gates. */
   riskLevel: RiskLevel;
-  /** The PermissionMode that tool hooks will see. */
   permissionMode: PermissionMode;
-  /** System prompt suffix that gets injected when the mode is active. */
+  /** Mode harness appended to the system prompt for every turn. */
   systemPromptSuffix: string;
-  /** Which tools can run without extra confirmation in this mode. */
   allowedToolPolicy: AllowedToolPolicy;
-  /** How to gate tool approval. */
   approvalPolicy: ApprovalPolicy;
-  /** Whether this mode is the default for new sessions. */
   isDefault: boolean;
-  /** Whether the dropdown must show a one-time warning before the user can pick it. */
   requiresWarning: boolean;
-  /**
-   * If true, the dropdown shows a clear visual separation (separator + label)
-   * before this mode. Used to push Bypass to the bottom under an "Advanced" header.
-   */
   isAdvanced: boolean;
-  /**
-   * Honest label shown next to the mode when some advertised behavior is not
-   * fully wired yet. Reserved for future use; no current mode sets it.
-   */
   experimentalNoteKey?: keyof TranslationKeys;
 }
 
-const ASK_MODE_SYSTEM_PROMPT_SUFFIX = `# ASK MODE ACTIVATED
+const ASK_MODE_HARNESS = `# ASK HARNESS
 
 You are in Ask mode for this turn.
-- No tools are available.
-- Do not emit tool calls, XML tool tags, pseudo-tool syntax, or "I'll inspect/read/list files" stubs.
-- If the user asks for file access, shell commands, browser actions, MCP calls, or AutoResearch execution, explain briefly that Ask mode cannot run tools and suggest switching to Agent or Bypass mode.`;
+- Answer the user's question directly and concisely using the conversation context you already have.
+- No tools are available. Do not emit tool calls, XML tool tags, pseudo-tool syntax, or promises to inspect files later.
+- If the request genuinely requires repository/file/browser/shell access, say so briefly and recommend Plan for read-only investigation or Danger for execution.`;
+
+const PLAN_MODE_HARNESS = `# PLAN HARNESS
+
+You are in Plan mode for this turn.
+- Investigate with read-only tools only. Never create, edit, move, rename, delete, install, execute shell commands, or otherwise mutate state.
+- Produce a decision-ready plan grounded in what you actually inspected: goal, current-state findings, ordered implementation steps, verification, rollback, and remaining risks.
+- Before proposing deletion or replacement, identify references, dependents, persisted-data compatibility, and migration/rollback requirements. If the scope is ambiguous, call that ambiguity out explicitly.
+- Do not claim that implementation or validation ran when it did not.`;
+
+const DANGER_MODE_HARNESS = `# DANGER HARNESS
+
+You are in Danger mode for this turn. You may use the full tool surface to complete the user's task end-to-end.
+- Be proactive: inspect, implement, verify, and report concrete results instead of stopping at a plan.
+- Destructive operations require a double-check before execution. First identify the exact targets, then check references/dependents and persisted-data compatibility, and finally verify the requested scope one more time immediately before delete/overwrite/reset/migration actions.
+- Prefer reversible changes (branch, backup, move, deprecate, migration) over irreversible deletion when both satisfy the request.
+- After mutations, verify the resulting state and surface anything not validated.
+- "Danger" grants capability, not permission to ignore product safety, repository protections, user scope, or external authorization boundaries.`;
 
 export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
   {
@@ -98,15 +83,10 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     descriptionKey: 'executionMode.ask.description',
     icon: 'ask',
     riskLevel: 'safe',
-    // Ask is chat-only; we still map to 'plan-only' so the existing
-    // PermissionMode path blocks tool execution before the
-    // 5-mode outer guard runs.
     permissionMode: 'plan-only',
-    systemPromptSuffix: ASK_MODE_SYSTEM_PROMPT_SUFFIX,
+    systemPromptSuffix: ASK_MODE_HARNESS,
     allowedToolPolicy: 'none',
     approvalPolicy: 'always-ask',
-    // Ask is the default for new chats — simple Q&A must never enter
-    // Agent/Bypass tool loops.
     isDefault: true,
     requiresWarning: false,
     isAdvanced: false,
@@ -118,11 +98,7 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     icon: 'plan',
     riskLevel: 'safe',
     permissionMode: 'plan-only',
-    systemPromptSuffix: '', // appended separately via PLAN_MODE_SYSTEM_PROMPT
-    // Plan mode is read-only inspection only — no write/edit/shell/browser/
-    // mcp/agent tools, and no `save_plan_doc` (the Rust tool registry
-    // does not implement it; plan-doc persistence is an app-side
-    // post-turn action in `chatActions.sendMessage`).
+    systemPromptSuffix: PLAN_MODE_HARNESS,
     allowedToolPolicy: 'plan',
     approvalPolicy: 'always-ask',
     isDefault: false,
@@ -130,73 +106,74 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
     isAdvanced: false,
   },
   {
-    id: 'debug',
-    labelKey: 'executionMode.debug.label',
-    descriptionKey: 'executionMode.debug.description',
-    icon: 'bug',
-    riskLevel: 'moderate',
-    // Use auto-edits: read + write tools auto-approve, but shell/browser/mcp still ask.
-    permissionMode: 'auto-edits',
-    systemPromptSuffix: '',
-    allowedToolPolicy: 'edit',
-    approvalPolicy: 'auto-safe-only',
-    isDefault: false,
-    requiresWarning: false,
-    isAdvanced: false,
-  },
-  {
-    id: 'agent',
-    labelKey: 'executionMode.agent.label',
-    descriptionKey: 'executionMode.agent.description',
-    icon: 'agent',
-    riskLevel: 'elevated',
-    // 'auto-edits' is the closest existing behavior to a normal autonomous
-    // agent: edit tools auto-approve, destructive commands still ask.
-    permissionMode: 'auto-edits',
-    systemPromptSuffix: '',
-    allowedToolPolicy: 'shell',
-    approvalPolicy: 'ask-on-risky',
-    isDefault: false,
-    requiresWarning: false,
-    isAdvanced: false,
-  },
-  {
-    id: 'bypass',
+    id: 'danger',
+    // Reuse the existing Bypass translation keys during the compatibility
+    // window. The dropdown renders the product name "Danger" explicitly.
     labelKey: 'executionMode.bypass.label',
     descriptionKey: 'executionMode.bypass.description',
     icon: 'bypass',
     riskLevel: 'dangerous',
-    permissionMode: 'bypass',
-    systemPromptSuffix: '',
+    // Full catalog, but keep the existing risky-action approval path instead
+    // of silently inheriting legacy Bypass auto-approval semantics.
+    permissionMode: 'auto-edits',
+    systemPromptSuffix: DANGER_MODE_HARNESS,
     allowedToolPolicy: 'full',
-    approvalPolicy: 'auto-everything',
+    approvalPolicy: 'ask-on-risky',
     isDefault: false,
     requiresWarning: true,
-    isAdvanced: true,
+    isAdvanced: false,
   },
 ]);
 
-const MODE_INDEX: ReadonlyMap<ExecutionModeId, ExecutionModeProfile> = new Map(
+const MODE_INDEX: ReadonlyMap<ActiveExecutionModeId, ExecutionModeProfile> = new Map(
   EXECUTION_MODES.map((profile) => [profile.id, profile]),
 );
 
-export function getExecutionMode(id: ExecutionModeId | string | null | undefined): ExecutionModeProfile {
-  if (id && typeof id === 'string') {
-    const known = MODE_INDEX.get(id as ExecutionModeId);
-    if (known) return known;
+const LEGACY_MODE_MIGRATION: Readonly<Record<LegacyExecutionModeId, ActiveExecutionModeId>> = Object.freeze({
+  // Debug/Agent are intentionally reduced to read-only planning rather than
+  // silently escalating old sessions into the new Danger capability.
+  debug: 'plan',
+  agent: 'plan',
+  // Legacy Bypass was already the explicit high-risk mode.
+  bypass: 'danger',
+});
+
+export function normalizeExecutionModeId(
+  id: ExecutionModeId | string | null | undefined,
+): ActiveExecutionModeId {
+  if (id && MODE_INDEX.has(id as ActiveExecutionModeId)) {
+    return id as ActiveExecutionModeId;
   }
-  return getDefaultExecutionMode();
+  if (id === 'debug' || id === 'agent' || id === 'bypass') {
+    return LEGACY_MODE_MIGRATION[id];
+  }
+  return getDefaultExecutionMode().id;
+}
+
+export function getExecutionMode(
+  id: ExecutionModeId | string | null | undefined,
+): ExecutionModeProfile {
+  return MODE_INDEX.get(normalizeExecutionModeId(id)) ?? getDefaultExecutionMode();
 }
 
 export function getDefaultExecutionMode(): ExecutionModeProfile {
-  // The registry explicitly marks isDefault=true; fall back to the first entry
-  // if the flag is missing (defensive — should never happen in practice).
   const def = EXECUTION_MODES.find((profile) => profile.isDefault);
   return def ?? EXECUTION_MODES[0]!;
 }
 
+/** Accept active ids plus historical ids that can be migrated safely. */
 export function isExecutionModeId(value: unknown): value is ExecutionModeId {
-  return typeof value === 'string' && MODE_INDEX.has(value as ExecutionModeId);
+  return (
+    typeof value === 'string' &&
+    (MODE_INDEX.has(value as ActiveExecutionModeId) ||
+      value === 'debug' ||
+      value === 'agent' ||
+      value === 'bypass')
+  );
+}
+
+export function isActiveExecutionModeId(value: unknown): value is ActiveExecutionModeId {
+  return typeof value === 'string' && MODE_INDEX.has(value as ActiveExecutionModeId);
 }
 
 export function listExecutionModes(): readonly ExecutionModeProfile[] {

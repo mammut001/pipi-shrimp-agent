@@ -1,224 +1,96 @@
 # Execution Modes
 
-Single source of truth for the 5-mode composer dropdown. The dropdown
-drives chat behavior, the model-facing tool catalog, and the approval
-gates. Everything that affects what the model can see, call, or have
-auto-approved must agree with the values recorded here.
+PiPi Shrimp exposes exactly three product-facing execution modes: **Ask**, **Plan**, and **Danger**.
+The registry in `src/services/executionMode/registry.ts` is the source of truth for the dropdown, prompt harness, model-facing tool catalog, and the compatibility mapping used while old sessions are migrated.
 
-> **Hard rule.** UI copy must not advertise a behavior that the
-> underlying enforcement layer does not provide. If a setting is only a
-> prompt-side instruction, the label must say so.
+> Hard rule: UI copy, prompt harnesses, tool visibility, and approval behavior must describe the same capability. A prompt-only instruction is never a substitute for runtime enforcement.
 
----
+## Mode contract
 
-## Mode registry
+| Mode | Purpose | Tool surface | Permission layer | Warning |
+| --- | --- | --- | --- | --- |
+| Ask | Q&A only | none | `plan-only` | no |
+| Plan | read-only investigation and planning | `PLAN_MODE_ALLOWED_TOOLS` | `plan-only` | no |
+| Danger | execute the task end-to-end | full catalog | `auto-edits` | yes |
 
-Every mode is a `ExecutionModeProfile` (`src/services/executionMode/registry.ts`).
-The registry is the single source of truth for:
+Every active profile has a non-empty `systemPromptSuffix`. Those suffixes are deliberately called **harnesses** because they define the behavior expected for the whole turn, while the tool guards below enforce the hard limits.
 
-| Field | What it drives |
-| --- | --- |
-| `permissionMode` | `preToolUseHooks` decision (`plan-only` / `auto-edits` / `bypass` / `standard`) |
-| `allowedToolPolicy` | The outer "is this tool even visible to the model?" guard (`none` / `plan` / `read-only` / `edit` / `shell` / `full`) |
-| `approvalPolicy` | `always-ask` / `ask-on-risky` / `auto-safe-only` / `auto-everything` |
-| `requiresWarning` | Dropdown shows a one-time warning gate (Bypass only) |
-| `isAdvanced` | Visual separator before the entry in the dropdown (Bypass only) |
-| `systemPromptSuffix` | Extra instructions appended to the system prompt |
+## Ask harness
 
-The hydration path (`hydrateSessionModes` in `guards.ts`) guarantees
-that a session row's `executionMode` and `permissionMode` are always in
-lockstep; `executionMode` is the source of truth and the legacy
-`permissionMode` column is only consulted when `executionMode` is
-absent (pre-v8 DB rows, Telegram mirror).
+Ask is chat-only.
 
----
+- The model-facing tool catalog is empty.
+- `isToolAllowedForMode('ask', ...)` returns false for every tool.
+- The harness tells the model not to emit tool-call syntax or pretend that it inspected files.
+- If the request needs repository, browser, or shell access, Ask should recommend Plan for read-only inspection or Danger for execution.
 
-## 1. Ask
+**Invariant:** Ask cannot run tools.
 
-Chat-only mode. **No tools at all.**
+## Plan harness
 
-| Field | Value |
-| --- | --- |
-| UI label | `executionMode.ask.label` (en-US "Ask a question") |
-| `permissionMode` | `plan-only` (defensive — `preToolUseHooks` would block tools anyway, but the outer Ask guard also returns false) |
-| `allowedToolPolicy` | `none` |
-| Approval behavior | `always-ask` (irrelevant in practice — there are no tools to ask about) |
-| Allowed tools | **None** (`isToolAllowedForProfile` returns `false` for any tool name; `getAllowedToolsForMode` returns `[]`) |
-| Blocked tools | Everything, including `read_file`. The system prompt suffix says: *"No tools are available. Do not emit tool calls, XML tool tags, pseudo-tool syntax, or 'I'll inspect/read/list files' stubs."* |
-| Hard-enforced? | **Yes** — `isToolAllowedForProfile` returns `false` for every tool under `allowedToolPolicy: 'none'`, the model-facing catalog returns `[]`, and `preToolUseHooks` would also block. The system-prompt suffix is *redundant* defence, not the only line. |
-| Default? | **Yes** — `isDefault: true`. New chats start in Ask. |
-| Runtime enforcement points | `src/services/executionMode/guards.ts::isToolAllowedForMode` (outer guard), `preToolUseHooks.executionModeGuardCheck` (hook layer), the Ask system-prompt suffix (redundant) |
-| Tests that protect it | `src/services/executionMode/__tests__/modeConsistency.test.ts` (registry invariants + Ask default). `src/store/chat/__tests__/chatToolExecution.test.ts` "Ask mode blocks every tool via the outer preToolUseHook" (Ask + every tool name → blocked). `src/services/executionMode/__tests__/registry.test.ts` (Ask is the default). |
+Plan is read-only investigation plus a decision-ready plan.
 
-> **Statement (must remain true):** Ask cannot run tools.
-> Do not relax this when adding new tools — Ask must stay tool-free.
+- Allowed tools come from `PLAN_MODE_ALLOWED_TOOLS`.
+- Writes, edits, shell, browser mutation, SSH, MCP, agent spawn, and `save_plan_doc` are blocked.
+- Plan-document persistence remains an app-side post-turn action.
+- Before proposing deletion/replacement, the harness requires checking references, dependents, persisted-data compatibility, migration, and rollback needs.
 
----
+**Invariant:** Plan may inspect; it may not mutate state.
 
-## 2. Plan
+## Danger harness
 
-Read-only inspection of the bound workspace. The model can read code
-and search it. It cannot write, edit, run, browse, ssh, or call MCP.
+Danger is the single tool-capable execution mode exposed to users.
 
-| Field | Value |
-| --- | --- |
-| UI label | `executionMode.plan.label` (en-US "Make a plan") |
-| `permissionMode` | `plan-only` |
-| `allowedToolPolicy` | `plan` |
-| Approval behavior | `always-ask` (irrelevant — the tool list is locked to read-only) |
-| Allowed tools | **Exactly** `read_file`, `list_files`, `search_files` (see `PLAN_MODE_ALLOWED_TOOLS` in `src/services/planMode.ts`) |
-| Blocked tools | `write_file`, `edit_file`, `execute_command`, `create_directory`, `delete_file`, `browser_*`, `ssh_*`, `mcp__*`, `agent_tool`, `save_plan_doc` (the last is not in the Rust registry at all) |
-| Hard-enforced? | **Yes** — Plan mode is *triple-enforced*: (a) the model-facing `getAllowedToolsForMode` returns only the Plan allowlist, (b) `isToolAllowedForProfile` returns `false` for every other tool, (c) `preToolUseHooks` checks `permissionMode === 'plan-only'`. |
-| Runtime enforcement points | `src/services/planMode.ts::PLAN_MODE_ALLOWED_TOOLS` (allowlist), `src/services/executionMode/guards.ts::isToolAllowedForProfile` (outer guard), `preToolUseHooks` (hook layer), `chatActions` plan-mode branch (request boundary), `resolvedChatRequest.allowedTools` normalisation |
-| Tests that protect it | `src/services/executionMode/__tests__/modeConsistency.test.ts` (registry invariants). `src/services/executionMode/__tests__/registry.test.ts` (Plan profile). `src/store/chat/__tests__/chatToolExecution.test.ts` "Plan mode … allowedTools filtered to PLAN_MODE_ALLOWED_TOOLS" (write/exec/browser/ssh/MCP rejected). |
+- The model-facing catalog is unfiltered (`allowedToolPolicy: full`).
+- The permission layer is `auto-edits`, not legacy `bypass`, so risky categories continue through the existing approval gates.
+- Dangerous-command and path-validation hooks still run.
+- The harness requires a destructive-operation double-check: identify exact targets, inspect references/dependents and persisted-data compatibility, then re-check requested scope immediately before delete/overwrite/reset/migration operations.
+- Reversible changes are preferred when they satisfy the request.
+- After mutation, the resulting state must be verified.
 
-> **Statement (must remain true):** Plan only exposes
-> `read_file` / `list_files` / `search_files`. The exact allowlist lives
-> in `PLAN_MODE_ALLOWED_TOOLS` so the registry, the model-facing tool
-> catalog, and `preToolUseHooks` stay in sync. Plan-document persistence
-> is an **app-side post-turn action** in `chatActions.sendMessage`
-> (`shouldSavePlanDoc` + `savePlanModeDoc`) — not a model-callable tool.
-> Do not add a `save_plan_doc` Rust handler and do not add it to
-> `PLAN_MODE_ALLOWED_TOOLS`.
+**Invariant:** Danger grants capability, not permission to skip repository protections, safety hooks, user scope, or external authorization boundaries.
 
----
+## Historical mode migration
 
-## 3. Debug
+Old persisted ids remain accepted only as compatibility aliases; they are not rendered in the product UI.
 
-Repro → diagnose → minimal fix → verify. Read + write/edit auto-approve;
-shell/browser/MCP/SSH still confirm.
+| Historical value | Active mode | Reason |
+| --- | --- | --- |
+| `debug` | Plan | conservative: do not silently escalate a stored session |
+| `agent` | Plan | conservative: do not silently escalate a stored session |
+| `bypass` | Danger | it was already the explicit high-risk selection |
 
-| Field | Value |
-| --- | --- |
-| UI label | `executionMode.debug.label` (en-US "Debug a bug") |
-| `permissionMode` | `auto-edits` |
-| `allowedToolPolicy` | `edit` |
-| Approval behavior | `auto-safe-only` (Debug only auto-approves tools in the `AUTO_EDIT_SAFE_TOOLS` set; everything else asks) |
-| Allowed tools | `read_file`, `list_files`, `path_exists`, `search_files`, `glob_search`, `grep_files`, `get_current_workspace`, `write_file`, `create_directory` |
-| Blocked tools | `execute_command`, `run_in_terminal`, `bash`, `exec`, `shell`, `ssh_*`, `browser_*`, `mcp__*`, `agent_tool`, `delete_file`, `edit_file` |
-| Hard-enforced? | **Yes** — write/edit auto-approve, but the outer guard's `edit` policy still rejects shell/browser/SSH regardless of `permissionMode`, and `canAutoApproveTool` for shell/SSH returns `false` even in Bypass. |
-| Runtime enforcement points | `src/services/executionMode/guards.ts::isToolAllowedForProfile` (outer `edit` policy), `src/services/tools/toolExecutionPolicy.ts::canAutoApproveTool` (auto-approve gate for `auto-edits`), `preToolUseHooks` |
-| Tests that protect it | `src/services/executionMode/__tests__/modeConsistency.test.ts` (registry invariants). `src/store/chat/__tests__/chatToolExecution.test.ts` (Debug can write_file but execute_command still asks). |
+Rows that predate `executionMode` use the same conservative rule:
 
-> **Statement (must remain true):** Debug auto-approves file edits but
-> still asks for shell, browser, MCP, SSH, and `agent_tool`. Do not move
-> those into `AUTO_EDIT_SAFE_TOOLS`.
+- `plan-only` -> Plan
+- `standard` / `auto-edits` -> Plan
+- `bypass` -> Danger
+- unknown/corrupt values -> Ask
 
----
+If an explicit `executionMode` is present but invalid, it collapses to Ask even if a stale `permissionMode` is more powerful. This prevents corrupt data from becoming an escalation path.
 
-## 4. Agent
+The next save persists the active three-mode id and its derived permission mode in lockstep.
 
-The default autonomous workhorse. Read + write + shell auto-approve;
-SSH / browser / MCP / `agent_tool` still confirm.
+## Enforcement layers
 
-| Field | Value |
-| --- | --- |
-| UI label | `executionMode.agent.label` (en-US "Agent") |
-| `permissionMode` | `auto-edits` |
-| `allowedToolPolicy` | `shell` |
-| Approval behavior | `ask-on-risky` (read/write/shell auto-approve, dangerous tools still confirm) |
-| Allowed tools | `read_file`, `list_files`, `path_exists`, `search_files`, `glob_search`, `grep_files`, `get_current_workspace`, `write_file`, `create_directory`, `edit_file`, `delete_file`, `execute_command`, `run_in_terminal`, `bash`, `exec`, `shell` |
-| Blocked tools | `ssh_*`, `browser_*`, `mcp__*`, `agent_tool` (the outer `shell` policy explicitly rejects these — they need explicit approval because the hard safety hooks cannot generically prove they are safe) |
-| Hard-enforced? | **Yes** — the dangerous-command and path-escape `preToolUseHooks` still run on every `execute_command`, and shell/SSH paths outside the bound workspace are still rejected. Agent does not bypass the dangerous-command gate. |
-| Runtime enforcement points | `src/services/executionMode/guards.ts::isToolAllowedForProfile` (outer `shell` policy), `preToolUseHooks` (dangerous command + path escape), `canAutoApproveTool` |
-| Tests that protect it | `src/services/executionMode/__tests__/modeConsistency.test.ts`. `src/store/chat/__tests__/chatToolExecution.test.ts` "Agent mode: shell auto-approves, ssh still asks". `src/services/tools/__tests__/toolExecutionPolicy.test.ts` (auto-approve for high-risk tools returns false). |
+The harness is only one layer. Runtime behavior must remain aligned across:
 
-> **Statement (must remain true):** Agent auto-approves normal
-> project-scoped tools. It does *not* auto-approve SSH, browser
-> mutation, MCP, or `agent_tool` — those are the categories where the
-> hard safety hooks cannot generically prove safety and the user should
-> still be in the loop.
+1. `src/services/executionMode/registry.ts` — three active profiles + legacy aliases.
+2. `src/services/executionMode/guards.ts` — active-mode normalization and tool visibility.
+3. `src/services/tools/preToolUseHooks.ts` — dangerous-command, path, browser, and permission checks.
+4. `src/store/chat/chatActions.ts` — prompt harness attachment and request-time tool catalog.
+5. `src/services/tools/toolExecutionPolicy.ts` — per-tool approval rules.
 
----
+Tests in `src/services/executionMode/__tests__/registry.test.ts`, `modeConsistency.test.ts`, and chat/tool-policy suites must be updated whenever those layers change.
 
-## 5. Bypass
+## AutoResearch
 
-Auto-approve everything that the dangerous-command and path-escape
-hooks can prove safe. Still respects every hard safety gate the app
-already has.
+AutoResearch has its own runtime loop. Its structured Recipe remains the bootstrap source of truth. The old advanced Prompt-block editor has been removed from the AutoResearch launch surface, but persisted recipe/schema fields were intentionally not deleted in the same change.
 
-| Field | Value |
-| --- | --- |
-| UI label | `executionMode.bypass.label` (en-US "Bypass permissions") |
-| `permissionMode` | `bypass` |
-| `allowedToolPolicy` | `full` |
-| Approval behavior | `auto-everything` |
-| Allowed tools | All (model-facing catalog returns `undefined`, meaning "do not filter") |
-| Blocked tools | **None at the registry layer** — but the dangerous-command and path-escape `preToolUseHooks` still fire on every shell call. SSH, browser, MCP, and `agent_tool` keep their confirmation dialog in the current implementation (see `canAutoApproveTool`'s `permissionMode === 'bypass'` branch in `toolExecutionPolicy.ts`). |
-| Hard-enforced? | **Partially.** Bypass is the **only** mode where `allowedToolPolicy: 'full'` is true, so the outer guard no longer rejects tools by name. But the dangerous-command check, the path-escape check, the SSH config gate, and the MCP server gate are *not* skipped — Bypass is "skip the user prompt" not "skip the safety hooks". |
-| Runtime enforcement points | `canAutoApproveTool` (auto-approve gate; rejects `isSshTool` / `isMcpTool` / `isBrowserMutationTool` / `agent_tool` even in bypass), `preToolUseHooks` dangerous-command + path-escape checks (always fire) |
-| Tests that protect it | `src/store/chat/__tests__/chatToolExecution.test.ts` "Bypass still rejects dangerous commands via preToolUseHooks" (canonical test — rm -rf, mkfs, dd rejected even in Bypass). `src/services/executionMode/__tests__/modeConsistency.test.ts` (Bypass `requiresWarning: true`, `isAdvanced: true`). |
+That separation is deliberate: removing a redundant UI path must not make old saved data unreadable.
 
-> **Statement (must remain true):** Bypass auto-approves normal
-> project-scoped tools but still respects the dangerous-command,
-> path-escape, SSH, browser, MCP, and `agent_tool` safety gates. The
-> UI must not say "Bypass: all tools auto-approve" without naming the
-> exceptions.
+## Skill runtime
 
----
+Skills are `SKILL.md` packages loaded by the Tauri `execute_skill` command. The Skills page must display real runtime content rather than a shadow React catalog. A concrete task is appended to the loaded skill instructions and then executed through a normal chat session, where the selected execution-mode harness and tool approval policies apply.
 
-## UI ↔ enforcement honesty
-
-The composer dropdown shows a `systemPromptSuffix` per mode. That
-suffix is **redundant** with the actual enforcement — it is the
-explanation the model sees, not the rule. The rules are:
-
-1. The 5-mode registry (`registry.ts`).
-2. The outer guard (`isToolAllowedForProfile`).
-3. `preToolUseHooks` (dangerous-command, path-escape, mode guard).
-4. The model-facing catalog (`getAllowedToolsForMode`).
-5. `canAutoApproveTool` (per-tool approval gate).
-
-If you add or change a mode:
-
-- Update the registry *and* the outer guard *and* the catalog at the
-  same time. `modeConsistency.test.ts` asserts that all three agree.
-- Do not put a "guard" in the system-prompt suffix that the
-  enforcement layer does not actually enforce. The model will call the
-  tool, and the tool will succeed.
-- If a setting is only a prompt-side instruction (no enforcement),
-  label it as such in the UI. Examples: "agent will try to", "may
-  require a follow-up turn", "the loop will retry up to N times".
-
----
-
-## Tool execution entry points
-
-Registry-backed tools (`read_file`, `write_file`, `execute_command`, SSH,
-bootstrap, etc.) must use `execute_single_tool` or `execute_tool_batch`. The
-legacy Tauri command `execute_tool` rejects registry tools (R2-01, 2026-06-24)
-and remains only for chat-scoped browser, Typst, and Skill tools, with Rust
-`execution_policy` enforcement.
-
-`execute_single_tool` requires an explicit `sessionId` for assistant/user
-originated calls so preview-issued approval tokens can be consumed against the
-correct chat session (R2-02).
-
-The Tauri command `cdp_execute_script` enforces the same Rust `execution_policy`
-before `Runtime.evaluate`: unknown sources are denied, trusted browser-agent
-overlay/URL probes are allowed without approval, and arbitrary JavaScript
-requires a matching preview approval token (R3-06).
-
-Browser CDP tasks read `PIPI_BROWSER_ACTION_PERMISSION_MODE` from localStorage
-(`observe_only` / `ask_each_action` / `auto_safe`) and pass it into the native
-agent policy layer. `observe_only` blocks mutating actions before any approval
-prompt (R3-02).
-
-CDP and legacy browser agent starts both pass `evaluateBrowserAgentStartGate`
-before `executeNativeBrowserTask`; `auth_required` (and related intervention
-states) block the autonomous agent until login or explicit
-`forceResumeWithoutAuth` (R3-03).
-
-CDP starts first compare the embedded/inspected preview URL with the live CDP tab
-URL (`getCurrentBrowserUrl`); a mismatch blocks the agent before any model or
-CDP action runs (R3-04).
-
----
-
-## Cross-references
-
-- Folder model: [`folders-and-runs.md`](./folders-and-runs.md).
-- AutoResearch runtime, which executes its own loop on top of these
-  modes: [`autoresearch-runtime.md`](./autoresearch-runtime.md).
-- File-level responsibility for the registry itself:
-  `src/services/executionMode/registry.ts` (file-level docstring).
+The Skills UI intentionally exposes no delete/write API for skill packages in this migration.

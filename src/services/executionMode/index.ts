@@ -6,12 +6,16 @@ export {
   EXECUTION_MODES,
   getDefaultExecutionMode,
   getExecutionMode,
+  isActiveExecutionModeId,
   isExecutionModeId,
   listExecutionModes,
+  normalizeExecutionModeId,
+  type ActiveExecutionModeId,
   type AllowedToolPolicy,
   type ApprovalPolicy,
   type ExecutionModeId,
   type ExecutionModeProfile,
+  type LegacyExecutionModeId,
   type RiskLevel,
 } from './registry';
 
