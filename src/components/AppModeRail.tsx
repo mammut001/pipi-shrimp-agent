@@ -12,7 +12,7 @@ type RailButtonProps = {
 };
 
 type RailItem = RailButtonProps & {
-  id: 'chat' | 'workflow' | 'diagnostics';
+  id: 'chat' | 'workflow' | 'autoresearch' | 'diagnostics';
 };
 
 const RAIL_ITEMS: RailItem[] = [
@@ -36,6 +36,16 @@ const RAIL_ITEMS: RailItem[] = [
         <rect x="4" y="4" width="6" height="6" rx="2" />
         <rect x="14" y="4" width="6" height="6" rx="2" />
         <rect x="4" y="14" width="6" height="6" rx="2" />
+      </svg>
+    ),
+  },
+  {
+    id: 'autoresearch',
+    label: 'Auto',
+    title: 'Open AutoResearch workspace',
+    icon: (
+      <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3zM3.31 9.397L5 10.12v4.102a8.969 8.969 0 00-1.05-.174 1 1 0 01-.89-.89 11.115 11.115 0 01.25-3.762zM9.3 16.573A9.026 9.026 0 007 14.935v-3.773l1.657.71a3 3 0 002.686 0l1.657-.71v3.772a8.972 8.972 0 00-2.3 1.638 1 1 0 01-1.4 0zM15 14.935a9.025 9.025 0 00-2.3 1.638 1 1 0 01-1.4 0 8.972 8.972 0 00-2.3-1.638v-3.772l1.657.71a3 3 0 002.686 0L15 11.162v3.773z" />
       </svg>
     ),
   },

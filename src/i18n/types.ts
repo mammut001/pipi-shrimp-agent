@@ -1153,6 +1153,10 @@ export type TranslationKeys = {
   'autoresearch.bootstrap.log.finalizing': string;
   'autoresearch.bootstrap.log.agentCompleted': string;
   'autoresearch.bootstrap.backToRecipe': string;
+  'autoresearch.bootstrap.developerConsole': string;
+  'autoresearch.bootstrap.retry': string;
+  'autoresearch.bootstrap.stop': string;
+  'autoresearch.bootstrap.inProgress': string;
   'autoresearch.bootstrap.missingFinalize': string;
   'autoresearch.bootstrap.retryHint': string;
   'autoresearch.bootstrap.recoverySteps': string;

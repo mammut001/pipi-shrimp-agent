@@ -19,6 +19,10 @@ jest.mock('@/i18n', () => ({
       'autoresearch.bootstrap.log.finished': 'Finished',
       'autoresearch.bootstrap.log.incomplete': 'Incomplete',
       'autoresearch.bootstrap.backToRecipe': 'Back to Recipe',
+      'autoresearch.bootstrap.developerConsole': 'Developer Console',
+      'autoresearch.bootstrap.retry': 'Retry bootstrap',
+      'autoresearch.bootstrap.stop': 'Stop bootstrap',
+      'autoresearch.bootstrap.inProgress': 'Bootstrap in progress...',
       'autoresearch.bootstrap.log.stopped': '[SYSTEM] Bootstrap stopped by user.',
     };
     return dict[key] || key;

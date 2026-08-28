@@ -78,8 +78,7 @@ export function MainLayout({
     ? defaultRightPanelContent
     : rightPanelContent;
   const shouldShowRightPanel = (showRightPanel ?? rightPanelVisible) && !forceHideRightPanel;
-  // If the viewport is in the small band and right panel is open, auto-collapse sidebar to rail
-  const sidebarExpanded = showSidebar && sidebarVisible && !forceCollapseSidebar && !(shouldShowRightPanel && isSmall);
+  const sidebarExpanded = showSidebar && sidebarVisible && !forceCollapseSidebar;
   const sidebarShellWidth = sidebarExpanded ? 240 : 64;
 
   const toggleLabel = shouldShowRightPanel

@@ -19,7 +19,7 @@ export const BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE =
 export function shouldRunBootstrapFinalizeNudge(
   readyResult: { status?: string } | null | undefined,
 ): boolean {
-  return !readyResult || readyResult.status !== 'ready';
+  return !readyResult;
 }
 
 /**

@@ -366,7 +366,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     setStoppedByUser(false);
     setHasStarted(true);
     setIsStreaming(true);
-    setAgentLogs(`[SYSTEM] Initializing AutoResearch Bootstrap Setup...\n`);
+    setAgentLogs((t('autoresearch.bootstrap.log.init') || '[SYSTEM] Initializing AutoResearch Bootstrap Setup...') + '\n');
 
     bootstrapAbortRef.current = new AbortController();
 
@@ -688,7 +688,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                         onClick={handleRetryBootstrap}
                         className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-bold transition-all shadow-sm"
                       >
-                        Retry bootstrap
+                        {t('autoresearch.bootstrap.retry') || 'Retry bootstrap'}
                       </button>
                       <button
                         type="button"
@@ -701,7 +701,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                         }}
                         className="rounded-lg border border-red-300 bg-white hover:bg-red-50 text-red-800 px-3 py-1.5 text-xs font-bold transition-all"
                       >
-                        Back to Recipe
+                        {t('autoresearch.bootstrap.backToRecipe') || 'Back to Recipe'}
                       </button>
                     </div>
                   )}
@@ -717,7 +717,9 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                       <span className="w-3 h-3 rounded-full bg-yellow-500/80"></span>
                       <span className="w-3 h-3 rounded-full bg-green-500/80"></span>
                     </div>
-                    <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider ml-2">Developer Console</span>
+                    <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider ml-2">
+                      {t('autoresearch.bootstrap.developerConsole') || 'Developer Console'}
+                    </span>
                     <AutoResearchSetupPhaseChip
                       input={setupPhaseInput}
                       className="ml-1 border-neutral-700 bg-neutral-800/80 text-neutral-300"
@@ -731,10 +733,12 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                           onClick={handleStopBootstrap}
                           className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-red-700 bg-red-900/40 hover:bg-red-800/60 hover:text-white transition-all text-red-200 font-sans"
                         >
-                          Stop bootstrap
+                          {t('autoresearch.bootstrap.stop') || 'Stop bootstrap'}
                         </button>
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span className="text-[10px] text-neutral-400">Bootstrap in progress...</span>
+                        <span className="text-[10px] text-neutral-400">
+                          {t('autoresearch.bootstrap.inProgress') || 'Bootstrap in progress...'}
+                        </span>
                       </>
                     ) : (
                       <>

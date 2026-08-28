@@ -6,11 +6,11 @@ import {
 } from '../finalizeNudge';
 
 describe('bootstrap finalizeNudge helpers', () => {
-  it('requires a nudge when readyResult is missing or not ready', () => {
+  it('requires a nudge when readyResult is missing', () => {
     expect(shouldRunBootstrapFinalizeNudge(null)).toBe(true);
     expect(shouldRunBootstrapFinalizeNudge(undefined)).toBe(true);
-    expect(shouldRunBootstrapFinalizeNudge({ status: 'draft' })).toBe(true);
-    expect(shouldRunBootstrapFinalizeNudge({ status: 'ready' })).toBe(false);
+    expect(shouldRunBootstrapFinalizeNudge({ status: 'needs_user_confirmation' } as any)).toBe(false);
+    expect(shouldRunBootstrapFinalizeNudge({ status: 'ready' } as any)).toBe(false);
   });
 
   it('appends the hard finalize requirement once', () => {

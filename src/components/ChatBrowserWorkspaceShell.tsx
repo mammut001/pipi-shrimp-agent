@@ -37,6 +37,7 @@ import { ScrollToBottomButton } from './chat/ScrollToBottomButton';
 import { useChatMessageScroll } from '@/hooks/useChatMessageScroll';
 import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
 import { safeGetJSON, safeSetJSON } from '@/utils/safeStorage';
+import { normalizeStructuredToolError } from '@/utils/toolErrorNormalization';
 
 /**
  * Draggable wrapper for SwarmPanel — allows free positioning anywhere on screen.
@@ -514,43 +515,63 @@ export function ChatBrowserWorkspaceShell() {
       </div>
 
       {/* Error Banner */}
-      {error && (
-        <div className="px-3 py-2 error-banner border-t">
-          <div className="mx-auto max-w-3xl flex flex-col sm:flex-row sm:items-center gap-2">
-            <div className="flex items-start gap-2 error-banner-text min-w-0 flex-1">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 flex-shrink-0 mt-0.5"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <span className="text-sm font-medium break-words overflow-hidden" style={{ wordBreak: 'break-word' }}>{error}</span>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-auto">
-              <button
-                onClick={() => retryLastMessage()}
-                className="px-3 py-1 text-sm error-button-primary rounded transition-colors whitespace-nowrap"
-              >
-                {t('common.retry')}
-              </button>
-              <button
-                onClick={() => clearError()}
-                className="p-1 error-button-secondary rounded"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+      {error && (() => {
+        const normalizedError = normalizeStructuredToolError(error);
+        return (
+          <div className="px-3 py-2 error-banner border-t">
+            <div className="mx-auto max-w-3xl flex flex-col sm:flex-row sm:items-center gap-2">
+              <div className="flex items-start gap-2 error-banner-text min-w-0 flex-1">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5 flex-shrink-0 mt-0.5"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                    clipRule="evenodd"
+                  />
                 </svg>
-              </button>
+                <span className="text-sm font-medium break-words overflow-hidden" style={{ wordBreak: 'break-word' }}>
+                  {normalizedError ? normalizedError.userMessage : error}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-auto">
+                {normalizedError?.actionKind === 'select_project_folder' ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (currentSessionId) {
+                        await useChatStore.getState().setSessionProjectDir(currentSessionId);
+                      }
+                      clearError();
+                    }}
+                    className="px-3 py-1 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded transition-colors whitespace-nowrap"
+                  >
+                    {normalizedError.actionLabel}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => retryLastMessage()}
+                    className="px-3 py-1 text-sm error-button-primary rounded transition-colors whitespace-nowrap"
+                  >
+                    {t('common.retry')}
+                  </button>
+                )}
+                <button
+                  onClick={() => clearError()}
+                  className="p-1 error-button-secondary rounded"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
 
       {/* Session Token Stats */}

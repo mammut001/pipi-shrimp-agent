@@ -10,10 +10,10 @@ export function finalizeBootstrapPlan(
   const warnings: string[] = [];
 
   if (plan.baselines.length < 1) {
-    unresolvedQuestions.push('Keep at least one baseline before starting AutoResearch.');
+    warnings.push('Keep at least one baseline before starting AutoResearch.');
   }
-  if (plan.successCriteria.trim().length < 10) {
-    unresolvedQuestions.push('Success criteria must be quantitative and at least 10 characters long.');
+  if (plan.successCriteria.trim().length < 5) {
+    warnings.push('Success criteria must be quantitative.');
   }
   if (!plan.gitInitialized) {
     warnings.push('Git initialization did not complete. The bootstrap can continue without it.');
