@@ -8,11 +8,18 @@ export interface ConversationalTemplateOption {
 }
 
 export function getConversationalTemplateOpeners(): Record<ConversationalTemplateId, string> {
+  const reproduce = t('autoresearch.bootstrap.card.reproduce.opener');
+  const baseline = t('autoresearch.bootstrap.card.baseline.opener');
+  const ablation = t('autoresearch.bootstrap.card.ablation.opener');
+  const scratch = t('autoresearch.bootstrap.card.scratch.opener');
   return {
-    'reproduce-paper': t('autoresearch.bootstrap.card.reproduce.opener'),
-    'beat-baseline': t('autoresearch.bootstrap.card.baseline.opener'),
-    ablation: t('autoresearch.bootstrap.card.ablation.opener'),
-    'from-scratch': t('autoresearch.bootstrap.card.scratch.opener'),
+    'reproduce-paper': reproduce,
+    'beat-baseline': baseline,
+    ablation,
+    'from-scratch': scratch,
+    reproduce_paper: reproduce,
+    beat_baseline: baseline,
+    from_scratch: scratch,
   };
 }
 

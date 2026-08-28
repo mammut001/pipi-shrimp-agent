@@ -337,12 +337,25 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     }
 
     try {
-      const parsed = AutoResearchBootstrapResultSchema.safeParse(JSON.parse(result));
-      if (!parsed.success) {
-        return;
+      const raw = typeof result === 'string' ? JSON.parse(result) : result;
+      if (raw?.plan?.conversationalTemplateId) {
+        raw.plan.conversationalTemplateId = String(raw.plan.conversationalTemplateId).replace(/_/g, '-');
       }
-      setWarnings(parsed.data.warnings);
-      setReadyResult(parsed.data);
+      const parsed = AutoResearchBootstrapResultSchema.safeParse(raw);
+      if (parsed.success) {
+        setWarnings(parsed.data.warnings || []);
+        setReadyResult(parsed.data);
+      } else if (raw?.plan) {
+        setWarnings(Array.isArray(raw.warnings) ? raw.warnings : []);
+        setReadyResult({
+          status: raw.status || 'ready',
+          plan: raw.plan,
+          warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
+          unresolvedQuestions: Array.isArray(raw.unresolvedQuestions) ? raw.unresolvedQuestions : [],
+          createdAt: raw.createdAt || new Date().toISOString(),
+          schemaVersion: 1,
+        });
+      }
     } catch {
       // Ignore malformed tool content and let the agent continue.
     }

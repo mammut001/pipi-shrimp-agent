@@ -47,7 +47,10 @@ export type ConversationalTemplateId =
   | 'reproduce-paper'
   | 'beat-baseline'
   | 'ablation'
-  | 'from-scratch';
+  | 'from-scratch'
+  | 'reproduce_paper'
+  | 'beat_baseline'
+  | 'from_scratch';
 
 export interface ScaffoldPlan {
   templateId: ScaffoldTemplateId;

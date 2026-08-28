@@ -1102,20 +1102,17 @@ async fn execute_bootstrap_finalize_tool(
         args,
         &["conversationalTemplateId"],
         "bootstrap_finalize requires conversationalTemplateId",
-    )?;
+    )?.replace('_', "-");
     let secondary_metrics = optional_string_array_arg(args, "secondaryMetrics")?;
     let initial_commit_sha = optional_string_arg(args, &["initialCommitSha"]);
 
     let mut unresolved_questions = Vec::new();
     let mut warnings = Vec::new();
     if baselines.is_empty() {
-        unresolved_questions
-            .push("Keep at least one baseline before starting AutoResearch.".to_string());
+        warnings.push("Keep at least one baseline before starting AutoResearch.".to_string());
     }
-    if success_criteria.trim().len() < 10 {
-        unresolved_questions.push(
-            "Success criteria must be quantitative and at least 10 characters long.".to_string(),
-        );
+    if success_criteria.trim().len() < 5 {
+        warnings.push("Success criteria must be quantitative.".to_string());
     }
     if !git_initialized {
         warnings.push(
