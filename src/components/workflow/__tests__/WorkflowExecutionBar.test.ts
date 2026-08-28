@@ -36,7 +36,7 @@ function createStoreState() {
       {
         id: 'workflow-1',
         projectGoal: '',
-        successCriteria: '',
+        successCriteria: [],
         goalEvaluatorAgentId: null,
         maxGoalIterations: 5,
         activeRunId: null,

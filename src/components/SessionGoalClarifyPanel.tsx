@@ -9,7 +9,7 @@ import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
 import {
   tryParseGoalPreflightResult,
   type GoalPreflightResult,
-} from '@/services/workflow/goalPreflight/schema';
+} from '@/services/goal/preflight/schema';
 import { createMessage, type Message } from '@/types/chat';
 
 interface SessionGoalClarifyPanelProps {

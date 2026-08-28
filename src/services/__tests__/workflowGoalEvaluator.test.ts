@@ -24,7 +24,7 @@ function createInstance(overrides: Partial<WorkflowInstance> = {}): WorkflowInst
     id: 'instance-1',
     name: 'Workflow',
     projectGoal: 'Ship the feature',
-    successCriteria: 'Tests pass and docs are updated',
+    successCriteria: ["Tests pass and docs are updated"],
     goalEvaluatorAgentId: null,
     maxGoalIterations: 5,
     agents: [],

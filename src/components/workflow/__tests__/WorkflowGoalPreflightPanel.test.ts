@@ -48,7 +48,7 @@ import {
   GoalPreflightResultSchema,
   tryParseGoalPreflightResult,
   serializeSuccessCriteria,
-} from '@/services/workflow/goalPreflight/schema';
+} from '@/services/goal/preflight/schema';
 
 const sampleResult = {
   status: 'ready' as const,

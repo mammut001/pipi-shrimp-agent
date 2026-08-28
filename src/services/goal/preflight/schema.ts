@@ -7,7 +7,6 @@
  */
 
 import { z } from 'zod';
-import { serializeSuccessCriteria } from '@/services/goal/types';
 
 export const GOAL_PREFLIGHT_AGENT_ROLES = [
   'planner',
@@ -52,13 +51,6 @@ export interface GoalPreflightAssistantTurn {
   result: GoalPreflightResult | null;
 }
 
-/**
- * Workflow still persists success criteria as newline-separated text. Export
- * the adapter here to preserve the existing preflight API while the canonical
- * Goal Core representation remains string[].
- */
-export { serializeSuccessCriteria };
-
 export function tryParseGoalPreflightResult(raw: string): GoalPreflightResult | null {
   if (typeof raw !== 'string' || raw.trim().length === 0) {
     return null;
@@ -82,7 +74,6 @@ export function tryParseGoalPreflightResult(raw: string): GoalPreflightResult | 
 
 function extractJsonObject(input: string): string | null {
   let text = input.trim();
-
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/i);
   if (fenceMatch && fenceMatch[1]) {
     text = fenceMatch[1].trim();

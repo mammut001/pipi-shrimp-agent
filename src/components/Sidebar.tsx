@@ -215,7 +215,7 @@ export function Sidebar() {
         id: runId,
         title: t('sidebar.newWorkflow'),
         projectGoal: '',
-        successCriteria: '',
+        successCriteria: [],
         status: 'idle',
         startTime: Date.now(),
         currentIteration: 0,

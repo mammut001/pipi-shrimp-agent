@@ -31,10 +31,10 @@ import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
 import { WORKFLOW_GOAL_CLARIFIER_TEMPLATE } from '@/services/agents/templates/workflowGoalClarifier';
 import {
   tryParseGoalPreflightResult,
-  serializeSuccessCriteria,
   type GoalPreflightResult,
-} from '@/services/workflow/goalPreflight/schema';
+} from '@/services/goal/preflight/schema';
 import { useWorkflowStore } from '@/store/workflowStore';
+import { formatSuccessCriteria } from '@/services/goal/types';
 
 interface WorkflowGoalPreflightPanelProps {
   /** Current workflow instance id (used to detect empty canvases & run engine). */
@@ -395,7 +395,7 @@ function GoalPreflightResultCard({
   onCreateSuggestedAgents,
 }: GoalPreflightResultCardProps) {
   const successCriteriaText = useMemo(
-    () => serializeSuccessCriteria(result.successCriteria),
+    () => formatSuccessCriteria(result.successCriteria),
     [result.successCriteria],
   );
 

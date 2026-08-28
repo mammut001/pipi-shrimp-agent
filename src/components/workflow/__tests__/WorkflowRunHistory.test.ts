@@ -72,7 +72,7 @@ function createRun(id: string, title: string, startTime: number): WorkflowRun {
     id,
     title,
     projectGoal: title,
-    successCriteria: '',
+    successCriteria: [],
     status: 'completed',
     startTime,
     endTime: startTime + 1000,

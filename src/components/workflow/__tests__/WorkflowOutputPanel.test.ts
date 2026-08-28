@@ -149,7 +149,7 @@ function createWorkflowState(selectedRunId: string) {
             id: 'run-empty',
             title: 'Run Empty',
             projectGoal: 'Goal Empty',
-            successCriteria: '',
+            successCriteria: [],
             status: 'completed',
             startTime: 3,
             agents: [],
@@ -161,7 +161,7 @@ function createWorkflowState(selectedRunId: string) {
             id: 'run-output',
             title: 'Run Output',
             projectGoal: 'Goal Output',
-            successCriteria: '',
+            successCriteria: [],
             status: 'completed',
             startTime: 2,
             agents: [
@@ -181,7 +181,7 @@ function createWorkflowState(selectedRunId: string) {
             id: 'run-fallback',
             title: 'Run Fallback',
             projectGoal: 'Goal Fallback',
-            successCriteria: '',
+            successCriteria: [],
             status: 'completed',
             startTime: 1,
             agents: [

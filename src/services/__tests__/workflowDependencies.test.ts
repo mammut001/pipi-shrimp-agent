@@ -84,7 +84,7 @@ describe('workflowDependencies', () => {
         id: 'inst-1',
         name: 'Workflow',
         projectGoal: 'Build feature',
-        successCriteria: 'Pass',
+        successCriteria: ["Pass"],
         goalEvaluatorAgentId: null,
         maxGoalIterations: 5,
         agents,

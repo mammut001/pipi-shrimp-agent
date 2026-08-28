@@ -1,25 +1,40 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  formatSuccessCriteria,
+  normalizeSuccessCriteria,
   parseSuccessCriteria,
   serializeSuccessCriteria,
 } from '@/services/goal/types';
 
 describe('Goal Core success criteria adapters', () => {
-  it('normalizes Workflow legacy text into canonical string[] criteria', () => {
-    expect(parseSuccessCriteria('- first\n• second\n\n third ')).toEqual([
+  it('normalizes legacy Workflow text into canonical string[] criteria', () => {
+    expect(normalizeSuccessCriteria('- first\n• second\n\n third ')).toEqual([
       'first',
       'second',
       'third',
     ]);
   });
 
-  it('round-trips canonical criteria through Workflow legacy storage', () => {
+  it('keeps canonical arrays canonical and removes accidental bullet prefixes', () => {
+    expect(normalizeSuccessCriteria([' first ', '- second', '• third', ''])).toEqual([
+      'first',
+      'second',
+      'third',
+    ]);
+  });
+
+  it('round-trips canonical criteria through text adapters', () => {
     const criteria = ['first', 'second', 'third'];
     expect(parseSuccessCriteria(serializeSuccessCriteria(criteria))).toEqual(criteria);
   });
 
-  it('drops blank criteria when serializing', () => {
-    expect(serializeSuccessCriteria(['first', ' ', '', 'second'])).toBe('- first\n- second');
+  it('renders criteria only at UI/prompt boundaries', () => {
+    expect(formatSuccessCriteria(['first', 'second'])).toBe('- first\n- second');
+  });
+
+  it('normalizes nullish input to an empty array', () => {
+    expect(normalizeSuccessCriteria(undefined)).toEqual([]);
+    expect(normalizeSuccessCriteria(null)).toEqual([]);
   });
 });

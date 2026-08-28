@@ -45,7 +45,7 @@ function createWorkflowState() {
         id: 'workflow-1',
         name: 'Workflow 1',
         projectGoal: 'Ship workflow hardening',
-        successCriteria: '',
+        successCriteria: [],
         goalEvaluatorAgentId: null,
         maxGoalIterations: 5,
         workflowRuns: [],

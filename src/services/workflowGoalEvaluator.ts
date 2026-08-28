@@ -5,6 +5,7 @@ import type {
   WorkflowMarkerCode,
 } from '@/types/workflow';
 import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
+import { formatSuccessCriteria } from '@/services/goal/types';
 import {
   parseWorkflowMarkers,
 } from '@/services/workflow/templates/markers';
@@ -159,7 +160,7 @@ function buildGoalEvaluatorPrompt(context: GoalEvaluationContext): string {
 
   return [
     `Project Goal:\n${context.instance.projectGoal?.trim() || ''}`,
-    `Success Criteria:\n${context.instance.successCriteria?.trim() || ''}`,
+    `Success Criteria:\n${formatSuccessCriteria(context.instance.successCriteria)}`,
     'You must evaluate whether the project goal is reached based on the final outputs below.',
     outputBlocks || 'No agent outputs were produced.',
     'Return strict JSON only.',

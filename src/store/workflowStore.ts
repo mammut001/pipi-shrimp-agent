@@ -23,6 +23,7 @@ import {
 import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
 import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
 import { useUIStore } from '@/store/uiStore';
+import { normalizeSuccessCriteria } from '@/services/goal/types';
 
 const STORAGE_KEY_V2 = 'pipi-workflow-v2';
 const STORAGE_KEY_V1 = 'pipi-workflow-v1';
@@ -251,7 +252,7 @@ export function selectAgentOutputRoutes(instance: WorkflowInstance | null, agent
 function normalizeRun(run: WorkflowRun): WorkflowRun {
   return {
     ...run,
-    successCriteria: run.successCriteria ?? '',
+    successCriteria: normalizeSuccessCriteria(run.successCriteria as unknown as string | string[]),
     currentIteration: run.currentIteration ?? 0,
     goalEvaluations: run.goalEvaluations ?? [],
     reachedGoal: run.reachedGoal ?? false,
@@ -262,7 +263,7 @@ function normalizeInstance(instance: WorkflowInstance): WorkflowInstance {
   const normalizedBase: WorkflowInstance = {
     ...instance,
     projectGoal: instance.projectGoal ?? '',
-    successCriteria: instance.successCriteria ?? '',
+    successCriteria: normalizeSuccessCriteria(instance.successCriteria as unknown as string | string[]),
     goalEvaluatorAgentId: instance.goalEvaluatorAgentId ?? null,
     maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
     activeRunId: instance.activeRunId ?? null,
@@ -283,10 +284,12 @@ function loadFromStorage(): Partial<WorkflowState> {
     const v2 = localStorage.getItem(STORAGE_KEY_V2);
     if (v2) {
       const parsed = JSON.parse(v2);
-      return {
-        instances: (parsed.instances || []).map(normalizeInstance),
-        currentInstanceId: parsed.currentInstanceId || null,
-      };
+      const instances = (parsed.instances || []).map(normalizeInstance);
+      const currentInstanceId = parsed.currentInstanceId || null;
+      // Persist the normalized representation immediately so legacy string
+      // criteria are migrated even before the user edits the workflow.
+      localStorage.setItem(STORAGE_KEY_V2, JSON.stringify({ instances, currentInstanceId }));
+      return { instances, currentInstanceId };
     }
 
     // Migrate from V1
@@ -299,7 +302,7 @@ function loadFromStorage(): Partial<WorkflowState> {
           id: 'default',
           name: 'My Workflow',
           projectGoal: '',
-          successCriteria: '',
+          successCriteria: [],
           goalEvaluatorAgentId: null,
           maxGoalIterations: DEFAULT_MAX_GOAL_ITERATIONS,
           agents: (old.agents || []).map(normalizeAgentBase),
@@ -487,7 +490,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       id,
       name: name || `Workflow ${get().instances.length + 1}`,
       projectGoal: '',
-      successCriteria: '',
+      successCriteria: [],
       goalEvaluatorAgentId: null,
       maxGoalIterations: DEFAULT_MAX_GOAL_ITERATIONS,
       agents: [],

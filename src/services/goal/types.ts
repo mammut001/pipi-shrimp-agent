@@ -2,14 +2,17 @@
  * Shared Goal Core domain types.
  *
  * Session Goal and Workflow Goal have different runtimes, but they share the
- * same objective / success criteria vocabulary and evaluation contract. Keep
- * runtime-specific state (budgets, traces, agent routing, iterations) outside
- * this module.
+ * same objective / success-criteria vocabulary and evaluation contract. Keep
+ * runtime-specific state (budgets, traces, routing, iterations) outside this
+ * module.
  */
+
+export type GoalSuccessCriteria = string[];
+export type GoalSuccessCriteriaInput = string | readonly string[] | null | undefined;
 
 export interface GoalSpec {
   objective: string;
-  successCriteria: string[];
+  successCriteria: GoalSuccessCriteria;
   asciiPreview?: string;
   assumptions?: string[];
   risks?: string[];
@@ -24,23 +27,40 @@ export interface GoalEvaluation {
   timestamp: number;
 }
 
+function normalizeCriterion(item: string): string {
+  return item
+    .trim()
+    .replace(/^[-•*]+\s*/, '')
+    .trim();
+}
+
 /**
- * Convert Workflow's legacy newline-separated success-criteria storage into
- * the canonical Goal Core representation. Storage migration is intentionally
- * deferred so this extraction does not change persisted workflow behaviour.
+ * Normalize any legacy/new success-criteria representation into Goal Core's
+ * canonical string[] shape. This is intentionally safe for persisted data
+ * written by older pipi-shrimp versions.
  */
-export function parseSuccessCriteria(criteria: string): string[] {
-  return criteria
-    .split(/\r?\n/)
-    .map((item) => item.replace(/^[-•\s]+/, '').trim())
+export function normalizeSuccessCriteria(input: GoalSuccessCriteriaInput): GoalSuccessCriteria {
+  const items = typeof input === 'string'
+    ? input.split(/\r?\n/)
+    : Array.isArray(input)
+      ? input
+      : [];
+
+  return items
+    .filter((item): item is string => typeof item === 'string')
+    .map(normalizeCriterion)
     .filter(Boolean);
 }
 
-/** Serialize canonical criteria for Workflow's current string storage. */
-export function serializeSuccessCriteria(criteria: string[]): string {
-  return criteria
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => (item.startsWith('- ') ? item : `- ${item}`))
+/** @deprecated Use normalizeSuccessCriteria. */
+export const parseSuccessCriteria = normalizeSuccessCriteria;
+
+/** Render canonical criteria for textareas/prompts without changing storage. */
+export function formatSuccessCriteria(input: GoalSuccessCriteriaInput): string {
+  return normalizeSuccessCriteria(input)
+    .map((item) => `- ${item}`)
     .join('\n');
 }
+
+/** @deprecated UI/prompt adapter only; Goal Core storage is string[]. */
+export const serializeSuccessCriteria = formatSuccessCriteria;

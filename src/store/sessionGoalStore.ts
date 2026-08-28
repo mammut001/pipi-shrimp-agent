@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import { buildSessionGoalPromptContext } from '@/services/sessionGoal/goalPrompt';
-import type { GoalPreflightResult } from '@/services/workflow/goalPreflight/schema';
+import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
 import {
   createEmptySessionGoal,
   normalizeSessionGoalRecord,

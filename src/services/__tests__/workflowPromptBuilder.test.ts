@@ -24,7 +24,7 @@ describe('workflowPromptBuilder', () => {
   it('includes success criteria, previous evaluation reasoning, inbox, and marker instructions in entry prompts', () => {
     const prompt = buildEntryAgentPrompt({
       projectGoal: 'Ship workflow stabilization',
-      successCriteria: 'Typecheck, tests, and lint pass',
+      successCriteria: ["Typecheck, tests, and lint pass"],
       agent: createAgent(),
       iteration: 2,
       previousEvaluation: {
@@ -57,7 +57,7 @@ describe('workflowPromptBuilder', () => {
   it('includes upstream outputs and inbox messages in downstream prompts', () => {
     const prompt = buildDownstreamAgentPrompt({
       projectGoal: 'Stabilize workflow schema',
-      successCriteria: 'All workflow tests pass',
+      successCriteria: ["All workflow tests pass"],
       agent: createAgent({ id: 'qa', name: 'QA', role: 'qa' }),
       upstreams: [{
         agent: createAgent({ id: 'developer', name: 'Developer', role: 'developer' }),
