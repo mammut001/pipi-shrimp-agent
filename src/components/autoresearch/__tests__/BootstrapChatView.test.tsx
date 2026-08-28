@@ -35,6 +35,12 @@ jest.mock('../BootstrapRecipeBuilder', () => ({
       <button data-testid="dirty-task" onClick={() => onChange({ ...recipe, researchGoal: { ...recipe.researchGoal, goalText: 'dirty' } })}>
         Make Dirty
       </button>
+      <button
+        data-testid="fill-workdir"
+        onClick={() => onChange({ ...recipe, workspace: { ...recipe.workspace, workDir: '/tmp/harness-smoke' } })}
+      >
+        Fill Workdir
+      </button>
       <button data-testid="send-task" disabled={disabled} onClick={() => onSend('compiled prompt')}>
         Start Bootstrap Setup
       </button>
@@ -158,6 +164,31 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(container.querySelector('[data-testid="retry-bootstrap"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="back-to-recipe-from-error"]')).toBeTruthy();
     expect(container.textContent).toMatch(/Retry bootstrap|Back to Recipe/i);
+  });
+
+  it('synthesizes a real Ready plan from the recipe when the agent omits bootstrap_finalize', async () => {
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const fill = container.querySelector('[data-testid="fill-workdir"]') as HTMLButtonElement;
+      fill.click();
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
+    const ready = useBootstrapPlanStore.getState().readyResult;
+    expect(ready?.status).toBe('ready');
+    expect(ready?.plan.scaffold.workDir).toBe('/tmp/harness-smoke');
+    expect(container.textContent).toContain('autoresearch.bootstrap.readyTitle');
+    expect(container.textContent).not.toContain('Bootstrap agent finished but did not produce a bootstrap_finalize result.');
+    expect(container.textContent).toMatch(/Host synthesized bootstrap_finalize/);
   });
 
   it('retry bootstrap re-invokes headless agent with the same compiled prompt', async () => {

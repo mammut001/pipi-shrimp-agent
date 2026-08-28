@@ -414,6 +414,9 @@ describe('loopEngine integration', () => {
     const firstSystemPrompt = await readTargetText(cfg, firstRun.systemPromptPath);
     expect(firstSystemPrompt).toContain(`Only permitted experiment tools for this run: ${formatAutoResearchToolCatalog(cfg)}`);
     expect(firstSystemPrompt).toContain('## WORKSPACE CONTRACT');
+    expect(firstSystemPrompt).toContain(`Iteration experiment checkout (READ/WRITE HERE): ${firstRun.codeDir}`);
+    expect(firstSystemPrompt).toContain(`Required files already confirmed: ${firstRun.codeDir}/run_experiment.py`);
+    expect(firstSystemPrompt).toContain('already snapshotted; do not read or write');
     expect(firstSystemPrompt).toContain('Modify run_experiment.py in');
     expect(firstSystemPrompt).toContain('NOT in the original experiment dir');
     expect(firstSystemPrompt).toContain('Run the experiment from');

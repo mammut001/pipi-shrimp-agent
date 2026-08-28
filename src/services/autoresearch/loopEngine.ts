@@ -43,6 +43,7 @@ import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEve
 import {
   type AutoResearchEnvironmentSummary,
 } from './preflight';
+import { mapExperimentFileToCheckout } from './experimentPathRewrite';
 import { formatAutoResearchToolCatalog, getAutoResearchToolProfile } from './toolCatalog';
 import { formatAutoResearchToolLanes } from './toolLanes';
 import {
@@ -197,8 +198,18 @@ function buildSystemPrompt({
   const allowedTools = formatAutoResearchToolCatalog(sshConfig);
   const toolLanes = formatAutoResearchToolLanes(sshConfig);
   const iterationCodeDir = runDir.codeDir;
+  const iterationRunScript = mapExperimentFileToCheckout(
+    environmentSummary.runScriptPath,
+    environmentSummary.experimentDir,
+    iterationCodeDir,
+  );
+  const iterationNotes = mapExperimentFileToCheckout(
+    environmentSummary.notesPath,
+    environmentSummary.experimentDir,
+    iterationCodeDir,
+  );
   const envLine = isLocal
-    ? `Executing directly on the local machine. Working directory: ${sshConfig.remoteWorkDir || '(current)'}.`
+    ? `Executing directly on the local machine. Tool sandbox: ${runDir.iterDir}. Experiment checkout: ${iterationCodeDir}.`
     : `Remote host via SSH — ${describeTarget(sshConfig)}.`;
   const shellProfileContext = isLocal
     ? buildShellProfilePromptContext({
@@ -234,11 +245,12 @@ ${shellProfileContext ? `- Active shell profile: ${shellProfileContext.shellProf
 ${toolLanes}
 
 ## Environment Preflight
-- Experiment directory: ${environmentSummary.experimentDir}
+- Iteration experiment checkout (READ/WRITE HERE): ${iterationCodeDir}
+- Original experiment directory (already snapshotted; do not read or write): ${environmentSummary.experimentDir}
 - Git repository: ${environmentSummary.repoStatus} (${environmentSummary.dirtyFileCount} dirty files before this iteration)
 - Preferred Python command: ${environmentSummary.preferredPythonCommand}
 - Recommended run command: ${environmentSummary.recommendedRunCommand}
-- Required files already confirmed: ${environmentSummary.runScriptPath}, ${environmentSummary.notesPath}
+- Required files already confirmed: ${iterationRunScript}, ${iterationNotes}
 - Workspace writable: ${environmentSummary.worktreeWritable ? 'yes' : 'no'}
 - GPU telemetry: ${environmentSummary.gpuSummary || 'not checked'}
 

@@ -81,6 +81,15 @@ export interface HeadlessAgentRunnerInput {
   onToolCall?: (call: { id: string; name: string; arguments: string }) => Promise<void> | void;
   onToolResult?: (call: { id: string; name: string; result: string; durationMs: number }) => Promise<void> | void;
   allowToolExecution?: (call: { id: string; name: string; arguments: string }) => { allowed: boolean; reason?: string };
+  /**
+   * Optional rewrite of parsed tool arguments after JSON.parse and before
+   * execution. AutoResearch uses this to map original experimentDir paths
+   * onto the iteration code checkout.
+   */
+  rewriteToolArguments?: (
+    args: Record<string, unknown>,
+    toolName: string,
+  ) => Record<string, unknown>;
   timeoutMs?: number;
   signal?: AbortSignal;
 }
@@ -184,6 +193,25 @@ async function ensureHeadlessWorkDir(
   return currentWorkDir;
 }
 
+function applyToolArgumentRewrite(
+  tool: ToolCallParams,
+  rewrite?: HeadlessAgentRunnerInput['rewriteToolArguments'],
+): ToolCallParams {
+  if (!rewrite) {
+    return tool;
+  }
+  try {
+    const parsed = JSON.parse(tool.arguments || '{}') as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return tool;
+    }
+    const next = rewrite(parsed as Record<string, unknown>, tool.name);
+    return { ...tool, arguments: JSON.stringify(next) };
+  } catch {
+    return tool;
+  }
+}
+
 async function executeToolBatch(
   tools: ToolCallParams[],
   executor: StreamingToolExecutor,
@@ -194,6 +222,7 @@ async function executeToolBatch(
   allowToolExecution?: HeadlessAgentRunnerInput['allowToolExecution'],
   permissionMode?: PermissionMode,
   executionMode?: ExecutionModeId | string,
+  rewriteToolArguments?: HeadlessAgentRunnerInput['rewriteToolArguments'],
 ): Promise<Array<{ id: string; name: string; content: string; durationMs: number }>> {
   const manualResults: Array<{ id: string; name: string; content: string; durationMs: number }> = [];
   const executableTools: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
@@ -241,6 +270,9 @@ async function executeToolBatch(
       parsedArguments = JSON.parse(tool.arguments) as Record<string, unknown>;
     } catch {
       parsedArguments = {};
+    }
+    if (rewriteToolArguments && parsedArguments && typeof parsedArguments === 'object') {
+      parsedArguments = rewriteToolArguments(parsedArguments, tool.name);
     }
 
     executableTools.push({
@@ -436,14 +468,17 @@ export async function runHeadlessAgentTurn(
         break;
 
       case 'tool_batch_request': {
+        const batchTools = (event.tools as ToolCallParams[]).map((tool: ToolCallParams) =>
+          applyToolArgumentRewrite(tool, input.rewriteToolArguments),
+        );
         currentWorkDir = await ensureHeadlessWorkDir(
           currentWorkDir,
-          event.tools,
+          batchTools,
           input.resolveWorkDir,
           input.onWorkDirResolved,
         );
 
-        for (const tool of event.tools) {
+        for (const tool of batchTools) {
           await input.onToolCall?.({
             id: tool.id,
             name: tool.name,
@@ -452,7 +487,7 @@ export async function runHeadlessAgentTurn(
         }
 
         const results = await executeToolBatch(
-          event.tools,
+          batchTools,
           executor,
           input.sessionId,
           currentWorkDir,
@@ -461,6 +496,7 @@ export async function runHeadlessAgentTurn(
           input.allowToolExecution,
           effectivePermissionMode,
           effectiveExecutionMode,
+          input.rewriteToolArguments,
         );
         toolBudgetSummary = appendToolBudgetEntries(
           toolBudgetSummary,
@@ -480,21 +516,22 @@ export async function runHeadlessAgentTurn(
       }
 
       case 'tool_call_request': {
+        const rewrittenTool = applyToolArgumentRewrite(event.tool, input.rewriteToolArguments);
         currentWorkDir = await ensureHeadlessWorkDir(
           currentWorkDir,
-          [event.tool],
+          [rewrittenTool],
           input.resolveWorkDir,
           input.onWorkDirResolved,
         );
 
         await input.onToolCall?.({
-          id: event.tool.id,
-          name: event.tool.name,
-          arguments: event.tool.arguments,
+          id: rewrittenTool.id,
+          name: rewrittenTool.name,
+          arguments: rewrittenTool.arguments,
         });
 
         const [result] = await executeToolBatch(
-          [event.tool],
+          [rewrittenTool],
           executor,
           input.sessionId,
           currentWorkDir,
@@ -502,6 +539,8 @@ export async function runHeadlessAgentTurn(
           allowedTools,
           input.allowToolExecution,
           effectivePermissionMode,
+          effectiveExecutionMode,
+          input.rewriteToolArguments,
         );
         if (result) {
           toolBudgetSummary = appendToolBudgetEntries(

@@ -308,6 +308,42 @@ describe('createAutoResearchSendMessage', () => {
     }));
   });
 
+  it('rewrites original experimentDir tool paths onto the iteration code checkout', async () => {
+    mockGetCurrentRunDir.mockReturnValue({
+      iterDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z',
+      codeDir: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code',
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/harness-smoke', activeConfig, {
+      environmentSummary: {
+        experimentDir: '/tmp/harness-smoke',
+        gitRepo: true,
+        repoStatus: 'clean',
+        dirtyFileCount: 0,
+        preferredPythonCommand: 'python3',
+        worktreeWritable: true,
+        runScriptPath: '/tmp/harness-smoke/run_experiment.py',
+        notesPath: '/tmp/harness-smoke/AUTORESEARCH.md',
+        recommendedRunCommand: 'python3 run_experiment.py',
+      },
+    });
+
+    await expect(sendMessage('system prompt', 'read experiment files')).resolves.toBe('final answer');
+
+    const rewrite = mockRunHeadlessAgentTurn.mock.calls[0]?.[0]?.rewriteToolArguments as
+      | ((args: Record<string, unknown>, toolName: string) => Record<string, unknown>)
+      | undefined;
+    expect(typeof rewrite).toBe('function');
+    expect(rewrite(
+      { path: '/tmp/harness-smoke/run_experiment.py', cwd: '/tmp/harness-smoke' },
+      'read_file',
+    )).toEqual({
+      path: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code/run_experiment.py',
+      cwd: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code',
+    });
+  });
+
   it('does not send requests when authorization would be empty', async () => {
     mockResolveActiveAgentConfig.mockReturnValue({
       ...activeConfig,

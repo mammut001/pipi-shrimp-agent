@@ -37,6 +37,7 @@ import {
 } from './reflection';
 import { appendTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
+import { rewriteAutoResearchToolArguments } from './experimentPathRewrite';
 import type { AutoResearchEnvironmentSummary } from './preflight';
 import { buildAutoResearchToolCatalog } from './toolCatalog';
 import type { AutoResearchRunPhase } from './history';
@@ -642,6 +643,13 @@ export function createAutoResearchSendMessage(
     const effectiveWorkDir = store.sshConfig?.mode === 'local'
       ? (currentRunDir?.iterDir || workDir)
       : workDir;
+    const experimentDirForRewrite = (
+      options.environmentSummary?.experimentDir
+      || store.experimentDir
+      || workDir
+      || ''
+    ).trim();
+    const rewriteLocalExperimentPaths = store.sshConfig?.mode === 'local' && Boolean(currentRunDir?.codeDir);
     const disabledToolAttemptCounts = new Map<string, number>();
     const blockedTools = new Set<string>();
     let retryConstraintState = buildAutoResearchRetryConstraintState({
@@ -707,6 +715,12 @@ export function createAutoResearchSendMessage(
           toolExecutionSource: 'autoresearch_phase',
           permissionMode: 'bypass',
           executionMode: 'bypass',
+          rewriteToolArguments: rewriteLocalExperimentPaths
+            ? (args) => rewriteAutoResearchToolArguments(args, {
+              experimentDir: experimentDirForRewrite,
+              codeDir: currentRunDir?.codeDir,
+            })
+            : undefined,
           signal,
           onTextDelta: (chunk) => {
             useAutoResearchStore.getState().appendLiveOutput(chunk);

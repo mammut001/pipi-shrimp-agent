@@ -692,4 +692,70 @@ describe('runHeadlessAgentTurn', () => {
     expect(passedSignal?.aborted).toBe(true);
     expect(mockReturn).toHaveBeenCalled();
   });
+
+  it('rewrites tool arguments before execution when rewriteToolArguments is provided', async () => {
+    const resolveAll = jest.fn();
+    mockRunChatTurn.mockReturnValue(
+      createAsyncGenerator([
+        {
+          type: 'tool_batch_request',
+          tools: [
+            { id: 'tool-2', name: 'read_file', arguments: '{"path":"/tmp/harness-smoke/train.py"}' },
+          ],
+          _resolveAll: resolveAll,
+        },
+        {
+          type: 'turn_complete',
+          tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]),
+    );
+    mockExecuteBatch.mockResolvedValue({
+      results: [
+        {
+          id: 'tool-2',
+          content: 'ok',
+          is_error: false,
+          execution_time_ms: 3,
+        },
+      ],
+      totalExecutionTime: 3,
+      errors: [],
+    });
+
+    const onToolCall = jest.fn();
+    const { runHeadlessAgentTurn } = await import('../agentRunner');
+    await runHeadlessAgentTurn({
+      sessionId: 'session-rewrite',
+      initialMessages: [{ role: 'user', content: 'Read train.py' }],
+      systemPrompt: 'system prompt',
+      workDir: '/tmp/research/iter/code',
+      rewriteToolArguments: (args) => ({
+        ...args,
+        path: typeof args.path === 'string'
+          ? args.path.replace('/tmp/harness-smoke', '/tmp/research/iter/code')
+          : args.path,
+      }),
+      onToolCall,
+    });
+
+    expect(onToolCall).toHaveBeenCalledWith({
+      id: 'tool-2',
+      name: 'read_file',
+      arguments: '{"path":"/tmp/research/iter/code/train.py"}',
+    });
+    expect(mockExecuteBatch).toHaveBeenCalledWith(
+      [
+        {
+          id: 'tool-2',
+          name: 'read_file',
+          arguments: { path: '/tmp/research/iter/code/train.py' },
+        },
+      ],
+      expect.objectContaining({
+        sessionId: 'session-rewrite',
+        workDir: '/tmp/research/iter/code',
+      }),
+    );
+  });
 });

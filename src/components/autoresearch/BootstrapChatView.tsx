@@ -14,6 +14,10 @@ import {
   buildBootstrapSystemPromptWithFinalizeRequirement,
   shouldRunBootstrapFinalizeNudge,
 } from '@/services/autoresearch/bootstrap/finalizeNudge';
+import {
+  HOST_SYNTHESIZED_BOOTSTRAP_FINALIZE_WARNING,
+  synthesizeBootstrapFinalizeFromRecipe,
+} from '@/services/autoresearch/bootstrap/synthesizeFinalize';
 import { startAutoResearchRun, logAutoResearchSetupFailure } from '@/services/autoresearch/setupFlow';
 import { getAutoResearchDefaultConfig } from '@/services/autoresearch/defaultConfig';
 import type { SshConfig } from '@/store/autoresearchStore';
@@ -472,23 +476,41 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       }
 
       let ready = useBootstrapPlanStore.getState().readyResult;
-      // End-of-turn nudge: if the first turn omitted bootstrap_finalize, run one
-      // short forced-finalize turn before treating this as a hard failure.
+      // Prefer a deterministic host finalize over a second LLM turn.
+      // Oral "Ready" without bootstrap_finalize is a failure; synthesizing
+      // from the recipe produces a real readyResult. Keep the nudge only
+      // when the recipe has no usable workDir.
       if (shouldRunBootstrapFinalizeNudge(ready)) {
-        setAgentLogs(
-          (prev) =>
-            prev
-            + '\n[SYSTEM] bootstrap_finalize missing after first turn — running finalize nudge turn...\n',
+        const synthesized = synthesizeBootstrapFinalizeFromRecipe(
+          recipe,
+          recipe.workspace.workDir.trim() || sshConfig?.remoteWorkDir,
         );
-        await runBootstrapTurn(
-          [{ role: 'user', content: buildBootstrapFinalizeNudgeUserMessage(bootstrapWorkDir) }],
-          'Finalize-nudge headless turn (must call bootstrap_finalize)...',
-          [...BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS],
-        );
-        if (bootstrapAbortRef.current.signal.aborted) {
-          return;
+        if (synthesized?.status === 'ready') {
+          setWarnings(synthesized.warnings);
+          setReadyResult(synthesized);
+          noteTool('bootstrap_finalize');
+          setAgentLogs(
+            (prev) =>
+              prev
+              + `\n[SYSTEM] ${HOST_SYNTHESIZED_BOOTSTRAP_FINALIZE_WARNING}\n`,
+          );
+          ready = synthesized;
+        } else {
+          setAgentLogs(
+            (prev) =>
+              prev
+              + '\n[SYSTEM] bootstrap_finalize missing after first turn — running finalize nudge turn...\n',
+          );
+          await runBootstrapTurn(
+            [{ role: 'user', content: buildBootstrapFinalizeNudgeUserMessage(bootstrapWorkDir) }],
+            'Finalize-nudge headless turn (must call bootstrap_finalize)...',
+            [...BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS],
+          );
+          if (bootstrapAbortRef.current.signal.aborted) {
+            return;
+          }
+          ready = useBootstrapPlanStore.getState().readyResult;
         }
-        ready = useBootstrapPlanStore.getState().readyResult;
       }
 
       if (shouldRunBootstrapFinalizeNudge(ready)) {
@@ -519,7 +541,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     } finally {
       setIsStreaming(false);
     }
-  }, [handleToolResult, importedFiles, isStreaming, noteTool, recipe.workspace.workDir, sshConfig]);
+  }, [handleToolResult, importedFiles, isStreaming, noteTool, recipe, setReadyResult, setWarnings, sshConfig]);
 
   const handleRetryBootstrap = useCallback(() => {
     const prompt = lastCompiledPromptRef.current;
