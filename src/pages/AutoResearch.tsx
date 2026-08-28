@@ -54,6 +54,10 @@ import {
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 import {
+  buildAutoResearchConnectionProbeCommand,
+  interpretAutoResearchConnectionProbe,
+} from '@/services/autoresearch/connectionProbe';
+import {
   normalizePathForWindowsShellSelection,
   shouldAutoOpenAutoResearchTerminal,
 } from '@/utils/windowsShellProfile';
@@ -475,37 +479,36 @@ function AutoResearchView() {
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
+      const probeCommand = buildAutoResearchConnectionProbeCommand({
+        workDir: cfg.remoteWorkDir,
+        experimentDir,
+      });
       const result = await invoke<RawBashResult>('execute_bash', {
         args: {
-          command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
+          command: buildRemoteBashCommand({ ...cfg, remoteWorkDir: '' }, probeCommand),
           timeoutSecs: 30,
           windowsShellProfile,
         },
       });
-      const stdout = (result.stdout || '').trim();
-      const stderr = (result.stderr || '').trim();
-      const exitCode = result.exit_code ?? 0;
-      if (exitCode !== 0) {
-        throw new Error(stderr || stdout || `connection test failed (exit ${exitCode})`);
-      }
-
-      const [unameLine = '', pwdLine = '', gitLine = ''] = stdout.split('\n');
-      if (cfg.mode === 'ssh' && unameLine.trim() !== 'Linux') {
-        throw new Error('Remote target must be Linux');
-      }
-      if (cfg.mode === 'local' && !['Darwin', 'Linux'].includes(unameLine.trim())) {
-        throw new Error('AutoResearch supports macOS and Linux only');
+      const verdict = interpretAutoResearchConnectionProbe({
+        stdout: result.stdout || '',
+        stderr: result.stderr || '',
+        exitCode: result.exit_code ?? 0,
+        mode: cfg.mode,
+      });
+      if (!verdict.ok) {
+        throw new Error(verdict.error || 'connection test failed');
       }
 
       setConnectionTest({
         status: 'success',
-        output: [unameLine, pwdLine, gitLine].filter(Boolean).join('\n'),
+        output: verdict.output,
       });
     } catch (error) {
       const message = formatError(error);
       setConnectionTest({ status: 'error', output: message });
     }
-  }, [getLifecycleLockMessage, setupForm, setupLocked, windowsShellProfile]);
+  }, [experimentDir, getLifecycleLockMessage, setupForm, setupLocked, windowsShellProfile]);
 
   const handleStart = useCallback(async () => {
     if (lifecycleLock.locked) {

@@ -1,4 +1,4 @@
-import { renderLivingDoc } from '../livingDoc';
+import { renderLivingDoc, upsertExperimentNotesLog } from '../livingDoc';
 
 describe('livingDoc', () => {
   it('renders a derived markdown summary from metrics', () => {
@@ -73,5 +73,18 @@ Train a tiny model until validation loss improves.
 - remove warmup
 "
 `);
+  });
+
+  it('upserts a generated log section in AUTORESEARCH.md without clobbering user notes', () => {
+    const original = '# AutoResearch Notes\n\nUser-written goal.\n';
+    const first = upsertExperimentNotesLog(original, '## AutoResearch log\nSession: s1');
+    expect(first).toContain('User-written goal.');
+    expect(first).toContain('<!-- AUTORESEARCH-LOG:START -->');
+    expect(first).toContain('Session: s1');
+
+    const second = upsertExperimentNotesLog(first, '## AutoResearch log\nSession: s1\nLatest: iter-002 IMPROVED');
+    expect(second.match(/AUTORESEARCH-LOG:START/g)).toHaveLength(1);
+    expect(second).toContain('Latest: iter-002 IMPROVED');
+    expect(second).toContain('User-written goal.');
   });
 });

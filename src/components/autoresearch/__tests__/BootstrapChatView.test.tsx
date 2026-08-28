@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import { BootstrapChatView } from '../BootstrapChatView';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
+import { clearPersistedBootstrapSession } from '@/services/autoresearch/bootstrap/bootstrapSessionPersist';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,6 +64,7 @@ describe('BootstrapChatView (Guided UI)', () => {
       }
     });
     useBootstrapPlanStore.getState().reset();
+    clearPersistedBootstrapSession();
   });
 
   afterEach(() => {
@@ -378,5 +380,99 @@ describe('BootstrapChatView (Guided UI)', () => {
 
     // Should expand the template grid again
     expect(container.innerHTML).toContain('autoresearch.bootstrap.card.scratch.title');
+  });
+
+  it('restores guided Ready after remount so the user does not refill the recipe', async () => {
+    const { persistBootstrapSession } = await import('@/services/autoresearch/bootstrap/bootstrapSessionPersist');
+    persistBootstrapSession({
+      version: 1,
+      recipe: {
+        researchGoal: {
+          goalText: 'Reproduce digits baseline',
+          taskType: 'reproduce_paper',
+          source: 'user',
+        },
+        references: {},
+        baselineAndMetric: {
+          primaryMetric: 'cv_accuracy',
+          direction: 'higher',
+          baselineValue: '0.85',
+          successCriteria: 'Match or exceed the target baseline metric.',
+        },
+        workspace: {
+          workDir: '/tmp/digits',
+          folderName: 'digits',
+        },
+        verification: { commands: ['pytest'] },
+        outputContract: {
+          includeMetrics: true,
+          includeArtifacts: true,
+          includeCommandsRun: true,
+          includeFailureReason: true,
+          includeRemainingRisks: true,
+        },
+      },
+      recipeDirty: true,
+      selectedTemplateId: 'reproduce-paper',
+      templatesExpanded: false,
+      hasStarted: true,
+      readyResult: {
+        status: 'ready',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        warnings: [],
+        unresolvedQuestions: [],
+        schemaVersion: 1,
+        plan: {
+          researchGoal: 'Reproduce digits baseline',
+          successCriteria: 'Match or exceed the target baseline metric.',
+          primaryMetric: 'cv_accuracy',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [{
+            name: 'Baseline',
+            task: 'classification',
+            dataset: 'digits',
+            reportedMetrics: [{ name: 'cv_accuracy', value: 0.9 }],
+            method: { summary: 'Test' },
+            reproducibility: { hasOfficialCode: false },
+          }],
+          scaffold: {
+            templateId: 'python-ml-baseline',
+            workDir: '/tmp/digits',
+            language: 'python',
+            entryCommand: 'python3 run_experiment.py',
+            vars: { project_name: 'digits' },
+            files: [{ path: 'train.py', purpose: 'train' }],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: 'reproduce-paper',
+        },
+      },
+      currentStep: 'ready',
+      observedTools: ['bootstrap_finalize'],
+      warnings: [],
+      iterations: 3,
+      agentLogs: '[SYSTEM] restored\n',
+      handoffSummary: null,
+      lastCompiledPrompt: 'compiled prompt',
+      missingFinalize: false,
+      error: null,
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.innerHTML).toContain('autoresearch.bootstrap.readyTitle');
+    expect(container.innerHTML).toContain('cv_accuracy');
+    expect(mockStartAutoResearchRun).not.toHaveBeenCalled();
   });
 });

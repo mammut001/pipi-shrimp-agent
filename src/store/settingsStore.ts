@@ -32,6 +32,11 @@ import {
   removeSettingsItem,
   SETTINGS_STORAGE_KEYS,
 } from './settings/settingsStorage';
+import {
+  mergeBootstrappedApiConfigs,
+  resolveAutoResearchLlmSettingsOnBoot,
+  resolvePreferredActiveConfigId,
+} from './settings/apiConfigBootstrap';
 import { useAutoResearchStore } from './autoresearchStore';
 import {
   buildAutoResearchRunLockMessage,
@@ -48,21 +53,6 @@ function blockAutoResearchSettingsMutation(action: string): boolean {
     statusMessage: buildAutoResearchRunLockMessage(action, lock),
   });
   return true;
-}
-
-function hasConfiguredApiKey(config: Pick<ApiConfig, 'apiKey'>): boolean {
-  return typeof config.apiKey === 'string' && config.apiKey.trim().length > 0;
-}
-
-function resolvePreferredActiveConfigId(
-  configs: ApiConfig[],
-  candidateId?: string | null,
-): string | null {
-  if (candidateId && configs.some((config) => config.id === candidateId)) {
-    return candidateId;
-  }
-
-  return configs.find((config) => hasConfiguredApiKey(config))?.id ?? null;
 }
 
 function sanitizeAutoResearchLlmSettings(
@@ -587,68 +577,32 @@ const initializeSettings = async () => {
       useSettingsStore.setState({ windowsShellProfile: storedShellProfile });
     }
 
-    const aliyunAnthropicConfig: ApiConfig = {
-      id: 'aliyun-anthropic',
-      name: '阿里云 MaaS (Anthropic 兼容)',
-      provider: 'anthropic-compatible',
-      modelProviderId: 'anthropic-compatible',
-      apiFormat: 'anthropic',
-      baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
-      apiKey: 'sk-sp-H.EPLMR.upK8.MEYCIQDJqW_7sUDKvGLHQDOGY_6r-UcpfG4B6Oi67hrX_ReEqgIhAKmCnVp2OR9ZGrfLqOAryAUdfV9AP9EWxJahsYPUzwXR',
-      model: 'qwen3.7-max',
-    };
-
-    const aliyunOpenAiConfig: ApiConfig = {
-      id: 'aliyun-openai',
-      name: '阿里云 MaaS (OpenAI 兼容)',
-      provider: 'openai-compatible',
-      modelProviderId: 'openai-compatible',
-      apiFormat: 'openai',
-      baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
-      apiKey: 'sk-sp-H.EPLMR.upK8.MEYCIQDJqW_7sUDKvGLHQDOGY_6r-UcpfG4B6Oi67hrX_ReEqgIhAKmCnVp2OR9ZGrfLqOAryAUdfV9AP9EWxJahsYPUzwXR',
-      model: 'qwen3.7-max',
-    };
-
     // Load API configs before any async secret hydration so Settings can
     // render the persisted active config on first paint.
-    const storedConfigs = localStorage.getItem(SETTINGS_STORAGE_KEYS.apiConfigs);
     const storedActiveId = localStorage.getItem(SETTINGS_STORAGE_KEYS.activeConfig);
+    const storedConfigs = loadPersistedApiConfigs();
+    const configs = mergeBootstrappedApiConfigs(storedConfigs);
 
-    let configs: ApiConfig[] = [];
-    if (storedConfigs) {
-      const raw = loadPersistedApiConfigs();
-      configs = raw.map((c) => ({
-        ...c,
-        modelProviderId: c.modelProviderId ?? c.provider,
-      }));
-
-      // Update or add Aliyun configs if not present or apiKey outdated
-      const hasAnthropic = configs.some((c) => c.id === 'aliyun-anthropic');
-      const hasOpenAI = configs.some((c) => c.id === 'aliyun-openai');
-
-      if (!hasAnthropic) configs.unshift(aliyunAnthropicConfig);
-      else {
-        configs = configs.map((c) => (c.id === 'aliyun-anthropic' ? { ...c, ...aliyunAnthropicConfig } : c));
-      }
-
-      if (!hasOpenAI) configs.unshift(aliyunOpenAiConfig);
-      else {
-        configs = configs.map((c) => (c.id === 'aliyun-openai' ? { ...c, ...aliyunOpenAiConfig } : c));
-      }
-    } else {
-      configs = [aliyunAnthropicConfig, aliyunOpenAiConfig];
-    }
-
-    const activeId = resolvePreferredActiveConfigId(configs, storedActiveId || 'aliyun-anthropic');
+    const activeId = resolvePreferredActiveConfigId(configs, storedActiveId);
     const activeConfig = activeId
       ? configs.find((c) => c.id === activeId) || null
       : null;
 
-    const autoResearchLlmSettings: AutoResearchLlmSettings = {
-      defaultConfigId: 'aliyun-anthropic',
-      agentConfigId: 'aliyun-anthropic',
-      reflectionConfigId: 'aliyun-anthropic',
-    };
+    let storedAutoResearchLlmSettings: Partial<AutoResearchLlmSettings> | null = null;
+    const storedAutoResearchLlmSettingsRaw = localStorage.getItem(SETTINGS_STORAGE_KEYS.autoResearchLlmSettings);
+    if (storedAutoResearchLlmSettingsRaw) {
+      try {
+        storedAutoResearchLlmSettings = JSON.parse(storedAutoResearchLlmSettingsRaw) as Partial<AutoResearchLlmSettings>;
+      } catch (error) {
+        console.error('Failed to parse AutoResearch LLM settings:', error);
+      }
+    }
+
+    const autoResearchLlmSettings = resolveAutoResearchLlmSettingsOnBoot({
+      configs,
+      stored: storedAutoResearchLlmSettings,
+      activeConfigId: activeId,
+    });
 
     useSettingsStore.setState({
       apiConfigs: configs,
@@ -729,18 +683,6 @@ const initializeSettings = async () => {
         });
       } catch (error) {
         console.error('Failed to parse vision settings:', error);
-      }
-    }
-
-    const storedAutoResearchLlmSettings = localStorage.getItem(SETTINGS_STORAGE_KEYS.autoResearchLlmSettings);
-    if (storedAutoResearchLlmSettings) {
-      try {
-        const parsed = JSON.parse(storedAutoResearchLlmSettings) as Partial<AutoResearchLlmSettings>;
-        useSettingsStore.setState((state) => ({
-          autoResearchLlmSettings: sanitizeAutoResearchLlmSettings(parsed, state.apiConfigs),
-        }));
-      } catch (error) {
-        console.error('Failed to parse AutoResearch LLM settings:', error);
       }
     }
   } catch (error) {

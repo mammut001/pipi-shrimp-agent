@@ -29,6 +29,10 @@ import { BootstrapRecipeBuilder } from './BootstrapRecipeBuilder';
 import { RecipeTemplateChooser } from './recipe/RecipeTemplateChooser';
 import { type Recipe } from './bootstrapRecipePrompt';
 import { AutoResearchSetupPhaseChip } from './AutoResearchSetupPhaseChip';
+import {
+  loadPersistedBootstrapSession,
+  persistBootstrapSession,
+} from '@/services/autoresearch/bootstrap/bootstrapSessionPersist';
 
 interface BootstrapChatViewProps {
   onReady?: () => void;
@@ -59,8 +63,8 @@ function resolveBaselineValue(baselines: ExtractedBaseline[], primaryMetric: str
   return baselines[0]?.reportedMetrics[0]?.value ?? null;
 }
 
-export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps) {
-  const [recipe, setRecipe] = useState<Recipe>({
+function createDefaultRecipe(sshConfig?: SshConfig): Recipe {
+  return {
     researchGoal: {
       goalText: 'I want to start an AutoResearch task. Please guide me through setting up goals, papers, baselines, and workspace scaffolding.',
       taskType: 'reproduce_paper',
@@ -87,25 +91,31 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       includeFailureReason: true,
       includeRemainingRisks: true,
     },
-  });
+  };
+}
 
-  const [recipeDirty, setRecipeDirty] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
-  const [agentLogs, setAgentLogs] = useState('');
+export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps) {
+  const persistedSession = useMemo(() => loadPersistedBootstrapSession(), []);
+  const [recipe, setRecipe] = useState<Recipe>(() => persistedSession?.recipe ?? createDefaultRecipe(sshConfig));
+  const [recipeDirty, setRecipeDirty] = useState(() => Boolean(persistedSession?.recipeDirty));
+  const [hasStarted, setHasStarted] = useState(() => Boolean(persistedSession?.hasStarted));
+  const [agentLogs, setAgentLogs] = useState(() => persistedSession?.agentLogs ?? '');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [handoffSummary, setHandoffSummary] = useState<string | null>(null);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<ConversationalTemplateOption['id'] | null>(null);
-  const [templatesExpanded, setTemplatesExpanded] = useState(true);
-  const [iterations, setIterations] = useState(() => getAutoResearchDefaultConfig().iterations);
-  const bootstrappedAtRef = useRef<string | null>(null);
+  const [error, setError] = useState<string | null>(() => persistedSession?.error ?? null);
+  const [handoffSummary, setHandoffSummary] = useState<string | null>(() => persistedSession?.handoffSummary ?? null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<ConversationalTemplateOption['id'] | null>(
+    () => (persistedSession?.selectedTemplateId as ConversationalTemplateOption['id'] | null) ?? null,
+  );
+  const [templatesExpanded, setTemplatesExpanded] = useState(() => persistedSession?.templatesExpanded ?? true);
+  const [iterations, setIterations] = useState(() => persistedSession?.iterations ?? getAutoResearchDefaultConfig().iterations);
+  const bootstrappedAtRef = useRef<string | null>(persistedSession?.handoffSummary ? persistedSession.readyResult?.createdAt ?? null : null);
   const consoleScrollRef = useRef<HTMLDivElement>(null);
   const bootstrapAbortRef = useRef<AbortController | null>(null);
 
   const [stoppedByUser, setStoppedByUser] = useState(false);
   /** Last compiled prompt — used to offer Retry after missing bootstrap_finalize. */
-  const lastCompiledPromptRef = useRef<string | null>(null);
-  const [missingFinalize, setMissingFinalize] = useState(false);
+  const lastCompiledPromptRef = useRef<string | null>(persistedSession?.lastCompiledPrompt ?? null);
+  const [missingFinalize, setMissingFinalize] = useState(() => Boolean(persistedSession?.missingFinalize));
 
   const clearImportedFiles = useSettingsStore((state) => state.clearImportedFiles);
 
@@ -122,11 +132,63 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   const markMetricsStep = useBootstrapPlanStore((state) => state.markMetricsStep);
   const setWarnings = useBootstrapPlanStore((state) => state.setWarnings);
   const setReadyResult = useBootstrapPlanStore((state) => state.setReadyResult);
-  const resetPlanStore = useBootstrapPlanStore((state) => state.reset);
+  const setCurrentStep = useCallback((step: typeof currentStep) => {
+    useBootstrapPlanStore.setState({ currentStep: step });
+  }, []);
 
-  useEffect(() => () => {
-    resetPlanStore();
-  }, [resetPlanStore]);
+  useEffect(() => {
+    if (!persistedSession) {
+      return;
+    }
+    const store = useBootstrapPlanStore.getState();
+    if (persistedSession.readyResult && !store.readyResult) {
+      setReadyResult(persistedSession.readyResult);
+    }
+    if (persistedSession.warnings.length > 0) {
+      setWarnings(persistedSession.warnings);
+    }
+    if (persistedSession.currentStep && persistedSession.currentStep !== 'goal') {
+      setCurrentStep(persistedSession.currentStep);
+    }
+    if (persistedSession.observedTools.length > 0) {
+      useBootstrapPlanStore.setState({ observedTools: persistedSession.observedTools });
+    }
+  }, [persistedSession, setCurrentStep, setReadyResult, setWarnings]);
+
+  useEffect(() => {
+    persistBootstrapSession({
+      version: 1,
+      recipe,
+      recipeDirty,
+      selectedTemplateId,
+      templatesExpanded,
+      hasStarted,
+      readyResult,
+      currentStep,
+      observedTools: useBootstrapPlanStore.getState().observedTools,
+      warnings,
+      iterations,
+      agentLogs,
+      handoffSummary,
+      lastCompiledPrompt: lastCompiledPromptRef.current,
+      missingFinalize,
+      error,
+    });
+  }, [
+    agentLogs,
+    currentStep,
+    error,
+    handoffSummary,
+    hasStarted,
+    iterations,
+    missingFinalize,
+    readyResult,
+    recipe,
+    recipeDirty,
+    selectedTemplateId,
+    templatesExpanded,
+    warnings,
+  ]);
 
   // Sync workspace root if sshConfig changes
   useEffect(() => {
@@ -180,7 +242,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         };
 
     const baseline = resolveBaselineValue(result.plan.baselines, result.plan.primaryMetric);
-    const direction = guessMetricDirection(result.plan.primaryMetric);
+    const direction = recipe.baselineAndMetric.direction || guessMetricDirection(result.plan.primaryMetric);
     const autoResearchState = useAutoResearchStore.getState();
 
     try {
@@ -287,12 +349,13 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       setHandoffSummary(`${result.plan.primaryMetric} · ${isSshMode ? remoteWorkDir : workDir}`);
       onReady?.();
     } catch (handoffError) {
+      bootstrappedAtRef.current = null;
       setError(logAutoResearchSetupFailure('bootstrap-handoff', handoffError, {
         workDir: isSshMode ? remoteWorkDir : workDir,
         metric: result.plan.primaryMetric,
       }));
     }
-  }, [onReady, sshConfig, windowsShellProfile]);
+  }, [onReady, recipe.baselineAndMetric.direction, sshConfig, windowsShellProfile]);
 
   const handleToolResult = useCallback(async (name: string, result: string) => {
     if (name === 'baseline_extract') {

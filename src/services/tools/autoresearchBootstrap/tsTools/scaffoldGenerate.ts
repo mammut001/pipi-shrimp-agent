@@ -168,3 +168,58 @@ export function renderKnownScaffoldTemplate(input: {
 export function getKnownScaffoldTemplateManifest(templateId: ScaffoldTemplateId): ScaffoldTemplateManifest {
   return TEMPLATE_MANIFESTS[templateId];
 }
+
+/** User-owned experiment files that must never be clobbered by a re-scaffold. */
+export const PRESERVE_EXISTING_SCAFFOLD_FILES = [
+  'train.py',
+  'eval.py',
+  'index.ts',
+  'package.json',
+  'requirements.txt',
+  'configs/baseline.yaml',
+] as const;
+
+export function assertSafeScaffoldRelativePath(relativePath: string): void {
+  const normalized = relativePath.replace(/\\/g, '/').trim();
+  if (!normalized) {
+    throw new Error('Scaffold file path is empty.');
+  }
+  if (
+    normalized.startsWith('/')
+    || normalized.includes('..')
+    || /^[a-zA-Z]:/.test(normalized)
+  ) {
+    throw new Error(`Refusing to write scaffold file outside workDir: ${relativePath}`);
+  }
+}
+
+export function shouldSkipExistingScaffoldFile(
+  relativePath: string,
+  existingPaths: Iterable<string>,
+  overwriteExisting = false,
+): boolean {
+  if (overwriteExisting) {
+    return false;
+  }
+  const normalized = relativePath.replace(/\\/g, '/');
+  const existing = new Set([...existingPaths].map((path) => path.replace(/\\/g, '/')));
+  return existing.has(normalized);
+}
+
+export function planScaffoldFileWrites(input: {
+  relativePaths: string[];
+  existingPaths: Iterable<string>;
+  overwriteExisting?: boolean;
+}): { write: string[]; skip: string[] } {
+  const write: string[] = [];
+  const skip: string[] = [];
+  for (const relativePath of input.relativePaths) {
+    assertSafeScaffoldRelativePath(relativePath);
+    if (shouldSkipExistingScaffoldFile(relativePath, input.existingPaths, input.overwriteExisting === true)) {
+      skip.push(relativePath);
+    } else {
+      write.push(relativePath);
+    }
+  }
+  return { write, skip };
+}

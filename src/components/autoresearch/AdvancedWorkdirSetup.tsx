@@ -55,6 +55,10 @@ import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
 import { buildRemoteBashCommand } from '@/utils/remoteExec';
 import {
+  buildAutoResearchConnectionProbeCommand,
+  interpretAutoResearchConnectionProbe,
+} from '@/services/autoresearch/connectionProbe';
+import {
   normalizePathForWindowsShellSelection,
   shouldAutoOpenAutoResearchTerminal,
 } from '@/utils/windowsShellProfile';
@@ -473,9 +477,13 @@ export function AdvancedWorkdirSetup() {
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
+      const probeCommand = buildAutoResearchConnectionProbeCommand({
+        workDir: cfg.remoteWorkDir,
+        experimentDir,
+      });
       const result = await invoke<RawBashResult>('execute_bash', {
         args: {
-          command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
+          command: buildRemoteBashCommand({ ...cfg, remoteWorkDir: '' }, probeCommand),
           // SSH ConnectTimeout is 10s (set in buildSshArgs), so 15s gives
           // enough headroom for the connection to fail naturally while still
           // surfacing the real SSH error instead of a generic timeout.
@@ -483,30 +491,28 @@ export function AdvancedWorkdirSetup() {
           windowsShellProfile,
         },
       });
-      const stdout = (result.stdout || '').trim();
-      const stderr = (result.stderr || '').trim();
-      const exitCode = result.exit_code ?? 0;
-      if (exitCode !== 0) {
-        throw new Error(extractSshError(stderr, stdout, exitCode));
-      }
-
-      const [unameLine = '', pwdLine = '', gitLine = ''] = stdout.split('\n');
-      if (cfg.mode === 'ssh' && unameLine.trim() !== 'Linux') {
-        throw new Error('Remote target must be Linux');
-      }
-      if (cfg.mode === 'local' && !['Darwin', 'Linux'].includes(unameLine.trim())) {
-        throw new Error('AutoResearch supports macOS and Linux only');
+      const verdict = interpretAutoResearchConnectionProbe({
+        stdout: result.stdout || '',
+        stderr: result.stderr || '',
+        exitCode: result.exit_code ?? 0,
+        mode: cfg.mode,
+      });
+      if (!verdict.ok) {
+        throw new Error(
+          verdict.error
+          || extractSshError(result.stderr || '', result.stdout || '', result.exit_code ?? 1),
+        );
       }
 
       setConnectionTest({
         status: 'success',
-        output: [unameLine, pwdLine, gitLine].filter(Boolean).join('\n'),
+        output: verdict.output,
       });
     } catch (error) {
       const message = formatError(error);
       setConnectionTest({ status: 'error', output: message });
     }
-  }, [setupForm, windowsShellProfile]);
+  }, [experimentDir, setupForm, windowsShellProfile]);
 
   const handleStart = useCallback(async () => {
     const validation = validateAutoResearchSetupDraft({

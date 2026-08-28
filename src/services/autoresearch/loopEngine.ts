@@ -11,6 +11,7 @@ import { createNotifier } from './notifier';
 import { describeTarget } from '@/utils/remoteExec';
 import {
   appendIterationMetrics,
+  readAllMetrics,
   type IterationMetrics,
 } from './metricsStore';
 import { parseMetricsArtifactPayload } from './metricsSchema';
@@ -24,6 +25,7 @@ import {
   type RunDir,
 } from './runDir';
 import { readLivingDoc, rebuildLivingDoc } from './livingDoc';
+import { buildMultiRoundGuidance } from './iterationPrompt';
 import { clearCurrentRunDir, setCurrentRunDir } from './terminalRunner';
 import {
   classifyAutoResearchFailure,
@@ -64,6 +66,8 @@ interface PromptInput {
   metricDirection: 'lower' | 'higher';
   metricName: string;
   maxIterations: number;
+  iteration: number;
+  previousMetrics: IterationMetrics[];
 }
 
 const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
@@ -183,6 +187,8 @@ function buildSystemPrompt({
   metricDirection,
   metricName,
   maxIterations,
+  iteration,
+  previousMetrics,
 }: PromptInput): string {
   // AUDIT-016 FIX: Calculate budget reserve dynamically based on maxIterations
   const budgetReserve = calculateBudgetReserve(maxIterations);
@@ -238,6 +244,15 @@ ${toolLanes}
 
 ## Session File
 ${sessionContent}
+
+## Multi-round strategy
+${buildMultiRoundGuidance({
+    iteration,
+    maxIterations,
+    metricName,
+    direction: metricDirection,
+    previous: previousMetrics,
+  })}
 
 ## Living AutoResearch Notes
 ${livingDoc || 'No prior iterations recorded yet.'}
@@ -711,6 +726,12 @@ export async function startExperimentLoop(
         summary: `Iteration ${iteration} is loading context and run artifacts.`,
       });
       const livingDoc = await readLivingDoc(artifactCfg, sessionId) || '';
+      let previousMetrics: IterationMetrics[] = [];
+      try {
+        previousMetrics = await readAllMetrics(artifactCfg, sessionId, state.metricDirection);
+      } catch {
+        previousMetrics = [];
+      }
       const systemPrompt = buildSystemPrompt({
         sessionContent,
         livingDoc,
@@ -720,6 +741,8 @@ export async function startExperimentLoop(
         metricDirection: store.metricDirection,
         metricName: state.metricName,
         maxIterations: store.maxIterations,
+        iteration,
+        previousMetrics,
       });
       await writeTargetText(artifactCfg, runDir.systemPromptPath, `${systemPrompt}\n`);
 
@@ -863,6 +886,7 @@ export async function startExperimentLoop(
           workDir,
           metricName: state.metricName,
           direction: state.metricDirection,
+          experimentNotesPath: environmentSummary.notesPath,
         });
         await logExperiment(entry, useAutoResearchStore.getState());
         await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
@@ -1043,6 +1067,7 @@ export async function startExperimentLoop(
         workDir,
         metricName: state.metricName,
         direction: state.metricDirection,
+        experimentNotesPath: environmentSummary.notesPath,
       });
       await logExperiment(entry, useAutoResearchStore.getState());
       await notifier.onExperimentComplete(entry, useAutoResearchStore.getState());
@@ -1331,6 +1356,7 @@ export async function startExperimentLoop(
         workDir,
         metricName: useAutoResearchStore.getState().metricName,
         direction: useAutoResearchStore.getState().metricDirection,
+        experimentNotesPath: environmentSummary.notesPath,
       });
       const rollbackResult = await rollbackIterationWorkspace(iterationCfg, iteration, runDir, {
         terminal: !isTerminalFailureError(error),

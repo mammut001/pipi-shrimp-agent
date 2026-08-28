@@ -13,7 +13,11 @@ import { parseBaselineExtractResponse } from './tsTools/baselineExtract';
 import { finalizeBootstrapPlan } from './tsTools/bootstrapFinalize';
 import { parsePaperExtractMetaResponse } from './tsTools/paperExtractMeta';
 import { buildPdfReadResult } from './tsTools/pdfRead';
-import { renderKnownScaffoldTemplate } from './tsTools/scaffoldGenerate';
+import {
+  assertSafeScaffoldRelativePath,
+  planScaffoldFileWrites,
+  renderKnownScaffoldTemplate,
+} from './tsTools/scaffoldGenerate';
 import { useSettingsStore } from '@/store';
 import { withWindowsShellProfileArgs } from '@/utils/windowsShellProfile';
 
@@ -74,6 +78,11 @@ async function ensureDirectory(path: string, workDir?: string): Promise<void> {
 async function writeTextFile(path: string, content: string, workDir?: string): Promise<void> {
   await ensureDirectory(getParentDirectory(path), workDir);
   await invokeCoreTool('write_file', { path, content }, workDir);
+}
+
+async function targetPathExists(path: string, workDir?: string): Promise<boolean> {
+  const result = await executeCommand(`test -e ${shellEscapePath(path)}`, workDir);
+  return (result.exit_code ?? 1) === 0;
 }
 
 async function executeCommand(command: string, workDir?: string): Promise<CommandResult> {
@@ -138,6 +147,7 @@ async function executeScaffoldGenerateTool(args: Record<string, any>, workDir?: 
     throw new Error('scaffold_generate requires workDir');
   }
 
+  const overwriteExisting = args.overwriteExisting === true || args.overwrite_existing === true;
   const vars = normalizeScaffoldVars(args);
   const { scaffold, renderedFiles } = renderKnownScaffoldTemplate({
     templateId,
@@ -145,12 +155,41 @@ async function executeScaffoldGenerateTool(args: Record<string, any>, workDir?: 
     vars,
   });
 
-  await ensureDirectory(targetDir, workDir);
   for (const file of renderedFiles) {
-    await writeTextFile(`${targetDir}/${file.path}`, file.content, workDir);
+    assertSafeScaffoldRelativePath(file.path);
   }
 
-  return JSON.stringify(scaffold);
+  await ensureDirectory(targetDir, workDir);
+  const existingPaths: string[] = [];
+  for (const file of renderedFiles) {
+    const absolutePath = `${targetDir.replace(/[\\/]+$/, '')}/${file.path}`;
+    if (await targetPathExists(absolutePath, workDir)) {
+      existingPaths.push(file.path);
+    }
+  }
+  const planned = planScaffoldFileWrites({
+    relativePaths: renderedFiles.map((file) => file.path),
+    existingPaths,
+    overwriteExisting,
+  });
+  const skipSet = new Set(planned.skip);
+  const written: string[] = [];
+
+  for (const file of renderedFiles) {
+    if (skipSet.has(file.path)) {
+      continue;
+    }
+    const absolutePath = `${targetDir.replace(/[\\/]+$/, '')}/${file.path}`;
+    await writeTextFile(absolutePath, file.content, workDir);
+    written.push(file.path);
+  }
+  const skippedExisting = planned.skip;
+
+  return JSON.stringify({
+    ...scaffold,
+    written,
+    skippedExisting,
+  });
 }
 
 async function executeGitInitWorkdirTool(args: Record<string, any>, workDir?: string): Promise<string> {
@@ -160,6 +199,17 @@ async function executeGitInitWorkdirTool(args: Record<string, any>, workDir?: st
   }
 
   await ensureDirectory(targetDir, workDir);
+  const existing = await executeCommand('git rev-parse --is-inside-work-tree', targetDir);
+  if ((existing.exit_code ?? 1) === 0 && existing.stdout?.trim() === 'true') {
+    const head = await executeCommand('git rev-parse --short HEAD', targetDir);
+    return JSON.stringify({
+      workDir: targetDir,
+      gitInitialized: true,
+      alreadyInitialized: true,
+      initialCommitSha: head.stdout?.trim() || undefined,
+    });
+  }
+
   await executeCommand('git init', targetDir);
   await executeCommand('git config user.name "AutoResearch"', targetDir);
   await executeCommand('git config user.email "autoresearch@local"', targetDir);
@@ -170,6 +220,7 @@ async function executeGitInitWorkdirTool(args: Record<string, any>, workDir?: st
   return JSON.stringify({
     workDir: targetDir,
     gitInitialized: true,
+    alreadyInitialized: false,
     initialCommitSha: head.stdout?.trim() || undefined,
   });
 }

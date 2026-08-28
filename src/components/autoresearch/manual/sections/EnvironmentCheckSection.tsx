@@ -48,20 +48,37 @@ export function EnvironmentCheckSection({
 
       {connectionTest.status === 'success' && (
         <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/30 p-3 space-y-2 text-xs text-emerald-800 font-sans">
-          <div className="font-semibold text-emerald-900">环境检测详情</div>
+          <div className="font-semibold text-emerald-900">{t('autoresearch.connection.detailsTitle')}</div>
           {(() => {
             const details = parseConnectionCheckOutput(connectionTest.output);
+            const gitLabel = details.gitStatus === 'ok'
+              ? t('autoresearch.connection.gitOk')
+              : details.gitStatus === 'missing'
+                ? t('autoresearch.connection.gitMissingWarning')
+                : details.gitStatus === 'not_installed'
+                  ? t('autoresearch.connection.gitNotInstalled')
+                  : t('autoresearch.connection.gitUnknown');
             return (
               <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
                 <div>
-                  <span className="text-emerald-600 font-sans">操作系统 (OS):</span> {details.platform}
+                  <span className="text-emerald-600 font-sans">{t('autoresearch.connection.osLabel')}:</span> {details.platform}
                 </div>
                 <div>
-                  <span className="text-emerald-600 font-sans">Git 仓库 (Git Repo):</span> {details.isGitRepo ? '是 (Yes)' : '否 (No)'}
+                  <span className="text-emerald-600 font-sans">{t('autoresearch.connection.gitLabel')}:</span> {gitLabel}
                 </div>
                 <div className="col-span-2 font-mono">
-                  <span className="text-emerald-600 font-sans">当前目录 (pwd):</span> {details.pwd}
+                  <span className="text-emerald-600 font-sans">{t('autoresearch.connection.pwdLabel')}:</span> {details.pwd}
                 </div>
+                {details.gitStatus === 'missing' && (
+                  <div className="col-span-2 text-amber-800 font-sans">
+                    {t('autoresearch.connection.gitWillInit')}
+                  </div>
+                )}
+                {details.experimentPresent === false && (
+                  <div className="col-span-2 text-amber-800 font-sans">
+                    {t('autoresearch.connection.experimentMissingWarning')}
+                  </div>
+                )}
               </div>
             );
           })()}

@@ -9,6 +9,7 @@ export interface LivingDocOptions {
   workDir: string;
   metricName: string;
   direction: 'lower' | 'higher';
+  experimentNotesPath?: string;
 }
 
 interface BootstrapDocSeed {
@@ -42,6 +43,51 @@ function buildDeadEnds(metrics: IterationMetrics[]): string[] {
 
 function renderSection(title: string, items: string[], fallback: string): string {
   return [`## ${title}`, items.length > 0 ? items.join('\n') : fallback, ''].join('\n');
+}
+
+const EXPERIMENT_NOTES_LOG_START = '<!-- AUTORESEARCH-LOG:START -->';
+const EXPERIMENT_NOTES_LOG_END = '<!-- AUTORESEARCH-LOG:END -->';
+
+export function upsertExperimentNotesLog(existing: string | null, logBody: string): string {
+  const block = [EXPERIMENT_NOTES_LOG_START, logBody.trim(), EXPERIMENT_NOTES_LOG_END].join('\n');
+  const source = existing ?? '';
+  if (source.includes(EXPERIMENT_NOTES_LOG_START) && source.includes(EXPERIMENT_NOTES_LOG_END)) {
+    return source.replace(
+      new RegExp(`${EXPERIMENT_NOTES_LOG_START}[\\s\\S]*?${EXPERIMENT_NOTES_LOG_END}`),
+      block,
+    );
+  }
+  const trimmed = source.trim();
+  return trimmed.length > 0 ? `${trimmed}\n\n${block}\n` : `${block}\n`;
+}
+
+function renderExperimentNotesLog(
+  sessionId: string,
+  metrics: IterationMetrics[],
+  options: LivingDocOptions,
+): string {
+  const summary = summarize(metrics, options.direction);
+  const last = metrics[metrics.length - 1] ?? null;
+  const recent = metrics.slice(-8).map((entry) => (
+    `- iter-${String(entry.iteration).padStart(3, '0')}: ${entry.status}`
+    + `${entry.metricValue === null || entry.metricValue === undefined ? '' : ` ${options.metricName}=${entry.metricValue}`}`
+    + `${entry.hypothesis ? ` — ${entry.hypothesis}` : ''}`
+  ));
+
+  return [
+    `## AutoResearch log`,
+    `Session: ${sessionId}`,
+    `Metric: ${options.metricName} (${options.direction} is better)`,
+    `Best so far: ${summary.best ? `${options.metricName}=${formatMetric(summary.best.metricValue)} (iter-${String(summary.best.iteration).padStart(3, '0')})` : 'none yet'}`,
+    last
+      ? `Latest: iter-${String(last.iteration).padStart(3, '0')} ${last.status}${last.failReason ? ` (${last.failReason})` : ''}`
+      : 'Latest: no iterations yet',
+    '',
+    '### Recent iterations',
+    recent.length > 0 ? recent.join('\n') : '- None yet.',
+    '',
+    'Do not delete this generated log. User notes above this marker are preserved across rounds.',
+  ].join('\n');
 }
 
 function renderBootstrapSection(plan: BootstrapPlan): string[] {
@@ -142,6 +188,32 @@ export async function rebuildLivingDoc(
 
   const content = renderLivingDoc(sessionId, objective || '', metrics, options, bootstrapSeed?.plan ?? null);
   await writeTargetText(cfg, paths.livingDocPath, `${content}\n`);
+
+  const historySnapshot = {
+    schemaVersion: 1,
+    sessionId,
+    updatedAt: new Date().toISOString(),
+    metricName: options.metricName,
+    direction: options.direction,
+    iterations: metrics.map((entry) => ({
+      iteration: entry.iteration,
+      status: entry.status,
+      metricValue: entry.metricValue,
+      hypothesis: entry.hypothesis,
+      failReason: entry.failReason ?? null,
+    })),
+  };
+  await writeTargetText(cfg, `${paths.sessionDir}/history.json`, `${JSON.stringify(historySnapshot, null, 2)}\n`);
+
+  if (options.experimentNotesPath) {
+    const existingNotes = await readTargetText(cfg, options.experimentNotesPath);
+    const nextNotes = upsertExperimentNotesLog(
+      existingNotes,
+      renderExperimentNotesLog(sessionId, metrics, options),
+    );
+    await writeTargetText(cfg, options.experimentNotesPath, nextNotes.endsWith('\n') ? nextNotes : `${nextNotes}\n`);
+  }
+
   return content;
 }
 

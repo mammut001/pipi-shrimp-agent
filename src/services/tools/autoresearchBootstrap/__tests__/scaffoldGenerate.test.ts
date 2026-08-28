@@ -1,7 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { renderKnownScaffoldTemplate } from '../tsTools/scaffoldGenerate';
+import {
+  assertSafeScaffoldRelativePath,
+  planScaffoldFileWrites,
+  PRESERVE_EXISTING_SCAFFOLD_FILES,
+  renderKnownScaffoldTemplate,
+} from '../tsTools/scaffoldGenerate';
 
 const FIXTURE_ROOT = path.join(
   process.cwd(),
@@ -43,5 +48,32 @@ describe('renderKnownScaffoldTemplate', () => {
       const expectedContent = readFileSync(expectedPath, 'utf8');
       expect(file.content.replace(/\r\n/g, '\n').trimEnd()).toBe(expectedContent.replace(/\r\n/g, '\n').trimEnd());
     }
+  });
+});
+
+describe('scaffold write policy', () => {
+  it('skips existing train.py instead of overwriting it', () => {
+    const planned = planScaffoldFileWrites({
+      relativePaths: ['train.py', 'run_experiment.py', 'AUTORESEARCH.md'],
+      existingPaths: ['train.py'],
+    });
+    expect(planned.skip).toEqual(['train.py']);
+    expect(planned.write).toEqual(['run_experiment.py', 'AUTORESEARCH.md']);
+    expect(PRESERVE_EXISTING_SCAFFOLD_FILES).toContain('train.py');
+  });
+
+  it('overwrites existing files only when explicitly requested', () => {
+    const planned = planScaffoldFileWrites({
+      relativePaths: ['train.py'],
+      existingPaths: ['train.py'],
+      overwriteExisting: true,
+    });
+    expect(planned.skip).toEqual([]);
+    expect(planned.write).toEqual(['train.py']);
+  });
+
+  it('rejects path traversal in scaffold outputs', () => {
+    expect(() => assertSafeScaffoldRelativePath('../outside.txt')).toThrow(/outside workDir/);
+    expect(() => assertSafeScaffoldRelativePath('/etc/passwd')).toThrow(/outside workDir/);
   });
 });

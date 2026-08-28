@@ -54,16 +54,44 @@ export function formatMetricIterationsSummary(
   }
 }
 
+import { parseAutoResearchConnectionProbeOutput } from '@/services/autoresearch/connectionProbe';
+
 export interface ParsedConnectionSuccess {
   platform: string;
   pwd: string;
   isGitRepo: boolean;
+  gitStatus: 'ok' | 'missing' | 'not_installed' | 'unknown';
+  experimentPresent: boolean;
+  pythonPresent: boolean;
+  workspaceReady: boolean;
 }
 
 export function parseConnectionCheckOutput(output: string): ParsedConnectionSuccess {
+  const probe = parseAutoResearchConnectionProbeOutput(output);
+  if (probe.targetOk || probe.git !== 'unknown' || probe.workspace !== 'unknown') {
+    return {
+      platform: probe.platform,
+      pwd: probe.pwd,
+      isGitRepo: probe.git === 'ok',
+      gitStatus: probe.git,
+      experimentPresent: probe.experiment !== 'missing',
+      pythonPresent: probe.python !== 'missing',
+      workspaceReady: probe.workspace !== 'failed',
+    };
+  }
+
   const lines = (output || '').split('\n').map((l) => l.trim());
   const platform = lines[0] || 'Unknown';
   const pwd = lines[1] || 'Unknown';
-  const isGitRepo = lines[2] === 'true';
-  return { platform, pwd, isGitRepo };
+  const gitLine = lines.find((line) => line === 'true' || line === 'false' || line.startsWith('git:')) || lines[2] || '';
+  const isGitRepo = gitLine === 'true' || gitLine === 'git:ok';
+  return {
+    platform,
+    pwd,
+    isGitRepo,
+    gitStatus: isGitRepo ? 'ok' : gitLine === 'git:not_installed' ? 'not_installed' : gitLine ? 'missing' : 'unknown',
+    experimentPresent: true,
+    pythonPresent: true,
+    workspaceReady: true,
+  };
 }

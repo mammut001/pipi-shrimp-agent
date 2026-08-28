@@ -142,7 +142,9 @@ describe('Manual Setup subcomponents smoke tests', () => {
         />
       );
     });
-    expect(container.textContent).toContain('操作系统 (OS)');
+    expect(container.textContent).toContain('autoresearch.connection.detailsTitle');
+    expect(container.textContent).toContain('autoresearch.connection.osLabel');
+    expect(container.textContent).toContain('Linux');
   });
 
   const baseCockpitProps = () => {

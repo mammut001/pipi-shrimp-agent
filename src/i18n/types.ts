@@ -1169,6 +1169,16 @@ export type TranslationKeys = {
   'autoresearch.connectionStatusErrorTitle': string;
   'autoresearch.connectionStatusErrorBody': string;
   'autoresearch.connectionStatusRawOutput': string;
+  'autoresearch.connection.detailsTitle': string;
+  'autoresearch.connection.osLabel': string;
+  'autoresearch.connection.gitLabel': string;
+  'autoresearch.connection.pwdLabel': string;
+  'autoresearch.connection.gitOk': string;
+  'autoresearch.connection.gitMissingWarning': string;
+  'autoresearch.connection.gitNotInstalled': string;
+  'autoresearch.connection.gitUnknown': string;
+  'autoresearch.connection.gitWillInit': string;
+  'autoresearch.connection.experimentMissingWarning': string;
   'autoresearch.connectionTestRequired': string;
   'autoresearch.metricNamePlaceholder': string;
   'autoresearch.lowerIsBetter': string;

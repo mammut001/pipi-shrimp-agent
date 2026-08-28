@@ -36,4 +36,21 @@ describe('manualFormatting tests', () => {
     expect(parsed.pwd).toBe('/home/ubuntu/project');
     expect(parsed.isGitRepo).toBe(true);
   });
+
+  it('parses structured probe output including git:missing', () => {
+    const rawOutput = [
+      'Darwin',
+      '/Users/demo',
+      'workspace:ok',
+      'experiment:ok',
+      '__AUTORESEARCH_TARGET_OK__',
+      'git:missing',
+      'python:ok',
+    ].join('\n');
+    const parsed = parseConnectionCheckOutput(rawOutput);
+    expect(parsed.platform).toBe('Darwin');
+    expect(parsed.isGitRepo).toBe(false);
+    expect(parsed.gitStatus).toBe('missing');
+    expect(parsed.workspaceReady).toBe(true);
+  });
 });
