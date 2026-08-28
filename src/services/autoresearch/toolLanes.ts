@@ -52,6 +52,19 @@ export function getAutoResearchAllowedToolsForPhase(
         profile.readTool,
       ]);
     case 'PARSE_METRICS':
+      // Metrics are not always emitted as a standalone file. Keep command
+      // execution scoped to this parsing lane so the agent can extract a
+      // metric from experiment stdout/logs without globally widening the
+      // autonomous tool allowlist. classifyAutoResearchToolPhase() keeps any
+      // command invoked here in PARSE_METRICS, so it cannot transition back
+      // into RUN_EXPERIMENT.
+      return uniqueTools([
+        'get_current_workspace',
+        profile.commandTool,
+        profile.readTool,
+        writeTool,
+        createDirectoryTool,
+      ]);
     case 'REFLECT':
     case 'DECIDE_NEXT':
       return uniqueTools([
