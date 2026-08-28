@@ -85,6 +85,17 @@ const OptionalNonEmptyStringSchema = z.preprocess(
 
 const UNSPECIFIED_FAILURE_REASON = 'unspecified failure';
 
+function coerceIsoDateTime(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)) {
+    return `${trimmed}Z`;
+  }
+  return value;
+}
+
 function coerceMetricsArtifactInput(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
@@ -97,7 +108,70 @@ function coerceMetricsArtifactInput(value: unknown): unknown {
   if (next.status === 'FAILED' && (next.failReason === undefined || next.failReason === null)) {
     next.failReason = UNSPECIFIED_FAILURE_REASON;
   }
+  if (typeof next.metricValue === 'string' && next.metricValue.trim() !== '') {
+    const parsed = Number(next.metricValue);
+    if (Number.isFinite(parsed)) {
+      next.metricValue = parsed;
+    }
+  }
+  if (typeof next.hypothesis !== 'string' || next.hypothesis.trim().length === 0) {
+    next.hypothesis = 'unspecified hypothesis';
+  }
+  if ('timestamp' in next) {
+    next.timestamp = coerceIsoDateTime(next.timestamp);
+  }
+  if ('startedAt' in next) {
+    next.startedAt = coerceIsoDateTime(next.startedAt);
+  }
+  if ('finishedAt' in next) {
+    next.finishedAt = coerceIsoDateTime(next.finishedAt);
+  }
+  if (next.extra && typeof next.extra === 'object' && !Array.isArray(next.extra)) {
+    const extra: Record<string, number | string | boolean> = {};
+    for (const [key, extraValue] of Object.entries(next.extra as Record<string, unknown>)) {
+      if (typeof extraValue === 'number' && Number.isFinite(extraValue)) {
+        extra[key] = extraValue;
+      } else if (typeof extraValue === 'string' || typeof extraValue === 'boolean') {
+        extra[key] = extraValue;
+      }
+    }
+    next.extra = extra;
+  }
   return next;
+}
+
+function coerceNativeMetricObject(
+  value: unknown,
+  expectedMetricName?: string,
+): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.metricName === 'string' && rec.metricName.trim()) {
+    return null;
+  }
+  const numericEntries = Object.entries(rec).filter(([, entryValue]) => (
+    typeof entryValue === 'number' && Number.isFinite(entryValue)
+  ));
+  if (numericEntries.length === 0) {
+    return null;
+  }
+  const matched = expectedMetricName
+    ? numericEntries.find(([key]) => key === expectedMetricName)
+    : undefined;
+  const picked = matched ?? numericEntries[0];
+  if (!picked) {
+    return null;
+  }
+  return {
+    metricName: expectedMetricName && expectedMetricName.trim() ? expectedMetricName : picked[0],
+    metricValue: picked[1],
+    status: 'IMPROVED',
+    hypothesis: typeof rec.hypothesis === 'string' && rec.hypothesis.trim()
+      ? rec.hypothesis
+      : 'native metrics.json',
+  };
 }
 
 const MetricsArtifactBaseObjectSchema = z.object({
@@ -142,9 +216,9 @@ const AgentMetricsArtifactObjectSchema = MetricsArtifactBaseObjectSchema.extend(
   iteration: z.number().int().positive(),
   primaryMetric: z.string().min(1),
   direction: DirectionSchema,
-  timestamp: z.string().datetime(),
+  timestamp: z.string().datetime({ offset: true }),
   generator: z.literal('agent'),
-}).strict();
+}).strip();
 
 type MetricsRunIdentity = {
   runId: string;
@@ -352,6 +426,13 @@ export function parseMetricsArtifactPayload(
   options: ParseMetricsArtifactOptions = {},
 ): { value: MetricsArtifactPayload | null; error?: string } {
   value = coerceMetricsArtifactInput(value);
+  const native = coerceNativeMetricObject(value, options.expectedMetricName);
+  if (native) {
+    const parsedNative = MetricsArtifactBaseSchema.safeParse(coerceMetricsArtifactInput(native));
+    if (parsedNative.success) {
+      return { value: parsedNative.data satisfies MetricsArtifactPayload };
+    }
+  }
   if (hasSchemaFields(value)) {
     const generator = readMetricsGenerator(value);
     if (generator === 'agent') {

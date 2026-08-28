@@ -1,12 +1,23 @@
+import json
 import subprocess
+from pathlib import Path
 
 
-def run(command: str) -> None:
+def run(command: str) -> int:
     completed = subprocess.run(command, shell=True, check=False)
-    if completed.returncode != 0:
-        raise SystemExit(completed.returncode)
+    return completed.returncode
 
 
 if __name__ == '__main__':
-    run('python3 train.py')
-    run('python3 eval.py')
+    train_rc = run('python3 train.py')
+    eval_rc = run('python3 eval.py')
+    rc = train_rc or eval_rc
+    payload = {
+        'metricName': 'accuracy',
+        'metricValue': 0.0 if rc == 0 else None,
+        'status': 'IMPROVED' if rc == 0 else 'FAILED',
+        'hypothesis': 'scaffold baseline',
+        'failReason': None if rc == 0 else f'train/eval exited {rc}',
+    }
+    Path('metrics.json').write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+    raise SystemExit(0 if rc == 0 else 1)

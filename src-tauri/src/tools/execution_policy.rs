@@ -578,6 +578,18 @@ fn evaluate_ssh_exec_policy(
     crate::commands::path_security::validate_command(command)
         .map_err(|e| AppError::SecurityError(e.message))?;
 
+    let is_bypass = req
+        .execution_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case("bypass"))
+        .unwrap_or(false);
+
+    if is_bypass && matches!(req.source, ToolExecutionSource::AutoresearchPhase) {
+        return Ok(allow(None));
+    }
+
     Ok(match req.source {
         ToolExecutionSource::AssistantToolCall
         | ToolExecutionSource::UserRequestedCommand
@@ -596,6 +608,18 @@ fn evaluate_ssh_upload_policy(
     args: &serde_json::Value,
 ) -> AppResult<PolicyDecision> {
     validate_remote_path(args, "remotePath", &req.name)?;
+    let is_bypass = req
+        .execution_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case("bypass"))
+        .unwrap_or(false);
+
+    if is_bypass && matches!(req.source, ToolExecutionSource::AutoresearchPhase) {
+        return Ok(allow(None));
+    }
+
     Ok(match req.source {
         ToolExecutionSource::AssistantToolCall
         | ToolExecutionSource::UserRequestedCommand
@@ -917,6 +941,31 @@ mod tests {
 
         assert_eq!(preview.decision, "awaiting_confirmation");
         assert!(preview.approval_token.is_some());
+    }
+
+    #[test]
+    fn autoresearch_phase_bypass_allows_ssh_exec_without_confirmation() {
+        let mut request = make_request("ssh_exec");
+        request.source = ToolExecutionSource::AutoresearchPhase;
+        request.execution_mode = Some("bypass".to_string());
+        request.arguments = serde_json::json!({
+            "command": "python3 run_experiment.py",
+            "remoteWorkDir": "/srv/project"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({
+                "command": "python3 run_experiment.py",
+                "remoteWorkDir": "/srv/project"
+            }),
+            Some("session-1"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(preview.decision, "allowed");
+        assert!(preview.approval_token.is_none());
     }
 
     #[test]

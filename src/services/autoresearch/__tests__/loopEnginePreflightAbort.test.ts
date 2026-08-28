@@ -36,4 +36,26 @@ describe('loopEngine preflight abort controller (R5-02)', () => {
     expect(() => stopExperimentLoop()).not.toThrow();
     expect(getActiveLoopAbortControllerForTest()).toBeNull();
   });
+
+  it('registers the provided abortController as the stop handle', async () => {
+    const controller = new AbortController();
+    const setError = jest.fn();
+    getStateMock.mockImplementation(() => {
+      expect(getActiveLoopAbortControllerForTest()).toBe(controller);
+      return {
+        sshConfig: null,
+        setError,
+        setRunStatus: jest.fn(),
+        setLoopState: jest.fn(),
+      } as unknown as ReturnType<typeof useAutoResearchStore.getState>;
+    });
+
+    await startExperimentLoop(jest.fn(async () => 'ok'), {
+      abortController: controller,
+      signal: controller.signal,
+    });
+
+    expect(controller.signal.aborted).toBe(false);
+    expect(getActiveLoopAbortControllerForTest()).toBeNull();
+  });
 });

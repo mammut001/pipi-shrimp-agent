@@ -486,32 +486,41 @@ export async function runHeadlessAgentTurn(
           });
         }
 
-        const results = await executeToolBatch(
-          batchTools,
-          executor,
-          input.sessionId,
-          currentWorkDir,
-          toolExecutionSource,
-          allowedTools,
-          input.allowToolExecution,
-          effectivePermissionMode,
-          effectiveExecutionMode,
-          input.rewriteToolArguments,
-        );
-        toolBudgetSummary = appendToolBudgetEntries(
-          toolBudgetSummary,
-          results.map(({ name, content }) => ({ name, content })),
-        );
-        for (const result of results) {
-          input.onToolSummary?.(result.name, previewToolResult(result.content));
-          await input.onToolResult?.({
-            id: result.id,
-            name: result.name,
-            result: result.content,
-            durationMs: result.durationMs,
-          });
+        try {
+          const results = await executeToolBatch(
+            batchTools,
+            executor,
+            input.sessionId,
+            currentWorkDir,
+            toolExecutionSource,
+            allowedTools,
+            input.allowToolExecution,
+            effectivePermissionMode,
+            effectiveExecutionMode,
+            input.rewriteToolArguments,
+          );
+          toolBudgetSummary = appendToolBudgetEntries(
+            toolBudgetSummary,
+            results.map(({ name, content }) => ({ name, content })),
+          );
+          for (const result of results) {
+            input.onToolSummary?.(result.name, previewToolResult(result.content));
+            await input.onToolResult?.({
+              id: result.id,
+              name: result.name,
+              result: result.content,
+              durationMs: result.durationMs,
+            });
+          }
+          event._resolveAll(results.map(({ id, content }) => ({ id, content })));
+        } catch (toolError) {
+          const message = toolError instanceof Error ? toolError.message : String(toolError);
+          event._resolveAll(batchTools.map((tool) => ({
+            id: tool.id,
+            content: `Error: ${message}`,
+          })));
+          throw toolError;
         }
-        event._resolveAll(results.map(({ id, content }) => ({ id, content })));
         break;
       }
 
@@ -530,18 +539,25 @@ export async function runHeadlessAgentTurn(
           arguments: rewrittenTool.arguments,
         });
 
-        const [result] = await executeToolBatch(
-          [rewrittenTool],
-          executor,
-          input.sessionId,
-          currentWorkDir,
-          toolExecutionSource,
-          allowedTools,
-          input.allowToolExecution,
-          effectivePermissionMode,
-          effectiveExecutionMode,
-          input.rewriteToolArguments,
-        );
+        let result: { id: string; name: string; content: string; durationMs: number } | undefined;
+        try {
+          [result] = await executeToolBatch(
+            [rewrittenTool],
+            executor,
+            input.sessionId,
+            currentWorkDir,
+            toolExecutionSource,
+            allowedTools,
+            input.allowToolExecution,
+            effectivePermissionMode,
+            effectiveExecutionMode,
+            input.rewriteToolArguments,
+          );
+        } catch (toolError) {
+          const message = toolError instanceof Error ? toolError.message : String(toolError);
+          event._resolve(`Error: ${message}`);
+          throw toolError;
+        }
         if (result) {
           toolBudgetSummary = appendToolBudgetEntries(
             toolBudgetSummary,

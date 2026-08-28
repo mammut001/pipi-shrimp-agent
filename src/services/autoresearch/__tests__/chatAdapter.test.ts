@@ -342,6 +342,13 @@ describe('createAutoResearchSendMessage', () => {
       path: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code/run_experiment.py',
       cwd: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code',
     });
+    expect(rewrite(
+      { command: 'python3 run_experiment.py' },
+      'execute_command',
+    )).toEqual({
+      command: 'python3 run_experiment.py',
+      cwd: '/tmp/research/runs/run-1/iter-002-2026-05-11T00-00-00Z/code',
+    });
   });
 
   it('does not send requests when authorization would be empty', async () => {

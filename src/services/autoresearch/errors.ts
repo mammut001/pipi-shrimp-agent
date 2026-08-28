@@ -182,6 +182,18 @@ export function isCommandNotFoundText(value: string | null | undefined): boolean
   return /command not found/i.test(value);
 }
 
+export function isAutoResearchAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const name = 'name' in error && typeof error.name === 'string' ? error.name : '';
+  if (name === 'AutoResearchAbortedError' || name === 'AbortError') {
+    return true;
+  }
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  return /aborted by user|Headless agent turn aborted|Chat turn aborted|sendMessage called after abort/i.test(message);
+}
+
 export function isTerminalFailureError(error: unknown): boolean {
   const envelope = extractErrorDetails(error);
   const message = envelope.message.toLowerCase();

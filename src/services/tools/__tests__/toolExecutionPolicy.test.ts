@@ -17,6 +17,8 @@ describe('toolExecutionPolicy', () => {
     // so the user-facing permission gate stays in place even in Bypass.
     expect(canAutoApproveTool('bypass', 'ssh_exec')).toBe(false);
     expect(canAutoApproveTool('bypass', 'ssh_upload_file')).toBe(false);
+    expect(canAutoApproveTool('bypass', 'ssh_exec', { source: 'autoresearch_phase' })).toBe(true);
+    expect(canAutoApproveTool('bypass', 'ssh_upload_file', { source: 'autoresearch_phase' })).toBe(true);
     expect(canAutoApproveTool('bypass', 'mcp__filesystem__write_file')).toBe(false);
     expect(canAutoApproveTool('bypass', 'agent_tool')).toBe(false);
   });

@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { useSettingsStore } from '@/store/settingsStore';
+import type { SshConfig } from '@/store/autoresearchStore';
 
 const mockInvoke = jest.fn();
 
@@ -179,6 +180,28 @@ describe('runDir', () => {
         workDir: workDir,
         timeoutSecs: 30,
         windowsShellProfile: 'wsl',
+      }),
+    });
+  });
+
+  it('uses /tmp as the host cwd for remote SSH helper invokes', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'auto' });
+    const cfg: SshConfig = {
+      mode: 'ssh',
+      host: 'example.test',
+      user: 'root',
+      keyPath: '',
+      port: 22,
+      remoteWorkDir: '/srv/project',
+      authMode: 'agent',
+      password: '',
+    };
+
+    await executeTargetCommand(cfg, 'printf test', 30);
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_bash', {
+      args: expect.objectContaining({
+        workDir: '/tmp',
       }),
     });
   });

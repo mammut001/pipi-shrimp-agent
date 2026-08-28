@@ -77,7 +77,7 @@ export const AutoResearchBootstrapResultSchema: z.ZodType<AutoResearchBootstrapR
   plan: BootstrapPlanSchema,
   warnings: z.array(z.string()),
   unresolvedQuestions: z.array(z.string()),
-  createdAt: z.string().datetime(),
+  createdAt: z.string().datetime({ offset: true }),
   schemaVersion: z.literal(1),
 }).strict();
 
@@ -85,7 +85,7 @@ export const BootstrapStartHandoffSchema: z.ZodType<BootstrapStartHandoff> = z.o
   workDir: z.string().min(1),
   successCriteria: z.string().min(1),
   primaryMetric: z.string().min(1),
-  bootstrapCreatedAt: z.string().datetime(),
+  bootstrapCreatedAt: z.string().datetime({ offset: true }),
   bootstrapKind: z.literal('conversational'),
 }).strict();
 

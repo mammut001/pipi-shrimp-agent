@@ -31,6 +31,7 @@ import {
   classifyAutoResearchFailure,
   formatError,
   getRateLimitRetryAfterSeconds,
+  isAutoResearchAbortError,
   isRateLimitError,
   isTerminalFailureError,
 } from './errors';
@@ -349,23 +350,15 @@ async function parseIterationMetrics(
         expectedMetricName: metricName,
         expectedDirection: metricDirection,
       });
-      if (!artifact.value) {
-        return {
-          parsed: null,
-          parseError: artifact.error ?? 'Invalid metrics artifact.',
-        };
+      if (artifact.value) {
+        return normalizeParsedResult(
+          artifact.value as unknown as Record<string, unknown>,
+          metricName,
+          'metrics_json',
+        );
       }
-
-      return normalizeParsedResult(
-        artifact.value as unknown as Record<string, unknown>,
-        metricName,
-        'metrics_json',
-      );
-    } catch (error) {
-      return {
-        parsed: null,
-        parseError: `Invalid metrics.json content: ${formatError(error)}`,
-      };
+    } catch {
+      // Invalid on-disk JSON: fall through to agent stdout parsers.
     }
   }
 
@@ -551,21 +544,18 @@ function getRunArtifactPaths(runDir: RunDir): string[] {
 
 export async function startExperimentLoop(
   sendMessage: (systemPrompt: string, userMessage: string) => Promise<string>,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; abortController?: AbortController } = {},
 ): Promise<void> {
-  // The AbortController is shared between the loop body, the sendMessage
-  // wrapper, and `stopExperimentLoop()`. setupFlow creates it and threads
-  // the signal into both sendMessage options and `options.signal` here.
-  // If no external signal is provided, we synthesize one so the catch
-  // block always has something to unlink.
-  const externalSignal = options.signal;
-  const abortController = new AbortController();
+  // Prefer the controller created by setupFlow so Stop aborts the same
+  // signal that sendMessage / runHeadlessAgentTurn observe.
+  const abortController = options.abortController ?? new AbortController();
+  if (activeLoopAbortController && activeLoopAbortController !== abortController) {
+    activeLoopAbortController.abort();
+  }
   activeLoopAbortController = abortController;
-  const signal: AbortSignal = externalSignal ?? abortController.signal;
+  const signal = abortController.signal;
+  const externalSignal = options.signal;
 
-  // If an external signal fires, abort our controller too (so our own
-  // `activeLoopAbortController` becomes the single source of truth that
-  // `stopExperimentLoop()` references).
   let externalAbortListener: (() => void) | null = null;
   if (externalSignal && externalSignal !== abortController.signal) {
     if (externalSignal.aborted) {
@@ -627,6 +617,9 @@ export async function startExperimentLoop(
     }
 
     const state = useAutoResearchStore.getState();
+    if (state.id !== sessionId || state.loopState === 'idle') {
+      break;
+    }
     const activeRun = state.runHistory.find((run) => run.id === state.id);
 
     if (state.consecutiveFailures >= 3) {
@@ -1126,6 +1119,9 @@ export async function startExperimentLoop(
       const summary = `[Exp ${iteration}] ${parsed.hypothesis} → ${parsed.status} ${icon} (${parsed.metricValue ?? 'N/A'})`;
       useAutoResearchStore.getState().appendLiveOutput(summary + '\n');
     } catch (error) {
+      if (isAutoResearchAbortError(error)) {
+        throw error;
+      }
       if (isRateLimitError(error)) {
         consecutiveRateLimitCount += 1;
         const retryAfterSeconds = getRateLimitRetryAfterSeconds(error);
@@ -1389,11 +1385,10 @@ export async function startExperimentLoop(
     // Match both the loopEngine class and the duck-typed Error from
     // chatAdapter (which can't import the class without a cycle).
     const isAbort = error instanceof AutoResearchAbortedError
-      || (error instanceof Error && error.name === 'AutoResearchAbortedError');
+      || isAutoResearchAbortError(error);
     if (isAbort) {
-      // Mark the run as stopped if it wasn't already so persistence is consistent.
       const latest = useAutoResearchStore.getState();
-      if (latest.loopState !== 'stopped') {
+      if (latest.id === sessionId && latest.loopState !== 'stopped') {
         useAutoResearchStore.getState().setRunStatus('stopped', {
           summary: 'Aborted by user.',
           endedAt: new Date().toISOString(),

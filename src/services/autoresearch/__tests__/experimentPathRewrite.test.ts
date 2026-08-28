@@ -25,13 +25,16 @@ describe('rewriteExperimentPath', () => {
       .toBe('/tmp/other/train.py');
   });
 
-  it('does not rewrite when the checkout lives inside experimentDir', () => {
+  it('rewrites workspace-root experiment files when the checkout is nested under it', () => {
     const workspace = '/Users/demo/autoresearch';
     const nestedCode = `${workspace}/runs/run-1/iter-001/code`;
-    expect(rewriteExperimentPath(`${workspace}/train.py`, workspace, nestedCode))
-      .toBe(`${workspace}/train.py`);
-    expect(rewriteExperimentPath(`${nestedCode}/train.py`, workspace, nestedCode))
+    const iterDir = `${workspace}/runs/run-1/iter-001`;
+    expect(rewriteExperimentPath(`${workspace}/train.py`, workspace, nestedCode, iterDir))
       .toBe(`${nestedCode}/train.py`);
+    expect(rewriteExperimentPath(`${nestedCode}/train.py`, workspace, nestedCode, iterDir))
+      .toBe(`${nestedCode}/train.py`);
+    expect(rewriteExperimentPath(`${iterDir}/hypothesis.md`, workspace, nestedCode, iterDir))
+      .toBe(`${iterDir}/hypothesis.md`);
   });
 });
 
@@ -92,5 +95,17 @@ describe('rewriteAutoResearchToolArguments', () => {
     const args = { path: `${experimentDir}/train.py` };
     expect(rewriteAutoResearchToolArguments(args, { experimentDir })).toEqual(args);
     expect(rewriteAutoResearchToolArguments(args, { codeDir })).toEqual(args);
+  });
+
+  it('binds relative run_experiment.py onto the checkout and sets cwd', () => {
+    const rewritten = rewriteAutoResearchToolArguments(
+      {
+        path: 'run_experiment.py',
+        command: 'python3 run_experiment.py',
+      },
+      { experimentDir, codeDir },
+    );
+    expect(rewritten.path).toBe(`${codeDir}/run_experiment.py`);
+    expect(rewritten.cwd).toBe(codeDir);
   });
 });

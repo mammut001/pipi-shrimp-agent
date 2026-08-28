@@ -182,14 +182,40 @@ describe('metricsSchema', () => {
     expect(result.error).toContain('schemaVersion');
   });
 
-  it('rejects unknown extra top-level fields for strict schema artifacts', () => {
+  it('strips unknown extra top-level fields on agent artifacts', () => {
     const result = parseMetricsArtifactPayload({
       ...createValidArtifact(),
       unexpected: true,
     });
 
-    expect(result.value).toBeNull();
-    expect(result.error).toContain('Unrecognized key(s) in object');
+    expect(result.error).toBeUndefined();
+    expect(result.value?.metricValue).toBe(0.42);
+    expect((result.value as { unexpected?: unknown } | null)?.unexpected).toBeUndefined();
+  });
+
+  it('accepts native sklearn-style metrics.json objects', () => {
+    const result = parseMetricsArtifactPayload(
+      { accuracy: 0.91, loss: 0.12 },
+      { expectedMetricName: 'cv_accuracy' },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.metricName).toBe('cv_accuracy');
+    expect(result.value?.metricValue).toBe(0.91);
+    expect(result.value?.status).toBe('IMPROVED');
+  });
+
+  it('coerces string metricValue and empty hypothesis', () => {
+    const result = parseMetricsArtifactPayload({
+      metricName: 'cv_accuracy',
+      metricValue: '0.9751',
+      status: 'IMPROVED',
+      hypothesis: '',
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.metricValue).toBe(0.9751);
+    expect(result.value?.hypothesis).toBe('unspecified hypothesis');
   });
 
   it('normalizes legacy persisted records with the current runId contract', () => {

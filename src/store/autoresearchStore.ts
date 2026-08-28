@@ -430,6 +430,7 @@ interface AutoResearchStore extends ExperimentSession {
   setCurrentPhase: (phase?: AutoResearchRunPhase) => void;
   setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string; reason?: string }) => void;
   setReflectionFailed: (reason: string, options?: { summary?: string; endedAt?: string }) => void;
+  acknowledgeReflectionFailure: () => void;
   setError: (msg: string) => void;
   patchActiveRunResumeToken: (patch: Partial<Omit<AutoResearchResumeToken, 'schemaVersion' | 'sessionId' | 'createdAt'>>) => void;
   clearActiveRunResumeToken: () => void;
@@ -761,6 +762,26 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
             reason: sanitizedReason,
           },
         })],
+      })),
+    };
+  }),
+
+  acknowledgeReflectionFailure: () => set((state) => {
+    const endedAt = new Date().toISOString();
+    return {
+      loopState: 'stopped' as const,
+      errorMessage: undefined,
+      statusMessage: undefined,
+      reason: undefined,
+      ...withActiveRunUpdate(state, (run) => ({
+        ...run,
+        status: 'stopped' as const,
+        updatedAt: endedAt,
+        endedAt,
+        currentPhase: 'DONE' as const,
+        summary: 'Reflection failure acknowledged.',
+        reason: undefined,
+        resumeToken: undefined,
       })),
     };
   }),

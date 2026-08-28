@@ -391,6 +391,7 @@ export function AdvancedWorkdirSetup() {
 
   useEffect(() => {
     if (activeRunId) {
+      setShowSetup(false);
       setShowRunList(false);
     }
   }, [activeRunId]);
@@ -612,6 +613,19 @@ export function AdvancedWorkdirSetup() {
         <>
           <button onClick={handleResume} className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-[12px] font-medium text-green-700 hover:bg-green-100">
             Resume
+          </button>
+          <button onClick={handleStop} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 hover:bg-red-100">
+            Stop
+          </button>
+        </>
+      )}
+      {loopState === 'error' && selectedRun?.status === 'reflection_failed' && (
+        <>
+          <button
+            onClick={() => useAutoResearchStore.getState().acknowledgeReflectionFailure()}
+            className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-[12px] font-medium text-indigo-700 hover:bg-indigo-100"
+          >
+            Acknowledge
           </button>
           <button onClick={handleStop} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 hover:bg-red-100">
             Stop

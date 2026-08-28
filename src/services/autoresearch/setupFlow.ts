@@ -351,7 +351,10 @@ export async function startAutoResearchRun(
     },
   );
 
-  void startExperimentLoop(sendMessage, { signal: abortController.signal }).catch((error) => {
+  void startExperimentLoop(sendMessage, {
+    abortController,
+    signal: abortController.signal,
+  }).catch((error) => {
     const message = logAutoResearchSetupFailure('loop-start', error, {
       sessionId,
       experimentDir: preflight.resolvedExperimentDir,
@@ -489,7 +492,10 @@ export async function resumeInterruptedAutoResearchRun(
     },
   );
 
-  void startExperimentLoop(sendMessage, { signal: resumeAbortController.signal }).catch((error) => {
+  void startExperimentLoop(sendMessage, {
+    abortController: resumeAbortController,
+    signal: resumeAbortController.signal,
+  }).catch((error) => {
     const message = logAutoResearchSetupFailure('resume-loop-start', error, {
       sessionId: runId,
       experimentDir: preflight.resolvedExperimentDir,

@@ -376,7 +376,7 @@ export class StreamingToolExecutor {
 
       if (hookResult.requiresConfirmation) {
         if (
-          !canAutoApproveTool(permissionMode, request.name, { browserIntent })
+          !canAutoApproveTool(permissionMode, request.name, { browserIntent, source })
           && !requestPermission
         ) {
           prevalidatedResults.push(buildPolicyErrorResult(
@@ -439,7 +439,7 @@ export class StreamingToolExecutor {
         // (dangerous-command / path-validation) have already run via
         // preToolUseHooks upstream, so we know the request isn't
         // destructive.
-        if (canAutoApproveTool(permissionMode, request.name, { browserIntent })) {
+        if (canAutoApproveTool(permissionMode, request.name, { browserIntent, source })) {
           executableRequests.push({
             ...request,
             approvalToken: preview.approvalToken,

@@ -230,7 +230,7 @@ const PYTHON_TEMPLATE_FILES: &[TemplateFileSource] = &[
     TemplateFileSource {
         output: "run_experiment.py",
         purpose: "Loop-compatible experiment entrypoint.",
-        content: "import subprocess\n\n\ndef run(command: str) -> None:\n    completed = subprocess.run(command, shell=True, check=False)\n    if completed.returncode != 0:\n        raise SystemExit(completed.returncode)\n\n\nif __name__ == '__main__':\n    run('{{train_command}}')\n    run('{{eval_command}}')\n",
+        content: "import json\nimport subprocess\nfrom pathlib import Path\n\n\ndef run(command: str) -> int:\n    completed = subprocess.run(command, shell=True, check=False)\n    return completed.returncode\n\n\nif __name__ == '__main__':\n    train_rc = run('{{train_command}}')\n    eval_rc = run('{{eval_command}}')\n    rc = train_rc or eval_rc\n    payload = {\n        'metricName': '{{primary_metric}}',\n        'metricValue': 0.0 if rc == 0 else None,\n        'status': 'IMPROVED' if rc == 0 else 'FAILED',\n        'hypothesis': 'scaffold baseline',\n        'failReason': None if rc == 0 else f'train/eval exited {rc}',\n    }\n    Path('metrics.json').write_text(json.dumps(payload, indent=2) + '\\n', encoding='utf-8')\n    raise SystemExit(0 if rc == 0 else 1)\n",
     },
     TemplateFileSource {
         output: ".gitignore",
@@ -273,7 +273,7 @@ const NODE_TEMPLATE_FILES: &[TemplateFileSource] = &[
     TemplateFileSource {
         output: "run_experiment.py",
         purpose: "Loop-compatible wrapper entrypoint.",
-        content: "import subprocess\n\n\nif __name__ == '__main__':\n    raise SystemExit(subprocess.run('{{node_eval_command}}', shell=True, check=False).returncode)\n",
+        content: "import json\nimport subprocess\nfrom pathlib import Path\n\n\nif __name__ == '__main__':\n    rc = subprocess.run('{{node_eval_command}}', shell=True, check=False).returncode\n    payload = {\n        'metricName': '{{primary_metric}}',\n        'metricValue': 0.0 if rc == 0 else None,\n        'status': 'IMPROVED' if rc == 0 else 'FAILED',\n        'hypothesis': 'scaffold baseline',\n        'failReason': None if rc == 0 else f'eval exited {rc}',\n    }\n    Path('metrics.json').write_text(json.dumps(payload, indent=2) + '\\n', encoding='utf-8')\n    raise SystemExit(0 if rc == 0 else 1)\n",
     },
     TemplateFileSource {
         output: ".gitignore",

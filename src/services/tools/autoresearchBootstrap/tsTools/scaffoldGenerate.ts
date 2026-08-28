@@ -80,7 +80,7 @@ const TEMPLATE_SOURCES: Record<ScaffoldTemplateId, Record<string, string>> = {
     'configs/baseline.yaml.tmpl': `project: {{project_name}}\nbaseline: {{baseline_name}}\ndataset: {{dataset_name}}\nmetric: {{primary_metric}}\n`,
     'train.py.tmpl': `from pathlib import Path\n\n\ndef main() -> None:\n    Path('artifacts').mkdir(exist_ok=True)\n    print('Training placeholder for {{project_name}}')\n\n\nif __name__ == '__main__':\n    main()\n`,
     'eval.py.tmpl': `import json\nfrom pathlib import Path\n\n\ndef main() -> None:\n    Path('artifacts').mkdir(exist_ok=True)\n    payload = {\n        'metric': '{{primary_metric}}',\n        'baseline': '{{baseline_name}}',\n        'dataset': '{{dataset_name}}',\n        'value': 0.0,\n    }\n    print(json.dumps(payload))\n\n\nif __name__ == '__main__':\n    main()\n`,
-    'run_experiment.py.tmpl': `import subprocess\n\n\ndef run(command: str) -> None:\n    completed = subprocess.run(command, shell=True, check=False)\n    if completed.returncode != 0:\n        raise SystemExit(completed.returncode)\n\n\nif __name__ == '__main__':\n    run('{{train_command}}')\n    run('{{eval_command}}')\n`,
+    'run_experiment.py.tmpl': `import json\nimport subprocess\nfrom pathlib import Path\n\n\ndef run(command: str) -> int:\n    completed = subprocess.run(command, shell=True, check=False)\n    return completed.returncode\n\n\nif __name__ == '__main__':\n    train_rc = run('{{train_command}}')\n    eval_rc = run('{{eval_command}}')\n    rc = train_rc or eval_rc\n    payload = {\n        'metricName': '{{primary_metric}}',\n        'metricValue': 0.0 if rc == 0 else None,\n        'status': 'IMPROVED' if rc == 0 else 'FAILED',\n        'hypothesis': 'scaffold baseline',\n        'failReason': None if rc == 0 else f'train/eval exited {rc}',\n    }\n    Path('metrics.json').write_text(json.dumps(payload, indent=2) + '\\n', encoding='utf-8')\n    raise SystemExit(0 if rc == 0 else 1)\n`,
     '.gitignore': `__pycache__/\nartifacts/\n.venv/\nnode_modules/\n`,
   },
   'node-eval-harness': {
@@ -88,7 +88,7 @@ const TEMPLATE_SOURCES: Record<ScaffoldTemplateId, Record<string, string>> = {
     'AUTORESEARCH.md.tmpl': `# AutoResearch Notes\n\nGoal: {{research_goal}}\n\nSuccess criteria: {{success_criteria}}\n\nPrimary metric: {{primary_metric}}\n`,
     'package.json.tmpl': `{"name":"{{project_name}}","private":true,"type":"module","scripts":{"evaluate":"{{node_eval_command}}"},"devDependencies":{"tsx":"^4.19.2"}}\n`,
     'index.ts.tmpl': `const result = {\n  metric: '{{primary_metric}}',\n  baseline: '{{baseline_name}}',\n  dataset: '{{dataset_name}}',\n  value: 0,\n};\n\nconsole.log(JSON.stringify(result));\n`,
-    'run_experiment.py.tmpl': `import subprocess\n\n\nif __name__ == '__main__':\n    raise SystemExit(subprocess.run('{{node_eval_command}}', shell=True, check=False).returncode)\n`,
+    'run_experiment.py.tmpl': `import json\nimport subprocess\nfrom pathlib import Path\n\n\nif __name__ == '__main__':\n    rc = subprocess.run('{{node_eval_command}}', shell=True, check=False).returncode\n    payload = {\n        'metricName': '{{primary_metric}}',\n        'metricValue': 0.0 if rc == 0 else None,\n        'status': 'IMPROVED' if rc == 0 else 'FAILED',\n        'hypothesis': 'scaffold baseline',\n        'failReason': None if rc == 0 else f'eval exited {rc}',\n    }\n    Path('metrics.json').write_text(json.dumps(payload, indent=2) + '\\n', encoding='utf-8')\n    raise SystemExit(0 if rc == 0 else 1)\n`,
     '.gitignore': `node_modules/\ndist/\nartifacts/\n`,
   },
 };

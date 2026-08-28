@@ -68,6 +68,30 @@ function resolveBaselineValue(baselines: ExtractedBaseline[], primaryMetric: str
   return baselines[0]?.reportedMetrics[0]?.value ?? null;
 }
 
+function resolveBootstrapRemoteWorkDir(sshConfig: SshConfig, workDir: string): string {
+  const remoteRoot = (sshConfig.remoteWorkDir || '~/autoresearch').replace(/[\\/]+$/, '');
+  const trimmed = workDir.trim().replace(/[\\/]+$/, '');
+  if (!trimmed) {
+    return remoteRoot;
+  }
+  if (
+    trimmed === remoteRoot
+    || trimmed.startsWith(`${remoteRoot}/`)
+    || trimmed.startsWith('/')
+    || trimmed.startsWith('~/')
+  ) {
+    return trimmed;
+  }
+  const folderName = trimmed.split(/[\\/]/).filter(Boolean).pop() || 'bootstrap-project';
+  return `${remoteRoot}/${folderName}`;
+}
+
+function parentRemotePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  const idx = normalized.lastIndexOf('/');
+  return idx > 0 ? normalized.slice(0, idx) : '.';
+}
+
 function createDefaultRecipe(sshConfig?: SshConfig): Recipe {
   return {
     researchGoal: {
@@ -216,18 +240,22 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }, [agentLogs]);
 
   const handleReadyResult = useCallback(async (result: AutoResearchBootstrapResult, runIterations: number) => {
-    if (result.status !== 'ready' || bootstrappedAtRef.current === result.createdAt) {
+    if (result.status !== 'ready') {
+      setError(
+        (result.unresolvedQuestions || []).filter(Boolean).join(' ')
+        || 'Bootstrap plan needs confirmation before starting AutoResearch.',
+      );
+      return;
+    }
+    if (bootstrappedAtRef.current === result.createdAt) {
       return;
     }
     bootstrappedAtRef.current = result.createdAt;
 
     const workDir = result.plan.scaffold.workDir;
     const isSshMode = sshConfig && sshConfig.mode === 'ssh';
-    
-    // Determine the directory name and target paths
-    const folderName = workDir.split(/[\\/]/).filter(Boolean).pop() || 'bootstrap-project';
     const remoteWorkDir = isSshMode
-      ? `${sshConfig.remoteWorkDir || '~/autoresearch'}/${folderName}`
+      ? resolveBootstrapRemoteWorkDir(sshConfig, workDir)
       : workDir;
 
     const targetConfig: SshConfig = isSshMode
@@ -252,49 +280,65 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
 
     try {
       if (isSshMode) {
-        // 1. Create remote workspace directory
         await runSshExec({
           ...sshConfig,
           command: `mkdir -p ${shellEscapePath(remoteWorkDir)}`,
         });
 
-        // 2. Upload scaffold files
         for (const file of result.plan.scaffold.files) {
           const localFilePath = `${workDir}/${file.path}`;
           const remoteFilePath = `${remoteWorkDir}/${file.path}`;
+          const remoteParent = parentRemotePath(remoteFilePath);
+          if (remoteParent && remoteParent !== '.') {
+            await runSshExec({
+              ...sshConfig,
+              command: `mkdir -p ${shellEscapePath(remoteParent)}`,
+            });
+          }
 
-          // Read local file content
-          const localFileResponse = await invoke<{ content: string }>('read_file', {
-            path: localFilePath,
-            workDir: null,
-          });
+          let content: string | null = null;
+          try {
+            const localFileResponse = await invoke<{ content: string }>('read_file', {
+              path: localFilePath,
+              workDir: null,
+            });
+            content = localFileResponse.content;
+          } catch {
+            content = null;
+          }
+          if (content == null) {
+            continue;
+          }
 
-          // Upload to remote
           await runSshUpload({
             ...sshConfig,
-            content: localFileResponse.content,
+            content,
             remotePath: remoteFilePath,
           });
         }
 
-        // 3. Upload bootstrap plan JSON
         const remoteBootstrapResultPath = `${remoteWorkDir}/.pipi-shrimp/autoresearch.bootstrap.json`;
+        await runSshExec({
+          ...sshConfig,
+          command: `mkdir -p ${shellEscapePath(parentRemotePath(remoteBootstrapResultPath))}`,
+        });
         await runSshUpload({
           ...sshConfig,
           content: JSON.stringify(result, null, 2),
           remotePath: remoteBootstrapResultPath,
         });
 
-        // 4. Initialize Git on remote
         await runSshExec({
           ...sshConfig,
           command: [
             `cd ${shellEscapePath(remoteWorkDir)}`,
-            `git init`,
-            `git config user.name "AutoResearch"`,
-            `git config user.email "autoresearch@local"`,
-            `git add -A`,
-            `git commit --allow-empty -m "Initial bootstrap scaffold"`,
+            'if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
+            '  git init',
+            '  git config user.name "AutoResearch"',
+            '  git config user.email "autoresearch@local"',
+            '  git add -A',
+            '  git commit --allow-empty -m "Initial bootstrap scaffold"',
+            'fi',
           ].join('\n'),
         });
       }
@@ -400,6 +444,9 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     setError(null);
     setMissingFinalize(false);
     setStoppedByUser(false);
+    setHandoffSummary(null);
+    bootstrappedAtRef.current = null;
+    setReadyResult(null);
     setHasStarted(true);
     setIsStreaming(true);
     setAgentLogs(`[SYSTEM] Initializing AutoResearch Bootstrap Setup...\n`);
@@ -631,7 +678,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }), [isStreaming, readyResult, error]);
 
   const summaryCard = useMemo(() => {
-    if (!readyResult || handoffSummary) {
+    if (!readyResult || readyResult.status !== 'ready' || handoffSummary) {
       return null;
     }
 

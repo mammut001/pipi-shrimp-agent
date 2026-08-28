@@ -224,7 +224,7 @@ export async function executeTargetCommand(
     return await invoke<RawBashResult>('execute_bash', {
       args: {
         command: finalCommand,
-        workDir: isLocalTarget ? resolveDefaultLocalCwd(cfg.remoteWorkDir) : undefined,
+        workDir: isLocalTarget ? resolveDefaultLocalCwd(cfg.remoteWorkDir) : DEFAULT_LOCAL_COMMAND_CWD,
         timeoutSecs,
         windowsShellProfile,
       },
@@ -325,6 +325,10 @@ export async function createRunDir(
     `  fi`,
     `else`,
     `  ${buildSnapshotCopyCommand(snapshotSourceDir, runDir.codeDir).replace(/\n/g, '\n  ')}`,
+    `fi`,
+    `if [ ! -d ${shellEscapePath(runDir.codeDir)} ] || [ -z "$(ls -A ${shellEscapePath(runDir.codeDir)} 2>/dev/null)" ]; then`,
+    `  echo "Failed to snapshot experiment into ${runDir.codeDir}" >&2`,
+    `  exit 1`,
     `fi`,
     `: > ${shellEscapePath(runDir.systemPromptPath)}`,
     `: > ${shellEscapePath(runDir.hypothesisPath)}`,

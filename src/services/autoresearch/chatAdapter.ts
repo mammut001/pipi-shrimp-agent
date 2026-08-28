@@ -21,6 +21,7 @@ import {
   classifyAutoResearchFailure,
   formatError,
   getToolRoundLimit,
+  isAutoResearchAbortError,
   isToolRoundLimitError,
   type AutoResearchFailureKind,
 } from './errors';
@@ -649,7 +650,7 @@ export function createAutoResearchSendMessage(
       || workDir
       || ''
     ).trim();
-    const rewriteLocalExperimentPaths = store.sshConfig?.mode === 'local' && Boolean(currentRunDir?.codeDir);
+    const rewriteExperimentPaths = Boolean(currentRunDir?.codeDir);
     const disabledToolAttemptCounts = new Map<string, number>();
     const blockedTools = new Set<string>();
     let retryConstraintState = buildAutoResearchRetryConstraintState({
@@ -715,10 +716,11 @@ export function createAutoResearchSendMessage(
           toolExecutionSource: 'autoresearch_phase',
           permissionMode: 'bypass',
           executionMode: 'bypass',
-          rewriteToolArguments: rewriteLocalExperimentPaths
+          rewriteToolArguments: rewriteExperimentPaths
             ? (args) => rewriteAutoResearchToolArguments(args, {
               experimentDir: experimentDirForRewrite,
               codeDir: currentRunDir?.codeDir,
+              iterDir: currentRunDir?.iterDir,
             })
             : undefined,
           signal,
@@ -926,6 +928,11 @@ export function createAutoResearchSendMessage(
         break;
       } catch (error) {
         flushBufferedReasoning();
+        if (isAutoResearchAbortError(error) || signal?.aborted) {
+          const abortError = new Error('sendMessage aborted by user.') as Error & { name: string };
+          abortError.name = 'AutoResearchAbortedError';
+          throw abortError;
+        }
         lastError = error;
         const apiRequestFailure = isApiRequestFailure(error);
         if (apiRequestFailure) {

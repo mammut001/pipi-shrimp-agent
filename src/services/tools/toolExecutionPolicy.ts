@@ -115,6 +115,7 @@ export function isHighRiskToolName(toolName: string): boolean {
 export interface AutoApproveToolOptions {
   /** When true, browser mutation tools auto-approve in Agent (auto-edits) mode. */
   browserIntent?: boolean;
+  source?: ToolExecutionSource;
 }
 
 export function canAutoApproveTool(
@@ -139,7 +140,9 @@ export function canAutoApproveTool(
     // path-validation) cannot express "is this safe" for them
     // generically. agent_tool in particular can spin up sub-agents
     // and team runs that the user should still explicitly approve.
-    if (isSshTool(toolName)) return false;
+    // AutoResearch SSH iterations have no confirmation UI, so the
+    // remote catalog is auto-approved only for that source.
+    if (isSshTool(toolName) && options?.source !== 'autoresearch_phase') return false;
     if (isMcpTool(toolName)) return false;
     if (toolName === 'agent_tool') return false;
     return true;

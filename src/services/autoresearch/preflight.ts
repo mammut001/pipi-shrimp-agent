@@ -51,6 +51,39 @@ export interface AutoResearchPreflightResult {
 
 const REQUIRED_EXPERIMENT_FILES = ['run_experiment.py', 'AUTORESEARCH.md'] as const;
 
+export function isIgnorableAutoResearchDirtyFile(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '').trim();
+  if (!normalized) {
+    return true;
+  }
+  const base = normalized.split('/').pop() ?? normalized;
+  if (base === 'AUTORESEARCH.md' || base === 'metrics.json') {
+    return true;
+  }
+  return normalized.includes('.pipi-shrimp/');
+}
+
+export function applyIgnorableDirtyFilter(summary: AutoResearchEnvironmentSummary): AutoResearchEnvironmentSummary {
+  const dirtyFiles = (summary.dirtyFiles ?? []).filter((file) => !isIgnorableAutoResearchDirtyFile(file));
+  if ((summary.dirtyFiles?.length ?? 0) > 0 && dirtyFiles.length === 0) {
+    return {
+      ...summary,
+      dirtyFiles: [],
+      dirtyFileCount: 0,
+      repoStatus: 'clean',
+    };
+  }
+  if (dirtyFiles.length > 0) {
+    return {
+      ...summary,
+      dirtyFiles,
+      dirtyFileCount: dirtyFiles.length,
+      repoStatus: 'dirty',
+    };
+  }
+  return summary;
+}
+
 export interface AutoResearchEnvironmentSummary {
   experimentDir: string;
   gitRepo: boolean;
@@ -68,6 +101,7 @@ export interface AutoResearchEnvironmentSummary {
   gpuUtilizationPercent?: number | null;
   gpuMemoryUsedMb?: number | null;
   gpuMemoryTotalMb?: number | null;
+  dirtyFiles?: string[];
   projectAutoAdapted?: boolean;
   projectAdaptationActions?: string[];
   inferredProjectType?: 'python' | 'node' | 'unknown';
@@ -271,12 +305,17 @@ function parseEnvironmentSummary(
   const gpuMemoryUsedMb = parseOptionalTelemetryNumber(gpuValues[3]);
   const gpuMemoryTotalMb = parseOptionalTelemetryNumber(gpuValues[4]);
   const gpuTelemetryAvailable = values.get('gpu_telemetry_available') === '1';
+  const dirtyFiles = (values.get('dirty_files') || '')
+    .split('|')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 
-  return {
+  return applyIgnorableDirtyFilter({
     experimentDir,
     gitRepo,
     repoStatus: parsedDirtyFileCount > 0 ? 'dirty' : 'clean',
     dirtyFileCount: parsedDirtyFileCount,
+    dirtyFiles,
     preferredPythonCommand,
     worktreeWritable,
     runScriptPath: buildRequiredPath(experimentDir, 'run_experiment.py'),
@@ -298,7 +337,7 @@ function parseEnvironmentSummary(
     gpuUtilizationPercent,
     gpuMemoryUsedMb,
     gpuMemoryTotalMb,
-  };
+  });
 }
 
 function parseOptionalTelemetryNumber(value: string | undefined): number | null {
@@ -325,9 +364,11 @@ export async function inspectAutoResearchEnvironment(
     'done',
     'git_repo=0',
     'dirty_file_count=0',
+    'dirty_files=""',
     `if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then`,
     '  git_repo=1',
     '  dirty_file_count="$(git -C "$repo" status --porcelain | wc -l | tr -d \' \')"',
+    '  dirty_files="$(git -C "$repo" status --porcelain | sed \'s/^...//\' | tr \'\\n\' \'|\')"',
     'fi',
     'worktree_writable=0',
     'probe_path="$repo/.autoresearch-write-probe-$$"',
@@ -346,6 +387,7 @@ export async function inspectAutoResearchEnvironment(
     'printf \'preferred_python\\t%s\\n\' "$preferred_python"',
     'printf \'git_repo\\t%s\\n\' "$git_repo"',
     'printf \'dirty_file_count\\t%s\\n\' "$dirty_file_count"',
+    'printf \'dirty_files\\t%s\\n\' "$dirty_files"',
     'printf \'worktree_writable\\t%s\\n\' "$worktree_writable"',
     'printf \'gpu_telemetry_available\\t%s\\n\' "$gpu_telemetry_available"',
     'printf \'gpu_raw\\t%s\\n\' "$gpu_raw"',
@@ -426,6 +468,14 @@ export async function runAutoResearchPreflight(
     input.experimentDir,
   );
 
+  const mkdirResult = await executeTargetCommand(
+    { ...input.sshConfig, remoteWorkDir: '' },
+    `mkdir -p ${shellEscapePath(resolvedExperimentDir)}`,
+    30,
+  );
+  if ((mkdirResult.exit_code ?? 0) !== 0) {
+    throw new Error(mkdirResult.stderr || `Failed to create experiment directory: ${resolvedExperimentDir}`);
+  }
   await assertTargetPathExists(input.sshConfig, 'Experiment directory', resolvedExperimentDir);
 
   const adaptation = input.autoAdapt === false

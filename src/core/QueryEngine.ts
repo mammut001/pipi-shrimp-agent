@@ -480,14 +480,31 @@ export async function* runChatTurn(
       });
 
       let allContent: string[];
+      let abortListener: (() => void) | null = null;
       try {
+        const abortPromise = options?.signal
+          ? new Promise<never>((_, reject) => {
+            if (options.signal?.aborted) {
+              reject(new Error('Chat turn aborted'));
+              return;
+            }
+            abortListener = () => {
+              reject(new Error('Chat turn aborted'));
+            };
+            options.signal?.addEventListener('abort', abortListener, { once: true });
+          })
+          : null;
         allContent = await Promise.race([
           Promise.all(promises),
           timeoutPromise,
+          ...(abortPromise ? [abortPromise] : []),
         ]);
       } finally {
         if (timeoutId !== undefined) {
           clearTimeout(timeoutId);
+        }
+        if (options?.signal && abortListener) {
+          options.signal.removeEventListener('abort', abortListener);
         }
       }
       toolBudgetSummary = appendToolBudgetEntries(

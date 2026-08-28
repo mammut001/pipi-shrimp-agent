@@ -32,7 +32,13 @@ jest.mock('@/services/agentConfig', () => ({
 }));
 
 jest.mock('../runDir', () => ({
-  executeTargetCommand: (...args: unknown[]) => mockExecuteTargetCommand(...args),
+  executeTargetCommand: (...args: unknown[]) => {
+    const command = String(args[1] ?? '');
+    if (command.includes('mkdir -p')) {
+      return Promise.resolve({ stdout: '', exit_code: 0 });
+    }
+    return mockExecuteTargetCommand(...args);
+  },
   pathExistsOnTarget: (...args: unknown[]) => mockPathExistsOnTarget(...args),
 }));
 
@@ -45,7 +51,7 @@ jest.mock('@/services/resolvedChatRequest', () => ({
 }));
 
 import { useSettingsStore } from '@/store/settingsStore';
-import { runAutoResearchPreflight } from '../preflight';
+import { applyIgnorableDirtyFilter, runAutoResearchPreflight } from '../preflight';
 
 describe('runAutoResearchPreflight', () => {
   const agentConfig = {
@@ -470,5 +476,24 @@ describe('runAutoResearchPreflight', () => {
         delete (globalThis as { navigator?: unknown }).navigator;
       }
     }
+  });
+});
+
+describe('applyIgnorableDirtyFilter', () => {
+  it('treats AutoResearch notes as a clean repo', () => {
+    const filtered = applyIgnorableDirtyFilter({
+      experimentDir: '/tmp/exp',
+      gitRepo: true,
+      repoStatus: 'dirty',
+      dirtyFileCount: 1,
+      dirtyFiles: ['AUTORESEARCH.md'],
+      preferredPythonCommand: 'python3',
+      worktreeWritable: true,
+      runScriptPath: '/tmp/exp/run_experiment.py',
+      notesPath: '/tmp/exp/AUTORESEARCH.md',
+      recommendedRunCommand: 'python3 run_experiment.py',
+    });
+    expect(filtered.repoStatus).toBe('clean');
+    expect(filtered.dirtyFileCount).toBe(0);
   });
 });
