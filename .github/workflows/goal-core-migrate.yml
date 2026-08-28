@@ -34,9 +34,12 @@ jobs:
           PY
       - name: Apply migration
         run: python tools/goal-core-migrate.py
-      - name: Commit migration
+      - name: Commit source migration
         shell: bash
         run: |
+          # The GitHub Actions token has contents:write but not workflows:write.
+          # Keep workflow files unchanged here; they are cleaned up separately.
+          git checkout -- .github/workflows/ci.yml .github/workflows/goal-core-migrate.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
