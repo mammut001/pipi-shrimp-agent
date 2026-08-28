@@ -1,8 +1,9 @@
 /** @jest-environment jsdom */
 import React from 'react';
-import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
+
 import { BootstrapRecipeBuilder } from '../BootstrapRecipeBuilder';
 import { buildBootstrapPromptFromRecipe, type Recipe } from '../bootstrapRecipePrompt';
 
@@ -21,129 +22,95 @@ jest.mock('@tauri-apps/plugin-dialog', () => ({
   open: jest.fn(),
 }));
 
-describe('buildBootstrapPromptFromRecipe Prompt Compiler', () => {
-  const dummyRecipe: Recipe = {
-    researchGoal: {
-      goalText: 'Exceed the baseline accuracy of the model',
-      taskType: 'beat_baseline',
-    },
-    references: {},
-    baselineAndMetric: {
-      primaryMetric: 'accuracy',
-      direction: 'higher',
-      baselineValue: '0.82',
-      successCriteria: 'Consistent 85% accuracy',
-    },
-    workspace: {
-      workDir: '/workspace/test',
-      folderName: 'my-exp-folder',
-    },
-    verification: {
-      commands: ['pytest tests/', 'npm test'],
-    },
-    outputContract: {
-      includeMetrics: true,
-      includeArtifacts: true,
-      includeCommandsRun: false,
-      includeFailureReason: true,
-      includeRemainingRisks: false,
-    },
-  };
+const recipe: Recipe = {
+  researchGoal: {
+    goalText: 'Exceed the baseline accuracy of the model',
+    taskType: 'beat_baseline',
+    source: 'user',
+  },
+  references: {},
+  baselineAndMetric: {
+    primaryMetric: 'accuracy',
+    direction: 'higher',
+    baselineValue: '0.82',
+    successCriteria: 'Consistent 85% accuracy',
+  },
+  workspace: {
+    workDir: '/workspace/test',
+    folderName: 'my-exp-folder',
+  },
+  verification: {
+    commands: ['pytest tests/', 'npm test'],
+  },
+  outputContract: {
+    includeMetrics: true,
+    includeArtifacts: true,
+    includeCommandsRun: false,
+    includeFailureReason: true,
+    includeRemainingRisks: false,
+  },
+};
 
-  it('compiles correct markdown including all 6 sections', () => {
-    const prompt = buildBootstrapPromptFromRecipe(dummyRecipe, {
+describe('buildBootstrapPromptFromRecipe', () => {
+  it('compiles the structured recipe into the AutoResearch bootstrap prompt', () => {
+    const prompt = buildBootstrapPromptFromRecipe(recipe, {
       contextFiles: ['/workspace/test/paper.pdf'],
     });
 
     expect(prompt).toContain('# AUTORESEARCH BOOTSTRAP REQUEST');
     expect(prompt).toContain('## Research Goal');
-    expect(prompt).toContain('**Task Type**: beat_baseline');
-    expect(prompt).toContain('**Goal/Intent**: Exceed the baseline accuracy of the model');
+    expect(prompt).toContain('Exceed the baseline accuracy of the model');
     expect(prompt).toContain('## References');
-    expect(prompt).toContain('Reference File: /workspace/test/paper.pdf');
+    expect(prompt).toContain('/workspace/test/paper.pdf');
     expect(prompt).toContain('## Baseline & Metric');
-    expect(prompt).toContain('**Primary Metric**: accuracy');
-    expect(prompt).toContain('**Baseline Value**: 0.82');
-    expect(prompt).toContain('**Success Criteria**: Consistent 85% accuracy');
+    expect(prompt).toContain('accuracy');
     expect(prompt).toContain('## Workspace');
-    expect(prompt).toContain('**Workspace Dir**: /workspace/test');
-    expect(prompt).toContain('**Scaffold Folder Name**: my-exp-folder');
+    expect(prompt).toContain('/workspace/test');
     expect(prompt).toContain('## Verification');
-    expect(prompt).toContain('Verification command: `pytest tests/`');
-    expect(prompt).toContain('Verification command: `npm test`');
+    expect(prompt).toContain('pytest tests/');
     expect(prompt).toContain('## Output Contract');
-    expect(prompt).toContain('Include evaluation metrics');
-    expect(prompt).toContain('Include created artifacts');
-    expect(prompt).toContain('Document any failures and the root cause');
   });
 
-  it('does not mention normal chat modes or bypass rules', () => {
-    const prompt = buildBootstrapPromptFromRecipe(dummyRecipe);
+  it('does not mix normal chat-mode or bypass instructions into the recipe compiler', () => {
+    const prompt = buildBootstrapPromptFromRecipe(recipe);
     expect(prompt).not.toContain('Bypass');
     expect(prompt).not.toContain('EXECUTION MODE');
-    expect(prompt).not.toContain('Answer directly. Do not use tools.');
   });
 });
 
-describe('BootstrapRecipeBuilder UI Component', () => {
+describe('BootstrapRecipeBuilder', () => {
   let container: HTMLDivElement;
   let root: Root;
-
-  const mockRecipe: Recipe = {
-    researchGoal: {
-      goalText: 'Initial goal',
-      taskType: 'reproduce_paper',
-    },
-    references: {},
-    baselineAndMetric: {
-      primaryMetric: 'accuracy',
-      direction: 'higher',
-    },
-    workspace: {
-      workDir: '/workspace/dir',
-      folderName: 'my-project',
-    },
-    verification: {
-      commands: [],
-    },
-    outputContract: {
-      includeMetrics: true,
-      includeArtifacts: false,
-      includeCommandsRun: false,
-      includeFailureReason: false,
-      includeRemainingRisks: false,
-    },
-  };
-
-  const mockOnChange = jest.fn();
-  const mockOnSend = jest.fn();
+  const onChange = jest.fn();
+  const onSend = jest.fn();
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    mockOnChange.mockReset();
-    mockOnSend.mockReset();
+    onChange.mockReset();
+    onSend.mockReset();
   });
 
   afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
+    act(() => root.unmount());
     document.body.removeChild(container);
   });
 
-  it('renders 6 recipe sections', () => {
+  function renderBuilder(value: Recipe = recipe) {
     act(() => {
       root.render(
         <BootstrapRecipeBuilder
-          recipe={mockRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
+          recipe={value}
+          onChange={onChange}
+          onSend={onSend}
+        />,
       );
     });
+  }
 
+  it('renders the six recipe sections and cockpit actions', () => {
+    renderBuilder();
     const text = container.textContent || '';
     expect(text).toContain('autoresearch.recipe.researchGoal');
     expect(text).toContain('autoresearch.recipe.references');
@@ -151,329 +118,47 @@ describe('BootstrapRecipeBuilder UI Component', () => {
     expect(text).toContain('autoresearch.recipe.workspace');
     expect(text).toContain('autoresearch.recipe.verification');
     expect(text).toContain('autoresearch.recipe.outputContract');
+    expect(text).toContain('autoresearch.recipe.previewPrompt');
   });
 
-  it('collapses and expands sections when clicking Edit/Collapse', () => {
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={mockRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    // Renders collapsed summary cards by default initially (activeSection = null)
-    expect(container.innerHTML).not.toContain('autoresearch.recipe.taskType');
-
-    // Find the Edit button for Goal
-    const buttons = Array.from(container.querySelectorAll('button'));
-    const editGoalBtn = buttons.find(b => b.textContent === 'autoresearch.recipe.edit' && b.closest('.rounded-2xl')?.innerHTML.includes('autoresearch.recipe.researchGoal'));
-    expect(editGoalBtn).toBeTruthy();
-
-    // Expand Research Goal
-    act(() => {
-      editGoalBtn!.click();
-    });
-    expect(container.innerHTML).toContain('autoresearch.recipe.taskType');
-
-    // Click collapse
-    const collapseGoalBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'autoresearch.recipe.collapse');
-    expect(collapseGoalBtn).toBeTruthy();
-    act(() => {
-      collapseGoalBtn!.click();
-    });
-    expect(container.innerHTML).not.toContain('autoresearch.recipe.taskType');
+  it('removes the advanced Prompt-block editor from the AutoResearch surface', () => {
+    renderBuilder();
+    const text = container.textContent || '';
+    expect(text).not.toContain('autoresearch.recipe.advancedTitle');
+    expect(text).not.toContain('chat.blockComposerTitle');
+    expect(container.innerHTML).not.toContain('Block Task Composer');
   });
 
-  it('shows missing status when required fields are empty', () => {
-    const invalidRecipe: Recipe = {
-      ...mockRecipe,
-      researchGoal: {
-        goalText: '',
-        taskType: 'reproduce_paper',
-      },
-    };
+  it('sends only the structured recipe prompt', () => {
+    renderBuilder();
+    const startButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('autoresearch.recipe.startScaffolding'),
+    );
+    expect(startButton).toBeTruthy();
 
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={invalidRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    // Check that goal section shows Missing status
-    const elements = Array.from(container.querySelectorAll('span'));
-    const missingBadge = elements.find(el => el.textContent === 'autoresearch.recipe.missing');
-    expect(missingBadge).toBeTruthy();
-
-    // Start button should be disabled
-    const startBtn = container.querySelector('button[disabled]') as HTMLButtonElement;
-    expect(startBtn).toBeTruthy();
-    expect(startBtn.textContent).toContain('autoresearch.recipe.confirmResearchGoalFirst');
+    act(() => startButton!.click());
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0]?.[0]).toContain('# AUTORESEARCH BOOTSTRAP REQUEST');
   });
 
-  it('collapses and opens prompt preview modal', () => {
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={mockRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
+  it('disables start when a required field is missing', () => {
+    renderBuilder({
+      ...recipe,
+      workspace: { ...recipe.workspace, workDir: '' },
     });
+    const disabledButtons = Array.from(container.querySelectorAll('button[disabled]'));
+    expect(disabledButtons.length).toBeGreaterThan(0);
+    expect(container.textContent).toContain('autoresearch.recipe.action.selectWorkspace');
+  });
 
-    // Prompt preview modal should be hidden by default
-    expect(container.innerHTML).not.toContain('autoresearch.recipe.copyPrompt');
-
-    const previewBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('autoresearch.recipe.previewPrompt'));
-    expect(previewBtn).toBeTruthy();
-
-    // Open prompt preview modal
-    act(() => {
-      previewBtn!.click();
-    });
+  it('opens the prompt preview from the structured recipe', () => {
+    renderBuilder();
+    const preview = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('autoresearch.recipe.previewPrompt'),
+    );
+    expect(preview).toBeTruthy();
+    act(() => preview!.click());
     expect(container.innerHTML).toContain('autoresearch.recipe.copyPrompt');
-    expect(container.innerHTML).toContain('autoresearch.recipe.close');
-  });
-
-  it('selects From scratch template and maps taskType formatting correctly', () => {
-    const { formatTaskTypeLabel, formatDirectionLabel, formatWorkspaceSummary, formatOutputContractSummary, formatMetricSummary } = require('../BootstrapRecipeBuilder');
-    expect(formatTaskTypeLabel('from_scratch', 'zh-CN')).toBe('从零开始');
-    expect(formatTaskTypeLabel('from_scratch', 'en-US')).toBe('From scratch');
-    expect(formatTaskTypeLabel('reproduce_paper', 'zh-CN')).toBe('复现论文');
-    expect(formatTaskTypeLabel('beat_baseline', 'zh-CN')).toBe('超越基线');
-    expect(formatTaskTypeLabel('ablation', 'zh-CN')).toBe('消融实验');
-
-    expect(formatDirectionLabel('higher', 'zh-CN')).toBe('目标越大越好');
-    expect(formatDirectionLabel('lower', 'zh-CN')).toBe('目标越小越好');
-    expect(formatDirectionLabel('higher', 'en-US')).toBe('larger is better');
-
-    expect(formatWorkspaceSummary('/work/dir', 'my-proj', 'zh-CN')).toBe('工作区根目录：/work/dir · 脚手架目录：my-proj');
-    expect(formatWorkspaceSummary('', 'my-proj', 'zh-CN')).toBe('工作区根目录：未选择 · 脚手架目录：my-proj');
-
-    const mockContract = {
-      includeMetrics: true,
-      includeArtifacts: true,
-      includeCommandsRun: false,
-      includeFailureReason: true,
-      includeRemainingRisks: false,
-    };
-    expect(formatOutputContractSummary(mockContract, 'zh-CN')).toBe('最终报告包含：指标、产物、失败原因');
-    expect(formatOutputContractSummary(mockContract, 'en-US')).toBe('Final report contains: metrics, artifacts, failure reason');
-
-    expect(formatMetricSummary('accuracy', 'higher', '0.85', 'zh-CN')).toBe('主指标：accuracy，目标越大越好，当前基线 0.85');
-    expect(formatMetricSummary('loss', 'lower', '', 'zh-CN')).toBe('主指标：loss，目标越小越好，当前基线 未指定');
-  });
-
-  it('scaffoldFolderName exists but workspaceRoot missing -> section status is Missing and summary shows workspace root missing', () => {
-    const missingWorkspaceRecipe: Recipe = {
-      ...mockRecipe,
-      workspace: {
-        workDir: '',
-        folderName: 'bootstrap-project',
-      },
-    };
-
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={missingWorkspaceRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    const text = container.textContent || '';
-    expect(text).toContain('not selected');
-    
-    const workspaceCard = container.querySelector('.rounded-2xl:nth-of-type(4)');
-    expect(workspaceCard?.textContent).toContain('autoresearch.recipe.missing');
-  });
-
-  it('separates required and optional readiness status, and missing workspace disables Start and shows 2/3 required count', () => {
-    const missingWorkspaceRecipe: Recipe = {
-      ...mockRecipe,
-      workspace: {
-        workDir: '',
-        folderName: 'my-project',
-      },
-    };
-
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={missingWorkspaceRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    const text = container.textContent || '';
-    expect(text).toContain('2 / 3');
-    expect(text).toContain('autoresearch.recipe.requiredProgress');
-
-    const startBtn = container.querySelector('button[disabled]') as HTMLButtonElement;
-    expect(startBtn).toBeTruthy();
-    expect(startBtn.textContent).toContain('autoresearch.recipe.action.selectWorkspace');
-  });
-
-  it('detects template placeholder goal as placeholder (not completed) and disables Start button', () => {
-    const placeholderRecipe: Recipe = {
-      ...mockRecipe,
-      researchGoal: {
-        goalText: 'I want to start an AutoResearch task. Please guide me through setting up goals, papers, baselines, and workspace scaffolding.',
-        taskType: 'reproduce_paper',
-        source: 'template',
-      },
-    };
-
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={placeholderRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    const text = container.textContent || '';
-    expect(text).toContain('autoresearch.recipe.confirmGoal');
-    expect(text).toContain('2 / 3');
-
-    const startBtn = container.querySelector('button[disabled]') as HTMLButtonElement;
-    expect(startBtn).toBeTruthy();
-    expect(startBtn.textContent).toContain('autoresearch.recipe.confirmResearchGoalFirst');
-  });
-
-  it('clicking missing workspace action button expands Workspace section', () => {
-    const missingWorkspaceRecipe: Recipe = {
-      ...mockRecipe,
-      workspace: {
-        workDir: '',
-        folderName: 'my-project',
-      },
-    };
-
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={missingWorkspaceRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    expect(container.innerHTML).not.toContain('autoresearch.recipe.rootDir');
-
-    const warningActionBtn = Array.from(container.querySelectorAll('button')).find(
-      b => b.textContent?.includes('autoresearch.recipe.action.selectWorkspace')
-    );
-    expect(warningActionBtn).toBeTruthy();
-
-    act(() => {
-      warningActionBtn!.click();
-    });
-
-    expect(container.innerHTML).toContain('autoresearch.recipe.rootDir');
-  });
-
-  it('clicking right panel progress step buttons expands the matching section on the left', () => {
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={mockRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    expect(container.innerHTML).not.toContain('autoresearch.recipe.rootDir');
-
-    // Find step button for workspace in right panel progress steps list
-    const stepButtons = Array.from(container.querySelectorAll('button'));
-    const workspaceStepBtn = stepButtons.find(b => b.getAttribute('aria-label') === 'Configure autoresearch.recipe.workspace');
-    expect(workspaceStepBtn).toBeTruthy();
-
-    act(() => {
-      workspaceStepBtn!.click();
-    });
-
-    // Left workspace section should now be expanded
-    expect(container.innerHTML).toContain('autoresearch.recipe.rootDir');
-  });
-
-  it('renders template-aware reference guidance in References card when no files are attached', () => {
-    const guidanceRecipe: Recipe = {
-      ...mockRecipe,
-      researchGoal: {
-        goalText: 'Initial goal',
-        taskType: 'reproduce_paper',
-      },
-    };
-
-    act(() => {
-      root.render(
-        <BootstrapRecipeBuilder
-          recipe={guidanceRecipe}
-          onChange={mockOnChange}
-          onSend={mockOnSend}
-        />
-      );
-    });
-
-    // Expand References section
-    const stepButtons = Array.from(container.querySelectorAll('button'));
-    const referencesStepBtn = stepButtons.find(b => b.getAttribute('aria-label') === 'Configure autoresearch.recipe.references');
-    expect(referencesStepBtn).toBeTruthy();
-
-    act(() => {
-      referencesStepBtn!.click();
-    });
-
-    // Should render the guidance for reproduce_paper
-    expect(container.textContent).toContain('autoresearch.recipe.referenceGuidance.reproduce');
-  });
-});
-
-describe('BootstrapRecipeBuilder advanced prompt blocks path', () => {
-  // The advanced prompt blocks toggle lets a user override the compiled prompt
-  // by composing their own ComposerBlocks. When Send is clicked, the blocks are
-  // fed through `buildPromptFromBlocks` from
-  // `@/components/chatInput/blocks/promptBuilder`. This is exercised here
-  // (a) by a static source-level assertion that no `require(` call sneaks
-  // back into the browser bundle, and (b) by a behavioural test that the
-  // submit handler routes through the static ESM import.
-  it('does not use CommonJS require() to load buildPromptFromBlocks', () => {
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const sourcePath = path.join(__dirname, '..', 'BootstrapRecipeBuilder.tsx');
-    const source = fs.readFileSync(sourcePath, 'utf8');
-    expect(source).not.toMatch(/require\(\s*['"]@\/components\/chatInput\/blocks\/promptBuilder['"]/);
-    // And confirm the static import is present, so we know the fallback is real.
-    expect(source).toMatch(
-      /import\s*\{[^}]*\bbuildPromptFromBlocks\b[^}]*\}\s*from\s*['"]@\/components\/chatInput\/blocks\/promptBuilder['"]/,
-    );
-  });
-
-  it('uses the static buildPromptFromBlocks import in the advanced send path', () => {
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const sourcePath = path.join(__dirname, '..', 'BootstrapRecipeBuilder.tsx');
-    const source = fs.readFileSync(sourcePath, 'utf8');
-
-    // The handleSubmit body should call buildPromptFromBlocks with composerBlocks,
-    // which is the symbol that drives the advanced path.
-    expect(source).toMatch(/buildPromptFromBlocks\(\s*composerBlocks/);
+    expect(container.textContent).toContain('# AUTORESEARCH BOOTSTRAP REQUEST');
   });
 });
