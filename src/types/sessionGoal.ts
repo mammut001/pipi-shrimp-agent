@@ -1,3 +1,5 @@
+import type { GoalEvaluation, GoalSpec } from '@/services/goal/types';
+
 /** Lifecycle for a per-session durable objective (Codex /goal-inspired). */
 export type SessionGoalStatus =
   | 'idle'
@@ -23,17 +25,11 @@ export interface SessionGoalBudget {
   tokensUsed: number;
 }
 
-export interface SessionGoalEvaluation {
-  reached: boolean;
-  confidence: number;
-  reasoning: string;
+export type SessionGoalEvaluation = GoalEvaluation & {
   evidence: string[];
-  timestamp: number;
-}
+};
 
-export interface SessionGoalRecord {
-  objective: string;
-  successCriteria: string[];
+export interface SessionGoalRecord extends GoalSpec {
   asciiPreview: string;
   status: SessionGoalStatus;
   autoContinue: boolean;
