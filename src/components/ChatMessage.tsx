@@ -23,8 +23,8 @@ import {
 import { buildImageDataUrl } from '@/services/vision/imageAttachments';
 import { ChatImage } from './ChatImage';
 import { ArtifactsBadge } from './ArtifactsBadge';
-import { useUIStore } from '@/store';
-import { normalizeStructuredToolError } from '@/utils/toolErrorNormalization';
+import { useUIStore, useChatStore } from '@/store';
+import { normalizeStructuredToolError, type NormalizedToolError } from '@/utils/toolErrorNormalization';
 
 function isSafeMarkdownHref(href: string | undefined): boolean {
   if (!href) return false;
@@ -32,6 +32,64 @@ function isSafeMarkdownHref(href: string | undefined): boolean {
   return !normalized.startsWith('javascript:')
     && !normalized.startsWith('data:')
     && !normalized.startsWith('vbscript:');
+}
+
+export function StructuredErrorCard({ normalized, toolCallId }: { normalized: NormalizedToolError; toolCallId?: string }) {
+  const handleAction = async () => {
+    if (normalized.actionKind === 'select_project_folder') {
+      const currentSessionId = useChatStore.getState().currentSessionId;
+      if (currentSessionId) {
+        await useChatStore.getState().setSessionProjectDir(currentSessionId);
+      } else {
+        const folderBtn = document.querySelector<HTMLButtonElement>('[data-folder-trigger="true"]');
+        folderBtn?.click();
+      }
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3.5 my-2 max-w-full min-w-0 font-sans not-prose">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="flex h-2 w-2 rounded-full bg-amber-500" />
+          <span className="text-xs font-semibold text-amber-900">{normalized.title}</span>
+        </div>
+        {toolCallId && <span className="text-[9px] font-mono text-gray-400">ID: {toolCallId}</span>}
+      </div>
+      <p className="text-xs text-amber-800 leading-relaxed font-sans mb-1.5 break-words">
+        {normalized.userMessage}
+      </p>
+      {normalized.noOpNotice && (
+        <p className="text-[11px] text-amber-600/90 font-medium mb-3">
+          {normalized.noOpNotice}
+        </p>
+      )}
+      <div className="flex items-center gap-2 flex-wrap pt-1">
+        {normalized.actionLabel && (
+          <button
+            type="button"
+            onClick={handleAction}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 transition-colors"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            {normalized.actionLabel}
+          </button>
+        )}
+        {normalized.rawDetails && (
+          <details className="text-[10px] text-gray-500 w-full mt-2">
+            <summary className="cursor-pointer hover:text-gray-700 select-none">
+              {t('common.details') || '详细诊断信息'}
+            </summary>
+            <pre className="mt-1 p-2 bg-white/80 rounded border border-amber-200 text-gray-600 font-mono text-[10px] whitespace-pre-wrap break-all overflow-x-auto max-w-full">
+              {normalized.rawDetails}
+            </pre>
+          </details>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Lazy-loaded heavy components — split into separate chunks
@@ -71,6 +129,9 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
   const normalizedMessageContent = isUser
     ? message.content
     : normalizeResumeTemplateMarkdown(message.content);
+  const assistantStructuredError = !isUser
+    ? normalizeStructuredToolError(normalizedMessageContent)
+    : null;
 
   useEffect(() => () => {
     if (copyResetTimeoutRef.current) {
@@ -193,7 +254,9 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                 </div>
               )}
 
-              {isUser ? (
+              {assistantStructuredError ? (
+                <StructuredErrorCard normalized={assistantStructuredError} toolCallId={message.id} />
+              ) : isUser ? (
                 /* User messages: plain text or Tool Results */
                 <MessageContent content={message.content} />
               ) : (
@@ -211,6 +274,13 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                       // Clean up the language name from any '[' or ']' or spaces
                       const language = rawLanguage.replace(/\[|\]/g, '').trim();
                       const codeContent = String(children).replace(/\n$/, '');
+
+                      if (language === 'json' || !isInline) {
+                        const blockError = normalizeStructuredToolError(codeContent);
+                        if (blockError) {
+                          return <StructuredErrorCard normalized={blockError} toolCallId={message.id} />;
+                        }
+                      }
 
                       if (isInline) {
                         return (
@@ -574,52 +644,7 @@ function MessageContent({ content }: { content: string }) {
     if (!isCleared) {
       const normalized = normalizeStructuredToolError(result);
       if (normalized) {
-        return (
-          <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3.5 my-2 max-w-full min-w-0">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2 w-2 rounded-full bg-amber-500" />
-                <span className="text-xs font-semibold text-amber-900">{normalized.title}</span>
-              </div>
-              <span className="text-[9px] font-mono text-gray-400">ID: {toolCallId}</span>
-            </div>
-            <p className="text-xs text-amber-800 leading-relaxed font-sans mb-1.5 break-words">
-              {normalized.userMessage}
-            </p>
-            {normalized.noOpNotice && (
-              <p className="text-[11px] text-amber-600/90 font-medium mb-3">
-                {normalized.noOpNotice}
-              </p>
-            )}
-            <div className="flex items-center gap-2 flex-wrap pt-1">
-              {normalized.actionKind === 'select_project_folder' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const folderBtn = document.querySelector<HTMLButtonElement>('[data-folder-trigger="true"]');
-                    folderBtn?.click();
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-amber-700 transition-colors"
-                >
-                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                  </svg>
-                  {normalized.actionLabel}
-                </button>
-              )}
-              {normalized.rawDetails && (
-                <details className="text-[10px] text-gray-500 w-full mt-2">
-                  <summary className="cursor-pointer hover:text-gray-700 select-none">
-                    {t('common.details') || '详细诊断信息'}
-                  </summary>
-                  <pre className="mt-1 p-2 bg-white/80 rounded border border-amber-200 text-gray-600 font-mono text-[10px] whitespace-pre-wrap break-all overflow-x-auto max-w-full">
-                    {normalized.rawDetails}
-                  </pre>
-                </details>
-              )}
-            </div>
-          </div>
-        );
+        return <StructuredErrorCard normalized={normalized} toolCallId={toolCallId} />;
       }
     }
 

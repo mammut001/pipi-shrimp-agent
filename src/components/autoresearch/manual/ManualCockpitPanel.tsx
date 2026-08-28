@@ -122,6 +122,12 @@ export function ManualCockpitPanel({
     if (connectionTestStatus === 'testing') {
       primaryActionLabel = t('autoresearch.connectionTesting') || '测试中...';
       primaryActionDisabled = true;
+    } else if (connectionTestStatus === 'error') {
+      primaryActionLabel = t('autoresearch.manual.action.envCheckFailed') || '环境检查失败，重新测试';
+      primaryActionHandler = () => {
+        setActiveSection('envCheck');
+        void handleTestConnection();
+      };
     } else {
       primaryActionLabel = t('autoresearch.manual.action.testEnv') || '先测试运行环境';
       primaryActionHandler = () => {
@@ -170,29 +176,34 @@ export function ManualCockpitPanel({
         {/* Checklist of 6 required elements */}
         <div className="space-y-1.5">
           {requiredItems.map((item, idx) => {
+            const isFailed = item.id === 'envCheck' && connectionTestStatus === 'error';
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={item.onClick}
                 className={`w-full flex items-center justify-between text-left p-2 rounded-xl border text-xs transition-all ${
-                  !item.ready
+                  isFailed
+                    ? 'bg-rose-50/40 border-rose-200 text-rose-800 hover:bg-rose-50/70'
+                    : !item.ready
                     ? 'bg-amber-50/30 border-amber-200/50 text-slate-700 hover:bg-amber-50/60'
                     : 'bg-emerald-50/20 border-emerald-100 text-slate-700 hover:bg-emerald-50/40'
                 }`}
               >
                 <div className="flex items-center gap-2">
                   <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full font-bold text-[9px] ${
-                    item.ready
+                    isFailed
+                      ? 'bg-rose-100 text-rose-700'
+                      : item.ready
                       ? 'bg-emerald-100 text-emerald-700'
                       : 'bg-amber-100 text-amber-700'
                   }`}>
-                    {idx + 1}
+                    {isFailed ? '!' : idx + 1}
                   </span>
                   <span>{item.label}</span>
                 </div>
-                <span className={item.ready ? 'text-emerald-600 font-semibold' : 'text-amber-600'}>
-                  {item.ready ? '✓' : '⋯'}
+                <span className={isFailed ? 'text-rose-600 font-semibold' : item.ready ? 'text-emerald-600 font-semibold' : 'text-amber-600'}>
+                  {isFailed ? (t('common.error') || '失败') : item.ready ? '✓' : '⋯'}
                 </span>
               </button>
             );
@@ -201,10 +212,16 @@ export function ManualCockpitPanel({
 
         {/* Missing details list */}
         {missingItems.length > 0 && (
-          <div className="rounded-xl bg-amber-50/30 border border-amber-200/50 p-3 space-y-1.5 text-xs text-amber-800 font-sans">
+          <div className={`rounded-xl border p-3 space-y-1.5 text-xs font-sans ${
+            connectionTestStatus === 'error'
+              ? 'bg-rose-50/40 border-rose-200 text-rose-800'
+              : 'bg-amber-50/30 border-amber-200/50 text-amber-800'
+          }`}>
             {missingItems.length === 1 && missingItems[0].id === 'envCheck' ? (
-              <div className="font-semibold text-amber-900 font-sans">
-                {t('autoresearch.manual.finalBlocker')}
+              <div className={`font-semibold font-sans ${connectionTestStatus === 'error' ? 'text-rose-900' : 'text-amber-900'}`}>
+                {connectionTestStatus === 'error'
+                  ? (t('autoresearch.manual.action.envCheckFailed') || '运行环境检查失败。请修复上面的问题后重新测试。')
+                  : t('autoresearch.manual.finalBlocker')}
               </div>
             ) : (
               <>

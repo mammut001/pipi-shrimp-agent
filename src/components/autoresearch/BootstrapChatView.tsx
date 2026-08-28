@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { t } from '@/i18n';
+import { t, getCurrentLocale } from '@/i18n';
 import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
 import { AUTORESEARCH_BOOTSTRAP_TEMPLATE } from '@/services/agents/templates/autoresearchBootstrap';
 import { AutoResearchBootstrapResultSchema } from '@/services/autoresearch/bootstrap/schema';
@@ -460,11 +460,11 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         setAgentLogs(
           (prev) =>
             prev
-            + '\n[SYSTEM] bootstrap_finalize missing after first turn — running finalize nudge turn...\n',
+            + '\n' + (t('autoresearch.bootstrap.log.finalizeNudge') || '[SYSTEM] bootstrap_finalize missing after first turn — running finalize nudge turn...') + '\n',
         );
         await runBootstrapTurn(
           [{ role: 'user', content: BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE }],
-          'Finalize-nudge headless turn (must call bootstrap_finalize)...',
+          t('autoresearch.bootstrap.log.finalizing') || 'Finalize-nudge headless turn (must call bootstrap_finalize)...',
         );
         if (bootstrapAbortRef.current.signal.aborted) {
           return;
@@ -473,21 +473,20 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       }
 
       if (shouldRunBootstrapFinalizeNudge(ready)) {
-        const warnMsg = BOOTSTRAP_MISSING_FINALIZE_MESSAGE;
+        const warnMsg = t('autoresearch.bootstrap.missingFinalize') || BOOTSTRAP_MISSING_FINALIZE_MESSAGE;
         setMissingFinalize(true);
         setError(
-          `${warnMsg} Use “Retry bootstrap” to run again with the same recipe, `
-          + 'or “Back to Recipe” to adjust goals/workspace, then start again.',
+          `${warnMsg} ` + (t('autoresearch.bootstrap.retryHint') || 'Use “Retry bootstrap” to run again with the same recipe, or “Back to Recipe” to adjust goals/workspace, then start again.'),
         );
         setAgentLogs(
           (prev) =>
             prev
             + `\n[WARNING] ${warnMsg}\n`
-            + '[RECOVERY] Next steps: Retry bootstrap (same prompt) or Back to Recipe to edit setup.\n',
+            + (t('autoresearch.bootstrap.recoverySteps') || '[RECOVERY] Next steps: Retry bootstrap (same prompt) or Back to Recipe to edit setup.') + '\n',
         );
       } else {
         setMissingFinalize(false);
-        setAgentLogs((prev) => prev + `\n[SYSTEM] Headless Research Agent completed successfully.\n`);
+        setAgentLogs((prev) => prev + '\n' + (t('autoresearch.bootstrap.log.agentCompleted') || '[SYSTEM] Headless Research Agent completed successfully.') + '\n');
       }
     } catch (runnerError) {
       if (bootstrapAbortRef.current?.signal.aborted) {
@@ -531,23 +530,33 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     let baselineValue = '';
     let successCriteria = '';
 
+    const isZh = getCurrentLocale().startsWith('zh');
+
     if (templateId === 'reproduce-paper') {
       taskType = 'reproduce_paper';
-      goalText = 'I want to fully reproduce a paper. Please help me identify the paper claims, lock baselines, target primary metric, and construct scaffold files.';
+      goalText = isZh
+        ? '我想复现一篇论文的完整实验。请协助我提取论文核心结论、锁定基线与目标指标，并构建实验脚手架文件。'
+        : 'I want to fully reproduce a paper. Please help me identify the paper claims, lock baselines, target primary metric, and construct scaffold files.';
       folderName = 'reproduce-project';
     } else if (templateId === 'beat-baseline') {
       taskType = 'beat_baseline';
-      goalText = 'I want to exceed an existing baseline on a known task. Please propose improvements, keep evaluations fair, and setup experiment workspace.';
+      goalText = isZh
+        ? '我想在已知任务上超越现有基线。请帮我设计改进方案、确保评估公平性，并搭建实验工作区。'
+        : 'I want to exceed an existing baseline on a known task. Please propose improvements, keep evaluations fair, and setup experiment workspace.';
       folderName = 'baseline-project';
     } else if (templateId === 'ablation') {
       taskType = 'ablation';
-      goalText = 'I want to conduct ablation studies on an existing model or method. Please help me isolate ablation parameters, verify metrics, and bootstrap scaffolding.';
+      goalText = isZh
+        ? '我想对现有模型或方法进行消融实验。请协助我分离消融变量、验证评估指标，并生成脚手架。'
+        : 'I want to conduct ablation studies on an existing model or method. Please help me isolate ablation parameters, verify metrics, and bootstrap scaffolding.';
       folderName = 'ablation-project';
       baselineValue = '';
       successCriteria = '';
     } else if (templateId === 'from-scratch') {
       taskType = 'from_scratch';
-      goalText = 'I want to start a brand new AutoResearch project from scratch. Please propose a concrete research objective and scaffold the project workspace.';
+      goalText = isZh
+        ? '我想从零开始启动一个新的 AutoResearch 课题。请协助我确定具体研究目标并搭建项目工作区。'
+        : 'I want to start a brand new AutoResearch project from scratch. Please propose a concrete research objective and scaffold the project workspace.';
       folderName = 'scratch-project';
       baselineValue = '';
       successCriteria = '';
@@ -738,27 +747,27 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                           }}
                           className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-all text-neutral-300 font-sans"
                         >
-                          ← Back to Recipe
+                          ← {t('autoresearch.bootstrap.backToRecipe') || 'Back to Recipe'}
                         </button>
                         {stoppedByUser ? (
                           <>
                             <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span className="text-[10px] text-amber-400 font-bold">Stopped</span>
+                            <span className="text-[10px] text-amber-400 font-bold">{t('common.stopped') || '已停止'}</span>
                           </>
                         ) : error ? (
                           <>
                             <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                            <span className="text-[10px] text-red-400 font-bold">Failed</span>
+                            <span className="text-[10px] text-red-400 font-bold">{t('common.failed') || '失败'}</span>
                           </>
                         ) : readyResult?.status === 'ready' ? (
                           <>
                             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            <span className="text-[10px] text-emerald-400 font-bold">Finished</span>
+                            <span className="text-[10px] text-emerald-400 font-bold">{t('autoresearch.bootstrap.log.finished') || '完成'}</span>
                           </>
                         ) : (
                           <>
                             <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span className="text-[10px] text-amber-400 font-bold">Incomplete</span>
+                            <span className="text-[10px] text-amber-400 font-bold">{t('autoresearch.bootstrap.log.incomplete') || '未完成'}</span>
                           </>
                         )}
                       </>
@@ -766,11 +775,11 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-1.5 selection:bg-neutral-800 min-w-0 max-w-full" ref={consoleScrollRef}>
-                  <pre className="whitespace-pre-wrap leading-relaxed break-all overflow-x-auto max-w-full">{agentLogs || 'Initializing bootstrap process...'}</pre>
+                  <pre className="whitespace-pre-wrap leading-relaxed break-all overflow-x-auto max-w-full">{agentLogs || (t('autoresearch.bootstrap.log.initializing') || '正在初始化引导流程...')}</pre>
                   {isStreaming && (
                     <div className="inline-flex items-center gap-1 text-[10px] text-neutral-500 animate-pulse font-sans">
                       <span>▋</span>
-                      <span>Streaming logs...</span>
+                      <span>{t('autoresearch.bootstrap.log.streaming') || '正在实时输出日志...'}</span>
                     </div>
                   )}
                 </div>

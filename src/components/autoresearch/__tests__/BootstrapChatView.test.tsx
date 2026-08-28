@@ -9,7 +9,20 @@ import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstr
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 jest.mock('@/i18n', () => ({
-  t: (key: string) => key,
+  t: (key: string) => {
+    const dict: Record<string, string> = {
+      'autoresearch.bootstrap.missingFinalize': 'Bootstrap agent finished but did not produce a bootstrap_finalize result.',
+      'autoresearch.bootstrap.retryHint': 'Use “Retry bootstrap” to run again with the same recipe, or “Back to Recipe” to adjust goals/workspace, then start again.',
+      'autoresearch.bootstrap.recoverySteps': '[RECOVERY] Next steps: Retry bootstrap (same prompt) or Back to Recipe to edit setup.',
+      'common.stopped': 'Stopped',
+      'common.failed': 'Failed',
+      'autoresearch.bootstrap.log.finished': 'Finished',
+      'autoresearch.bootstrap.log.incomplete': 'Incomplete',
+      'autoresearch.bootstrap.backToRecipe': 'Back to Recipe',
+      'autoresearch.bootstrap.log.stopped': '[SYSTEM] Bootstrap stopped by user.',
+    };
+    return dict[key] || key;
+  },
   getCurrentLocale: () => 'en-US',
 }));
 

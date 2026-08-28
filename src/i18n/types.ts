@@ -27,6 +27,10 @@ export type TranslationKeys = {
   'common.edit': string;
   'common.hide': string;
   'common.show': string;
+  'common.hideRightPanel': string;
+  'common.showRightPanel': string;
+  'common.stopped': string;
+  'common.failed': string;
   'common.clear': string;
   'common.open': string;
   'common.move': string;
@@ -1141,6 +1145,17 @@ export type TranslationKeys = {
   'autoresearch.bootstrap.log.completed': string;
   'autoresearch.bootstrap.log.failed': string;
   'autoresearch.bootstrap.log.blocked': string;
+  'autoresearch.bootstrap.log.streaming': string;
+  'autoresearch.bootstrap.log.initializing': string;
+  'autoresearch.bootstrap.log.finished': string;
+  'autoresearch.bootstrap.log.incomplete': string;
+  'autoresearch.bootstrap.log.finalizeNudge': string;
+  'autoresearch.bootstrap.log.finalizing': string;
+  'autoresearch.bootstrap.log.agentCompleted': string;
+  'autoresearch.bootstrap.backToRecipe': string;
+  'autoresearch.bootstrap.missingFinalize': string;
+  'autoresearch.bootstrap.retryHint': string;
+  'autoresearch.bootstrap.recoverySteps': string;
   'autoresearch.manual.workspaceHelper': string;
   'autoresearch.manual.targetProjectHelper': string;
   'autoresearch.manual.advancedFields': string;

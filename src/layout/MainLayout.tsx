@@ -20,6 +20,7 @@
  */
 
 import React, { lazy, Suspense } from 'react';
+import { t } from '@/i18n';
 import { useUIStore } from '@/store';
 import { useArtifactsStore } from '@/store/artifactsStore';
 import { useResponsiveLayout } from '@/hooks';
@@ -35,17 +36,18 @@ const ArtifactsPanel = lazy(() => import('@/components/ArtifactsPanel'));
 /**
  * Props for MainLayout component
  */
-interface MainLayoutProps {
-  /** Child components to render in the main content area */
+export interface MainLayoutProps {
   children: React.ReactNode;
-  /** Whether to show the sidebar (default: true) */
   showSidebar?: boolean;
-  /** Override whether the right panel should render */
+  /**
+   * Explicit right-panel visibility override. When omitted, the panel tracks
+   * `uiStore.rightPanelVisible` (and is auto-hidden on narrow viewports).
+   */
   showRightPanel?: boolean;
   /**
-   * Custom content for the right panel. When omitted, the global `AgentPanel`
-   * is used as the default so every page has a useful side panel out of the
-   * box. Pass `null` to disable the right panel entirely.
+   * Page-specific content to render in the right panel. Pass `null` to disable
+   * the panel entirely for pages that never need one (e.g. empty-state views).
+   * Defaults to `<AgentPanel />`.
    */
   rightPanelContent?: React.ReactNode | null;
   /**
@@ -71,15 +73,18 @@ export function MainLayout({
 }: MainLayoutProps) {
   const { sidebarVisible, rightPanelVisible, toggleSidebar, toggleRightPanel } = useUIStore();
   const artifactsPanelOpen = useArtifactsStore((s) => s.panelOpen);
-  const { forceHideRightPanel, forceCollapseSidebar } = useResponsiveLayout();
-  // On very narrow viewports the expanded sidebar would consume most
-  // of the screen, so we force-collapse it to the 64px rail.
-  const sidebarExpanded = showSidebar && sidebarVisible && !forceCollapseSidebar;
+  const { forceHideRightPanel, forceCollapseSidebar, isSmall } = useResponsiveLayout();
   const effectiveRightPanelContent = rightPanelContent === undefined
     ? defaultRightPanelContent
     : rightPanelContent;
   const shouldShowRightPanel = (showRightPanel ?? rightPanelVisible) && !forceHideRightPanel;
+  // If the viewport is in the small band and right panel is open, auto-collapse sidebar to rail
+  const sidebarExpanded = showSidebar && sidebarVisible && !forceCollapseSidebar && !(shouldShowRightPanel && isSmall);
   const sidebarShellWidth = sidebarExpanded ? 240 : 64;
+
+  const toggleLabel = shouldShowRightPanel
+    ? (t('common.hideRightPanel') || '隐藏右侧面板')
+    : (t('common.showRightPanel') || '展开右侧面板');
 
   return (
     <div className="h-screen flex overflow-hidden bg-gray-50">
@@ -162,8 +167,8 @@ export function MainLayout({
             type="button"
             onClick={toggleRightPanel}
             className="absolute right-3 top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[#e7e5e1] bg-white/95 text-[#6f6e69] shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-[background-color,color,box-shadow,transform,border-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-px hover:border-[#ddd8d0] hover:bg-white hover:text-[#37352f] hover:shadow-[0_12px_24px_rgba(15,23,42,0.12)] active:translate-y-0"
-            title={shouldShowRightPanel ? 'Hide right panel' : 'Show right panel'}
-            aria-label={shouldShowRightPanel ? 'Hide right panel' : 'Show right panel'}
+            title={toggleLabel}
+            aria-label={toggleLabel}
           >
             <svg
               className={`h-4 w-4 transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${shouldShowRightPanel ? 'rotate-180' : ''}`}

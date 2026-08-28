@@ -66,6 +66,7 @@ export function SessionFolderChip({
                    transition-all duration-150"
         title={tooltip}
         data-testid={emptyTestId}
+        data-folder-trigger={kind === 'project' ? 'true' : undefined}
       >
         <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
           {label}

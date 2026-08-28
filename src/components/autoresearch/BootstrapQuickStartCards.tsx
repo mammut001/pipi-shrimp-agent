@@ -1,13 +1,14 @@
-import { CONVERSATIONAL_TEMPLATE_OPTIONS } from '@/services/autoresearch/bootstrap/conversationalTemplates';
+import { getConversationalTemplateOptions, type ConversationalTemplateOption } from '@/services/autoresearch/bootstrap/conversationalTemplates';
 import { t } from '@/i18n';
 
 interface BootstrapQuickStartCardsProps {
   selectedId?: string | null;
-  onSelect: (templateId: (typeof CONVERSATIONAL_TEMPLATE_OPTIONS)[number]['id']) => void;
+  onSelect: (templateId: ConversationalTemplateOption['id']) => void;
 }
 
 export function BootstrapQuickStartCards({ selectedId, onSelect }: BootstrapQuickStartCardsProps) {
-  const selectedOption = CONVERSATIONAL_TEMPLATE_OPTIONS.find((opt) => opt.id === selectedId);
+  const templateOptions = getConversationalTemplateOptions();
+  const selectedOption = templateOptions.find((opt) => opt.id === selectedId);
 
   return (
     <div className="space-y-2">
@@ -21,7 +22,7 @@ export function BootstrapQuickStartCards({ selectedId, onSelect }: BootstrapQuic
 
       {/* Compact Cards Grid */}
       <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
-        {CONVERSATIONAL_TEMPLATE_OPTIONS.map((option) => {
+        {templateOptions.map((option) => {
           const isSelected = selectedId === option.id;
           return (
             <button

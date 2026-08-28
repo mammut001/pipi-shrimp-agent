@@ -59,7 +59,7 @@ const computeLayout = (width: number): ResponsiveLayout => {
     tier,
     isCompact: tier === 'xs',
     isSmall: tier === 'sm' || tier === 'xs',
-    forceHideRightPanel: tier !== 'md',
+    forceHideRightPanel: tier === 'xs',
     forceCollapseSidebar: tier === 'xs',
     width,
   };

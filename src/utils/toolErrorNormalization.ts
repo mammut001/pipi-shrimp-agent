@@ -1,4 +1,4 @@
-import { t } from '@/i18n';
+import { t, getCurrentLocale } from '@/i18n';
 
 export interface NormalizedToolError {
   isStructuredError: boolean;
@@ -27,11 +27,18 @@ export function normalizeStructuredToolError(
 
   const trimmed = rawContent.trim();
 
-  // Try parsing structured JSON error
+  // Try parsing structured JSON error (including strings enclosed in markdown code fences)
   let parsed: any = null;
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+  let jsonString = trimmed;
+  if (jsonString.startsWith('```json') && jsonString.endsWith('```')) {
+    jsonString = jsonString.slice(7, -3).trim();
+  } else if (jsonString.startsWith('```') && jsonString.endsWith('```')) {
+    jsonString = jsonString.slice(3, -3).trim();
+  }
+
+  if (jsonString.startsWith('{') && jsonString.endsWith('}')) {
     try {
-      parsed = JSON.parse(trimmed);
+      parsed = JSON.parse(jsonString);
     } catch {
       parsed = null;
     }
@@ -45,8 +52,20 @@ export function normalizeStructuredToolError(
       (parsed.error_kind === 'permission_denied' && NO_PROJECT_FOLDER_PATTERN.test(parsed.message || ''))
     ));
 
+  let isZh = false;
+  if (locale) {
+    isZh = locale.startsWith('zh');
+  } else {
+    const defaultLocale = typeof getCurrentLocale === 'function' ? getCurrentLocale() : '';
+    if (defaultLocale) {
+      isZh = defaultLocale.startsWith('zh');
+    } else {
+      const saveText = typeof t === 'function' ? t('common.save') : 'Save';
+      isZh = saveText !== 'Save' && saveText !== 'common.save';
+    }
+  }
+
   if (isNoProjectFolder) {
-    const isZh = locale ? locale.startsWith('zh') : t('common.save') !== 'Save';
     return {
       isStructuredError: true,
       kind: 'no_project_folder',
@@ -64,7 +83,6 @@ export function normalizeStructuredToolError(
   }
 
   if (parsed && (parsed.error === true || parsed.is_error === true || parsed.error_kind)) {
-    const isZh = locale ? locale.startsWith('zh') : t('common.save') !== 'Save';
     if (parsed.error_kind === 'confirmation_required' || parsed.error === 'confirmation_required') {
       return {
         isStructuredError: true,
