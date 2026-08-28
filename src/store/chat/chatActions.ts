@@ -68,6 +68,7 @@ import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { stripGoalMarkers } from '@/services/sessionGoal/goalEvaluator';
 import { stripProviderStreamArtifacts } from '@/utils/streamSanitizer';
 import { decideGoalLoopAfterTurn, shouldRunGoalLoop } from '@/services/sessionGoal/goalLoop';
+import { classifyGoalTurnIntent, type GoalTurnIntent } from '@/services/sessionGoal/goalIntent';
 
 export function shouldRemoveEmptyAssistantPlaceholder(message: Message | undefined): boolean {
   return Boolean(message && message.role === 'assistant' && !message.content && !message.reasoning);
@@ -552,6 +553,18 @@ export function createChatActionMethods({
         await addMessage(userMessage);
 
         const activeGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
+        const goalIntent: GoalTurnIntent = activeGoal
+          ? classifyGoalTurnIntent(content, activeGoal, options)
+          : 'unrelated';
+
+        if (activeGoal && goalIntent === 'interrupt') {
+          useSessionGoalStore.getState().pauseGoal(activeSessionId);
+          useSessionGoalStore.getState().recordTrace(activeSessionId, 'system', '用户要求暂停目标');
+        } else if (activeGoal && goalIntent === 'goal_continue' && (activeGoal.status === 'paused' || activeGoal.status === 'budget_limited')) {
+          useSessionGoalStore.getState().resumeGoal(activeSessionId);
+          useSessionGoalStore.getState().recordTrace(activeSessionId, 'system', '继续推进目标');
+        }
+
         if (activeGoal && activeGoal.status !== 'paused' && activeGoal.status !== 'completed' && !options?.goalLoopContinuation) {
           useSessionGoalStore.getState().recordTrace(activeSessionId, 'user_turn', content);
         } else if (activeGoal && options?.goalLoopContinuation) {
@@ -714,7 +727,7 @@ export function createChatActionMethods({
           selection: useSettingsStore.getState().windowsShellProfile,
           workDir: sessionWorkDir,
         });
-        const sessionGoalContext = useSessionGoalStore.getState().getPromptContext(activeSessionId);
+        const sessionGoalContext = useSessionGoalStore.getState().getPromptContext(activeSessionId, goalIntent);
         const { systemPrompt } = buildPrompt(template?.sections || [], {
           agentInstructions: useUIStore.getState().agentInstructions,
           // Two-folder model: `workDir` here is the **Project Folder**
@@ -899,7 +912,7 @@ export function createChatActionMethods({
         }
 
         const tokenDelta = (tokenUsage?.input_tokens ?? 0) + (tokenUsage?.output_tokens ?? 0);
-        if (activeGoal && shouldRunGoalLoop({ goalLoopContinuation: options?.goalLoopContinuation, isPlanMode })) {
+        if (activeGoal && shouldRunGoalLoop({ goalLoopContinuation: options?.goalLoopContinuation, isPlanMode, intent: goalIntent })) {
           const latestGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
           if (latestGoal) {
             useSessionGoalStore.getState().consumeTurnBudget(activeSessionId, tokenDelta);
@@ -909,6 +922,7 @@ export function createChatActionMethods({
               assistantContent: sanitizedAssistantContent,
               tokenDelta,
               isGoalLoopContinuation: options?.goalLoopContinuation,
+              intent: goalIntent,
             });
 
             useSessionGoalStore.getState().recordEvaluation(activeSessionId, loopDecision.evaluation);

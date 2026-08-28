@@ -454,7 +454,7 @@ export function ChatBrowserWorkspaceShell() {
           const goalButton = document.querySelector<HTMLButtonElement>('[data-goal-trigger="true"]');
           goalButton?.click();
         }}
-        onExpandPanel={() => setAgentPanelTab('goal')}
+        onExpandPanel={() => useUIStore.getState().openRightPanelTab('goal')}
       />
       {/* Messages List — min-h-0 allows this to shrink when terminal panel is open */}
       <div className="relative flex-1 min-h-0 w-full">

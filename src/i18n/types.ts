@@ -16,6 +16,7 @@ export type TranslationKeys = {
   'common.error': string;
   'common.success': string;
   'common.retry': string;
+  'common.details': string;
   'common.close': string;
   'common.or': string;
   'common.preview': string;
@@ -358,8 +359,12 @@ export type TranslationKeys = {
   'goal.inputPlaceholder': string;
   'goal.save': string;
   'goal.clear': string;
+  'goal.emptyWarning': string;
   'goal.saveSuccess': string;
   'goal.clearSuccess': string;
+  'tool.noProjectFolder.message': string;
+  'tool.noProjectFolder.action': string;
+  'tool.noProjectFolder.noOpNotice': string;
   'goal.active': string;
   'goal.panelTitle': string;
   'goal.panelDescription': string;
@@ -1126,8 +1131,16 @@ export type TranslationKeys = {
   'autoresearch.manual.action.fillTargetProject': string;
   'autoresearch.manual.action.fillMetric': string;
   'autoresearch.manual.action.testEnv': string;
+  'autoresearch.manual.action.envCheckFailed': string;
   'autoresearch.manual.start': string;
   'autoresearch.manual.action.openProviderConfig': string;
+  'autoresearch.bootstrap.log.init': string;
+  'autoresearch.bootstrap.log.spawning': string;
+  'autoresearch.bootstrap.log.stopped': string;
+  'autoresearch.bootstrap.log.executing': string;
+  'autoresearch.bootstrap.log.completed': string;
+  'autoresearch.bootstrap.log.failed': string;
+  'autoresearch.bootstrap.log.blocked': string;
   'autoresearch.manual.workspaceHelper': string;
   'autoresearch.manual.targetProjectHelper': string;
   'autoresearch.manual.advancedFields': string;

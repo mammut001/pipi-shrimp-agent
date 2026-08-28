@@ -43,4 +43,67 @@ describe('session goal loop', () => {
     });
     expect(decision.action).toBe('budget_limited');
   });
+
+  it('does NOT advance goal when turn intent is unrelated (even with autoContinue ON)', () => {
+    const goal = normalizeSessionGoalRecord({
+      objective: 'Create goal-test.txt containing goal completed',
+      status: 'active',
+      autoContinue: true,
+      budget: { ...DEFAULT_SESSION_GOAL_BUDGET, turnsUsed: 1 },
+    });
+    const decision = decideGoalLoopAfterTurn({
+      goal,
+      assistantContent: '2',
+      intent: 'unrelated',
+    });
+    expect(decision.action).toBe('none');
+    expect(decision.continueMessage).toBeUndefined();
+  });
+
+  it('does NOT advance goal when turn intent is interrupt', () => {
+    const goal = normalizeSessionGoalRecord({
+      objective: 'Create goal-test.txt containing goal completed',
+      status: 'active',
+      autoContinue: true,
+      budget: { ...DEFAULT_SESSION_GOAL_BUDGET, turnsUsed: 1 },
+    });
+    const decision = decideGoalLoopAfterTurn({
+      goal,
+      assistantContent: '好的，已暂停目标。',
+      intent: 'interrupt',
+    });
+    expect(decision.action).toBe('none');
+    expect(decision.continueMessage).toBeUndefined();
+  });
+
+  it('does NOT advance goal when autoContinue is OFF', () => {
+    const goal = normalizeSessionGoalRecord({
+      objective: 'Create goal-test.txt containing goal completed',
+      status: 'active',
+      autoContinue: false,
+      budget: { ...DEFAULT_SESSION_GOAL_BUDGET, turnsUsed: 1 },
+    });
+    const decision = decideGoalLoopAfterTurn({
+      goal,
+      assistantContent: 'Created file scaffold.',
+      intent: 'goal_related',
+    });
+    expect(decision.action).toBe('none');
+  });
+
+  it('advances goal when turn intent is goal_continue and autoContinue is ON', () => {
+    const goal = normalizeSessionGoalRecord({
+      objective: 'Create goal-test.txt containing goal completed',
+      status: 'active',
+      autoContinue: true,
+      budget: { ...DEFAULT_SESSION_GOAL_BUDGET, turnsUsed: 1 },
+    });
+    const decision = decideGoalLoopAfterTurn({
+      goal,
+      assistantContent: 'Continuing with task...',
+      intent: 'goal_continue',
+    });
+    expect(decision.action).toBe('continue');
+    expect(decision.continueMessage).toContain('Create goal-test.txt');
+  });
 });

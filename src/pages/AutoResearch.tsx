@@ -472,12 +472,22 @@ function AutoResearchView() {
       return;
     }
 
+    const targetWorkDir = (cfg.mode === 'ssh' ? cfg.remoteWorkDir : (cfg.remoteWorkDir || experimentDir || '')).trim();
+    if (cfg.mode === 'local' && !targetWorkDir) {
+      setConnectionTest({
+        status: 'error',
+        output: t('autoresearch.manual.action.fillWorkspace') || 'Please configure a target workspace directory before testing.',
+      });
+      return;
+    }
+
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
       const result = await invoke<RawBashResult>('execute_bash', {
         args: {
           command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
+          workDir: cfg.mode === 'local' ? targetWorkDir : undefined,
           timeoutSecs: 30,
           windowsShellProfile,
         },

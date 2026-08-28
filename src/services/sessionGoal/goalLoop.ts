@@ -1,5 +1,6 @@
 import { buildContinueGoalMessage } from '@/services/sessionGoal/goalPrompt';
 import { evaluateSessionGoalTurn, isBudgetExhausted } from '@/services/sessionGoal/goalEvaluator';
+import type { GoalTurnIntent } from '@/services/sessionGoal/goalIntent';
 import type { SessionGoalEvaluation, SessionGoalRecord } from '@/types/sessionGoal';
 
 export type GoalLoopAction = 'none' | 'complete' | 'continue' | 'budget_limited' | 'blocked';
@@ -15,10 +16,25 @@ export interface GoalLoopTurnInput {
   assistantContent: string;
   tokenDelta?: number;
   isGoalLoopContinuation?: boolean;
+  intent?: GoalTurnIntent;
 }
 
 export function decideGoalLoopAfterTurn(input: GoalLoopTurnInput): GoalLoopDecision {
-  const { goal, assistantContent, tokenDelta = 0 } = input;
+  const { goal, assistantContent, tokenDelta = 0, intent } = input;
+
+  if (intent === 'unrelated' || intent === 'interrupt') {
+    return {
+      action: 'none',
+      evaluation: {
+        reached: false,
+        confidence: 0,
+        reasoning: '当前轮次为独立问题或已被暂停，不推进持久目标循环',
+        evidence: [],
+        timestamp: Date.now(),
+      },
+    };
+  }
+
   const evaluation = evaluateSessionGoalTurn(goal, assistantContent);
 
   if (goal.status === 'paused' || goal.status === 'completed') {
@@ -52,7 +68,12 @@ export function decideGoalLoopAfterTurn(input: GoalLoopTurnInput): GoalLoopDecis
   };
 }
 
-export function shouldRunGoalLoop(options?: { goalLoopContinuation?: boolean; isPlanMode?: boolean }): boolean {
+export function shouldRunGoalLoop(options?: {
+  goalLoopContinuation?: boolean;
+  isPlanMode?: boolean;
+  intent?: GoalTurnIntent;
+}): boolean {
   if (options?.isPlanMode) return false;
+  if (options?.intent === 'unrelated' || options?.intent === 'interrupt') return false;
   return true;
 }

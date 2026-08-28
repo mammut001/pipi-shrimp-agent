@@ -7,7 +7,7 @@ import {
   ConversationalTemplateOption,
 } from '@/services/autoresearch/bootstrap/conversationalTemplates';
 import type { AutoResearchBootstrapResult, ExtractedBaseline } from '@/services/autoresearch/bootstrap/types';
-import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
+import { useBootstrapPlanStore, getStepForTool } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
 import {
   BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE,
   buildBootstrapSystemPromptWithFinalizeRequirement,
@@ -39,6 +39,36 @@ interface BootstrapChatViewProps {
 export const BOOTSTRAP_MISSING_FINALIZE_MESSAGE =
   'Bootstrap agent finished but did not produce a bootstrap_finalize result.';
 
+function parseToolResultError(result: string): { isError: boolean; kind: 'none' | 'failed' | 'blocked' | 'confirmation_required'; reason: string } {
+  if (!result || typeof result !== 'string') {
+    return { isError: false, kind: 'none', reason: '' };
+  }
+
+  const trimmed = result.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed.error_kind === 'confirmation_required' || parsed.error === 'confirmation_required') {
+        return { isError: true, kind: 'confirmation_required', reason: parsed.message || 'Confirmation required' };
+      }
+      if (parsed.error_kind === 'permission_denied' || parsed.error === 'permission_denied') {
+        return { isError: true, kind: 'blocked', reason: parsed.message || 'Permission denied' };
+      }
+      if (parsed.error === true || parsed.is_error === true || parsed.error_kind) {
+        return { isError: true, kind: 'failed', reason: parsed.message || parsed.cause || 'Tool failed' };
+      }
+    } catch {
+      // not JSON
+    }
+  }
+
+  if (trimmed.startsWith('Error:') || trimmed.startsWith('error:')) {
+    return { isError: true, kind: 'failed', reason: trimmed.slice(0, 120) };
+  }
+
+  return { isError: false, kind: 'none', reason: '' };
+}
+
 function guessMetricDirection(metricName: string): 'higher' | 'lower' {
   const lowered = metricName.toLowerCase();
   if (['loss', 'error', 'perplexity', 'wer', 'cer', 'latency', 'time'].some((token) => lowered.includes(token))) {
@@ -62,23 +92,23 @@ function resolveBaselineValue(baselines: ExtractedBaseline[], primaryMetric: str
 export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps) {
   const [recipe, setRecipe] = useState<Recipe>({
     researchGoal: {
-      goalText: 'I want to start an AutoResearch task. Please guide me through setting up goals, papers, baselines, and workspace scaffolding.',
+      goalText: '',
       taskType: 'reproduce_paper',
       source: 'template',
     },
     references: {},
     baselineAndMetric: {
-      primaryMetric: 'accuracy',
+      primaryMetric: '',
       direction: 'higher',
-      baselineValue: '0.85',
-      successCriteria: 'Match or exceed the target baseline metric.',
+      baselineValue: '',
+      successCriteria: '',
     },
     workspace: {
-      workDir: sshConfig?.mode === 'ssh' ? sshConfig.remoteWorkDir || '' : '',
+      workDir: sshConfig?.remoteWorkDir || '',
       folderName: 'bootstrap-project',
     },
     verification: {
-      commands: ['pytest'],
+      commands: [],
     },
     outputContract: {
       includeMetrics: true,
@@ -114,6 +144,8 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }, [clearImportedFiles]);
 
   const currentStep = useBootstrapPlanStore((state) => state.currentStep);
+  const failedStep = useBootstrapPlanStore((state) => state.failedStep);
+  const failureReason = useBootstrapPlanStore((state) => state.failureReason);
   const warnings = useBootstrapPlanStore((state) => state.warnings);
   const readyResult = useBootstrapPlanStore((state) => state.readyResult);
   const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
@@ -130,7 +162,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
 
   // Sync workspace root if sshConfig changes
   useEffect(() => {
-    if (sshConfig?.mode === 'ssh' && sshConfig.remoteWorkDir) {
+    if (sshConfig?.remoteWorkDir) {
       setRecipe((prev) => ({
         ...prev,
         workspace: {
@@ -360,13 +392,20 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       },
     ];
 
+    const targetWorkDir = (sshConfig?.mode === 'ssh' ? sshConfig.remoteWorkDir : (recipe.workspace.workDir || '')) || undefined;
+
     const runBootstrapTurn = async (messages: typeof initialMessages, label: string) => {
-      setAgentLogs((prev) => prev + `[SYSTEM] ${label}\n\n`);
+      const spawningLabel = t('autoresearch.bootstrap.log.spawning') || label;
+      setAgentLogs((prev) => prev + `[SYSTEM] ${spawningLabel}\n\n`);
       await runHeadlessAgentTurn({
         sessionId: `autoresearch-bootstrap-${Date.now()}`,
         initialMessages: messages,
         systemPrompt,
         allowedTools: AUTORESEARCH_BOOTSTRAP_TEMPLATE.allowedTools,
+        toolExecutionSource: 'autoresearch_phase',
+        permissionMode: 'bypass',
+        executionMode: 'bypass',
+        workDir: targetWorkDir,
         signal: bootstrapAbortRef.current!.signal,
         onTextDelta: (chunk) => {
           setAgentLogs((prev) => prev + chunk);
@@ -375,12 +414,32 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
           setAgentLogs((prev) => prev + `\n[STATUS] ${message}\n`);
         },
         onToolCall: async ({ name }) => {
-          setAgentLogs((prev) => prev + `\n[TOOL CALL] Executing: ${name}\n`);
-          noteTool(name);
+          const executingTpl = t('autoresearch.bootstrap.log.executing') || '[TOOL CALL] Executing: {name}';
+          const msg = executingTpl.replace('{name}', name);
+          setAgentLogs((prev) => prev + `\n${msg}\n`);
         },
         onToolResult: async ({ name, result, durationMs }) => {
-          setAgentLogs((prev) => prev + `[TOOL RESULT] Completed ${name} in ${durationMs}ms.\n`);
-          await handleToolResult(name, result);
+          const err = parseToolResultError(result);
+          if (err.isError) {
+            const isBlocked = err.kind === 'blocked' || err.kind === 'confirmation_required';
+            const logTpl = isBlocked
+              ? (t('autoresearch.bootstrap.log.blocked') || '[TOOL RESULT] BLOCKED: {name} — {reason} ({duration}ms)')
+              : (t('autoresearch.bootstrap.log.failed') || '[TOOL RESULT] FAILED: {name} — {reason} ({duration}ms)');
+            const logMsg = logTpl
+              .replace('{name}', name)
+              .replace('{reason}', err.reason)
+              .replace('{duration}', String(durationMs));
+            setAgentLogs((prev) => prev + `${logMsg}\n`);
+            useBootstrapPlanStore.getState().setStepFailure(getStepForTool(name), err.reason);
+          } else {
+            const completedTpl = t('autoresearch.bootstrap.log.completed') || '[TOOL RESULT] Completed {name} in {duration}ms.';
+            const logMsg = completedTpl
+              .replace('{name}', name)
+              .replace('{duration}', String(durationMs));
+            setAgentLogs((prev) => prev + `${logMsg}\n`);
+            noteTool(name);
+            await handleToolResult(name, result);
+          }
         },
       });
     };
@@ -468,9 +527,9 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     let taskType: Recipe['researchGoal']['taskType'] = 'reproduce_paper';
     let goalText = '';
     let folderName = 'bootstrap-project';
-    let verifyCommands: string[] = ['pytest'];
-    let baselineValue = '0.85';
-    let successCriteria = 'Match or exceed the target baseline metric.';
+    let verifyCommands: string[] = [];
+    let baselineValue = '';
+    let successCriteria = '';
 
     if (templateId === 'reproduce-paper') {
       taskType = 'reproduce_paper';
@@ -706,8 +765,8 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                     )}
                   </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-1.5 selection:bg-neutral-800" ref={consoleScrollRef}>
-                  <pre className="whitespace-pre-wrap leading-relaxed">{agentLogs || 'Initializing bootstrap process...'}</pre>
+                <div className="flex-1 overflow-y-auto p-4 space-y-1.5 selection:bg-neutral-800 min-w-0 max-w-full" ref={consoleScrollRef}>
+                  <pre className="whitespace-pre-wrap leading-relaxed break-all overflow-x-auto max-w-full">{agentLogs || 'Initializing bootstrap process...'}</pre>
                   {isStreaming && (
                     <div className="inline-flex items-center gap-1 text-[10px] text-neutral-500 animate-pulse font-sans">
                       <span>▋</span>
@@ -722,8 +781,18 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       </div>
 
       {hasStarted && (
-        <div className="flex flex-col gap-4 overflow-y-auto min-w-0">
-          <BootstrapProgressRail currentStep={currentStep} warnings={warnings} />
+        <div className="flex flex-col gap-4 overflow-y-auto min-w-0 max-w-full">
+          <BootstrapProgressRail
+            currentStep={currentStep}
+            failedStep={failedStep}
+            failureReason={failureReason}
+            warnings={warnings}
+            onRetry={() => {
+              if (lastCompiledPromptRef.current) {
+                void handleStartBootstrap(lastCompiledPromptRef.current);
+              }
+            }}
+          />
         </div>
       )}
     </div>

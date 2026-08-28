@@ -276,6 +276,8 @@ export interface UIState {
 
   // Agentic Actions
   toggleRightPanel: () => void;
+  setRightPanelVisible: (visible: boolean) => void;
+  openRightPanelTab: (tab: UIState['agentPanelTab']) => void;
   setAgentInstructions: (instructions: string) => void;
   addTaskStep: (label: string, id?: string) => void;
   updateTaskStep: (id: string, status: TaskStep['status']) => void;

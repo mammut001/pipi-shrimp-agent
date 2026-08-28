@@ -1005,18 +1005,19 @@ export function ChatInput({
                       </button>
                       <button
                         type="button"
+                        disabled={!goalInputText.trim()}
                         onClick={() => {
                           if (!currentSessionId) return;
                           const trimmed = goalInputText.trim();
-                          if (trimmed) {
-                            setSessionObjective(currentSessionId, trimmed);
-                          } else {
-                            clearSessionGoal(currentSessionId);
+                          if (!trimmed) {
+                            addNotification('warning', t('goal.emptyWarning'));
+                            return;
                           }
+                          setSessionObjective(currentSessionId, trimmed);
                           setGoalPopoverOpen(false);
-                          addNotification('success', trimmed ? t('goal.saveSuccess') : t('goal.clearSuccess'));
+                          addNotification('success', t('goal.saveSuccess'));
                         }}
-                        className="px-2.5 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors font-medium shadow-sm"
+                        className="px-2.5 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {t('goal.save')}
                       </button>

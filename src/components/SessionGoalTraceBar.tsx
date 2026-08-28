@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { t } from '@/i18n';
 import { buildContinueGoalMessage } from '@/services/sessionGoal/goalPrompt';
-import { useChatStore } from '@/store';
+import { useChatStore, useUIStore } from '@/store';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import type { SessionGoalStatus } from '@/types/sessionGoal';
 
@@ -159,6 +159,7 @@ export function SessionGoalTraceBar({ onEdit, onExpandPanel }: SessionGoalTraceB
             type="button"
             onClick={() => {
               setExpanded((value) => !value);
+              useUIStore.getState().openRightPanelTab('goal');
               onExpandPanel?.();
             }}
             className="p-1 rounded-md text-gray-500 hover:bg-white/80 hover:text-gray-800 transition-colors"

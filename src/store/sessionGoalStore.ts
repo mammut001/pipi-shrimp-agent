@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { buildSessionGoalPromptContext } from '@/services/sessionGoal/goalPrompt';
+import type { GoalTurnIntent } from '@/services/sessionGoal/goalIntent';
 import type { GoalPreflightResult } from '@/services/workflow/goalPreflight/schema';
 import {
   createEmptySessionGoal,
@@ -38,7 +39,7 @@ interface SessionGoalState {
   recordTrace: (sessionId: string, kind: GoalTraceKind, summary: string) => void;
   recordEvaluation: (sessionId: string, evaluation: SessionGoalEvaluation) => void;
   consumeTurnBudget: (sessionId: string, tokenDelta?: number) => void;
-  getPromptContext: (sessionId: string) => Record<string, string>;
+  getPromptContext: (sessionId: string, intent?: GoalTurnIntent) => Record<string, string>;
 }
 
 function loadGoalsFromStorage(): GoalsBySession {
@@ -341,11 +342,11 @@ export const useSessionGoalStore = create<SessionGoalState>((set, get) => ({
     });
   },
 
-  getPromptContext: (sessionId) => {
+  getPromptContext: (sessionId, intent) => {
     const goal = get().goalsBySession[sessionId];
     if (!goal?.objective?.trim()) {
-      return buildSessionGoalPromptContext(null);
+      return buildSessionGoalPromptContext(null, intent);
     }
-    return buildSessionGoalPromptContext(goal);
+    return buildSessionGoalPromptContext(goal, intent);
   },
 }));

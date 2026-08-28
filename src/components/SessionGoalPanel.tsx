@@ -75,8 +75,7 @@ export function SessionGoalPanel() {
     if (!currentSessionId) return;
     const trimmed = draft.trim();
     if (!trimmed) {
-      clearGoal(currentSessionId);
-      addNotification('success', t('goal.clearSuccess'));
+      addNotification('warning', t('goal.emptyWarning'));
       return;
     }
     setObjective(currentSessionId, trimmed);
@@ -142,7 +141,12 @@ export function SessionGoalPanel() {
               className="w-full text-xs border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
             />
             <div className="flex items-center gap-2 flex-wrap">
-              <button type="button" onClick={handleSave} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!draft.trim()}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 {t('goal.save')}
               </button>
               <button

@@ -73,4 +73,40 @@ describe('manualReadiness tests', () => {
     expect(envAction.disabled).toBe(false);
     expect(envAction.labelKey).toBe('autoresearch.manual.action.testEnv');
   });
+
+  it('tests all 4 connection test states for envCheck next action', () => {
+    const envDraft = {
+      ...validLocalDraft,
+      connectionTestStatus: 'idle' as const,
+    };
+    const readiness = getManualSetupReadiness(envDraft);
+
+    // 1. idle (not tested)
+    const idleAction = getManualSetupNextAction(readiness, 'idle');
+    expect(idleAction.actionType).toBe('envCheck');
+    expect(idleAction.labelKey).toBe('autoresearch.manual.action.testEnv');
+    expect(idleAction.disabled).toBe(false);
+
+    // 2. testing
+    const testingAction = getManualSetupNextAction(readiness, 'testing');
+    expect(testingAction.actionType).toBe('envCheck');
+    expect(testingAction.labelKey).toBe('autoresearch.connectionTesting');
+    expect(testingAction.disabled).toBe(true);
+
+    // 3. error (failed)
+    const errorAction = getManualSetupNextAction(readiness, 'error');
+    expect(errorAction.actionType).toBe('envCheck');
+    expect(errorAction.labelKey).toBe('autoresearch.manual.action.envCheckFailed');
+    expect(errorAction.disabled).toBe(false);
+
+    // 4. success (passed)
+    const passedReadiness = getManualSetupReadiness({
+      ...validLocalDraft,
+      connectionTestStatus: 'success',
+    });
+    const successAction = getManualSetupNextAction(passedReadiness, 'success');
+    expect(successAction.actionType).toBe('start');
+    expect(successAction.labelKey).toBe('autoresearch.manual.start');
+    expect(successAction.disabled).toBe(false);
+  });
 });

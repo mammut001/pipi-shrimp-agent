@@ -175,13 +175,19 @@ export function getManualSetupNextAction(
         actionType: 'envCheck',
         disabled: true,
       };
-    } else {
+    }
+    if (connectionTestStatus === 'error') {
       return {
-        labelKey: 'autoresearch.manual.action.testEnv',
+        labelKey: 'autoresearch.manual.action.envCheckFailed',
         actionType: 'envCheck',
         disabled: false,
       };
     }
+    return {
+      labelKey: 'autoresearch.manual.action.testEnv',
+      actionType: 'envCheck',
+      disabled: false,
+    };
   }
 
   return {

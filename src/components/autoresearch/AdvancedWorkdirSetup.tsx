@@ -470,12 +470,22 @@ export function AdvancedWorkdirSetup() {
       return;
     }
 
+    const targetWorkDir = (cfg.mode === 'ssh' ? cfg.remoteWorkDir : (cfg.remoteWorkDir || experimentDir || '')).trim();
+    if (cfg.mode === 'local' && !targetWorkDir) {
+      setConnectionTest({
+        status: 'error',
+        output: t('autoresearch.manual.action.fillWorkspace') || 'Please configure a target workspace directory before testing.',
+      });
+      return;
+    }
+
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
       const result = await invoke<RawBashResult>('execute_bash', {
         args: {
           command: buildRemoteBashCommand(cfg, 'uname -s && pwd && git rev-parse --is-inside-work-tree'),
+          workDir: cfg.mode === 'local' ? targetWorkDir : undefined,
           // SSH ConnectTimeout is 10s (set in buildSshArgs), so 15s gives
           // enough headroom for the connection to fail naturally while still
           // surfacing the real SSH error instead of a generic timeout.

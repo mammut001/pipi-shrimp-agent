@@ -330,6 +330,8 @@ export const useUIStore = create<UIState>((set) => ({
 
   // Agentic Actions
   toggleRightPanel: () => set((state) => ({ rightPanelVisible: !state.rightPanelVisible })),
+  setRightPanelVisible: (rightPanelVisible: boolean) => set({ rightPanelVisible }),
+  openRightPanelTab: (tab) => set({ rightPanelVisible: true, agentPanelTab: tab }),
   setAgentInstructions: (agentInstructions) => {
     set({ agentInstructions });
     safeLocalStorageSet(AGENT_INSTRUCTIONS_STORAGE_KEY, agentInstructions);
