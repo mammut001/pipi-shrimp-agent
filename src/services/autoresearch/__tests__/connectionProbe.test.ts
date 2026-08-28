@@ -1,11 +1,35 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  AUTORESEARCH_SAFE_HOST_CWD,
   buildAutoResearchConnectionProbeCommand,
+  buildAutoResearchConnectionProbeInvokeArgs,
   interpretAutoResearchConnectionProbe,
   parseAutoResearchConnectionProbeOutput,
 } from '../connectionProbe';
 
 describe('connectionProbe', () => {
+  it('never uses a relative host cwd of . for execute_bash', () => {
+    const args = buildAutoResearchConnectionProbeInvokeArgs({
+      mode: 'local',
+      sshConfig: { mode: 'local', remoteWorkDir: '/tmp/ar-nongit2' },
+      workDir: '/tmp/ar-nongit2',
+      experimentDir: '/tmp/harness-smoke',
+      timeoutSecs: 30,
+    });
+    expect(args.workDir).toBe(AUTORESEARCH_SAFE_HOST_CWD);
+    expect(args.workDir).not.toBe('.');
+    expect(args.command).not.toMatch(/(^|\s)cd \.(?:\s|$)/);
+    expect(args.command).toContain('/tmp/ar-nongit2');
+    expect(args.command).toContain('/tmp/harness-smoke');
+  });
+
+  it('rejects a relative workspace path instead of probing .', () => {
+    expect(() => buildAutoResearchConnectionProbeCommand({
+      workDir: '.',
+      experimentDir: '/tmp/exp',
+    })).toThrow(/absolute or home path/);
+  });
+
   it('does not chain git with && so a missing repo cannot fail the probe', () => {
     const command = buildAutoResearchConnectionProbeCommand({
       workDir: '~/autoresearch',

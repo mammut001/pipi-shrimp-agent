@@ -143,6 +143,13 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(nudgeCall.systemPrompt).toMatch(/HARD REQUIREMENT: bootstrap_finalize/);
     expect(nudgeCall.initialMessages?.[0]?.content).toMatch(/bootstrap_finalize/);
 
+    const primaryCall = (mockRunHeadlessAgentTurn.mock.calls[0] as any[])[0];
+    expect(primaryCall.toolExecutionSource).toBe('autoresearch_phase');
+    expect(primaryCall.permissionMode).toBe('bypass');
+    expect(primaryCall.executionMode).toBe('bypass');
+    expect(primaryCall.workDir).toBeTruthy();
+    expect(primaryCall.workDir).not.toBe('.');
+
     expect(container.textContent).toContain('Bootstrap agent finished but did not produce a bootstrap_finalize result.');
     expect(container.textContent).toContain('Failed');
     // Recovery path: not a dead-end — Retry + Back to Recipe are offered

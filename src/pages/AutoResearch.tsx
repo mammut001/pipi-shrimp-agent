@@ -52,9 +52,8 @@ import {
   useAutoResearchLifecycleLock,
 } from '@/services/autoresearch/runLock';
 import { openFileExternal } from '@/services/docService';
-import { buildRemoteBashCommand } from '@/utils/remoteExec';
 import {
-  buildAutoResearchConnectionProbeCommand,
+  buildAutoResearchConnectionProbeInvokeArgs,
   interpretAutoResearchConnectionProbe,
 } from '@/services/autoresearch/connectionProbe';
 import {
@@ -479,16 +478,15 @@ function AutoResearchView() {
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
-      const probeCommand = buildAutoResearchConnectionProbeCommand({
-        workDir: cfg.remoteWorkDir,
-        experimentDir,
-      });
       const result = await invoke<RawBashResult>('execute_bash', {
-        args: {
-          command: buildRemoteBashCommand({ ...cfg, remoteWorkDir: '' }, probeCommand),
+        args: buildAutoResearchConnectionProbeInvokeArgs({
+          mode: cfg.mode,
+          sshConfig: cfg,
+          workDir: cfg.remoteWorkDir,
+          experimentDir,
           timeoutSecs: 30,
           windowsShellProfile,
-        },
+        }),
       });
       const verdict = interpretAutoResearchConnectionProbe({
         stdout: result.stdout || '',

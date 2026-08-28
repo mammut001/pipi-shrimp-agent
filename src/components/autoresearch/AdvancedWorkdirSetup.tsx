@@ -53,9 +53,8 @@ import {
 import { sanitizePathInput } from '@/services/autoresearch/pathInput';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { openFileExternal } from '@/services/docService';
-import { buildRemoteBashCommand } from '@/utils/remoteExec';
 import {
-  buildAutoResearchConnectionProbeCommand,
+  buildAutoResearchConnectionProbeInvokeArgs,
   interpretAutoResearchConnectionProbe,
 } from '@/services/autoresearch/connectionProbe';
 import {
@@ -477,19 +476,18 @@ export function AdvancedWorkdirSetup() {
     setConnectionTest({ status: 'testing', output: t('autoresearch.connectionTesting') });
 
     try {
-      const probeCommand = buildAutoResearchConnectionProbeCommand({
-        workDir: cfg.remoteWorkDir,
-        experimentDir,
-      });
       const result = await invoke<RawBashResult>('execute_bash', {
-        args: {
-          command: buildRemoteBashCommand({ ...cfg, remoteWorkDir: '' }, probeCommand),
+        args: buildAutoResearchConnectionProbeInvokeArgs({
+          mode: cfg.mode,
+          sshConfig: cfg,
+          workDir: cfg.remoteWorkDir,
+          experimentDir,
           // SSH ConnectTimeout is 10s (set in buildSshArgs), so 15s gives
           // enough headroom for the connection to fail naturally while still
           // surfacing the real SSH error instead of a generic timeout.
           timeoutSecs: 15,
           windowsShellProfile,
-        },
+        }),
       });
       const verdict = interpretAutoResearchConnectionProbe({
         stdout: result.stdout || '',

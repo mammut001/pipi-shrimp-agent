@@ -188,11 +188,11 @@ export function getSessionBaselineDir(cfg: SshConfig, sessionId: string): string
 }
 
 function resolveDefaultLocalCwd(targetPath?: string): string {
-  if (targetPath && targetPath.trim()) {
-    return targetPath.trim();
+  const trimmed = targetPath?.trim();
+  if (trimmed && trimmed !== '.' && trimmed !== './') {
+    return trimmed;
   }
-  const isWindows = typeof process !== 'undefined' && process.platform === 'win32';
-  return isWindows ? '.' : '/tmp';
+  return DEFAULT_LOCAL_COMMAND_CWD;
 }
 
 export async function executeTargetCommand(
@@ -224,7 +224,7 @@ export async function executeTargetCommand(
     return await invoke<RawBashResult>('execute_bash', {
       args: {
         command: finalCommand,
-        workDir: isLocalTarget ? (cfg.remoteWorkDir || DEFAULT_LOCAL_COMMAND_CWD) : undefined,
+        workDir: isLocalTarget ? resolveDefaultLocalCwd(cfg.remoteWorkDir) : undefined,
         timeoutSecs,
         windowsShellProfile,
       },

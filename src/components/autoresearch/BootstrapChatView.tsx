@@ -423,13 +423,22 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       },
     ];
 
+    const bootstrapWorkDir = recipe.workspace.workDir.trim()
+      || sshConfig?.remoteWorkDir?.trim()
+      || '/tmp';
+
     const runBootstrapTurn = async (messages: typeof initialMessages, label: string) => {
       setAgentLogs((prev) => prev + `[SYSTEM] ${label}\n\n`);
       await runHeadlessAgentTurn({
         sessionId: `autoresearch-bootstrap-${Date.now()}`,
         initialMessages: messages,
         systemPrompt,
+        workDir: bootstrapWorkDir,
         allowedTools: AUTORESEARCH_BOOTSTRAP_TEMPLATE.allowedTools,
+        toolExecutionSource: 'autoresearch_phase',
+        permissionMode: 'bypass',
+        executionMode: 'bypass',
+        maxToolRounds: AUTORESEARCH_BOOTSTRAP_TEMPLATE.execution?.maxRounds,
         signal: bootstrapAbortRef.current!.signal,
         onTextDelta: (chunk) => {
           setAgentLogs((prev) => prev + chunk);
@@ -504,7 +513,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     } finally {
       setIsStreaming(false);
     }
-  }, [handleToolResult, isStreaming, noteTool, importedFiles]);
+  }, [handleToolResult, importedFiles, isStreaming, noteTool, recipe.workspace.workDir, sshConfig]);
 
   const handleRetryBootstrap = useCallback(() => {
     const prompt = lastCompiledPromptRef.current;

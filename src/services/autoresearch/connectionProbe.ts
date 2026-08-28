@@ -1,4 +1,19 @@
-import { shellEscapePath } from '@/utils/remoteExec';
+import { buildRemoteBashCommand, shellEscapePath } from '@/utils/remoteExec';
+
+/**
+ * Host-side cwd for AutoResearch `execute_bash` probes.
+ * Never use `.` — the file sandbox rejects a relative process cwd with
+ * `Access denied: path '.'`. `/tmp` is always an allowed root.
+ */
+export const AUTORESEARCH_SAFE_HOST_CWD = '/tmp';
+
+function assertProbePath(label: string, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '.' || trimmed === './') {
+    throw new Error(`${label} must be an absolute or home path, not '${value || '.'}'.`);
+  }
+  return trimmed;
+}
 
 export type AutoResearchProbeGitStatus = 'ok' | 'missing' | 'not_installed' | 'unknown';
 export type AutoResearchProbePythonStatus = 'ok' | 'missing' | 'unknown';
@@ -36,8 +51,8 @@ export interface AutoResearchConnectionProbeVerdict {
  * experiment dir reports `git:missing` instead of exit 128.
  */
 export function buildAutoResearchConnectionProbeCommand(input: AutoResearchConnectionProbeInput): string {
-  const workDir = shellEscapePath(input.workDir.trim() || '.');
-  const experimentDir = shellEscapePath(input.experimentDir.trim() || input.workDir.trim() || '.');
+  const workDir = shellEscapePath(assertProbePath('AutoResearch workspace', input.workDir));
+  const experimentDir = shellEscapePath(assertProbePath('Target project', input.experimentDir));
 
   return [
     'uname -s',
@@ -61,6 +76,35 @@ export function buildAutoResearchConnectionProbeCommand(input: AutoResearchConne
     "  printf 'python:missing\\n'",
     'fi',
   ].join('\n');
+}
+
+export function buildAutoResearchConnectionProbeInvokeArgs(input: {
+  mode: 'local' | 'ssh';
+  sshConfig: Parameters<typeof buildRemoteBashCommand>[0];
+  workDir: string;
+  experimentDir: string;
+  timeoutSecs: number;
+  windowsShellProfile?: string;
+}): {
+  command: string;
+  workDir: string;
+  timeoutSecs: number;
+  windowsShellProfile?: string;
+} {
+  const probe = buildAutoResearchConnectionProbeCommand({
+    workDir: input.workDir,
+    experimentDir: input.experimentDir,
+  });
+  const command = input.mode === 'local'
+    ? probe
+    : buildRemoteBashCommand({ ...input.sshConfig, remoteWorkDir: '' }, probe);
+
+  return {
+    command,
+    workDir: AUTORESEARCH_SAFE_HOST_CWD,
+    timeoutSecs: input.timeoutSecs,
+    windowsShellProfile: input.windowsShellProfile,
+  };
 }
 
 export function parseAutoResearchConnectionProbeOutput(raw: string): AutoResearchConnectionProbeParse {

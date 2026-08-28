@@ -183,6 +183,23 @@ describe('runDir', () => {
     });
   });
 
+  it('falls back to /tmp when a local AutoResearch helper uses a relative cwd of .', async () => {
+    useSettingsStore.setState({ windowsShellProfile: 'auto' });
+    const cfg = createLocalSshConfig('.');
+
+    await expect(executeTargetCommand(cfg, 'printf test', 30)).resolves.toEqual(expect.objectContaining({
+      stdout: 'test',
+      exit_code: 0,
+    }));
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_bash', {
+      args: expect.objectContaining({
+        command: 'printf test',
+        workDir: '/tmp',
+      }),
+    });
+  });
+
   it('falls back to /tmp when a local AutoResearch helper clears the workdir', async () => {
     useSettingsStore.setState({ windowsShellProfile: 'wsl' });
     const cfg = createLocalSshConfig('');

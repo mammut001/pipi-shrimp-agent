@@ -53,6 +53,18 @@ describe('AutoResearch controlled profile', () => {
     for (const site of callSites) {
       expect(site).toMatch(/toolExecutionSource:\s*'autoresearch_phase'/);
     }
+
+    const bootstrapSource = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/components/autoresearch/BootstrapChatView.tsx'),
+      'utf8',
+    );
+    const bootstrapSites = bootstrapSource.match(/runHeadlessAgentTurn\([\s\S]*?\n\s+\}\);/g) ?? [];
+    expect(bootstrapSites.length).toBeGreaterThanOrEqual(1);
+    for (const site of bootstrapSites) {
+      expect(site).toMatch(/toolExecutionSource:\s*'autoresearch_phase'/);
+      expect(site).toMatch(/permissionMode:\s*'bypass'/);
+      expect(site).toMatch(/executionMode:\s*'bypass'/);
+    }
   });
 
   it('does not import or call the chat sendMessage path that respects Ask mode', async () => {
