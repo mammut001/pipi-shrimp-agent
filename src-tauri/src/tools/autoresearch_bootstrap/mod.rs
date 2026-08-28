@@ -1095,7 +1095,7 @@ async fn execute_bootstrap_finalize_tool(
         serde_json::from_value(args.get("papers").cloned().unwrap_or_else(|| json!([]))).unwrap_or_default();
     let baselines: Vec<ExtractedBaseline> =
         serde_json::from_value(args.get("baselines").cloned().unwrap_or_else(|| json!([]))).unwrap_or_default();
-    let scaffold: ScaffoldPlan = match serde_json::from_value(args.get("scaffold").cloned().unwrap_or(Value::Null)) {
+    let scaffold: ScaffoldPlan = match serde_json::from_value::<ScaffoldPlan>(args.get("scaffold").cloned().unwrap_or(Value::Null)) {
         Ok(mut s) => {
             if let Some(ctx_dir) = &context.work_dir {
                 if s.work_dir.is_empty() || s.work_dir.contains("/workspace") || s.work_dir.contains("autoresearch-project") {
@@ -1124,7 +1124,7 @@ async fn execute_bootstrap_finalize_tool(
         .map(|s| s.trim().replace('_', "-"))
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "reproduce-paper".to_string());
-    let secondary_metrics = optional_string_array_arg(args, "secondaryMetrics")?.unwrap_or_default();
+    let secondary_metrics = optional_string_array_arg(args, "secondaryMetrics")?;
     let initial_commit_sha = optional_string_arg(args, &["initialCommitSha"]);
 
     let mut warnings = Vec::new();
