@@ -1,0 +1,48 @@
+name: One-shot Goal Core migration
+
+on:
+  push:
+    branches:
+      - agent/goal-core-extraction
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/goal-core-extraction
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fix migration regex escaping
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tools/goal-core-migrate.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace(r'''re.sub(r"^[-•*]+\\s*",''', r'''re.sub(r"^[-•*]+\s*",''')
+          s = s.replace(r'''single_re = re.compile(r"(successCriteria:\\s*)'((?:\\\\.|[^'\\n])*)'")''', r'''single_re = re.compile(r"(successCriteria:\s*)'((?:\\.|[^'\n])*)'")''')
+          s = s.replace(r'''double_re = re.compile(r'(successCriteria:\\s*)"((?:\\\\.|[^"\\n])*)"')''', r'''double_re = re.compile(r'(successCriteria:\s*)"((?:\\.|[^"\n])*)"')''')
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Apply migration
+        run: python tools/goal-core-migrate.py
+      - name: Commit migration
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No migration changes to commit"
+            exit 0
+          fi
+          git commit -m "refactor: complete Goal Core migration"
+          git push origin HEAD:agent/goal-core-extraction
