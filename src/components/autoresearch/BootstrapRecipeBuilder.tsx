@@ -5,8 +5,6 @@ import type { SshConfig } from '@/store/autoresearchStore';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { Recipe } from './bootstrapRecipePrompt';
 import { buildBootstrapPromptFromRecipe } from './bootstrapRecipePrompt';
-import { type ComposerBlock } from '@/components/chatInput/blocks/types';
-import { buildPromptFromBlocks } from '@/components/chatInput/blocks/promptBuilder';
 
 import {
   getRecipeReadiness,
@@ -37,14 +35,18 @@ export {
   formatOutputContractSummary,
 } from './recipe/recipeFormatting';
 
-export function formatMetricSummary(metric: string, direction: 'higher' | 'lower', baselineValue: string | undefined, locale: string): string {
+export function formatMetricSummary(
+  metric: string,
+  direction: 'higher' | 'lower',
+  baselineValue: string | undefined,
+  locale: string,
+): string {
   const dirLabel = formatDirectionLabel(direction, locale);
   const baselineText = baselineValue || (locale === 'zh-CN' ? '未指定' : 'none');
   if (locale === 'zh-CN') {
     return `主指标：${metric}，${dirLabel}，当前基线 ${baselineText}`;
-  } else {
-    return `Primary metric: ${metric}, ${dirLabel}, current baseline ${baselineText}`;
   }
+  return `Primary metric: ${metric}, ${dirLabel}, current baseline ${baselineText}`;
 }
 
 interface BootstrapRecipeBuilderProps {
@@ -66,17 +68,6 @@ export function BootstrapRecipeBuilder({
   const [newCommand, setNewCommand] = useState('');
   const [showPromptPreview, setShowPromptPreview] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
-  
-  // Optional Advanced Section
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [composerBlocks, setComposerBlocks] = useState<ComposerBlock[]>([
-    {
-      id: 'b-advanced-intent',
-      type: 'intent',
-      intentType: 'autoresearch',
-      detail: recipe.researchGoal.goalText,
-    },
-  ]);
 
   const importedFiles = useSettingsStore((state) => state.importedFiles);
   const addImportedFiles = useSettingsStore((state) => state.addImportedFiles);
@@ -99,18 +90,15 @@ export function BootstrapRecipeBuilder({
       if (!selection) return;
 
       const paths = Array.isArray(selection) ? selection : [selection];
-      const newFiles = paths.map((p) => ({
-        name: p.split(/[\\/]/).pop() || p,
-        path: p,
-      }));
-
-      addImportedFiles(newFiles);
-    } catch (err) {
-      console.error('Failed to open file dialog:', err);
+      addImportedFiles(paths.map((path) => ({
+        name: path.split(/[\\/]/).pop() || path,
+        path,
+      })));
+    } catch (error) {
+      console.error('Failed to open file dialog:', error);
     }
   }, [addImportedFiles]);
 
-  // Sync workspace dir if it is empty and sshConfig is loaded
   useEffect(() => {
     if (!recipe.workspace.workDir) {
       const defaultDir = sshConfig?.mode === 'ssh' ? sshConfig.remoteWorkDir || '' : '';
@@ -126,24 +114,24 @@ export function BootstrapRecipeBuilder({
     }
   }, [sshConfig, recipe, onChange]);
 
-  const handleGoalChange = (val: Partial<Recipe['researchGoal']>) => {
+  const handleGoalChange = (value: Partial<Recipe['researchGoal']>) => {
     onChange({
       ...recipe,
-      researchGoal: { ...recipe.researchGoal, ...val, source: 'user' },
+      researchGoal: { ...recipe.researchGoal, ...value, source: 'user' },
     });
   };
 
-  const handleMetricChange = (val: Partial<Recipe['baselineAndMetric']>) => {
+  const handleMetricChange = (value: Partial<Recipe['baselineAndMetric']>) => {
     onChange({
       ...recipe,
-      baselineAndMetric: { ...recipe.baselineAndMetric, ...val },
+      baselineAndMetric: { ...recipe.baselineAndMetric, ...value },
     });
   };
 
-  const handleWorkspaceChange = (val: Partial<Recipe['workspace']>) => {
+  const handleWorkspaceChange = (value: Partial<Recipe['workspace']>) => {
     onChange({
       ...recipe,
-      workspace: { ...recipe.workspace, ...val },
+      workspace: { ...recipe.workspace, ...value },
     });
   };
 
@@ -161,17 +149,20 @@ export function BootstrapRecipeBuilder({
     }
   };
 
-  const handleRemoveCommand = (cmd: string) => {
+  const handleRemoveCommand = (command: string) => {
     onChange({
       ...recipe,
       verification: {
         ...recipe.verification,
-        commands: recipe.verification.commands.filter((c) => c !== cmd),
+        commands: recipe.verification.commands.filter((item) => item !== command),
       },
     });
   };
 
-  const handleOutputContractChange = (field: keyof Recipe['outputContract'], checked: boolean) => {
+  const handleOutputContractChange = (
+    field: keyof Recipe['outputContract'],
+    checked: boolean,
+  ) => {
     onChange({
       ...recipe,
       outputContract: {
@@ -181,6 +172,10 @@ export function BootstrapRecipeBuilder({
     });
   };
 
+  // The structured Recipe is now the only AutoResearch bootstrap source of
+  // truth. Historical recipe fields remain untouched for compatibility, but
+  // the removed Prompt-block editor can no longer create a second competing
+  // launch prompt.
   const compiledPrompt = buildBootstrapPromptFromRecipe(recipe, {
     projectFolder: sshConfig?.mode === 'ssh' ? sshConfig.remoteWorkDir : undefined,
     contextFiles: importedFiles.map((file) => file.path),
@@ -193,15 +188,7 @@ export function BootstrapRecipeBuilder({
   };
 
   const handleSubmit = () => {
-    if (showAdvanced) {
-      const compiled = buildPromptFromBlocks(composerBlocks, {
-        projectFolder: sshConfig?.mode === 'ssh' ? sshConfig.remoteWorkDir : undefined,
-        contextFiles: importedFiles.map((file) => file.path),
-      });
-      onSend(compiled);
-    } else {
-      onSend(compiledPrompt);
-    }
+    onSend(compiledPrompt);
   };
 
   const readiness = getRecipeReadiness(recipe);
@@ -209,10 +196,8 @@ export function BootstrapRecipeBuilder({
   const locale = getCurrentLocale();
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6 items-start font-sans">
-      {/* Left Column: Recipe Sections */}
-      <div className="space-y-3 max-w-[920px] w-full">
-        {/* Section 1: Research Goal */}
+    <div className="grid grid-cols-1 items-start gap-6 font-sans lg:grid-cols-[1fr_280px]">
+      <div className="w-full max-w-[920px] space-y-3">
         <RecipeSectionCard
           id="goal"
           number={1}
@@ -223,8 +208,8 @@ export function BootstrapRecipeBuilder({
             readiness.sectionStatus.goal === 'completed'
               ? (t('autoresearch.recipe.completed') || '已完成')
               : readiness.sectionStatus.goal === 'placeholder'
-              ? (t('autoresearch.recipe.confirmGoal') || '请确认目标')
-              : (t('autoresearch.recipe.missing') || '缺失')
+                ? (t('autoresearch.recipe.confirmGoal') || '请确认目标')
+                : (t('autoresearch.recipe.missing') || '缺失')
           }
           activeSection={activeSection}
           setActiveSection={setActiveSection}
@@ -232,14 +217,15 @@ export function BootstrapRecipeBuilder({
           collapsedSummary={
             <span className="truncate pr-4 font-sans">
               <span className="font-semibold text-gray-700">{formatTaskTypeLabel(recipe.researchGoal.taskType, locale)}:</span>{' '}
-              {isGoalPlaceholder(recipe.researchGoal.goalText, recipe.researchGoal.source) ? (t('autoresearch.recipe.confirmGoal') || '请确认目标') : (recipe.researchGoal.goalText || 'No goal set yet')}
+              {isGoalPlaceholder(recipe.researchGoal.goalText, recipe.researchGoal.source)
+                ? (t('autoresearch.recipe.confirmGoal') || '请确认目标')
+                : (recipe.researchGoal.goalText || 'No goal set yet')}
             </span>
           }
         >
           <ResearchGoalSection recipe={recipe} onChange={handleGoalChange} />
         </RecipeSectionCard>
 
-        {/* Section 2: References */}
         <RecipeSectionCard
           id="references"
           number={2}
@@ -254,7 +240,7 @@ export function BootstrapRecipeBuilder({
             <p className="truncate font-sans">
               {importedFiles.length === 0
                 ? (t('autoresearch.recipe.noFiles') || '暂未添加参考文件。')
-                : `${t('autoresearch.recipe.references')}: ${importedFiles.map((f) => f.name).join(', ')}`}
+                : `${t('autoresearch.recipe.references')}: ${importedFiles.map((file) => file.name).join(', ')}`}
             </p>
           }
         >
@@ -267,7 +253,6 @@ export function BootstrapRecipeBuilder({
           />
         </RecipeSectionCard>
 
-        {/* Section 3: Baseline & Metric */}
         <RecipeSectionCard
           id="baseline"
           number={3}
@@ -289,7 +274,7 @@ export function BootstrapRecipeBuilder({
                     recipe.baselineAndMetric.primaryMetric,
                     recipe.baselineAndMetric.direction,
                     recipe.baselineAndMetric.baselineValue,
-                    locale
+                    locale,
                   )
                 : (t('autoresearch.recipe.notConfigured') || 'Not configured')}
             </p>
@@ -298,7 +283,6 @@ export function BootstrapRecipeBuilder({
           <BaselineMetricSection recipe={recipe} onChange={handleMetricChange} />
         </RecipeSectionCard>
 
-        {/* Section 4: Workspace */}
         <RecipeSectionCard
           id="workspace"
           number={4}
@@ -314,7 +298,7 @@ export function BootstrapRecipeBuilder({
           setActiveSection={setActiveSection}
           firstMissingSection={nextAction.section}
           collapsedSummary={
-            <span className="truncate pr-4 text-gray-600 font-sans">
+            <span className="truncate pr-4 font-sans text-gray-600">
               {formatWorkspaceSummary(recipe.workspace, locale)}
             </span>
           }
@@ -322,7 +306,6 @@ export function BootstrapRecipeBuilder({
           <WorkspaceSection recipe={recipe} sshConfig={sshConfig} onChange={handleWorkspaceChange} />
         </RecipeSectionCard>
 
-        {/* Section 5: Verification */}
         <RecipeSectionCard
           id="verification"
           number={5}
@@ -350,7 +333,6 @@ export function BootstrapRecipeBuilder({
           />
         </RecipeSectionCard>
 
-        {/* Section 6: Output Contract */}
         <RecipeSectionCard
           id="output"
           number={6}
@@ -367,29 +349,23 @@ export function BootstrapRecipeBuilder({
             </p>
           }
         >
-          <OutputContractSection outputContract={recipe.outputContract} onChange={handleOutputContractChange} />
+          <OutputContractSection
+            outputContract={recipe.outputContract}
+            onChange={handleOutputContractChange}
+          />
         </RecipeSectionCard>
       </div>
 
-      {/* Right Column: Launch Cockpit */}
       <RecipeCockpitPanel
         recipe={recipe}
         readiness={readiness}
         activeSection={activeSection}
         setActiveSection={setActiveSection}
         disabled={disabled}
-        showAdvanced={showAdvanced}
-        setShowAdvanced={setShowAdvanced}
-        composerBlocks={composerBlocks}
-        setComposerBlocks={setComposerBlocks}
-        sshConfig={sshConfig}
-        importedFiles={importedFiles}
-        onSend={onSend}
         onShowPromptPreview={() => setShowPromptPreview(true)}
         onSubmit={handleSubmit}
       />
 
-      {/* Prompt Preview Modal */}
       <PromptPreviewDialog
         isOpen={showPromptPreview}
         onClose={() => setShowPromptPreview(false)}
