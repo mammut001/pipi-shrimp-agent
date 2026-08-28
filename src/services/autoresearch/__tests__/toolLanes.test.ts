@@ -51,6 +51,17 @@ describe('toolLanes', () => {
 
     expect(isAutoResearchToolLaneTransitionAllowed('RUN_EXPERIMENT', 'PARSE_METRICS')).toBe(true);
     expect(isAutoResearchToolLaneTransitionAllowed('PARSE_METRICS', 'EDIT_CODE')).toBe(false);
+    expect(isAutoResearchToolLaneTransitionAllowed('PARSE_METRICS', 'RUN_EXPERIMENT')).toBe(false);
     expect(buildAutoResearchToolLaneError('write_file', 'PARSE_METRICS', ['get_current_workspace', 'read_file'])).toContain('write_file');
+  });
+
+  it('does not re-enter RUN_EXPERIMENT after PARSE_METRICS', () => {
+    expect(classifyAutoResearchToolPhase({
+      currentPhase: 'PARSE_METRICS',
+      toolName: 'execute_command',
+      isExperimentRun: true,
+      config: { mode: 'local' },
+    })).toBe('PARSE_METRICS');
+    expect(getAutoResearchAllowedToolsForPhase({ mode: 'local' }, 'PARSE_METRICS')).not.toContain('execute_command');
   });
 });

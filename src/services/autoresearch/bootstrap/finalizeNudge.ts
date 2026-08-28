@@ -12,9 +12,21 @@ export const BOOTSTRAP_FINALIZE_HARD_REQUIREMENT = `## HARD REQUIREMENT: bootstr
 /** User message injected for a second headless turn when the first omitted finalize. */
 export const BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE =
   'STOP and call bootstrap_finalize now. '
-  + 'Do not search for more papers or write long prose. '
-  + 'Use the information already gathered (or sensible defaults from the recipe) and call the bootstrap_finalize tool with status="ready". '
-  + 'If something critical is missing, still call bootstrap_finalize with the best complete plan and list gaps in unresolvedQuestions.';
+  + 'The only allowed tool in this turn is bootstrap_finalize. '
+  + 'Do not call scaffold_generate, git_init_workdir, arxiv_search, or any other tool. '
+  + 'Do not create a new folder. Do not invent a medical, UNet, or any other project. '
+  + 'Reuse the recipe workDir, metric, baseline, and goal already provided. '
+  + 'If something is missing, still call bootstrap_finalize with the best complete plan and list gaps in unresolvedQuestions.';
+
+export const BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS = ['bootstrap_finalize'] as const;
+
+export function buildBootstrapFinalizeNudgeUserMessage(workDir?: string): string {
+  const trimmed = workDir?.trim();
+  if (!trimmed) {
+    return BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE;
+  }
+  return `${BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE} The scaffold.workDir MUST be "${trimmed}".`;
+}
 
 export function shouldRunBootstrapFinalizeNudge(
   readyResult: { status?: string } | null | undefined,

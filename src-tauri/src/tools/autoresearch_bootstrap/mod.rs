@@ -935,6 +935,15 @@ async fn execute_arxiv_search_tool(args: &Value) -> AppResult<String> {
     Ok(json!({ "papers": papers }).to_string())
 }
 
+fn is_safe_scaffold_relative_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim();
+    !trimmed.is_empty()
+        && !trimmed.starts_with('/')
+        && !trimmed.contains("..")
+        && !trimmed.contains(':')
+}
+
 async fn execute_scaffold_generate_tool(
     args: &Value,
     context: &BootstrapExecutionContext,
@@ -946,6 +955,11 @@ async fn execute_scaffold_generate_tool(
     )?;
     let target_dir = require_string_arg(args, &["workDir"], "scaffold_generate requires workDir")?;
     let resolved_work_dir = resolve_target_path(&target_dir, context)?;
+    let overwrite_existing = args
+        .get("overwriteExisting")
+        .and_then(Value::as_bool)
+        .or_else(|| args.get("overwrite_existing").and_then(Value::as_bool))
+        .unwrap_or(false);
     let vars = normalize_scaffold_vars(args);
     let rendered =
         render_known_scaffold_template(&template_id, &resolved_work_dir.to_string_lossy(), &vars)?;
@@ -959,12 +973,32 @@ async fn execute_scaffold_generate_tool(
             ))
         })?;
 
+    let mut written: Vec<String> = Vec::new();
+    let mut skipped_existing: Vec<String> = Vec::new();
     for file in &rendered.rendered_files {
+        if !is_safe_scaffold_relative_path(&file.path) {
+            return Err(AppError::InvalidInput(format!(
+                "Refusing to write scaffold file outside workDir: {}",
+                file.path
+            )));
+        }
         let path = resolved_work_dir.join(&file.path);
+        if path.exists() && !overwrite_existing {
+            skipped_existing.push(file.path.clone());
+            continue;
+        }
         write_text_file(&path, &file.content).await?;
+        written.push(file.path.clone());
     }
 
-    serde_json::to_string(&rendered.scaffold).map_err(|error| {
+    let mut payload = serde_json::to_value(&rendered.scaffold).map_err(|error| {
+        AppError::InternalError(format!("Failed to serialize scaffold plan: {error}"))
+    })?;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("written".to_string(), json!(written));
+        object.insert("skippedExisting".to_string(), json!(skipped_existing));
+    }
+    serde_json::to_string(&payload).map_err(|error| {
         AppError::InternalError(format!("Failed to serialize scaffold plan: {error}"))
     })
 }

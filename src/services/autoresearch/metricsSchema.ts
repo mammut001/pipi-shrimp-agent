@@ -71,9 +71,34 @@ const DirectionSchema = z.enum(['lower', 'higher']);
 const GeneratorSchema = z.enum(['agent', 'loop_engine', 'bootstrap']);
 const MetricsExtraValueSchema = z.union([z.number().finite(), z.string(), z.boolean()]);
 const OptionalNonEmptyStringSchema = z.preprocess(
-  (value) => (typeof value === 'string' && value.trim().length === 0 ? undefined : value),
+  (value) => {
+    if (value === null || value === undefined) {
+      return undefined;
+    }
+    if (typeof value === 'string' && value.trim().length === 0) {
+      return undefined;
+    }
+    return value;
+  },
   z.string().min(1).optional(),
 );
+
+const UNSPECIFIED_FAILURE_REASON = 'unspecified failure';
+
+function coerceMetricsArtifactInput(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const next = { ...(value as Record<string, unknown>) };
+  if (next.failReason === null || (typeof next.failReason === 'string' && next.failReason.trim().length === 0)) {
+    next.failReason = undefined;
+  }
+  if (next.status === 'FAILED' && (next.failReason === undefined || next.failReason === null)) {
+    next.failReason = UNSPECIFIED_FAILURE_REASON;
+  }
+  return next;
+}
 
 const MetricsArtifactBaseObjectSchema = z.object({
   metricName: z.string().min(1),
@@ -271,7 +296,7 @@ export function normalizeIterationMetricsRecord(
     sessionId: input.sessionId || options.sessionId,
   };
 
-  const parsed = PersistedIterationMetricsSchema.safeParse(candidate);
+  const parsed = PersistedIterationMetricsSchema.safeParse(coerceMetricsArtifactInput(candidate));
   if (!parsed.success) {
     throw new Error(formatSchemaError('Invalid iteration metrics record', parsed.error));
   }
@@ -298,7 +323,7 @@ export function parsePersistedIterationMetricsLine(
     throw new Error(`${options.source}: invalid JSON (${error instanceof Error ? error.message : String(error)}).`);
   }
 
-  const parsed = PersistedIterationMetricsSchema.safeParse(parsedJson);
+  const parsed = PersistedIterationMetricsSchema.safeParse(coerceMetricsArtifactInput(parsedJson));
   if (parsed.success) {
     const mismatch = validateExpectedFields(parsed.data, {
       expectedSessionId: options.sessionId,
@@ -326,6 +351,7 @@ export function parseMetricsArtifactPayload(
   value: unknown,
   options: ParseMetricsArtifactOptions = {},
 ): { value: MetricsArtifactPayload | null; error?: string } {
+  value = coerceMetricsArtifactInput(value);
   if (hasSchemaFields(value)) {
     const generator = readMetricsGenerator(value);
     if (generator === 'agent') {

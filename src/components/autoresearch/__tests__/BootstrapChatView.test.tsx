@@ -142,6 +142,8 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(nudgeCall).toBeTruthy();
     expect(nudgeCall.systemPrompt).toMatch(/HARD REQUIREMENT: bootstrap_finalize/);
     expect(nudgeCall.initialMessages?.[0]?.content).toMatch(/bootstrap_finalize/);
+    expect(nudgeCall.initialMessages?.[0]?.content).toMatch(/Do not call scaffold_generate/);
+    expect(nudgeCall.allowedTools).toEqual(['bootstrap_finalize']);
 
     const primaryCall = (mockRunHeadlessAgentTurn.mock.calls[0] as any[])[0];
     expect(primaryCall.toolExecutionSource).toBe('autoresearch_phase');

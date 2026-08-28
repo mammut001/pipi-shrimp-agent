@@ -78,15 +78,28 @@ describe('metricsSchema', () => {
     expect(result.value?.reasoning).toBeUndefined();
   });
 
-  it('rejects FAILED artifacts without failReason', () => {
+  it('fills a default failReason when FAILED artifacts omit it', () => {
     const result = parseMetricsArtifactPayload({
       ...createValidArtifact(),
       metricValue: null,
       status: 'FAILED',
     });
 
-    expect(result.value).toBeNull();
-    expect(result.error).toContain('FAILED metrics artifacts must include a failReason.');
+    expect(result.error).toBeUndefined();
+    expect(result.value?.status).toBe('FAILED');
+    expect(result.value?.failReason).toBe('unspecified failure');
+  });
+
+  it('coerces failReason null on FAILED artifacts instead of throwing Expected string, received null', () => {
+    const result = parseMetricsArtifactPayload({
+      ...createValidArtifact(),
+      metricValue: null,
+      status: 'FAILED',
+      failReason: null,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.failReason).toBe('unspecified failure');
   });
 
   it('rejects null metricValue for non-FAILED statuses', () => {

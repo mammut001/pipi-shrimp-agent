@@ -959,7 +959,8 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 "primaryMetric": { "type": "string" },
                 "baselineName": { "type": "string" },
                 "datasetName": { "type": "string" },
-                "projectName": { "type": "string" }
+                "projectName": { "type": "string" },
+                "overwriteExisting": { "type": "boolean" }
             },
             "required": ["templateId", "workDir", "researchGoal", "successCriteria", "primaryMetric"],
             "additionalProperties": false,
@@ -1083,6 +1084,18 @@ mod tests {
         assert!(result.content.contains("python-ml-baseline"));
         assert!(work_dir.join("run_experiment.py").exists());
         assert!(work_dir.join("AUTORESEARCH.md").exists());
+
+        let train_path = work_dir.join("train.py");
+        std::fs::write(&train_path, "# KEEP-TRAIN-MARKER\n").expect("seed train.py");
+        let second = registry
+            .execute_with_context(&request, None)
+            .await
+            .expect("second scaffold should succeed");
+        assert!(!second.is_error, "second scaffold_generate failed: {}", second.content);
+        assert!(second.content.contains("\"skippedExisting\""));
+        assert!(second.content.contains("train.py"));
+        let preserved = std::fs::read_to_string(&train_path).expect("train.py should remain");
+        assert_eq!(preserved, "# KEEP-TRAIN-MARKER\n");
 
         let _ = std::fs::remove_dir_all(work_dir);
     }

@@ -123,16 +123,46 @@ describe('metricsStore', () => {
       generator: 'loop_engine',
       metricName: 'val_loss',
       metricValue: null,
-      status: 'FAILED',
+      status: 'NOT_A_STATUS',
       hypothesis: 'bad payload',
       durationMs: 1000,
       startedAt: '2026-05-05T00:00:00.000Z',
       finishedAt: '2026-05-05T00:00:01.000Z',
     })}\n`, 'utf8');
 
-    await expect(readAllMetrics(cfg, 'session-1', 'lower')).rejects.toThrow(
-      'FAILED metrics artifacts must include a failReason.',
-    );
+    await expect(readAllMetrics(cfg, 'session-1', 'lower')).rejects.toThrow(/invalid metrics artifact|Invalid/i);
+  });
+
+  it('hydrates FAILED metrics when failReason is null', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    const metricsPath = path.join(workDir, 'runs', 'session-1', 'metrics.jsonl');
+    await fs.mkdir(path.dirname(metricsPath), { recursive: true });
+    await fs.writeFile(metricsPath, `${JSON.stringify({
+      schemaVersion: 1,
+      sessionId: 'session-1',
+      runId: 'session-1',
+      iteration: 1,
+      primaryMetric: 'val_loss',
+      direction: 'lower',
+      timestamp: '2026-05-05T00:00:01.000Z',
+      generator: 'loop_engine',
+      metricName: 'val_loss',
+      metricValue: null,
+      status: 'FAILED',
+      failReason: null,
+      hypothesis: 'agent omitted failReason',
+      durationMs: 1000,
+      startedAt: '2026-05-05T00:00:00.000Z',
+      finishedAt: '2026-05-05T00:00:01.000Z',
+    })}\n`, 'utf8');
+
+    await expect(readAllMetrics(cfg, 'session-1', 'lower')).resolves.toEqual([
+      expect.objectContaining({
+        status: 'FAILED',
+        failReason: 'unspecified failure',
+        metricValue: null,
+      }),
+    ]);
   });
 
   it('summarizes numeric metrics', () => {

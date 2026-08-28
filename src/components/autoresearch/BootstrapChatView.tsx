@@ -9,7 +9,8 @@ import {
 import type { AutoResearchBootstrapResult, ExtractedBaseline } from '@/services/autoresearch/bootstrap/types';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
 import {
-  BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE,
+  BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS,
+  buildBootstrapFinalizeNudgeUserMessage,
   buildBootstrapSystemPromptWithFinalizeRequirement,
   shouldRunBootstrapFinalizeNudge,
 } from '@/services/autoresearch/bootstrap/finalizeNudge';
@@ -427,14 +428,18 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       || sshConfig?.remoteWorkDir?.trim()
       || '/tmp';
 
-    const runBootstrapTurn = async (messages: typeof initialMessages, label: string) => {
+    const runBootstrapTurn = async (
+      messages: typeof initialMessages,
+      label: string,
+      allowedTools: string[] = AUTORESEARCH_BOOTSTRAP_TEMPLATE.allowedTools ?? [],
+    ) => {
       setAgentLogs((prev) => prev + `[SYSTEM] ${label}\n\n`);
       await runHeadlessAgentTurn({
         sessionId: `autoresearch-bootstrap-${Date.now()}`,
         initialMessages: messages,
         systemPrompt,
         workDir: bootstrapWorkDir,
-        allowedTools: AUTORESEARCH_BOOTSTRAP_TEMPLATE.allowedTools,
+        allowedTools,
         toolExecutionSource: 'autoresearch_phase',
         permissionMode: 'bypass',
         executionMode: 'bypass',
@@ -476,8 +481,9 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
             + '\n[SYSTEM] bootstrap_finalize missing after first turn — running finalize nudge turn...\n',
         );
         await runBootstrapTurn(
-          [{ role: 'user', content: BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE }],
+          [{ role: 'user', content: buildBootstrapFinalizeNudgeUserMessage(bootstrapWorkDir) }],
           'Finalize-nudge headless turn (must call bootstrap_finalize)...',
+          [...BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS],
         );
         if (bootstrapAbortRef.current.signal.aborted) {
           return;

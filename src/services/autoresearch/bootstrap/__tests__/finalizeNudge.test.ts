@@ -1,6 +1,8 @@
 import {
   BOOTSTRAP_FINALIZE_HARD_REQUIREMENT,
+  BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS,
   BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE,
+  buildBootstrapFinalizeNudgeUserMessage,
   buildBootstrapSystemPromptWithFinalizeRequirement,
   shouldRunBootstrapFinalizeNudge,
 } from '../finalizeNudge';
@@ -27,6 +29,10 @@ describe('bootstrap finalizeNudge helpers', () => {
   it('exports a nudge user message that forces finalize tool use', () => {
     expect(BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE).toMatch(/bootstrap_finalize/);
     expect(BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE.toLowerCase()).toMatch(/call/);
+    expect(BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE).toMatch(/Do not call scaffold_generate/);
+    expect(BOOTSTRAP_FINALIZE_NUDGE_USER_MESSAGE).toMatch(/Do not invent/);
+    expect(BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS).toEqual(['bootstrap_finalize']);
     expect(BOOTSTRAP_FINALIZE_HARD_REQUIREMENT).toMatch(/MUST end this bootstrap/i);
+    expect(buildBootstrapFinalizeNudgeUserMessage('/tmp/ar-nongit2')).toContain('/tmp/ar-nongit2');
   });
 });

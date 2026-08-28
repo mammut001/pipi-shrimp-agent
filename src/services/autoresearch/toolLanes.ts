@@ -140,11 +140,21 @@ export function classifyAutoResearchToolPhase(input: {
   }
 
   if (input.toolName === profile.commandTool) {
+    if (
+      input.currentPhase === 'PARSE_METRICS'
+      || input.currentPhase === 'REFLECT'
+      || input.currentPhase === 'DECIDE_NEXT'
+      || input.currentPhase === 'DONE'
+      || input.currentPhase === 'FAILED'
+    ) {
+      return input.currentPhase;
+    }
+
     if (input.isExperimentRun) {
       return 'RUN_EXPERIMENT';
     }
 
-    if (input.currentPhase === 'RUN_EXPERIMENT' || input.currentPhase === 'PARSE_METRICS') {
+    if (input.currentPhase === 'RUN_EXPERIMENT') {
       return 'PARSE_METRICS';
     }
 
