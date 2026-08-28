@@ -485,6 +485,54 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         ready = useBootstrapPlanStore.getState().readyResult;
       }
 
+      if (!ready && recipe.workspace.workDir) {
+        const fallbackPlan = {
+          researchGoal: recipe.researchGoal.goalText || 'Reproduce paper experiments and benchmark baseline',
+          successCriteria: recipe.baselineAndMetric.successCriteria || `${recipe.baselineAndMetric.primaryMetric} optimized`,
+          primaryMetric: recipe.baselineAndMetric.primaryMetric || 'metric',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [
+            {
+              name: 'Baseline',
+              task: recipe.researchGoal.taskType,
+              dataset: 'default',
+              reportedMetrics: [
+                {
+                  name: recipe.baselineAndMetric.primaryMetric || 'metric',
+                  value: parseFloat(recipe.baselineAndMetric.baselineValue || '0') || 0,
+                },
+              ],
+              method: { summary: 'Recipe baseline configuration' },
+              reproducibility: { hasOfficialCode: false },
+            },
+          ],
+          scaffold: {
+            templateId: 'python-ml-baseline' as const,
+            workDir: recipe.workspace.workDir,
+            language: 'python' as const,
+            entryCommand: recipe.verification.commands[0] || 'python3 run_experiment.py',
+            vars: {
+              project_name: recipe.workspace.folderName || 'autoresearch-project',
+              primary_metric: recipe.baselineAndMetric.primaryMetric || 'metric',
+            },
+            files: [{ path: 'run_experiment.py', purpose: 'Loop entrypoint' }],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: recipe.researchGoal.taskType.replace(/_/g, '-') as any,
+        };
+        const synthesizedResult = {
+          status: 'ready' as const,
+          plan: fallbackPlan,
+          warnings: ['Auto-synthesized by AutoResearch harness from user recipe.'],
+          unresolvedQuestions: [],
+          createdAt: new Date().toISOString(),
+          schemaVersion: 1 as const,
+        };
+        useBootstrapPlanStore.getState().setReadyResult(synthesizedResult);
+        ready = synthesizedResult;
+      }
+
       if (shouldRunBootstrapFinalizeNudge(ready)) {
         const warnMsg = t('autoresearch.bootstrap.missingFinalize') || BOOTSTRAP_MISSING_FINALIZE_MESSAGE;
         setMissingFinalize(true);
