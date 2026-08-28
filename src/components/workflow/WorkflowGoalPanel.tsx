@@ -2,10 +2,8 @@ import { useEffect, useState } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { t } from '@/i18n';
 import { WorkflowGoalPreflightPanel } from './WorkflowGoalPreflightPanel';
-import {
-  serializeSuccessCriteria,
-  type GoalPreflightResult,
-} from '@/services/workflow/goalPreflight/schema';
+import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
+import { formatSuccessCriteria, normalizeSuccessCriteria } from '@/services/goal/types';
 import { useUIStore } from '@/store/uiStore';
 
 export interface WorkflowGoalPanelProps {
@@ -35,7 +33,7 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
   useEffect(() => {
     if (!currentInstance) return;
     setProjectGoal(currentInstance.projectGoal || '');
-    setSuccessCriteria(currentInstance.successCriteria || '');
+    setSuccessCriteria(formatSuccessCriteria(currentInstance.successCriteria));
     setGoalEvaluatorAgentId(currentInstance.goalEvaluatorAgentId || '');
     setMaxGoalIterations(currentInstance.maxGoalIterations || 5);
   }, [
@@ -53,15 +51,14 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
   const evaluatorAgents = currentInstance.agents.filter((agent) => agent.role === 'goal-evaluator');
 
   const handleApplyPreflight = (result: GoalPreflightResult) => {
-    const criteriaString = serializeSuccessCriteria(result.successCriteria);
     updateInstanceMeta(currentInstance.id, {
       projectGoal: result.finalGoal,
-      successCriteria: criteriaString,
+      successCriteria: result.successCriteria,
       goalEvaluatorAgentId: goalEvaluatorAgentId || null,
       maxGoalIterations,
     });
     setProjectGoal(result.finalGoal);
-    setSuccessCriteria(criteriaString);
+    setSuccessCriteria(formatSuccessCriteria(result.successCriteria));
     addNotification('success', t('workflow.goalPreflight.appliedToast'));
   };
 
@@ -121,7 +118,7 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
             <button
               onClick={() => updateInstanceMeta(currentInstance.id, {
                 projectGoal,
-                successCriteria,
+                successCriteria: normalizeSuccessCriteria(successCriteria),
                 goalEvaluatorAgentId: goalEvaluatorAgentId || null,
                 maxGoalIterations,
               })}

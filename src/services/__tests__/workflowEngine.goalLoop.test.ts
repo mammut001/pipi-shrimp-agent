@@ -76,7 +76,7 @@ function createInstance(agents: WorkflowAgent[], connections: WorkflowConnection
     id: 'instance-1',
     name: 'Workflow',
     projectGoal: 'Ship the feature',
-    successCriteria: 'tests pass',
+    successCriteria: ["tests pass"],
     goalEvaluatorAgentId: null,
     maxGoalIterations,
     agents,

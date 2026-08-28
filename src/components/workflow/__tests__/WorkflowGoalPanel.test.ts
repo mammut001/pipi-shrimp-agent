@@ -51,7 +51,7 @@ function createStoreState() {
       {
         id: 'workflow-1',
         projectGoal: 'Ship workflow layout fix',
-        successCriteria: 'Canvas stays visible',
+        successCriteria: ["Canvas stays visible"],
         goalEvaluatorAgentId: 'agent-goal',
         maxGoalIterations: 5,
         agents: [

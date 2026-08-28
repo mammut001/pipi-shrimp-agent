@@ -2,6 +2,7 @@
  * Workflow Types - Multi-agent workflow system type definitions
  */
 
+import type { GoalEvaluation, GoalSpec } from '@/services/goal/types';
 import type { ProviderName } from '@/shared/providers';
 import type { WorkflowVisionPolicy } from './vision';
 
@@ -118,15 +119,11 @@ export interface WorkflowConnection {
 
 // ============ Goal Evaluation ============
 
-export interface GoalEvaluationResult {
+export interface GoalEvaluationResult extends GoalEvaluation {
   iteration: number;
-  reached: boolean;
-  confidence: number;
   missingItems: string[];
   nextAgentIdHint?: string;
-  reasoning: string;
   rawOutput?: string;
-  timestamp: number;
 }
 
 export type WorkflowMarkerCode =
@@ -155,7 +152,7 @@ export interface WorkflowRun {
   id: string;
   title: string;
   projectGoal: string;
-  successCriteria: string;
+  successCriteria: GoalSpec['successCriteria'];
   bootstrapKind?: 'conversational' | 'manual';
   status: 'idle' | 'running' | 'completed' | 'completed-not-reached' | 'error' | 'stopped';
   startTime: number;
@@ -174,7 +171,7 @@ export interface WorkflowInstance {
   id: string;
   name: string;
   projectGoal: string;
-  successCriteria: string;
+  successCriteria: GoalSpec['successCriteria'];
   goalEvaluatorAgentId: string | null;
   maxGoalIterations: number;
   agents: WorkflowAgent[];

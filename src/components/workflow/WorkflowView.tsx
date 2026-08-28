@@ -17,7 +17,7 @@ import { useUIStore } from '@/store/uiStore';
 import { workflowEngine } from '@/services/workflowEngine';
 import { validateWorkflowForRun } from '@/services/workflow/validation';
 import { t } from '@/i18n';
-import type { GoalPreflightResult } from '@/services/workflow/goalPreflight/schema';
+import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
 
 function WorkflowTaskPanel({ agentId }: { agentId: string }) {
   const agent = useWorkflowStore((state) => {

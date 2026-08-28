@@ -55,13 +55,15 @@ describe('toolLanes', () => {
     expect(buildAutoResearchToolLaneError('write_file', 'PARSE_METRICS', ['get_current_workspace', 'read_file'])).toContain('write_file');
   });
 
-  it('does not re-enter RUN_EXPERIMENT after PARSE_METRICS', () => {
+  it('allows command-based metric parsing without re-entering RUN_EXPERIMENT', () => {
     expect(classifyAutoResearchToolPhase({
       currentPhase: 'PARSE_METRICS',
       toolName: 'execute_command',
       isExperimentRun: true,
       config: { mode: 'local' },
     })).toBe('PARSE_METRICS');
-    expect(getAutoResearchAllowedToolsForPhase({ mode: 'local' }, 'PARSE_METRICS')).not.toContain('execute_command');
+    expect(getAutoResearchAllowedToolsForPhase({ mode: 'local' }, 'PARSE_METRICS')).toContain('execute_command');
+    expect(getAutoResearchAllowedToolsForPhase({ mode: 'local' }, 'REFLECT')).not.toContain('execute_command');
+    expect(getAutoResearchAllowedToolsForPhase({ mode: 'local' }, 'DECIDE_NEXT')).not.toContain('execute_command');
   });
 });

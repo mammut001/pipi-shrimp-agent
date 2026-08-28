@@ -42,9 +42,18 @@ struct TerminalSession {
 static TERMINAL_SESSIONS: Lazy<Mutex<HashMap<String, TerminalSession>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// Detect the user's preferred shell.
+/// Detect the user's preferred shell on Unix-like hosts.
+///
+/// Respect SHELL when the environment provides it. Minimal Linux containers
+/// frequently do not ship zsh, so fall back to the POSIX `sh` available via
+/// PATH instead of assuming `/bin/zsh` exists. Windows terminals are resolved
+/// by `resolve_terminal_shell` before this fallback is reached.
 fn detect_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    std::env::var("SHELL")
+        .ok()
+        .map(|shell| shell.trim().to_string())
+        .filter(|shell| !shell.is_empty())
+        .unwrap_or_else(|| "sh".to_string())
 }
 
 /// Create a new PTY terminal session.

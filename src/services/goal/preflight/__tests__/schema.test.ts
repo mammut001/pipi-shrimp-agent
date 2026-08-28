@@ -1,21 +1,20 @@
 /**
- * Workflow Goal Preflight — schema & parser tests
+ * Goal Core Preflight — schema & parser tests
  *
  * Coverage:
  *  - `GoalPreflightResultSchema` accepts a fully-populated `ready` result.
  *  - The schema rejects malformed `readinessScore` and `status`.
- *  - `serializeSuccessCriteria` produces the newline-separated form that
- *    `WorkflowInstance.successCriteria` expects.
- *  - `tryParseGoalPreflightResult` strips a ```json fence, extracts a
- *    leading prose / trailing prose envelope, and returns `null` on
- *    malformed input instead of throwing.
+ *  - `tryParseGoalPreflightResult` strips a JSON fence, extracts a
+ *    leading/trailing prose envelope, and returns `null` on malformed input.
+ *
+ * Success-criteria normalization/formatting belongs to Goal Core type tests,
+ * not to the preflight schema.
  */
 
 import { describe, it, expect } from '@jest/globals';
 import {
   GoalPreflightResultSchema,
   tryParseGoalPreflightResult,
-  serializeSuccessCriteria,
 } from '../schema';
 
 const readyResult = {
@@ -65,7 +64,7 @@ describe('GoalPreflightResultSchema', () => {
     }
   });
 
-  it('accepts a needs_more_info result', () => {
+  it('requires a non-empty final goal even while more info is needed', () => {
     const parsed = GoalPreflightResultSchema.safeParse({
       ...readyResult,
       status: 'needs_more_info',
@@ -73,8 +72,6 @@ describe('GoalPreflightResultSchema', () => {
       readinessScore: 30,
     });
     expect(parsed.success).toBe(false);
-    // finalGoal must be non-empty even when status is needs_more_info
-    // (the schema is the same).
   });
 
   it('rejects readinessScore above 100', () => {
@@ -112,24 +109,6 @@ describe('GoalPreflightResultSchema', () => {
   });
 });
 
-describe('serializeSuccessCriteria', () => {
-  it('joins a list into a newline-bulleted string', () => {
-    expect(serializeSuccessCriteria(['a', 'b', 'c'])).toBe('- a\n- b\n- c');
-  });
-
-  it('preserves existing leading dashes', () => {
-    expect(serializeSuccessCriteria(['- already', 'b'])).toBe('- already\n- b');
-  });
-
-  it('drops empty and whitespace-only entries', () => {
-    expect(serializeSuccessCriteria(['a', '   ', '', 'b'])).toBe('- a\n- b');
-  });
-
-  it('returns an empty string for an empty list', () => {
-    expect(serializeSuccessCriteria([])).toBe('');
-  });
-});
-
 describe('tryParseGoalPreflightResult', () => {
   it('parses a raw JSON string', () => {
     const result = tryParseGoalPreflightResult(JSON.stringify(readyResult));
@@ -138,7 +117,7 @@ describe('tryParseGoalPreflightResult', () => {
     expect(result?.readinessScore).toBe(85);
   });
 
-  it('strips a ```json code fence', () => {
+  it('strips a json code fence', () => {
     const fenced = '```json\n' + JSON.stringify(readyResult) + '\n```';
     const result = tryParseGoalPreflightResult(fenced);
     expect(result?.finalGoal).toBe(readyResult.finalGoal);

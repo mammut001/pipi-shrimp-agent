@@ -14,6 +14,7 @@ import {
   type WorkflowRun,
 } from '@/types/workflow';
 import { DEFAULT_MAX_GOAL_ITERATIONS } from '@/services/workflow/defaults';
+import { normalizeSuccessCriteria } from '@/services/goal/types';
 import {
   formatWorkflowValidationErrors,
   validateWorkflowForRun,
@@ -105,7 +106,7 @@ interface WorkflowRunSnapshot {
   instanceId: string;
   instanceName: string;
   projectGoal: string;
-  successCriteria: string;
+  successCriteria: string[];
   maxGoalIterations: number;
   goalEvaluatorAgentId: string | null;
   agents: WorkflowAgent[];
@@ -168,6 +169,7 @@ function freezeWorkflowRunSnapshot(snapshot: WorkflowRunSnapshot): WorkflowRunSn
     Object.freeze(connection);
   }
 
+  Object.freeze(snapshot.successCriteria);
   Object.freeze(snapshot.agents);
   Object.freeze(snapshot.executableAgents);
   Object.freeze(snapshot.connections);
@@ -184,7 +186,7 @@ function createWorkflowRunSnapshot(instance: WorkflowInstance): WorkflowRunSnaps
     instanceId: instance.id,
     instanceName: instance.name,
     projectGoal: instance.projectGoal?.trim() || '',
-    successCriteria: instance.successCriteria?.trim() || '',
+    successCriteria: normalizeSuccessCriteria(instance.successCriteria),
     maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
     goalEvaluatorAgentId: instance.goalEvaluatorAgentId ?? null,
     agents,
@@ -199,7 +201,7 @@ function buildGoalEvaluationInstance(snapshot: WorkflowRunSnapshot): WorkflowIns
     id: snapshot.instanceId,
     name: snapshot.instanceName,
     projectGoal: snapshot.projectGoal,
-    successCriteria: snapshot.successCriteria,
+    successCriteria: [...snapshot.successCriteria],
     goalEvaluatorAgentId: snapshot.goalEvaluatorAgentId,
     maxGoalIterations: snapshot.maxGoalIterations,
     agents: snapshot.agents,
@@ -574,7 +576,7 @@ ${output}
     const prompt = predecessorIds.length === 0 && inboxMessages.length === 0
       ? buildEntryAgentPrompt({
           projectGoal: snapshot.projectGoal,
-          successCriteria: snapshot.successCriteria,
+          successCriteria: [...snapshot.successCriteria],
           agent,
           iteration,
           previousEvaluation,
@@ -583,7 +585,7 @@ ${output}
       : buildDownstreamAgentPrompt(
           {
             projectGoal: snapshot.projectGoal,
-            successCriteria: snapshot.successCriteria,
+            successCriteria: [...snapshot.successCriteria],
             agent,
             upstreams,
             iteration,
@@ -681,7 +683,7 @@ ${output}
     }
 
     const configuredGoal = instance.projectGoal?.trim() || userPrompt?.trim() || '';
-    const successCriteria = instance.successCriteria?.trim() || '';
+    const successCriteria = normalizeSuccessCriteria(instance.successCriteria);
     const validationResult = validateWorkflowForRun({
       ...instance,
       projectGoal: configuredGoal,
@@ -741,7 +743,7 @@ ${output}
         id: localRunId,
         title: `${projectGoal.slice(0, 60)}${projectGoal.length > 60 ? '...' : ''}`,
         projectGoal,
-        successCriteria,
+        successCriteria: [...successCriteria],
         status: 'error',
         startTime: this.deps.now(),
         endTime: this.deps.now(),
@@ -783,7 +785,7 @@ ${output}
       id: localRunId,
       title: `${projectGoal.slice(0, 60)}${projectGoal.length > 60 ? '...' : ''}`,
       projectGoal,
-      successCriteria,
+      successCriteria: [...successCriteria],
       status: 'running',
       startTime: this.deps.now(),
       agents: snapshot.agents.map((agent) => ({

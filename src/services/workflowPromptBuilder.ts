@@ -8,6 +8,7 @@ import {
   getExpectedMarkersForRole,
 } from '@/services/workflow/templates/markers';
 import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
+import { formatSuccessCriteria } from '@/services/goal/types';
 
 const MAX_UPSTREAM_CHARS = 5000;
 
@@ -38,7 +39,7 @@ export interface AgentStatusBlock {
 
 export interface BuildWorkflowPromptOptions {
   projectGoal: string;
-  successCriteria?: string;
+  successCriteria?: readonly string[];
   agent: WorkflowAgent;
   upstreams?: UpstreamOutput[];
   inboxMessages?: WorkflowInboxPromptItem[];
@@ -142,7 +143,7 @@ export function buildWorkflowAgentPrompt(options: BuildWorkflowPromptOptions): s
   const roleLabel = options.agent.role ? `${options.agent.role}` : 'custom';
 
   sections.push(`## 工作流目标（Project Goal）\n${options.projectGoal}`);
-  sections.push(`## 成功判定标准（Success Criteria）\n${options.successCriteria?.trim() || '（未设置）'}`);
+  sections.push(`## 成功判定标准（Success Criteria）\n${formatSuccessCriteria(options.successCriteria) || '（未设置）'}`);
   sections.push(
     [
       '## 你的角色',

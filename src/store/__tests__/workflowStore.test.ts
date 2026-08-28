@@ -46,7 +46,7 @@ describe('workflowStore', () => {
     expect(instance).toMatchObject({
       name: 'Test Workflow',
       projectGoal: '',
-      successCriteria: '',
+      successCriteria: [],
       goalEvaluatorAgentId: null,
       maxGoalIterations: 5,
       activeRunId: null,
@@ -61,7 +61,7 @@ describe('workflowStore', () => {
     const instance = useWorkflowStore.getState().createInstance('Persistent Workflow');
     useWorkflowStore.getState().updateInstanceMeta(instance.id, {
       projectGoal: 'Ship diagnostics hardening',
-      successCriteria: 'Typecheck, tests, and lint pass',
+      successCriteria: ["Typecheck, tests, and lint pass"],
       goalEvaluatorAgentId: null,
       maxGoalIterations: 7,
     });
@@ -69,7 +69,7 @@ describe('workflowStore', () => {
     const persisted = JSON.parse(localStorageMock.data[STORAGE_KEY]);
     expect(persisted.instances[0]).toMatchObject({
       projectGoal: 'Ship diagnostics hardening',
-      successCriteria: 'Typecheck, tests, and lint pass',
+      successCriteria: ["Typecheck, tests, and lint pass"],
       maxGoalIterations: 7,
     });
   });
@@ -96,7 +96,7 @@ describe('workflowStore', () => {
       id: 'run-1',
       title: 'Run 1',
       projectGoal: 'Ship it',
-      successCriteria: 'All checks green',
+      successCriteria: ["All checks green"],
       status: 'running',
       startTime: 1,
       agents: [],
@@ -242,7 +242,7 @@ describe('workflowStore', () => {
       id: 'run-1',
       title: 'Run 1',
       projectGoal: 'Goal 1',
-      successCriteria: '',
+      successCriteria: [],
       status: 'completed',
       startTime: 1,
       agents: [],
@@ -254,7 +254,7 @@ describe('workflowStore', () => {
       id: 'run-2',
       title: 'Run 2',
       projectGoal: 'Goal 2',
-      successCriteria: '',
+      successCriteria: [],
       status: 'completed',
       startTime: 2,
       agents: [],
@@ -279,7 +279,7 @@ describe('workflowStore', () => {
       id: 'run-origin',
       title: 'Origin Run',
       projectGoal: 'Ship origin workflow',
-      successCriteria: '',
+      successCriteria: [],
       status: 'running',
       startTime: 1,
       agents: [],

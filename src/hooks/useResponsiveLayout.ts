@@ -2,28 +2,24 @@
  * useResponsiveLayout - Centralized responsive viewport helpers for the main shell.
  *
  * Returns tiered layout flags based on window.innerWidth. The thresholds are
- * tuned to the MainLayout geometry (expanded sidebar 300px, default right
- * panel 320px, comfortable chat main column >= ~768px / max-w-3xl):
+ * tuned to the MainLayout geometry and keep the three-column shell available
+ * on common 1280px laptop viewports while still protecting genuinely cramped
+ * windows:
  *
  *   < 720px   xs  — phone-class, sidebar is forced to the 68px rail and the
  *                   right panel is hidden. Only the main content area fits.
- *   < 1388px  sm  — small / typical laptop viewport. Sidebar can stay
- *                   expanded (300px) but a right panel (~320px) would shrink
- *                   the chat main column below 768px and squeeze the
- *                   `max-w-3xl` content into the middle. The right panel is
- *                   force-hidden unless the page explicitly opts in via
- *                   `showRightPanel` (e.g. Workflow, AutoResearch).
- *   >= 1388px md  — full layout (sidebar + main + optional right panel).
+ *   < 1180px  sm  — compact desktop / tablet viewport. The right panel is
+ *                   auto-hidden to preserve usable main content width.
+ *   >= 1180px md  — full layout (sidebar + main + optional right panel).
  *
  * `forceHideRightPanel` is the recommended flag to feed into
  * `shouldShowRightPanel`: it leaves the user-explicit `rightPanelVisible`
- * toggle intact (the user can still re-open the panel via the toggle handle
- * in <main> on a wider window) but prevents the panel from rendering when
- * there simply isn't enough room.
+ * toggle intact on sufficiently wide viewports while preventing the panel
+ * from rendering when there simply isn't enough room.
  *
  * `forceCollapseSidebar` is the recommended flag for the sidebar. On `xs` the
- * expanded sidebar (300px) would consume almost the entire viewport so we
- * always force the 68px rail there.
+ * expanded sidebar would consume almost the entire viewport so we always
+ * force the 68px rail there.
  */
 
 import { useEffect, useState } from 'react';
@@ -45,12 +41,11 @@ export interface ResponsiveLayout {
   width: number;
 }
 
-// Breakpoint chosen so the chat main column can stay >= 768px (max-w-3xl) when
-// the right AgentPanel (~320px) is shown alongside the expanded sidebar
-// (~300px): 300 + 320 + 768 = 1388. Below this width the right panel is
-// auto-hidden so the chat content keeps a comfortable line length instead of
-// being squeezed into the middle of a too-narrow main column.
-const MD_BREAKPOINT = 1388;
+// Keep this aligned with MainLayout's documented responsive contract. The old
+// 1388px threshold hid the right panel on 1280px laptop viewports, making
+// AgentPanel and page-specific panels inaccessible even though the shell still
+// has enough room to render them.
+const MD_BREAKPOINT = 1180;
 const XS_BREAKPOINT = 720;
 
 const computeLayout = (width: number): ResponsiveLayout => {
