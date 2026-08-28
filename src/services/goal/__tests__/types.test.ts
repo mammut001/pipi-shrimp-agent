@@ -3,8 +3,6 @@ import { describe, expect, it } from '@jest/globals';
 import {
   formatSuccessCriteria,
   normalizeSuccessCriteria,
-  parseSuccessCriteria,
-  serializeSuccessCriteria,
 } from '@/services/goal/types';
 
 describe('Goal Core success criteria adapters', () => {
@@ -24,9 +22,9 @@ describe('Goal Core success criteria adapters', () => {
     ]);
   });
 
-  it('round-trips canonical criteria through text adapters', () => {
+  it('round-trips canonical criteria through the display boundary', () => {
     const criteria = ['first', 'second', 'third'];
-    expect(parseSuccessCriteria(serializeSuccessCriteria(criteria))).toEqual(criteria);
+    expect(normalizeSuccessCriteria(formatSuccessCriteria(criteria))).toEqual(criteria);
   });
 
   it('renders criteria only at UI/prompt boundaries', () => {
