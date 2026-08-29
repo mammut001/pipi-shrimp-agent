@@ -84,10 +84,10 @@ export function Chat() {
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
 
   // Get current session work dir for terminal cwd
-  const terminalCwd = currentSessionData?.workDir || fallbackTerminalCwd;
+  const terminalCwd = currentSessionData?.projectDir || currentSessionData?.workDir || fallbackTerminalCwd;
 
   useEffect(() => {
-    if (!terminalPanelVisible || currentSessionData?.workDir || fallbackTerminalCwd) {
+    if (!terminalPanelVisible || currentSessionData?.projectDir || currentSessionData?.workDir || fallbackTerminalCwd) {
       return;
     }
 
@@ -105,7 +105,7 @@ export function Chat() {
     return () => {
       cancelled = true;
     };
-  }, [currentSessionData?.workDir, currentSessionId, ensureSessionWorkDir, fallbackTerminalCwd, terminalPanelVisible]);
+  }, [currentSessionData?.projectDir, currentSessionData?.workDir, currentSessionId, ensureSessionWorkDir, fallbackTerminalCwd, terminalPanelVisible]);
 
   // Memoized: filter out internal tool-result messages
   const rawMessages = currentMessages();
@@ -329,27 +329,23 @@ export function Chat() {
           <ChatInput />
           </div>{/* end chat area */}
 
-          {/* Terminal Panel (bottom, VS Code-style)
-              We always render this subtree but hide it via CSS so the xterm
-              instance (and its PTY session) survives toggle cycles. Conditional
-              rendering would unmount the component and destroy the session,
-              making the terminal appear "cleared" every time it is reopened. */}
-          <div style={{ display: terminalPanelVisible ? 'contents' : 'none' }}>
-            {/* Drag handle for resizing */}
-            <div
-              className="h-1 bg-[#3c3c3c] cursor-row-resize hover:bg-blue-500 transition-colors flex-shrink-0"
-              onMouseDown={handleTerminalDragStart}
-            />
-            <div
-              className="flex-shrink-0"
-              style={{ height: terminalPanelHeight }}
-            >
-              <TerminalPanel
-                cwd={terminalCwd}
-                onClose={toggleTerminalPanel}
+          {terminalPanelVisible && (
+            <>
+              <div
+                className="h-1 bg-[#3c3c3c] cursor-row-resize hover:bg-blue-500 transition-colors flex-shrink-0"
+                onMouseDown={handleTerminalDragStart}
               />
-            </div>
-          </div>
+              <div
+                className="flex-shrink-0"
+                style={{ height: terminalPanelHeight }}
+              >
+                <TerminalPanel
+                  cwd={terminalCwd}
+                  onClose={toggleTerminalPanel}
+                />
+              </div>
+            </>
+          )}
         </div>
         {/* Permission Modal */}
         {pendingPermission && (

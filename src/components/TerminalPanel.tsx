@@ -148,10 +148,8 @@ export function TerminalPanel({
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    // Helper: wait one animation frame (lets the browser finish layout)
     const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-    // Helper: safe fit — guards against 0×0 container
     const safeFit = () => {
       try {
         const dims = fitAddon.proposeDimensions();
@@ -163,11 +161,35 @@ export function TerminalPanel({
       return null;
     };
 
+    const waitForVisibleSize = (): Promise<void> => new Promise((resolve) => {
+      if (container.clientWidth > 8 && container.clientHeight > 8) {
+        resolve();
+        return;
+      }
+      const observer = new ResizeObserver(() => {
+        if (container.clientWidth > 8 && container.clientHeight > 8) {
+          observer.disconnect();
+          resolve();
+        }
+      });
+      observer.observe(container);
+      window.setTimeout(() => {
+        observer.disconnect();
+        resolve();
+      }, 800);
+    });
+
     let unlistenOutput: UnlistenFn | null = null;
     let unlistenExit: UnlistenFn | null = null;
     let cwdSetupTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    // Wire up user input / resize forwarding (safe to register before open)
+    terminal.attachCustomKeyEventHandler((event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        return false;
+      }
+      return true;
+    });
+
     const onDataDisposable = terminal.onData((data) => {
       invoke('terminal_input', { sessionId, data }).catch(() => {});
     });
@@ -175,26 +197,25 @@ export function TerminalPanel({
       invoke('terminal_resize', { sessionId, rows, cols }).catch(() => {});
     });
 
-    // ── Single sequential async flow ──
-    // fonts.ready → open → frame → fit → listeners → create PTY
-    // This strict ordering guarantees xterm measures the real font, not a fallback.
+    // Wait until the panel is actually laid out. Opening xterm inside
+    // `display:none` / 0-height leaves a black PTY that never echoes.
     (async () => {
       try {
-        // 1. Wait for the terminal font to finish loading
-        await document.fonts.ready;
+        await Promise.race([
+          document.fonts.ready,
+          new Promise<void>((resolve) => window.setTimeout(resolve, 250)),
+        ]);
         if (disposed) return;
 
-        // 2. Attach xterm to the DOM (creates the hidden measurement span)
-        terminal.open(container);
+        await waitForVisibleSize();
+        if (disposed) return;
 
-        // 3. Wait one frame so the browser completes layout / paint
+        terminal.open(container);
         await nextFrame();
         if (disposed) return;
 
-        // 4. Now measure & fit — font is loaded, DOM is laid out
         safeFit();
 
-        // 5. Set up Tauri event listeners
         unlistenOutput = await listen<{ session_id: string; data: string }>(
           'terminal-output',
           (event) => {
@@ -217,7 +238,6 @@ export function TerminalPanel({
 
         if (disposed) return;
 
-        // 6. Spawn the PTY with the measured dimensions
         const dims = fitAddon.proposeDimensions();
         await invoke('terminal_create', {
           sessionId,
@@ -237,10 +257,6 @@ export function TerminalPanel({
         safeFit();
         terminal.focus();
 
-        // Belt-and-suspenders: ensure we're in the right directory even if the
-        // login shell's .zprofile / .zshrc happens to change the cwd.
-        // We send `cd "<dir>" && clear` after a brief delay so the shell is
-        // fully initialized. The `clear` keeps the terminal looking clean.
         if (cwd && !disposed) {
           cwdSetupTimeoutId = setTimeout(() => {
             if (!disposed) {
