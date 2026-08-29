@@ -11,7 +11,7 @@
  * - Output streams back via the `terminal-output` / `terminal-exit` events
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -26,6 +26,7 @@ import {
   formatShellProfileLabel,
   resolveWindowsShellProfile,
 } from '@/utils/windowsShellProfile';
+import { isTerminalPassThroughShortcut } from '@/utils/terminalShortcuts';
 
 /** Monochrome theme matching the app's palette (black accents, light surfaces). */
 const TERMINAL_THEME = {
@@ -87,7 +88,10 @@ export function TerminalPanel({
   const [status, setStatus] = useState<'connecting' | 'ready' | 'exited' | 'error'>('connecting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
-  const shellResolution = resolveWindowsShellProfile(windowsShellProfile, cwd);
+  const shellResolution = useMemo(
+    () => resolveWindowsShellProfile(windowsShellProfile, cwd),
+    [windowsShellProfile, cwd],
+  );
   const shellLabel = formatShellProfileLabel(shellResolution);
   const cwdPathKind = detectPathKind(cwd);
   const shellBanner = shellResolution.isWindows && shellResolution.resolved === 'wsl' && cwdPathKind === 'windows'
@@ -113,6 +117,12 @@ export function TerminalPanel({
     const escaped = wslPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     return `cd "${escaped}" && clear\r`;
   }, [shellResolution]);
+  const buildCwdCommandRef = useRef(buildCwdCommand);
+  buildCwdCommandRef.current = buildCwdCommand;
+  const onSessionReadyRef = useRef(onSessionReady);
+  onSessionReadyRef.current = onSessionReady;
+  const onSessionExitRef = useRef(onSessionExit);
+  onSessionExitRef.current = onSessionExit;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -184,7 +194,7 @@ export function TerminalPanel({
     let cwdSetupTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     terminal.attachCustomKeyEventHandler((event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      if (isTerminalPassThroughShortcut(event)) {
         return false;
       }
       return true;
@@ -232,13 +242,15 @@ export function TerminalPanel({
             if (event.payload.session_id !== sessionId) return;
             terminal.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
             setStatus('exited');
-            onSessionExit?.(sessionId);
+            onSessionExitRef.current?.(sessionId);
           }
         );
 
         if (disposed) return;
 
         const dims = fitAddon.proposeDimensions();
+        terminal.write('\x1b[90mOpening PTY…\x1b[0m\r\n');
+        console.info('[TerminalPanel] terminal_create', { sessionId, cwd: cwd || null, rows: dims?.rows ?? 24, cols: dims?.cols ?? 80 });
         await invoke('terminal_create', {
           sessionId,
           cwd: cwd || null,
@@ -253,14 +265,15 @@ export function TerminalPanel({
         }
 
         setStatus('ready');
-        onSessionReady?.(sessionId);
+        onSessionReadyRef.current?.(sessionId);
         safeFit();
         terminal.focus();
+        console.info('[TerminalPanel] terminal_create ready', sessionId);
 
         if (cwd && !disposed) {
           cwdSetupTimeoutId = setTimeout(() => {
             if (!disposed) {
-              const cmd = buildCwdCommand(cwd);
+              const cmd = buildCwdCommandRef.current(cwd);
               invoke('terminal_input', { sessionId, data: cmd }).catch(() => {});
             }
             cwdSetupTimeoutId = null;
@@ -298,7 +311,7 @@ export function TerminalPanel({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [cwd, externalSessionId, onSessionExit, onSessionReady, buildCwdCommand, windowsShellProfile]);
+  }, [cwd, externalSessionId, windowsShellProfile]);
 
   const handleClear = useCallback(() => {
     terminalRef.current?.clear();
