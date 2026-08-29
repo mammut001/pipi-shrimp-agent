@@ -211,6 +211,8 @@ function buildGitignoreContent(): string {
     'node_modules/',
     'artifacts/',
     'runs/',
+    'session.md',
+    'history.json',
     '*.log',
     '',
   ].join('\n');

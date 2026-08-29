@@ -360,7 +360,7 @@ describe('chatStore sendMessage integration', () => {
       undefined,
       false,
       undefined,
-      { noTools: true },
+      expect.objectContaining({ noTools: true }),
     );
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
       ['user', 'hello world'],
@@ -705,7 +705,8 @@ describe('chatStore sendMessage integration', () => {
     expect(projectDir).toBeUndefined();
     expect(allowBrowserTools).toBe(false);
     expect(requestConfig).toBeUndefined();
-    expect(options).toBeUndefined();
+    expect(options?.allowedTools).toBeUndefined();
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
     expect(pipiOutputDir).toBeUndefined();
   });
 
@@ -721,7 +722,7 @@ describe('chatStore sendMessage integration', () => {
       undefined,
       false,
       undefined,
-      { noTools: true },
+      expect.objectContaining({ noTools: true }),
     );
   });
 
@@ -761,7 +762,7 @@ describe('chatStore sendMessage integration', () => {
       undefined,
       false,
       undefined,
-      { noTools: true },
+      expect.objectContaining({ noTools: true }),
     );
   });
 

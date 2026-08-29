@@ -528,7 +528,8 @@ export function AutoResearchDashboardView({
       openLabel={t('autoresearch.detail.open')}
       onClose={onClose}
       headerActions={(
-        <>
+        <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+          {headerActions}
           {onOpenFullReport && (
             <button
               type="button"
@@ -538,7 +539,7 @@ export function AutoResearchDashboardView({
               {t('autoresearch.detail.fullReport')}
             </button>
           )}
-        </>
+        </div>
       )}
       className={className}
       sidebar={(

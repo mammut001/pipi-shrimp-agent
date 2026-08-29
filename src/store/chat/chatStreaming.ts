@@ -87,6 +87,22 @@ export function resolveStreamingOwnerSessionId(
 }
 
 const cancellationRequestedSessions = new Set<string>();
+const chatTurnAbortControllers = new Map<string, AbortController>();
+
+export function createChatTurnAbortController(sessionId: string): AbortController {
+  chatTurnAbortControllers.get(sessionId)?.abort();
+  const controller = new AbortController();
+  chatTurnAbortControllers.set(sessionId, controller);
+  return controller;
+}
+
+export function abortChatTurn(sessionId: string | null | undefined): void {
+  if (!sessionId) {
+    return;
+  }
+  chatTurnAbortControllers.get(sessionId)?.abort();
+  chatTurnAbortControllers.delete(sessionId);
+}
 
 export function requestChatGenerationCancel(sessionId: string | null | undefined): void {
   if (sessionId) {
