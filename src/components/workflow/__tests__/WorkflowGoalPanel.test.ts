@@ -96,6 +96,9 @@ describe('WorkflowGoalPanel', () => {
     expect(markup).not.toContain('type="number"');
     expect(markup).toContain('workflow.goalPanel.expandConfig');
     expect(markup).toContain('h-20');
+    expect(markup).toContain('pr-20');
+    expect(markup).toContain('whitespace-nowrap');
+    expect(markup).toContain('data-testid="workflow-goal-save"');
   });
 
   it('exposes a Clarify Goal button', () => {

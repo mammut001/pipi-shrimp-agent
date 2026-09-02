@@ -205,4 +205,16 @@ describe('WorkflowView', () => {
 
     expect(harness.container.textContent).toContain('workflow-output');
   });
+
+  it('keeps the agent task Save label clear of the layout toggle gutter', async () => {
+    await harness.render(createElement(WorkflowView));
+    await clickElement(findButtonByText(harness.container, 'select-agent-1'), harness.window);
+
+    const saveButton = harness.container.querySelector('[data-testid="workflow-task-save"]') as HTMLButtonElement;
+    expect(saveButton).toBeTruthy();
+    expect(saveButton.textContent).toContain('workflow.save');
+    expect(saveButton.className).toContain('whitespace-nowrap');
+    expect(saveButton.className).not.toContain('mr-12');
+    expect(saveButton.closest('div')?.parentElement?.className).toContain('pr-20');
+  });
 });
