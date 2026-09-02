@@ -2,7 +2,7 @@
  * AutoResearch Loop Engine — Autonomous experiment cycle state machine.
  */
 
-import { useAutoResearchStore, type ExperimentEntry, type ExperimentStatus, type SshConfig } from '@/store/autoresearchStore';
+import { useAutoResearchStore, updateRunRecord, type ExperimentEntry, type ExperimentStatus, type SshConfig } from '@/store/autoresearchStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { buildShellProfilePromptContext } from '@/utils/windowsShellProfile';
 import { logExperiment } from './expLogger';
@@ -331,15 +331,11 @@ async function parseIterationMetrics(
     `${runDir.codeDir}/metrics.json`,
   ].filter((value, index, list) => list.indexOf(value) === index);
 
-  let metricsContent: string | null = null;
   for (const candidatePath of metricsCandidates) {
-    metricsContent = await readTargetText(cfg, candidatePath);
-    if (metricsContent) {
-      break;
+    const metricsContent = await readTargetText(cfg, candidatePath);
+    if (!metricsContent) {
+      continue;
     }
-  }
-
-  if (metricsContent) {
     try {
       const sanitizedMetricsContent = metricsContent.replace(/:\s*NaN\b/g, ': null').replace(/:\s*Infinity\b/g, ': null');
       const raw = JSON.parse(sanitizedMetricsContent) as unknown;
@@ -351,14 +347,17 @@ async function parseIterationMetrics(
         expectedDirection: metricDirection,
       });
       if (artifact.value) {
-        return normalizeParsedResult(
+        const normalized = normalizeParsedResult(
           artifact.value as unknown as Record<string, unknown>,
           metricName,
           'metrics_json',
         );
+        if (normalized.parsed && typeof normalized.parsed.metricValue === 'number' && Number.isFinite(normalized.parsed.metricValue)) {
+          return normalized;
+        }
       }
     } catch {
-      // Invalid on-disk JSON: fall through to agent stdout parsers.
+      // Invalid on-disk JSON: try next candidate or fall through to agent stdout parsers.
     }
   }
 
@@ -902,6 +901,33 @@ export async function startExperimentLoop(
         continue;
       }
 
+      if (parsed && typeof parsed.metricValue === 'number' && Number.isFinite(parsed.metricValue)) {
+        if (parsed.status === 'FAILED') {
+          const currentBest = state.bestMetric;
+          const isBetter = currentBest === null || currentBest === undefined
+            ? true
+            : state.metricDirection === 'higher'
+              ? parsed.metricValue > currentBest
+              : parsed.metricValue < currentBest;
+          parsed.status = isBetter ? 'IMPROVED' : 'NOT_IMPROVED';
+          parsed.failReason = undefined;
+          emitAutoResearchRuntimeEvent({
+            level: 'info',
+            phase: 'PARSE_METRICS',
+            type: 'metrics_parsed',
+            message: `evaluation_fallback_from_metrics: iteration ${iteration} recovered score ${parsed.metricValue} despite agent failure or lane rejection.`,
+            summary: `Iteration ${iteration} recovered score ${parsed.metricValue} (${parsed.status}).`,
+            metadata: {
+              iteration,
+              iterDir: runDir.iterDir,
+              parser: parsed.parseSource,
+              metricValue: parsed.metricValue,
+            },
+            iterationId: `${sessionId}-iter-${iteration}`,
+          });
+        }
+      }
+
       const metricsRecord: IterationMetrics = {
         iteration,
         sessionId,
@@ -1388,7 +1414,7 @@ export async function startExperimentLoop(
       || isAutoResearchAbortError(error);
     if (isAbort) {
       const latest = useAutoResearchStore.getState();
-      if (latest.id === sessionId && latest.loopState !== 'stopped') {
+      if (latest.id === sessionId && latest.loopState !== 'stopped' && latest.loopState !== 'paused') {
         useAutoResearchStore.getState().setRunStatus('stopped', {
           summary: 'Aborted by user.',
           endedAt: new Date().toISOString(),
@@ -1411,17 +1437,44 @@ export function getActiveLoopAbortControllerForTest(): AbortController | null {
   return activeLoopAbortController;
 }
 
-export function stopExperimentLoop(): void {
+export function suspendExperimentLoopOnUnmount(): void {
+  const state = useAutoResearchStore.getState();
+  if (state.loopState === 'running' || state.loopState === 'paused') {
+    useAutoResearchStore.getState().patchActiveRunResumeToken({ status: 'paused' });
+    useAutoResearchStore.getState().setRunStatus('paused', {
+      summary: 'Run paused on page exit.',
+    });
+    useAutoResearchStore.getState().setLoopState('paused');
+    if (activeLoopAbortController) {
+      activeLoopAbortController.abort();
+    }
+  }
+}
+
+export function stopExperimentLoop(targetRunId?: string): void {
   // Fire the in-flight abort first so any active LLM call can be cancelled
   // before we even set the run status. The loop will pick this up on its
   // next iteration boundary and exit cleanly via the catch above.
   if (activeLoopAbortController) {
     activeLoopAbortController.abort();
   }
+  const state = useAutoResearchStore.getState();
+  const runId = targetRunId || state.id || state.selectedRunId;
   useAutoResearchStore.getState().setRunStatus('stopped', {
     summary: 'Stopped by user.',
     endedAt: new Date().toISOString(),
   });
+  if (runId && state.id !== runId) {
+    useAutoResearchStore.setState((s) => ({
+      runHistory: updateRunRecord(s.runHistory, runId, (r) => ({
+        ...r,
+        status: 'stopped',
+        endedAt: new Date().toISOString(),
+        summary: 'Stopped by user.',
+        resumeToken: undefined,
+      })),
+    }));
+  }
   emitAutoResearchRuntimeEvent({
     level: 'warn',
     phase: 'DONE',
@@ -1441,12 +1494,28 @@ export function pauseExperimentLoop(): void {
     summary: 'Run paused by user.',
   });
   useAutoResearchStore.getState().patchActiveRunResumeToken({ status: 'paused' });
+  useAutoResearchStore.getState().setRunStatus('paused', {
+    summary: 'Run paused by user.',
+  });
   useAutoResearchStore.getState().setLoopState('paused');
 }
 
-export function resumeExperimentLoop(): void {
+export async function resumePersistedExperimentLoop(targetRunId?: string): Promise<void> {
   const state = useAutoResearchStore.getState();
-  if (state.loopState === 'paused') {
+  const runId = targetRunId
+    || state.id
+    || state.selectedRunId
+    || state.runHistory.find((r) => r.resumeToken?.resumable && (r.status === 'paused' || r.resumeToken?.status === 'paused'))?.id;
+  if (!runId) {
+    throw new Error('No resumable AutoResearch run found.');
+  }
+  const { resumeInterruptedAutoResearchRun } = await import('./setupFlow');
+  await resumeInterruptedAutoResearchRun(runId);
+}
+
+export function resumeExperimentLoop(targetRunId?: string): void {
+  const state = useAutoResearchStore.getState();
+  if (activeLoopAbortController && state.loopState === 'paused') {
     useAutoResearchStore.getState().patchActiveRunResumeToken({ status: 'running' });
     useAutoResearchStore.getState().setRunStatus('running', {
       summary: 'Run resumed.',
@@ -1459,5 +1528,9 @@ export function resumeExperimentLoop(): void {
       summary: 'Run resumed by user.',
     });
     useAutoResearchStore.getState().setLoopState('running');
+    return;
   }
+  void resumePersistedExperimentLoop(targetRunId).catch((error) => {
+    useAutoResearchStore.getState().setError(`Failed to resume run: ${formatError(error)}`);
+  });
 }

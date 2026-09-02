@@ -255,8 +255,9 @@ function getInterruptedRunForResume(runId: string): {
   if (!run) {
     throw new Error('Interrupted AutoResearch run not found.');
   }
-  if (run.status !== 'interrupted') {
-    throw new Error('Only interrupted AutoResearch runs can be resumed.');
+  const isResumable = run.status === 'interrupted' || run.status === 'paused' || run.resumeToken?.status === 'paused';
+  if (!isResumable) {
+    throw new Error('Only interrupted or paused AutoResearch runs can be resumed.');
   }
   if (!run.resumeToken) {
     throw new Error('This interrupted run does not have a recovery token. Start a new run instead.');

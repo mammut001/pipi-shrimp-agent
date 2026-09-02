@@ -160,7 +160,7 @@ function upsertRunRecord(runs: AutoResearchRunRecord[], record: AutoResearchRunR
   return sortRuns(next);
 }
 
-function updateRunRecord(
+export function updateRunRecord(
   runs: AutoResearchRunRecord[],
   runId: string,
   updater: (run: AutoResearchRunRecord) => AutoResearchRunRecord,
@@ -354,6 +354,8 @@ function mapRunStatusToLoopState(status: AutoResearchRunStatus | undefined): Loo
     case 'running':
     case 'waiting_rate_limit':
       return 'running';
+    case 'paused':
+      return 'paused';
     case 'reflection_failed':
     case 'failed':
       return 'error';
@@ -691,7 +693,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
 
   setRunStatus: (status, options) => set((state) => {
     const updatedAt = options?.endedAt ?? new Date().toISOString();
-    const clearReason = ['running', 'waiting_rate_limit', 'completed', 'stopped'].includes(status);
+    const clearReason = ['running', 'waiting_rate_limit', 'paused', 'completed', 'stopped'].includes(status);
     const clearResumeToken = ['completed', 'stopped', 'failed', 'reflection_failed', 'interrupted'].includes(status);
     const nextReason = options?.reason !== undefined
       ? sanitizeOptionalText(options.reason)
@@ -723,7 +725,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
           ? undefined
           : patchAutoResearchResumeToken(
             run.resumeToken,
-            status === 'running' || status === 'waiting_rate_limit' || status === 'interrupted'
+            status === 'running' || status === 'waiting_rate_limit' || status === 'interrupted' || status === 'paused'
               ? { status }
               : {},
             updatedAt,

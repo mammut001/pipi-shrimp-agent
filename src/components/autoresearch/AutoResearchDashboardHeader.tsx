@@ -5,6 +5,7 @@ import { isDemoRun } from '@/services/autoresearch/demoRun';
 import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { buildAutoResearchModelDisplayFromSnapshot } from '@/services/autoresearch/modelDisplay';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
+import { AutoResearchRunPhaseChip } from './AutoResearchRunProgressRail';
 
 interface AutoResearchDashboardHeaderProps {
   run: AutoResearchRunRecord;
@@ -96,6 +97,14 @@ export function AutoResearchDashboardHeader({
           <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-white/70">
             {statusLabel}
           </span>
+          {(run.status === 'running' || run.status === 'paused') && (
+            <AutoResearchRunPhaseChip
+              currentIteration={run.currentIteration}
+              maxIterations={run.config.iterations}
+              phase={run.currentPhase}
+              loopState={run.status}
+            />
+          )}
         </div>
 
         <h1 className="mt-4 text-3xl font-semibold tracking-tight text-[#f4f4f4] sm:text-[2.4rem]">

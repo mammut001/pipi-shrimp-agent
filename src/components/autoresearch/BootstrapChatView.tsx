@@ -22,10 +22,11 @@ import { startAutoResearchRun, logAutoResearchSetupFailure } from '@/services/au
 import { getAutoResearchDefaultConfig } from '@/services/autoresearch/defaultConfig';
 import { normalizeSuccessCriteria } from '@/services/goal';
 import type { SshConfig } from '@/store/autoresearchStore';
-import { useAutoResearchStore } from '@/store/autoresearchStore';
+import { useAutoResearchStore, getSelectedAutoResearchRunContext } from '@/store/autoresearchStore';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { BootstrapQuickStartCards } from './BootstrapQuickStartCards';
 import { BootstrapProgressRail } from './BootstrapProgressRail';
+import { AutoResearchRunProgressRail } from './AutoResearchRunProgressRail';
 import { runSshExec, runSshUpload } from '@/tools/impl/SshTool';
 import { shellEscapePath } from '@/utils/remoteExec';
 import { shouldAutoOpenAutoResearchTerminal } from '@/utils/windowsShellProfile';
@@ -159,6 +160,11 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   const currentStep = useBootstrapPlanStore((state) => state.currentStep);
   const warnings = useBootstrapPlanStore((state) => state.warnings);
   const readyResult = useBootstrapPlanStore((state) => state.readyResult);
+  const storeLoopState = useAutoResearchStore((state) => state.loopState);
+  const storeCurrentIteration = useAutoResearchStore((state) => state.currentIteration);
+  const storeMaxIterations = useAutoResearchStore((state) => state.maxIterations);
+  const selectedRunContext = useAutoResearchStore(getSelectedAutoResearchRunContext);
+  const storeCurrentPhase = selectedRunContext.run?.currentPhase ?? 'PREFLIGHT';
   const windowsShellProfile = useSettingsStore((state) => state.windowsShellProfile);
   const importedFiles = useSettingsStore((state) => state.importedFiles);
   const noteTool = useBootstrapPlanStore((state) => state.noteTool);
@@ -946,7 +952,16 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
 
       {hasStarted && (
         <div className="flex flex-col gap-4 overflow-y-auto min-w-0">
-          <BootstrapProgressRail currentStep={currentStep} warnings={warnings} />
+          {storeLoopState === 'running' || storeLoopState === 'paused' ? (
+            <AutoResearchRunProgressRail
+              currentIteration={storeCurrentIteration}
+              maxIterations={storeMaxIterations}
+              phase={storeCurrentPhase}
+              loopState={storeLoopState}
+            />
+          ) : (
+            <BootstrapProgressRail currentStep={currentStep} warnings={warnings} />
+          )}
         </div>
       )}
     </div>

@@ -126,6 +126,7 @@ function RunStatusBadge({ status }: { status: AutoResearchRunRecord['status'] })
     draft: 'bg-gray-100 text-gray-700',
     running: 'bg-green-100 text-green-700',
     waiting_rate_limit: 'bg-yellow-100 text-yellow-700',
+    paused: 'bg-amber-100 text-amber-700',
     reflection_failed: 'bg-red-100 text-red-700',
     stopped: 'bg-gray-100 text-gray-700',
     failed: 'bg-red-100 text-red-700',
@@ -250,7 +251,7 @@ export function AutoResearchPanel() {
   const canResumeInterruptedRun = Boolean(
     selectedRun
     && !isSelectedRunActive
-    && selectedRun.status === 'interrupted'
+    && (selectedRun.status === 'interrupted' || selectedRun.status === 'paused' || selectedRun.resumeToken?.status === 'paused')
     && selectedRun.resumeToken?.resumable,
   );
 
@@ -290,8 +291,8 @@ export function AutoResearchPanel() {
   }, [lifecycleLock.locked]);
 
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
-  const handleResume = useCallback(() => resumeExperimentLoop(), []);
-  const handleStop = useCallback(() => stopExperimentLoop(), []);
+  const handleResume = useCallback(() => resumeExperimentLoop(selectedRun?.id), [selectedRun?.id]);
+  const handleStop = useCallback(() => stopExperimentLoop(selectedRun?.id), [selectedRun?.id]);
   const handleResumeInterruptedRun = useCallback(() => {
     if (!selectedRun || !canResumeInterruptedRun || isResumingInterruptedRun) {
       return;
@@ -522,20 +523,20 @@ export function AutoResearchPanel() {
                 {loopState === 'running' && (
                   <>
                     <button onClick={handlePause} className="flex-1 py-1 bg-yellow-50 text-yellow-700 rounded-lg text-[9px] font-bold hover:bg-yellow-100 transition-colors">
-                      ⏸ Pause
+                      ⏸ {t('autoresearch.pause')}
                     </button>
                     <button onClick={handleStop} className="flex-1 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 transition-colors">
-                      ⏹ Stop
+                      ⏹ {t('autoresearch.stop')}
                     </button>
                   </>
                 )}
                 {loopState === 'paused' && (
                   <>
                     <button onClick={handleResume} className="flex-1 py-1 bg-green-50 text-green-700 rounded-lg text-[9px] font-bold hover:bg-green-100 transition-colors">
-                      ▶ Resume
+                      ▶ {t('autoresearch.resume')}
                     </button>
                     <button onClick={handleStop} className="flex-1 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 transition-colors">
-                      ⏹ Stop
+                      ⏹ {t('autoresearch.stop')}
                     </button>
                   </>
                 )}
