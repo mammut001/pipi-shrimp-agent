@@ -962,6 +962,8 @@ export type TranslationKeys = {
   'settings.name': string;
   'settings.nameRequired': string;
   'settings.modelRequired': string;
+  'settings.customModelHelp': string;
+  'settings.customModelPlaceholder': string;
   'settings.configNamePlaceholder': string;
   'settings.provider': string;
   'settings.baseUrl': string;

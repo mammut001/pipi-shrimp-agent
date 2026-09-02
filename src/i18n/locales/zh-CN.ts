@@ -1546,6 +1546,8 @@ const zhCN: TranslationKeys = {
   'settings.name': '名称',
   'settings.nameRequired': '名称不能为空',
   'settings.modelRequired': '模型不能为空',
+  'settings.customModelHelp': '可输入自定义模型 ID',
+  'settings.customModelPlaceholder': '输入或选择模型 ID，例如 vercel/meta/muse-spark-1.2-contributor',
   'settings.configNamePlaceholder': '我的 Anthropic API',
   'settings.provider': '提供商',
   'settings.baseUrl': '接口地址',

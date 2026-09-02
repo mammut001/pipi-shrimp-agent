@@ -13,7 +13,7 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
 import { usePromptStore } from '@/store/promptStore';
-import type { ApiConfig, ModelPricing } from '@/types/settings';
+import type { ApiConfig, ModelPricing, ModelEntry } from '@/types/settings';
 import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import {
   resolveDraftApiKeyValue,
@@ -33,6 +33,7 @@ import {
   getProviderDefaultApiFormat,
   isApiKeyRequired,
   canFetchModels,
+  supportsCustomModel,
   validateProviderFields,
   validateFetchModelsPrereqs,
 } from '@/shared/providers';
@@ -124,15 +125,20 @@ export function Settings() {
     language: getCurrentLocale() as Locale,
   });
 
-  // Build source-annotated model list: remote entries first, then default fallbacks
+  // Build source-annotated model list: remote entries first, then default fallbacks, then current custom model if missing
   const providerName = formData.provider as ProviderName;
   const remoteEntries = availableModelEntries[providerName] ?? [];
   const remoteIds = new Set(remoteEntries.map((e) => e.id));
   const defaultIds = getProviderDefaultModelIds(providerName).filter((id) => !remoteIds.has(id));
-  const currentProviderModelEntries = [
+  const currentProviderModelEntries: ModelEntry[] = [
     ...remoteEntries,
     ...defaultIds.map((id) => ({ id, source: 'default' as const })),
   ];
+  const currentModel = formData.model?.trim();
+  const existingIds = new Set(currentProviderModelEntries.map((e) => e.id));
+  if (currentModel && !existingIds.has(formData.model) && !existingIds.has(currentModel)) {
+    currentProviderModelEntries.push({ id: formData.model, source: 'user' });
+  }
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -271,8 +277,13 @@ export function Settings() {
 
       addNotification('success', `${t('settings.foundModels')}: ${models.length}`);
 
-      if (models.length > 0 && !models.includes(formData.model)) {
-        setFormData(prev => ({ ...prev, model: models[0] }));
+      if (models.length > 0) {
+        setFormData(prev => {
+          if (!prev.model?.trim()) {
+            return { ...prev, model: models[0] };
+          }
+          return prev;
+        });
       }
     } catch (error) {
       const errorMessage = formatError(error);
@@ -400,6 +411,10 @@ export function Settings() {
 
     if (!formData.name.trim()) {
       newErrors.name = t('settings.nameRequired');
+    }
+
+    if (!formData.model.trim()) {
+      newErrors.model = t('settings.modelRequired');
     }
 
     // Capability-driven provider field validation
@@ -818,12 +833,13 @@ export function Settings() {
               {/* Model */}
               <div className="mb-3">
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-medium text-gray-600">{t('settings.model')}</label>
+                  <label htmlFor="model" className="block text-xs font-medium text-gray-600">{t('settings.model')}</label>
                   {canFetchModels(formData.provider) && (
                   <button
                     type="button"
                     onClick={handleRefreshModels}
                     disabled={isFetchingModels}
+                    data-testid="fetch-models-button"
                     className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 disabled:opacity-50"
                   >
                     <svg
@@ -834,21 +850,53 @@ export function Settings() {
                     >
                       <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
                     </svg>
-                    {isFetchingModels ? 'Fetching...' : 'Fetch models'}
+                    {isFetchingModels ? t('settings.fetchingModels') : t('settings.fetchModels')}
                   </button>
                   )}
                 </div>
-                <select
-                  value={formData.model}
-                  onChange={(e) => handleChange('model', e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                >
-                  {currentProviderModelEntries.map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.id}{entry.source === 'remote' ? ' ✦' : ''}
-                    </option>
-                  ))}
-                </select>
+                {supportsCustomModel(formData.provider) ? (
+                  <>
+                    <input
+                      id="model"
+                      type="text"
+                      list={`model-suggestions-${formData.provider}`}
+                      value={formData.model}
+                      onChange={(e) => handleChange('model', e.target.value)}
+                      placeholder={t('settings.customModelPlaceholder')}
+                      data-testid="model-input"
+                      className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
+                        errors.model ? 'border-red-300' : 'border-gray-300'
+                      }`}
+                    />
+                    <datalist id={`model-suggestions-${formData.provider}`} data-testid="model-datalist">
+                      {currentProviderModelEntries.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.id}{entry.source === 'remote' ? ' ✦' : ''}
+                        </option>
+                      ))}
+                    </datalist>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {t('settings.customModelHelp')}
+                    </p>
+                  </>
+                ) : (
+                  <select
+                    id="model"
+                    value={formData.model}
+                    onChange={(e) => handleChange('model', e.target.value)}
+                    data-testid="model-select"
+                    className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${
+                      errors.model ? 'border-red-300' : 'border-gray-300'
+                    }`}
+                  >
+                    {currentProviderModelEntries.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.id}{entry.source === 'remote' ? ' ✦' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {errors.model && <p className="mt-1 text-xs text-red-500">{errors.model}</p>}
               </div>
 
               <div className="mb-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-3 border border-green-200">

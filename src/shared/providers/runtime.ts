@@ -31,6 +31,13 @@ export function canFetchModels(provider: string): boolean {
   return getProvider(provider)?.supportsModelFetch ?? false;
 }
 
+/** Whether this provider supports custom/free-text model IDs (compatible gateways) */
+export function supportsCustomModel(provider: string): boolean {
+  return getProvider(provider)?.supportsCustomModel ?? (
+    provider === 'openai-compatible' || provider === 'anthropic-compatible'
+  );
+}
+
 // ===== Resolution helpers =====
 
 /**

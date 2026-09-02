@@ -19,7 +19,7 @@ import {
   classifyConnectionError,
   getConnectionErrorMessage,
 } from '../services/settings/settingsConnection';
-import { validateProviderFields } from '../shared/providers';
+import { validateProviderFields, supportsCustomModel } from '../shared/providers';
 
 // ─── Sanitization (delegates to errorLogger) ─────────────────────────────────
 
@@ -203,6 +203,40 @@ describe('fetchAvailableModels failure behavior', () => {
 
     const availableModels = remoteFetchFailed ? defaultModels : ['new-remote-model', ...defaultModels];
     expect(availableModels).toContain('claude-3-5-sonnet-20241022');
+  });
+
+  it('fetchAvailableModels does not clobber existing custom model when non-empty', () => {
+    const customModel = 'vercel/meta/muse-spark-1.2-contributor';
+    const fetchedModels = ['alibaba/qwen', 'voyage/rerank'];
+
+    // If current model is already non-empty, auto-pick does not overwrite it
+    let selectedModel = customModel;
+    if (fetchedModels.length > 0 && !selectedModel.trim()) {
+      selectedModel = fetchedModels[0];
+    }
+    expect(selectedModel).toBe('vercel/meta/muse-spark-1.2-contributor');
+  });
+
+  it('fetchAvailableModels auto-picks first model only when model was empty', () => {
+    const fetchedModels = ['alibaba/qwen', 'voyage/rerank'];
+
+    let selectedModel = '';
+    if (fetchedModels.length > 0 && !selectedModel.trim()) {
+      selectedModel = fetchedModels[0];
+    }
+    expect(selectedModel).toBe('alibaba/qwen');
+  });
+});
+
+describe('custom model gateway support', () => {
+  it('identifies compatible gateway providers as supporting custom models', () => {
+    expect(supportsCustomModel('openai-compatible')).toBe(true);
+    expect(supportsCustomModel('anthropic-compatible')).toBe(true);
+  });
+
+  it('does not flag standard providers as custom model providers by default', () => {
+    expect(supportsCustomModel('openai')).toBe(false);
+    expect(supportsCustomModel('anthropic')).toBe(false);
   });
 });
 

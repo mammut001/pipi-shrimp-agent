@@ -26,6 +26,7 @@ export {
   isBaseUrlRequired,
   shouldShowBaseUrl,
   canFetchModels,
+  supportsCustomModel,
   resolveConfigBaseUrl,
   resolveConfigApiFormat,
   validateProviderFields,
