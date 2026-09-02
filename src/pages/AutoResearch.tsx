@@ -1069,20 +1069,17 @@ function AutoResearchView() {
               {terminalVisible ? t('autoresearch.hideTerminal') : t('autoresearch.showTerminal')}
             </button>
           </div>
-          <div
-            style={{
-              height: terminalVisible ? 260 : 0,
-              display: terminalVisible ? undefined : 'none',
-            }}
-          >
-            <TerminalPanel
-              sessionId={terminalSessionId}
-              cwd={terminalCwd || undefined}
-              onClose={handleTerminalClose}
-              onSessionReady={handleTerminalReady}
-              onSessionExit={handleTerminalExit}
-            />
-          </div>
+          {terminalVisible && (
+            <div style={{ height: 260 }}>
+              <TerminalPanel
+                sessionId={terminalSessionId}
+                cwd={terminalCwd || undefined}
+                onClose={handleTerminalClose}
+                onSessionReady={handleTerminalReady}
+                onSessionExit={handleTerminalExit}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

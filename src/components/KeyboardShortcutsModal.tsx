@@ -7,6 +7,7 @@
 import { useEffect, useCallback, useState } from 'react';
 import { useUIStore } from '@/store';
 import { startNewChatFlow } from '@/services/newChatFlow';
+import { isTerminalPassThroughShortcut } from '@/utils/terminalShortcuts';
 
 interface Shortcut {
   key: string;
@@ -164,15 +165,15 @@ export function useKeyboardShortcuts() {
   }, [showShortcuts, toggleSidebar]);
 
   useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [handleKeyDown]);
 
   return { showShortcuts, setShowShortcuts, KeyboardShortcutsModal };
 }
 
 export function handleKeyboardShortcut(
-  e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'preventDefault' | 'target'>,
+  e: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'preventDefault' | 'stopPropagation' | 'target'>,
   handlers: {
     toggleShortcuts: () => void;
     toggleSidebar: () => void;
@@ -183,10 +184,11 @@ export function handleKeyboardShortcut(
 ): void {
   const isMeta = e.metaKey || e.ctrlKey;
 
-  // Search is a global navigation shortcut and should work even while the
-  // message composer or another editable control has focus.
-  if (isMeta && e.key.toLowerCase() === 'k') {
+  // Search is a global navigation shortcut. Listen in capture so xterm's
+  // hidden textarea cannot swallow Ctrl/Cmd+K before the app handler.
+  if (isTerminalPassThroughShortcut(e)) {
     e.preventDefault();
+    e.stopPropagation();
     handlers.focusSessionSearch?.();
     return;
   }

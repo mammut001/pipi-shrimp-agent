@@ -175,16 +175,8 @@ export function ChatBrowserWorkspaceShell() {
   const setTerminalPanelHeight = useUIStore((s) => s.setTerminalPanelHeight);
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
 
-  // Once the terminal has been opened at least once, keep it mounted so the
-  // PTY session survives hide/show toggles (avoids clearing the session).
-  const [terminalEverOpened, setTerminalEverOpened] = useState(false);
   const [fallbackTerminalCwd, setFallbackTerminalCwd] = useState<string | undefined>();
   const setAgentPanelTab = useUIStore((s) => s.setAgentPanelTab);
-  useEffect(() => {
-    if (terminalPanelVisible && !terminalEverOpened) {
-      setTerminalEverOpened(true);
-    }
-  }, [terminalPanelVisible, terminalEverOpened]);
 
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
@@ -231,8 +223,8 @@ export function ChatBrowserWorkspaceShell() {
 
   // Memoized token usage
   const currentSessionData = currentSession();
-  const terminalCwd = currentSessionData?.workDir || fallbackTerminalCwd;
-  const canPreviewWorkspace = Boolean(currentSessionData?.workDir);
+  const terminalCwd = currentSessionData?.projectDir || currentSessionData?.workDir || fallbackTerminalCwd;
+  const canPreviewWorkspace = Boolean(currentSessionData?.projectDir || currentSessionData?.workDir);
   const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
   const isSplitMode = browserDockMode === 'split';
   const previewWorkspaceActive = !isSplitMode && workspaceMode === 'preview';
@@ -247,10 +239,10 @@ export function ChatBrowserWorkspaceShell() {
     isTruncated: workspaceTruncated,
     refreshEntries: refreshWorkspaceEntries,
     revealInFinder: revealWorkspacePath,
-  } = useSessionWorkspacePreview(currentSessionData?.workDir ?? null, previewWorkspaceActive);
+  } = useSessionWorkspacePreview(currentSessionData?.projectDir ?? currentSessionData?.workDir ?? null, previewWorkspaceActive);
 
   useEffect(() => {
-    if (!terminalPanelVisible || currentSessionData?.workDir || fallbackTerminalCwd) {
+    if (!terminalPanelVisible || currentSessionData?.projectDir || currentSessionData?.workDir || fallbackTerminalCwd) {
       return;
     }
 
@@ -268,7 +260,7 @@ export function ChatBrowserWorkspaceShell() {
     return () => {
       cancelled = true;
     };
-  }, [currentSessionData?.workDir, currentSessionId, ensureSessionWorkDir, fallbackTerminalCwd, terminalPanelVisible]);
+  }, [currentSessionData?.projectDir, currentSessionData?.workDir, currentSessionId, ensureSessionWorkDir, fallbackTerminalCwd, terminalPanelVisible]);
 
   // Get pricing from settings store
   const getModelPricing = useSettingsStore((s) => s.getModelPricing);
@@ -434,7 +426,7 @@ export function ChatBrowserWorkspaceShell() {
 
         <div className={`flex-1 min-w-0 ${workspacePreviewChrome.shellBg}`}>
           <SessionWorkspacePreviewPane
-            workDir={currentSessionData?.workDir ?? null}
+            workDir={currentSessionData?.projectDir ?? currentSessionData?.workDir ?? null}
             selectedFilePath={selectedFilePath}
             selectedContent={selectedContent}
             fileLoading={fileLoading}
@@ -590,26 +582,20 @@ export function ChatBrowserWorkspaceShell() {
 
       <ChatInput />
 
-      {/* Terminal Panel — keep mounted after first open so PTY session survives
-           hide/show toggles. Visibility controlled by CSS, not unmounting. */}
-      {terminalEverOpened && (
+      {/* Mount the PTY only while visible. Hiding with display:none left xterm
+          attached to a 0-height box (gray dot, black screen, no echo). */}
+      {terminalPanelVisible && (
         <>
-          {/* Drag handle */}
           <div
             className={workspacePreviewChrome.terminalDivider}
             onMouseDown={handleTerminalDragStart}
-            style={{ display: terminalPanelVisible ? undefined : 'none' }}
           >
             <span className={workspacePreviewChrome.terminalDividerThumb} />
           </div>
           <div
             className="flex-shrink-0 overflow-hidden"
-            style={{
-              height: terminalPanelVisible ? terminalPanelHeight : 0,
-              display: terminalPanelVisible ? undefined : 'none',
-            }}
+            style={{ height: terminalPanelHeight }}
           >
-            {/* key=cwd resets the terminal when the work folder changes */}
             <TerminalPanel
               key={terminalCwd ?? '__no_cwd__'}
               cwd={terminalCwd}
@@ -627,7 +613,7 @@ export function ChatBrowserWorkspaceShell() {
       rightPanelContent={
         previewWorkspaceActive ? (
           <SessionWorkspaceFileManagerPane
-            workDir={currentSessionData?.workDir ?? null}
+            workDir={currentSessionData?.projectDir ?? currentSessionData?.workDir ?? null}
             entries={workspaceEntries}
             selectedFilePath={selectedFilePath}
             onSelectFile={setSelectedFilePath}
