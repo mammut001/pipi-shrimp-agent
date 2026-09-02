@@ -20,6 +20,7 @@ import {
 } from '@/services/autoresearch/bootstrap/synthesizeFinalize';
 import { startAutoResearchRun, logAutoResearchSetupFailure } from '@/services/autoresearch/setupFlow';
 import { getAutoResearchDefaultConfig } from '@/services/autoresearch/defaultConfig';
+import { normalizeSuccessCriteria } from '@/services/goal';
 import type { SshConfig } from '@/store/autoresearchStore';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { useWorkflowStore } from '@/store/workflowStore';
@@ -384,7 +385,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         id: crypto.randomUUID(),
         title: result.plan.researchGoal,
         projectGoal: result.plan.researchGoal,
-        successCriteria: result.plan.successCriteria,
+        successCriteria: normalizeSuccessCriteria(result.plan.successCriteria),
         bootstrapKind: 'conversational',
         status: 'running',
         startTime: Date.now(),
