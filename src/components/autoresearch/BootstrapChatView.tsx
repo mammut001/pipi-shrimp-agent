@@ -689,7 +689,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
           <p className="mt-1">{readyResult.plan.primaryMetric} · {readyResult.plan.scaffold.workDir}</p>
           <p className="mt-1 text-xs text-emerald-800">{readyResult.plan.successCriteria}</p>
         </div>
-        <div className="flex items-center gap-2 border-t border-emerald-200/50 pt-2 flex-wrap">
+        <div className="flex flex-col gap-2 border-t border-emerald-200/50 pt-2 sm:flex-row sm:flex-wrap sm:items-center">
           <label className="text-xs font-semibold text-emerald-800">Iterations:</label>
           <input
             type="number"
@@ -701,7 +701,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
           />
           <button
             onClick={() => handleReadyResult(readyResult, iterations)}
-            className="ml-auto rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 text-xs font-bold transition-all shadow-sm flex items-center gap-1 font-sans"
+            className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1 font-sans sm:ml-auto sm:w-auto"
           >
             <span>🚀</span> Start AutoResearch
           </button>

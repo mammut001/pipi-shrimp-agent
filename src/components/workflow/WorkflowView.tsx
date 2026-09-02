@@ -17,6 +17,7 @@ import { useUIStore } from '@/store/uiStore';
 import { workflowEngine } from '@/services/workflowEngine';
 import { validateWorkflowForRun } from '@/services/workflow/validation';
 import { t } from '@/i18n';
+import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter';
 import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
 
 function WorkflowTaskPanel({ agentId }: { agentId: string }) {
@@ -55,7 +56,7 @@ function WorkflowTaskPanel({ agentId }: { agentId: string }) {
   };
 
   return (
-      <div className="border-b border-gray-200 bg-gray-50/70 px-4 py-4 space-y-3">
+      <div className={`border-b border-gray-200 bg-gray-50/70 pl-4 ${MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS} py-4 space-y-3`}>
       <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
@@ -68,7 +69,8 @@ function WorkflowTaskPanel({ agentId }: { agentId: string }) {
         </div>
         <button
           onClick={handleSave}
-          className="shrink-0 px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          data-testid="workflow-task-save"
+          className="relative z-10 shrink-0 whitespace-nowrap px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
         >
           {t('workflow.save')}
         </button>

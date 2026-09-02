@@ -14,8 +14,10 @@ import { useMemo, useEffect, useRef, useCallback, useState, lazy, Suspense } fro
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
+import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter';
 import { ChatMessage, ChatInput } from '@/components';
 import { SessionGoalTraceBar } from './SessionGoalTraceBar';
+import { ChatWorkspaceModeToggle } from './ChatWorkspaceModeToggle';
 import { BrowserWorkspacePane } from './BrowserWorkspacePane';
 import {
   SessionWorkspaceFileManagerPane,
@@ -363,8 +365,10 @@ export function ChatBrowserWorkspaceShell() {
     }
   }, [canPreviewWorkspace, workspaceMode]);
 
+  const showChatPageModeToggle = !isSplitMode && !previewWorkspaceActive;
+
   const renderWorkspaceModeToolbar = () => (
-    <div className={`${workspacePreviewChrome.toolbar} px-4 py-3`}>
+    <div className={`${workspacePreviewChrome.toolbar} pl-4 ${MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS} py-3`}>
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className={workspacePreviewChrome.eyebrow}>{t('chat.workspaceView')}</p>
@@ -373,37 +377,11 @@ export function ChatBrowserWorkspaceShell() {
           </p>
         </div>
 
-        <div className={workspacePreviewChrome.segmented}>
-          <button
-            type="button"
-            onClick={() => setWorkspaceMode('chat')}
-            className={`${workspacePreviewChrome.segmentedButton} ${
-              workspaceMode === 'chat'
-                ? workspacePreviewChrome.segmentedButtonActive
-                : workspacePreviewChrome.segmentedButtonInactive
-            }`}
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z" />
-            </svg>
-            {t('nav.chat')}
-          </button>
-          <button
-            type="button"
-            onClick={() => canPreviewWorkspace && setWorkspaceMode('preview')}
-            disabled={!canPreviewWorkspace}
-            className={`${workspacePreviewChrome.segmentedButton} ${
-              workspaceMode === 'preview'
-                ? workspacePreviewChrome.segmentedButtonActive
-                : workspacePreviewChrome.segmentedButtonInactiveDisabled
-            }`}
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6h13M9 5h13M3 5h.01M3 11h.01M3 17h.01" />
-            </svg>
-            {t('common.preview')}
-          </button>
-        </div>
+        <ChatWorkspaceModeToggle
+          mode={workspaceMode}
+          canPreview={canPreviewWorkspace}
+          onChange={setWorkspaceMode}
+        />
       </div>
     </div>
   );
@@ -441,6 +419,18 @@ export function ChatBrowserWorkspaceShell() {
   // Render the chat panel content
   const renderChatPanel = () => (
     <div className="flex flex-col min-h-0 w-full min-w-0 flex-1">
+      {showChatPageModeToggle && (
+        <div
+          data-testid="chat-page-workspace-mode-bar"
+          className={`${workspacePreviewChrome.toolbar} flex shrink-0 items-center pl-4 ${MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS} py-2`}
+        >
+          <ChatWorkspaceModeToggle
+            mode={workspaceMode}
+            canPreview={canPreviewWorkspace}
+            onChange={setWorkspaceMode}
+          />
+        </div>
+      )}
       <SessionGoalTraceBar
         onEdit={() => {
           const goalButton = document.querySelector<HTMLButtonElement>('[data-goal-trigger="true"]');

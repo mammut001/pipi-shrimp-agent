@@ -46,9 +46,11 @@ import {
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
 import {
+  abortChatTurn,
   clearChatGenerationCancel,
   clearStreamingRoundBuffers,
   consumeChatGenerationCancel,
+  createChatTurnAbortController,
   createStreamingAccumulator,
   flushBuffer,
   handleStreamChunk,
@@ -787,6 +789,7 @@ export function createChatActionMethods({
           }
         }
 
+        const turnAbort = createChatTurnAbortController(activeSessionId);
         const engine = isAskMode
           ? runChatTurn(
               activeSessionId,
@@ -795,7 +798,7 @@ export function createChatActionMethods({
               sessionWorkDir,
               false,
               undefined,
-              { noTools: true },
+              { noTools: true, signal: turnAbort.signal },
             )
           : isPlanMode
           ? runChatTurn(
@@ -814,6 +817,7 @@ export function createChatActionMethods({
                 // not a model-callable tool, so `save_plan_doc` is
                 // intentionally absent here.
                 allowedTools: modeAllowedTools,
+                signal: turnAbort.signal,
               },
             )
           : runChatTurn(
@@ -823,7 +827,10 @@ export function createChatActionMethods({
               sessionWorkDir,
               shouldAllowBrowserTools,
               undefined,
-              modeAllowedTools?.length ? { allowedTools: modeAllowedTools } : undefined,
+              {
+                ...(modeAllowedTools?.length ? { allowedTools: modeAllowedTools } : {}),
+                signal: turnAbort.signal,
+              },
               sessionPipiOutputDir ?? undefined,
             );
         const uiStore = useUIStore.getState();
@@ -1155,6 +1162,7 @@ export function createChatActionMethods({
       // tokens until its own timeout fires.
       const owningSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
 
+      abortChatTurn(owningSessionId);
       requestChatGenerationCancel(owningSessionId);
       if (owningSessionId) {
         failUnresolvedSessionTools(

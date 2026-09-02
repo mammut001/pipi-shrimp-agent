@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { t } from '@/i18n';
+import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter';
 import { WorkflowGoalPreflightPanel } from './WorkflowGoalPreflightPanel';
 import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
 import { formatSuccessCriteria, normalizeSuccessCriteria } from '@/services/goal/types';
@@ -85,7 +86,7 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
   }
 
   return (
-    <section className="shrink-0 border-b border-gray-200 bg-white px-4 py-3">
+    <section className={`shrink-0 border-b border-gray-200 bg-white pl-4 ${MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS} py-3`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <label className="block text-xs font-medium text-gray-500">
@@ -116,13 +117,14 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
               {expanded ? t('workflow.goalPanel.collapseConfig') : t('workflow.goalPanel.expandConfig')}
             </button>
             <button
+              data-testid="workflow-goal-save"
               onClick={() => updateInstanceMeta(currentInstance.id, {
                 projectGoal,
                 successCriteria: normalizeSuccessCriteria(successCriteria),
                 goalEvaluatorAgentId: goalEvaluatorAgentId || null,
                 maxGoalIterations,
               })}
-              className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+              className="inline-flex items-center justify-center whitespace-nowrap rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
             >
               {t('workflow.save')}
             </button>

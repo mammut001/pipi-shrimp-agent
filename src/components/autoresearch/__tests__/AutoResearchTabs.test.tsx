@@ -106,4 +106,18 @@ describe('AutoResearchTabs', () => {
 
     expect((container.querySelector('[data-testid="advanced-input"]') as HTMLInputElement).value).toBe('workdir');
   });
+
+  it('renders tab header with layout toggle gutter class', () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root.render(<AutoResearchTabs />);
+    });
+
+    const header = container.firstElementChild?.firstElementChild as HTMLDivElement;
+    expect(header).toBeTruthy();
+    expect(header.className).toContain('pr-20');
+  });
 });

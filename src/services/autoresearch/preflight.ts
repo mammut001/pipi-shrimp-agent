@@ -57,7 +57,15 @@ export function isIgnorableAutoResearchDirtyFile(path: string): boolean {
     return true;
   }
   const base = normalized.split('/').pop() ?? normalized;
-  if (base === 'AUTORESEARCH.md' || base === 'metrics.json') {
+  if (
+    base === 'AUTORESEARCH.md'
+    || base === 'metrics.json'
+    || base === 'session.md'
+    || base === 'history.json'
+  ) {
+    return true;
+  }
+  if (normalized === 'runs' || normalized === 'runs/' || normalized.startsWith('runs/')) {
     return true;
   }
   return normalized.includes('.pipi-shrimp/');

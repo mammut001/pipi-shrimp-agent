@@ -118,11 +118,15 @@ describe('Bypass mode does not collapse the two-folder model', () => {
       resolve(repoRoot, 'src/store/chat/chatToolExecution.ts'),
       'utf8',
     );
+    const policySource = readFileSync(
+      resolve(repoRoot, 'src/services/tools/toolExecutionPolicy.ts'),
+      'utf8',
+    );
     // Bypass auto-approve logic must use the same
     // canAutoApproveTool(permissionMode, toolName) predicate that the
     // pre-tool policy uses, so SSH / browser / MCP / agent_tool still
     // gate even in Bypass.
-    expect(source).toMatch(/permissionMode\s*===\s*'bypass'/);
+    expect(policySource).toMatch(/permissionMode\s*===\s*'bypass'/);
     expect(source).toMatch(/canAutoApproveTool\(permissionMode,\s*(?:req|request|tool)\.name/);
   });
 

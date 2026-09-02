@@ -496,4 +496,21 @@ describe('applyIgnorableDirtyFilter', () => {
     expect(filtered.repoStatus).toBe('clean');
     expect(filtered.dirtyFileCount).toBe(0);
   });
+
+  it('ignores session.md and runs/ host artifacts', () => {
+    const filtered = applyIgnorableDirtyFilter({
+      experimentDir: '/tmp/exp',
+      gitRepo: true,
+      repoStatus: 'dirty',
+      dirtyFileCount: 3,
+      dirtyFiles: ['session.md', 'runs/session-1/session.md', 'AUTORESEARCH.md'],
+      preferredPythonCommand: 'python3',
+      worktreeWritable: true,
+      runScriptPath: '/tmp/exp/run_experiment.py',
+      notesPath: '/tmp/exp/AUTORESEARCH.md',
+      recommendedRunCommand: 'python3 run_experiment.py',
+    });
+    expect(filtered.repoStatus).toBe('clean');
+    expect(filtered.dirtyFileCount).toBe(0);
+  });
 });

@@ -360,7 +360,7 @@ describe('chatStore sendMessage integration', () => {
       undefined,
       false,
       undefined,
-      { noTools: true },
+      expect.objectContaining({ noTools: true }),
     );
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
       ['user', 'hello world'],
@@ -461,7 +461,10 @@ describe('chatStore sendMessage integration', () => {
       // is intentionally NOT in this list because the Rust registry
       // has no handler for it. See PLAN_MODE_ALLOWED_TOOLS in
       // src/services/planMode.ts.
-      { allowedTools: ['read_file', 'list_files', 'search_files'] },
+      expect.objectContaining({
+        allowedTools: ['read_file', 'list_files', 'search_files'],
+        signal: expect.any(AbortSignal),
+      }),
     );
     // Two-folder model: `savePlanModeDoc` is called with the PiPi
     // Output Folder path, NOT the Project Folder (`/tmp/pipi/session-1`
@@ -623,7 +626,10 @@ describe('chatStore sendMessage integration', () => {
       '/tmp/pipi/session-1',
       false,
       undefined,
-      { allowedTools: ['read_file', 'list_files', 'search_files'] },
+      expect.objectContaining({
+        allowedTools: ['read_file', 'list_files', 'search_files'],
+        signal: expect.any(AbortSignal),
+      }),
     );
     expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
   });
@@ -705,7 +711,8 @@ describe('chatStore sendMessage integration', () => {
     expect(projectDir).toBeUndefined();
     expect(allowBrowserTools).toBe(false);
     expect(requestConfig).toBeUndefined();
-    expect(options).toBeUndefined();
+    expect(options?.allowedTools).toBeUndefined();
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
     expect(pipiOutputDir).toBeUndefined();
   });
 
@@ -721,7 +728,7 @@ describe('chatStore sendMessage integration', () => {
       undefined,
       false,
       undefined,
-      { noTools: true },
+      expect.objectContaining({ noTools: true }),
     );
   });
 
@@ -761,7 +768,7 @@ describe('chatStore sendMessage integration', () => {
       undefined,
       false,
       undefined,
-      { noTools: true },
+      expect.objectContaining({ noTools: true }),
     );
   });
 
