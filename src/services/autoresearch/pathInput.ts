@@ -11,6 +11,14 @@ export function sanitizePathInput(value: string, options?: { trim?: boolean }): 
   return options?.trim ? sanitized.trim() : sanitized;
 }
 
+export function isAbsoluteOrHomePath(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith('/')
+    || trimmed === '~'
+    || trimmed.startsWith('~/')
+    || /^[A-Za-z]:[\\/]/.test(trimmed);
+}
+
 export function isHorizontalArrowKey(key: string): boolean {
   return key === 'ArrowLeft' || key === 'ArrowRight';
 }

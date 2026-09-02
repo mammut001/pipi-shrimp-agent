@@ -16,7 +16,7 @@ import {
 } from './history';
 import { assertSupportedPlatform } from './platformGuard';
 import { buildAutoResearchDefaultConfig, normalizeDirection, type AutoResearchDefaultConfig } from './defaultConfig';
-import { sanitizePathInput } from './pathInput';
+import { isAbsoluteOrHomePath, sanitizePathInput } from './pathInput';
 import { assertAutoResearchLifecycleUnlocked } from './runLock';
 import type { AutoResearchPreflightResult } from './preflight';
 import { sanitizeAutoResearchResumeSshConfig } from './resumeToken';
@@ -142,8 +142,20 @@ export function validateAutoResearchSetupDraft(draft: AutoResearchSetupDraft): {
   if (!sshConfig.remoteWorkDir) {
     return { error: t('autoresearch.validationWorkdirRequired'), value: null };
   }
+  if (!isAbsoluteOrHomePath(sshConfig.remoteWorkDir)) {
+    return {
+      error: t('autoresearch.validationWorkdirAbsolute') || 'AutoResearch workspace must be an absolute or home (~) path.',
+      value: null,
+    };
+  }
   if (!experimentDir) {
     return { error: t('autoresearch.validationExperimentDirRequired'), value: null };
+  }
+  if (!isAbsoluteOrHomePath(experimentDir)) {
+    return {
+      error: t('autoresearch.validationExperimentDirAbsolute') || 'Target project must be an absolute or home (~) path.',
+      value: null,
+    };
   }
   if (!metric) {
     return { error: t('autoresearch.validationMetricRequired'), value: null };

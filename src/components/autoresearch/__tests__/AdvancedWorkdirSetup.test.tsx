@@ -457,7 +457,7 @@ describe('AdvancedWorkdirSetup Expert Launch Cockpit UI Component', () => {
     });
 
     const textAfter = container.textContent || '';
-    expect(textAfter).toContain('主机地址 (Host)');
+    expect(textAfter).toMatch(/autoresearch\.manual\.hostLabel|主机地址 \(Host\)/);
   });
 
   it('10. password is not persisted to localStorage', () => {

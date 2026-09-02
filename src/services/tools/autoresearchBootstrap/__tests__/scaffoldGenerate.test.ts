@@ -52,14 +52,15 @@ describe('renderKnownScaffoldTemplate', () => {
 });
 
 describe('scaffold write policy', () => {
-  it('skips existing train.py instead of overwriting it', () => {
+  it('skips existing train.py and run_experiment.py instead of overwriting them', () => {
     const planned = planScaffoldFileWrites({
       relativePaths: ['train.py', 'run_experiment.py', 'AUTORESEARCH.md'],
-      existingPaths: ['train.py'],
+      existingPaths: ['train.py', 'run_experiment.py'],
     });
-    expect(planned.skip).toEqual(['train.py']);
-    expect(planned.write).toEqual(['run_experiment.py', 'AUTORESEARCH.md']);
+    expect(planned.skip).toEqual(['train.py', 'run_experiment.py']);
+    expect(planned.write).toEqual(['AUTORESEARCH.md']);
     expect(PRESERVE_EXISTING_SCAFFOLD_FILES).toContain('train.py');
+    expect(PRESERVE_EXISTING_SCAFFOLD_FILES).toContain('run_experiment.py');
   });
 
   it('overwrites existing files only when explicitly requested', () => {

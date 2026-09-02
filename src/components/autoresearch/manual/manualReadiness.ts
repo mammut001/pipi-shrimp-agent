@@ -1,3 +1,5 @@
+import { isAbsoluteOrHomePath } from '@/services/autoresearch/pathInput';
+
 export interface ManualSetupDraft {
   setupForm: {
     mode: 'local' | 'ssh';
@@ -58,9 +60,15 @@ export function getManualSetupReadiness(draft: ManualSetupDraft): ManualSetupRea
         }
         return 'missing';
       case 'workspace':
-        return (draft.setupForm.remoteWorkDir || '').trim().length > 0 ? 'completed' : 'missing';
+        return (draft.setupForm.remoteWorkDir || '').trim().length > 0
+          && isAbsoluteOrHomePath(draft.setupForm.remoteWorkDir)
+          ? 'completed'
+          : 'missing';
       case 'targetProject':
-        return (draft.experimentDir || '').trim().length > 0 ? 'completed' : 'missing';
+        return (draft.experimentDir || '').trim().length > 0
+          && isAbsoluteOrHomePath(draft.experimentDir)
+          ? 'completed'
+          : 'missing';
       case 'metric':
         const metricValid = (draft.metric || '').trim().length > 0;
         return (metricValid && !draft.baselineInvalid) ? 'completed' : 'missing';

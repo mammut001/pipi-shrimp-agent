@@ -23,10 +23,20 @@ describe('connectionProbe', () => {
     expect(args.command).toContain('/tmp/harness-smoke');
   });
 
-  it('rejects a relative workspace path instead of probing .', () => {
+  it('rejects relative workspace and experimentDir paths instead of probing .', () => {
     expect(() => buildAutoResearchConnectionProbeCommand({
       workDir: '.',
       experimentDir: '/tmp/exp',
+    })).toThrow(/absolute or home path/);
+
+    expect(() => buildAutoResearchConnectionProbeCommand({
+      workDir: './relative-work',
+      experimentDir: '/tmp/exp',
+    })).toThrow(/absolute or home path/);
+
+    expect(() => buildAutoResearchConnectionProbeCommand({
+      workDir: '/tmp/work',
+      experimentDir: 'relative-exp',
     })).toThrow(/absolute or home path/);
   });
 

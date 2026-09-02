@@ -24,7 +24,7 @@ export function EnvironmentCheckSection({
   return (
     <div className="space-y-4 font-sans">
       <p className="text-xs text-gray-600 leading-relaxed">
-        AutoResearch 需要测试您的环境路径是否可用，以及环境（Linux Target / local node）是否兼容。请点击下方按钮测试。
+        {t('autoresearch.manual.envCheckDesc')}
       </p>
       <div className="flex flex-wrap gap-2">
         <button

@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import type { AutoResearchBootstrapResult, BootstrapStep } from './types';
+import { loadPersistedBootstrapSession } from './bootstrapSessionPersist';
 
 const TOOL_TO_STEP: Record<string, BootstrapStep> = {
   pdf_read: 'papers',
   paper_extract_meta: 'papers',
   arxiv_search: 'papers',
+  read_file: 'papers',
   baseline_extract: 'baselines',
   scaffold_generate: 'scaffold',
   git_init_workdir: 'scaffold',
@@ -23,11 +25,31 @@ interface BootstrapPlanState {
   reset: () => void;
 }
 
+function getInitialStoreState(): Pick<BootstrapPlanState, 'currentStep' | 'observedTools' | 'warnings' | 'readyResult'> {
+  const persisted = loadPersistedBootstrapSession();
+  if (persisted?.readyResult?.status === 'ready') {
+    return {
+      currentStep: 'ready',
+      observedTools: persisted.observedTools || [],
+      warnings: persisted.warnings || [],
+      readyResult: persisted.readyResult,
+    };
+  }
+  return {
+    currentStep: 'goal',
+    observedTools: [],
+    warnings: [],
+    readyResult: null,
+  };
+}
+
+const initialState = getInitialStoreState();
+
 export const useBootstrapPlanStore = create<BootstrapPlanState>((set) => ({
-  currentStep: 'goal',
-  observedTools: [],
-  warnings: [],
-  readyResult: null,
+  currentStep: initialState.currentStep,
+  observedTools: initialState.observedTools,
+  warnings: initialState.warnings,
+  readyResult: initialState.readyResult,
   noteTool: (toolName) => set((state) => {
     const nextStep = TOOL_TO_STEP[toolName] ?? state.currentStep;
     return {
@@ -47,7 +69,7 @@ export const useBootstrapPlanStore = create<BootstrapPlanState>((set) => ({
   setWarnings: (warnings) => set({ warnings }),
   setReadyResult: (readyResult) => set({
     readyResult,
-    currentStep: readyResult?.status === 'ready' ? 'ready' : 'metrics',
+    currentStep: readyResult?.status === 'ready' ? 'ready' : 'scaffold',
   }),
   reset: () => set({
     currentStep: 'goal',
