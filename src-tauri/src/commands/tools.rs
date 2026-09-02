@@ -6,7 +6,10 @@
 use crate::models::CancelToolExecutionResponse;
 use crate::tools::execution_policy::{self, ToolPolicyPreview};
 use crate::tools::process_manager;
-use crate::tools::{classify_tool_error_code, ToolCallRequest, ToolCallResult, ToolExecutionSource};
+use crate::tools::{
+    build_tool_runtime_metadata, classify_tool_error_code, ToolCallRequest, ToolCallResult,
+    ToolExecutionSource,
+};
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
@@ -155,16 +158,61 @@ pub async fn execute_single_tool(
 }
 
 /**
- * Get the list of available tools and their metadata.
+ * Get available tool definitions from the authoritative Rust registry.
  *
- * Used by the frontend to build the tool list for the API request.
+ * Existing callers receive the Anthropic-compatible schema. Runtime clients
+ * can request the expanded metadata view with includeRuntimeMetadata=true;
+ * this keeps one command/registry authority while preserving API compatibility.
  */
 #[tauri::command]
 pub async fn get_available_tools(
+    #[allow(non_snake_case)] includeRuntimeMetadata: Option<bool>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let registry = state.0.lock().await;
-    Ok(registry.get_anthropic_tools_schema())
+    let schemas = registry.get_anthropic_tools_schema();
+
+    if !includeRuntimeMetadata.unwrap_or(false) {
+        return Ok(schemas);
+    }
+
+    let mut metadata = schemas
+        .into_iter()
+        .filter_map(|schema| {
+            let name = schema.get("name")?.as_str()?.to_string();
+            let description = schema
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let input_schema = schema
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+            let runtime_metadata = build_tool_runtime_metadata(
+                name.clone(),
+                description,
+                registry.is_read_only(&name),
+                registry.is_concurrency_safe(&name),
+                input_schema,
+            );
+            serde_json::to_value(runtime_metadata).ok()
+        })
+        .collect::<Vec<_>>();
+
+    metadata.sort_by(|left, right| {
+        left.get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .cmp(
+                right
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+            )
+    });
+
+    Ok(metadata)
 }
 
 #[tauri::command]
