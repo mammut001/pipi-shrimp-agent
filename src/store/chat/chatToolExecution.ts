@@ -1,13 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { EngineEvent } from '../../core/types';
+import { submitSessionToolResults } from '../../core/runtime';
 import { t } from '../../i18n';
 import { recordToolForReactiveCompact } from '../../services/compact/reactiveCompact';
-import { StreamingToolExecutor, partitionTools, type ToolRequest } from '../../services/StreamingToolExecutor';
+import { StreamingToolExecutor, type ToolRequest } from '../../services/StreamingToolExecutor';
 import { getCurrentAgentContext } from '../../services/multiagent/agentContext';
 import { runAgentBackground, runAgentSync } from '../../services/multiagent/subagent';
 import { runPostToolUseHooks, type PostHookContext } from '../../services/tools/postToolUseHooks';
 import { runPreToolUseHooks } from '../../services/tools/preToolUseHooks';
+import { partitionToolsByMetadata } from '../../services/tools/toolMetadata';
 import { detectBrowserIntent } from '../../services/browser/browserIntent';
 import {
   canAutoApproveTool,
@@ -124,7 +126,7 @@ export interface ToolBatchExecutionContext {
 export interface ToolBatchExecutionDeps {
   uiStore: typeof useUIStore;
   createExecutor: () => Pick<StreamingToolExecutor, 'executeBatch'>;
-  partitionTools: typeof partitionTools;
+  partitionToolsByMetadata: typeof partitionToolsByMetadata;
   runPreToolUseHooks: typeof runPreToolUseHooks;
   runPostToolUseHooks: typeof runPostToolUseHooks;
   normalizeResumeWorkspaceToolArgs: typeof normalizeResumeWorkspaceToolArgs;
@@ -145,7 +147,7 @@ export interface ToolBatchExecutionDeps {
 const defaultDeps: ToolBatchExecutionDeps = {
   uiStore: useUIStore,
   createExecutor: () => new StreamingToolExecutor(),
-  partitionTools,
+  partitionToolsByMetadata,
   runPreToolUseHooks,
   runPostToolUseHooks,
   normalizeResumeWorkspaceToolArgs,
@@ -367,13 +369,6 @@ async function executeConcurrentTools(
       executionMode: executionModeId,
       browserIntent: allowBrowserTools,
       requestPermission: async (request) => {
-        // Bypass: auto-approve normal project-scoped tools without
-        // showing the permission modal. Hard safety blocks still
-        // happen upstream via preToolUseHooks, and the backend
-        // `rejected` decision already short-circuits before this
-        // callback fires. SSH / browser / MCP tools still fall
-        // through to the modal because canAutoApproveTool returns
-        // false for them.
         if (canAutoApproveTool(permissionMode, request.name, { browserIntent: allowBrowserTools })) {
           return true;
         }
@@ -479,15 +474,6 @@ async function resolveSerialToolPermission(
     approvalToken?: string | null;
   },
 ): Promise<boolean> {
-  // Bypass auto-approves normal project-scoped tools even when the
-  // backend preview asks for confirmation (e.g. `curl` in a benign
-  // command). The hard safety hooks (dangerous-command,
-  // path-validation) have already run before we get here, so we know
-  // the request isn't a critical destructive command or an
-  // out-of-project write. We only fall through to the UI prompt for
-  // SSH / browser / MCP tools which `canAutoApproveTool` still
-  // rejects, and for tools that the policy preview explicitly
-  // rejected (caller already handled `rejected` separately).
   if (canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
     return true;
   }
@@ -946,49 +932,19 @@ export async function handleToolBatchRequest(
   const { chunk, activeSessionId, assistantMessageId, get, set, ensureSessionWorkDir } = context;
   const uiStore = deps.uiStore.getState();
   let currentSession = get().sessions.find((session) => session.id === activeSessionId);
-  // Two-folder model: the tool cwd is the **Project Folder** — the
-  // folder tools (bash, read/write/list/...) run against. We resolve
-  // it via `getSessionProjectDir(session)` which prefers the new
-  // `projectDir` column and falls back to the legacy `workDir`
-  // mirror. Raw `session.workDir` reads are wrong in the two-folder
-  // world — `workDir` is only a backwards-compat mirror of
-  // `projectDir`, never the canonical source.
-  //
-  // We do NOT fall back to the PiPi Output Folder when the Project
-  // Folder is missing: tools that mutate project state have no
-  // meaning in the app-owned output root, and silently using the PiPi
-  // Output Folder as the tool cwd would let the model "edit"
-  // `.pipi-shrimp/...` files it considers source code.
-  //
-  // The legacy `ensureSessionWorkDir()` helper used to paper over
-  // this by returning whichever single folder the session had bound;
-  // in the two-folder world that helper now provisions the **PiPi
-  // Output Folder**. We use it only as a backstop: if it returns a
-  // path that equals the session's `pipiOutputDir` we discard the
-  // result and surface a hard error so the model can prompt the user
-  // to bind a Project Folder. Otherwise the helper is treated as a
-  // no-op.
   let workDir = resolveSessionProjectDir(currentSession) ?? null;
   const executionModeId = resolveSessionExecutionModeId(currentSession);
   const permissionMode = resolvePermissionMode(executionModeId);
-  // Mirror the 5-mode execution mode id into the hook context so the
-  // preToolUseHooks.executionModeGuardCheck can enforce mode-specific
-  // policy. Falls back to legacy PermissionMode behavior when the
-  // session was created before the 5-mode system shipped.
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
   const blockedWorkspaceToolIds = new Set<string>();
   const preBlockedResults: ToolArtifactResult[] = [];
 
-  // Preflight: if any tool needs a Project Folder and none is bound,
-  // try ensureSessionWorkDir once, then block workspace tools with a
-  // clear error instead of multi-round path failures.
   {
     const needsWorkDir = chunk.tools.some((tool) => WORKSPACE_TOOL_NAMES.has(tool.name));
     let ensureResult: string | null = null;
     if (!workDir && needsWorkDir) {
       ensureResult = await ensureSessionWorkDir();
       currentSession = get().sessions.find((session) => session.id === activeSessionId);
-      // Re-resolve after ensure — may have set projectDir or only pipi output.
       workDir = resolveSessionProjectDir(currentSession) ?? null;
     }
 
@@ -1041,19 +997,9 @@ export async function handleToolBatchRequest(
     }
   }
 
-  // Only seed tools that will still run. Pre-blocked workspace tools were
-  // already resolveSessionTool(failed); re-seeding them would put their IDs
-  // back into unresolvedIds and wipe UI steps back to pending.
   const executableTools = chunk.tools.filter((tool) => !blockedWorkspaceToolIds.has(tool.id));
   seedSessionToolRuntime(activeSessionId, executableTools, set, get);
-  // Prefer runtime-synced progress (includes pre-blocked failed steps). If
-  // there are only pre-blocked tools, seed is a no-op and sync already
-  // reported pendingToolCalls=0 with failed steps.
 
-  // Always resolve the normalization cwd through the canonical helper
-  // so a session that only has `workDir` (legacy mirror) still picks
-  // up the right folder. We never use the raw `currentSession.workDir`
-  // directly here — that was the bug.
   const projectFolderForNormalization = workDir ?? resolveSessionProjectDir(currentSession);
   const normalizedToolArgsById = new Map<string, string>();
   for (const tool of executableTools) {
@@ -1082,7 +1028,7 @@ export async function handleToolBatchRequest(
     return { id: tool.id, name: tool.name, arguments: parsedArgs };
   });
 
-  const { concurrent, serial } = deps.partitionTools(toolRequests);
+  const { concurrent, serial } = await deps.partitionToolsByMetadata(toolRequests);
   const serialIds = new Set(serial.map((tool) => tool.id));
   const allResults: ToolArtifactResult[] = [];
 
@@ -1134,6 +1080,16 @@ export async function handleToolBatchRequest(
   }
 
   const mergedResults = [...preBlockedResults, ...allResults];
-  chunk._resolveAll(mergedResults.map(({ id, content }) => ({ id, content })));
+  const accepted = submitSessionToolResults(
+    activeSessionId,
+    chunk.requestId,
+    mergedResults.map(({ id, content }) => ({ id, content })),
+  );
+  if (!accepted) {
+    console.warn('[ChatToolExecution] Session runtime was released before tool results were submitted', {
+      activeSessionId,
+      requestId: chunk.requestId,
+    });
+  }
   return mergedResults;
 }
