@@ -753,13 +753,7 @@ export function createChatActionMethods({
 
         if (shouldAllowBrowserTools && !isAskMode && !isPlanMode) {
           if (modeAllowedTools) {
-            if (executionModeId === 'agent') {
-              modeAllowedTools = [...new Set([...modeAllowedTools, ...BROWSER_TOOL_NAMES])];
-            } else if (executionModeId === 'debug') {
-              modeAllowedTools = [...new Set([...modeAllowedTools, ...Array.from(BROWSER_READ_ONLY_TOOLS)])];
-            } else {
-              modeAllowedTools = [...new Set([...modeAllowedTools, ...BROWSER_TOOL_NAMES])];
-            }
+            modeAllowedTools = [...new Set([...modeAllowedTools, ...BROWSER_TOOL_NAMES])];
           }
         }
 

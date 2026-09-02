@@ -45,7 +45,10 @@ function isAbsoluteOrHomePath(value: string): boolean {
     || /^[A-Za-z]:[\\/]/.test(trimmed);
 }
 
-function isWorkspaceDot(value: string): boolean {
+function isWorkspaceDot(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return true;
+  }
   const trimmed = value.trim();
   return !trimmed || trimmed === '.' || trimmed === './';
 }
@@ -191,14 +194,16 @@ export function rewriteAutoResearchToolArguments(
     const boundRelative = bindRelativeExperimentPath(value, codeDir);
     next[key] = rewriteExperimentPath(boundRelative, experimentDir, codeDir, iterDir);
   }
-  if (typeof next.command === 'string' && next.command.trim()) {
-    next.command = rewriteEmbeddedExperimentPaths(next.command, experimentDir, codeDir, iterDir);
-    const cwdMissing = typeof next.cwd !== 'string' || isWorkspaceDot(next.cwd);
+  const command = next.command;
+  if (typeof command === 'string' && command.trim()) {
+    next.command = rewriteEmbeddedExperimentPaths(command, experimentDir, codeDir, iterDir);
+    const rawCwd = next.cwd;
+    const cwdMissing = typeof rawCwd !== 'string' || isWorkspaceDot(rawCwd);
     const workDirMissing = typeof next.work_dir !== 'string' && typeof next.workDir !== 'string';
     if (
       cwdMissing
       && workDirMissing
-      && /\brun_experiment\.py\b/.test(next.command)
+      && /\brun_experiment\.py\b/.test(command)
     ) {
       next.cwd = trimSlash(codeDir);
     }

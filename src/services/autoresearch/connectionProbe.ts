@@ -224,7 +224,7 @@ export function interpretAutoResearchConnectionProbe(input: {
     parsed.workspace === 'ok' ? 'workspace:ok' : null,
     parsed.experiment === 'ok' ? 'experiment:ok' : parsed.experiment === 'missing' ? 'experiment:missing' : null,
     '__AUTORESEARCH_TARGET_OK__',
-    parsed.git === 'ok' ? 'git:ok' : parsed.git === 'missing' ? 'git:missing' : parsed.git === 'not_installed' ? 'git:not_installed' : null,
+    parsed.git === 'ok' ? 'git:ok' : parsed.git === 'missing' ? 'git:missing' : null,
     parsed.python === 'ok' ? 'python:ok' : parsed.python === 'missing' ? 'python:missing' : null,
   ].filter((line): line is string => Boolean(line));
 

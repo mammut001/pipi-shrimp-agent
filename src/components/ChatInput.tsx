@@ -331,7 +331,7 @@ export function ChatInput({
   // 2. Sync from composer to store
   const handleComposerBlocksChange = useCallback((newBlocks: ComposerBlock[]) => {
     const modeBlock = newBlocks.find((b) => b.type === 'mode') as any;
-    if (modeBlock && modeBlock.executionMode === 'bypass' && selectedExecutionModeId !== 'bypass') {
+    if (modeBlock && (modeBlock.executionMode === 'danger' || modeBlock.executionMode === 'bypass') && selectedExecutionModeId !== 'danger') {
       setPendingBypassBlocks(newBlocks);
     } else {
       setComposerBlocks(newBlocks);
@@ -345,7 +345,7 @@ export function ChatInput({
     if (!pendingBypassBlocks) return;
     setComposerBlocks(pendingBypassBlocks);
     if (currentSessionId) {
-      void updateSessionExecutionMode(currentSessionId, 'bypass');
+      void updateSessionExecutionMode(currentSessionId, 'danger');
     }
     setPendingBypassBlocks(null);
   }, [pendingBypassBlocks, currentSessionId, updateSessionExecutionMode]);

@@ -1,7 +1,6 @@
 import * as path from 'node:path';
 
-const AUTORESEARCH_TEST_TMP_ROOT = path.resolve(process.cwd(), '.tmp', 'jest-autoresearch');
-
 export function getAutoResearchTestTmpDir(): string {
-  return AUTORESEARCH_TEST_TMP_ROOT;
+  const workerId = process.env.JEST_WORKER_ID || '1';
+  return path.resolve(process.cwd(), '.tmp', 'jest-autoresearch', `w-${workerId}`);
 }

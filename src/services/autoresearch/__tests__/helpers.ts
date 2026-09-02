@@ -142,7 +142,7 @@ export async function initGitRepo(
   await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: workDir });
   await execFileAsync('git', ['config', 'user.name', 'Pipi Shrimp Test'], { cwd: workDir });
   await execFileAsync('git', ['add', '.'], { cwd: workDir });
-  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workDir });
+  await execFileAsync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: workDir });
 }
 
 export function installLocalInvokeMock(mockInvoke: jest.Mock): void {

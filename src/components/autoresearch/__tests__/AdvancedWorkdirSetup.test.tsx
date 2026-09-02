@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
 // Define global states with var and mock prefix so they are hoisted and accessible in mock factories
 var mockSettingsState = {
   activeConfigId: 'config-1',
@@ -371,6 +373,13 @@ describe('AdvancedWorkdirSetup Expert Launch Cockpit UI Component', () => {
 
     act(() => {
       root.render(<AdvancedWorkdirSetup />);
+    });
+
+    const setupBtn = Array.from(container.querySelectorAll('button')).find(
+      b => b.textContent === 'Setup and Start'
+    );
+    act(() => {
+      setupBtn?.click();
     });
 
     const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');
