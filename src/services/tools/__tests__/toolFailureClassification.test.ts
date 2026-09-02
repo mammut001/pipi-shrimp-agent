@@ -16,7 +16,7 @@ describe('toolFailureClassification', () => {
 
   it('classifies policy and lane violations', () => {
     expect(isPolicyToolFailureText(
-      'Error: Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+      'Error: Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.',
     )).toBe(true);
     expect(isPolicyToolFailureText('Error: Blocked: Attempting to delete root filesystem')).toBe(true);
     expect(isPolicyToolFailureText('Error: Permission denied')).toBe(true);
@@ -91,7 +91,7 @@ describe('toolFailureClassification', () => {
 
   it('short-circuits only all-policy batches', () => {
     expect(shouldShortCircuitFailedToolBatch([
-      'Error: Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+      'Error: Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.',
       'Error: Blocked: Attempting to delete root filesystem',
     ])).toBe(true);
 
@@ -100,7 +100,7 @@ describe('toolFailureClassification', () => {
     ])).toBe(false);
 
     expect(shouldShortCircuitFailedToolBatch([
-      'Error: Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+      'Error: Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.',
       "Error: Failed to read file '/tmp/FocusApp/README.md': os error 2",
     ])).toBe(false);
   });

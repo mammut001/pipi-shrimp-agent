@@ -673,7 +673,7 @@ describe('chatToolExecution', () => {
   });
 
   describe('Bypass + Ask mode semantics', () => {
-    it('Bypass + execute_command does not call waitForPermission (auto-approves)', async () => {
+    it('Danger + execute_command asks for permission on risky shell', async () => {
       const resolved = jest.fn();
       const waitForPermission = jest.fn(async () => true);
       const updateTaskStep = jest.fn();
@@ -737,20 +737,13 @@ describe('chatToolExecution', () => {
         ensureSessionWorkDir: async () => '/tmp/workspace',
       }, deps);
 
-      // Bypass must NOT open the permission modal — neither for the
-      // serial path nor for any approval flow inside it.
-      expect(waitForPermission as jest.Mock).not.toHaveBeenCalled();
-      // The backend was told the request is awaiting_confirmation,
-      // but Bypass + auto-approveable tool short-circuits before any
-      // approval token is consumed.
+      expect(waitForPermission as jest.Mock).toHaveBeenCalled();
       expect(invoke).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
         toolCallId: 'tool-bypass-1',
         name: 'execute_command',
         workDir: '/tmp/workspace',
       }));
-      // No "awaiting_confirmation" task step — the tool went straight
-      // to running.
-      expect(updateTaskStep).not.toHaveBeenCalledWith('tool-bypass-1', 'awaiting_confirmation');
+      expect(updateTaskStep).toHaveBeenCalledWith('tool-bypass-1', 'awaiting_confirmation');
       expect(updateTaskStep).toHaveBeenCalledWith('tool-bypass-1', 'running');
     });
 
@@ -874,7 +867,7 @@ describe('chatToolExecution', () => {
       const runPreToolUseHooks = jest.fn(async () => ({
         approved: false,
         blockedBy: 'permission-mode',
-        error: 'Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+        error: 'Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.',
       }));
       const deps = createDeps({
         uiStore: { getState: () => ({
@@ -936,7 +929,7 @@ describe('chatToolExecution', () => {
       const runPreToolUseHooks = jest.fn(async () => ({
         approved: false,
         blockedBy: 'permission-mode',
-        error: 'Tool execution is disabled in Ask mode. Switch to Agent or Bypass to run tools.',
+        error: 'Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.',
       }));
       const deps = createDeps({
         uiStore: { getState: () => ({
@@ -1114,10 +1107,8 @@ describe('chatToolExecution', () => {
         ensureSessionWorkDir: async () => '/tmp/workspace',
       }, deps);
 
-      // In Bypass the modal never opens, and the task step never
-      // enters "awaiting_confirmation". It goes straight to running.
-      expect(waitForPermission as jest.Mock).not.toHaveBeenCalled();
-      expect(updateTaskStep).not.toHaveBeenCalledWith('tool-vis-1', 'awaiting_confirmation');
+      expect(waitForPermission as jest.Mock).toHaveBeenCalled();
+      expect(updateTaskStep).toHaveBeenCalledWith('tool-vis-1', 'awaiting_confirmation');
       expect(updateTaskStep).toHaveBeenCalledWith('tool-vis-1', 'running');
     });
 
@@ -1263,8 +1254,8 @@ describe('chatToolExecution', () => {
       }, deps);
 
       const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string; permissionMode?: string } | undefined;
-      expect(ctxArg?.executionMode).toBe('agent');
-      expect(ctxArg?.permissionMode).toBe('auto-edits');
+      expect(ctxArg?.executionMode).toBe('plan');
+      expect(ctxArg?.permissionMode).toBe('plan-only');
     });
 
     it('resolves legacy bypass permissionMode for hook context', async () => {
@@ -1295,8 +1286,8 @@ describe('chatToolExecution', () => {
       }, deps);
 
       const ctxArg = (runPreToolUseHooks as jest.Mock).mock.calls[0]?.[0] as { executionMode?: string; permissionMode?: string } | undefined;
-      expect(ctxArg?.executionMode).toBe('bypass');
-      expect(ctxArg?.permissionMode).toBe('bypass');
+      expect(ctxArg?.executionMode).toBe('danger');
+      expect(ctxArg?.permissionMode).toBe('auto-edits');
     });
   });
 
@@ -1942,8 +1933,7 @@ describe('chatToolExecution', () => {
         ensureSessionWorkDir: async () => null,
       }, deps);
 
-      // Bypass auto-approves the project-scoped shell tool.
-      expect(waitForPermission as jest.Mock).not.toHaveBeenCalled();
+      expect(waitForPermission as jest.Mock).toHaveBeenCalled();
       expect((deps.invoke as jest.Mock)).toHaveBeenCalledWith('execute_single_tool', expect.objectContaining({
         toolCallId: 'tool-bypass-exec',
         name: 'execute_command',

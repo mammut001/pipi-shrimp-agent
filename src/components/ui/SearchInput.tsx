@@ -39,8 +39,19 @@ export function SearchInput({
       </svg>
       <input
         type="text"
+        data-sidebar-search=""
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape') return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (value) {
+            onClear();
+          } else {
+            e.currentTarget.blur();
+          }
+        }}
         placeholder={placeholder}
         className="w-full pl-8 pr-8 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-300 focus:border-gray-300 placeholder-gray-400"
       />

@@ -83,34 +83,30 @@ describe('preToolUseHooks.executionModeGuardCheck', () => {
     expect(write.error).toMatch(/Plan mode/i);
   });
 
-  it('Debug mode allows writes but blocks shell and browser', async () => {
-    const write = await executionModeGuardCheck(
-      ctx({ executionMode: 'debug', toolName: 'write_file' }),
-    );
-    expect(write.approved).toBe(true);
+  it('legacy Debug/Agent ids normalize to Plan and block writes', async () => {
+    for (const executionMode of ['debug', 'agent'] as const) {
+      const write = await executionModeGuardCheck(
+        ctx({ executionMode, toolName: 'write_file' }),
+      );
+      expect(write.approved).toBe(false);
 
-    const shell = await executionModeGuardCheck(
-      ctx({ executionMode: 'debug', toolName: 'execute_command' }),
-    );
-    expect(shell.approved).toBe(false);
-
-    const browser = await executionModeGuardCheck(
-      ctx({ executionMode: 'debug', toolName: 'browser_click' }),
-    );
-    expect(browser.approved).toBe(false);
+      const read = await executionModeGuardCheck(
+        ctx({ executionMode, toolName: 'read_file' }),
+      );
+      expect(read.approved).toBe(true);
+    }
   });
 
-  it('Agent mode allows shell and gates browser tools behind confirmation', async () => {
+  it('Danger mode allows shell without an outer catalog block', async () => {
     const shell = await executionModeGuardCheck(
-      ctx({ executionMode: 'agent', toolName: 'execute_command' }),
+      ctx({ executionMode: 'danger', toolName: 'execute_command' }),
     );
     expect(shell.approved).toBe(true);
 
     const browser = await executionModeGuardCheck(
-      ctx({ executionMode: 'agent', toolName: 'browser_click' }),
+      ctx({ executionMode: 'danger', toolName: 'browser_click' }),
     );
     expect(browser.approved).toBe(true);
-    expect(browser.requiresConfirmation).toBe(true);
   });
 
   it('Bypass mode does not add an outer restriction (hooks stay responsible for risk gating)', async () => {

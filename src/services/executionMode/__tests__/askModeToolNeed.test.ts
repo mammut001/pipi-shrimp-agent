@@ -14,6 +14,14 @@ describe('detectAskModeToolNeed', () => {
       needed: true,
       reason: 'workspace',
     });
+    expect(detectAskModeToolNeed('详细阅读一下这个项目吧')).toEqual({
+      needed: true,
+      reason: 'workspace',
+    });
+    expect(detectAskModeToolNeed('看看 src/App.tsx')).toEqual({
+      needed: true,
+      reason: 'workspace',
+    });
   });
 
   it('detects command execution requests', () => {

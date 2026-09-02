@@ -577,7 +577,7 @@ export async function* runChatTurn(
             type: 'error',
             error: withToolBudgetSummary(
               new Error(
-                '当前为问答模式，无法执行工具。请在弹窗中切换到智能体或绕过模式，然后点击「重试」。',
+                '当前为问答模式，无法执行工具。请在弹窗中切换到规划或危险模式，然后点击「重试」。',
               ),
               toolBudgetSummary,
             ),

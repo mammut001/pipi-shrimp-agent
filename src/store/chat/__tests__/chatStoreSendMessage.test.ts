@@ -356,7 +356,7 @@ describe('chatStore sendMessage integration', () => {
     expect(mockRunChatTurn).toHaveBeenCalledWith(
       'session-1',
       expect.arrayContaining([expect.objectContaining({ role: 'user', content: 'hello world' })]),
-      expect.stringContaining('# ASK MODE ACTIVATED'),
+      expect.stringContaining('# ASK HARNESS'),
       undefined,
       false,
       undefined,
@@ -700,7 +700,8 @@ describe('chatStore sendMessage integration', () => {
       (mockRunChatTurn as jest.Mock).mock.calls[0];
     expect(sessionId).toBe('session-1');
     expect(messages).toEqual(expect.any(Array));
-    expect(systemPrompt).toBe('system prompt');
+    expect(systemPrompt).toContain('system prompt');
+    expect(systemPrompt).toContain('# DANGER HARNESS');
     expect(projectDir).toBeUndefined();
     expect(allowBrowserTools).toBe(false);
     expect(requestConfig).toBeUndefined();
@@ -711,12 +712,12 @@ describe('chatStore sendMessage integration', () => {
   it('routes Ask mode through noTools so the model cannot enter a tool loop', async () => {
     resetChatState({ executionMode: 'ask', permissionMode: 'plan-only' });
 
-    await useChatStore.getState().sendMessage('详细阅读一下这个项目吧');
+    await useChatStore.getState().sendMessage('介绍一下这个项目的大概方向');
 
     expect(mockRunChatTurn).toHaveBeenCalledWith(
       'session-1',
       expect.any(Array),
-      expect.stringContaining('# ASK MODE ACTIVATED'),
+      expect.stringContaining('# ASK HARNESS'),
       undefined,
       false,
       undefined,
@@ -737,12 +738,12 @@ describe('chatStore sendMessage integration', () => {
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
       ['user', '介绍一下这个项目的大概方向。'],
-      ['assistant', 'Ask 模式这回合不能调用工具。如果你需要我读取文件、执行命令或操作 AutoResearch，请切到 `Agent` 或 `Bypass` 模式。'],
+      ['assistant', '问答模式这回合不能调用工具。如果需要读取文件、执行命令或改动代码，请切到规划或危险模式。'],
     ]);
     expect(mockShowExecutionModeUpgradePrompt).not.toHaveBeenCalled();
   });
 
-  it('upgrades Ask mode to Agent when a tool-requiring message is sent', async () => {
+  it('upgrades Ask mode to Plan when a tool-requiring message is sent', async () => {
     resetChatState({ executionMode: 'ask', permissionMode: 'plan-only' });
 
     await useChatStore.getState().sendMessage('读取 README 并总结。');
@@ -752,7 +753,7 @@ describe('chatStore sendMessage integration', () => {
       messagePreview: '读取 README 并总结。',
     });
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
-    expect(session?.executionMode).toBe('agent');
+    expect(session?.executionMode).toBe('plan');
     expect(mockRunChatTurn).not.toHaveBeenCalledWith(
       'session-1',
       expect.any(Array),
@@ -764,24 +765,14 @@ describe('chatStore sendMessage integration', () => {
     );
   });
 
-  it('Agent mode passes a shell-lane allowlist without save_plan_doc', async () => {
-    resetChatState({ executionMode: 'agent', permissionMode: 'auto-edits' });
+  it('Danger mode sendMessage does not pass a restricted allowlist', async () => {
+    resetChatState({ executionMode: 'danger', permissionMode: 'auto-edits' });
     await useChatStore.getState().sendMessage('Explore the project');
 
     const calls = (mockRunChatTurn as jest.Mock).mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     const seventh = calls[0]?.[6];
-    expect(seventh?.allowedTools).toEqual(expect.arrayContaining([
-      'read_file',
-      'list_files',
-      'write_file',
-      'execute_command',
-    ]));
-    expect(seventh?.allowedTools).not.toContain('save_plan_doc');
-    expect(seventh?.allowedTools).toContain('browser_click');
-    expect(seventh?.allowedTools).toContain('browser_navigate');
-    expect(seventh?.allowedTools).not.toContain('mcp__tool');
-    expect(seventh?.allowedTools).not.toContain('agent_tool');
+    expect(seventh?.allowedTools).toBeUndefined();
   });
 
   it('Bypass mode sendMessage never passes save_plan_doc in allowedTools', async () => {

@@ -107,10 +107,8 @@ export const EXECUTION_MODES: readonly ExecutionModeProfile[] = Object.freeze([
   },
   {
     id: 'danger',
-    // Reuse the existing Bypass translation keys during the compatibility
-    // window. The dropdown renders the product name "Danger" explicitly.
-    labelKey: 'executionMode.bypass.label',
-    descriptionKey: 'executionMode.bypass.description',
+    labelKey: 'executionMode.danger.label',
+    descriptionKey: 'executionMode.danger.description',
     icon: 'bypass',
     riskLevel: 'dangerous',
     // Full catalog, but keep the existing risky-action approval path instead

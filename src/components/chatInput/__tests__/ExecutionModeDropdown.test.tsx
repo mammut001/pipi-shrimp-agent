@@ -24,26 +24,27 @@ describe('ExecutionModeDropdown three-mode surface', () => {
   it('renders Ask as the default selected label', () => {
     const html = render('ask');
     expect(html).toContain('data-testid="mode-test-trigger"');
-    expect(html).toContain('Ask');
+    expect(html).toContain('executionMode.ask.label');
   });
 
-  it('renders Danger explicitly instead of the legacy Bypass product name', () => {
+  it('renders Danger via i18n instead of the legacy Bypass product name', () => {
     const html = render('danger');
-    expect(html).toContain('Danger');
+    expect(html).toContain('executionMode.danger.label');
     expect(html).not.toContain('Bypass');
+    expect(html).not.toContain('绕过');
   });
 
   it('normalizes historical Agent selection to Plan', () => {
     expect(getExecutionMode('agent').id).toBe('plan');
     const html = render('agent');
-    expect(html).toContain('Plan');
+    expect(html).toContain('executionMode.plan.label');
     expect(html).not.toContain('Agent');
   });
 
   it('normalizes historical Bypass selection to Danger', () => {
     expect(getExecutionMode('bypass').id).toBe('danger');
     const html = render('bypass');
-    expect(html).toContain('Danger');
+    expect(html).toContain('executionMode.danger.label');
     expect(html).not.toContain('Bypass');
   });
 
@@ -63,8 +64,10 @@ describe('DangerWarningDialog', () => {
         onConfirm: () => undefined,
       }),
     );
-    expect(html).toContain('Danger mode');
-    expect(html).toContain('full tool surface');
-    expect(html).toContain('double-checked');
+    expect(html).toContain('executionMode.danger.warningTitle');
+    expect(html).toContain('executionMode.danger.warningBody');
+    expect(html).toContain('executionMode.danger.warningConfirm');
+    expect(html).not.toContain('Enable Bypass');
+    expect(html).not.toContain('启用绕过');
   });
 });

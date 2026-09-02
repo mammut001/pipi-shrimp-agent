@@ -338,6 +338,9 @@ export type TranslationKeys = {
   'executionMode.upgrade.cancel': string;
   'executionMode.upgrade.switchedToAgent': string;
   'executionMode.upgrade.switchedToBypass': string;
+  'executionMode.upgrade.hint': string;
+  'executionMode.upgrade.switchedToPlan': string;
+  'executionMode.upgrade.switchedToDanger': string;
   'executionMode.plan.label': string;
   'executionMode.plan.description': string;
   'executionMode.debug.label': string;
@@ -350,6 +353,13 @@ export type TranslationKeys = {
   'executionMode.bypass.warningBody': string;
   'executionMode.bypass.warningConfirm': string;
   'executionMode.bypass.warningCancel': string;
+  'executionMode.danger.label': string;
+  'executionMode.danger.description': string;
+  'executionMode.danger.badge': string;
+  'executionMode.danger.warningTitle': string;
+  'executionMode.danger.warningBody': string;
+  'executionMode.danger.warningConfirm': string;
+  'executionMode.danger.warningCancel': string;
   'goal.label': string;
   'goal.setTooltip': string;
   'goal.placeholder': string;

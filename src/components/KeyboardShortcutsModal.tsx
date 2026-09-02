@@ -134,7 +134,7 @@ function focusSessionSearch(): void {
   // existing input rather than introducing a second command-palette/search
   // implementation just for Cmd/Ctrl+K.
   requestAnimationFrame(() => {
-    const input = document.querySelector<HTMLInputElement>('aside input[type="text"]');
+    const input = document.querySelector<HTMLInputElement>('aside input[data-sidebar-search]');
     input?.focus();
     input?.select();
   });
