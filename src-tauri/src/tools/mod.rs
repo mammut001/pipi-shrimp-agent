@@ -166,35 +166,51 @@ fn is_cancellable(name: &str) -> bool {
     matches!(name, "execute_command" | "ssh_exec")
 }
 
+pub fn build_tool_runtime_metadata(
+    name: String,
+    description: String,
+    is_read_only: bool,
+    is_concurrency_safe: bool,
+    input_schema: serde_json::Value,
+) -> ToolRuntimeMetadata {
+    ToolRuntimeMetadata {
+        requires_workspace: requires_workspace(&name),
+        permission_class: permission_class(&name, is_read_only).to_string(),
+        default_timeout_ms: default_timeout_ms(&name),
+        output_byte_limit: Some(1_048_576),
+        retry_policy: ToolRetryPolicy {
+            max_retries: 0,
+            base_delay_ms: 250,
+            max_delay_ms: 2_000,
+        },
+        cancellable: is_cancellable(&name),
+        emitted_events: vec![
+            "tool-start".to_string(),
+            "tool-complete".to_string(),
+            "tool-error".to_string(),
+        ],
+        concurrency_class: if is_concurrency_safe {
+            ToolConcurrencyClass::Concurrent
+        } else {
+            ToolConcurrencyClass::Serial
+        },
+        name,
+        description,
+        is_read_only,
+        is_concurrency_safe,
+        input_schema,
+    }
+}
+
 impl ToolMetadata {
     pub fn to_runtime_metadata(&self) -> ToolRuntimeMetadata {
-        ToolRuntimeMetadata {
-            name: self.name.clone(),
-            description: self.description.clone(),
-            is_read_only: self.is_read_only,
-            is_concurrency_safe: self.is_concurrency_safe,
-            concurrency_class: if self.is_concurrency_safe {
-                ToolConcurrencyClass::Concurrent
-            } else {
-                ToolConcurrencyClass::Serial
-            },
-            requires_workspace: requires_workspace(&self.name),
-            permission_class: permission_class(&self.name, self.is_read_only).to_string(),
-            default_timeout_ms: default_timeout_ms(&self.name),
-            output_byte_limit: Some(1_048_576),
-            retry_policy: ToolRetryPolicy {
-                max_retries: 0,
-                base_delay_ms: 250,
-                max_delay_ms: 2_000,
-            },
-            cancellable: is_cancellable(&self.name),
-            emitted_events: vec![
-                "tool-start".to_string(),
-                "tool-complete".to_string(),
-                "tool-error".to_string(),
-            ],
-            input_schema: self.input_schema.clone(),
-        }
+        build_tool_runtime_metadata(
+            self.name.clone(),
+            self.description.clone(),
+            self.is_read_only,
+            self.is_concurrency_safe,
+            self.input_schema.clone(),
+        )
     }
 }
 
