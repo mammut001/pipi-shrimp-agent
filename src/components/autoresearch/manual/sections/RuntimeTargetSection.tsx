@@ -33,12 +33,12 @@ export function RuntimeTargetSection({ setupForm, setSetupForm }: RuntimeTargetS
 
       {setupForm.mode === 'local' ? (
         <p className="text-[11px] leading-relaxed text-gray-500 font-sans">
-          本机运行支持 macOS 和 Linux 操作系统。如果您的系统是 Windows，本地运行需要将 Shell 配置文件设置为 WSL。
+          {t('autoresearch.manual.localEnvNote')}
         </p>
       ) : (
         <div className="space-y-3 font-sans">
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-gray-700">主机地址 (Host)</label>
+            <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.hostLabel')}</label>
             <input
               className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
               placeholder={t('autoresearch.hostPlaceholder')}
@@ -48,7 +48,7 @@ export function RuntimeTargetSection({ setupForm, setSetupForm }: RuntimeTargetS
           </div>
           <div className="flex gap-3">
             <div className="flex-1 space-y-1">
-              <label className="text-xs font-semibold text-gray-700">用户名 (User)</label>
+              <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.userLabel')}</label>
               <input
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
                 placeholder={t('autoresearch.userPlaceholder')}
@@ -57,7 +57,7 @@ export function RuntimeTargetSection({ setupForm, setSetupForm }: RuntimeTargetS
               />
             </div>
             <div className="w-24 space-y-1">
-              <label className="text-xs font-semibold text-gray-700">端口 (Port)</label>
+              <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.portLabel')}</label>
               <input
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
                 placeholder={t('autoresearch.portPlaceholder')}
@@ -96,7 +96,7 @@ export function RuntimeTargetSection({ setupForm, setSetupForm }: RuntimeTargetS
           </div>
           {setupForm.authMode === 'password' && (
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-gray-700">密码</label>
+              <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.passwordLabel')}</label>
               <input
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
                 placeholder={t('autoresearch.passwordPlaceholder')}
@@ -109,7 +109,7 @@ export function RuntimeTargetSection({ setupForm, setSetupForm }: RuntimeTargetS
           )}
           {setupForm.authMode === 'key' && (
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-gray-700">密钥路径 (Key Path)</label>
+              <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.keyPathLabel')}</label>
               <input
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
                 placeholder={t('autoresearch.sshKeyPathPlaceholder')}

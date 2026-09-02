@@ -28,7 +28,7 @@ export function MetricIterationsSection({
   return (
     <div className="space-y-4 font-sans">
       <div className="space-y-1.5 font-sans">
-        <label className="text-xs font-semibold text-gray-700">主要指标名称 (Primary Metric)</label>
+        <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.primaryMetricLabel')}</label>
         <div className="flex gap-2">
           <input
             className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
@@ -41,15 +41,15 @@ export function MetricIterationsSection({
             value={direction}
             onChange={(event) => setDirection(event.target.value as 'lower' | 'higher')}
           >
-            <option value="lower">目标越小越好</option>
-            <option value="higher">目标越大越好</option>
+            <option value="lower">{t('autoresearch.manual.directionLower')}</option>
+            <option value="higher">{t('autoresearch.manual.directionHigher')}</option>
           </select>
         </div>
         <p className="text-[11px] text-gray-500 font-sans">{t('autoresearch.metricHelper')}</p>
       </div>
 
       <div className="space-y-1.5 font-sans">
-        <label className="text-xs font-semibold text-gray-700">当前基线 (Baseline - 可选)</label>
+        <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.baselineOptional')}</label>
         <input
           className={`w-full rounded-xl border bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:outline-none ${baselineInvalid ? 'border-rose-300 focus:border-rose-400' : 'border-gray-200 focus:border-neutral-400'}`}
           placeholder={t('autoresearch.baselinePlaceholder')}
@@ -63,7 +63,7 @@ export function MetricIterationsSection({
       </div>
 
       <div className="space-y-1.5 font-sans">
-        <label className="text-xs font-semibold text-gray-700">最大迭代轮数 (Max Iterations)</label>
+        <label className="text-xs font-semibold text-gray-700">{t('autoresearch.manual.maxIterationsLabel')}</label>
         <input
           className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm transition-colors focus:border-neutral-400 focus:outline-none"
           placeholder={t('autoresearch.maxIterationsPlaceholder')}

@@ -38,12 +38,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function isAbsoluteOrHomePath(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed.startsWith('/')
-    || trimmed.startsWith('~/')
-    || /^[A-Za-z]:[\\/]/.test(trimmed);
-}
+import { isAbsoluteOrHomePath } from './pathInput';
 
 function isWorkspaceDot(value: unknown): boolean {
   if (typeof value !== 'string') {

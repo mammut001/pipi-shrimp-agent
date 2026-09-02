@@ -173,6 +173,7 @@ export function getKnownScaffoldTemplateManifest(templateId: ScaffoldTemplateId)
 export const PRESERVE_EXISTING_SCAFFOLD_FILES = [
   'train.py',
   'eval.py',
+  'run_experiment.py',
   'index.ts',
   'package.json',
   'requirements.txt',

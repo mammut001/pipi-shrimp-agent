@@ -163,7 +163,7 @@ describe('BootstrapChatView (Guided UI)', () => {
     // Recovery path: not a dead-end — Retry + Back to Recipe are offered
     expect(container.querySelector('[data-testid="retry-bootstrap"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="back-to-recipe-from-error"]')).toBeTruthy();
-    expect(container.textContent).toMatch(/Retry bootstrap|Back to Recipe/i);
+    expect(container.textContent).toMatch(/Retry bootstrap|Back to Recipe|autoresearch\.bootstrap\.retry|autoresearch\.bootstrap\.backToRecipe/i);
   });
 
   it('synthesizes a real Ready plan from the recipe when the agent omits bootstrap_finalize', async () => {
@@ -338,7 +338,7 @@ describe('BootstrapChatView (Guided UI)', () => {
     });
 
     const stopButton = Array.from(container.querySelectorAll('button'))
-      .find((btn) => btn.textContent?.includes('Stop bootstrap'));
+      .find((btn) => btn.textContent?.includes('autoresearch.bootstrap.stop') || btn.textContent?.includes('Stop bootstrap'));
     expect(stopButton).toBeTruthy();
 
     await act(async () => {
@@ -348,7 +348,7 @@ describe('BootstrapChatView (Guided UI)', () => {
     });
 
     expect(container.textContent).toContain('Bootstrap stopped by user');
-    expect(container.textContent).toContain('Stopped');
+    expect(container.textContent).toMatch(/autoresearch\.bootstrap\.statusStopped|Stopped/);
   });
 
   it('confirms reset on template change if recipe is dirty', async () => {
@@ -514,5 +514,181 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(container.innerHTML).toContain('autoresearch.bootstrap.readyTitle');
     expect(container.innerHTML).toContain('cv_accuracy');
     expect(mockStartAutoResearchRun).not.toHaveBeenCalled();
+  });
+
+  it('does not treat needs_user_confirmation as ready and shows confirmation panel', async () => {
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    act(() => {
+      useBootstrapPlanStore.getState().setReadyResult({
+        status: 'needs_user_confirmation',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        warnings: [],
+        unresolvedQuestions: ['Which evaluation dataset split?'],
+        schemaVersion: 1,
+        plan: {
+          researchGoal: 'Investigate',
+          successCriteria: 'Beat baseline',
+          primaryMetric: 'cv_accuracy',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [],
+          scaffold: {
+            templateId: 'python-ml-baseline',
+            workDir: '/tmp/test',
+            language: 'python',
+            entryCommand: 'python3 train.py',
+            vars: {},
+            files: [],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: 'reproduce-paper',
+        },
+      });
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const chip = container.querySelector('[data-testid="autoresearch-setup-phase-chip"]');
+    expect(chip?.getAttribute('aria-label')).not.toBe('AutoResearch phase: Bootstrap ready');
+    expect(container.querySelector('[data-testid="bootstrap-confirmation-panel"]')).toBeTruthy();
+    expect(container.textContent).toContain('Which evaluation dataset split?');
+    // Start button must not be present
+    expect(container.querySelector('button[className*="bg-emerald-600"]')).toBeFalsy();
+  });
+
+  it('clicking Back to Recipe resets state completely', async () => {
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const stopButton = Array.from(container.querySelectorAll('button'))
+      .find((b) => b.textContent?.includes('autoresearch.bootstrap.stop') || b.textContent?.includes('Stop bootstrap'));
+    expect(stopButton).toBeTruthy();
+
+    await act(async () => {
+      stopButton!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const backButton = Array.from(container.querySelectorAll('button'))
+      .find((b) => b.textContent?.includes('autoresearch.bootstrap.backToRecipe') || b.textContent?.includes('Back to Recipe'));
+    expect(backButton).toBeTruthy();
+
+    await act(async () => {
+      backButton!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(useBootstrapPlanStore.getState().readyResult).toBeNull();
+    expect(container.querySelector('[data-testid="send-task"]')).toBeTruthy();
+  });
+
+  it('displays resolved remote workdir in SSH mode on the ready card', async () => {
+    const { persistBootstrapSession } = await import('@/services/autoresearch/bootstrap/bootstrapSessionPersist');
+    persistBootstrapSession({
+      version: 1,
+      recipe: {
+        researchGoal: { goalText: 'SSH experiment', taskType: 'reproduce_paper', source: 'user' },
+        references: {},
+        baselineAndMetric: { primaryMetric: 'top1_acc', direction: 'higher' },
+        workspace: { workDir: '/tmp/local-temp', folderName: 'p' },
+        verification: { commands: [] },
+        outputContract: {
+          includeMetrics: true,
+          includeArtifacts: true,
+          includeCommandsRun: true,
+          includeFailureReason: true,
+          includeRemainingRisks: true,
+        },
+      },
+      recipeDirty: false,
+      selectedTemplateId: null,
+      templatesExpanded: false,
+      hasStarted: true,
+      readyResult: {
+        status: 'ready',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        warnings: [],
+        unresolvedQuestions: [],
+        schemaVersion: 1,
+        plan: {
+          researchGoal: 'SSH experiment',
+          successCriteria: 'Beat baseline',
+          primaryMetric: 'top1_acc',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [],
+          scaffold: {
+            templateId: 'python-ml-baseline',
+            workDir: '/tmp/local-temp',
+            language: 'python',
+            entryCommand: 'python3 train.py',
+            vars: {},
+            files: [],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: 'reproduce-paper',
+        },
+      },
+      currentStep: 'ready',
+      observedTools: ['bootstrap_finalize'],
+      warnings: [],
+      iterations: 3,
+      agentLogs: '[SYSTEM] ready\n',
+      handoffSummary: null,
+      lastCompiledPrompt: 'prompt',
+      missingFinalize: false,
+      error: null,
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    act(() => {
+      root.render(
+        <BootstrapChatView
+          sshConfig={{
+            mode: 'ssh',
+            host: '192.168.1.100',
+            user: 'ubuntu',
+            port: 22,
+            remoteWorkDir: '~/remote-experiment',
+            authMode: 'agent',
+            keyPath: '',
+            password: '',
+          }}
+        />
+      );
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain('top1_acc');
+    expect(container.textContent).toContain('~/remote-experiment');
+    expect(container.textContent).not.toContain('/tmp/local-temp');
   });
 });

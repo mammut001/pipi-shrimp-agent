@@ -36,6 +36,7 @@ import { RecipeTemplateChooser } from './recipe/RecipeTemplateChooser';
 import { type Recipe } from './bootstrapRecipePrompt';
 import { AutoResearchSetupPhaseChip } from './AutoResearchSetupPhaseChip';
 import {
+  clearPersistedBootstrapSession,
   loadPersistedBootstrapSession,
   persistBootstrapSession,
 } from '@/services/autoresearch/bootstrap/bootstrapSessionPersist';
@@ -70,20 +71,22 @@ function resolveBaselineValue(baselines: ExtractedBaseline[], primaryMetric: str
 }
 
 function resolveBootstrapRemoteWorkDir(sshConfig: SshConfig, workDir: string): string {
-  const remoteRoot = (sshConfig.remoteWorkDir || '~/autoresearch').replace(/[\\/]+$/, '');
+  const remoteRoot = (sshConfig.remoteWorkDir || '~/autoresearch').trim().replace(/[\\/]+$/, '');
   const trimmed = workDir.trim().replace(/[\\/]+$/, '');
   if (!trimmed) {
     return remoteRoot;
   }
-  if (
-    trimmed === remoteRoot
-    || trimmed.startsWith(`${remoteRoot}/`)
-    || trimmed.startsWith('/')
-    || trimmed.startsWith('~/')
-  ) {
+  if (trimmed === remoteRoot || trimmed.startsWith(`${remoteRoot}/`)) {
     return trimmed;
   }
-  const folderName = trimmed.split(/[\\/]/).filter(Boolean).pop() || 'bootstrap-project';
+
+  const folderName = trimmed.split(/[\\/]/).filter(Boolean).pop() || '';
+  const isGenericTemp = !folderName || /^(tmp|temp|temporary)/i.test(folderName) || folderName.startsWith('autoresearch-');
+
+  if (remoteRoot !== '~/autoresearch' || isGenericTemp) {
+    return remoteRoot;
+  }
+
   return `${remoteRoot}/${folderName}`;
 }
 
@@ -167,11 +170,11 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }, []);
 
   useEffect(() => {
-    if (!persistedSession) {
+    if (!persistedSession || !persistedSession.hasStarted) {
       return;
     }
     const store = useBootstrapPlanStore.getState();
-    if (persistedSession.readyResult && !store.readyResult) {
+    if (persistedSession.readyResult?.status === 'ready' && !store.readyResult) {
       setReadyResult(persistedSession.readyResult);
     }
     if (persistedSession.warnings.length > 0) {
@@ -186,6 +189,27 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }, [persistedSession, setCurrentStep, setReadyResult, setWarnings]);
 
   useEffect(() => {
+    if (!hasStarted) {
+      persistBootstrapSession({
+        version: 1,
+        recipe,
+        recipeDirty,
+        selectedTemplateId,
+        templatesExpanded,
+        hasStarted: false,
+        readyResult: null,
+        currentStep: 'goal',
+        observedTools: [],
+        warnings: [],
+        iterations,
+        agentLogs: '',
+        handoffSummary: null,
+        lastCompiledPrompt: null,
+        missingFinalize: false,
+        error: null,
+      });
+      return;
+    }
     persistBootstrapSession({
       version: 1,
       recipe,
@@ -308,6 +332,15 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
             content = null;
           }
           if (content == null) {
+            continue;
+          }
+
+          // Preserve existing experiment files on remote host (never clobber)
+          const checkRemote = await runSshExec({
+            ...sshConfig,
+            command: `if [ -f ${shellEscapePath(remoteFilePath)} ]; then echo "EXISTS"; fi`,
+          });
+          if (checkRemote.stdout?.trim() === 'EXISTS') {
             continue;
           }
 
@@ -436,18 +469,32 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     setAgentLogs((prev) => prev + '\n[SYSTEM] Bootstrap stopped by user.\n');
   }, []);
 
+  const handleResetToRecipe = useCallback(() => {
+    useBootstrapPlanStore.getState().reset();
+    setReadyResult(null);
+    setHasStarted(false);
+    setError(null);
+    setMissingFinalize(false);
+    setStoppedByUser(false);
+    setHandoffSummary(null);
+    bootstrappedAtRef.current = null;
+    setAgentLogs('');
+    clearPersistedBootstrapSession();
+  }, [setReadyResult]);
+
   const handleStartBootstrap = useCallback(async (compiledPrompt: string) => {
     if (isStreaming) {
       return;
     }
 
+    useBootstrapPlanStore.getState().reset();
+    setReadyResult(null);
     lastCompiledPromptRef.current = compiledPrompt;
     setError(null);
     setMissingFinalize(false);
     setStoppedByUser(false);
     setHandoffSummary(null);
     bootstrappedAtRef.current = null;
-    setReadyResult(null);
     setHasStarted(true);
     setIsStreaming(true);
     setAgentLogs(`[SYSTEM] Initializing AutoResearch Bootstrap Setup...\n`);
@@ -612,6 +659,13 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
 
     setSelectedTemplateId(templateId);
     setTemplatesExpanded(false);
+    useBootstrapPlanStore.getState().reset();
+    setReadyResult(null);
+    setHandoffSummary(null);
+    bootstrappedAtRef.current = null;
+    setError(null);
+    setMissingFinalize(false);
+    setStoppedByUser(false);
 
     let taskType: Recipe['researchGoal']['taskType'] = 'reproduce_paper';
     let goalText = '';
@@ -673,7 +727,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   const setupPhaseInput = useMemo(() => ({
     bootstrapKind: 'conversational' as const,
     bootstrapStreaming: isStreaming,
-    bootstrapReady: Boolean(readyResult),
+    bootstrapReady: readyResult?.status === 'ready',
     startingRun: false,
     error,
   }), [isStreaming, readyResult, error]);
@@ -683,15 +737,20 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
       return null;
     }
 
+    const isSshMode = sshConfig && sshConfig.mode === 'ssh';
+    const displayedWorkDir = isSshMode
+      ? resolveBootstrapRemoteWorkDir(sshConfig, readyResult.plan.scaffold.workDir)
+      : readyResult.plan.scaffold.workDir;
+
     return (
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm animate-fadeIn flex flex-col gap-2 font-sans">
         <div>
           <p className="font-semibold">{t('autoresearch.bootstrap.readyTitle')}</p>
-          <p className="mt-1">{readyResult.plan.primaryMetric} · {readyResult.plan.scaffold.workDir}</p>
+          <p className="mt-1">{readyResult.plan.primaryMetric} · {displayedWorkDir}</p>
           <p className="mt-1 text-xs text-emerald-800">{readyResult.plan.successCriteria}</p>
         </div>
         <div className="flex flex-col gap-2 border-t border-emerald-200/50 pt-2 sm:flex-row sm:flex-wrap sm:items-center">
-          <label className="text-xs font-semibold text-emerald-800">Iterations:</label>
+          <label className="text-xs font-semibold text-emerald-800">{t('autoresearch.bootstrap.iterations')}</label>
           <input
             type="number"
             min={1}
@@ -704,12 +763,12 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
             onClick={() => handleReadyResult(readyResult, iterations)}
             className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1 font-sans sm:ml-auto sm:w-auto"
           >
-            <span>🚀</span> Start AutoResearch
+            <span>🚀</span> {t('autoresearch.bootstrap.start')}
           </button>
         </div>
       </div>
     );
-  }, [readyResult, iterations, handoffSummary, handleReadyResult]);
+  }, [readyResult, iterations, handoffSummary, handleReadyResult, sshConfig]);
 
   return (
     <div className={`min-h-0 flex-1 gap-4 p-4 w-full max-w-7xl mx-auto flex flex-col ${hasStarted ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_280px]' : ''}`}>
@@ -749,6 +808,26 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
             <div className="flex-1 flex flex-col gap-4 min-h-0 animate-fadeIn">
               {/* Status information */}
               {summaryCard}
+              {readyResult?.status === 'needs_user_confirmation' && !handoffSummary && (
+                <div
+                  className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm font-sans flex flex-col gap-2"
+                  data-testid="bootstrap-confirmation-panel"
+                >
+                  <p className="font-semibold">{t('autoresearch.bootstrap.needsConfirmationTitle')}</p>
+                  <p className="text-xs text-amber-800">
+                    {readyResult.unresolvedQuestions.filter(Boolean).join(' ') || 'The bootstrap plan needs user confirmation before starting AutoResearch.'}
+                  </p>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleResetToRecipe}
+                      className="rounded-lg border border-amber-300 bg-white hover:bg-amber-100 text-amber-900 px-3 py-1 text-xs font-semibold transition-all"
+                    >
+                      {t('autoresearch.bootstrap.backToRecipe')}
+                    </button>
+                  </div>
+                </div>
+              )}
               {handoffSummary && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 shadow-sm font-sans">
                   {t('autoresearch.bootstrap.started')}: {handoffSummary}
@@ -768,20 +847,15 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                         onClick={handleRetryBootstrap}
                         className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-bold transition-all shadow-sm"
                       >
-                        Retry bootstrap
+                        {t('autoresearch.bootstrap.retry')}
                       </button>
                       <button
                         type="button"
                         data-testid="back-to-recipe-from-error"
-                        onClick={() => {
-                          setHasStarted(false);
-                          setError(null);
-                          setMissingFinalize(false);
-                          setStoppedByUser(false);
-                        }}
+                        onClick={handleResetToRecipe}
                         className="rounded-lg border border-red-300 bg-white hover:bg-red-50 text-red-800 px-3 py-1.5 text-xs font-bold transition-all"
                       >
-                        Back to Recipe
+                        {t('autoresearch.bootstrap.backToRecipe')}
                       </button>
                     </div>
                   )}
@@ -797,7 +871,7 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                       <span className="w-3 h-3 rounded-full bg-yellow-500/80"></span>
                       <span className="w-3 h-3 rounded-full bg-green-500/80"></span>
                     </div>
-                    <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider ml-2">Developer Console</span>
+                    <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider ml-2">{t('autoresearch.bootstrap.developerConsole')}</span>
                     <AutoResearchSetupPhaseChip
                       input={setupPhaseInput}
                       className="ml-1 border-neutral-700 bg-neutral-800/80 text-neutral-300"
@@ -811,43 +885,44 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                           onClick={handleStopBootstrap}
                           className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-red-700 bg-red-900/40 hover:bg-red-800/60 hover:text-white transition-all text-red-200 font-sans"
                         >
-                          Stop bootstrap
+                          {t('autoresearch.bootstrap.stop')}
                         </button>
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span className="text-[10px] text-neutral-400">Bootstrap in progress...</span>
+                        <span className="text-[10px] text-neutral-400">{t('autoresearch.bootstrap.inProgress')}</span>
                       </>
                     ) : (
                       <>
                         <button
                           type="button"
-                          onClick={() => {
-                            setHasStarted(false);
-                            setError(null);
-                            setStoppedByUser(false);
-                          }}
+                          onClick={handleResetToRecipe}
                           className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-all text-neutral-300 font-sans"
                         >
-                          ← Back to Recipe
+                          ← {t('autoresearch.bootstrap.backToRecipe')}
                         </button>
                         {stoppedByUser ? (
                           <>
                             <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span className="text-[10px] text-amber-400 font-bold">Stopped</span>
+                            <span className="text-[10px] text-amber-400 font-bold">{t('autoresearch.bootstrap.statusStopped')}</span>
                           </>
                         ) : error ? (
                           <>
                             <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                            <span className="text-[10px] text-red-400 font-bold">Failed</span>
+                            <span className="text-[10px] text-red-400 font-bold">{t('autoresearch.bootstrap.statusFailed')}</span>
                           </>
                         ) : readyResult?.status === 'ready' ? (
                           <>
                             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            <span className="text-[10px] text-emerald-400 font-bold">Finished</span>
+                            <span className="text-[10px] text-emerald-400 font-bold">{t('autoresearch.bootstrap.statusFinished')}</span>
+                          </>
+                        ) : readyResult?.status === 'needs_user_confirmation' ? (
+                          <>
+                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                            <span className="text-[10px] text-amber-400 font-bold">{t('autoresearch.bootstrap.statusNeedsConfirmation')}</span>
                           </>
                         ) : (
                           <>
                             <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span className="text-[10px] text-amber-400 font-bold">Incomplete</span>
+                            <span className="text-[10px] text-amber-400 font-bold">{t('autoresearch.bootstrap.statusIncomplete')}</span>
                           </>
                         )}
                       </>
@@ -855,11 +930,11 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-1.5 selection:bg-neutral-800" ref={consoleScrollRef}>
-                  <pre className="whitespace-pre-wrap leading-relaxed">{agentLogs || 'Initializing bootstrap process...'}</pre>
+                  <pre className="whitespace-pre-wrap leading-relaxed">{agentLogs || t('autoresearch.bootstrap.initializing')}</pre>
                   {isStreaming && (
                     <div className="inline-flex items-center gap-1 text-[10px] text-neutral-500 animate-pulse font-sans">
                       <span>▋</span>
-                      <span>Streaming logs...</span>
+                      <span>{t('autoresearch.bootstrap.streamingLogs')}</span>
                     </div>
                   )}
                 </div>

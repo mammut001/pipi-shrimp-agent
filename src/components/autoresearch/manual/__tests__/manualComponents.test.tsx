@@ -262,7 +262,7 @@ describe('Manual Setup subcomponents smoke tests', () => {
         />
       );
     });
-    expect(container.textContent).toContain('工作区目录');
+    expect(container.textContent).toMatch(/autoresearch\.manual\.summaryWorkspaceDir|工作区目录/);
   });
 
   it('renders AdvancedFieldsSection', () => {

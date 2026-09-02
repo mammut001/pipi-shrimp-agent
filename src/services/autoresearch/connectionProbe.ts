@@ -1,4 +1,5 @@
 import { buildRemoteBashCommand, shellEscapePath } from '@/utils/remoteExec';
+import { isAbsoluteOrHomePath } from './pathInput';
 
 /**
  * Host-side cwd for AutoResearch `execute_bash` probes.
@@ -9,7 +10,7 @@ export const AUTORESEARCH_SAFE_HOST_CWD = '/tmp';
 
 function assertProbePath(label: string, value: string): string {
   const trimmed = value.trim();
-  if (!trimmed || trimmed === '.' || trimmed === './') {
+  if (!trimmed || !isAbsoluteOrHomePath(trimmed)) {
     throw new Error(`${label} must be an absolute or home path, not '${value || '.'}'.`);
   }
   return trimmed;

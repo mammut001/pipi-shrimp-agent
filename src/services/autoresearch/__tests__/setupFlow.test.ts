@@ -25,7 +25,9 @@ jest.mock('@/i18n', () => ({
     'autoresearch.validationPasswordRequired': 'SSH password is required for password auth.',
     'autoresearch.validationKeyPathRequired': 'SSH key path is required for key auth.',
     'autoresearch.validationWorkdirRequired': 'Workdir is required.',
+    'autoresearch.validationWorkdirAbsolute': 'AutoResearch workspace must be an absolute or home (~) path.',
     'autoresearch.validationExperimentDirRequired': 'Experiment directory is required.',
+    'autoresearch.validationExperimentDirAbsolute': 'Target project must be an absolute or home (~) path.',
     'autoresearch.validationMetricRequired': 'Metric name is required.',
     'autoresearch.validationBaselineNumber': 'Baseline must be a number.',
   }[key] ?? key),
@@ -88,6 +90,52 @@ describe('validateAutoResearchSetupDraft', () => {
 
     expect(result.value).toBeNull();
     expect(result.error).toBe('Run a successful connection test before starting AutoResearch.');
+  });
+
+  it('rejects relative workspace path', () => {
+    const result = validateAutoResearchSetupDraft({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '.',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/exp',
+      metric: 'val_loss',
+      direction: 'lower',
+      iterations: 5,
+      baselineInput: '',
+    });
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBe('AutoResearch workspace must be an absolute or home (~) path.');
+  });
+
+  it('rejects relative experiment directory path', () => {
+    const result = validateAutoResearchSetupDraft({
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/work',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: './relative-exp',
+      metric: 'val_loss',
+      direction: 'lower',
+      iterations: 5,
+      baselineInput: '',
+    });
+
+    expect(result.value).toBeNull();
+    expect(result.error).toBe('Target project must be an absolute or home (~) path.');
   });
 
   it('normalizes valid local setup values', () => {
