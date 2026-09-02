@@ -38,49 +38,29 @@ pub enum ToolExecutionSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallRequest {
-    /// Unique tool call ID (from API)
     pub id: String,
-    /// Tool name
     pub name: String,
-    /// JSON-encoded arguments
     pub arguments: String,
-    /// Bound work directory for scoped path execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_dir: Option<String>,
-    /// The logical caller/source that initiated this tool execution.
     #[serde(default)]
     pub source: ToolExecutionSource,
-    /// Optional backend allowlist for defense-in-depth enforcement.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_tools: Option<Vec<String>>,
-    /// Active provider API key for LLM-backed tool execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
-    /// Active model name for LLM-backed tool execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Optional provider base URL hint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    /// Optional provider id hint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
-    /// Optional API format hint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
-    /// Optional execution capability hints.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_capabilities: Option<crate::claude::provider::ProviderCapabilities>,
-    /// Optional backend-issued approval token bound to this exact request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_token: Option<String>,
-    /// Optional 5-mode execution mode id (ask / plan / debug / agent / bypass).
-    /// When set to "bypass", normal project-scoped tools skip the
-    /// confirmation gate (the hard safety hooks — dangerous-command /
-    /// path-validation — still run on the frontend). When set to "ask"
-    /// or "plan", the frontend blocks the request entirely before it
-    /// reaches the backend; this field is only consulted as defense
-    /// in depth.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_mode: Option<String>,
 }
@@ -88,33 +68,134 @@ pub struct ToolCallRequest {
 /// Tool execution result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallResult {
-    /// Original tool call ID
     pub id: String,
-    /// Tool name
     pub name: String,
-    /// Result content (or error message)
     pub content: String,
-    /// Whether this result represents an error
     pub is_error: bool,
-    /// Standardized error code for programmatic error handling.
-    /// Present when is_error is true. Values: "schema_validation",
-    /// "invalid_arguments", "not_found", "permission_denied", "io_error", "internal_error"
     pub error_code: Option<String>,
 }
 
-/// Tool metadata used by the scheduler for dispatch decisions
+/// Core metadata authored when a tool is registered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolMetadata {
-    /// Tool name (must be unique)
     pub name: String,
-    /// Human-readable description (injected into API system prompt)
     pub description: String,
-    /// Whether this tool only reads data (no side effects)
     pub is_read_only: bool,
-    /// Whether this tool can safely run concurrently with other concurrent-safe tools
     pub is_concurrency_safe: bool,
-    /// JSON Schema for input validation
     pub input_schema: serde_json::Value,
+}
+
+/// Runtime scheduling class exposed to every frontend/client.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolConcurrencyClass {
+    Concurrent,
+    Serial,
+}
+
+/// Declarative retry hint. Enforcement remains at the runtime/provider layer;
+/// keeping the hint in registry metadata prevents each client inventing policy.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRetryPolicy {
+    pub max_retries: u8,
+    pub base_delay_ms: u64,
+    pub max_delay_ms: u64,
+}
+
+/// Expanded metadata view consumed by TypeScript runtimes. This is derived from
+/// the authoritative Rust ToolRegistry rather than duplicated TS sets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRuntimeMetadata {
+    pub name: String,
+    pub description: String,
+    pub is_read_only: bool,
+    pub is_concurrency_safe: bool,
+    pub concurrency_class: ToolConcurrencyClass,
+    pub requires_workspace: bool,
+    pub permission_class: String,
+    pub default_timeout_ms: u64,
+    pub output_byte_limit: Option<usize>,
+    pub retry_policy: ToolRetryPolicy,
+    pub cancellable: bool,
+    pub emitted_events: Vec<String>,
+    pub input_schema: serde_json::Value,
+}
+
+fn requires_workspace(name: &str) -> bool {
+    matches!(
+        name,
+        "read_file"
+            | "write_file"
+            | "list_files"
+            | "create_directory"
+            | "path_exists"
+            | "search_files"
+            | "glob_search"
+            | "grep_files"
+            | "execute_command"
+            | "compile_typst_file"
+            | "render_typst_to_pdf"
+            | "render_typst_to_svg"
+            | "scaffold_generate"
+            | "git_init_workdir"
+            | "bootstrap_finalize"
+    )
+}
+
+fn permission_class(name: &str, is_read_only: bool) -> &'static str {
+    if is_read_only {
+        return "read_only";
+    }
+    match name {
+        "execute_command" | "code_execution" | "ssh_exec" => "process_execution",
+        "write_file" | "create_directory" | "delete_file" | "append_file" => "workspace_mutation",
+        _ => "mutating",
+    }
+}
+
+fn default_timeout_ms(name: &str) -> u64 {
+    match name {
+        "execute_command" | "ssh_exec" | "code_execution" => 300_000,
+        _ => 30_000,
+    }
+}
+
+fn is_cancellable(name: &str) -> bool {
+    matches!(name, "execute_command" | "ssh_exec")
+}
+
+impl ToolMetadata {
+    pub fn to_runtime_metadata(&self) -> ToolRuntimeMetadata {
+        ToolRuntimeMetadata {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            is_read_only: self.is_read_only,
+            is_concurrency_safe: self.is_concurrency_safe,
+            concurrency_class: if self.is_concurrency_safe {
+                ToolConcurrencyClass::Concurrent
+            } else {
+                ToolConcurrencyClass::Serial
+            },
+            requires_workspace: requires_workspace(&self.name),
+            permission_class: permission_class(&self.name, self.is_read_only).to_string(),
+            default_timeout_ms: default_timeout_ms(&self.name),
+            output_byte_limit: Some(1_048_576),
+            retry_policy: ToolRetryPolicy {
+                max_retries: 0,
+                base_delay_ms: 250,
+                max_delay_ms: 2_000,
+            },
+            cancellable: is_cancellable(&self.name),
+            emitted_events: vec![
+                "tool-start".to_string(),
+                "tool-complete".to_string(),
+                "tool-error".to_string(),
+            ],
+            input_schema: self.input_schema.clone(),
+        }
+    }
 }
 
 pub fn classify_tool_error_code(message: &str) -> &'static str {
