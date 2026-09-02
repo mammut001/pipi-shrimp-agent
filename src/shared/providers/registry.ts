@@ -57,6 +57,8 @@ export interface ProviderDef {
   baseUrlPlaceholder?: string;
   /** Help text shown below the Base URL field */
   baseUrlHelp?: string;
+  /** Whether the provider supports free-text custom model IDs (compatible gateways) */
+  supportsCustomModel?: boolean;
   /** Default models shipped with this provider (fallback when fetch unavailable) */
   defaultModels: ProviderModelDef[];
   /** Default pricing per model ID */
@@ -292,6 +294,7 @@ const anthropicCompatibleProvider: ProviderDef = {
   defaultApiFormat: 'anthropic',
   requiresApiKey: true,
   supportsModelFetch: true,
+  supportsCustomModel: true,
   modelsEndpointStyle: 'anthropic',
   showBaseUrl: true,
   requiresBaseUrl: true,
@@ -308,6 +311,7 @@ const openaiCompatibleProvider: ProviderDef = {
   defaultApiFormat: 'openai',
   requiresApiKey: true,
   supportsModelFetch: true,
+  supportsCustomModel: true,
   modelsEndpointStyle: 'openai',
   showBaseUrl: true,
   requiresBaseUrl: true,
