@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter';
 
 interface DocumentDetailShellProps {
   title: string;
@@ -34,7 +35,7 @@ export function DocumentDetailShell({
   return (
     <div className={`flex min-h-full w-full flex-col bg-[#f7f6f3] shadow-[0_32px_120px_rgba(15,23,42,0.12)] ${className}`}>
       {/* Document Header - Scrolls naturally with content to maximize viewport space */}
-      <div className="border-b border-slate-200/80 bg-white px-4 py-3 sm:px-5">
+      <div className={`border-b border-slate-200/80 bg-white pl-4 sm:pl-5 ${MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS} py-3`}>
         <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">

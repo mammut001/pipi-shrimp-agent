@@ -45,4 +45,21 @@ describe('ChatWorkspaceModeToggle', () => {
     fireEvent.click(preview);
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it('switches back to chat from preview mode', () => {
+    const onChange = jest.fn();
+    const { getByRole } = render(
+      createElement(ChatWorkspaceModeToggle, {
+        mode: 'preview',
+        canPreview: true,
+        onChange,
+      }),
+    );
+
+    expect(getByRole('button', { name: 'nav.chat' }).getAttribute('aria-pressed')).toBe('false');
+    expect(getByRole('button', { name: 'common.preview' }).getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(getByRole('button', { name: 'nav.chat' }));
+    expect(onChange).toHaveBeenCalledWith('chat');
+  });
 });
