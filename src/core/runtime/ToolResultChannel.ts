@@ -8,6 +8,10 @@ interface PendingToolResultRequest {
   abortCleanup?: () => void;
 }
 
+type BufferedToolResponse =
+  | { kind: 'results'; results: ToolExecutionResult[] }
+  | { kind: 'error'; error: Error };
+
 export interface WaitForToolResultsOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -35,7 +39,7 @@ function normalizeResults(
  */
 export class ToolResultChannel {
   private readonly pending = new Map<string, PendingToolResultRequest>();
-  private readonly buffered = new Map<string, ToolExecutionResult[]>();
+  private readonly buffered = new Map<string, BufferedToolResponse>();
 
   waitFor(
     requestId: string,
@@ -45,7 +49,10 @@ export class ToolResultChannel {
     const buffered = this.buffered.get(requestId);
     if (buffered) {
       this.buffered.delete(requestId);
-      return Promise.resolve(normalizeResults(expectedIds, buffered));
+      if (buffered.kind === 'error') {
+        return Promise.reject(buffered.error);
+      }
+      return Promise.resolve(normalizeResults(expectedIds, buffered.results));
     }
 
     if (this.pending.has(requestId)) {
@@ -99,7 +106,10 @@ export class ToolResultChannel {
   submit(requestId: string, results: ToolExecutionResult[]): void {
     const pending = this.pending.get(requestId);
     if (!pending) {
-      this.buffered.set(requestId, results.map((result) => ({ ...result })));
+      this.buffered.set(requestId, {
+        kind: 'results',
+        results: results.map((result) => ({ ...result })),
+      });
       return;
     }
 
@@ -115,7 +125,7 @@ export class ToolResultChannel {
     const normalized = error instanceof Error ? error : new Error(String(error));
     const pending = this.pending.get(requestId);
     if (!pending) {
-      this.buffered.set(requestId, [{ id: '__runtime_error__', content: `Error: ${normalized.message}` }]);
+      this.buffered.set(requestId, { kind: 'error', error: normalized });
       return;
     }
 
