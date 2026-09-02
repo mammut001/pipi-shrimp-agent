@@ -1546,6 +1546,8 @@ Fill structured browser forms while re-checking PageState before risky actions.
   'settings.name': 'Name',
   'settings.nameRequired': 'Name is required',
   'settings.modelRequired': 'Model is required',
+  'settings.customModelHelp': 'You can type a custom model ID',
+  'settings.customModelPlaceholder': 'Type or select a model ID, e.g. vercel/meta/muse-spark-1.2-contributor',
   'settings.configNamePlaceholder': 'My Anthropic API',
   'settings.provider': 'Provider',
   'settings.baseUrl': 'Base URL',
