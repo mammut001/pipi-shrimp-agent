@@ -5,6 +5,7 @@ export type AutoResearchRunStatus =
   | 'draft'
   | 'running'
   | 'waiting_rate_limit'
+  | 'paused'
   | 'reflection_failed'
   | 'stopped'
   | 'failed'

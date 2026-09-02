@@ -78,6 +78,10 @@ jest.mock('@/i18n', () => ({
     'autoresearch.validationBaselineNumber': 'Baseline must be a valid number',
     'autoresearch.emptyIdle': 'AutoResearch is idle.',
     'autoresearch.setupAndStart': 'Setup and Start',
+    'autoresearch.pause': 'Pause',
+    'autoresearch.stop': 'Stop',
+    'autoresearch.resume': 'Resume',
+    'autoresearch.acknowledge': 'Acknowledge',
     'autoresearch.baselinePlaceholder': 'e.g. 0.963284',
     'autoresearch.hostPlaceholder': '例如 192.168.1.10 或 server.example.com',
     'autoresearch.userPlaceholder': '例如 ubuntu / root / your-user',
@@ -595,5 +599,100 @@ describe('AdvancedWorkdirSetup Expert Launch Cockpit UI Component', () => {
     expect(details).toBeTruthy();
     expect(details?.hasAttribute('open')).toBe(false);
     expect(container.textContent).toContain('Usually no need to modify');
+  });
+
+  it('17. hides setup form and lands on live run dashboard when active run or run history exists', () => {
+    const activeRun = {
+      id: 'run-guided-123',
+      title: 'Guided Run',
+      status: 'running',
+      currentPhase: 'RUN_EXPERIMENT',
+      currentIteration: 1,
+      iterations: [],
+      config: { experimentDir: '/path/exp', workdir: '/path/work', metric: 'loss', direction: 'lower', iterations: 5 },
+    } as any;
+    mockStoreState.id = 'run-guided-123';
+    mockStoreState.loopState = 'running';
+    mockStoreState.runHistory = [activeRun];
+    mockGetSortedAutoResearchRuns.mockReturnValue([activeRun]);
+    mockGetSelectedAutoResearchRunContext.mockReturnValue({
+      run: activeRun,
+      liveOutput: 'running',
+      reason: '',
+      loopState: 'running',
+      statusMessage: '',
+      isActive: true,
+    });
+
+    act(() => {
+      root.render(<AdvancedWorkdirSetup />);
+    });
+
+    // Should NOT show the manual launch cockpit
+    expect(container.querySelector('[data-testid="manual-launch-cockpit"]')).toBeFalsy();
+    expect(container.textContent).not.toContain('Manual Launch AutoResearch');
+    // Should render the live detail document / run controls
+    expect(container.querySelector('[data-testid="run-detail-doc"]')).toBeTruthy();
+    expect(container.textContent).toContain('Pause');
+    expect(container.textContent).toContain('Stop');
+  });
+
+  it('18. shows Resume and Stop for persisted paused run with resumable token after refresh', () => {
+    mockStoreState.id = ''; // Inactive in-memory loop after refresh
+    mockStoreState.loopState = 'idle';
+    const pausedRun = {
+      id: 'run-paused-after-refresh',
+      title: 'Paused Run',
+      status: 'paused',
+      currentPhase: 'DECIDE_NEXT',
+      currentIteration: 2,
+      iterations: [],
+      resumeToken: { status: 'paused', resumable: true },
+      config: { experimentDir: '/path/exp', workdir: '/path/work', metric: 'acc', direction: 'higher', iterations: 5 },
+    } as any;
+    mockStoreState.runHistory = [pausedRun];
+    mockGetSortedAutoResearchRuns.mockReturnValue([pausedRun]);
+    mockGetSelectedAutoResearchRunContext.mockReturnValue({
+      run: pausedRun,
+      liveOutput: '',
+      reason: '',
+      loopState: 'idle',
+      statusMessage: '',
+      isActive: false,
+    });
+
+    act(() => {
+      root.render(<AdvancedWorkdirSetup />);
+    });
+
+    expect(container.textContent).toContain('Resume');
+    expect(container.textContent).toContain('Stop');
+  });
+
+  it('19. reflection failed run renders localized Acknowledge button', () => {
+    const errorRun = {
+      id: 'run-reflection-fail',
+      title: 'Failed Reflection Run',
+      status: 'reflection_failed',
+      currentPhase: 'FAILED',
+      currentIteration: 1,
+      iterations: [],
+      config: { experimentDir: '/path/exp', workdir: '/path/work', metric: 'loss', direction: 'lower', iterations: 5 },
+    } as any;
+    mockGetSelectedAutoResearchRunContext.mockReturnValue({
+      run: errorRun,
+      liveOutput: '',
+      reason: 'Reflection parse failed',
+      loopState: 'error',
+      statusMessage: '',
+      isActive: true,
+    });
+
+    act(() => {
+      root.render(<AdvancedWorkdirSetup />);
+    });
+
+    expect(container.textContent).toContain('Acknowledge');
+    expect(container.textContent).toContain('Stop');
   });
 });

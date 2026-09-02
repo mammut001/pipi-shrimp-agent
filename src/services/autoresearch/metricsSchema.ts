@@ -126,6 +126,15 @@ function coerceMetricsArtifactInput(value: unknown): unknown {
   if ('finishedAt' in next) {
     next.finishedAt = coerceIsoDateTime(next.finishedAt);
   }
+  if (typeof next.metric_name === 'string' && !next.metricName) {
+    next.metricName = next.metric_name;
+  }
+  if (next.metric_value !== undefined && next.metricValue === undefined) {
+    next.metricValue = next.metric_value;
+  }
+  if (!next.status && (typeof next.metricValue === 'number' || typeof next.metric_value === 'number')) {
+    next.status = 'IMPROVED';
+  }
   if (next.extra && typeof next.extra === 'object' && !Array.isArray(next.extra)) {
     const extra: Record<string, number | string | boolean> = {};
     for (const [key, extraValue] of Object.entries(next.extra as Record<string, unknown>)) {
@@ -151,6 +160,7 @@ function coerceNativeMetricObject(
   if (typeof rec.metricName === 'string' && rec.metricName.trim()) {
     return null;
   }
+
   const numericEntries = Object.entries(rec).filter(([, entryValue]) => (
     typeof entryValue === 'number' && Number.isFinite(entryValue)
   ));
@@ -167,10 +177,11 @@ function coerceNativeMetricObject(
   return {
     metricName: expectedMetricName && expectedMetricName.trim() ? expectedMetricName : picked[0],
     metricValue: picked[1],
-    status: 'IMPROVED',
+    status: rec.status === 'NOT_IMPROVED' ? 'NOT_IMPROVED' : 'IMPROVED',
     hypothesis: typeof rec.hypothesis === 'string' && rec.hypothesis.trim()
       ? rec.hypothesis
       : 'native metrics.json',
+    failReason: typeof rec.failReason === 'string' ? rec.failReason : undefined,
   };
 }
 

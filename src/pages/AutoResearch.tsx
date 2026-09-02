@@ -36,7 +36,7 @@ import {
   resolveActiveAgentConfig,
   validateResolvedAgentConfig,
 } from '@/services/agentConfig';
-import { stopExperimentLoop, pauseExperimentLoop, resumeExperimentLoop } from '@/services/autoresearch';
+import { stopExperimentLoop, pauseExperimentLoop, resumeExperimentLoop, suspendExperimentLoopOnUnmount } from '@/services/autoresearch';
 import { assertSupportedPlatform } from '@/services/autoresearch/platformGuard';
 import { formatError } from '@/services/autoresearch/errors';
 import {
@@ -384,10 +384,7 @@ function AutoResearchView() {
   // is a no-op but harmless.
   useEffect(() => {
     return () => {
-      const state = useAutoResearchStore.getState();
-      if (state.loopState === 'running' || state.loopState === 'paused') {
-        stopExperimentLoop();
-      }
+      suspendExperimentLoopOnUnmount();
     };
   }, []);
 
@@ -584,8 +581,8 @@ function AutoResearchView() {
   }, [handleStart]);
 
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
-  const handleResume = useCallback(() => resumeExperimentLoop(), []);
-  const handleStop = useCallback(() => stopExperimentLoop(), []);
+  const handleResume = useCallback(() => resumeExperimentLoop(displayRun?.id), [displayRun?.id]);
+  const handleStop = useCallback(() => stopExperimentLoop(displayRun?.id), [displayRun?.id]);
   const handleTerminalClose = useCallback(() => setTerminalVisible(false), [setTerminalVisible]);
   const handleTerminalReady = useCallback(() => setTerminalReady(true), [setTerminalReady]);
   const handleTerminalExit = useCallback(() => setTerminalReady(false), [setTerminalReady]);
@@ -599,25 +596,42 @@ function AutoResearchView() {
     }
   }, [displayRun]);
 
-  const runControls = selectedRunContext.isActive ? (
+  const isPersistedPausedRun = !selectedRunContext.isActive
+    && Boolean(displayRun?.resumeToken?.resumable)
+    && (displayRun?.status === 'paused' || displayRun?.resumeToken?.status === 'paused');
+
+  const runControls = (selectedRunContext.isActive || isPersistedPausedRun) ? (
     <div className="flex flex-wrap items-center gap-2">
-      {loopState === 'running' && (
+      {selectedRunContext.isActive && loopState === 'running' && (
         <>
           <button onClick={handlePause} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-700 hover:bg-amber-100">
-            Pause
+            {t('autoresearch.pause')}
           </button>
           <button onClick={handleStop} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 hover:bg-red-100">
-            Stop
+            {t('autoresearch.stop')}
           </button>
         </>
       )}
-      {loopState === 'paused' && (
+      {(loopState === 'paused' || isPersistedPausedRun) && (
         <>
           <button onClick={handleResume} className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-[12px] font-medium text-green-700 hover:bg-green-100">
-            Resume
+            {t('autoresearch.resume')}
           </button>
           <button onClick={handleStop} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 hover:bg-red-100">
-            Stop
+            {t('autoresearch.stop')}
+          </button>
+        </>
+      )}
+      {selectedRunContext.isActive && loopState === 'error' && displayRun?.status === 'reflection_failed' && (
+        <>
+          <button
+            onClick={() => useAutoResearchStore.getState().acknowledgeReflectionFailure()}
+            className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-[12px] font-medium text-indigo-700 hover:bg-indigo-100"
+          >
+            {t('autoresearch.acknowledge')}
+          </button>
+          <button onClick={handleStop} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700 hover:bg-red-100">
+            {t('autoresearch.stop')}
           </button>
         </>
       )}
@@ -1096,6 +1110,12 @@ export function AutoResearch() {
     && selectedExperiment >= 0
     && selectedExperiment < selectedRun.iterations.length,
   );
+
+  useEffect(() => {
+    return () => {
+      suspendExperimentLoopOnUnmount();
+    };
+  }, []);
 
   return (
     <MainLayout

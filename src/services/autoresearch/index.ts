@@ -2,7 +2,14 @@
  * AutoResearch service barrel exports
  */
 
-export { startExperimentLoop, stopExperimentLoop, pauseExperimentLoop, resumeExperimentLoop } from './loopEngine';
+export {
+  startExperimentLoop,
+  stopExperimentLoop,
+  pauseExperimentLoop,
+  resumeExperimentLoop,
+  resumePersistedExperimentLoop,
+  suspendExperimentLoopOnUnmount,
+} from './loopEngine';
 export { logExperiment, appendMarkdownLog, saveExperimentToDb } from './expLogger';
 export { rollback, commitExperiment, isRemoteClean, getRemoteDiff } from './rollback';
 export { createNotifier } from './notifier';
