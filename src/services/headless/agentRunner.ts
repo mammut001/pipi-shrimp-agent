@@ -1,8 +1,9 @@
-import { runChatTurn } from '@/core/QueryEngine';
+import { getSessionHandle } from '@/core/runtime';
 import type { ToolCallParams, TokenUsage } from '@/core/types';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import type { ExecutionModeId } from '@/services/executionMode';
-import { StreamingToolExecutor, partitionTools } from '@/services/StreamingToolExecutor';
+import { StreamingToolExecutor } from '@/services/StreamingToolExecutor';
+import { partitionToolsByMetadata, toolNamesRequireWorkspace } from '@/services/tools/toolMetadata';
 import type { ToolExecutionSource, PermissionMode } from '@/services/tools/toolExecutionPolicy';
 import { useSettingsStore } from '@/store';
 import {
@@ -13,21 +14,6 @@ import {
   type ToolBudgetSummary,
 } from '@/services/tools/toolBudget';
 import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
-
-const WORKSPACE_SENSITIVE_TOOLS = new Set([
-  'get_current_workspace',
-  'read_file',
-  'write_file',
-  'create_directory',
-  'path_exists',
-  'list_files',
-  'search_files',
-  'glob_search',
-  'grep_files',
-  'execute_command',
-  'compile_typst_file',
-  'render_typst_to_pdf',
-]);
 
 type HeadlessMessage = {
   role: 'user' | 'assistant';
@@ -179,7 +165,17 @@ async function ensureHeadlessWorkDir(
     return currentWorkDir;
   }
 
-  const needsWorkDir = tools.some((tool) => WORKSPACE_SENSITIVE_TOOLS.has(tool.name));
+  let needsWorkDir = tools.some((tool) => tool.name === 'get_current_workspace');
+  if (!needsWorkDir) {
+    try {
+      needsWorkDir = await toolNamesRequireWorkspace(tools.map((tool) => tool.name));
+    } catch {
+      // Metadata is a safety hint. If the registry cannot be queried, fail
+      // closed by resolving a workspace rather than guessing that none is needed.
+      needsWorkDir = tools.length > 0;
+    }
+  }
+
   if (!needsWorkDir || !resolveWorkDir) {
     return currentWorkDir;
   }
@@ -282,7 +278,7 @@ async function executeToolBatch(
     });
   }
 
-  const { concurrent, serial } = partitionTools(executableTools);
+  const { concurrent, serial } = await partitionToolsByMetadata(executableTools);
   const results: Array<{ id: string; name: string; content: string; durationMs: number }> = [...manualResults];
 
   if (concurrent.length > 0) {
@@ -399,22 +395,22 @@ export async function runHeadlessAgentTurn(
     }
   }
 
-  const engine = runChatTurn(
-    input.sessionId,
-    input.initialMessages,
-    constrainedSystemPrompt,
-    input.workDir,
-    false,
-    input.agentConfig,
-    {
+  const sessionHandle = getSessionHandle(input.sessionId);
+  const engine = sessionHandle.runTurn({
+    initialMessages: input.initialMessages,
+    systemPrompt: constrainedSystemPrompt,
+    projectRoot: input.workDir,
+    allowBrowserTools: false,
+    requestConfig: input.agentConfig,
+    options: {
       noTools: input.noTools ?? (input.allowedTools?.length === 0 ? true : undefined),
       allowedTools: input.allowedTools,
       maxToolRounds: input.maxToolRounds,
       signal: turnAbortController.signal,
       timeoutMs: input.timeoutMs,
     },
-    input.pipiOutputDir,
-  );
+    pipiOutputDir: input.pipiOutputDir,
+  });
 
   let currentWorkDir = input.workDir;
   let finalText = '';
@@ -512,13 +508,19 @@ export async function runHeadlessAgentTurn(
               durationMs: result.durationMs,
             });
           }
-          event._resolveAll(results.map(({ id, content }) => ({ id, content })));
+          sessionHandle.submitToolResults(
+            event.requestId,
+            results.map(({ id, content }) => ({ id, content })),
+          );
         } catch (toolError) {
           const message = toolError instanceof Error ? toolError.message : String(toolError);
-          event._resolveAll(batchTools.map((tool) => ({
-            id: tool.id,
-            content: `Error: ${message}`,
-          })));
+          sessionHandle.submitToolResults(
+            event.requestId,
+            batchTools.map((tool) => ({
+              id: tool.id,
+              content: `Error: ${message}`,
+            })),
+          );
           throw toolError;
         }
         break;
@@ -555,7 +557,10 @@ export async function runHeadlessAgentTurn(
           );
         } catch (toolError) {
           const message = toolError instanceof Error ? toolError.message : String(toolError);
-          event._resolve(`Error: ${message}`);
+          sessionHandle.submitToolResults(event.requestId, [{
+            id: rewrittenTool.id,
+            content: `Error: ${message}`,
+          }]);
           throw toolError;
         }
         if (result) {
@@ -563,8 +568,6 @@ export async function runHeadlessAgentTurn(
             toolBudgetSummary,
             [{ name: result.name, content: result.content }],
           );
-        }
-        if (result) {
           input.onToolSummary?.(result.name, previewToolResult(result.content));
           await input.onToolResult?.({
             id: result.id,
@@ -573,7 +576,10 @@ export async function runHeadlessAgentTurn(
             durationMs: result.durationMs,
           });
         }
-        event._resolve(result?.content ?? 'Error: no result returned for tool');
+        sessionHandle.submitToolResults(event.requestId, [{
+          id: rewrittenTool.id,
+          content: result?.content ?? 'Error: no result returned for tool',
+        }]);
         break;
       }
 
@@ -585,11 +591,13 @@ export async function runHeadlessAgentTurn(
         }
         break;
 
-      case 'error':
+      case 'error': {
+        const runtimeError = new Error(event.error);
         throw withToolBudgetSummary(
-          event.error,
+          runtimeError,
           getToolBudgetSummaryFromUnknown(event.error) ?? toolBudgetSummary,
         );
+      }
 
       default:
         break;

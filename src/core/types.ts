@@ -5,6 +5,14 @@ export type ToolCallParams = {
 };
 
 /**
+ * Serializable tool execution result passed back to the session runtime.
+ */
+export interface ToolExecutionResult {
+  id: string;
+  content: string;
+}
+
+/**
  * Token usage statistics from API response
  */
 export interface TokenUsage {
@@ -29,46 +37,41 @@ export interface APIResponse {
 }
 
 /**
- * Engine events emitted by runChatTurn (QueryEngine)
- * 
- * Flow:
- *   - text_delta/reasoning_delta: streaming output
- *   - tool_call: detected tool use (collected)
- *   - tool_call_request: requests UI to execute tool (with _resolve callback)
- *   - tool_result: tool execution completed
- *   - status_update: status message for UI
- *   - turn_complete: turn finished successfully
- *   - error: error occurred
- *   - api_response_complete: API response finished (contains token stats)
+ * Engine events emitted by the session runtime.
+ *
+ * IMPORTANT: EngineEvent is a transport type. Every branch must remain JSON
+ * serializable: no callbacks, Promises, AbortSignals, Error instances, DOM
+ * objects, or other process-local state. Tool continuation travels through the
+ * SessionHandle command/result channel keyed by requestId.
  */
 export type EngineEvent =
   // Streaming output
   | { type: 'text_delta'; content: string }
   | { type: 'reasoning_delta'; content: string }
-  
+
   // Tool use detection (collected during streaming)
   | { type: 'tool_call'; tool: ToolCallParams }
-  
-  // Tool execution request (UI should call invoke('execute_tool_batch'))
-  // _resolve is a callback to pass the tool result back into the generator
-  | { type: 'tool_call_request'; tool: ToolCallParams; _resolve: (result: string) => void }
 
-  // Batch tool execution request — replaces multiple individual tool_call_requests.
-  // Consumer should execute concurrent tools in parallel and serial tools sequentially,
-  // then call _resolveAll with results for every tool in the batch.
-  | { type: 'tool_batch_request'; tools: ToolCallParams[]; _resolveAll: (results: { id: string; content: string }[]) => void }
-  
-  // Tool execution result (emitted after tool completes)
+  // Single tool execution request. Consumers submit the result through the
+  // SessionHandle using requestId; the event itself contains no resolver.
+  | { type: 'tool_call_request'; requestId: string; tool: ToolCallParams }
+
+  // Batch tool execution request. Consumers execute the tools and submit one
+  // result per id through SessionHandle.submitToolResults(requestId, results).
+  | { type: 'tool_batch_request'; requestId: string; tools: ToolCallParams[] }
+
+  // Tool execution result (optional observability event)
   | { type: 'tool_result'; id: string; content: string; is_error: boolean }
-  
+
   // Status updates for UI
   | { type: 'status_update'; message: string }
-  
+
   // Turn completion
   | { type: 'turn_complete'; tokenUsage?: TokenUsage }
-  
-  // Error handling
-  | { type: 'error'; error: Error }
-  
+
+  // Error handling. Keep the transport payload a string so it can be persisted,
+  // replayed, sent over remote control, and reconstructed as Error by clients.
+  | { type: 'error'; error: string }
+
   // API response completion (contains final token stats, etc.)
   | { type: 'api_response_complete'; response?: APIResponse };

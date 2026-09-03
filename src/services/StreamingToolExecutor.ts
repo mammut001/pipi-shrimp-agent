@@ -1,8 +1,10 @@
 /**
  * Streaming Tool Executor
- * Provides concurrent execution for read-only tools and progress callbacks
+ * Provides policy-gated execution and delegates registry scheduling to Rust.
  *
- * Based on Claude Code's StreamingToolExecutor.ts
+ * Rust ToolRegistry/ToolScheduler is the concurrency authority. This layer
+ * owns frontend integration (hooks, confirmations, MCP and legacy chat tools)
+ * but does not maintain a duplicate read-only/serial tool catalog.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -71,9 +73,9 @@ export interface ToolExecutionOptions {
   source?: ToolExecutionSource;
   permissionMode?: PermissionMode;
   /**
-   * Optional 5-mode execution mode id. When provided, the preToolUseHooks
-   * executionModeGuardCheck enforces the 5-mode registry policy on top of
-   * the PermissionMode.
+   * Optional execution mode id. When provided, the preToolUseHooks
+   * executionModeGuardCheck enforces the mode registry policy on top of
+   * PermissionMode.
    */
   executionMode?: string;
   allowedTools?: string[];
@@ -177,99 +179,16 @@ function finalizeToolResult(
   };
 }
 
-/**
- * Read-only tools that can be executed concurrently without side effects.
- * Names must match exactly what the Rust execute_tool command accepts.
- */
-const READ_ONLY_TOOLS = new Set([
-  // Filesystem reads
-  'read_file',
-  'list_files',
-  'path_exists',
-  // Search — all read-only scans
-  'search_files',
-  'glob_search',
-  'grep_files',
-  // Browser observation (no DOM mutation)
-  'browser_get_page',
-  'browser_get_text',
-  'browser_screenshot',
-  'browser_extract_content',
-  // Typst rendering (SVG is pure computation, no disk write)
-  'render_typst_to_svg',
-  // Skill loading is read-only (reads a SKILL.md file, no side effects)
-  'Skill',
-  'pdf_read',
-  'paper_extract_meta',
-  'baseline_extract',
-  'arxiv_search',
-]);
-
 const AUTORESEARCH_BOOTSTRAP_TOOL_SET = new Set<string>(AUTORESEARCH_BOOTSTRAP_TOOL_NAMES);
 const FRONTEND_ONLY_TOOLS = new Set<string>();
-
-/**
- * Tools that should never be executed concurrently (explicit deny-list).
- * Unknown tools not in READ_ONLY_TOOLS are already serial by default (fail-closed),
- * so this set is only needed for documentation / extra safety belt.
- */
-const SERIAL_ONLY_TOOLS = new Set([
-  // Filesystem writes
-  'write_file',
-  'append_file',
-  'create_directory',
-  // Code / command execution
-  'code_execution',
-  // Browser mutations
-  'browser_navigate',
-  'browser_click',
-  'browser_type',
-  'browser_scroll',
-  'browser_press_key',
-  'browser_wait',
-]);
-
-/**
- * Check if a tool is read-only (safe for concurrent execution)
- */
-export function isReadOnlyTool(toolName: string): boolean {
-  // Legacy chat-scoped tools (browser, Typst, Skill) are not in the
-  // Rust ToolRegistry and must run through `execute_tool`, not
-  // `execute_tool_batch`. They also share browser/font state and must
-  // not run concurrently with each other.
-  if (isLegacyChatOnlyTool(toolName)) {
-    return false;
-  }
-  return READ_ONLY_TOOLS.has(toolName) && !SERIAL_ONLY_TOOLS.has(toolName);
-}
-
-/**
- * Partition tools into concurrent-safe and serial-required groups
- */
-export function partitionTools(toolRequests: ToolRequest[]): {
-  concurrent: ToolRequest[];
-  serial: ToolRequest[];
-} {
-  const concurrent: ToolRequest[] = [];
-  const serial: ToolRequest[] = [];
-
-  for (const request of toolRequests) {
-    if (isReadOnlyTool(request.name)) {
-      concurrent.push(request);
-    } else {
-      serial.push(request);
-    }
-  }
-
-  return { concurrent, serial };
-}
 
 function isFrontendOnlyTool(toolName: string): boolean {
   return toolName.startsWith('mcp__') || FRONTEND_ONLY_TOOLS.has(toolName);
 }
 
 /**
- * Streaming Tool Executor with concurrency control
+ * Streaming Tool Executor with policy/frontend integration.
+ * Registry-backed scheduling is delegated to execute_tool_batch in Rust.
  */
 export class StreamingToolExecutor {
   private timeoutMs: number;
@@ -300,7 +219,7 @@ export class StreamingToolExecutor {
   }
 
   /**
-   * Execute tools with intelligent partitioning and concurrency
+   * Execute tools with backend-owned registry scheduling.
    */
   async executeBatch(
     toolRequests: ToolRequest[],
@@ -332,7 +251,6 @@ export class StreamingToolExecutor {
     let completed = 0;
     const total = normalizedToolRequests.length;
 
-    // Progress callback helper
     const reportProgress = (currentTool?: string) => {
       completed++;
       onProgress?.(completed, total, currentTool);
@@ -431,14 +349,6 @@ export class StreamingToolExecutor {
       }
 
       if (preview.decision === 'awaiting_confirmation') {
-        // Bypass mode: auto-approve normal project-scoped tools so the
-        // frontend doesn't open a permission modal for things like
-        // `wc -l src/foo.ts`. SSH / browser / MCP tools still fall
-        // through to the confirmation gate because `canAutoApproveTool`
-        // returns false for them even in Bypass. Hard safety blocks
-        // (dangerous-command / path-validation) have already run via
-        // preToolUseHooks upstream, so we know the request isn't
-        // destructive.
         if (canAutoApproveTool(permissionMode, request.name, { browserIntent, source })) {
           executableRequests.push({
             ...request,
@@ -523,9 +433,7 @@ export class StreamingToolExecutor {
     };
   }
 
-  /**
-   * Execute frontend-only tools with rate limiting.
-   */
+  /** Execute frontend-only tools serially. */
   private async executeFrontendOnlyBatch(
     toolRequests: ToolRequest[],
     onProgress: (toolName: string) => void,
@@ -553,10 +461,7 @@ export class StreamingToolExecutor {
     return { results, errors };
   }
 
-  /**
-   * Execute chat-scoped legacy tools (browser, Typst, Skill) that are not
-   * registered in the Rust ToolRegistry.
-   */
+  /** Execute chat-scoped legacy tools outside the Rust registry. */
   private async executeLegacyChatTool(
     request: ToolRequest,
     sessionId: string,
@@ -585,9 +490,7 @@ export class StreamingToolExecutor {
     } satisfies ToolResult);
   }
 
-  /**
-   * Execute Rust-backed tools via the authoritative batch scheduler.
-   */
+  /** Execute Rust-backed tools via the authoritative batch scheduler. */
   private async executeNativeBatch(
     toolRequests: ToolRequest[],
     sessionId: string,
@@ -702,16 +605,13 @@ export class StreamingToolExecutor {
     }
   }
 
-  /**
-   * Execute a single frontend-only tool with timeout.
-   */
+  /** Execute a single frontend-only tool with timeout. */
   private async executeFrontendOnlyTool(
     request: ToolRequest,
     _workDir?: string,
   ): Promise<ToolResult> {
     const startTime = Date.now();
 
-    // Route MCP tools (mcp__<server>__<tool>) to the MCP backend
     if (request.name.startsWith('mcp__')) {
       return this.executeMCPTool(request, startTime);
     }
@@ -730,10 +630,7 @@ export class StreamingToolExecutor {
     }
   }
 
-  /**
-   * Execute an MCP tool by resolving the server from store and calling mcp_call_tool.
-   * Tool name format: mcp__<serverName>__<toolName>
-   */
+  /** Execute an MCP tool by resolving the server from store. */
   private async executeMCPTool(request: ToolRequest, startTime: number): Promise<ToolResult> {
     const parsed = parseMCPToolName(request.name);
     if (!parsed) {
@@ -753,7 +650,6 @@ export class StreamingToolExecutor {
     }
 
     const { runtimes } = useMCPStore.getState();
-    // Match by sanitized name to handle servers with special characters
     const runtime = runtimes.find(r => sanitizeName(r.name) === parsed.serverName);
 
     if (!runtime) {
@@ -810,9 +706,7 @@ export class StreamingToolExecutor {
     }
   }
 
-  /**
-   * Execute tools using the legacy batch method (for compatibility)
-   */
+  /** Execute tools using the legacy batch method (for compatibility). */
   async executeLegacyBatch(
     toolRequests: ToolRequest[],
     sessionId: string,
@@ -827,7 +721,4 @@ export class StreamingToolExecutor {
   }
 }
 
-/**
- * Default instance for global use
- */
 export const defaultToolExecutor = new StreamingToolExecutor();
