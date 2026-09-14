@@ -121,15 +121,30 @@ All identified defects have been fixed conservatively in accordance with PR #73'
 - Key Jest suites (SessionRuntime / QueryEngine / StreamingToolExecutor / agentRunner / chatToolExecution / chatStoreSendMessage): 6 suites / 99 tests PASS
 - PR #73 remains Draft at `56222249cdb2f8c04d857e7eadb600c5ba98c1fd`
 
-### Manual retest (Phase 11) — PENDING / BLOCKED
-- Vercel AI Gateway: `insufficient_funds` / positive credit balance required
-- 阿里云 MaaS (Anthropic compatible): `insufficient_balance_error` (402 / 1008)
-- No streaming turn could be started → Manual A/C/D/E could not exercise Stop / switch / dual-session cancel paths
+### Manual retest (Phase 11) — PARTIAL PASS (2026-09-14 evening)
+
+**Provider used:** DeepSeek via OpenAI-compatible Settings entry  
+**Base URL:** `https://api.deepseek.com`  
+**Model:** `deepseek-flash`  
+**Local HEAD when retested:** `e93349b` (includes cherry-pick of Settings custom-model #74 so `deepseek-flash` can be typed; #74 is already on `main`)
+
+Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for those keys; DeepSeek unblocked streaming.
+
+| Scenario | Result | Evidence |
+|----------|--------|----------|
+| Smoke (`reply only ping-ok`) | **INCONCLUSIVE (provider truncation)** | App often returned `ping` only. External `curl` with the same key/model returned full `ping-ok`. Likely DeepSeek default thinking consuming completion budget, not a SessionRuntime failure. |
+| Manual A ×2 (Stop mid-stream → immediate follow-up) | **PASS (behavior)** | Stop interrupted streaming; follow-up turn ran clean with no ghost continuation. Exact reply string often `runtime` instead of `runtime-ok` (same truncation class as smoke). |
+| Manual C (A streaming → switch to B → B reply → back to A) | **PASS (behavior)** | No cross-chat replay. Chat A later answered `A-new`. Chat B truncated to `B` instead of `B-ok`. |
+| Manual D/E (dual concurrent sessions / cancel-during-tool) | **NOT RETESTED** | Not re-run in this DeepSeek pass. |
+
+Screenshots (box assets from computerUse): Settings DeepSeek config; smoke truncated `ping`; Manual C final `A-new`.
 
 ### Residual non-blocking notes
 1. Production `chatToolExecution.ts` still optionally calls `(chunk as any)._resolveAll(...)` when present (compat shim for old fixtures). EngineEvent itself remains serializable; prefer deleting this shim once tests no longer attach callbacks.
 2. `FALLBACK_WORKSPACE_TOOL_NAMES` remains as fail-closed fallback when Rust metadata is unavailable (renamed from `WORKSPACE_TOOL_NAMES`). Prefer eventually removing even the fallback once metadata load is guaranteed.
 3. Jest may leave open handles after some suites (observed warning); not a failure.
+4. Built-in DeepSeek provider catalog still lists only `deepseek-chat` / `deepseek-reasoner`; configuring `deepseek-flash` required openai-compatible + custom model field (#74). Consider updating the first-party DeepSeek model list separately from #73.
+5. Local branch is **ahead 1** with cherry-picked #74 for retest UX. Drop or leave that commit before Ready; it is already merged on `main` and is not a #73 runtime change.
 
 ### Merge recommendation (orchestrator)
-**Keep PR #73 Draft** until critical manual cancel/switch retests pass on a funded provider.
+**Keep PR #73 Draft.** Manual A/C cancel and session-switch behavior now look good on DeepSeek, but dual-session and cancel-during-tool paths are still unexercised, and short-reply truncation under thinking models should be treated as environment noise rather than a green light for Ready.
