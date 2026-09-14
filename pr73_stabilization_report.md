@@ -111,3 +111,25 @@ All identified defects have been fixed conservatively in accordance with PR #73'
 - **PR #73:** Remains in **DRAFT** state.
 - **Remote Target Branch:** `agent/runtime-p0-session-channel-tool-metadata`
 - **History:** No force-push, fast-forward commits only.
+
+---
+
+## 5. Orchestrator follow-up (2026-09-14)
+
+### Independent gate spot-check
+- `pnpm exec tsc --noEmit`: PASS
+- Key Jest suites (SessionRuntime / QueryEngine / StreamingToolExecutor / agentRunner / chatToolExecution / chatStoreSendMessage): 6 suites / 99 tests PASS
+- PR #73 remains Draft at `56222249cdb2f8c04d857e7eadb600c5ba98c1fd`
+
+### Manual retest (Phase 11) — PENDING / BLOCKED
+- Vercel AI Gateway: `insufficient_funds` / positive credit balance required
+- 阿里云 MaaS (Anthropic compatible): `insufficient_balance_error` (402 / 1008)
+- No streaming turn could be started → Manual A/C/D/E could not exercise Stop / switch / dual-session cancel paths
+
+### Residual non-blocking notes
+1. Production `chatToolExecution.ts` still optionally calls `(chunk as any)._resolveAll(...)` when present (compat shim for old fixtures). EngineEvent itself remains serializable; prefer deleting this shim once tests no longer attach callbacks.
+2. `FALLBACK_WORKSPACE_TOOL_NAMES` remains as fail-closed fallback when Rust metadata is unavailable (renamed from `WORKSPACE_TOOL_NAMES`). Prefer eventually removing even the fallback once metadata load is guaranteed.
+3. Jest may leave open handles after some suites (observed warning); not a failure.
+
+### Merge recommendation (orchestrator)
+**Keep PR #73 Draft** until critical manual cancel/switch retests pass on a funded provider.
