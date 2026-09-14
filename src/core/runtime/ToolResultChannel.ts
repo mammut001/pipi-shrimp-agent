@@ -1,4 +1,5 @@
 import type { ToolExecutionResult } from '@/core/types';
+export type { ToolExecutionResult };
 
 interface PendingToolResultRequest {
   expectedIds: string[];
@@ -16,6 +17,8 @@ export interface WaitForToolResultsOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
 }
+
+const MAX_TOMBSTONES = 1000;
 
 function normalizeResults(
   expectedIds: string[],
@@ -36,19 +39,55 @@ function normalizeResults(
  * Early submissions are buffered because an async-generator consumer can
  * execute a tool before the generator resumes past the `yield` and installs
  * its waiter.
+ *
+ * Invariants:
+ * - Exactly-once delivery per requestId.
+ * - Late results cannot settle cancelled/timed-out waiters.
+ * - Late results cannot settle later requests.
+ * - Bounded tombstone history preserves clean memory behavior.
+ * - Cancellation emits AbortError so no false error is shown to users.
  */
 export class ToolResultChannel {
   private readonly pending = new Map<string, PendingToolResultRequest>();
   private readonly buffered = new Map<string, BufferedToolResponse>();
+  private readonly tombstones = new Set<string>();
+  private readonly tombstoneOrder: string[] = [];
+
+  private markTombstone(requestId: string): void {
+    if (this.tombstones.has(requestId)) {
+      return;
+    }
+    this.tombstones.add(requestId);
+    this.tombstoneOrder.push(requestId);
+    if (this.tombstoneOrder.length > MAX_TOMBSTONES) {
+      const oldest = this.tombstoneOrder.shift();
+      if (oldest) {
+        this.tombstones.delete(oldest);
+      }
+    }
+  }
+
+  isTombstoned(requestId: string): boolean {
+    return this.tombstones.has(requestId);
+  }
+
+  hasPending(requestId?: string): boolean {
+    return requestId ? this.pending.has(requestId) : this.pending.size > 0;
+  }
 
   waitFor(
     requestId: string,
-    expectedIds: string[],
+    expectedIds: string[] = [],
     options: WaitForToolResultsOptions = {},
   ): Promise<ToolExecutionResult[]> {
+    if (this.tombstones.has(requestId)) {
+      return Promise.reject(new Error(`Tool request ${requestId} already settled or cancelled`));
+    }
+
     const buffered = this.buffered.get(requestId);
     if (buffered) {
       this.buffered.delete(requestId);
+      this.markTombstone(requestId);
       if (buffered.kind === 'error') {
         return Promise.reject(buffered.error);
       }
@@ -71,6 +110,7 @@ export class ToolResultChannel {
       if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
         entry.timeoutId = setTimeout(() => {
           this.pending.delete(requestId);
+          this.markTombstone(requestId);
           entry.abortCleanup?.();
           reject(new Error(`Tool batch timed out after ${timeoutMs / 1000}s`));
         }, timeoutMs);
@@ -86,12 +126,14 @@ export class ToolResultChannel {
       if (options.signal) {
         const onAbort = () => {
           this.pending.delete(requestId);
+          this.markTombstone(requestId);
           if (entry.timeoutId !== undefined) {
             clearTimeout(entry.timeoutId);
           }
           reject(new DOMException('Chat turn aborted', 'AbortError'));
         };
         if (options.signal.aborted) {
+          this.markTombstone(requestId);
           onAbort();
           return;
         }
@@ -104,16 +146,24 @@ export class ToolResultChannel {
   }
 
   submit(requestId: string, results: ToolExecutionResult[]): void {
+    if (this.tombstones.has(requestId)) {
+      // Late result after cancellation, timeout, or prior settlement: safely drop.
+      return;
+    }
+
     const pending = this.pending.get(requestId);
     if (!pending) {
-      this.buffered.set(requestId, {
-        kind: 'results',
-        results: results.map((result) => ({ ...result })),
-      });
+      if (!this.buffered.has(requestId)) {
+        this.buffered.set(requestId, {
+          kind: 'results',
+          results: results.map((result) => ({ ...result })),
+        });
+      }
       return;
     }
 
     this.pending.delete(requestId);
+    this.markTombstone(requestId);
     if (pending.timeoutId !== undefined) {
       clearTimeout(pending.timeoutId);
     }
@@ -122,14 +172,22 @@ export class ToolResultChannel {
   }
 
   reject(requestId: string, error: unknown): void {
+    if (this.tombstones.has(requestId)) {
+      // Late result after cancellation, timeout, or prior settlement: safely drop.
+      return;
+    }
+
     const normalized = error instanceof Error ? error : new Error(String(error));
     const pending = this.pending.get(requestId);
     if (!pending) {
-      this.buffered.set(requestId, { kind: 'error', error: normalized });
+      if (!this.buffered.has(requestId)) {
+        this.buffered.set(requestId, { kind: 'error', error: normalized });
+      }
       return;
     }
 
     this.pending.delete(requestId);
+    this.markTombstone(requestId);
     if (pending.timeoutId !== undefined) {
       clearTimeout(pending.timeoutId);
     }
@@ -137,15 +195,20 @@ export class ToolResultChannel {
     pending.reject(normalized);
   }
 
-  cancelAll(reason = 'Session runtime disposed'): void {
-    const error = new Error(reason);
+  cancelAll(reason = 'Session runtime cancelled'): void {
+    const error = new DOMException(reason, 'AbortError');
     for (const [requestId, pending] of this.pending) {
       if (pending.timeoutId !== undefined) {
         clearTimeout(pending.timeoutId);
       }
       pending.abortCleanup?.();
+      this.markTombstone(requestId);
       pending.reject(error);
-      this.pending.delete(requestId);
+    }
+    this.pending.clear();
+
+    for (const requestId of this.buffered.keys()) {
+      this.markTombstone(requestId);
     }
     this.buffered.clear();
   }

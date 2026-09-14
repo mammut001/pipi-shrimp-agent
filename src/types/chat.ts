@@ -180,7 +180,14 @@ export interface ChatState {
   /**
    * Update last message (for streaming updates) and persist to database
    */
-  updateLastMessage: (content: string, artifacts?: Artifact[], reasoning?: string, tokenUsage?: Message['token_usage']) => Promise<void>;
+  updateLastMessage: (
+    content: string,
+    artifacts?: Artifact[],
+    reasoning?: string,
+    tokenUsage?: Message['token_usage'],
+    targetSessionId?: string,
+    targetMessageId?: string,
+  ) => Promise<void>;
 
   /**
    * Update a specific message by ID (content + metadata) and persist to database.
@@ -191,7 +198,7 @@ export interface ChatState {
   /**
    * Append streaming content to current buffer
    */
-  appendStreamingContent: (content: string) => void;
+  appendStreamingContent: (content: string, turnId?: string, sessionId?: string) => void;
 
   /**
    * Set streaming status (with timeout protection)

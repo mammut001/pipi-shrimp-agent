@@ -463,11 +463,11 @@ export function ChatInput({
 
   const sendAsRegularChat = useCallback(async (message: string, messageAttachments: ImageAttachment[], rawInput?: string) => {
     setIsSubmitting(true);
+    // Clear draft immediately so rapid subsequent keystrokes are preserved
+    clearInputDraft();
     try {
       onSend?.(message);
       await sendMessage(message, currentSessionId ?? undefined, { attachments: messageAttachments });
-      // Only clear draft after successful send
-      clearInputDraft();
     } catch (error) {
       // Preserve input on failure so user can retry
       console.error('[ChatInput] sendMessage failed, preserving input:', error);
@@ -526,9 +526,9 @@ export function ChatInput({
       }
 
       setIsSubmitting(true);
+      clearInputDraft();
       try {
         await onSend?.(message, messageAttachments);
-        clearInputDraft();
       } catch (error) {
         console.error('[ChatInput] callback-only onSend failed, preserving input:', error);
         setInput(rawInput);

@@ -44,7 +44,7 @@ export interface APIResponse {
  * objects, or other process-local state. Tool continuation travels through the
  * SessionHandle command/result channel keyed by requestId.
  */
-export type EngineEvent =
+export type EngineEventBase =
   // Streaming output
   | { type: 'text_delta'; content: string }
   | { type: 'reasoning_delta'; content: string }
@@ -75,3 +75,8 @@ export type EngineEvent =
 
   // API response completion (contains final token stats, etc.)
   | { type: 'api_response_complete'; response?: APIResponse };
+
+export type EngineEvent = EngineEventBase & {
+  sessionId?: string;
+  turnId?: string;
+};

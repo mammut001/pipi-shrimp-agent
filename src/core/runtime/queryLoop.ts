@@ -35,7 +35,7 @@ import {
 import { prepareMessagesForVision } from '@/services/vision/visionMessagePrep';
 import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
 import { toError } from '@/utils/errorFormat';
-import type { ToolResultChannel } from './ToolResultChannel';
+import type { ToolResultChannel, ToolExecutionResult } from './ToolResultChannel';
 
 const OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM = `## Tool Calling Protocol
 - You MUST invoke tools via the structured OpenAI function-calling channel named tool_calls.
@@ -138,12 +138,14 @@ export interface RunChatTurnOptions {
   maxToolRounds?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
+  turnId?: string;
 }
 
-function createToolRequestId(sessionId: string, round: number): string {
+function createToolRequestId(sessionId: string, round: number, turnId?: string): string {
   const randomId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `${sessionId}:tool-batch:${round}:${randomId}`;
+  const turnPart = turnId ? `:${turnId}` : '';
+  return `${sessionId}${turnPart}:tool-batch:${round}:${randomId}`;
 }
 
 function errorMessage(error: unknown, fallback = 'Chat request failed'): string {
@@ -165,11 +167,13 @@ export async function* runQueryEngineTurn(
   options: RunChatTurnOptions | undefined,
   pipiOutputDir: string | undefined,
   toolResultChannel: ToolResultChannel,
+  turnId?: string,
 ): AsyncGenerator<EngineEvent, void, unknown> {
-  const settings = useSettingsStore.getState().agentSettings;
+  const settings = useSettingsStore?.getState?.()?.agentSettings;
   const maxToolBudget = options?.maxToolRounds ?? settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
   const toolBudgetReserve = maxToolBudget > 4 ? 2 : 1;
   const maxModelRounds = Math.max(maxToolBudget + 8, 25);
+  const effectiveTurnId = turnId ?? options?.turnId;
 
   let currentMessages = [...initialMessages];
   let round = 0;
@@ -180,7 +184,7 @@ export async function* runQueryEngineTurn(
   let disallowedToolRetryCount = 0;
 
   const effectivePipiOutputDir = pipiOutputDir
-    ?? useChatStore.getState().sessions.find((session) => session.id === sessionId)?.pipiOutputDir;
+    ?? useChatStore?.getState?.()?.sessions?.find((session) => session.id === sessionId)?.pipiOutputDir;
   const memoryHook = createMemoryHook({ projectRoot, pipiOutputDir: effectivePipiOutputDir });
 
   let modelRound = 0;
@@ -264,7 +268,7 @@ export async function* runQueryEngineTurn(
       try {
         for await (const chunk of stream) {
           if (options?.signal?.aborted) {
-            throw new DOMException('Chat turn aborted', 'AbortError');
+            return;
           }
           if (chunk.type === 'text_delta') {
             assistantMessageContent += chunk.content;
@@ -290,6 +294,14 @@ export async function* runQueryEngineTurn(
         console.info(`[QueryEngine] Stream finished for session ${sessionId}`);
         break;
       } catch (e) {
+        if (
+          options?.signal?.aborted
+          || (e instanceof DOMException && e.name === 'AbortError')
+          || (e instanceof Error && (e.name === 'AbortError' || e.message.toLowerCase().includes('aborted') || e.message.toLowerCase().includes('cancelled')))
+        ) {
+          return;
+        }
+
         if (
           !strictBudgetRetry
           && isContextOverflowError(e)
@@ -393,24 +405,37 @@ export async function* runQueryEngineTurn(
         message: `Executing ${pendingToolCalls.length} tool(s): ${pendingToolCalls.map(t => t.name).join(', ')}`,
       };
 
-      const requestId = createToolRequestId(sessionId, round);
+      const requestId = createToolRequestId(sessionId, round, effectiveTurnId);
       yield {
         type: 'tool_batch_request',
         requestId,
         tools: pendingToolCalls,
       };
 
-      const submittedResults = await toolResultChannel.waitFor(
-        requestId,
-        pendingToolCalls.map((tool) => tool.id),
-        {
-          timeoutMs: Number.parseInt(
-            (typeof process !== 'undefined' && process.env?.PIPI_TOOL_BATCH_TIMEOUT_MS) || '300000',
-            10,
-          ) || 300_000,
-          signal: options?.signal,
-        },
-      );
+      let submittedResults: ToolExecutionResult[];
+      try {
+        submittedResults = await toolResultChannel.waitFor(
+          requestId,
+          pendingToolCalls.map((tool) => tool.id),
+          {
+            timeoutMs: Number.parseInt(
+              (typeof process !== 'undefined' && process.env?.PIPI_TOOL_BATCH_TIMEOUT_MS) || '300000',
+              10,
+            ) || 300_000,
+            signal: options?.signal,
+          },
+        );
+      } catch (waitError) {
+        if (
+          options?.signal?.aborted
+          || (waitError instanceof DOMException && waitError.name === 'AbortError')
+          || (waitError instanceof Error && (waitError.name === 'AbortError' || waitError.message.toLowerCase().includes('aborted') || waitError.message.toLowerCase().includes('cancelled')))
+        ) {
+          return;
+        }
+        yield { type: 'error', error: errorMessage(waitError) };
+        return;
+      }
       const allContent = pendingToolCalls.map((tool) => (
         submittedResults.find((result) => result.id === tool.id)?.content
         ?? 'Error: no result returned for tool'
@@ -464,7 +489,7 @@ export async function* runQueryEngineTurn(
 
         const allAskBlocked = allContentList.every(isAskModeToolFailureText);
         if (allAskBlocked) {
-          const currentSession = useChatStore.getState().sessions.find((s) => s.id === sessionId);
+          const currentSession = useChatStore?.getState?.()?.sessions?.find((s) => s.id === sessionId);
           const currentModeId = resolveSessionExecutionModeId(currentSession);
           if (currentModeId === 'ask' || currentModeId === 'plan') {
             const lastUserMessage = [...currentMessages].reverse().find((message) => message.role === 'user');
@@ -491,7 +516,7 @@ export async function* runQueryEngineTurn(
             return `• ${tool.name}: ${reason}`;
           })
           .join('\n');
-        const currentSession = useChatStore.getState().sessions.find((s) => s.id === sessionId);
+        const currentSession = useChatStore?.getState?.()?.sessions?.find((s) => s.id === sessionId);
         const currentModeId = resolveSessionExecutionModeId(currentSession);
         yield {
           type: 'error',
