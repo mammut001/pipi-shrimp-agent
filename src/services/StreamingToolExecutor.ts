@@ -193,8 +193,12 @@ function isFrontendOnlyTool(toolName: string): boolean {
 export class StreamingToolExecutor {
   private timeoutMs: number;
 
-  constructor(options: { concurrencyLimit?: number; timeoutMs?: number } = {}) {
-    this.timeoutMs = options.timeoutMs ?? 30000; // 30 seconds
+  constructor(options: { concurrencyLimit?: number; timeoutMs?: number } | number = {}) {
+    if (typeof options === 'number') {
+      this.timeoutMs = options;
+    } else {
+      this.timeoutMs = options.timeoutMs ?? 300_000;
+    }
   }
 
   private getBootstrapProviderContext() {

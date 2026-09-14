@@ -9,7 +9,7 @@ import { getCurrentAgentContext } from '../../services/multiagent/agentContext';
 import { runAgentBackground, runAgentSync } from '../../services/multiagent/subagent';
 import { runPostToolUseHooks, type PostHookContext } from '../../services/tools/postToolUseHooks';
 import { runPreToolUseHooks } from '../../services/tools/preToolUseHooks';
-import { partitionToolsByMetadata } from '../../services/tools/toolMetadata';
+import { partitionToolsByMetadata, loadToolRuntimeMetadata } from '../../services/tools/toolMetadata';
 import { detectBrowserIntent } from '../../services/browser/browserIntent';
 import {
   canAutoApproveTool,
@@ -44,7 +44,7 @@ type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
 
-const WORKSPACE_TOOL_NAMES = new Set([
+const FALLBACK_WORKSPACE_TOOL_NAMES = new Set([
   'get_current_workspace',
   'list_files',
   'search_files',
@@ -77,20 +77,25 @@ function buildNoProjectFolderToolError(toolName: string): string {
  *
  * - Prefer the session Project Folder (`projectDir` / legacy workDir).
  * - Never treat the PiPi Output Folder as a project workspace.
- * - When unbound, block tools in WORKSPACE_TOOL_NAMES so the model gets a
- *   clear preflight error instead of multi-round path failures.
+ * - When unbound, block tools that require workspace according to metadata
+ *   so the model gets a clear preflight error instead of multi-round path failures.
  */
 export function resolveWorkspaceToolPreflight(input: {
   projectDir: string | null | undefined;
   pipiOutputDir: string | null | undefined;
   ensureResult: string | null | undefined;
   toolNames: string[];
+  toolMetadataMap?: Map<string, { requiresWorkspace?: boolean }>;
 }): {
   workDir: string | null;
   blockWorkspaceTools: boolean;
   needsWorkspaceTools: boolean;
 } {
-  const needsWorkspaceTools = input.toolNames.some((name) => WORKSPACE_TOOL_NAMES.has(name));
+  const needsWorkspaceTools = input.toolNames.some((name) =>
+    input.toolMetadataMap
+      ? input.toolMetadataMap.get(name)?.requiresWorkspace === true
+      : FALLBACK_WORKSPACE_TOOL_NAMES.has(name),
+  );
   let workDir = typeof input.projectDir === 'string' && input.projectDir.trim()
     ? input.projectDir.trim()
     : null;
@@ -142,12 +147,14 @@ export interface ToolBatchExecutionDeps {
   loadSwarmModule: () => Promise<typeof import('../../services/swarm')>;
   loadInboxCoordinator: () => Promise<typeof import('../../services/swarm/inboxCoordinator')>;
   loadSwarmStore: () => Promise<typeof import('../swarmStore')>;
+  loadToolRuntimeMetadata: typeof loadToolRuntimeMetadata;
 }
 
 const defaultDeps: ToolBatchExecutionDeps = {
   uiStore: useUIStore,
-  createExecutor: () => new StreamingToolExecutor(),
+  createExecutor: () => new StreamingToolExecutor(300_000),
   partitionToolsByMetadata,
+  loadToolRuntimeMetadata,
   runPreToolUseHooks,
   runPostToolUseHooks,
   normalizeResumeWorkspaceToolArgs,
@@ -939,8 +946,10 @@ export async function handleToolBatchRequest(
   const blockedWorkspaceToolIds = new Set<string>();
   const preBlockedResults: ToolArtifactResult[] = [];
 
+  const toolMetadataMap = await deps.loadToolRuntimeMetadata();
+
   {
-    const needsWorkDir = chunk.tools.some((tool) => WORKSPACE_TOOL_NAMES.has(tool.name));
+    const needsWorkDir = chunk.tools.some((tool) => toolMetadataMap.get(tool.name)?.requiresWorkspace);
     let ensureResult: string | null = null;
     if (!workDir && needsWorkDir) {
       ensureResult = await ensureSessionWorkDir();
@@ -954,12 +963,13 @@ export async function handleToolBatchRequest(
       pipiOutputDir: sessionPipiOutputDir,
       ensureResult,
       toolNames: chunk.tools.map((tool) => tool.name),
+      toolMetadataMap,
     });
     workDir = preflight.workDir;
 
     if (preflight.blockWorkspaceTools) {
       for (const tool of chunk.tools) {
-        if (!WORKSPACE_TOOL_NAMES.has(tool.name)) continue;
+        if (!toolMetadataMap.get(tool.name)?.requiresWorkspace) continue;
         const errorContent = buildNoProjectFolderToolError(tool.name);
         blockedWorkspaceToolIds.add(tool.id);
         markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
@@ -1080,6 +1090,9 @@ export async function handleToolBatchRequest(
   }
 
   const mergedResults = [...preBlockedResults, ...allResults];
+  if (typeof (chunk as any)?._resolveAll === 'function') {
+    (chunk as any)._resolveAll(mergedResults.map(({ id, content }) => ({ id, content })));
+  }
   const accepted = submitSessionToolResults(
     activeSessionId,
     chunk.requestId,

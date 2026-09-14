@@ -30,7 +30,7 @@ async function fetchToolRuntimeMetadata(): Promise<Map<string, ToolRuntimeMetada
   const metadata = await invoke<ToolRuntimeMetadata[]>('get_available_tools', {
     includeRuntimeMetadata: true,
   });
-  return new Map(metadata.map((entry) => [entry.name, entry]));
+  return new Map((Array.isArray(metadata) ? metadata : []).map((entry) => [entry.name, entry]));
 }
 
 /**
