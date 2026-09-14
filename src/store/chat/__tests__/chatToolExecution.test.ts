@@ -147,7 +147,9 @@ function legacyPermissionModeToExecutionMode(
   }
 }
 
-function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchExecutionDeps {
+function createDeps(
+  overrides: Partial<ToolBatchExecutionDeps> & { partitionTools?: any } = {},
+): ToolBatchExecutionDeps {
   const mockUiState = {
     activeSkill: null,
     setActiveSkill: jest.fn(),
@@ -158,6 +160,29 @@ function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchE
     addNotification: jest.fn(),
   };
 
+  const partitionToolsByMetadata = overrides.partitionToolsByMetadata
+    ?? (overrides.partitionTools
+      ? jest.fn(async (...args: any[]) => overrides.partitionTools(...args))
+      : jest.fn(async (tools: any) => ({
+          concurrent: tools.filter((t: any) => t.name === 'read_file' || t.name === 'list_files'),
+          serial: tools.filter((t: any) => t.name !== 'read_file' && t.name !== 'list_files'),
+        })));
+
+  const defaultToolMetadataMap = new Map<string, any>([
+    ['get_current_workspace', { requiresWorkspace: true }],
+    ['read_file', { requiresWorkspace: false }],
+    ['write_file', { requiresWorkspace: true }],
+    ['list_files', { requiresWorkspace: true }],
+    ['create_directory', { requiresWorkspace: true }],
+    ['path_exists', { requiresWorkspace: true }],
+    ['search_files', { requiresWorkspace: true }],
+    ['glob_search', { requiresWorkspace: true }],
+    ['grep_files', { requiresWorkspace: true }],
+    ['execute_command', { requiresWorkspace: true }],
+    ['compile_typst_file', { requiresWorkspace: true }],
+    ['render_typst_to_pdf', { requiresWorkspace: true }],
+  ]);
+
   return {
     uiStore: { getState: () => mockUiState } as unknown as ToolBatchExecutionDeps['uiStore'],
     createExecutor: () => ({
@@ -167,7 +192,8 @@ function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchE
         errors: [],
       })),
     }),
-    partitionTools: jest.fn((tools: any) => ({ concurrent: tools, serial: [] })),
+    partitionToolsByMetadata,
+    loadToolRuntimeMetadata: overrides.loadToolRuntimeMetadata ?? jest.fn(async () => defaultToolMetadataMap),
     runPreToolUseHooks: jest.fn(async () => ({ approved: true })),
     runPostToolUseHooks: jest.fn(async () => {}),
     normalizeResumeWorkspaceToolArgs: jest.fn((_toolName: any, args: any) => args),

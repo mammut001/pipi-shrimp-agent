@@ -64,4 +64,51 @@ describe('GoalStatusBadge', () => {
     expect(screen.getByText('⏳')).toBeTruthy();
     expect(screen.getByText('workflow.goalStatus.evaluating')).toBeTruthy();
   });
+
+  it('renders Not Reached status when workflow is stopped after iterations with null evaluation', () => {
+    const storeState = useWorkflowStore.getState();
+    const activeRun = storeState.instances[0].workflowRuns[0];
+    useWorkflowStore.setState({
+      isRunning: false,
+      instances: [
+        {
+          ...storeState.instances[0],
+          workflowRuns: [
+            {
+              ...activeRun,
+              currentIteration: 2,
+              goalEvaluations: [],
+            },
+          ],
+        },
+      ],
+    });
+    render(<GoalStatusBadge />);
+    expect(screen.getByText('❌')).toBeTruthy();
+    expect(screen.getByText('Iter 2/5')).toBeTruthy();
+    expect(screen.getByText('workflow.goalStatus.notReached')).toBeTruthy();
+  });
+
+  it('renders Reached status when latest evaluation reached goal', () => {
+    const storeState = useWorkflowStore.getState();
+    const activeRun = storeState.instances[0].workflowRuns[0];
+    useWorkflowStore.setState({
+      isRunning: false,
+      instances: [
+        {
+          ...storeState.instances[0],
+          workflowRuns: [
+            {
+              ...activeRun,
+              currentIteration: 2,
+              goalEvaluations: [{ iteration: 2, reached: true, missingItems: [] }],
+            },
+          ],
+        },
+      ],
+    });
+    render(<GoalStatusBadge />);
+    expect(screen.getByText('✅')).toBeTruthy();
+    expect(screen.getByText('workflow.goalStatus.reached')).toBeTruthy();
+  });
 });

@@ -1,9 +1,48 @@
 const mockRunChatTurn = jest.fn();
 const mockExecuteBatch = jest.fn();
 const mockPartitionTools = jest.fn();
+let currentResolveAll: ((results: unknown[]) => void) | null = null;
+const mockSubmitToolResults = jest.fn((_requestId: string, results: unknown[]) => {
+  currentResolveAll?.(results);
+});
+const createMockSessionHandle = (sessionId?: string) => ({
+  runTurn: (request: any) => {
+    return mockRunChatTurn(
+      sessionId ?? request.sessionId,
+      request.initialMessages,
+      request.systemPrompt,
+      request.projectRoot,
+      request.allowBrowserTools,
+      request.requestConfig,
+      request.options,
+      request.pipiOutputDir,
+    );
+  },
+  submitToolResults: (...args: unknown[]) => mockSubmitToolResults(...args),
+  cancel: jest.fn(),
+  isTurnActive: jest.fn(() => true),
+});
+
+jest.mock('@/core/runtime', () => ({
+  getSessionHandle: jest.fn((sessionId?: string) => createMockSessionHandle(sessionId)),
+  submitSessionToolResults: (...args: unknown[]) => mockSubmitToolResults(...args),
+  cancelSessionRuntime: jest.fn(),
+  releaseSessionRuntime: jest.fn(),
+}));
 
 jest.mock('@/core/QueryEngine', () => ({
   runChatTurn: (...args: unknown[]) => mockRunChatTurn(...args),
+}));
+
+jest.mock('@/services/tools/toolMetadata', () => ({
+  partitionToolsByMetadata: jest.fn(async (tools: any[]) => mockPartitionTools(tools)),
+  toolNamesRequireWorkspace: jest.fn(async (names: string[]) => {
+    return names.some((n) => [
+      'read_file', 'write_file', 'create_directory', 'path_exists',
+      'list_files', 'search_files', 'glob_search', 'grep_files',
+      'execute_command', 'compile_typst_file', 'render_typst_to_pdf',
+    ].includes(n));
+  }),
 }));
 
 jest.mock('@/services/StreamingToolExecutor', () => ({
@@ -17,6 +56,12 @@ jest.mock('@/store', () => ({
   useSettingsStore: {
     getState: () => ({
       agentSettings: {},
+      getActiveConfig: () => null,
+    }),
+  },
+  useChatStore: {
+    getState: () => ({
+      sessions: [],
     }),
   },
 }));
@@ -24,6 +69,9 @@ jest.mock('@/store', () => ({
 function createAsyncGenerator(events: unknown[]) {
   return (async function* generate() {
     for (const event of events) {
+      if (event && typeof event === 'object' && '_resolveAll' in event) {
+        currentResolveAll = (event as { _resolveAll?: (results: unknown[]) => void })._resolveAll ?? null;
+      }
       yield event;
     }
   })();

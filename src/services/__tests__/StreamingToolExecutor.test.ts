@@ -29,14 +29,27 @@ jest.mock('@/services/tools/autoresearchBootstrap', () => ({
   AUTORESEARCH_BOOTSTRAP_TOOL_NAMES: ['pdf_read', 'paper_extract_meta', 'baseline_extract', 'arxiv_search'],
 }));
 
-import { StreamingToolExecutor, isReadOnlyTool } from '@/services/StreamingToolExecutor';
+import { StreamingToolExecutor } from '@/services/StreamingToolExecutor';
+import { partitionToolsByMetadata, invalidateToolRuntimeMetadataCache } from '@/services/tools/toolMetadata';
 
-describe('isReadOnlyTool', () => {
-  it('treats legacy browser observation tools as serial-only', () => {
-    expect(isReadOnlyTool('browser_extract_content')).toBe(false);
-    expect(isReadOnlyTool('browser_get_text')).toBe(false);
-    expect(isReadOnlyTool('browser_screenshot')).toBe(false);
-    expect(isReadOnlyTool('read_file')).toBe(true);
+describe('partitionToolsByMetadata', () => {
+  it('treats legacy browser observation tools as serial and read_file as concurrent', async () => {
+    invalidateToolRuntimeMetadataCache();
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_available_tools') {
+        return [
+          { name: 'read_file', concurrencyClass: 'concurrent', isConcurrencySafe: true },
+          { name: 'browser_extract_content', concurrencyClass: 'serial', isConcurrencySafe: false },
+        ];
+      }
+      return [];
+    });
+    const result = await partitionToolsByMetadata([
+      { name: 'read_file' },
+      { name: 'browser_extract_content' },
+    ]);
+    expect(result.concurrent).toEqual([{ name: 'read_file' }]);
+    expect(result.serial).toEqual([{ name: 'browser_extract_content' }]);
   });
 });
 
