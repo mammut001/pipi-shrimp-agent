@@ -120,7 +120,8 @@ pub async fn test_connection(
         attachments: None,
         tool_calls: None,
         tool_call_id: None,
-    }];
+            reasoning: None,
+        }];
     let client = {
         let state = state.lock().await;
         state.client.clone()

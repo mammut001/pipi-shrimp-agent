@@ -409,7 +409,8 @@ async fn run_json_bootstrap_inference(
         attachments: None,
         tool_calls: None,
         tool_call_id: None,
-    }];
+            reasoning: None,
+        }];
 
     let response = send_request_impl(
         &client,

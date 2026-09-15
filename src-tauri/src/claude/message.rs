@@ -44,6 +44,9 @@ pub struct Message {
     /// Tool call ID (for tool result role)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Assistant reasoning / thinking trace (DeepSeek: serialized as reasoning_content).
+    #[serde(default, alias = "reasoning_content", skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 /**

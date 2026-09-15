@@ -228,22 +228,54 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<Value> {
         }
 
         if let Some(tool_calls) = &message.tool_calls {
-            formatted.push(serde_json::json!({
+            let mut assistant = serde_json::json!({
                 "role": "assistant",
                 "content": Value::Null,
                 "tool_calls": tool_calls.iter().map(format_openai_tool_call).collect::<Vec<_>>(),
-            }));
+            });
+            if let Some(reasoning) = message
+                .reasoning
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+            {
+                assistant
+                    .as_object_mut()
+                    .expect("assistant message object")
+                    .insert(
+                        "reasoning_content".to_string(),
+                        Value::String(reasoning.to_string()),
+                    );
+            }
+            formatted.push(assistant);
             continue;
         }
 
-        formatted.push(serde_json::json!({
+        let mut formatted_message = serde_json::json!({
             "role": message.role,
             "content": if message.role == "user" && has_image_attachments(message) {
                 build_openai_user_content(message)
             } else {
                 Value::String(message.content.clone())
             },
-        }));
+        });
+        if message.role == "assistant" {
+            if let Some(reasoning) = message
+                .reasoning
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+            {
+                formatted_message
+                    .as_object_mut()
+                    .expect("formatted message object")
+                    .insert(
+                        "reasoning_content".to_string(),
+                        Value::String(reasoning.to_string()),
+                    );
+            }
+        }
+        formatted.push(formatted_message);
     }
 
     formatted
@@ -301,6 +333,23 @@ fn sanitize_assistant_message_for_openai_record(
     }
     if let Some(tool_call_id) = record.get("tool_call_id") {
         sanitized.insert("tool_call_id".to_string(), tool_call_id.clone());
+    }
+
+    // DeepSeek (and similar OpenAI-compatible reasoners) require the prior
+    // assistant turn's reasoning_content to be passed back on tool continuation
+    // rounds. This is message-history passback, distinct from request-level
+    // reasoning/reasoning_effort params gated by accepts_reasoning_param.
+    if capabilities.supports_reasoning {
+        if let Some(reasoning_content) = record.get("reasoning_content") {
+            let keep = match reasoning_content {
+                Value::String(s) => !s.trim().is_empty(),
+                Value::Null => false,
+                _ => true,
+            };
+            if keep {
+                sanitized.insert("reasoning_content".to_string(), reasoning_content.clone());
+            }
+        }
     }
 
     if capabilities.accepts_reasoning_param {
@@ -577,6 +626,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            reasoning: None,
         }
     }
 
@@ -606,6 +656,7 @@ mod tests {
                 arguments: "{\"path\":\"/tmp/a\"}".to_string(),
             }]),
             tool_call_id: None,
+            reasoning: None,
         }];
         let anthropic = format_messages_for_anthropic(&messages);
         let openai = format_messages_for_openai(&messages);
@@ -634,6 +685,7 @@ mod tests {
             }]),
             tool_calls: None,
             tool_call_id: None,
+            reasoning: None,
         }];
 
         let anthropic = format_messages_for_anthropic(&messages);
@@ -732,6 +784,114 @@ mod tests {
             messages[0]["tool_calls"][0]["function"]["name"],
             "execute_command"
         );
+    }
+
+    #[test]
+    fn preserves_assistant_reasoning_content_for_deepseek_tool_continuation() {
+        let messages = vec![
+            sample_message("user", "list files"),
+            Message {
+                role: "assistant".to_string(),
+                content: "".to_string(),
+                attachments: None,
+                tool_calls: Some(vec![ToolCall {
+                    tool_call_id: "call_1".to_string(),
+                    name: "execute_command".to_string(),
+                    arguments: "{\"command\":\"ls -la\"}".to_string(),
+                }]),
+                tool_call_id: None,
+                reasoning: Some("I should list the directory.".to_string()),
+            },
+            Message {
+                role: "user".to_string(),
+                content: "__TOOL_RESULT__:call_1:README.md".to_string(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: Some("call_1".to_string()),
+                reasoning: None,
+            },
+        ];
+
+        let config = ResolvedProviderConfig {
+            provider_id: ProviderId::DeepSeek,
+            api_format: super::super::provider_adapter::ApiFormat::OpenAI,
+            base_url: "https://api.deepseek.com".to_string(),
+            api_key: "token".to_string(),
+            model: "deepseek-v4-pro".to_string(),
+            capabilities: ProviderCapabilities {
+                supports_thinking: false,
+                supports_reasoning: true,
+                supports_reasoning_stream: true,
+                supports_tool_calls: true,
+                supports_tool_openai: true,
+                supports_streaming: true,
+                supports_response_format: false,
+                supports_response_format_json_schema: false,
+                supports_json_mode: true,
+                accepts_response_format: false,
+                accepts_reasoning_param: false,
+                supports_vision: false,
+                uses_responses_api: false,
+                requires_tool_ordering: false,
+                thinking_budget: None,
+                max_output_tokens: Some(8192),
+            },
+        };
+
+        let body = build_openai_body(&config, &messages, Some("system"), false, false, true);
+        let history = body["messages"].as_array().expect("messages array");
+        let assistant = history
+            .iter()
+            .find(|message| message.get("role") == Some(&serde_json::json!("assistant")))
+            .expect("assistant message");
+
+        assert_eq!(
+            assistant.get("reasoning_content"),
+            Some(&serde_json::json!("I should list the directory."))
+        );
+        assert!(assistant.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn strips_assistant_reasoning_content_when_provider_lacks_reasoning_support() {
+        let mut messages = vec![serde_json::json!({
+            "role": "assistant",
+            "content": null,
+            "reasoning_content": "internal trace",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "arguments": "{\"command\":\"ls -la\"}"
+                }
+            }]
+        })];
+
+        sanitize_openai_history_messages(
+            &mut messages,
+            &ProviderCapabilities {
+                supports_thinking: false,
+                supports_reasoning: false,
+                supports_reasoning_stream: false,
+                supports_tool_calls: true,
+                supports_tool_openai: true,
+                supports_streaming: true,
+                supports_response_format: false,
+                supports_response_format_json_schema: false,
+                supports_json_mode: false,
+                accepts_response_format: false,
+                accepts_reasoning_param: false,
+                supports_vision: false,
+                uses_responses_api: false,
+                requires_tool_ordering: false,
+                thinking_budget: None,
+                max_output_tokens: Some(8192),
+            },
+        );
+
+        assert_eq!(messages[0].get("reasoning_content"), None);
+        assert!(messages[0].get("tool_calls").is_some());
     }
 
     #[test]
