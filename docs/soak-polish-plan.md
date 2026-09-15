@@ -1,7 +1,7 @@
 # Soak / product-polish plan (GPT excerpt)
 
 **Saved:** 2026-09-15 (America/Toronto)  
-**Context:** Post-★★★★★ product gaps; first soak knife after Manual D harness (#83) + diagnostics (#84) + trace sink (#82).
+**Context:** Post-★★★★★ product gaps; soak knives after Manual D harness (#83) + diagnostics (#84) + trace sink (#82) + soak runner (#85).
 
 ## Principle
 
@@ -41,6 +41,24 @@ Build a **deterministic soak runner** that loops the Manual D style scenario and
 4. Jest test: `soakRunner.test.ts` runs N=5 or N=10 by default (fast); documents `PIPI_SOAK_ITERS=200 pnpm exec jest …`
 5. Docs: `docs/soak-runner.md` + this plan excerpt
 
+
+## Knife 2: Real Tauri + SQLite reload/crash soak
+
+**PR target:** kill mid-tool → reopen → hydrate → follow-up (no orphan resume as success, no cross-session contamination).
+
+### Implement
+
+1. `src/core/runtime/soak/crashReloadSoak.ts` — Manual D barriers + InMemoryMessageDb crash simulation + hydrate interrupted + follow-up
+2. Jest `crashReloadSoak.test.ts` (default N=5); env `PIPI_CRASH_RELOAD_SOAK_ITERS`
+3. Rust: `orphan_messages_survive_db_reopen_after_mid_tool` (connection drop/reopen durability)
+4. Docs: `docs/soak-crash-reload.md` including **manual Tauri kill checklist**
+
+### Intentionally not this knife
+
+- Stop button / session-switch UX polish
+- Full Playwright E2E platform
+- Fault-injected mid-WAL tear during COMMIT
+
 ## Later polish leftovers (not this knife)
 
 From scout (`docs/soak-polish-scout.md`):
@@ -54,9 +72,12 @@ From scout (`docs/soak-polish-scout.md`):
 
 ```
 src/core/runtime/soak/
+src/core/runtime/soak/crashReloadSoak.ts
 src/core/runtime/__tests__/manualDProductHarness.ts
 src/core/runtime/__tests__/manualDProductHarness.test.ts
 src/core/runtime/__tests__/manualDBarrier.ts
+src-tauri/src/tools/test_barrier.rs
 docs/soak-runner.md
+docs/soak-crash-reload.md
 docs/soak-polish-scout.md
 ```

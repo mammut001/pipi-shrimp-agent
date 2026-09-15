@@ -77,8 +77,8 @@ Live Stop still uses `user_cancel` wording via the same builder.
   (durable signal = scrub + assistant notice)
 - **Deferred:** multi-orphan → one notice (today one notice listing all
   orphan tool names in that hydrate pass; further policy TBD)
-- **Deferred (knife 2):** full real SQLite crash matrix
-  (kill between/around commit, process restart, WAL recovery)
+- **Partial (soak knife 2):** headless crash/reload soak + DB reopen durability —
+  see `docs/soak-crash-reload.md`. Mid-COMMIT WAL tear fault-injection still deferred.
 
 ## Tests
 

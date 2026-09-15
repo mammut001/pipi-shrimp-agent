@@ -5,7 +5,13 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { dumpRuntimeDiagnostics } from '../SessionRuntime';
 import { dumpRuntimeTraceJsonLines } from '../RuntimeTraceSink';
-import type { FailureBundlePaths, SoakAssertionFailure } from './types';
+import type {
+  CrashReloadAssertionFailure,
+  FailureBundlePaths,
+  SoakAssertionFailure,
+} from './types';
+
+type BundleFailure = SoakAssertionFailure | CrashReloadAssertionFailure;
 
 export function resolveSoakArtifactRoot(explicit?: string): string {
   if (explicit && explicit.length > 0) {
@@ -36,7 +42,7 @@ export function writeSoakFailureBundle(options: {
   iteration: number;
   sessionA: string;
   sessionB: string;
-  failures: SoakAssertionFailure[];
+  failures: BundleFailure[];
   assertionMessage?: string;
 }): FailureBundlePaths {
   const root = resolveSoakArtifactRoot(options.artifactRoot);

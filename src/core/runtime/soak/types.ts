@@ -85,3 +85,48 @@ export type FailureBundlePaths = {
   traceBPath: string;
   fullTracePath: string;
 };
+
+/** GPT soak knife 2 — crash/reload soak invariants. */
+export type CrashReloadInvariantName =
+  | 'hydrate_terminalizes_orphans'
+  | 'no_orphan_resume_as_success'
+  | 'no_cross_session_contamination'
+  | 'follow_up_no_orphan_tool_calls';
+
+export type CrashReloadAssertionFailure = {
+  invariant: CrashReloadInvariantName | 'setup' | 'scenario';
+  message: string;
+};
+
+export type CrashReloadIterationResult = {
+  ok: boolean;
+  iteration: number;
+  sessionA: string;
+  sessionB: string;
+  failures: CrashReloadAssertionFailure[];
+  orphanCount?: number;
+  historyA?: Message[];
+  historyB?: Message[];
+};
+
+export type CrashReloadRunOptions = {
+  /** Default 20 (CI-friendly). Override with PIPI_CRASH_RELOAD_SOAK_ITERS or PIPI_SOAK_ITERS. */
+  iterations?: number;
+  artifactRoot?: string;
+  stopOnFailure?: boolean;
+  sessionPrefix?: string;
+  runIteration?: (
+    iteration: number,
+    sessionPrefix: string,
+  ) => Promise<CrashReloadIterationResult>;
+};
+
+export type CrashReloadRunSummary = {
+  ok: boolean;
+  iterationsRequested: number;
+  iterationsCompleted: number;
+  failedAt?: number;
+  failureBundleDir?: string;
+  failureBundleDirs?: string[];
+  results: CrashReloadIterationResult[];
+};
