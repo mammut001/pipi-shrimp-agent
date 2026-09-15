@@ -9,19 +9,29 @@ import { dbToSession, messageToDb } from '../../../utils/chatHelpers';
 export type PersistCall =
   | { op: 'db_save_message'; message: DbMessage }
   | { op: 'db_save_messages'; messages: DbMessage[] }
-  | { op: 'db_delete_session'; sessionId: string };
+  | { op: 'db_delete_session'; sessionId: string }
+  | { op: 'db_delete_message'; messageId: string };
 
 export class InMemoryMessageDb {
   /** sessionId → messageId → row */
   private rows = new Map<string, Map<string, DbMessage>>();
-  /** Sessions deleted while a cancel/persist may still be in flight. */
+  /**
+   * Parent session registry — mirrors SQLite `sessions` + FK(session_id).
+   * Messages cannot be saved unless the session row exists (no auto-create).
+   */
+  private sessions = new Set<string>();
+  /** Sessions that were explicitly deleted (for assertions). */
   private deleted = new Set<string>();
   readonly calls: PersistCall[] = [];
+  /** Late saves rejected because the session parent is missing (FK semantics). */
+  readonly rejectedSaves: PersistCall[] = [];
 
   clear(): void {
     this.rows.clear();
+    this.sessions.clear();
     this.deleted.clear();
     this.calls.length = 0;
+    this.rejectedSaves.length = 0;
   }
 
   seed(sessionId: string, messages: Message[]): void {
@@ -30,13 +40,16 @@ export class InMemoryMessageDb {
       map.set(message.id, messageToDb(message, sessionId));
     }
     this.rows.set(sessionId, map);
+    this.sessions.add(sessionId);
     this.deleted.delete(sessionId);
   }
 
   saveMessage(message: DbMessage): void {
     this.calls.push({ op: 'db_save_message', message });
-    if (this.deleted.has(message.session_id)) {
-      return; // late write after delete — discarded
+    // Match production with PRAGMA foreign_keys=ON: no session parent → reject, no resurrection.
+    if (!this.sessions.has(message.session_id)) {
+      this.rejectedSaves.push({ op: 'db_save_message', message });
+      return;
     }
     let map = this.rows.get(message.session_id);
     if (!map) {
@@ -46,13 +59,17 @@ export class InMemoryMessageDb {
     map.set(message.id, message);
   }
 
-  /** Simulates transactional bulk upsert (db_save_messages). */
+  /**
+   * Simulates transactional bulk upsert (db_save_messages).
+   * Entire batch is rejected if any message references a missing session (FK).
+   */
   saveMessages(messages: DbMessage[]): void {
     this.calls.push({ op: 'db_save_messages', messages: [...messages] });
+    if (messages.some((message) => !this.sessions.has(message.session_id))) {
+      this.rejectedSaves.push({ op: 'db_save_messages', messages: [...messages] });
+      return;
+    }
     for (const message of messages) {
-      if (this.deleted.has(message.session_id)) {
-        continue;
-      }
       let map = this.rows.get(message.session_id);
       if (!map) {
         map = new Map();
@@ -65,7 +82,21 @@ export class InMemoryMessageDb {
   deleteSession(sessionId: string): void {
     this.calls.push({ op: 'db_delete_session', sessionId });
     this.deleted.add(sessionId);
+    this.sessions.delete(sessionId);
     this.rows.delete(sessionId);
+  }
+
+  deleteMessage(messageId: string): void {
+    this.calls.push({ op: 'db_delete_message', messageId });
+    for (const map of this.rows.values()) {
+      map.delete(messageId);
+    }
+  }
+
+  deleteMessagesByIds(messageIds: string[]): void {
+    for (const messageId of messageIds) {
+      this.deleteMessage(messageId);
+    }
   }
 
   getMessages(sessionId: string): DbMessage[] {
@@ -75,7 +106,7 @@ export class InMemoryMessageDb {
   }
 
   hasSession(sessionId: string): boolean {
-    return this.rows.has(sessionId) && !this.deleted.has(sessionId);
+    return this.sessions.has(sessionId);
   }
 
   isDeleted(sessionId: string): boolean {
@@ -212,6 +243,36 @@ export function wireSafeInvokeToDb(
       db.deleteSession((args as { sessionId: string }).sessionId);
       return undefined;
     }
+    if (command === 'db_delete_message') {
+      db.deleteMessage((args as { messageId: string }).messageId);
+      return undefined;
+    }
+    if (command === 'delete_messages_by_ids') {
+      db.deleteMessagesByIds((args as { messageIds: string[] }).messageIds);
+      return undefined;
+    }
     return undefined;
   });
+}
+
+/** True when next-turn API history presents toolCallId as a completed success containing needle. */
+export function apiHasSuccessfulToolOutcome(
+  api: Array<{ content?: string; tool_calls?: unknown[] }>,
+  toolCallId: string,
+  bodyNeedle: string,
+): boolean {
+  const hasToolCall = api.some((message) => (
+    Array.isArray(message.tool_calls)
+    && message.tool_calls.some((tc) => {
+      if (!tc || typeof tc !== 'object') return false;
+      const id = 'id' in tc ? (tc as { id?: string }).id : (tc as { tool_call_id?: string }).tool_call_id;
+      return id === toolCallId;
+    })
+  ));
+  const hasResult = api.some((message) => (
+    typeof message.content === 'string'
+    && message.content.includes(`__TOOL_RESULT__:${toolCallId}:`)
+    && message.content.includes(bodyNeedle)
+  ));
+  return hasToolCall && hasResult;
 }

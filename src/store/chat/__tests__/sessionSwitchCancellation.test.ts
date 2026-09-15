@@ -169,7 +169,11 @@ describe('sessionSwitchCancellation matrix', () => {
     expect(listOrphanToolCalls(db.loadMessages(sessionA))).toEqual([]);
   });
 
-  it('7) delete session while cancelling discards late persists for deleted session', async () => {
+  it('7) delete session while cancelling: late db_save_messages cannot resurrect (FK semantics)', async () => {
+    // Closer to production SQLite: sessions registry + FK(session_id).
+    // InMemoryMessageDb rejects saves when the parent session row is gone
+    // (mirrors PRAGMA foreign_keys=ON). Full rusqlite proof lives in
+    // src-tauri/src/database.rs::tests::delete_session_then_late_save_messages_does_not_resurrect.
     const sessionA = 'session-delete-A';
     const sessionB = 'session-keep-B';
     const historyA = [
@@ -203,14 +207,17 @@ describe('sessionSwitchCancellation matrix', () => {
     expect(db.isDeleted(sessionA)).toBe(true);
     expect(db.hasSession(sessionA)).toBe(false);
 
-    // Late cancel persist attempts (scrub + notice) must not resurrect A
-    await mockSafeInvoke('db_save_messages', {
-      messages: [...cancelling.scrubbedById.values(), cancelling.notice!].map((m) => messageToDb(m, sessionA)),
-    });
+    const lateBatch = [...cancelling.scrubbedById.values(), cancelling.notice!]
+      .map((m) => messageToDb(m, sessionA));
+
+    // Late cancel persist attempts must not resurrect A (FK reject / no parent session).
+    await mockSafeInvoke('db_save_messages', { messages: lateBatch });
     await mockSafeInvoke('db_save_message', {
       message: messageToDb(cancelling.notice!, sessionA),
     });
 
+    expect(db.rejectedSaves.length).toBeGreaterThanOrEqual(2);
+    expect(db.rejectedSaves.some((c) => c.op === 'db_save_messages')).toBe(true);
     expect(db.hasSession(sessionA)).toBe(false);
     expect(db.getMessages(sessionA)).toEqual([]);
     expect(get().sessions.map((s) => s.id)).toEqual([sessionB]);

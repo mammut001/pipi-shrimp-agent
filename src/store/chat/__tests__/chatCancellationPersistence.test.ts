@@ -20,6 +20,7 @@ import {
 import { buildApiMessages, messageToDb } from '../../../utils/chatHelpers';
 import {
   InMemoryMessageDb,
+  apiHasSuccessfulToolOutcome,
   assistantWithTools,
   bindState,
   hasOrphanToolCalls,
@@ -144,8 +145,8 @@ describe('chatCancellationPersistence matrix', () => {
     ))).toEqual(expect.arrayContaining(['tc-done']));
   });
 
-  it('5) cancel then late tool completion must not pollute persisted history', async () => {
-    const sessionId = 'sess-late-complete';
+  it('5a) late orphan restore without result → hydrate re-terminalizes', async () => {
+    const sessionId = 'sess-late-orphan';
     const orphanAssistant = assistantWithTools('a1', 'calling', [
       { id: 'tc-late', name: 'read_file', arguments: '{}' },
     ], 2);
@@ -163,37 +164,77 @@ describe('chatCancellationPersistence matrix', () => {
       messages: [...cancelled.scrubbedById.values(), cancelled.notice!].map((m) => messageToDb(m, sessionId)),
     });
 
-    // Late completion: stale writer re-upserts the *original* assistant with tool_calls
-    // and a tool result — must not leave follow-up history assuming success without notice.
+    // Late writer restores orphaned tool_calls WITHOUT a result.
+    db.saveMessage(messageToDb(orphanAssistant, sessionId));
+
+    replace(makeChatState([makeSession(sessionId, db.loadMessages(sessionId))]));
+    expect(listOrphanToolCalls(get().sessions[0].messages).length).toBeGreaterThan(0);
+
+    await terminalizeInterruptedToolTurns(sessionId, set, get, { kind: 'interrupted', persist: 'db' });
+
+    const finalMessages = get().sessions[0].messages;
+    expect(listOrphanToolCalls(finalMessages)).toEqual([]);
+    expect(
+      hasTerminalMarker(finalMessages, 'user_cancel')
+      || hasTerminalMarker(finalMessages, 'interrupted'),
+    ).toBe(true);
+    expect(listOrphanToolCalls(db.loadMessages(sessionId))).toEqual([]);
+    expect(buildApiMessages(finalMessages).some((m) => Boolean(m.tool_calls?.length))).toBe(false);
+  });
+
+  it('5b) late tool result after cancel must NOT appear as successful tool outcome', async () => {
+    const sessionId = 'sess-late-complete';
+    const orphanAssistant = assistantWithTools('a1', 'calling', [
+      { id: 'tc-late', name: 'read_file', arguments: '{}' },
+    ], 2);
+    const history = [userMsg('u0', 'read it', 1), orphanAssistant];
+    db.seed(sessionId, history);
+    const { set, get, replace } = bindState(makeChatState([makeSession(sessionId, history)]));
+
+    const cancelled = terminalizeInterruptedMessages(history, { kind: 'user_cancel', now: 30 });
+    expect(cancelled.notice?.content).toContain('cancelled_tool_call_ids: tc-late');
+    set((state) => ({
+      sessions: state.sessions.map((s) => (
+        s.id === sessionId ? { ...s, messages: cancelled.messages } : s
+      )),
+    }));
+    await mockSafeInvoke('db_save_messages', {
+      messages: [...cancelled.scrubbedById.values(), cancelled.notice!].map((m) => messageToDb(m, sessionId)),
+    });
+
+    // Pollution: stale writer re-upserts assistant tool_calls AND a successful late result.
+    // Previously Case 5 overwrote with orphan-only so hydrate "passed" without clearing the result.
     db.saveMessage(messageToDb(orphanAssistant, sessionId));
     db.saveMessage(messageToDb(
       userMsg('u-late', '__TOOL_RESULT__:tc-late:late ok', 99, 'tc-late'),
       sessionId,
     ));
 
-    // Reload + hydrate: if orphans reappear (assistant tool_calls without considering
-    // the late result... wait, late result WOULD resolve the orphan). The pollution
-    // case is: late writer restores orphaned tool_calls WITHOUT a result, or restores
-    // tool_calls after scrub while notice already says cancelled.
-    // Re-seed pollution as orphan-only (no result) — the classic late race.
-    db.saveMessage(messageToDb(orphanAssistant, sessionId));
+    // Without scrubLateCompletionsAfterCancel, orphans would be "resolved" by the late result
+    // and buildApiMessages would present a successful tool outcome — false positive.
+    const polluted = db.loadMessages(sessionId);
+    expect(listOrphanToolCalls(polluted)).toEqual([]); // late result resolves the call
+    expect(polluted.some((m) => m.content.includes('late ok'))).toBe(true);
 
-    replace(makeChatState([makeSession(sessionId, db.loadMessages(sessionId))]));
-    const reloaded = get().sessions[0].messages;
-    // After pollution, orphans may be present again (and late result may also exist)
-    // Hydrate must terminalize any remaining orphans.
+    replace(makeChatState([makeSession(sessionId, polluted)]));
     await terminalizeInterruptedToolTurns(sessionId, set, get, { kind: 'interrupted', persist: 'db' });
 
     const finalMessages = get().sessions[0].messages;
     expect(listOrphanToolCalls(finalMessages)).toEqual([]);
-    // Durable signal: either user_cancel notice from before, and/or interrupted on hydrate
-    const hasAnyTerminal = hasTerminalMarker(finalMessages, 'user_cancel')
-      || hasTerminalMarker(finalMessages, 'interrupted');
-    expect(hasAnyTerminal).toBe(true);
+    expect(hasTerminalMarker(finalMessages, 'user_cancel')).toBe(true);
+    // Late success body must not survive in durable history or next-turn API messages.
+    expect(finalMessages.some((m) => m.content.includes('late ok'))).toBe(false);
+    expect(finalMessages.some((m) => m.id === 'u-late')).toBe(false);
 
     const api = buildApiMessages(finalMessages);
-    expect(api.some((m) => Boolean(m.tool_calls?.length) && listOrphanToolCalls(finalMessages).length > 0)).toBe(false);
-    expect(listOrphanToolCalls(db.loadMessages(sessionId))).toEqual([]);
+    expect(apiHasSuccessfulToolOutcome(api, 'tc-late', 'late ok')).toBe(false);
+    expect(api.some((m) => typeof m.content === 'string' && m.content.includes('late ok'))).toBe(false);
+    expect(api.some((m) => Boolean(m.tool_calls?.length))).toBe(false);
+
+    const persisted = db.loadMessages(sessionId);
+    expect(listOrphanToolCalls(persisted)).toEqual([]);
+    expect(persisted.some((m) => m.content.includes('late ok'))).toBe(false);
+    expect(hasTerminalMarker(persisted, 'user_cancel')).toBe(true);
   });
 
   it('6) cancel interleaved with DB save stays consistent (atomic batch wins)', async () => {
