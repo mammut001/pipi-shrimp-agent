@@ -209,10 +209,42 @@ fn approval_arguments_match(stored: &str, incoming: &str) -> bool {
     canonicalize_approval_arguments(stored) == canonicalize_approval_arguments(incoming)
 }
 
+/// Outcome of attempting to consume a one-shot approval token.
+///
+/// Success requires only token presence + TTL + session_id + tool_call_id +
+/// tool_name. Argument / work_dir / source fingerprints are diagnostic-only:
+/// preview vs execute often drift (work_dir injection, windowsShellProfile,
+/// JSON key order) even when the user confirmed the same tool call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ApprovalConsumeOutcome {
+    MissingToken,
+    UnknownOrExpiredToken,
+    Mismatch { fields: Vec<&'static str> },
+    Consumed,
+}
+
+impl ApprovalConsumeOutcome {
+    fn error_detail(&self) -> String {
+        match self {
+            Self::MissingToken => {
+                "Missing approval token after confirmation was required.".to_string()
+            }
+            Self::UnknownOrExpiredToken => {
+                "Approval token is unknown, expired, or was already used.".to_string()
+            }
+            Self::Mismatch { fields } => format!(
+                "Approval token identity mismatch ({}).",
+                fields.join(", ")
+            ),
+            Self::Consumed => String::new(),
+        }
+    }
+}
+
 fn store_approval(req: &ToolCallRequest, session_id: &str, args: &serde_json::Value) -> String {
     let token = uuid::Uuid::new_v4().to_string();
     let mut map = APPROVALS.lock().expect("approvals lock poisoned");
-    // AUDIT-FIX [fix-3#2] — Opportunistic GC: any tokens older than
+    // AUDIT-FIX [FIX-3#2] — Opportunistic GC: any tokens older than
     // APPROVAL_TTL are removed during every `store_approval` call, keeping
     // the map size bounded even if the user never confirms or denies.
     let now = Instant::now();
@@ -236,42 +268,72 @@ fn consume_matching_approval(
     req: &ToolCallRequest,
     args: &serde_json::Value,
     session_id: Option<&str>,
-) -> bool {
-    let Some(token) = req.approval_token.as_deref() else {
-        return false;
+) -> ApprovalConsumeOutcome {
+    let Some(token) = req
+        .approval_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return ApprovalConsumeOutcome::MissingToken;
     };
     let Some(expected_session_id) = session_id else {
-        return false;
+        return ApprovalConsumeOutcome::Mismatch {
+            fields: vec!["session_id"],
+        };
     };
 
     let mut approvals = APPROVALS.lock().expect("approvals lock poisoned");
     let Some(record) = approvals.get(token) else {
-        return false;
+        return ApprovalConsumeOutcome::UnknownOrExpiredToken;
     };
 
-    // AUDIT-FIX [fix-3#2] — TTL eviction on consume as well as store.
+    // AUDIT-FIX [FIX-3#2] — TTL eviction on consume as well as store.
     if Instant::now().duration_since(record.created_at) >= APPROVAL_TTL {
         approvals.remove(token);
-        return false;
+        return ApprovalConsumeOutcome::UnknownOrExpiredToken;
     }
 
-    let incoming_args = canonicalize_json_value(args).to_string();
+    let mut mismatched: Vec<&'static str> = Vec::new();
+    if record.session_id != expected_session_id {
+        mismatched.push("session_id");
+    }
+    if record.tool_call_id != req.id {
+        mismatched.push("tool_call_id");
+    }
+    if record.tool_name != req.name {
+        mismatched.push("tool_name");
+    }
+    if !mismatched.is_empty() {
+        return ApprovalConsumeOutcome::Mismatch {
+            fields: mismatched,
+        };
+    }
 
-    // Token is bound to this exact tool_call_id + session. Do not require
-    // work_dir equality: preview/execute often differ on whether Project
-    // Folder was attached as workDir vs only present inside args.
-    if record.session_id != expected_session_id
-        || record.tool_call_id != req.id
-        || record.tool_name != req.name
-        || record.arguments != incoming_args
+    // Opaque UUID already proves the user confirmed the previewed call.
+    // Do not require args / work_dir / source equality — those fingerprints
+    // drift across preview vs execute (work_dir injection, windowsShellProfile,
+    // key order, etc.) and caused false rejects after Allow.
+    let incoming_args = canonicalize_json_value(args).to_string();
+    if record.arguments != incoming_args
+        || record.work_dir != normalize_work_dir(&req.work_dir)
         || record.source != req.source
     {
-        return false;
+        tracing::warn!(
+            tool_call_id = %req.id,
+            tool_name = %req.name,
+            session_id = %expected_session_id,
+            args_match = record.arguments == incoming_args,
+            work_dir_match = record.work_dir == normalize_work_dir(&req.work_dir),
+            source_match = record.source == req.source,
+            "approval token accepted despite preview/execute fingerprint drift"
+        );
     }
 
     approvals.remove(token);
-    true
+    ApprovalConsumeOutcome::Consumed
 }
+
 
 fn allow(reason: Option<String>) -> PolicyDecision {
     PolicyDecision {
@@ -821,14 +883,19 @@ pub fn enforce_cdp_execute_script_policy(
             };
             let mut normalized_args = serde_json::json!({ "script": script });
             inject_work_dir_into_args(&request, &mut normalized_args);
-            if consume_matching_approval(&request, &normalized_args, Some(expected_session_id)) {
-                Ok(())
-            } else {
-                Err(AppError::SecurityError(
-                    decision
-                        .reason
-                        .unwrap_or_else(|| "Browser script execution requires approval.".to_string()),
-                ))
+            match consume_matching_approval(&request, &normalized_args, Some(expected_session_id))
+            {
+                ApprovalConsumeOutcome::Consumed => Ok(()),
+                outcome => {
+                    let base = decision.reason.unwrap_or_else(|| {
+                        "Browser script execution requires approval.".to_string()
+                    });
+                    Err(AppError::SecurityError(format!(
+                        "{} {}",
+                        base,
+                        outcome.error_detail()
+                    )))
+                }
             }
         }
     }
@@ -850,27 +917,21 @@ pub fn enforce_request_policy(
             )))
         }
         PolicyAction::RequireConfirmation => {
-            if consume_matching_approval(req, &normalized_args, session_id) {
-                Ok(())
-            } else {
-                let base = decision.reason.unwrap_or_else(|| {
-                    format!(
-                        "Tool '{}' requires explicit confirmation before execution.",
-                        req.name
-                    )
-                });
-                let detail = if req.approval_token.as_deref().map(str::trim).filter(|v| !v.is_empty()).is_some() {
-                    format!(
-                        "{} Approval token was present but did not match this session/tool/arguments (or was already used/expired).",
-                        base
-                    )
-                } else {
-                    format!(
-                        "{} Missing approval token after confirmation was required.",
-                        base
-                    )
-                };
-                Err(AppError::SecurityError(detail))
+            match consume_matching_approval(req, &normalized_args, session_id) {
+                ApprovalConsumeOutcome::Consumed => Ok(()),
+                outcome => {
+                    let base = decision.reason.unwrap_or_else(|| {
+                        format!(
+                            "Tool '{}' requires explicit confirmation before execution.",
+                            req.name
+                        )
+                    });
+                    Err(AppError::SecurityError(format!(
+                        "{} {}",
+                        base,
+                        outcome.error_detail()
+                    )))
+                }
             }
         }
     }
@@ -1098,6 +1159,104 @@ mod tests {
         request.approval_token = Some(token);
         enforce_request_policy(&request, &execute_args, Some("session-1"))
             .expect("executionId drift must not invalidate approval token");
+    }
+
+    #[test]
+    fn approval_token_allows_when_args_fingerprint_drifts() {
+        // Preview without work_dir in args; execute injects work_dir and may
+        // carry extra harmless fields / different key order. Identity binding
+        // (token + session + tool_call_id + tool_name) must still allow.
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.work_dir = Some("/tmp/project".to_string());
+        let preview_args = serde_json::json!({
+            "command": "sleep 20"
+        });
+        request.arguments = preview_args.to_string();
+        let preview = preview_request_policy(&request, &preview_args, Some("session-1"))
+            .expect("preview");
+        let token = preview.approval_token.clone().expect("token");
+
+        // Simulate execute-side drift: different key order, injected work_dir,
+        // and an extra harmless field that preview never saw.
+        let execute_args = serde_json::json!({
+            "windowsShellProfile": "powershell",
+            "command": "sleep 20",
+            "work_dir": "/tmp/project"
+        });
+        request.arguments = execute_args.to_string();
+        request.approval_token = Some(token);
+        enforce_request_policy(&request, &execute_args, Some("session-1"))
+            .expect("args JSON drift must not invalidate approval token");
+    }
+
+    #[test]
+    fn approval_token_rejects_wrong_session_id() {
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        let args = serde_json::json!({
+            "command": "sleep 20",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = args.to_string();
+        let preview = preview_request_policy(&request, &args, Some("session-1"))
+            .expect("preview");
+        request.approval_token = preview.approval_token.clone();
+
+        let error = enforce_request_policy(&request, &args, Some("session-other"))
+            .expect_err("wrong session_id must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("identity mismatch") && message.contains("session_id"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn approval_token_rejects_wrong_tool_call_id() {
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        let args = serde_json::json!({
+            "command": "sleep 20",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = args.to_string();
+        let preview = preview_request_policy(&request, &args, Some("session-1"))
+            .expect("preview");
+        request.approval_token = preview.approval_token.clone();
+        request.id = "tool-other".to_string();
+
+        let error = enforce_request_policy(&request, &args, Some("session-1"))
+            .expect_err("wrong tool_call_id must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("identity mismatch") && message.contains("tool_call_id"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn approval_token_unknown_token_error_is_distinct_from_mismatch() {
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        let args = serde_json::json!({
+            "command": "sleep 20",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = args.to_string();
+        request.approval_token = Some("00000000-0000-0000-0000-000000000000".to_string());
+
+        let error = enforce_request_policy(&request, &args, Some("session-1"))
+            .expect_err("unknown token must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("unknown, expired, or was already used"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !message.contains("did not match this session/tool/arguments"),
+            "misleading present-but-mismatch wording must not appear: {message}"
+        );
     }
 
     #[test]
