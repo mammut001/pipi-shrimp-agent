@@ -1233,6 +1233,22 @@ export function createChatActionMethods({
         // Snapshot unresolved tools + executionIds BEFORE failUnresolved clears them.
         const unresolvedTools = listUnresolvedSessionTools(owningSessionId);
         const executionIds = listCancellableSessionExecutionIds(owningSessionId);
+        const stopHandle = getSessionHandle(owningSessionId);
+        for (const tool of unresolvedTools) {
+          stopHandle.emitTraceEvent('tool_cancel_requested', {
+            toolCallId: tool.toolCallId,
+            ...(tool.executionId ? { executionId: tool.executionId } : {}),
+            reason: 'Cancelled by user',
+          });
+        }
+        for (const executionId of executionIds) {
+          if (!unresolvedTools.some((t) => t.executionId === executionId)) {
+            stopHandle.emitTraceEvent('tool_cancel_requested', {
+              executionId,
+              reason: 'Cancelled by user',
+            });
+          }
+        }
         await Promise.all(
           executionIds.map(async (executionId) => {
             try {

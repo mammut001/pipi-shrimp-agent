@@ -21,6 +21,13 @@ export interface WaitForToolResultsOptions {
   turnId?: string;
 }
 
+/** Optional observer for late/mismatched discards (identity + reason only). */
+export type ToolResultDiscardSink = (info: {
+  requestId: string;
+  reason: string;
+  turnId?: string;
+}) => void;
+
 const MAX_TOMBSTONES = 1000;
 
 function normalizeResults(
@@ -70,6 +77,29 @@ export class ToolResultChannel {
   private readonly buffered = new Map<string, BufferedToolResponse>();
   private readonly tombstones = new Set<string>();
   private readonly tombstoneOrder: string[] = [];
+  private discardSink: ToolResultDiscardSink | null = null;
+
+  /** Wire an optional discard observer (SessionRuntime trace). */
+  setDiscardSink(sink: ToolResultDiscardSink | null): void {
+    this.discardSink = sink;
+  }
+
+  /** Pending waiter requestIds (for cancel-path tool_cancelled emits). */
+  listPendingRequestIds(): string[] {
+    return [...this.pending.keys()];
+  }
+
+  private notifyDiscard(requestId: string, reason: string, turnId?: string): void {
+    try {
+      this.discardSink?.({
+        requestId,
+        reason,
+        ...(turnId !== undefined ? { turnId } : {}),
+      });
+    } catch {
+      // Discard observability must never break the channel
+    }
+  }
 
   private markTombstone(requestId: string): void {
     if (this.tombstones.has(requestId)) {
@@ -179,6 +209,7 @@ export class ToolResultChannel {
   submit(requestId: string, results: ToolExecutionResult[], turnId?: string): boolean {
     if (this.tombstones.has(requestId)) {
       // Late result after cancellation, timeout, or prior settlement: safely drop.
+      this.notifyDiscard(requestId, 'tombstoned_late_result', turnId);
       return false;
     }
 
@@ -196,6 +227,11 @@ export class ToolResultChannel {
 
     if (!turnIdsCompatible(pending.turnId, turnId)) {
       // Wrong turn — discard only; do not settle the waiter.
+      this.notifyDiscard(
+        requestId,
+        'turn_id_mismatch',
+        turnId ?? pending.turnId,
+      );
       return false;
     }
 
@@ -212,6 +248,7 @@ export class ToolResultChannel {
   reject(requestId: string, error: unknown, turnId?: string): boolean {
     if (this.tombstones.has(requestId)) {
       // Late result after cancellation, timeout, or prior settlement: safely drop.
+      this.notifyDiscard(requestId, 'tombstoned_late_result', turnId);
       return false;
     }
 
@@ -225,6 +262,11 @@ export class ToolResultChannel {
     }
 
     if (!turnIdsCompatible(pending.turnId, turnId)) {
+      this.notifyDiscard(
+        requestId,
+        'turn_id_mismatch',
+        turnId ?? pending.turnId,
+      );
       return false;
     }
 

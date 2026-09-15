@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 jest.mock('@/services/StreamingToolExecutor', () => ({
   StreamingToolExecutor: jest.fn(),
@@ -44,6 +44,13 @@ import {
   resolveWorkspaceToolPreflight,
   type ToolBatchExecutionDeps,
 } from '../chatToolExecution';
+import {
+  clearRuntimeTraceSink,
+  getRuntimeTraceEvents,
+  getSessionHandle,
+  releaseSessionRuntime,
+  releaseSessionRuntimeForTests,
+} from '../../../core/runtime';
 import {
   resetAllSessionToolRuntime,
 } from '../toolRuntimeState';
@@ -2175,4 +2182,160 @@ describe('chatToolExecution', () => {
       expect((deps.invoke as jest.Mock)).not.toHaveBeenCalledWith('execute_tool_batch', expect.anything());
     });
   });
+
+  describe('runtime trace sink identity chains', () => {
+    beforeEach(() => {
+      clearRuntimeTraceSink();
+      releaseSessionRuntimeForTests('session-1');
+      resetAllSessionToolRuntime();
+    });
+
+    it('concurrent tools emit requested → execution_started → completed', async () => {
+      const executeBatch = jest.fn(async () => ({
+        results: [{ id: 'tool-1', content: 'ok', is_error: false, status: 'success' }],
+        totalExecutionTime: 1,
+        errors: [],
+      }));
+      const deps = createDeps({
+        createExecutor: () => ({ executeBatch }),
+        partitionTools: jest.fn(() => ({
+          concurrent: [{ id: 'tool-1', name: 'read_file', arguments: { path: 'a.ts' } }],
+          serial: [],
+        })),
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = '/tmp/project';
+      const resolved: Array<{ id: string; content: string }> = [];
+      const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+        type: 'tool_batch_request',
+        requestId: 'req-concurrent-trace',
+        turnId: 'turn-concurrent-trace',
+        tools: [{ id: 'tool-1', name: 'read_file', arguments: '{"path":"a.ts"}' }],
+        _resolveAll: (results: Array<{ id: string; content: string }>) => {
+          resolved.push(...results);
+        },
+      } as any;
+
+      // Ensure host.trace is the shared sink
+      getSessionHandle('session-1');
+
+      await handleToolBatchRequest({
+        chunk,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/project',
+      }, deps);
+
+      const events = getRuntimeTraceEvents().filter((e) => e.context.toolCallId === 'tool-1'
+        || e.context.requestId === 'req-concurrent-trace');
+      const types = events.map((e) => e.type);
+      expect(types).toContain('tool_requested');
+      expect(types).toContain('tool_execution_started');
+      expect(types).toContain('tool_completed');
+      const requestedIdx = types.indexOf('tool_requested');
+      const startedIdx = types.indexOf('tool_execution_started');
+      const completedIdx = types.indexOf('tool_completed');
+      expect(requestedIdx).toBeGreaterThanOrEqual(0);
+      expect(startedIdx).toBeGreaterThan(requestedIdx);
+      expect(completedIdx).toBeGreaterThan(startedIdx);
+    });
+
+    it('serial early-return (policy reject) emits tool_completed terminal', async () => {
+      const deps = createDeps({
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{ id: 'tool-2', name: 'execute_command', arguments: { command: 'echo hi' } }],
+        })),
+        invoke: jest.fn(async (cmd: string) => {
+          if (cmd === 'preview_tool_policy') {
+            return { decision: 'rejected', reason: 'blocked by policy' };
+          }
+          return { content: 'should-not-run', is_error: false };
+        }) as any,
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = '/tmp/project';
+      getSessionHandle('session-1');
+
+      await handleToolBatchRequest({
+        chunk: {
+          type: 'tool_batch_request',
+          requestId: 'req-serial-early',
+          turnId: 'turn-serial-early',
+          tools: [{ id: 'tool-2', name: 'execute_command', arguments: '{"command":"echo hi"}' }],
+          _resolveAll: jest.fn(),
+        } as any,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/project',
+      }, deps);
+
+      const toolEvents = getRuntimeTraceEvents().filter((e) => e.context.toolCallId === 'tool-2');
+      const types = toolEvents.map((e) => e.type);
+      expect(types).toContain('tool_requested');
+      expect(types).toContain('tool_completed');
+      expect(types).not.toContain('tool_execution_started');
+      const completed = toolEvents.find((e) => e.type === 'tool_completed');
+      expect(completed?.reason).toBe('rejected');
+    });
+
+    it('late submit after release records tool_result_discarded (not only console.warn)', async () => {
+      const deps = createDeps({
+        partitionTools: jest.fn(() => ({
+          concurrent: [{ id: 'tool-1', name: 'read_file', arguments: { path: 'a.ts' } }],
+          serial: [],
+        })),
+        createExecutor: () => ({
+          executeBatch: jest.fn(async () => ({
+            results: [{ id: 'tool-1', content: 'ok', is_error: false }],
+            totalExecutionTime: 1,
+            errors: [],
+          })),
+        }),
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = '/tmp/project';
+      const handle = getSessionHandle('session-1');
+
+      // Release before batch finishes submit — simulate race by releasing after tools run.
+      // We release inside a patched submit path by releasing just before handleToolBatchRequest ends:
+      // release after creating handle so emit works, then release mid-flight via setTimeout 0 is flaky.
+      // Instead: run batch, but release runtime before calling handleToolBatchRequest's submit by
+      // releasing in registerArtifacts (invoked before submit).
+      const originalRegister = deps.registerArtifactsFromToolResults;
+      deps.registerArtifactsFromToolResults = jest.fn(async (...args: any[]) => {
+        releaseSessionRuntime('session-1', handle);
+        return originalRegister(...args);
+      }) as any;
+
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        await handleToolBatchRequest({
+          chunk: {
+            type: 'tool_batch_request',
+            requestId: 'req-late-release',
+            turnId: 'turn-late-release',
+            tools: [{ id: 'tool-1', name: 'read_file', arguments: '{"path":"a.ts"}' }],
+            _resolveAll: jest.fn(),
+          } as any,
+          activeSessionId: 'session-1',
+          assistantMessageId: 'assistant-1',
+          get: () => state,
+          set: jest.fn(),
+          ensureSessionWorkDir: async () => '/tmp/project',
+        }, deps);
+
+        const discarded = getRuntimeTraceEvents().filter((e) => e.type === 'tool_result_discarded');
+        expect(discarded.some((e) => e.reason === 'runtime_released_late_submit')).toBe(true);
+        expect(discarded.some((e) => e.context.requestId === 'req-late-release')).toBe(true);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+  });
+
 });
