@@ -118,13 +118,12 @@ pub async fn execute_single_tool(
     ) {
         Ok(value) => value,
         Err(message) => {
-            return Ok(ToolCallResult {
-                id: toolCallId.clone(),
-                name: name.clone(),
-                content: format!("Error: {}", message),
-                is_error: true,
-                error_code: Some("invalid_arguments".to_string()),
-            });
+            return Ok(ToolCallResult::error(
+                toolCallId.clone(),
+                name.clone(),
+                format!("Error: {}", message),
+                Some("invalid_arguments".to_string()),
+            ));
         }
     };
 
@@ -148,13 +147,12 @@ pub async fn execute_single_tool(
     let registry = state.0.lock().await;
     match registry.execute_with_context(&req, session_id_ref).await {
         Ok(result) => Ok(result),
-        Err(error) => Ok(ToolCallResult {
-            id: req.id,
-            name: req.name,
-            content: format!("Error: {}", error),
-            is_error: true,
-            error_code: Some(classify_tool_error_code(&error.to_string()).to_string()),
-        }),
+        Err(error) => Ok(ToolCallResult::error(
+            req.id,
+            req.name,
+            format!("Error: {}", error),
+            Some(classify_tool_error_code(&error.to_string()).to_string()),
+        )),
     }
 }
 

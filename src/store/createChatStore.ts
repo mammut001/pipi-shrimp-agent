@@ -56,6 +56,28 @@ type ChatSetState = (
 
 let runtimeListenerCleanups: RuntimeListenerCleanup[] = [];
 
+function mapToolCompleteStatus(
+  status: string | undefined,
+  isError: boolean,
+): 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected' {
+  switch (status) {
+    case 'success':
+      return 'done';
+    case 'failed':
+      return 'failed';
+    case 'rejected':
+      return 'rejected';
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelled';
+    case 'timed_out':
+    case 'timeout':
+      return 'timed_out';
+    default:
+      return isError ? 'failed' : 'done';
+  }
+}
+
 function clearRuntimeListeners() {
   for (const cleanup of runtimeListenerCleanups) {
     try {
@@ -590,15 +612,22 @@ export const useChatStore = create<ChatState>()(
         });
         runtimeListenerCleanups.push(unlistenToolStart);
 
-        const unlistenToolComplete = await listen<{ session_id: string; tool_call_id: string; name: string; is_error: boolean }>('tool-complete', (event) => {
+        const unlistenToolComplete = await listen<{
+          session_id: string;
+          tool_call_id: string;
+          name: string;
+          is_error: boolean;
+          status?: string;
+        }>('tool-complete', (event) => {
           if (!get().sessions.some((session) => session.id === event.payload.session_id)) {
             return;
           }
+          const stepStatus = mapToolCompleteStatus(event.payload.status, event.payload.is_error);
           resolveSessionTool(
             event.payload.session_id,
             event.payload.tool_call_id,
             event.payload.name,
-            event.payload.is_error ? 'failed' : 'done',
+            stepStatus,
             event.payload.is_error ? `Error: ${event.payload.name} failed` : '',
             set,
             get,

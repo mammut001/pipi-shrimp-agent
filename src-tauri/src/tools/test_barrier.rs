@@ -277,7 +277,7 @@ mod tests {
     use super::*;
     use crate::tools::registry::{register_builtin_tools, ToolRegistry};
     use crate::tools::scheduler::execute_tool_calls;
-    use crate::tools::{ToolCallRequest, ToolExecutionSource};
+    use crate::tools::{ToolCallRequest, ToolExecutionSource, ToolTerminalStatus};
     use once_cell::sync::Lazy;
     use std::sync::Mutex;
     use std::thread;
@@ -515,10 +515,21 @@ mod tests {
         let results_b = handle_b.join().expect("join b");
         assert_eq!(results_a.len(), 1, "session_a should return one tool result");
         assert_eq!(results_b.len(), 1, "session_b should return one tool result");
-        assert!(
-            !results_a[0].is_error,
-            "A should complete as cancelled JSON, not tool error: {}",
+        assert_eq!(
+            results_a[0].status,
+            ToolTerminalStatus::Cancelled,
+            "A terminal status must be Cancelled: {}",
             results_a[0].content
+        );
+        assert!(
+            results_a[0].is_error,
+            "Cancelled terminal status keeps is_error in sync"
+        );
+        assert_eq!(
+            results_b[0].status,
+            ToolTerminalStatus::Success,
+            "B terminal status must be Success: {}",
+            results_b[0].content
         );
         assert!(
             !results_b[0].is_error,
