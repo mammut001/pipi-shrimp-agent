@@ -105,7 +105,8 @@ export function terminalizeInterruptedMessages(
   });
 
   const toolNames = [...new Set(orphans.map((orphan) => orphan.toolCall.name))];
-  const notice = createMessage('assistant', buildToolCancelNoticeContent(toolNames, kind));
+  const toolCallIds = orphans.map((orphan) => orphan.toolCall.id);
+  const notice = createMessage('assistant', buildToolCancelNoticeContent(toolNames, kind, toolCallIds));
   if (typeof options.now === 'number') {
     notice.timestamp = options.now;
   }
@@ -124,23 +125,122 @@ export function terminalizeInterruptedMessages(
   };
 }
 
+/** Durable marker so hydrate can scrub late tool results after DB reload (metadata is not persisted). */
+export const CANCELLED_TOOL_CALL_IDS_MARKER = 'cancelled_tool_call_ids';
+
 export function buildToolCancelNoticeContent(
   toolNames: string[],
   kind: ToolCancelNoticeKind = 'interrupted',
+  toolCallIds: string[] = [],
 ): string {
   const label = toolNames.join(', ') || 'unknown tool';
+  const idClause = toolCallIds.length > 0
+    ? ` [${CANCELLED_TOOL_CALL_IDS_MARKER}: ${toolCallIds.join(',')}]`
+    : '';
   if (kind === 'user_cancel') {
     return (
-      `[Tool run cancelled by user: ${label}. `
+      `[Tool run cancelled by user: ${label}.${idClause} `
       + 'Treat this as a terminal cancel for that attempt — do NOT re-request the same tool '
       + 'or assume it completed. Ask the user before retrying.]'
     );
   }
   return (
-    `[Tool run interrupted before completion (session reloaded): ${label}. `
+    `[Tool run interrupted before completion (session reloaded): ${label}.${idClause} `
     + 'Treat this as a terminal cancel for that attempt — do NOT re-request the same tool '
     + 'or assume it completed. Ask the user before retrying.]'
   );
+}
+
+export function collectCancelledToolCallIdsFromNotices(messages: Message[]): Set<string> {
+  const ids = new Set<string>();
+  const markerRe = new RegExp(`\\[${CANCELLED_TOOL_CALL_IDS_MARKER}:\\s*([^\\]]+)\\]`);
+  for (const message of messages) {
+    if (message.role !== 'assistant' || typeof message.content !== 'string') {
+      continue;
+    }
+    const isCancelNotice = message.content.includes('Tool run cancelled by user')
+      || message.content.includes('Tool run interrupted before completion');
+    if (!isCancelNotice) {
+      continue;
+    }
+    const match = message.content.match(markerRe);
+    if (match) {
+      for (const id of match[1].split(',').map((part) => part.trim()).filter(Boolean)) {
+        ids.add(id);
+      }
+    }
+    const metaIds = message.metadata?.orphanToolCallIds;
+    if (Array.isArray(metaIds)) {
+      for (const id of metaIds) {
+        if (typeof id === 'string' && id.length > 0) {
+          ids.add(id);
+        }
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * After cancel/interrupted notice is durable, a late tool completion may re-upsert
+ * assistant tool_calls + a successful __TOOL_RESULT__. Strip those so next-turn
+ * history cannot treat the cancelled attempt as success.
+ */
+export function scrubLateCompletionsAfterCancel(messages: Message[]): {
+  messages: Message[];
+  changed: boolean;
+  scrubbedById: Map<string, Message>;
+  droppedResultIds: string[];
+} {
+  const cancelledIds = collectCancelledToolCallIdsFromNotices(messages);
+  if (cancelledIds.size === 0) {
+    return {
+      messages,
+      changed: false,
+      scrubbedById: new Map(),
+      droppedResultIds: [],
+    };
+  }
+
+  const scrubbedById = new Map<string, Message>();
+  const droppedResultIds: string[] = [];
+  const nextMessages: Message[] = [];
+
+  for (const message of messages) {
+    const parsed = parseToolResultMessage(message);
+    if (parsed && cancelledIds.has(parsed.toolCallId)) {
+      droppedResultIds.push(message.id);
+      continue;
+    }
+    if (typeof message.tool_call_id === 'string' && cancelledIds.has(message.tool_call_id)) {
+      droppedResultIds.push(message.id);
+      continue;
+    }
+
+    if (message.role === 'assistant' && message.tool_calls?.length) {
+      const remaining = message.tool_calls.filter((toolCall) => !cancelledIds.has(toolCall.id));
+      if (remaining.length !== message.tool_calls.length) {
+        const cleaned: Message = {
+          ...message,
+          content: message.content.trim()
+            || (remaining.length === 0 ? '[Tool execution cancelled before completion.]' : message.content),
+          tool_calls: remaining.length > 0 ? remaining : undefined,
+        };
+        scrubbedById.set(cleaned.id, cleaned);
+        nextMessages.push(cleaned);
+        continue;
+      }
+    }
+
+    nextMessages.push(message);
+  }
+
+  return {
+    messages: nextMessages,
+    changed: scrubbedById.size > 0 || droppedResultIds.length > 0,
+    scrubbedById,
+    droppedResultIds,
+  };
 }
 
 /**
@@ -232,43 +332,83 @@ export async function terminalizeInterruptedToolTurns(
     return false;
   }
 
-  const result = terminalizeInterruptedMessages(session.messages, {
+  // First: strip late successful completions that contradict an existing cancel notice
+  // (IDs survive in notice content; metadata alone is lost across DB reload).
+  const late = scrubLateCompletionsAfterCancel(session.messages);
+  let workingMessages = late.messages;
+  if (late.changed) {
+    const nowLate = Date.now();
+    set((state) => ({
+      sessions: state.sessions.map((candidate) => (
+        candidate.id === sessionId
+          ? {
+              ...candidate,
+              updatedAt: nowLate,
+              messages: workingMessages,
+            }
+          : candidate
+      )),
+    }));
+  }
+
+  const result = terminalizeInterruptedMessages(workingMessages, {
     kind: options.kind ?? 'interrupted',
   });
-  if (!result.changed || !result.notice) {
+  if (!late.changed && (!result.changed || !result.notice)) {
     return false;
   }
 
-  const now = Date.now();
-  set((state) => ({
-    sessions: state.sessions.map((candidate) => (
-      candidate.id === sessionId
-        ? {
-            ...candidate,
-            updatedAt: now,
-            messages: result.messages,
-          }
-        : candidate
-    )),
-  }));
+  if (result.changed && result.notice) {
+    const now = Date.now();
+    set((state) => ({
+      sessions: state.sessions.map((candidate) => (
+        candidate.id === sessionId
+          ? {
+              ...candidate,
+              updatedAt: now,
+              messages: result.messages,
+            }
+          : candidate
+      )),
+    }));
+  }
 
   const persist = options.persist ?? 'db';
   if (persist === 'db') {
-    // Single write path: scrubbed rows + notice together (transactional).
+    if (late.droppedResultIds.length > 0) {
+      try {
+        await safeInvoke('delete_messages_by_ids', { messageIds: late.droppedResultIds });
+      } catch (error) {
+        console.error('Failed to delete late cancelled tool results during hydrate:', error);
+        for (const messageId of late.droppedResultIds) {
+          try {
+            await safeInvoke('db_delete_message', { messageId });
+          } catch (fallbackError) {
+            console.error('Failed to delete late tool result message:', fallbackError);
+          }
+        }
+      }
+    }
+
+    const scrubbedById = new Map<string, Message>([
+      ...late.scrubbedById.entries(),
+      ...result.scrubbedById.entries(),
+    ]);
     const toPersist = [
-      ...result.scrubbedById.values(),
-      result.notice,
+      ...scrubbedById.values(),
+      ...(result.notice ? [result.notice] : []),
     ].map((message) => messageToDb(message, sessionId));
-    try {
-      await safeInvoke('db_save_messages', { messages: toPersist });
-    } catch (error) {
-      console.error('Failed to persist hydrate terminalize (scrub + notice) atomically:', error);
-      // Residual fallback: sequential upserts if bulk command unavailable.
-      for (const message of toPersist) {
-        try {
-          await safeInvoke('db_save_message', { message });
-        } catch (fallbackError) {
-          console.error('Failed to persist message during hydrate terminalize fallback:', fallbackError);
+    if (toPersist.length > 0) {
+      try {
+        await safeInvoke('db_save_messages', { messages: toPersist });
+      } catch (error) {
+        console.error('Failed to persist hydrate terminalize (scrub + notice) atomically:', error);
+        for (const message of toPersist) {
+          try {
+            await safeInvoke('db_save_message', { message });
+          } catch (fallbackError) {
+            console.error('Failed to persist message during hydrate terminalize fallback:', fallbackError);
+          }
         }
       }
     }

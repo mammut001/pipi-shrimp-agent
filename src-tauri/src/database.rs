@@ -1244,6 +1244,9 @@ pub fn init_database() -> SqliteResult<()> {
 
     let conn = Connection::open(&db_path)?;
 
+    // Enforce FK(session_id) so late db_save_messages after db_delete_session
+    // cannot resurrect orphan message rows (SQLite defaults foreign_keys=OFF).
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     ensure_wal_mode(&conn)?;
 
     // Bootstrap the version-tracking table on first run. This must
@@ -2519,4 +2522,127 @@ mod tests {
             assert!(!changed, "no drift should mean no change");
         });
     }
+
+    #[test]
+    fn delete_session_then_late_save_messages_does_not_resurrect() {
+        with_temp_data_dir(|_| {
+            {
+                let mut guard = DATABASE.lock().expect("db lock");
+                *guard = None;
+            }
+            init_database().expect("init database");
+
+            let session = DbSession {
+                id: "sess-del".to_string(),
+                title: "dying".to_string(),
+                created_at: 1,
+                updated_at: 1,
+                cwd: None,
+                project_id: None,
+                model: None,
+                work_dir: None,
+                working_files: None,
+                permission_mode: None,
+                project_dir: None,
+                pipi_output_dir: None,
+                execution_mode: None,
+            };
+            save_session(&session).expect("save session");
+            save_message(&DbMessage {
+                id: "m1".to_string(),
+                session_id: "sess-del".to_string(),
+                role: "assistant".to_string(),
+                content: "calling".to_string(),
+                reasoning: None,
+                attachments: None,
+                artifacts: None,
+                tool_calls: Some(r#"[{"id":"tc-del"}]"#.to_string()),
+                token_usage: None,
+                created_at: 1,
+            })
+            .expect("save message");
+
+            delete_session("sess-del").expect("delete session");
+            assert!(
+                get_messages_for_session("sess-del")
+                    .expect("load")
+                    .is_empty(),
+                "messages must be gone after delete_session"
+            );
+
+            let late = DbMessage {
+                id: "m-late".to_string(),
+                session_id: "sess-del".to_string(),
+                role: "assistant".to_string(),
+                content: "resurrected cancel notice".to_string(),
+                reasoning: None,
+                attachments: None,
+                artifacts: None,
+                tool_calls: None,
+                token_usage: None,
+                created_at: 99,
+            };
+
+            let bulk = save_messages(&[late.clone()]);
+            assert!(
+                bulk.is_err(),
+                "late db_save_messages must fail FK when session is deleted; got {:?}",
+                bulk
+            );
+            assert!(
+                get_messages_for_session("sess-del")
+                    .expect("load after bulk")
+                    .is_empty(),
+                "late save_messages must not resurrect rows"
+            );
+
+            let single = save_message(&late);
+            assert!(
+                single.is_err(),
+                "late db_save_message must fail FK when session is deleted; got {:?}",
+                single
+            );
+            assert!(
+                get_messages_for_session("sess-del")
+                    .expect("load after single")
+                    .is_empty(),
+                "late save_message must not resurrect rows"
+            );
+
+            // Sibling session remains writable.
+            let keep = DbSession {
+                id: "sess-keep".to_string(),
+                title: "keep".to_string(),
+                created_at: 1,
+                updated_at: 1,
+                cwd: None,
+                project_id: None,
+                model: None,
+                work_dir: None,
+                working_files: None,
+                permission_mode: None,
+                project_dir: None,
+                pipi_output_dir: None,
+                execution_mode: None,
+            };
+            save_session(&keep).expect("save sibling session");
+            save_message(&DbMessage {
+                id: "m-keep".to_string(),
+                session_id: "sess-keep".to_string(),
+                role: "user".to_string(),
+                content: "keep me".to_string(),
+                reasoning: None,
+                attachments: None,
+                artifacts: None,
+                tool_calls: None,
+                token_usage: None,
+                created_at: 1,
+            })
+            .expect("save sibling message");
+            let kept = get_messages_for_session("sess-keep").expect("load sibling");
+            assert_eq!(kept.len(), 1);
+            assert_eq!(kept[0].content, "keep me");
+        });
+    }
+
 }

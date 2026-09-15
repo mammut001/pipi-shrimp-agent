@@ -1285,11 +1285,12 @@ export function createChatActionMethods({
         }));
         if (unresolvedTools.length > 0) {
           const toolNames = unresolvedTools.map((tool) => tool.label);
+          const toolCallIds = unresolvedTools.map((tool) => tool.toolCallId);
           await get().addMessageToSession(
             owningSessionId,
             createMessage(
               'assistant',
-              buildToolCancelNoticeContent(toolNames, 'user_cancel'),
+              buildToolCancelNoticeContent(toolNames, 'user_cancel', toolCallIds),
             ),
           );
         }
