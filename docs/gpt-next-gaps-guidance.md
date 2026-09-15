@@ -13,3 +13,8 @@ Principle: **prove + persist + observe**, not redesign. Do not rewrite SessionRu
 - Rewrite SessionRuntime / queryLoop / new SessionManager
 - Actor system / event sourcing / full durable resume of half-run tools
 - OpenTelemetry stack; ChatStore rewrite; multi-provider; big E2E framework
+
+## Next knives (P1)
+
+4. Manual D repeatable product harness — `src/core/runtime/__tests__/manualDProductHarness.test.ts` (+ Rust `test_barrier_tool`)
+5. Interrupted-turn recovery policy — `docs/interrupted-turn-recovery-policy.md` + helpers/tests

@@ -10,3 +10,4 @@ export * from './chatResumeTools';
 export * from './chatSelectors';
 export * from './chatStreaming';
 export * from './chatToolExecution';
+export * from './interruptedTurnRecoveryPolicy';
