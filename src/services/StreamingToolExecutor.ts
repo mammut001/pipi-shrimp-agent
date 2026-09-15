@@ -328,6 +328,23 @@ export class StreamingToolExecutor {
         }
       }
 
+      // Keep preview/execute argument fingerprints aligned for cancellable
+      // tools by assigning executionId before policy preview (same as serial path).
+      if (
+        (request.name === 'execute_command' || request.name === 'ssh_exec')
+        && typeof request.arguments === 'object'
+        && request.arguments
+        && typeof (request.arguments as Record<string, unknown>).executionId !== 'string'
+      ) {
+        request = {
+          ...request,
+          arguments: {
+            ...(request.arguments as Record<string, unknown>),
+            executionId: crypto.randomUUID(),
+          },
+        };
+      }
+
       const preview = await invoke<ToolPolicyPreviewResult>('preview_tool_policy', {
         toolCall: {
           id: request.id,

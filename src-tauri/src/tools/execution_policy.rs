@@ -176,6 +176,39 @@ fn is_command_tool(name: &str) -> bool {
     )
 }
 
+
+fn canonicalize_approval_arguments(arguments: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
+        return arguments.to_string();
+    };
+    canonicalize_json_value(&value).to_string()
+}
+
+fn canonicalize_json_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = serde_json::Map::new();
+            for key in keys {
+                if key == "executionId" || key == "execution_id" {
+                    continue;
+                }
+                out.insert(key.clone(), canonicalize_json_value(&map[key]));
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(canonicalize_json_value).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+fn approval_arguments_match(stored: &str, incoming: &str) -> bool {
+    canonicalize_approval_arguments(stored) == canonicalize_approval_arguments(incoming)
+}
+
 fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
     let token = uuid::Uuid::new_v4().to_string();
     let mut map = APPROVALS.lock().expect("approvals lock poisoned");
@@ -190,7 +223,7 @@ fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
             session_id: session_id.to_string(),
             tool_call_id: req.id.clone(),
             tool_name: req.name.clone(),
-            arguments: req.arguments.clone(),
+            arguments: canonicalize_approval_arguments(&req.arguments),
             work_dir: req.work_dir.clone(),
             source: req.source,
             created_at: now,
@@ -212,14 +245,20 @@ fn consume_matching_approval(req: &ToolCallRequest, session_id: Option<&str>) ->
         return false;
     };
 
+    // AUDIT-FIX [fix-3#2] — TTL eviction on consume as well as store.
+    if Instant::now().duration_since(record.created_at) >= APPROVAL_TTL {
+        approvals.remove(token);
+        return false;
+    }
+
     // AUDIT-FIX [fix-3#2] — Treat the token as one-shot even if the user
     // never confirmed: remove it unconditionally *after* we verified all
-    // fields match. This is unchanged from the previous single-use
-    // behaviour, but is now paired with TTL eviction above.
+    // fields match. Argument compare ignores volatile executionId fields and
+    // JSON key order so preview/execute stringification cannot false-mismatch.
     if record.session_id != expected_session_id
         || record.tool_call_id != req.id
         || record.tool_name != req.name
-        || record.arguments != req.arguments
+        || !approval_arguments_match(&record.arguments, &req.arguments)
         || record.work_dir != req.work_dir
         || record.source != req.source
     {
@@ -787,14 +826,24 @@ pub fn enforce_request_policy(
             if consume_matching_approval(req, session_id) {
                 Ok(())
             } else {
-                Err(AppError::SecurityError(decision.reason.unwrap_or_else(
-                    || {
-                        format!(
-                            "Tool '{}' requires explicit confirmation before execution.",
-                            req.name
-                        )
-                    },
-                )))
+                let base = decision.reason.unwrap_or_else(|| {
+                    format!(
+                        "Tool '{}' requires explicit confirmation before execution.",
+                        req.name
+                    )
+                });
+                let detail = if req.approval_token.as_deref().map(str::trim).filter(|v| !v.is_empty()).is_some() {
+                    format!(
+                        "{} Approval token was present but did not match this session/tool/arguments (or was already used/expired).",
+                        base
+                    )
+                } else {
+                    format!(
+                        "{} Missing approval token after confirmation was required.",
+                        base
+                    )
+                };
+                Err(AppError::SecurityError(detail))
             }
         }
     }
@@ -998,6 +1047,30 @@ mod tests {
         let replay_error = enforce_request_policy(&request, &args, Some("session-1"))
             .expect_err("approval token should be single-use");
         assert!(replay_error.to_string().contains("approval"));
+    }
+
+    #[test]
+    fn approval_token_ignores_execution_id_fingerprint_drift() {
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.work_dir = Some("/tmp/project".to_string());
+        let preview_args = serde_json::json!({
+            "command": "sleep 20 && echo DONE",
+            "executionId": "preview-exec-1"
+        });
+        request.arguments = preview_args.to_string();
+        let preview = preview_request_policy(&request, &preview_args, Some("session-1"))
+            .expect("preview");
+        let token = preview.approval_token.clone().expect("token");
+
+        let execute_args = serde_json::json!({
+            "executionId": "execute-exec-2",
+            "command": "sleep 20 && echo DONE"
+        });
+        request.arguments = execute_args.to_string();
+        request.approval_token = Some(token);
+        enforce_request_policy(&request, &execute_args, Some("session-1"))
+            .expect("executionId drift must not invalidate approval token");
     }
 
     #[test]

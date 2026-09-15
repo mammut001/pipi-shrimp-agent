@@ -481,6 +481,10 @@ async function resolveSerialToolPermission(
     approvalToken?: string | null;
   },
 ): Promise<boolean> {
+  // Frontend auto-approve still returns true here; callers must pass any
+  // backend-issued approvalToken through to execute so RequireConfirmation
+  // can be consumed. Do not gate this on requiresConfirmation or Bypass
+  // write tools will regress to a modal.
   if (canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
     return true;
   }
