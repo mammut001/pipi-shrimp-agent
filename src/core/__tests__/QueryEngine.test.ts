@@ -235,6 +235,73 @@ describe('QueryEngine context overflow fallback', () => {
     );
   });
 
+  it('passes assistant reasoning through on the continuation request after tool_calls', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* reasoningThenToolTurn() {
+        yield { type: 'reasoning_delta', content: 'Need to inspect README first.' };
+        yield {
+          type: 'tool_call',
+          tool: { id: 'tool-reason-1', name: 'read_file', arguments: '{"path":"README.md"}' },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 2, output_tokens: 4 }, model: 'MiniMax-M2.7' },
+        };
+      })
+      .mockImplementationOnce(async function* finalTurn() {
+        yield { type: 'text_delta', content: 'README looks good.' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 3, output_tokens: 2 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const iterator = runChatTurn(
+      'session-reasoning-passback',
+      [{ role: 'user', content: 'check README' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    );
+
+    const events: Array<{ type?: string; content?: string; requestId?: string }> = [];
+    let next = await iterator.next();
+    while (!next.done) {
+      events.push(next.value as { type?: string; content?: string; requestId?: string });
+      if (next.value?.type === 'tool_batch_request') {
+        submitSessionToolResults(
+          'session-reasoning-passback',
+          (next.value as { requestId: string }).requestId,
+          [{ id: 'tool-reason-1', content: 'README contents' }],
+        );
+      }
+      next = await iterator.next();
+    }
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'reasoning_delta', content: 'Need to inspect README first.' }),
+      expect.objectContaining({ type: 'tool_batch_request' }),
+      expect.objectContaining({ type: 'text_delta', content: 'README looks good.' }),
+      expect.objectContaining({ type: 'turn_complete' }),
+    ]));
+
+    expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(2);
+    const continuationOptions = mockBuildResolvedChatRequest.mock.calls[1]?.[1] as {
+      messages: Array<Record<string, unknown>>;
+    };
+    const assistantWithTools = continuationOptions.messages.find(
+      (message) => message.role === 'assistant' && Array.isArray(message.tool_calls),
+    );
+    expect(assistantWithTools).toMatchObject({
+      role: 'assistant',
+      reasoning: 'Need to inspect README first.',
+      tool_calls: [
+        expect.objectContaining({ id: 'tool-reason-1', name: 'read_file' }),
+      ],
+    });
+  });
+
   it('retries once when the model emits text-form tool calls instead of structured tool_calls', async () => {
     mockInvokeRustAPIStream
       .mockImplementationOnce(async function* malformed() {

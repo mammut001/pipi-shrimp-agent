@@ -213,6 +213,9 @@ export async function* runQueryEngineTurn(
       attachments: m.attachments,
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id,
+      ...(typeof m.reasoning === 'string' && m.reasoning.trim().length > 0
+        ? { reasoning: m.reasoning }
+        : {}),
     })), resolvedConfig!);
     const effectiveNoTools = Boolean(options?.noTools || reserveFinalResponseRound);
     const effectiveOptions: RunChatTurnOptions = {
@@ -364,6 +367,9 @@ export async function* runQueryEngineTurn(
       role: 'assistant',
       content: assistantMessageContent,
       tool_calls: pendingToolCalls.length > 0 ? pendingToolCalls : undefined,
+      ...(assistantMessageReasoning.trim().length > 0
+        ? { reasoning: assistantMessageReasoning }
+        : {}),
     };
     currentMessages.push(assistantMessage);
 
