@@ -8,6 +8,12 @@
  * (terminalizeInterruptedMessages on cancel; tool-result append on B success)
  * so soak / callers can assert real runtime-shaped histories — not synthetic
  * fixtures alone.
+ *
+ * ID invariant (GPT FIX-FIRST): for each tool, assistant `tool_calls[].id`
+ * === channel `requestId` used by `waitFor` / `submitSessionToolResults`
+ * === submitted `ToolExecutionResult.id` === history `__TOOL_RESULT__` /
+ * `tool_call_id`. Single-tool harness uses reqA/reqB as that shared id.
+ * `toolAId` / `toolBId` options are tool *names* only.
  */
 import {
   getSessionHandle,
@@ -30,7 +36,9 @@ export type ManualDProductHarnessOptions = {
   sessionB: string;
   reqA?: string;
   reqB?: string;
+  /** Tool *name* for A (not the channel/tool-call id — that is reqA). */
   toolAId?: string;
+  /** Tool *name* for B (not the channel/tool-call id — that is reqB). */
   toolBId?: string;
   cancelReason?: string;
   /** Seed for message ids / timestamps (soak iteration). */
@@ -91,8 +99,9 @@ export async function runManualDProductHarness(
   const iteration = options.iteration ?? 0;
   const reqA = options.reqA ?? `manual-d-req-a-${iteration}`;
   const reqB = options.reqB ?? `manual-d-req-b-${iteration}`;
-  const toolAId = options.toolAId ?? 'tool-a';
-  const toolBId = options.toolBId ?? 'tool-b';
+  // toolAId/toolBId options are tool *names* (product ToolCall.name).
+  const toolNameA = options.toolAId ?? 'tool-a';
+  const toolNameB = options.toolBId ?? 'tool-b';
   const cancelReason = options.cancelReason ?? 'Manual D Stop A';
   const releaseOnSuccess = options.releaseOnSuccess !== false;
   const clearTrace = options.clearTrace !== false;
@@ -116,10 +125,12 @@ export async function runManualDProductHarness(
   runtimeA.markWaitingTool(turnA);
   runtimeB.markWaitingTool(turnB);
 
-  const toolCallIdA = `tc-harness-a-${iteration}-${turnA}`;
-  const toolCallIdB = `tc-harness-b-${iteration}-${turnB}`;
-  const tcA: ToolCall = { id: toolCallIdA, name: toolAId, arguments: '{}' };
-  const tcB: ToolCall = { id: toolCallIdB, name: toolBId, arguments: '{}' };
+  // Unify tool-call id with channel requestId (single-tool batch).
+  // History ownership / result pairing keys off this same id.
+  const toolCallIdA = reqA;
+  const toolCallIdB = reqB;
+  const tcA: ToolCall = { id: toolCallIdA, name: toolNameA, arguments: '{}' };
+  const tcB: ToolCall = { id: toolCallIdB, name: toolNameB, arguments: '{}' };
 
   // Product mid-wait store shape (dangling tool_calls while channel waits).
   let historyA = midWaitHistory(`harness A iter=${iteration}`, tcA, iteration, 0);
@@ -129,7 +140,7 @@ export async function runManualDProductHarness(
     await gateA.wait();
     return runtimeA.getToolResultChannel().waitFor(
       reqA,
-      [toolAId],
+      [toolCallIdA],
       { turnId: turnA },
     );
   })();
@@ -137,7 +148,7 @@ export async function runManualDProductHarness(
     await gateB.wait();
     return runtimeB.getToolResultChannel().waitFor(
       reqB,
-      [toolBId],
+      [toolCallIdB],
       { turnId: turnB },
     );
   })();
@@ -182,7 +193,7 @@ export async function runManualDProductHarness(
   const lateAAccepted = submitSessionToolResults(
     sessionA,
     reqA,
-    [{ id: toolAId, content: lateContent }],
+    [{ id: toolCallIdA, content: lateContent }],
     turnA,
   );
   if (lateAAccepted === true) {
@@ -202,7 +213,7 @@ export async function runManualDProductHarness(
   const bAccepted = submitSessionToolResults(
     sessionB,
     reqB,
-    [{ id: toolBId, content: 'b-ok' }],
+    [{ id: toolCallIdB, content: 'b-ok' }],
     turnB,
   );
 

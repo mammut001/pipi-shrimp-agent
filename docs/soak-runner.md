@@ -40,12 +40,20 @@ Each `runSoakIteration()`:
 
 `buildSoakScenarioHistories()` remains a **unit helper** for isolated history-invariant tests only. The default soak path must not rely on it.
 
+### Tool-call ID pairing (harness)
+
+Single-tool Manual D harness unifies IDs so history ownership matches the channel:
+
+- assistant `tool_calls[].id` === `waitFor` / `submitSessionToolResults` `requestId` === submitted `ToolExecutionResult.id`
+- B `__TOOL_RESULT__` / `tool_call_id` use that same id
+- `toolAId` / `toolBId` harness options are tool **names** only (not channel keys)
+
 ### Message-history invariants (A/B)
 
 | Session | History source (default) | Shape | Checks |
 | --- | --- | --- | --- |
 | **A** (cancelled) | Manual D harness + product terminalize | scrubbed tool_calls + cancel notice | **0** orphans; notice is cancel/interrupted (not success); no `late-a-should-discard` |
-| **B** (success) | Manual D harness | assistant `tool-b` + matching `__TOOL_RESULT__:…:b-ok` | **0** orphans; terminalize no-op; successful completion present |
+| **B** (success) | Manual D harness | assistant tool_call + matching `__TOOL_RESULT__:<reqB>:b-ok` | **0** orphans; terminalize no-op; successful completion; `tool_call_id` === waited/submitted id |
 
 Callers may pass `historyA` / `historyB` to assert against injected snapshots (`historySource: 'injected'`).
 

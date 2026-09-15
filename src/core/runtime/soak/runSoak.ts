@@ -345,7 +345,7 @@ export async function runSoakIteration(
         'B submit rejected after A cancel',
       );
     } else {
-      const expected = [{ id: 'tool-b', content: 'b-ok' }];
+      const expected = [{ id: harness.toolCallIdB, content: 'b-ok' }];
       if (JSON.stringify(harness.bResults) !== JSON.stringify(expected)) {
         pushFail(
           failures,
@@ -394,6 +394,45 @@ export async function runSoakIteration(
     }
     if (bEvents.some((e) => e.type === 'turn_terminal')) {
       pushFail(failures, 'no_cross_session_cancel', 'B unexpectedly terminal');
+    }
+
+    // ID pairing (harness path): history tool_call id === waited/submitted requestId.
+    if (historySource === 'manual_d_harness') {
+      if (harness.toolCallIdA !== harness.reqA || harness.toolCallIdB !== harness.reqB) {
+        pushFail(
+          failures,
+          'scenario',
+          `harness toolCallId/requestId mismatch: A ${harness.toolCallIdA}/${harness.reqA} B ${harness.toolCallIdB}/${harness.reqB}`,
+        );
+      }
+      const bPair = historyB.find(
+        (m) => typeof m.tool_call_id === 'string'
+          && String(m.content).includes('__TOOL_RESULT__'),
+      );
+      if (!bPair || bPair.tool_call_id !== harness.reqB) {
+        pushFail(
+          failures,
+          'scenario',
+          `B history tool_call_id ${bPair?.tool_call_id ?? 'missing'} !== waited id ${harness.reqB}`,
+        );
+      } else if (!String(bPair.content).includes(`__TOOL_RESULT__:${harness.reqB}:`)) {
+        pushFail(
+          failures,
+          'scenario',
+          `B __TOOL_RESULT__ content missing waited id ${harness.reqB}`,
+        );
+      }
+      const assistantB = historyB.find(
+        (m) => m.role === 'assistant' && Array.isArray(m.tool_calls) && (m.tool_calls?.length ?? 0) > 0,
+      );
+      const midWaitId = assistantB?.tool_calls?.[0]?.id;
+      if (midWaitId !== undefined && midWaitId !== harness.reqB) {
+        pushFail(
+          failures,
+          'scenario',
+          `B assistant tool_calls[].id ${midWaitId} !== waited id ${harness.reqB}`,
+        );
+      }
     }
 
     // Real harness-produced (or injected) A/B message-history checks.
