@@ -173,5 +173,12 @@ ChatGPT (logged-in box Chrome) accepted `d4e5ad7` but rejected over-loose `7ced7
 - Allow smoke retest after `5fd1b53`: **PASS** (`ALLOW_OK2`).
 - Manual D still Draft/inconclusive; PR remains Draft.
 
+
+### Runtime +1★ batch (2026-09-15)
+Pushed after GPT 皮皮虾/后端架构对比 scoring:
+- `5d7e06c` — TurnState, channel turnId binding, fail-closed metadata, TS concurrent barrier
+- `25eecf6` — host-neutral sealed ownership: cancellable from metadata, owner-required release, narrowed SessionHandle, queryLoop zero `@/store`, runTurn integration barrier
+GPT interim stars after `5d7e06c`: Runtime ★★★★ / Session ★★★★ / Tool ★★★½. Ready still gated on Manual D deterministic PASS via real execution path.
+
 ### Merge recommendation (orchestrator)
 **Keep PR #73 Draft.** Manual A/C/E pass; long-running Allow smoke now passes after `d4e5ad7`. Manual D remains inconclusive due to dual-chat timing/Stop harness limits, not a reproduced SessionRuntime cross-session failure. Re-run D with a cleaner overlap, then reconsider Ready.
