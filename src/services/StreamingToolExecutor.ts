@@ -61,6 +61,10 @@ export interface ToolResult {
   id: string;
   content: string;
   is_error: boolean;
+  /** Authoritative Rust terminal status when present (`success`/`failed`/...). */
+  status?: string;
+  terminal_status?: string;
+  error_code?: string | null;
   error_message?: string;
   execution_time_ms?: number;
   output_truncated?: boolean;
@@ -599,6 +603,11 @@ export class StreamingToolExecutor {
             id: result.id,
             content,
             is_error: Boolean(result.is_error),
+            status: typeof result.status === 'string' ? result.status : undefined,
+            terminal_status: typeof result.terminal_status === 'string'
+              ? result.terminal_status
+              : undefined,
+            error_code: typeof result.error_code === 'string' ? result.error_code : null,
             error_message: result.is_error ? content : undefined,
             execution_time_ms: elapsed,
           } satisfies ToolResult));

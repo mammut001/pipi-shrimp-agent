@@ -194,16 +194,78 @@ function buildGetCurrentWorkspaceResult(workDir: string | null): string {
     : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
 }
 
-function resolveToolStepStatus(
+export type ToolTerminalStatus =
+  | 'success'
+  | 'failed'
+  | 'rejected'
+  | 'cancelled'
+  | 'timed_out';
+
+export type ToolStepStatus = 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected';
+
+/** Map Rust `ToolTerminalStatus` snake_case values onto Chat step statuses. */
+export function mapTerminalStatusToStepStatus(
+  terminalStatus: string | null | undefined,
+): ToolStepStatus | null {
+  if (!terminalStatus) {
+    return null;
+  }
+  switch (terminalStatus) {
+    case 'success':
+      return 'done';
+    case 'failed':
+      return 'failed';
+    case 'rejected':
+      return 'rejected';
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelled';
+    case 'timed_out':
+    case 'timeout':
+      return 'timed_out';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Prefer the authoritative native `status` / `terminal_status` field when present.
+ * Fall back to JSON/content heuristics only for legacy results that omit it.
+ */
+export function resolveToolStepStatus(
   content: string,
   fallbackFailed: boolean,
-): 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected' {
+  terminalStatus?: string | null,
+): ToolStepStatus {
+  const fromNative = mapTerminalStatusToStepStatus(terminalStatus);
+  if (fromNative) {
+    return fromNative;
+  }
+
   try {
-    const parsed = JSON.parse(content) as { status?: string; error_kind?: string };
-    if (parsed.status === 'cancelled') {
+    const parsed = JSON.parse(content) as {
+      status?: string;
+      error_kind?: string;
+      terminal_status?: string;
+      timed_out?: boolean;
+    };
+    // Legacy content heuristics: only cancel / timeout / reject — not process "failed".
+    const legacyTerminal = parsed.terminal_status
+      ?? (parsed.status === 'cancelled'
+        || parsed.status === 'canceled'
+        || parsed.status === 'timed_out'
+        || parsed.status === 'timeout'
+        || parsed.status === 'rejected'
+        ? parsed.status
+        : null);
+    const fromLegacy = mapTerminalStatusToStepStatus(legacyTerminal);
+    if (fromLegacy && fromLegacy !== 'done' && fromLegacy !== 'failed') {
+      return fromLegacy;
+    }
+    if (parsed.status === 'cancelled' || parsed.status === 'canceled') {
       return 'cancelled';
     }
-    if (parsed.status === 'timed_out') {
+    if (parsed.status === 'timed_out' || parsed.status === 'timeout' || parsed.timed_out === true) {
       return 'timed_out';
     }
     if (parsed.error_kind === 'permission_denied') {
@@ -393,7 +455,11 @@ async function executeConcurrentTools(
       ...batchResult.results.map((result) => {
         const req = executableConcurrent.find((candidate) => candidate.id === result.id);
         if (req) {
-          const finalStatus = resolveToolStepStatus(result.content, result.is_error);
+          const finalStatus = resolveToolStepStatus(
+            result.content,
+            result.is_error,
+            result.status ?? result.terminal_status ?? null,
+          );
           resolveSessionTool(
             activeSessionId,
             result.id,
@@ -867,6 +933,7 @@ async function executeSerialTool(
 
   let toolDidFail = false;
   let finalStatus: 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected' = 'done';
+  let nativeTerminalStatus: string | null = null;
   try {
     if (tool.name === 'agent_tool') {
       toolResultContent = await executeAgentTool(tool, effectiveArgs, activeSessionId, workDir, deps);
@@ -887,6 +954,8 @@ async function executeSerialTool(
       const nativeResult = await deps.invoke<{
         content: string;
         is_error: boolean;
+        status?: string;
+        terminal_status?: string;
       }>('execute_single_tool', {
         toolCallId: tool.id,
         name: tool.name,
@@ -899,8 +968,9 @@ async function executeSerialTool(
       });
       toolResultContent = nativeResult.content;
       toolDidFail = Boolean(nativeResult.is_error);
+      nativeTerminalStatus = nativeResult.status ?? nativeResult.terminal_status ?? null;
     }
-    finalStatus = resolveToolStepStatus(toolResultContent, toolDidFail);
+    finalStatus = resolveToolStepStatus(toolResultContent, toolDidFail, nativeTerminalStatus);
     uiStore.updateTaskStep(tool.id, finalStatus);
     resolveSessionTool(activeSessionId, tool.id, tool.name, finalStatus, toolResultContent, set, get);
   } catch (error) {

@@ -716,6 +716,7 @@ describe('chatToolExecution', () => {
         return {
           content: '{"status":"cancelled","stdout":"","stderr":""}',
           is_error: true,
+          status: 'cancelled',
         };
       }
 
@@ -766,6 +767,72 @@ describe('chatToolExecution', () => {
       id: 'tool-7',
       content: '{"status":"cancelled","stdout":"","stderr":""}',
     }));
+  });
+
+  it('prefers native terminal status over content heuristics', async () => {
+    const resolved = jest.fn();
+    const updateTaskStep = jest.fn();
+    const invoke = jest.fn(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-status-1',
+          toolName: 'execute_command',
+          decision: 'allowed',
+        };
+      }
+
+      if (command === 'execute_single_tool') {
+        return {
+          // Content looks successful; authoritative status says timed_out.
+          content: '{"stdout":"partial","stderr":"","exit_code":0}',
+          is_error: true,
+          status: 'timed_out',
+        };
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const deps = createDeps({
+      uiStore: { getState: () => ({
+        activeSkill: null,
+        setActiveSkill: jest.fn(),
+        setTaskProgress: jest.fn(),
+        updateTaskStep,
+        showQuestionnaire: jest.fn(async () => 'user response'),
+        waitForPermission: jest.fn(async () => true),
+        addNotification: jest.fn(),
+      }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-status-1',
+          name: 'execute_command',
+          arguments: { command: 'sleep 99', cwd: '/tmp/workspace' },
+        }],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-status-1',
+        name: 'execute_command',
+        arguments: JSON.stringify({ command: 'sleep 99', cwd: '/tmp/workspace' }),
+      }],
+      _resolveAll: resolved,
+    };
+
+    await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    expect(updateTaskStep).toHaveBeenCalledWith('tool-status-1', 'timed_out');
   });
 
   describe('Bypass + Ask mode semantics', () => {

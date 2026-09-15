@@ -118,19 +118,19 @@ async fn execute_single(
                         "tool_call_id": tool_result.id,
                         "name": tool_result.name,
                         "is_error": tool_result.is_error,
+                        "status": tool_result.status,
                     }),
                 );
             }
             tool_result
         }
         Err(e) => {
-            let error_result = ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
-                content: format!("Error: {}", e),
-                is_error: true,
-                error_code: Some(classify_tool_error_code(&e.to_string()).to_string()),
-            };
+            let error_result = ToolCallResult::error(
+                req.id.clone(),
+                req.name.clone(),
+                format!("Error: {}", e),
+                Some(classify_tool_error_code(&e.to_string()).to_string()),
+            );
             if let Some(w) = window {
                 let _ = w.emit(
                     "tool-error",

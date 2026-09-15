@@ -128,16 +128,15 @@ impl ToolRegistry {
             .filter_map(serde_json::Value::as_str)
             .collect::<Vec<_>>()
             .join("; ");
-        Some(ToolCallResult {
-            id: req.id.clone(),
-            name: req.name.clone(),
-            content: format!(
+        Some(ToolCallResult::error(
+            req.id.clone(),
+            req.name.clone(),
+            format!(
                 "Schema validation failed for tool '{}': {}",
                 req.name, error_msgs
             ),
-            is_error: true,
-            error_code: Some("schema_validation".to_string()),
-        })
+            Some("schema_validation".to_string()),
+        ))
     }
 
     /// Run a sync registry handler with already-validated args.
@@ -156,33 +155,29 @@ impl ToolRegistry {
         }
 
         if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
-            return Ok(ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
-                content: format!(
+            return Ok(ToolCallResult::error(
+                req.id.clone(),
+                req.name.clone(),
+                format!(
                     "Error: bootstrap tool '{}' requires execute_with_context()",
                     req.name
                 ),
-                is_error: true,
-                error_code: Some("invalid_arguments".to_string()),
-            });
+                Some("invalid_arguments".to_string()),
+            ));
         }
 
         match (entry.handler)(args) {
-            Ok(content) => Ok(ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
+            Ok(content) => Ok(ToolCallResult::success(
+                req.id.clone(),
+                req.name.clone(),
                 content,
-                is_error: false,
-                error_code: None,
-            }),
-            Err(e) => Ok(ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
-                content: format!("Error: {}", e),
-                is_error: true,
-                error_code: Some("internal_error".to_string()),
-            }),
+            )),
+            Err(e) => Ok(ToolCallResult::error(
+                req.id.clone(),
+                req.name.clone(),
+                format!("Error: {}", e),
+                Some("internal_error".to_string()),
+            )),
         }
     }
 
@@ -227,27 +222,23 @@ impl ToolRegistry {
             };
 
             return match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
-                Ok(Some(content)) => Ok(ToolCallResult {
-                    id: req.id.clone(),
-                    name: req.name.clone(),
+                Ok(Some(content)) => Ok(ToolCallResult::success(
+                    req.id.clone(),
+                    req.name.clone(),
                     content,
-                    is_error: false,
-                    error_code: None,
-                }),
-                Ok(None) => Ok(ToolCallResult {
-                    id: req.id.clone(),
-                    name: req.name.clone(),
-                    content: format!("Error: Unknown tool: {}", req.name),
-                    is_error: true,
-                    error_code: Some("not_found".to_string()),
-                }),
-                Err(error) => Ok(ToolCallResult {
-                    id: req.id.clone(),
-                    name: req.name.clone(),
-                    content: format!("Error: {}", error),
-                    is_error: true,
-                    error_code: Some(error.code.clone()),
-                }),
+                )),
+                Ok(None) => Ok(ToolCallResult::error(
+                    req.id.clone(),
+                    req.name.clone(),
+                    format!("Error: Unknown tool: {}", req.name),
+                    Some("not_found".to_string()),
+                )),
+                Err(error) => Ok(ToolCallResult::error(
+                    req.id.clone(),
+                    req.name.clone(),
+                    format!("Error: {}", error),
+                    Some(error.code.clone()),
+                )),
             };
         }
 
