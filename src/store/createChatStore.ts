@@ -37,7 +37,7 @@ import {
   resolveSessionTool,
   syncSessionToolRuntimeToCurrentSession,
 } from './chat/toolRuntimeState';
-import { scrubDanglingToolCalls } from './chat/scrubDanglingToolCalls';
+import { scrubDanglingToolCalls, terminalizeInterruptedToolTurnsForSessions } from './chat/scrubDanglingToolCalls';
 import {
   getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper,
   getSessionProjectDir as resolveSessionProjectDirHelper,
@@ -515,6 +515,10 @@ export const useChatStore = create<ChatState>()(
         );
 
         set({ sessions });
+        // GPT P0 knife 1 — crash/reload: terminalize orphan tool_calls from
+        // persisted history only (no toolRuntimeState). Scrub + durable notice
+        // so the next runChatTurn does not see an open tool request.
+        await terminalizeInterruptedToolTurnsForSessions(set, get, { kind: 'interrupted' });
         // AUDIT-FIX [fix-22#1] — Use the safe localStorage helper. The
         // legacy → new key migration is now handled by `safeMigrateKey`.
         const current = safeGetItem<string>(CURRENT_SESSION_ID_STORAGE_KEY);
@@ -662,6 +666,7 @@ export const useChatStore = create<ChatState>()(
           }
           if (stored) {
             set({ sessions: (JSON.parse(stored) as Session[]).map(hydrateSessionModes) });
+            await terminalizeInterruptedToolTurnsForSessions(set, get, { kind: 'interrupted' });
           }
         } catch (localStorageError) {
           console.error('Failed to load from localStorage:', localStorageError);
