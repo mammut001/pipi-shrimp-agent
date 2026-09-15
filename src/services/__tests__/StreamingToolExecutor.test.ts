@@ -56,6 +56,7 @@ describe('partitionToolsByMetadata', () => {
 describe('StreamingToolExecutor.executeBatch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    invalidateToolRuntimeMetadataCache();
     useSettingsStore.setState({ windowsShellProfile: 'auto' });
     mockRunPreToolUseHooks.mockResolvedValue({ approved: true });
     mockResolveActiveAgentConfig.mockReturnValue({
@@ -416,6 +417,152 @@ describe('StreamingToolExecutor.executeBatch', () => {
       id: 'tool-bypass',
       is_error: false,
       content: '{"status":"succeeded","stdout":"42 src/services/autoresearch/loopEngine.ts"}',
+    }));
+  });
+
+  it('injects executionId for tools marked cancellable in runtime metadata', async () => {
+    mockInvoke.mockImplementation(async (command: string, payload?: any) => {
+      if (command === 'get_available_tools') {
+        return [
+          { name: 'execute_command', cancellable: true },
+          { name: 'ssh_exec', cancellable: true },
+          { name: 'read_file', cancellable: false },
+        ];
+      }
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: payload?.toolCall?.id ?? 'unused',
+          toolName: payload?.toolCall?.name ?? 'unused',
+          decision: 'allowed',
+        };
+      }
+      if (command === 'execute_tool_batch') {
+        const args = JSON.parse(payload.toolCalls[0].arguments as string);
+        expect(args.executionId).toEqual(expect.any(String));
+        expect(args.executionId.length).toBeGreaterThan(0);
+        // Preview must have seen the same executionId (fingerprint alignment).
+        const previewCall = mockInvoke.mock.calls.find(
+          ([cmd, p]) => cmd === 'preview_tool_policy' && (p as any)?.toolCall?.id === 'tool-cancel',
+        );
+        expect(previewCall).toBeDefined();
+        expect(JSON.parse((previewCall?.[1] as any).toolCall.arguments as string).executionId).toBe(args.executionId);
+        return [{
+          id: 'tool-cancel',
+          name: 'execute_command',
+          content: '{"status":"succeeded","stdout":"ok"}',
+          is_error: false,
+        }];
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      { id: 'tool-cancel', name: 'execute_command', arguments: { command: 'sleep 1', cwd: '/tmp' } },
+    ], {
+      sessionId: 'session-cancel',
+      workDir: '/tmp',
+      source: 'assistant_tool_call',
+    });
+
+    expect(result.results[0]).toEqual(expect.objectContaining({
+      id: 'tool-cancel',
+      is_error: false,
+    }));
+  });
+
+  it('does not inject executionId for tools without cancellable metadata', async () => {
+    mockInvoke.mockImplementation(async (command: string, payload?: any) => {
+      if (command === 'get_available_tools') {
+        return [
+          { name: 'write_file', cancellable: false },
+          { name: 'execute_command', cancellable: true },
+        ];
+      }
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-write',
+          toolName: 'write_file',
+          decision: 'allowed',
+        };
+      }
+      if (command === 'execute_tool_batch') {
+        const args = JSON.parse(payload.toolCalls[0].arguments as string);
+        expect(args.executionId).toBeUndefined();
+        expect(args).toEqual({ path: 'a.txt', content: 'hi' });
+        return [{
+          id: 'tool-write',
+          name: 'write_file',
+          content: '{"status":"succeeded"}',
+          is_error: false,
+        }];
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    await executor.executeBatch([
+      { id: 'tool-write', name: 'write_file', arguments: { path: 'a.txt', content: 'hi' } },
+    ], {
+      sessionId: 'session-write',
+      workDir: '/tmp',
+      source: 'assistant_tool_call',
+    });
+  });
+
+  it('preserves an existing executionId and keeps approval path intact', async () => {
+    mockInvoke.mockImplementation(async (command: string, payload?: any) => {
+      if (command === 'get_available_tools') {
+        return [{ name: 'ssh_exec', cancellable: true }];
+      }
+      if (command === 'preview_tool_policy') {
+        const args = JSON.parse(payload.toolCall.arguments as string);
+        expect(args.executionId).toBe('preexisting-exec-id');
+        return {
+          toolCallId: 'tool-ssh',
+          toolName: 'ssh_exec',
+          decision: 'awaiting_confirmation',
+          reason: 'Remote command requires approval.',
+          approvalToken: 'approval-ssh',
+        };
+      }
+      if (command === 'execute_tool_batch') {
+        expect(payload.toolCalls[0].approvalToken).toBe('approval-ssh');
+        const args = JSON.parse(payload.toolCalls[0].arguments as string);
+        expect(args.executionId).toBe('preexisting-exec-id');
+        return [{
+          id: 'tool-ssh',
+          name: 'ssh_exec',
+          content: '{"status":"succeeded","stdout":"ok"}',
+          is_error: false,
+        }];
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const requestPermission = jest.fn(async () => true);
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      {
+        id: 'tool-ssh',
+        name: 'ssh_exec',
+        arguments: { command: 'uptime', executionId: 'preexisting-exec-id' },
+      },
+    ], {
+      sessionId: 'session-ssh',
+      source: 'assistant_tool_call',
+      requestPermission,
+    });
+
+    expect(requestPermission).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'tool-ssh',
+      name: 'ssh_exec',
+      approvalToken: 'approval-ssh',
+      arguments: expect.stringContaining('"executionId":"preexisting-exec-id"'),
+    }));
+    expect(result.results[0]).toEqual(expect.objectContaining({
+      id: 'tool-ssh',
+      is_error: false,
     }));
   });
 });

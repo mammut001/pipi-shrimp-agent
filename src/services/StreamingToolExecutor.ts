@@ -20,6 +20,7 @@ import {
 import {
   AUTORESEARCH_BOOTSTRAP_TOOL_NAMES,
 } from '@/services/tools/autoresearchBootstrap';
+import { loadToolRuntimeMetadata } from '@/services/tools/toolMetadata';
 import {
   DEFAULT_TOOL_EXECUTION_SOURCE,
   canAutoApproveTool,
@@ -264,6 +265,15 @@ export class StreamingToolExecutor {
     const executableRequests: ToolRequest[] = [];
     const allowedToolSet = allowedTools ? new Set(allowedTools) : null;
 
+    // Same pattern as chatToolExecution: executionId injection is driven by
+    // Rust tool runtime metadata (cancellable), not a hardcoded tool-name list.
+    let toolMetadataMap = new Map<string, { cancellable?: boolean }>();
+    try {
+      toolMetadataMap = await loadToolRuntimeMetadata();
+    } catch {
+      // Fail closed for cancellation: without metadata, do not inject executionId.
+    }
+
     for (let request of normalizedToolRequests) {
       if (allowedToolSet && !allowedToolSet.has(request.name)) {
         prevalidatedResults.push(buildPolicyErrorResult(
@@ -330,11 +340,16 @@ export class StreamingToolExecutor {
 
       // Keep preview/execute argument fingerprints aligned for cancellable
       // tools by assigning executionId before policy preview (same as serial path).
+      const existingExecutionId = typeof request.arguments === 'object' && request.arguments
+        ? (request.arguments as Record<string, unknown>).executionId
+        : undefined;
+      const hasExecutionId = typeof existingExecutionId === 'string'
+        && existingExecutionId.trim().length > 0;
       if (
-        (request.name === 'execute_command' || request.name === 'ssh_exec')
+        toolMetadataMap.get(request.name)?.cancellable === true
         && typeof request.arguments === 'object'
         && request.arguments
-        && typeof (request.arguments as Record<string, unknown>).executionId !== 'string'
+        && !hasExecutionId
       ) {
         request = {
           ...request,
