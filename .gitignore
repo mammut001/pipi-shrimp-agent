@@ -97,3 +97,6 @@ scripts/*.sh
 /terminals/
 /agent-tools/
 docs/architecture/refactor-plan.md
+
+# Soak failure bundles (generated)
+/artifacts/soak/pipi-soak-failure-*
