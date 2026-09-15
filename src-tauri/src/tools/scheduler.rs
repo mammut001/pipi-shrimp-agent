@@ -209,7 +209,7 @@ mod tests {
         let mut reg = ToolRegistry::new();
         reg.register(
             "read_file",
-            Arc::new(|_| Ok("content".to_string())),
+            Arc::new(|_| Ok(crate::tools::ToolHandlerOutput::success("content"))),
             ToolMetadata {
                 name: "read_file".to_string(),
                 description: "Read a file".to_string(),
@@ -220,7 +220,7 @@ mod tests {
         );
         reg.register(
             "write_file",
-            Arc::new(|_| Ok("ok".to_string())),
+            Arc::new(|_| Ok(crate::tools::ToolHandlerOutput::success("ok"))),
             ToolMetadata {
                 name: "write_file".to_string(),
                 description: "Write a file".to_string(),
@@ -231,7 +231,7 @@ mod tests {
         );
         reg.register(
             "list_files",
-            Arc::new(|_| Ok("files".to_string())),
+            Arc::new(|_| Ok(crate::tools::ToolHandlerOutput::success("files"))),
             ToolMetadata {
                 name: "list_files".to_string(),
                 description: "List files".to_string(),

@@ -97,17 +97,6 @@ impl ToolTerminalStatus {
         }
     }
 
-    /// Map UI / content step strings onto a terminal status.
-    pub fn from_content_status(value: &str) -> Option<Self> {
-        match value {
-            "success" | "succeeded" | "done" | "ok" => Some(Self::Success),
-            "failed" | "error" | "fail" => Some(Self::Failed),
-            "rejected" | "permission_denied" => Some(Self::Rejected),
-            "cancelled" | "canceled" => Some(Self::Cancelled),
-            "timed_out" | "timeout" | "timedout" => Some(Self::TimedOut),
-            _ => None,
-        }
-    }
 }
 
 /// Map a structured `error_code` onto a terminal status.
@@ -121,38 +110,74 @@ pub fn terminal_status_from_error_code(code: Option<&str>) -> ToolTerminalStatus
     }
 }
 
-/// Infer cancelled / timed_out (and similar) from structured tool JSON content.
-///
-/// Handlers such as `execute_command` and `test_barrier_tool` return Ok(content)
-/// with an embedded `status` field; Chat previously had to parse that itself.
-pub fn infer_terminal_status_from_content(content: &str) -> Option<ToolTerminalStatus> {
-    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
-    if let Some(status) = parsed.get("status").and_then(|v| v.as_str()) {
-        // Only promote cancel / timeout / reject from embedded JSON.
-        // Process tools may embed `"status":"failed"` for non-zero exit while
-        // still returning Ok(content) with ToolCallResult.is_error=false.
-        match ToolTerminalStatus::from_content_status(status) {
-            Some(ToolTerminalStatus::Cancelled) => return Some(ToolTerminalStatus::Cancelled),
-            Some(ToolTerminalStatus::TimedOut) => return Some(ToolTerminalStatus::TimedOut),
-            Some(ToolTerminalStatus::Rejected) => return Some(ToolTerminalStatus::Rejected),
-            _ => {}
+/// Authoritative sync-handler outcome. Status must be set at the known
+/// success/failure site — never inferred by sniffing JSON content.
+#[derive(Debug, Clone)]
+pub struct ToolHandlerOutput {
+    pub content: String,
+    pub status: ToolTerminalStatus,
+    pub error_code: Option<String>,
+}
+
+impl ToolHandlerOutput {
+    pub fn success(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            status: ToolTerminalStatus::Success,
+            error_code: None,
         }
     }
-    if parsed
-        .get("error_kind")
-        .and_then(|v| v.as_str())
-        .is_some_and(|k| k == "permission_denied")
-    {
-        return Some(ToolTerminalStatus::Rejected);
+
+    pub fn terminal(
+        content: impl Into<String>,
+        status: ToolTerminalStatus,
+        error_code: Option<String>,
+    ) -> Self {
+        Self {
+            content: content.into(),
+            status,
+            error_code,
+        }
     }
-    if parsed
-        .get("timed_out")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return Some(ToolTerminalStatus::TimedOut);
+}
+
+fn error_code_for_terminal_status(status: ToolTerminalStatus) -> Option<String> {
+    match status {
+        ToolTerminalStatus::Cancelled => Some("cancelled".to_string()),
+        ToolTerminalStatus::TimedOut => Some("timed_out".to_string()),
+        ToolTerminalStatus::Rejected => Some("permission_denied".to_string()),
+        ToolTerminalStatus::Failed => Some("internal_error".to_string()),
+        ToolTerminalStatus::Success => None,
     }
-    None
+}
+
+/// Map a typed process/execution status onto ToolTerminalStatus at the call site.
+///
+/// Non-zero command exit (`Failed`) remains `Success` for ToolCallResult so
+/// Chat keeps treating delivered process output as a completed tool step.
+pub fn terminal_status_from_execution_status(
+    status: crate::models::ToolExecutionStatus,
+) -> ToolTerminalStatus {
+    match status {
+        crate::models::ToolExecutionStatus::Cancelled => ToolTerminalStatus::Cancelled,
+        crate::models::ToolExecutionStatus::TimedOut => ToolTerminalStatus::TimedOut,
+        crate::models::ToolExecutionStatus::Rejected => ToolTerminalStatus::Rejected,
+        _ => ToolTerminalStatus::Success,
+    }
+}
+
+/// Build handler output from a typed ExecuteCodeResponse (no content sniffing).
+pub fn handler_output_from_execute_code(
+    response: crate::models::ExecuteCodeResponse,
+) -> anyhow::Result<ToolHandlerOutput> {
+    let status = terminal_status_from_execution_status(response.status.clone());
+    let content = serde_json::to_string(&response)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize command result: {}", e))?;
+    Ok(ToolHandlerOutput::terminal(
+        content,
+        status,
+        error_code_for_terminal_status(status),
+    ))
 }
 
 /// Tool execution result
@@ -188,18 +213,19 @@ impl ToolCallResult {
         }
     }
 
-    /// Successful handler output. Inspects structured content for cancel/timeout.
+    /// Successful handler output. Always Success — callers that know Cancelled /
+    /// TimedOut / Rejected must use [`Self::from_handler_output`] or [`Self::new`].
     pub fn success(id: impl Into<String>, name: impl Into<String>, content: String) -> Self {
-        let status =
-            infer_terminal_status_from_content(&content).unwrap_or(ToolTerminalStatus::Success);
-        let error_code = match status {
-            ToolTerminalStatus::Cancelled => Some("cancelled".to_string()),
-            ToolTerminalStatus::TimedOut => Some("timed_out".to_string()),
-            ToolTerminalStatus::Rejected => Some("permission_denied".to_string()),
-            ToolTerminalStatus::Failed => Some("internal_error".to_string()),
-            ToolTerminalStatus::Success => None,
-        };
-        Self::new(id, name, content, status, error_code)
+        Self::new(id, name, content, ToolTerminalStatus::Success, None)
+    }
+
+    /// Build from an explicit handler outcome (status set at the error/success site).
+    pub fn from_handler_output(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        output: ToolHandlerOutput,
+    ) -> Self {
+        Self::new(id, name, output.content, output.status, output.error_code)
     }
 
     /// Error / policy / validation outcome. Status is derived from `error_code`.
@@ -391,27 +417,62 @@ mod terminal_status_tests {
     }
 
     #[test]
-    fn cancelled_content_sets_cancelled_status() {
+    fn success_ignores_embedded_cancelled_content() {
         let content = r#"{"status":"cancelled","barrier_id":"b1"}"#.to_string();
         let result = ToolCallResult::success("1", "test_barrier_tool", content);
+        assert_eq!(result.status, ToolTerminalStatus::Success);
+        assert!(!result.is_error);
+        assert!(result.error_code.is_none());
+    }
+
+    #[test]
+    fn handler_output_sets_cancelled_without_content_sniff() {
+        let output = ToolHandlerOutput::terminal(
+            r#"{"status":"cancelled","barrier_id":"b1"}"#.to_string(),
+            ToolTerminalStatus::Cancelled,
+            Some("cancelled".to_string()),
+        );
+        let result = ToolCallResult::from_handler_output("1", "test_barrier_tool", output);
         assert_eq!(result.status, ToolTerminalStatus::Cancelled);
         assert!(result.is_error);
         assert_eq!(result.error_code.as_deref(), Some("cancelled"));
     }
 
     #[test]
-    fn timed_out_content_and_flag_set_timed_out_status() {
-        let content = r#"{"status":"timed_out","stdout":"","stderr":""}"#.to_string();
-        let result = ToolCallResult::success("1", "execute_command", content);
+    fn handler_output_sets_timed_out_from_execution_status() {
+        let response = crate::models::ExecuteCodeResponse {
+            execution_id: "e1".to_string(),
+            status: crate::models::ToolExecutionStatus::TimedOut,
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: -1,
+            cwd: None,
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            output_truncated: false,
+            sanitized: true,
+            timed_out: true,
+        };
+        let output = handler_output_from_execute_code(response).expect("serialize");
+        assert_eq!(output.status, ToolTerminalStatus::TimedOut);
+        assert_eq!(output.error_code.as_deref(), Some("timed_out"));
+        // Content still mentions timed_out, but status came from the typed field.
+        assert!(output.content.contains("timed_out"));
+        let result = ToolCallResult::from_handler_output("1", "execute_command", output);
         assert_eq!(result.status, ToolTerminalStatus::TimedOut);
         assert!(result.is_error);
+    }
 
-        let flagged = ToolCallResult::success(
-            "2",
-            "execute_command",
-            r#"{"timed_out":true,"stdout":""}"#.to_string(),
+    #[test]
+    fn non_zero_exit_execution_failed_stays_tool_success() {
+        assert_eq!(
+            terminal_status_from_execution_status(crate::models::ToolExecutionStatus::Failed),
+            ToolTerminalStatus::Success
         );
-        assert_eq!(flagged.status, ToolTerminalStatus::TimedOut);
+        assert_eq!(
+            terminal_status_from_execution_status(crate::models::ToolExecutionStatus::Succeeded),
+            ToolTerminalStatus::Success
+        );
     }
 
     #[test]

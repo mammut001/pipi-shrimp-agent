@@ -1,5 +1,5 @@
 use crate::commands::code::execute_bash_for_tool;
-use crate::models::ExecuteCodeResponse;
+use crate::tools::{handler_output_from_execute_code, ToolHandlerOutput};
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -193,12 +193,7 @@ fn build_upload_command(
     ))
 }
 
-fn serialize_execute_response(response: ExecuteCodeResponse) -> anyhow::Result<String> {
-    serde_json::to_string(&response)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize SSH execution result: {}", e))
-}
-
-pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<String> {
+pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<ToolHandlerOutput> {
     let cfg = parse_ssh_config(args)?;
     let command = args
         .get("command")
@@ -233,7 +228,7 @@ pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<String> {
         None,
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    serialize_execute_response(result)
+    handler_output_from_execute_code(result)
 }
 
 pub fn execute_ssh_upload(args: &Value) -> anyhow::Result<String> {
