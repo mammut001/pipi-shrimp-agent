@@ -15,6 +15,7 @@ import {
   getSessionRuntimeForTests,
   releaseSessionRuntime,
   releaseSessionRuntimeForTests,
+  submitSessionToolResults,
 } from '../SessionRuntime';
 import { createTauriRuntimeHost } from '../tauriRuntimeHost';
 
@@ -171,5 +172,61 @@ describe('RuntimeTraceSink ring buffer', () => {
     expect(api.size()).toBeGreaterThanOrEqual(1);
     expect(api.dumpJsonLines()).toContain('turn_started');
     expect(target.__PIPI_RUNTIME_TRACE__).toBe(api);
+  });
+
+  it('late submit after runtime release records tool_result_discarded into shared sink', () => {
+    clearRuntimeTraceSink();
+    const sessionId = 'late-submit-released';
+    releaseSessionRuntimeForTests(sessionId);
+    const handle = getSessionHandle(sessionId, createTauriRuntimeHost());
+    const runtime = getSessionRuntimeForTests(sessionId)!;
+    const turnId = runtime.startTurn();
+    releaseSessionRuntime(sessionId, handle);
+
+    const accepted = submitSessionToolResults(
+      sessionId,
+      'req-after-release',
+      [{ id: 'tool-1', content: 'too-late' }],
+      turnId,
+    );
+    expect(accepted).toBe(false);
+
+    const discarded = getRuntimeTraceEvents().filter((e) => e.type === 'tool_result_discarded');
+    expect(discarded.length).toBeGreaterThanOrEqual(1);
+    const last = discarded[discarded.length - 1]!;
+    expect(last.reason).toBe('runtime_released_late_submit');
+    expect(last.context.sessionId).toBe(sessionId);
+    expect(last.context.requestId).toBe('req-after-release');
+    expect(last.context.turnId).toBe(turnId);
+    expect(last.context.runtimeId).toBe('released');
+  });
+
+  it('runTurn early abort still emits turn_terminal', async () => {
+    const events: RuntimeTraceEvent[] = [];
+    const host: RuntimeHost = {
+      cancelSubprocess: () => {},
+      trace: (event) => {
+        events.push(event);
+        sharedRuntimeTraceSink.record(event);
+      },
+    };
+    const runtime = new SessionRuntime('early-return-terminal', host);
+    const controller = new AbortController();
+    controller.abort('pre-aborted');
+
+    const yielded: unknown[] = [];
+    for await (const event of runtime.runTurn({
+      initialMessages: [],
+      systemPrompt: 'sys',
+      options: { signal: controller.signal },
+    })) {
+      yielded.push(event);
+    }
+
+    expect(yielded).toEqual([]);
+    const terminal = events.filter((e) => e.type === 'turn_terminal');
+    expect(terminal.length).toBeGreaterThanOrEqual(1);
+    expect(terminal.some((e) => String(e.reason).includes('pre-aborted'))).toBe(true);
+    expect(runtime.getState()).toBe('idle');
   });
 });

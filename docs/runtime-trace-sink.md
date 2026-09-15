@@ -16,8 +16,19 @@
 | `tool_requested` | `markWaitingTool` + chat tool start |
 | `tool_execution_started` / `tool_completed` / `tool_cancelled` | chat tool execution / cancel paths |
 | `tool_cancel_requested` | `SessionRuntime.cancel`, `stopGeneration` |
-| `tool_result_discarded` | late / mismatched `ToolResultChannel` submit (`reason` e.g. `tombstoned_late_result`) |
+| `tool_result_discarded` | late / mismatched `ToolResultChannel` submit (`reason` e.g. `tombstoned_late_result`); also `runtime_released_late_submit` when submit happens after release |
 | `runtime_released` | `releaseSessionRuntime` |
+
+### Concurrent vs serial tool chains
+
+Both paths emit the same greppable identity spine per tool call:
+
+`tool_requested` → `tool_execution_started` → `tool_completed` / `tool_cancelled`
+
+- **Concurrent** (`executeConcurrentTools`): full chain for executed tools; blocked/invalid tools still close with `tool_requested` → `tool_completed` (no start).
+- **Serial early returns** (policy reject, permission deny, hook block, local helpers): always emit a terminal `tool_completed` / `tool_cancelled` after `tool_requested` so chains do not hang open.
+- **`runTurn` early abort** (pre-aborted signal): still emits `turn_terminal` into the host/shared sink.
+- **Late submit after release**: `submitSessionToolResults` records `tool_result_discarded` with `reason: runtime_released_late_submit` into `sharedRuntimeTraceSink` (not console-only).
 
 Common fields: `sessionId`, `runtimeId`, `turnId`, `requestId`, `toolCallId`, `executionId`, `reason`.
 

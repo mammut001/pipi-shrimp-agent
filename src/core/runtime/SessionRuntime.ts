@@ -13,6 +13,7 @@ import type {
   RuntimeTraceEventName,
   RuntimeTraceExtras,
 } from './RuntimeTrace';
+import { recordRuntimeTraceEvent } from './RuntimeTraceSink';
 
 export type RuntimeTurnId = string;
 
@@ -547,6 +548,22 @@ export function submitSessionToolResults(
 ): boolean {
   const handle = sessionHandles.get(sessionId);
   if (!handle) {
+    // Runtime already released — channel discard sink cannot fire; use shared sink.
+    try {
+      recordRuntimeTraceEvent({
+        type: 'tool_result_discarded',
+        at: Date.now(),
+        context: {
+          sessionId,
+          runtimeId: 'released',
+          requestId,
+          ...(turnId !== undefined ? { turnId } : {}),
+        },
+        reason: 'runtime_released_late_submit',
+      });
+    } catch {
+      // Trace must never break submit
+    }
     return false;
   }
   return handle.submitToolResults(requestId, results, turnId);
