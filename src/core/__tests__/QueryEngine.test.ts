@@ -47,6 +47,15 @@ jest.mock('@/services/tools/toolResultSanitizer', () => ({
 import { runChatTurn } from '../QueryEngine';
 import { submitSessionToolResults } from '../runtime';
 
+/** Submit tool results using requestId + turnId from a tool_batch_request event. */
+function submitBatchFromEvent(
+  sessionId: string,
+  event: { requestId: string; turnId?: string },
+  results: Array<{ id: string; content: string }>,
+) {
+  return submitSessionToolResults(sessionId, event.requestId, results, event.turnId);
+}
+
 describe('QueryEngine context overflow fallback', () => {
   const resolvedConfig = {
     configId: 'cfg-1',
@@ -220,7 +229,7 @@ describe('QueryEngine context overflow fallback', () => {
 
     const toolBatchEvent = await iterator.next();
     expect(toolBatchEvent.value.type).toBe('tool_batch_request');
-    submitSessionToolResults('session-2', toolBatchEvent.value.requestId, [{ id: 'tool-1', content: 'README contents' }]);
+    submitBatchFromEvent('session-2', toolBatchEvent.value, [{ id: 'tool-1', content: 'README contents' }]);
 
     let completeEvent = await iterator.next();
     while (completeEvent.value?.type === 'text_delta') {
@@ -270,9 +279,9 @@ describe('QueryEngine context overflow fallback', () => {
     while (!next.done) {
       events.push(next.value as { type?: string; content?: string; requestId?: string });
       if (next.value?.type === 'tool_batch_request') {
-        submitSessionToolResults(
+        submitBatchFromEvent(
           'session-reasoning-passback',
-          (next.value as { requestId: string }).requestId,
+          next.value as { requestId: string; turnId?: string },
           [{ id: 'tool-reason-1', content: 'README contents' }],
         );
       }
@@ -557,7 +566,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     expect(batch.value.type).toBe('tool_batch_request');
     // Simulate the consumer rejecting both tool calls (e.g. Ask
     // mode outer guard, dangerous-command hook, etc.).
-    submitSessionToolResults('session-ask-1', batch.value.requestId, [
+    submitBatchFromEvent('session-ask-1', batch.value, [
       { id: 'tool-1', content: 'Error: Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.' },
       { id: 'tool-2', content: 'Error: Blocked: Attempting to delete root filesystem' },
     ]);
@@ -612,7 +621,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
 
     const batch = await iterator.next();
     expect(batch.value.type).toBe('tool_batch_request');
-    submitSessionToolResults('session-recover-1', batch.value.requestId, [
+    submitBatchFromEvent('session-recover-1', batch.value, [
       {
         id: 'tool-1',
         content: "Error: Failed to read file '/Users/dogecoin/Documents/GitHub/FocusApp/README.md': os error 2",
@@ -804,7 +813,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     expect(status.value.type).toBe('status_update');
     const batch = await iterator.next();
     expect(batch.value.type).toBe('tool_batch_request');
-    submitSessionToolResults('session-final-summary', batch.value.requestId, [{ id: 'tool-1', content: 'README contents' }]);
+    submitBatchFromEvent('session-final-summary', batch.value, [{ id: 'tool-1', content: 'README contents' }]);
 
     // Drain the final summary turn.
     let event = await iterator.next();
@@ -896,7 +905,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
 
     const batch = await iterator.next();
     expect(batch.value.type).toBe('tool_batch_request');
-    submitSessionToolResults('session-plan-retry', batch.value.requestId, [
+    submitBatchFromEvent('session-plan-retry', batch.value, [
       { id: 'tool-1', content: 'Error: This tool is not allowed in Plan mode (read-only inspection and plan docs only).' },
     ]);
 
@@ -963,7 +972,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     const toolBatchEvent = await iterator.next();
     const nextPromise = iterator.next();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    submitSessionToolResults('session-cleanup-test', toolBatchEvent.value.requestId, [{ id: 'tool-cleanup-1', content: 'Content' }]);
+    submitBatchFromEvent('session-cleanup-test', toolBatchEvent.value, [{ id: 'tool-cleanup-1', content: 'Content' }]);
 
     let completeEvent = await nextPromise;
     while (completeEvent.value?.type === 'text_delta') {

@@ -166,8 +166,10 @@ export interface RunChatTurnOptions extends RuntimeTurnContext {
 function createToolRequestId(sessionId: string, round: number, turnId?: string): string {
   const randomId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const turnPart = turnId ? `:${turnId}` : '';
-  return `${sessionId}${turnPart}:tool-batch:${round}:${randomId}`;
+  // turnId from SessionRuntime is already `${sessionId}:${uuid}`; use it as the
+  // stable prefix so requestIds are not double-prefixed with sessionId.
+  const prefix = turnId ?? sessionId;
+  return `${prefix}:tool-batch:${round}:${randomId}`;
 }
 
 function errorMessage(error: unknown, fallback = 'Chat request failed'): string {

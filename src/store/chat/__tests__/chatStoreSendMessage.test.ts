@@ -368,6 +368,7 @@ describe('chatStore sendMessage integration', () => {
       false,
       undefined,
       expect.objectContaining({ noTools: true }),
+      undefined,
     );
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
       ['user', 'hello world'],
@@ -472,6 +473,7 @@ describe('chatStore sendMessage integration', () => {
         allowedTools: ['read_file', 'list_files', 'search_files'],
         signal: expect.any(AbortSignal),
       }),
+      pipiOutputDir,
     );
     // Two-folder model: `savePlanModeDoc` is called with the PiPi
     // Output Folder path, NOT the Project Folder (`/tmp/pipi/session-1`
@@ -637,6 +639,7 @@ describe('chatStore sendMessage integration', () => {
         allowedTools: ['read_file', 'list_files', 'search_files'],
         signal: expect.any(AbortSignal),
       }),
+      undefined,
     );
     expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
   });
@@ -736,6 +739,7 @@ describe('chatStore sendMessage integration', () => {
       false,
       undefined,
       expect.objectContaining({ noTools: true }),
+      undefined,
     );
   });
 
