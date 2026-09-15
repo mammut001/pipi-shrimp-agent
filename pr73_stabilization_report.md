@@ -140,6 +140,11 @@ Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for th
 | Manual D (dual concurrent sessions; cancel A while B runs) | **INCONCLUSIVE (harness)** | Could not keep two long-running tools overlapping: long-running shell approvals clicked Allow but still rejected; multi-file reads finished too fast to Stop mid-flight. No cross-session leak observed in the runs that did complete, but cancel-isolation under true concurrency was not demonstrated. |
 | Unbound Project Folder tool denial | **EXPECTED (not a #73 bug)** | `read_file` / workspace tools correctly return `permission_denied` when no Project Folder is bound. |
 
+### Approval resume fix (2026-09-14 night)
+- Root cause addressed: approval token fingerprint compared raw argument JSON strings, so `executionId` / key-order drift between preview and execute could make Allow look like a fresh policy denial (`Assistant tool calls need approval for long-running commands`).
+- Fix: canonicalize approval argument fingerprints (stable key order, strip `executionId`/`execution_id`), TTL-check on consume, clearer mismatch errors; StreamingToolExecutor assigns `executionId` before preview; built-in DeepSeek catalog now includes `deepseek-flash`.
+- Note: `agy` stalled on Antigravity auth for this batch; fix landed directly on the branch.
+
 ### DeepSeek-related fixes landed on this branch (to unblock tool retests)
 1. `006cdc6` / `91dd670` — pass/serialize assistant `reasoning` as `reasoning_content` on tool continuation.
 2. `47dbd27` — keep `reasoning_content` passback even when `supports_reasoning` capability is false (Custom + `deepseek-flash`); treat flash/v4 as tools+reasoning.
