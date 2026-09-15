@@ -1,12 +1,13 @@
 /**
  * Deterministic soak runner — loops Manual D–style dual-session scenario.
  *
- * Reuses Manual D barriers + SessionRuntime / ToolResultChannel latches.
- * Does not rewrite SessionRuntime / queryLoop; no Playwright; no OTel.
+ * Reuses Manual D product harness (#83) + SessionRuntime / ToolResultChannel
+ * latches. Does not rewrite SessionRuntime / queryLoop; no Playwright; no OTel.
  *
- * Orphan / cancelled-as-success invariants assert against real session A/B
- * message histories (produced by the iteration, or accepted via options) —
- * not only runtime latch/mock state.
+ * Default path: A/B message histories come from the real Manual D harness
+ * (product terminalize on A cancel + successful tool result on B) — not from
+ * buildSoakScenarioHistories() synthetic fixtures. That helper remains for
+ * isolated history-invariant unit tests only.
  */
 import {
   getSessionHandle,
@@ -14,11 +15,11 @@ import {
   releaseSessionRuntimeForTests,
   submitSessionToolResults,
 } from '../SessionRuntime';
+import { getRuntimeTraceEvents } from '../RuntimeTraceSink';
 import {
-  clearRuntimeTraceSink,
-  getRuntimeTraceEvents,
-} from '../RuntimeTraceSink';
-import { createManualDBarrier, awaitCondition } from '../__tests__/manualDBarrier';
+  runManualDProductHarness,
+  harnessSessionEvents,
+} from '../__tests__/manualDProductHarness';
 import {
   listOrphanToolCalls,
   terminalizeInterruptedMessages,
@@ -43,7 +44,8 @@ function pushFail(
 }
 
 /**
- * Scenario-accurate A/B message histories for one soak iteration.
+ * Scenario fixture histories for **isolated** orphan/terminalize unit tests.
+ * NOT used by the default runSoakIteration path (that uses Manual D harness).
  *
  * A: cancelled mid-tool → dangling tool_call (orphan until terminalize).
  * B: successful tool path → tool_call + matching tool result (no orphans).
@@ -88,9 +90,21 @@ export function buildSoakScenarioHistories(iteration: number): {
   };
 }
 
+function historyHasCancelNotice(history: Message[]): boolean {
+  return history.some((m) => (
+    typeof m.content === 'string'
+    && (/cancelled by user|interrupted before completion/i.test(m.content))
+  ));
+}
+
 /**
- * Assert orphan / cancelled-as-success invariants on real A/B message histories.
- * Returns remaining orphan count on A after terminalize (expect 0).
+ * Assert orphan / cancelled-as-success invariants on A/B message histories.
+ *
+ * Accepts either:
+ * - Pre-terminalize A (orphans present) — unit-helper / injected fixtures
+ * - Post-product-cancel A (scrubbed + cancel notice) — Manual D harness path
+ *
+ * Returns remaining orphan count on A after ensuring terminal shape (expect 0).
  */
 export function assertSoakHistoryInvariants(
   historyA: Message[],
@@ -98,21 +112,46 @@ export function assertSoakHistoryInvariants(
   failures: SoakAssertionFailure[],
   iteration: number,
 ): number {
-  // --- Session A (cancelled): must have orphans before terminalize ---
   const orphansABefore = listOrphanToolCalls(historyA);
-  if (orphansABefore.length === 0) {
+  const alreadyTerminal = orphansABefore.length === 0 && historyHasCancelNotice(historyA);
+
+  let terminalizedA = {
+    messages: historyA,
+    notice: null as Message | null,
+    changed: false,
+  };
+  let orphansAAfter = orphansABefore;
+
+  if (alreadyTerminal) {
+    // Harness / product Stop path already scrubbed + appended cancel notice.
+    orphansAAfter = listOrphanToolCalls(historyA);
+    terminalizedA = {
+      messages: historyA,
+      notice: historyA.find((m) => (
+        typeof m.content === 'string'
+        && (/cancelled by user|interrupted before completion/i.test(m.content))
+      )) ?? null,
+      changed: false,
+    };
+  } else if (orphansABefore.length === 0) {
     pushFail(
       failures,
       'no_orphan_tool_calls',
-      'session A history expected orphan tool_calls after cancel (none found)',
+      'session A history expected orphan tool_calls after cancel, or a cancel/interrupted notice (none found)',
     );
+  } else {
+    const result = terminalizeInterruptedMessages(historyA, {
+      kind: 'user_cancel',
+      now: iteration,
+    });
+    terminalizedA = {
+      messages: result.messages,
+      notice: result.notice,
+      changed: result.changed,
+    };
+    orphansAAfter = listOrphanToolCalls(result.messages);
   }
 
-  const terminalizedA = terminalizeInterruptedMessages(historyA, {
-    kind: 'user_cancel',
-    now: iteration,
-  });
-  const orphansAAfter = listOrphanToolCalls(terminalizedA.messages);
   if (orphansAAfter.length > 0) {
     pushFail(
       failures,
@@ -129,6 +168,16 @@ export function assertSoakHistoryInvariants(
       'session A terminalize produced no cancel notice despite orphans',
     );
   }
+  if (!terminalizedA.notice && alreadyTerminal === false && orphansABefore.length === 0) {
+    // already flagged missing orphans/notice above
+  } else if (alreadyTerminal && !terminalizedA.notice) {
+    pushFail(
+      failures,
+      'no_cancelled_as_success',
+      'session A harness history missing cancel/interrupted notice',
+    );
+  }
+
   const noticeContent = terminalizedA.notice?.content ?? '';
   if (terminalizedA.notice && /tool result|completed successfully/i.test(noticeContent)) {
     pushFail(failures, 'no_cancelled_as_success', 'session A terminal notice looks like success');
@@ -144,10 +193,8 @@ export function assertSoakHistoryInvariants(
     );
   }
 
-  // If A history already resolved the cancelled tool_call as a successful result,
-  // orphansABefore was empty (flagged above) — that is cancelled-as-success pollution.
-  // Extra guard: any __TOOL_RESULT__ for A's tool ids without a cancel notice path.
-  if (orphansABefore.length === 0) {
+  // If A history wrongly resolves cancelled tool as success (no orphans, no notice).
+  if (orphansABefore.length === 0 && !alreadyTerminal) {
     const resolvedLikeSuccess = historyA.some(
       (m) => typeof m.tool_call_id === 'string' && m.tool_call_id.length > 0,
     );
@@ -158,6 +205,15 @@ export function assertSoakHistoryInvariants(
         'session A history resolves tool_calls as success after cancel (no orphans)',
       );
     }
+  }
+
+  // Late A discard must not appear in A history.
+  if (historyA.some((m) => String(m.content).includes('late-a-should-discard'))) {
+    pushFail(
+      failures,
+      'no_stale_replay_late_a_discarded',
+      'session A history contains late discarded tool result content',
+    );
   }
 
   // --- Session B (success): must have no orphans; must not need terminalize ---
@@ -181,12 +237,30 @@ export function assertSoakHistoryInvariants(
     );
   }
 
+  // B must show successful tool completion (not empty / not cancel-only).
+  const bHasToolResult = historyB.some(
+    (m) => typeof m.tool_call_id === 'string'
+      && m.tool_call_id.length > 0
+      && typeof m.content === 'string'
+      && m.content.includes('__TOOL_RESULT__'),
+  );
+  if (!bHasToolResult) {
+    pushFail(
+      failures,
+      'no_cross_session_cancel',
+      'session B history missing successful tool completion (__TOOL_RESULT__)',
+    );
+  }
+
   return orphansAAfter.length;
 }
 
 /**
- * One Manual D–style iteration:
+ * One Manual D–style iteration via the real product harness:
  * A/B wait → cancel A → B success → late A discarded → optional follow-up turn on A.
+ *
+ * Histories default to harness-produced (product terminalize / tool result).
+ * Callers may still inject historyA/historyB for negative tests.
  *
  * On failure, leaves session runtimes live so the caller can dump diagnostics.
  * On success, releases both sessions for the next iteration.
@@ -202,65 +276,52 @@ export async function runSoakIteration(
   const reqA = `soak-req-a-${iteration}`;
   const reqB = `soak-req-b-${iteration}`;
 
-  releaseSessionRuntimeForTests(sessionA);
-  releaseSessionRuntimeForTests(sessionB);
-  clearRuntimeTraceSink();
-
   let orphanCount = 0;
+  let historyA: Message[] | undefined;
+  let historyB: Message[] | undefined;
+  let historySource: SoakIterationResult['historySource'];
 
   try {
+    // Real Manual D / SessionRuntime product harness (not synthetic fixtures).
+    const harness = await runManualDProductHarness({
+      sessionA,
+      sessionB,
+      reqA,
+      reqB,
+      cancelReason: `Soak Stop A iter=${iteration}`,
+      iteration,
+      releaseOnSuccess: false,
+      clearTrace: true,
+    });
+
+    historySource = harness.historySource;
+    historyA = options.historyA ?? harness.historyA;
+    historyB = options.historyB ?? harness.historyB;
+    if (options.historyA || options.historyB) {
+      historySource = 'injected';
+    }
+
     const handleA = getSessionHandle(sessionA);
     const handleB = getSessionHandle(sessionB);
     const runtimeA = getSessionRuntimeForTests(sessionA)!;
-    const runtimeB = getSessionRuntimeForTests(sessionB)!;
+    const turnA = harness.turnA;
+    const turnB = harness.turnB;
 
-    const gateA = createManualDBarrier();
-    const gateB = createManualDBarrier();
-
-    const turnA = runtimeA.startTurn();
-    const turnB = runtimeB.startTurn();
-    runtimeA.markWaitingTool(turnA);
-    runtimeB.markWaitingTool(turnB);
-
-    const waitAPromise = (async () => {
-      await gateA.wait();
-      return runtimeA.getToolResultChannel().waitFor(
-        reqA,
-        ['tool-a'],
-        { turnId: turnA },
-      );
-    })();
-    const waitBPromise = (async () => {
-      await gateB.wait();
-      return runtimeB.getToolResultChannel().waitFor(
-        reqB,
-        ['tool-b'],
-        { turnId: turnB },
-      );
-    })();
-
-    if (handleA.getState() !== 'waiting_tool' || handleB.getState() !== 'waiting_tool') {
+    // --- Runtime latch / abort invariants from harness outcome ---
+    if (harness.aWaitResolvedOk) {
       pushFail(
         failures,
-        'scenario',
-        `expected both waiting_tool; A=${handleA.getState()} B=${handleB.getState()}`,
+        'no_cancelled_as_success',
+        'A wait resolved successfully after cancel (cancelled-as-success)',
+      );
+    } else if (harness.aAbortName !== 'AbortError') {
+      pushFail(
+        failures,
+        'no_cancelled_as_success',
+        `A wait rejected with ${harness.aAbortName}, expected AbortError`,
       );
     }
 
-    gateA.release();
-    gateB.release();
-    await awaitCondition(
-      () => runtimeA.getToolResultChannel().listPendingRequestIds().includes(reqA)
-        && runtimeB.getToolResultChannel().listPendingRequestIds().includes(reqB),
-      'both channels pending',
-    );
-
-    // Cancel A while B is still waiting.
-    handleA.cancelActiveTurn(`Soak Stop A iter=${iteration}`);
-
-    if (handleA.isTurnActive(turnA)) {
-      pushFail(failures, 'no_cross_session_cancel', 'A turn still active after cancel');
-    }
     if (handleA.getState() !== 'terminal') {
       pushFail(
         failures,
@@ -268,82 +329,28 @@ export async function runSoakIteration(
         `A state after cancel: ${handleA.getState()} (expected terminal)`,
       );
     }
-    if (!handleB.isTurnActive(turnB) || handleB.getState() !== 'waiting_tool') {
-      pushFail(
-        failures,
-        'no_cross_session_cancel',
-        `B disrupted after A cancel: active=${handleB.isTurnActive(turnB)} state=${handleB.getState()}`,
-      );
-    }
 
-    try {
-      await waitAPromise;
-      pushFail(
-        failures,
-        'no_cancelled_as_success',
-        'A wait resolved successfully after cancel (cancelled-as-success)',
-      );
-    } catch (err) {
-      const name = err && typeof err === 'object' && 'name' in err
-        ? String((err as { name: unknown }).name)
-        : undefined;
-      if (name !== 'AbortError') {
-        pushFail(
-          failures,
-          'no_cancelled_as_success',
-          `A wait rejected with ${name}, expected AbortError`,
-        );
-      }
-    }
-
-    // Late A must discard only — no stale replay.
-    const lateA = submitSessionToolResults(
-      sessionA,
-      reqA,
-      [{ id: 'tool-a', content: 'late-a-should-discard' }],
-      turnA,
-    );
-    if (lateA !== false) {
+    if (harness.lateAAccepted) {
       pushFail(
         failures,
         'no_stale_replay_late_a_discarded',
-        `late A submit returned ${lateA}, expected false`,
+        'late A submit returned true, expected false',
       );
     }
 
-    // Release B — must succeed independently (no cross-session cancel).
-    const bAccepted = submitSessionToolResults(
-      sessionB,
-      reqB,
-      [{ id: 'tool-b', content: 'b-ok' }],
-      turnB,
-    );
-    if (bAccepted !== true) {
+    if (!harness.bAccepted) {
       pushFail(
         failures,
         'no_cross_session_cancel',
-        `B submit rejected (${bAccepted}) after A cancel`,
+        'B submit rejected after A cancel',
       );
-    }
-
-    let bResults: unknown;
-    try {
-      bResults = await waitBPromise;
-    } catch (err) {
-      pushFail(
-        failures,
-        'no_cross_session_cancel',
-        `B wait rejected after A cancel: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    if (bAccepted && bResults !== undefined) {
+    } else {
       const expected = [{ id: 'tool-b', content: 'b-ok' }];
-      if (JSON.stringify(bResults) !== JSON.stringify(expected)) {
+      if (JSON.stringify(harness.bResults) !== JSON.stringify(expected)) {
         pushFail(
           failures,
           'no_cross_session_cancel',
-          `B results mismatch: ${JSON.stringify(bResults)}`,
+          `B results mismatch: ${JSON.stringify(harness.bResults)}`,
         );
       }
       if (!handleB.isTurnActive(turnB)) {
@@ -355,10 +362,10 @@ export async function runSoakIteration(
       }
     }
 
-    // Trace invariants.
-    const events = getRuntimeTraceEvents();
-    const aEvents = events.filter((e) => e.context.sessionId === sessionA);
-    const bEvents = events.filter((e) => e.context.sessionId === sessionB);
+    // Trace invariants (from harness events + live sink).
+    const events = harness.events.length > 0 ? harness.events : getRuntimeTraceEvents();
+    const aEvents = harnessSessionEvents(events, sessionA);
+    const bEvents = harnessSessionEvents(events, sessionB);
 
     if (!aEvents.some((e) => e.type === 'turn_cancelling')) {
       pushFail(failures, 'scenario', 'A missing turn_cancelling trace');
@@ -389,10 +396,7 @@ export async function runSoakIteration(
       pushFail(failures, 'no_cross_session_cancel', 'B unexpectedly terminal');
     }
 
-    // Real A/B message-history orphan / cancelled-as-success checks (not latch-only).
-    const produced = buildSoakScenarioHistories(iteration);
-    const historyA = options.historyA ?? produced.historyA;
-    const historyB = options.historyB ?? produced.historyB;
+    // Real harness-produced (or injected) A/B message-history checks.
     orphanCount = assertSoakHistoryInvariants(historyA, historyB, failures, iteration);
 
     // Optional follow-up / switch: new A turn after terminal; old turnId must not settle it.
@@ -412,7 +416,6 @@ export async function runSoakIteration(
         `follow-up A bad state: active=${handleA.isTurnActive(followUpTurn)} state=${followState}`,
       );
     }
-    // Stale: present cancelled turnA id against the new waiter — must discard.
     const staleReplay = submitSessionToolResults(
       sessionA,
       followReq,
@@ -426,7 +429,6 @@ export async function runSoakIteration(
         `stale replay with old turnId accepted (${staleReplay})`,
       );
     }
-    // Correct submit for follow-up turn.
     const followAccepted = submitSessionToolResults(
       sessionA,
       followReq,
@@ -461,13 +463,15 @@ export async function runSoakIteration(
       sessionB,
       failures,
       orphanCount,
+      historyA,
+      historyB,
+      historySource,
     };
 
     if (result.ok) {
       releaseSessionRuntimeForTests(sessionA);
       releaseSessionRuntimeForTests(sessionB);
     }
-    // On failure leave B (and possibly A follow-up) live for diagnostics dump.
 
     return result;
   } catch (err) {
@@ -483,6 +487,9 @@ export async function runSoakIteration(
       sessionB,
       failures,
       orphanCount,
+      historyA,
+      historyB,
+      historySource: historySource ?? 'manual_d_harness',
     };
   }
 }

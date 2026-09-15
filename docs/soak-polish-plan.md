@@ -54,6 +54,7 @@ From scout (`docs/soak-polish-scout.md`):
 
 ```
 src/core/runtime/soak/
+src/core/runtime/__tests__/manualDProductHarness.ts
 src/core/runtime/__tests__/manualDProductHarness.test.ts
 src/core/runtime/__tests__/manualDBarrier.ts
 docs/soak-runner.md

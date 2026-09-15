@@ -66,11 +66,51 @@ describe('soak runner (Manual D loop + failure bundle)', () => {
     expect(result.failures).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.orphanCount).toBe(0);
+    expect(result.historySource).toBe('manual_d_harness');
     releaseSessionRuntimeForTests(result.sessionA);
     releaseSessionRuntimeForTests(result.sessionB);
   });
 
-  it('buildSoakScenarioHistories: A orphans / B resolved (real A/B histories)', () => {
+  it('default soak uses Manual D harness histories (not synthetic-only)', async () => {
+    const synthetic = buildSoakScenarioHistories(1);
+    // Synthetic A is pre-terminalize dangling orphans — must NOT be what default soak asserts.
+    expect(listOrphanToolCalls(synthetic.historyA).length).toBeGreaterThan(0);
+    expect(
+      synthetic.historyA.some((m) => /cancelled by user/i.test(String(m.content))),
+    ).toBe(false);
+
+    const result = await runSoakIteration(1, 'jest-soak-real-hist');
+    expect(result.ok).toBe(true);
+    expect(result.historySource).toBe('manual_d_harness');
+    expect(result.historyA).toBeDefined();
+    expect(result.historyB).toBeDefined();
+
+    // Fail if soak only checked synthetic fixtures and never ran real harness histories:
+    // harness A is product-terminalized (scrubbed + cancel notice, 0 orphans).
+    expect(listOrphanToolCalls(result.historyA!)).toEqual([]);
+    expect(
+      result.historyA!.some((m) => /cancelled by user/i.test(String(m.content))),
+    ).toBe(true);
+    expect(result.historyA).not.toEqual(synthetic.historyA);
+
+    // B has successful tool completion from harness wait resolution.
+    expect(listOrphanToolCalls(result.historyB!)).toEqual([]);
+    expect(
+      result.historyB!.some((m) => typeof m.tool_call_id === 'string'
+        && String(m.content).includes('__TOOL_RESULT__')
+        && String(m.content).includes('b-ok')),
+    ).toBe(true);
+
+    // Late A discard must not pollute A history.
+    expect(
+      result.historyA!.every((m) => !String(m.content).includes('late-a-should-discard')),
+    ).toBe(true);
+
+    releaseSessionRuntimeForTests(result.sessionA);
+    releaseSessionRuntimeForTests(result.sessionB);
+  });
+
+  it('buildSoakScenarioHistories: unit helper only (A orphans / B resolved)', () => {
     const { historyA, historyB } = buildSoakScenarioHistories(3);
     expect(listOrphanToolCalls(historyA).length).toBeGreaterThan(0);
     expect(listOrphanToolCalls(historyB)).toEqual([]);
@@ -81,10 +121,12 @@ describe('soak runner (Manual D loop + failure bundle)', () => {
   });
 
   it('runSoakIteration accepts custom histories and asserts against them', async () => {
+    // Inject pre-terminalize synthetic A + resolved B (negative-path unit override).
     const { historyA, historyB } = buildSoakScenarioHistories(7);
     const result = await runSoakIteration(7, 'jest-soak-hist', { historyA, historyB });
     expect(result.ok).toBe(true);
     expect(result.orphanCount).toBe(0);
+    expect(result.historySource).toBe('injected');
     releaseSessionRuntimeForTests(result.sessionA);
     releaseSessionRuntimeForTests(result.sessionB);
   });
@@ -112,6 +154,7 @@ describe('soak runner (Manual D loop + failure bundle)', () => {
     expect(result.ok).toBe(false);
     expect(result.failures.some((f) => f.invariant === 'no_orphan_tool_calls'
       || f.invariant === 'no_cancelled_as_success')).toBe(true);
+    expect(result.historySource).toBe('injected');
     releaseSessionRuntimeForTests(result.sessionA);
     releaseSessionRuntimeForTests(result.sessionB);
   });
@@ -127,6 +170,7 @@ describe('soak runner (Manual D loop + failure bundle)', () => {
     expect(summary.failedAt).toBeUndefined();
     expect(summary.results).toHaveLength(5);
     expect(summary.results.every((r) => r.ok)).toBe(true);
+    expect(summary.results.every((r) => r.historySource === 'manual_d_harness')).toBe(true);
   });
 
   it('runSoak N=10 documents longer CI-friendly soak', async () => {

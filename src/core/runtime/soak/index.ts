@@ -17,6 +17,7 @@ export {
 export type {
   SoakInvariantName,
   SoakAssertionFailure,
+  SoakHistorySource,
   SoakIterationOptions,
   SoakIterationResult,
   RunSoakOptions,

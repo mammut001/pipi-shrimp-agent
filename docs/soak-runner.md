@@ -8,7 +8,7 @@
 
 | Piece | Source |
 | --- | --- |
-| Manual D dual-session scenario | `src/core/runtime/__tests__/manualDProductHarness.test.ts` |
+| Manual D dual-session scenario | `src/core/runtime/__tests__/manualDProductHarness.ts` (+ `.test.ts`) |
 | Deterministic barriers | `src/core/runtime/__tests__/manualDBarrier.ts` |
 | Diagnostics dump | `dumpRuntimeDiagnostics` / `__PIPI_RUNTIME_DIAG__` (#84) |
 | Filtered traces | `dumpJsonLines({ sessionId, limit })` / `sharedRuntimeTraceSink` (#82) |
@@ -23,37 +23,38 @@ src/core/runtime/soak/
   types.ts
   index.ts
   soakRunner.test.ts  # Jest entry (default N=5 / N=10)
+src/core/runtime/__tests__/manualDProductHarness.ts  # reusable harness + product histories
 ```
 
 ### Iteration shape
 
 Each `runSoakIteration()`:
 
-1. A and B enter `waiting_tool` behind Manual D barriers (no sleeps)
-2. Cancel A while B still waiting
-3. Late A tool submit → discarded (`false`)
-4. B submit succeeds; B wait resolves
+1. Runs **`runManualDProductHarness`** — A and B enter `waiting_tool` behind Manual D barriers (no sleeps)
+2. Cancel A while B still waiting → harness applies product `terminalizeInterruptedMessages(..., user_cancel)` to A history
+3. Late A tool submit → discarded (`false`); late content must **not** appear in A history
+4. B submit succeeds; B wait resolves → harness appends matching `__TOOL_RESULT__` to B history
 5. Trace checks: A cancel/discard chain; B never cancelled
-6. **Real A/B message histories** — produce (or accept via `SoakIterationOptions`) scenario histories; run `listOrphanToolCalls` / `terminalizeInterruptedMessages` on them (not latch/mock-only)
+6. **Real A/B message histories** from the harness (default `historySource: 'manual_d_harness'`); run orphan / cancel-notice / success invariants
 7. Follow-up: new A turn after terminal; submit with old turnId must discard; correct turnId succeeds
+
+`buildSoakScenarioHistories()` remains a **unit helper** for isolated history-invariant tests only. The default soak path must not rely on it.
 
 ### Message-history invariants (A/B)
 
-Histories are scenario-accurate by default (`buildSoakScenarioHistories`):
+| Session | History source (default) | Shape | Checks |
+| --- | --- | --- | --- |
+| **A** (cancelled) | Manual D harness + product terminalize | scrubbed tool_calls + cancel notice | **0** orphans; notice is cancel/interrupted (not success); no `late-a-should-discard` |
+| **B** (success) | Manual D harness | assistant `tool-b` + matching `__TOOL_RESULT__:…:b-ok` | **0** orphans; terminalize no-op; successful completion present |
 
-| Session | History shape | Checks |
-| --- | --- | --- |
-| **A** (cancelled) | user + assistant with dangling `tool-a` tool_call | orphans before terminalize; **0** after; cancel notice must not look like success |
-| **B** (success) | user + assistant `tool-b` + matching `__TOOL_RESULT__` | **0** orphans; terminalize must be a no-op |
-
-Callers may pass `historyA` / `historyB` to assert against external session snapshots.
+Callers may pass `historyA` / `historyB` to assert against injected snapshots (`historySource: 'injected'`).
 
 ### Invariants
 
-- **no_cross_session_cancel** — B still succeeds after A cancel (latches + B history clean)
-- **no_orphan_tool_calls** — terminalized **A** history has no dangling tool_calls; **B** history never has orphans
+- **no_cross_session_cancel** — B still succeeds after A cancel (latches + B history clean + tool result)
+- **no_orphan_tool_calls** — terminal **A** history has no dangling tool_calls; **B** history never has orphans
 - **no_cancelled_as_success** — A rejects with `AbortError` / terminal; A notice is cancel/interrupted (not success); A history must not resolve cancelled tools as success
-- **no_stale_replay_late_a_discarded** — late A + post-switch stale submit discarded
+- **no_stale_replay_late_a_discarded** — late A + post-switch stale submit discarded; late content absent from A history
 
 ### `stopOnFailure` semantics
 
@@ -79,6 +80,9 @@ On each failed iteration (and stop if `stopOnFailure`), writes under `artifacts/
 ```bash
 # Short (CI default inside soakRunner.test.ts): N=5 and N=10
 pnpm exec jest src/core/runtime/soak/soakRunner.test.ts --runInBand --no-coverage
+
+# Also run Manual D harness suite
+pnpm exec jest src/core/runtime/__tests__/manualDProductHarness.test.ts --runInBand --no-coverage
 
 # Long soak via env (also enables the opt-in long describe when >= 20)
 PIPI_SOAK_ITERS=200 pnpm exec jest src/core/runtime/soak/soakRunner.test.ts --runInBand --no-coverage

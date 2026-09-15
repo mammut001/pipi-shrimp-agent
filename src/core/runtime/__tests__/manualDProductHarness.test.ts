@@ -15,11 +15,12 @@ import {
   releaseSessionRuntimeForTests,
   submitSessionToolResults,
 } from '../SessionRuntime';
+import { clearRuntimeTraceSink } from '../RuntimeTraceSink';
+import { listOrphanToolCalls } from '../../../store/chat/scrubDanglingToolCalls';
 import {
-  clearRuntimeTraceSink,
-  getRuntimeTraceEvents,
-} from '../RuntimeTraceSink';
-import { createManualDBarrier, awaitCondition } from './manualDBarrier';
+  runManualDProductHarness,
+  harnessSessionEvents,
+} from './manualDProductHarness';
 
 describe('Manual D product harness (dual-session store/runtime boundary)', () => {
   const sessionA = 'manual-d-product-a';
@@ -32,85 +33,38 @@ describe('Manual D product harness (dual-session store/runtime boundary)', () =>
   });
 
   it('A cancel + B release + late A discard — deterministic barriers, greppable traces', async () => {
-    const handleA = getSessionHandle(sessionA);
-    const handleB = getSessionHandle(sessionB);
-    const runtimeA = getSessionRuntimeForTests(sessionA)!;
-    const runtimeB = getSessionRuntimeForTests(sessionB)!;
-
-    const gateA = createManualDBarrier();
-    const gateB = createManualDBarrier();
-
-    const turnA = runtimeA.startTurn();
-    const turnB = runtimeB.startTurn();
-    runtimeA.markWaitingTool(turnA);
-    runtimeB.markWaitingTool(turnB);
-
-    // Controllable waiters enter "waiting" without sleep.
-    const waitAPromise = (async () => {
-      await gateA.wait();
-      return runtimeA.getToolResultChannel().waitFor(
-        'manual-d-req-a',
-        ['tool-a'],
-        { turnId: turnA },
-      );
-    })();
-    const waitBPromise = (async () => {
-      await gateB.wait();
-      return runtimeB.getToolResultChannel().waitFor(
-        'manual-d-req-b',
-        ['tool-b'],
-        { turnId: turnB },
-      );
-    })();
-
-    // Both sessions entered waiting_tool (product Ready-gate equivalent).
-    expect(handleA.getState()).toBe('waiting_tool');
-    expect(handleB.getState()).toBe('waiting_tool');
-    expect(handleA.isTurnActive(turnA)).toBe(true);
-    expect(handleB.isTurnActive(turnB)).toBe(true);
-
-    // Open channel waiters (both still waiting for tool results).
-    gateA.release();
-    gateB.release();
-    await awaitCondition(
-      () => runtimeA.getToolResultChannel().listPendingRequestIds().includes('manual-d-req-a')
-        && runtimeB.getToolResultChannel().listPendingRequestIds().includes('manual-d-req-b'),
-      'both channels pending',
-    );
-
-    // Cancel A while B is still waiting.
-    handleA.cancelActiveTurn('Manual D Stop A');
-    expect(handleA.isTurnActive(turnA)).toBe(false);
-    expect(handleA.getState()).toBe('terminal');
-    expect(handleB.isTurnActive(turnB)).toBe(true);
-    expect(handleB.getState()).toBe('waiting_tool');
-
-    await expect(waitAPromise).rejects.toMatchObject({ name: 'AbortError' });
-
-    // Late A release must discard only — no continuation / no stale replay.
-    const lateA = submitSessionToolResults(
+    const harness = await runManualDProductHarness({
       sessionA,
-      'manual-d-req-a',
-      [{ id: 'tool-a', content: 'late-a-should-discard' }],
-      turnA,
-    );
-    expect(lateA).toBe(false);
-
-    // Release B — succeeds independently.
-    const bAccepted = submitSessionToolResults(
       sessionB,
-      'manual-d-req-b',
-      [{ id: 'tool-b', content: 'b-ok' }],
-      turnB,
-    );
-    expect(bAccepted).toBe(true);
-    await expect(waitBPromise).resolves.toEqual([{ id: 'tool-b', content: 'b-ok' }]);
-    expect(handleB.isTurnActive(turnB)).toBe(true);
+      reqA: 'manual-d-req-a',
+      reqB: 'manual-d-req-b',
+      cancelReason: 'Manual D Stop A',
+      iteration: 0,
+      releaseOnSuccess: true,
+    });
 
-    // Trace sink: A cancel chain + late discard; B never cancelled.
-    const events = getRuntimeTraceEvents();
-    const aEvents = events.filter((e) => e.context.sessionId === sessionA);
-    const bEvents = events.filter((e) => e.context.sessionId === sessionB);
+    expect(harness.aWaitResolvedOk).toBe(false);
+    expect(harness.aAbortName).toBe('AbortError');
+    expect(harness.lateAAccepted).toBe(false);
+    expect(harness.bAccepted).toBe(true);
+    expect(harness.bResults).toEqual([{ id: 'tool-b', content: 'b-ok' }]);
+
+    // Product-path histories: A terminalized (no orphans + cancel notice); B resolved.
+    expect(listOrphanToolCalls(harness.historyA)).toEqual([]);
+    expect(
+      harness.historyA.some((m) => /cancelled by user/i.test(String(m.content))),
+    ).toBe(true);
+    expect(
+      harness.historyA.every((m) => !String(m.content).includes('late-a-should-discard')),
+    ).toBe(true);
+    expect(listOrphanToolCalls(harness.historyB)).toEqual([]);
+    expect(
+      harness.historyB.some((m) => m.tool_call_id === harness.toolCallIdB
+        && String(m.content).includes('b-ok')),
+    ).toBe(true);
+
+    const aEvents = harnessSessionEvents(harness.events, sessionA);
+    const bEvents = harnessSessionEvents(harness.events, sessionB);
 
     expect(aEvents.some((e) => e.type === 'turn_cancelling')).toBe(true);
     expect(aEvents.some((e) => e.type === 'tool_cancel_requested')).toBe(true);

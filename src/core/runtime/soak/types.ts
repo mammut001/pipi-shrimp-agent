@@ -16,11 +16,13 @@ export type SoakAssertionFailure = {
   message: string;
 };
 
+export type SoakHistorySource = 'manual_d_harness' | 'injected' | 'synthetic';
+
 export type SoakIterationOptions = {
   /**
    * Optional session A/B message histories to assert orphan/terminalize against.
-   * When omitted, the iteration produces scenario-accurate histories for A (cancelled
-   * dangling tool_call) and B (resolved tool result).
+   * When omitted, the iteration uses histories produced by the Manual D product
+   * harness (cancel terminalize on A + successful tool result on B).
    */
   historyA?: Message[];
   historyB?: Message[];
@@ -34,6 +36,12 @@ export type SoakIterationResult = {
   failures: SoakAssertionFailure[];
   /** Orphan tool_call count remaining on session A history after terminalize (expect 0). */
   orphanCount?: number;
+  /** A history asserted this iteration (harness-produced unless injected). */
+  historyA?: Message[];
+  /** B history asserted this iteration (harness-produced unless injected). */
+  historyB?: Message[];
+  /** Where histories came from — default path must be `manual_d_harness`. */
+  historySource?: SoakHistorySource;
 };
 
 export type RunSoakOptions = {
