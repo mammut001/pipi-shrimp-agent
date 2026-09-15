@@ -275,6 +275,9 @@ pub fn execute_test_barrier_tool(args: &serde_json::Value) -> anyhow::Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::registry::{register_builtin_tools, ToolRegistry};
+    use crate::tools::scheduler::execute_tool_calls;
+    use crate::tools::{ToolCallRequest, ToolExecutionSource};
     use once_cell::sync::Lazy;
     use std::sync::Mutex;
     use std::thread;
@@ -298,6 +301,51 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         panic!("timed out waiting for barrier readiness");
+    }
+
+    fn make_barrier_tool_request(
+        call_id: &str,
+        barrier_id: &str,
+        execution_id: &str,
+    ) -> ToolCallRequest {
+        ToolCallRequest {
+            id: call_id.to_string(),
+            name: "test_barrier_tool".to_string(),
+            arguments: serde_json::json!({
+                "barrier_id": barrier_id,
+                "executionId": execution_id,
+            })
+            .to_string(),
+            work_dir: None,
+            source: ToolExecutionSource::AssistantToolCall,
+            allowed_tools: None,
+            api_key: None,
+            model: None,
+            base_url: None,
+            provider: None,
+            api_format: None,
+            provider_capabilities: None,
+            approval_token: None,
+            execution_mode: None,
+        }
+    }
+
+    fn make_builtin_registry() -> ToolRegistry {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+        registry
+    }
+
+    fn run_tool_batch_on_session(
+        request: ToolCallRequest,
+        session_id: &'static str,
+    ) -> Vec<crate::tools::ToolCallResult> {
+        let registry = make_builtin_registry();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        rt.block_on(execute_tool_calls(&[request], &registry, None, session_id))
     }
 
     #[test]
@@ -399,6 +447,95 @@ mod tests {
         let outcome_b = handle_b.join().expect("join b").expect("b ok");
         assert_eq!(outcome_a, BarrierWaitOutcome::Cancelled);
         assert_eq!(outcome_b, BarrierWaitOutcome::Released);
+    }
+
+
+    /// GPT #73 Ready gate: dual-session cancel isolation through the real
+    /// ToolRegistry + ToolScheduler path (execute_tool_calls), not wait_on_barrier().
+    #[test]
+    fn dual_session_cancel_a_release_b_via_registry_scheduler() {
+        let _guard = TEST_LOCK.lock().expect("test lock");
+        let barrier_a = unique("sched-A");
+        let barrier_b = unique("sched-B");
+        let exec_a = unique("sched-execA");
+        let exec_b = unique("sched-execB");
+
+        let req_a = make_barrier_tool_request("call-a", &barrier_a, &exec_a);
+        let req_b = make_barrier_tool_request("call-b", &barrier_b, &exec_b);
+
+        let handle_a = thread::spawn(move || run_tool_batch_on_session(req_a, "session_a"));
+        let handle_b = thread::spawn(move || run_tool_batch_on_session(req_b, "session_b"));
+
+        wait_until(
+            || {
+                is_execution_waiting(&exec_a)
+                    && is_execution_waiting(&exec_b)
+                    && barrier_waiter_count(&barrier_a) >= 1
+                    && barrier_waiter_count(&barrier_b) >= 1
+            },
+            Duration::from_secs(5),
+        );
+
+        // Public cancel_tool_execution command path (process cancel → barrier cancel).
+        let cancel_a = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(crate::commands::cancel_tool_execution(exec_a.clone()))
+                .expect("cancel_tool_execution")
+        };
+        assert!(
+            cancel_a.cancelled,
+            "execA cancel must succeed via cancel_tool_execution: {:?}",
+            cancel_a
+        );
+        assert!(
+            is_execution_waiting(&exec_b),
+            "B must remain waiting after A cancel (no cross-interference)"
+        );
+        assert_eq!(
+            barrier_waiter_count(&barrier_b),
+            1,
+            "B waiter count must stay 1 after A cancel"
+        );
+
+        // Public release_test_barrier command path for B only.
+        let release_b = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(crate::commands::release_test_barrier(barrier_b.clone()))
+                .expect("release_test_barrier")
+        };
+        assert_eq!(release_b["status"], "released");
+
+        let results_a = handle_a.join().expect("join a");
+        let results_b = handle_b.join().expect("join b");
+        assert_eq!(results_a.len(), 1, "session_a should return one tool result");
+        assert_eq!(results_b.len(), 1, "session_b should return one tool result");
+        assert!(
+            !results_a[0].is_error,
+            "A should complete as cancelled JSON, not tool error: {}",
+            results_a[0].content
+        );
+        assert!(
+            !results_b[0].is_error,
+            "B should complete as done JSON, not tool error: {}",
+            results_b[0].content
+        );
+
+        let parsed_a: serde_json::Value =
+            serde_json::from_str(&results_a[0].content).expect("A result json");
+        let parsed_b: serde_json::Value =
+            serde_json::from_str(&results_b[0].content).expect("B result json");
+        assert_eq!(parsed_a["status"], "cancelled");
+        assert_eq!(parsed_a["barrier_id"], barrier_a);
+        assert_eq!(parsed_b["status"], "done");
+        assert_eq!(parsed_b["barrier_id"], barrier_b);
+        assert!(!is_execution_waiting(&exec_a));
+        assert!(!is_execution_waiting(&exec_b));
     }
 
     #[test]
