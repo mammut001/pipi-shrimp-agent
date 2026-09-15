@@ -8,12 +8,10 @@ import {
 } from '@/services/agentConfig';
 import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { isContextOverflowError } from '@/services/context/contextBudget';
-import { useChatStore, useSettingsStore, useUIStore } from '@/store';
-import { useCdpStore } from '@/store/cdpStore';
 import {
   detectAskModeToolNeed,
   isAskModeToolFailureText,
-  resolveSessionExecutionModeId,
+  type AskModeToolNeedReason,
 } from '@/services/executionMode';
 import {
   BROWSER_NOT_CONNECTED_USER_MESSAGE,
@@ -132,10 +130,28 @@ export function buildExhaustedMalformedToolCallError(error: unknown): Error {
   );
 }
 
-export interface RunChatTurnOptions {
+/**
+ * Host-resolved inputs for a query-loop turn. Callers (chat / headless /
+ * SessionRuntime adapters) must resolve settings, execution mode, and UI/browser
+ * side-effects so this module stays store-free.
+ */
+export interface RuntimeTurnContext {
+  /** Prefer caller-resolved agent settings; defaults to DEFAULT_AGENT_SETTINGS.maxToolRounds. */
+  maxToolRounds?: number;
+  /** Session execution mode id (ask/plan/agent/…). Used for failure hints / upgrade prompts. */
+  executionModeId?: string;
+  /** Host callback when browser tools fail due to disconnected Chrome. */
+  onBrowserNotConnected?: () => void;
+  /** Host callback when ask/plan mode should offer an upgrade. */
+  onExecutionModeUpgradeNeeded?: (info: {
+    reason: AskModeToolNeedReason;
+    messagePreview: string;
+  }) => void;
+}
+
+export interface RunChatTurnOptions extends RuntimeTurnContext {
   noTools?: boolean;
   allowedTools?: string[];
-  maxToolRounds?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
   turnId?: string;
@@ -183,8 +199,7 @@ export async function* runQueryEngineTurn(
   toolResultChannel: ToolResultChannel,
   turnId?: string,
 ): AsyncGenerator<EngineEvent, void, unknown> {
-  const settings = useSettingsStore?.getState?.()?.agentSettings;
-  const maxToolBudget = options?.maxToolRounds ?? settings?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
+  const maxToolBudget = options?.maxToolRounds ?? DEFAULT_AGENT_SETTINGS.maxToolRounds;
   const toolBudgetReserve = maxToolBudget > 4 ? 2 : 1;
   const maxModelRounds = Math.max(maxToolBudget + 8, 25);
   const effectiveTurnId = turnId ?? options?.turnId;
@@ -197,8 +212,7 @@ export async function* runQueryEngineTurn(
   let malformedToolCallRetryCount = 0;
   let disallowedToolRetryCount = 0;
 
-  const effectivePipiOutputDir = pipiOutputDir
-    ?? useChatStore?.getState?.()?.sessions?.find((session) => session.id === sessionId)?.pipiOutputDir;
+  const effectivePipiOutputDir = pipiOutputDir;
   const memoryHook = createMemoryHook({ projectRoot, pipiOutputDir: effectivePipiOutputDir });
 
   let modelRound = 0;
@@ -526,21 +540,20 @@ export async function* runQueryEngineTurn(
       if (allFailed && !effectiveNoTools && shouldShortCircuitFailedToolBatch(allContentList)) {
         const allBrowserDisconnected = allContentList.every(isBrowserNotConnectedToolResult);
         if (allBrowserDisconnected) {
-          void useCdpStore.getState().requestChromeConnection();
+          options?.onBrowserNotConnected?.();
           yield { type: 'error', error: BROWSER_NOT_CONNECTED_USER_MESSAGE };
           return;
         }
 
         const allAskBlocked = allContentList.every(isAskModeToolFailureText);
         if (allAskBlocked) {
-          const currentSession = useChatStore?.getState?.()?.sessions?.find((s) => s.id === sessionId);
-          const currentModeId = resolveSessionExecutionModeId(currentSession);
+          const currentModeId = options?.executionModeId;
           if (currentModeId === 'ask' || currentModeId === 'plan') {
             const lastUserMessage = [...currentMessages].reverse().find((message) => message.role === 'user');
             const userContent = typeof lastUserMessage?.content === 'string' ? lastUserMessage.content : '';
             const toolNeed = detectAskModeToolNeed(userContent);
             if (toolNeed.needed) {
-              void useUIStore.getState().showExecutionModeUpgradePrompt({
+              options?.onExecutionModeUpgradeNeeded?.({
                 reason: toolNeed.reason,
                 messagePreview: userContent.trim().slice(0, 240),
               });
@@ -560,11 +573,10 @@ export async function* runQueryEngineTurn(
             return `• ${tool.name}: ${reason}`;
           })
           .join('\n');
-        const currentSession = useChatStore?.getState?.()?.sessions?.find((s) => s.id === sessionId);
-        const currentModeId = resolveSessionExecutionModeId(currentSession);
+        const currentModeId = options?.executionModeId;
         yield {
           type: 'error',
-          error: `本轮所有工具调用都被拒绝。具体原因：\n${failureDetail}\n\n（${buildToolBatchFailureHint(currentModeId)}）`,
+          error: `本轮所有工具调用都被拒绝。具体原因：\n${failureDetail}\n\n（${buildToolBatchFailureHint(currentModeId ?? "agent")}）`,
         };
         return;
       }

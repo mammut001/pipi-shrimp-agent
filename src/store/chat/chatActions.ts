@@ -36,6 +36,7 @@ import {
   resolveSessionExecutionModeId,
   detectAskModeToolNeed,
   shouldOfferExecutionModeUpgrade,
+  type AskModeToolNeedReason,
 } from '@/services/executionMode';
 import { detectBrowserIntent } from '@/services/browser/browserIntent';
 import { BROWSER_TOOL_NAMES, BROWSER_READ_ONLY_TOOLS } from '@/services/browser/browserTools';
@@ -812,6 +813,16 @@ export function createChatActionMethods({
         }
 
         const turnAbort = createChatTurnAbortController(activeSessionId);
+        const turnHostContext = {
+          maxToolRounds: useSettingsStore.getState().agentSettings?.maxToolRounds,
+          executionModeId,
+          onBrowserNotConnected: () => {
+            void useCdpStore.getState().requestChromeConnection();
+          },
+          onExecutionModeUpgradeNeeded: (info: { reason: AskModeToolNeedReason; messagePreview: string }) => {
+            void useUIStore.getState().showExecutionModeUpgradePrompt(info);
+          },
+        };
         const engine = isAskMode
           ? runChatTurn(
               activeSessionId,
@@ -820,7 +831,8 @@ export function createChatActionMethods({
               sessionWorkDir,
               false,
               undefined,
-              { noTools: true, signal: turnAbort.signal },
+              { ...turnHostContext, noTools: true, signal: turnAbort.signal },
+              sessionPipiOutputDir ?? undefined,
             )
           : isPlanMode
           ? runChatTurn(
@@ -831,6 +843,7 @@ export function createChatActionMethods({
               false, // allowBrowserTools — always off in plan mode
               undefined,
               {
+                ...turnHostContext,
                 // Plan mode: read-only inspection only. The chat engine
                 // forwards `allowedTools` through `buildResolvedChatRequest`
                 // (which normalises `[]` -> `undefined`) and the Rust executor
@@ -841,6 +854,7 @@ export function createChatActionMethods({
                 allowedTools: modeAllowedTools,
                 signal: turnAbort.signal,
               },
+              sessionPipiOutputDir ?? undefined,
             )
           : runChatTurn(
               activeSessionId,
@@ -850,6 +864,7 @@ export function createChatActionMethods({
               shouldAllowBrowserTools,
               undefined,
               {
+                ...turnHostContext,
                 ...(modeAllowedTools?.length ? { allowedTools: modeAllowedTools } : {}),
                 signal: turnAbort.signal,
               },

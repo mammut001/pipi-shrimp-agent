@@ -405,7 +405,10 @@ export async function runHeadlessAgentTurn(
     options: {
       noTools: input.noTools ?? (input.allowedTools?.length === 0 ? true : undefined),
       allowedTools: input.allowedTools,
-      maxToolRounds: input.maxToolRounds,
+      maxToolRounds: input.maxToolRounds
+        ?? useSettingsStore.getState().agentSettings?.maxToolRounds
+        ?? DEFAULT_AGENT_SETTINGS.maxToolRounds,
+      executionModeId: typeof effectiveExecutionMode === 'string' ? effectiveExecutionMode : undefined,
       signal: turnAbortController.signal,
       timeoutMs: input.timeoutMs,
     },

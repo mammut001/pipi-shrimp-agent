@@ -169,18 +169,19 @@ function createDeps(
         })));
 
   const defaultToolMetadataMap = new Map<string, any>([
-    ['get_current_workspace', { requiresWorkspace: true }],
-    ['read_file', { requiresWorkspace: false }],
-    ['write_file', { requiresWorkspace: true }],
-    ['list_files', { requiresWorkspace: true }],
-    ['create_directory', { requiresWorkspace: true }],
-    ['path_exists', { requiresWorkspace: true }],
-    ['search_files', { requiresWorkspace: true }],
-    ['glob_search', { requiresWorkspace: true }],
-    ['grep_files', { requiresWorkspace: true }],
-    ['execute_command', { requiresWorkspace: true }],
-    ['compile_typst_file', { requiresWorkspace: true }],
-    ['render_typst_to_pdf', { requiresWorkspace: true }],
+    ['get_current_workspace', { requiresWorkspace: true, cancellable: false }],
+    ['read_file', { requiresWorkspace: false, cancellable: false }],
+    ['write_file', { requiresWorkspace: true, cancellable: false }],
+    ['list_files', { requiresWorkspace: true, cancellable: false }],
+    ['create_directory', { requiresWorkspace: true, cancellable: false }],
+    ['path_exists', { requiresWorkspace: true, cancellable: false }],
+    ['search_files', { requiresWorkspace: true, cancellable: false }],
+    ['glob_search', { requiresWorkspace: true, cancellable: false }],
+    ['grep_files', { requiresWorkspace: true, cancellable: false }],
+    ['execute_command', { requiresWorkspace: true, cancellable: true }],
+    ['ssh_exec', { requiresWorkspace: false, cancellable: true }],
+    ['compile_typst_file', { requiresWorkspace: true, cancellable: false }],
+    ['render_typst_to_pdf', { requiresWorkspace: true, cancellable: false }],
   ]);
 
   return {
@@ -558,6 +559,75 @@ describe('chatToolExecution', () => {
     expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'approved');
     expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'running');
     expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'done');
+  });
+
+  it('does not inject executionId for tools without cancellable metadata', async () => {
+    const resolved = jest.fn();
+    const waitForPermission = jest.fn(async () => true);
+    const updateTaskStep = jest.fn();
+    const invoke = jest.fn(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-write-1',
+          toolName: 'write_file',
+          decision: 'allowed',
+          reason: null,
+          approvalToken: null,
+        };
+      }
+      if (command === 'execute_single_tool') {
+        return {
+          content: '{"status":"succeeded"}',
+          is_error: false,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const deps = createDeps({
+      uiStore: { getState: () => ({
+        activeSkill: null,
+        setActiveSkill: jest.fn(),
+        setTaskProgress: jest.fn(),
+        updateTaskStep,
+        showQuestionnaire: jest.fn(async () => 'user response'),
+        waitForPermission,
+        addNotification: jest.fn(),
+      }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-write-1',
+          name: 'write_file',
+          arguments: { path: 'a.txt', content: 'hi' },
+        }],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-write-1',
+        name: 'write_file',
+        arguments: JSON.stringify({ path: 'a.txt', content: 'hi' }),
+      }],
+      _resolveAll: resolved,
+    } as any;
+
+    await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    const executeSingleToolCall = (invoke as jest.Mock).mock.calls.find(([command]) => command === 'execute_single_tool');
+    expect(executeSingleToolCall).toBeDefined();
+    const parsedArgs = JSON.parse(executeSingleToolCall?.[1].arguments as string);
+    expect(parsedArgs.executionId).toBeUndefined();
+    expect(parsedArgs.path).toBe('a.txt');
   });
 
   it('marks serial tools as rejected when backend policy blocks them before execution', async () => {

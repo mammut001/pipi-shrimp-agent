@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach } from '@jest/globals';
 import {
   SessionRuntime,
   getSessionHandle,
+  getSessionRuntimeForTests,
   cancelSessionRuntime,
   releaseSessionRuntime,
+  releaseSessionRuntimeForTests,
   submitSessionToolResults,
 } from '../SessionRuntime';
 import { ToolResultChannel } from '../ToolResultChannel';
@@ -77,7 +79,7 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
   const sessionId = 'test-session-p0';
 
   beforeEach(() => {
-    releaseSessionRuntime(sessionId);
+    releaseSessionRuntimeForTests(sessionId);
   });
 
   it('creates and caches runtime for a session ID', () => {
@@ -89,12 +91,12 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
   it('exposes runtimeId as alias of instanceId', () => {
     const handle = getSessionHandle(sessionId);
     expect(handle.runtimeId).toBe(handle.instanceId);
-    expect(handle.runtime.runtimeId).toBe(handle.runtime.instanceId);
+    expect(getSessionRuntimeForTests(sessionId)!.runtimeId).toBe(getSessionRuntimeForTests(sessionId)!.instanceId);
   });
 
   it('tracks TurnState transitions: created → running path via startTurn/cancel', () => {
     const handle = getSessionHandle(sessionId);
-    const runtime = handle.runtime;
+    const runtime = getSessionRuntimeForTests(sessionId)!;
 
     expect(handle.getState()).toBe('idle');
     const turnId = runtime.startTurn();
@@ -115,7 +117,7 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
 
   it('tracks active turn and marks turn inactive upon cancellation', () => {
     const handle = getSessionHandle(sessionId);
-    const runtime = handle.runtime;
+    const runtime = getSessionRuntimeForTests(sessionId)!;
 
     const turnId = runtime.startTurn();
     expect(runtime.isTurnActive(turnId)).toBe(true);
@@ -128,7 +130,7 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
 
   it('refuses markWaitingTool / markRunning after terminal (late continuation)', () => {
     const handle = getSessionHandle(sessionId);
-    const runtime = handle.runtime;
+    const runtime = getSessionRuntimeForTests(sessionId)!;
     const turnId = runtime.startTurn();
     handle.cancelActiveTurn('stop');
     expect(runtime.getState()).toBe('terminal');
@@ -142,7 +144,7 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
 
   it('starting a new turn automatically cancels the prior active turn', () => {
     const handle = getSessionHandle(sessionId);
-    const runtime = handle.runtime;
+    const runtime = getSessionRuntimeForTests(sessionId)!;
 
     const turn1 = runtime.startTurn();
     expect(runtime.isTurnActive(turn1)).toBe(true);
@@ -154,7 +156,7 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
 
   it('cancelling via cancelSessionRuntime marks active turn inactive', () => {
     const handle = getSessionHandle(sessionId);
-    const runtime = handle.runtime;
+    const runtime = getSessionRuntimeForTests(sessionId)!;
 
     const turn = runtime.startTurn();
     expect(handle.isTurnActive(turn)).toBe(true);
@@ -165,7 +167,7 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
 
   it('releaseSessionRuntime safely verifies instance identity and runtimeId', () => {
     const handle1 = getSessionHandle(sessionId);
-    const runtime1 = handle1.runtime;
+    const runtime1 = getSessionRuntimeForTests(sessionId)!;
     const runtimeId1 = handle1.runtimeId;
 
     releaseSessionRuntime(sessionId, runtime1);
@@ -173,20 +175,21 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
 
     // A newer handle created will be fresh
     const handleNew = getSessionHandle(sessionId);
-    expect(handleNew.runtime).not.toBe(runtime1);
+    expect(getSessionRuntimeForTests(sessionId)).not.toBe(runtime1);
     expect(handleNew.runtimeId).not.toBe(runtimeId1);
 
     // Stale release by runtimeId must not dispose the newer runtime
     releaseSessionRuntime(sessionId, runtimeId1);
-    expect(handleNew.runtime.isDisposed).toBe(false);
+    expect(getSessionRuntimeForTests(sessionId)!.isDisposed).toBe(false);
 
+    const runtimeNew = getSessionRuntimeForTests(sessionId)!;
     releaseSessionRuntime(sessionId, handleNew.runtimeId);
-    expect(handleNew.runtime.isDisposed).toBe(true);
+    expect(runtimeNew.isDisposed).toBe(true);
   });
 
   it('submitting tool results routes to active channel and rejects after release', () => {
     const handle = getSessionHandle(sessionId);
-    const runtime = handle.runtime;
+    const runtime = getSessionRuntimeForTests(sessionId)!;
 
     const turnId = runtime.startTurn();
     const accepted = submitSessionToolResults(

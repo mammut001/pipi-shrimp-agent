@@ -939,7 +939,7 @@ export const useChatStore = create<ChatState>()(
       if (sessionProjectDir && sessionProjectDir !== sessionPipiOutputDir) {
         await safeInvokeOrNull('delete_session_work_dir', { path: sessionProjectDir });
       }
-      releaseSessionRuntime(sessionId);
+      releaseSessionRuntime(sessionId, getSessionHandle(sessionId));
       let nextSessionId: string | null = null;
       set((state) => {
         const newSessions = state.sessions.filter((session) => session.id !== sessionId);
@@ -961,7 +961,7 @@ export const useChatStore = create<ChatState>()(
       const deletedSessionIds: string[] = [];
       for (const sessionId of sessionIds) {
         try {
-          releaseSessionRuntime(sessionId);
+          releaseSessionRuntime(sessionId, getSessionHandle(sessionId));
           await safeInvoke('db_delete_session', { sessionId });
           deletedSessionIds.push(sessionId);
           await safeInvokeOrNull('delete_app_chat_dir', { sessionId });

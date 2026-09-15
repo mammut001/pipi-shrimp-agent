@@ -301,47 +301,44 @@ export class SessionRuntime {
  */
 export class SessionHandle {
   readonly sessionId: string;
-  readonly runtime: SessionRuntime;
+  /** @internal Underlying runtime — prefer runTurn/cancel/submitToolResults/state getters. */
+  private readonly _runtime: SessionRuntime;
 
   constructor(runtime: SessionRuntime) {
-    this.runtime = runtime;
+    this._runtime = runtime;
     this.sessionId = runtime.sessionId;
   }
 
   get instanceId(): string {
-    return this.runtime.instanceId;
+    return this._runtime.instanceId;
   }
 
   get runtimeId(): string {
-    return this.runtime.runtimeId;
+    return this._runtime.runtimeId;
   }
 
   get activeTurnId(): RuntimeTurnId | null {
-    return this.runtime.activeTurnId;
+    return this._runtime.activeTurnId;
   }
 
   get isDisposed(): boolean {
-    return this.runtime.isDisposed;
+    return this._runtime.isDisposed;
   }
 
   getState(): TurnState | 'idle' {
-    return this.runtime.getState();
+    return this._runtime.getState();
   }
 
   getActiveTurnId(): RuntimeTurnId | null {
-    return this.runtime.getActiveTurnId();
+    return this._runtime.getActiveTurnId();
   }
 
   isTurnActive(turnId?: string): boolean {
-    return this.runtime.isTurnActive(turnId);
-  }
-
-  startTurn(turnId?: RuntimeTurnId): RuntimeTurnId {
-    return this.runtime.startTurn(turnId);
+    return this._runtime.isTurnActive(turnId);
   }
 
   runTurn(request: SessionTurnRequest): AsyncGenerator<EngineEvent, void, unknown> {
-    return this.runtime.runTurn(request);
+    return this._runtime.runTurn(request);
   }
 
   submitToolResults(
@@ -349,19 +346,19 @@ export class SessionHandle {
     results: ToolExecutionResult[],
     turnId?: string,
   ): boolean {
-    return this.runtime.submitToolResults(requestId, results, turnId);
+    return this._runtime.submitToolResults(requestId, results, turnId);
   }
 
   rejectToolResults(requestId: string, error: unknown, turnId?: string): boolean {
-    return this.runtime.rejectToolResults(requestId, error, turnId);
+    return this._runtime.rejectToolResults(requestId, error, turnId);
   }
 
   cancel(reason?: string, turnId?: string): void {
-    this.runtime.cancel(reason, turnId);
+    this._runtime.cancel(reason, turnId);
   }
 
   cancelActiveTurn(reason?: string): void {
-    this.runtime.cancelActiveTurn(reason);
+    this._runtime.cancelActiveTurn(reason);
   }
 
   dispose(): void {
@@ -427,37 +424,56 @@ export function cancelSessionRuntime(
 /**
  * Ownership-aware release.
  *
- * Prefer passing the SessionHandle, SessionRuntime, or runtimeId/instanceId that
- * originally owned the session. When the token does not match the currently
- * registered runtime (a newer generation took over the same sessionId), this is
- * a no-op — preventing async finally blocks from disposing the wrong instance.
+ * The owner token (SessionHandle, SessionRuntime, or runtimeId/instanceId) is
+ * required so async finally blocks cannot dispose a newer generation that has
+ * taken over the same sessionId. Mismatched tokens are a no-op.
  *
- * Calling without a handle/runtimeId releases whatever is currently registered
- * (legacy behavior for tests / explicit teardown).
+ * For test teardown that intentionally clears whatever is registered, use
+ * {@link releaseSessionRuntimeForTests}.
  */
 export function releaseSessionRuntime(
   sessionId: string,
-  handleOrRuntimeOrId?: SessionHandle | SessionRuntime | string,
+  handleOrRuntimeOrId: SessionHandle | SessionRuntime | string,
 ): void {
   const current = sessionRuntimes.get(sessionId);
   if (!current) {
     return;
   }
-  if (handleOrRuntimeOrId !== undefined) {
-    let targetRuntimeId: string | undefined;
-    if (typeof handleOrRuntimeOrId === 'string') {
-      targetRuntimeId = handleOrRuntimeOrId;
-    } else if (handleOrRuntimeOrId instanceof SessionHandle) {
-      targetRuntimeId = handleOrRuntimeOrId.runtimeId;
-    } else {
-      targetRuntimeId = handleOrRuntimeOrId.runtimeId;
-    }
-    if (current.runtimeId !== targetRuntimeId) {
-      // Identity mismatch: a newer runtime has taken ownership of this sessionId.
-      return;
-    }
+  let targetRuntimeId: string;
+  if (typeof handleOrRuntimeOrId === 'string') {
+    targetRuntimeId = handleOrRuntimeOrId;
+  } else if (handleOrRuntimeOrId instanceof SessionHandle) {
+    targetRuntimeId = handleOrRuntimeOrId.runtimeId;
+  } else {
+    targetRuntimeId = handleOrRuntimeOrId.runtimeId;
+  }
+  if (current.runtimeId !== targetRuntimeId) {
+    // Identity mismatch: a newer runtime has taken ownership of this sessionId.
+    return;
   }
   current.dispose();
   sessionRuntimes.delete(sessionId);
   sessionHandles.delete(sessionId);
+}
+
+/**
+ * Test-only: release whatever runtime is registered for sessionId without an
+ * ownership token. Production callers must use {@link releaseSessionRuntime}.
+ */
+export function releaseSessionRuntimeForTests(sessionId: string): void {
+  const current = sessionRuntimes.get(sessionId);
+  if (!current) {
+    return;
+  }
+  current.dispose();
+  sessionRuntimes.delete(sessionId);
+  sessionHandles.delete(sessionId);
+}
+
+/**
+ * Test-only access to the sealed SessionRuntime behind a handle.
+ * Prefer SessionHandle.runTurn / cancel / submitToolResults in production.
+ */
+export function getSessionRuntimeForTests(sessionId: string): SessionRuntime | undefined {
+  return sessionRuntimes.get(sessionId);
 }

@@ -44,8 +44,6 @@ type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
 
-const CANCELLABLE_TOOL_NAMES = new Set(['execute_command', 'ssh_exec']);
-
 const NO_PROJECT_FOLDER_MESSAGE =
   'No Project Folder is bound to this session. Set a Project Folder (the user\'s repo) before running workspace tools like list_files, write_file, create_directory, execute_command, or compile_typst_file.';
 
@@ -243,8 +241,9 @@ async function previewBackendToolPolicy(
 function prepareCancellableToolArgs(
   toolName: string,
   toolArgs: string,
+  cancellable: boolean,
 ): { toolArgs: string; executionId: string | null } {
-  if (!CANCELLABLE_TOOL_NAMES.has(toolName)) {
+  if (!cancellable) {
     return { toolArgs, executionId: null };
   }
 
@@ -704,6 +703,7 @@ async function executeSerialTool(
   get: () => ChatState,
   set: ChatSetState,
   deps: ToolBatchExecutionDeps,
+  toolMetadataMap?: Map<string, { cancellable?: boolean }>,
 ): Promise<ToolArtifactResult> {
   const uiStore = deps.uiStore.getState();
 
@@ -774,7 +774,11 @@ async function executeSerialTool(
   effectiveArgs = hookResult.modifiedArgs || normalizedToolArgs;
   let pendingExecutionId: string | null = null;
   try {
-    const preparedArgs = prepareCancellableToolArgs(tool.name, effectiveArgs);
+    const preparedArgs = prepareCancellableToolArgs(
+      tool.name,
+      effectiveArgs,
+      toolMetadataMap?.get(tool.name)?.cancellable === true,
+    );
     effectiveArgs = preparedArgs.toolArgs;
     pendingExecutionId = preparedArgs.executionId;
   } catch (error) {
@@ -940,7 +944,7 @@ export async function handleToolBatchRequest(
   const blockedWorkspaceToolIds = new Set<string>();
   const preBlockedResults: ToolArtifactResult[] = [];
 
-  let toolMetadataMap: Map<string, { requiresWorkspace?: boolean }> | undefined;
+  let toolMetadataMap: Map<string, { requiresWorkspace?: boolean; cancellable?: boolean }> | undefined;
   try {
     toolMetadataMap = await deps.loadToolRuntimeMetadata();
   } catch (error) {
@@ -1110,6 +1114,7 @@ export async function handleToolBatchRequest(
         get,
         set,
         deps,
+        toolMetadataMap,
       ),
     );
   }
