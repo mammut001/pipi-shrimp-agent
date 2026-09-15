@@ -158,7 +158,7 @@ export interface RunChatTurnOptions extends RuntimeTurnContext {
   /** Runtime-layer ownership guard; refuse late continuation after terminal/cancel. */
   isTurnActive?: (turnId?: string) => boolean;
   /** Notify SessionRuntime that the turn entered waiting_tool. */
-  onWaitingTool?: () => void;
+  onWaitingTool?: (info?: { requestId: string }) => void;
   /** Notify SessionRuntime that tool results resolved and turn is running again. */
   onToolsResolved?: () => void;
 }
@@ -463,7 +463,7 @@ export async function* runQueryEngineTurn(
         tools: pendingToolCalls,
       };
 
-      options?.onWaitingTool?.();
+      options?.onWaitingTool?.({ requestId });
       let submittedResults: ToolExecutionResult[];
       try {
         submittedResults = await toolResultChannel.waitFor(

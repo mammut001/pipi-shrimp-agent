@@ -1,3 +1,5 @@
+import type { RuntimeTraceEvent } from './RuntimeTrace';
+
 /**
  * Host-side adapter for SessionRuntime cancellation side effects.
  *
@@ -6,6 +8,11 @@
  */
 export interface RuntimeHost {
   cancelSubprocess(sessionId: string): void | Promise<void>;
+  /**
+   * Optional lifecycle / identity trace sink. Omit or leave undefined for a
+   * no-op (production default). Tests inject a capturing sink.
+   */
+  trace?(event: RuntimeTraceEvent): void;
 }
 
 /** No-op host for tests and non-Tauri environments. */

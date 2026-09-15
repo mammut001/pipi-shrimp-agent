@@ -11,6 +11,7 @@ import {
 import { ToolResultChannel } from '../ToolResultChannel';
 import type { RuntimeHost } from '../RuntimeHost';
 import { noopRuntimeHost } from '../RuntimeHost';
+import type { RuntimeTraceEvent } from '../RuntimeTrace';
 
 describe('ToolResultChannel', () => {
   let channel: ToolResultChannel;
@@ -246,5 +247,110 @@ describe('SessionRuntime RuntimeHost adapter', () => {
     handle.cancel('injected');
     expect(cancelSubprocess).toHaveBeenCalledWith(sessionId);
     releaseSessionRuntimeForTests(sessionId);
+  });
+});
+
+describe('SessionRuntime introspection + trace', () => {
+  const sessionId = 'test-session-introspection';
+
+  beforeEach(() => {
+    releaseSessionRuntimeForTests(sessionId);
+  });
+
+  it('getSnapshot returns clear identity + state snapshot', () => {
+    const handle = getSessionHandle(sessionId);
+    expect(handle.getSnapshot()).toEqual({
+      sessionId,
+      runtimeId: handle.runtimeId,
+      turnId: null,
+      state: 'idle',
+      disposed: false,
+    });
+
+    const runtime = getSessionRuntimeForTests(sessionId)!;
+    const turnId = runtime.startTurn();
+    expect(handle.getSnapshot()).toEqual({
+      sessionId,
+      runtimeId: handle.runtimeId,
+      turnId,
+      state: 'created',
+      disposed: false,
+    });
+
+    expect(handle.getTraceContext()).toEqual({
+      sessionId,
+      runtimeId: handle.runtimeId,
+      turnId,
+    });
+  });
+
+  it('cancel emits turn_cancelling → turn_terminal with same runtimeId/turnId', () => {
+    const events: RuntimeTraceEvent[] = [];
+    const host: RuntimeHost = {
+      cancelSubprocess: jest.fn(),
+      trace: (event) => {
+        events.push(event);
+      },
+    };
+    const runtime = new SessionRuntime('trace-cancel-session', host);
+    const turnId = runtime.startTurn();
+
+    runtime.cancel('User cancelled');
+
+    const lifecycle = events.filter((e) =>
+      e.type === 'turn_started'
+      || e.type === 'turn_cancelling'
+      || e.type === 'turn_terminal',
+    );
+    expect(lifecycle.map((e) => e.type)).toEqual([
+      'turn_started',
+      'turn_cancelling',
+      'turn_terminal',
+    ]);
+
+    for (const event of lifecycle) {
+      expect(event.context.sessionId).toBe('trace-cancel-session');
+      expect(event.context.runtimeId).toBe(runtime.runtimeId);
+      expect(event.context.turnId).toBe(turnId);
+    }
+
+    const cancelling = lifecycle.find((e) => e.type === 'turn_cancelling')!;
+    const terminal = lifecycle.find((e) => e.type === 'turn_terminal')!;
+    expect(cancelling.reason).toBe('User cancelled');
+    expect(terminal.reason).toBe('User cancelled');
+    expect(runtime.getState()).toBe('terminal');
+  });
+
+  it('markWaitingTool emits turn_waiting_tool with requestId in trace context', () => {
+    const events: RuntimeTraceEvent[] = [];
+    const host: RuntimeHost = {
+      cancelSubprocess: () => {},
+      trace: (event) => {
+        events.push(event);
+      },
+    };
+    const runtime = new SessionRuntime('trace-wait-session', host);
+    const turnId = runtime.startTurn();
+    runtime.markRunning(turnId);
+    runtime.markWaitingTool(turnId, 'req-batch-1');
+
+    const waiting = events.find((e) => e.type === 'turn_waiting_tool');
+    expect(waiting).toBeDefined();
+    expect(waiting!.context).toMatchObject({
+      sessionId: 'trace-wait-session',
+      runtimeId: runtime.runtimeId,
+      turnId,
+      requestId: 'req-batch-1',
+    });
+    expect(runtime.getSnapshot().state).toBe('waiting_tool');
+  });
+
+  it('noop host without trace does not throw on lifecycle', () => {
+    const runtime = new SessionRuntime('no-trace-session', noopRuntimeHost);
+    const turnId = runtime.startTurn();
+    expect(() => {
+      runtime.markWaitingTool(turnId);
+      runtime.cancel('stop');
+    }).not.toThrow();
   });
 });
