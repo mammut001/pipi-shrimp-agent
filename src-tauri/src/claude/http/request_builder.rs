@@ -586,7 +586,27 @@ pub fn build_openai_body(
         body["reasoning_split"] = serde_json::json!(true);
     }
 
+    // DeepSeek flash/v4 default to thinking mode. With tools, the API then requires
+    // every assistant reasoning_content to be replayed. Disable thinking for
+    // DeepSeek-like OpenAI-compatible requests so tool rounds stay reliable;
+    // reasoning passback remains implemented for providers that leave thinking on.
+    if should_disable_deepseek_thinking(config) {
+        body["thinking"] = serde_json::json!({ "type": "disabled" });
+    }
+
     body
+}
+
+fn should_disable_deepseek_thinking(config: &ResolvedProviderConfig) -> bool {
+    if config.provider_id == ProviderId::DeepSeek {
+        return true;
+    }
+    let model = config.model.to_ascii_lowercase();
+    let base = config.base_url.to_ascii_lowercase();
+    base.contains("deepseek.com")
+        || model.contains("deepseek")
+        || (config.provider_id == ProviderId::Custom
+            && (model.contains("flash") || model.contains("v4") || model.contains("reasoner")))
 }
 
 pub fn estimate_request_input_tokens(
