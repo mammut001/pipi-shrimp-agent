@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { EngineEvent } from '../../core/types';
-import { submitSessionToolResults } from '../../core/runtime';
+import { getSessionHandle, submitSessionToolResults } from '../../core/runtime';
 import { t } from '../../i18n';
 import { recordToolForReactiveCompact } from '../../services/compact/reactiveCompact';
 import { StreamingToolExecutor, type ToolRequest } from '../../services/StreamingToolExecutor';
@@ -43,6 +43,33 @@ type ToolBatchChunk = Extract<EngineEvent, { type: 'tool_batch_request' }>;
 type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
+
+
+/** Best-effort identity/status trace — never includes tool argument payloads. */
+function emitSessionToolTrace(
+  sessionId: string,
+  type: 'tool_requested' | 'tool_execution_started' | 'tool_completed' | 'tool_cancel_requested' | 'tool_cancelled',
+  extras: {
+    toolCallId?: string;
+    executionId?: string | null;
+    requestId?: string;
+    turnId?: string;
+    reason?: string;
+  } = {},
+): void {
+  try {
+    const handle = getSessionHandle(sessionId);
+    handle.emitTraceEvent(type, {
+      ...(extras.toolCallId !== undefined ? { toolCallId: extras.toolCallId } : {}),
+      ...(extras.executionId ? { executionId: extras.executionId } : {}),
+      ...(extras.requestId !== undefined ? { requestId: extras.requestId } : {}),
+      ...(extras.turnId !== undefined ? { turnId: extras.turnId } : {}),
+      ...(extras.reason !== undefined ? { reason: extras.reason } : {}),
+    });
+  } catch {
+    // Trace must never break tool execution
+  }
+}
 
 const NO_PROJECT_FOLDER_MESSAGE =
   'No Project Folder is bound to this session. Set a Project Folder (the user\'s repo) before running workspace tools like list_files, write_file, create_directory, execute_command, or compile_typst_file.';
@@ -774,6 +801,7 @@ async function executeSerialTool(
   const uiStore = deps.uiStore.getState();
 
   markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
+  emitSessionToolTrace(activeSessionId, 'tool_requested', { toolCallId: tool.id });
   uiStore.updateTaskStep(tool.id, 'validating');
   markSessionToolStatus(activeSessionId, tool.id, tool.name, 'validating', set, get);
 
@@ -930,6 +958,10 @@ async function executeSerialTool(
   if (pendingExecutionId) {
     setSessionToolExecutionId(activeSessionId, tool.id, tool.name, pendingExecutionId, set, get);
   }
+  emitSessionToolTrace(activeSessionId, 'tool_execution_started', {
+    toolCallId: tool.id,
+    executionId: pendingExecutionId,
+  });
 
   let toolDidFail = false;
   let finalStatus: 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected' = 'done';
@@ -978,6 +1010,20 @@ async function executeSerialTool(
     toolResultContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
     finalStatus = 'failed';
     resolveSessionTool(activeSessionId, tool.id, tool.name, 'failed', toolResultContent, set, get);
+  }
+
+  if (finalStatus === 'cancelled') {
+    emitSessionToolTrace(activeSessionId, 'tool_cancelled', {
+      toolCallId: tool.id,
+      executionId: pendingExecutionId,
+      reason: finalStatus,
+    });
+  } else {
+    emitSessionToolTrace(activeSessionId, 'tool_completed', {
+      toolCallId: tool.id,
+      executionId: pendingExecutionId,
+      reason: finalStatus,
+    });
   }
 
   const postCtx: PostHookContext = {

@@ -20,8 +20,21 @@ export type {
   RuntimeTraceContext,
   RuntimeTraceEvent,
   RuntimeTraceEventName,
+  RuntimeTraceExtras,
   TraceSink,
 } from './RuntimeTrace';
+export {
+  clearRuntimeTraceSink,
+  createRuntimeTraceRingBuffer,
+  DEFAULT_RUNTIME_TRACE_CAPACITY,
+  dumpRuntimeTraceJsonLines,
+  getRuntimeTraceEvents,
+  installRuntimeTraceDevDump,
+  recordRuntimeTraceEvent,
+  sharedRuntimeTraceSink,
+  type RuntimeTraceDumpApi,
+  type RuntimeTraceRingBuffer,
+} from './RuntimeTraceSink';
 export {
   createTauriRuntimeHost,
   defaultTauriRuntimeHost,

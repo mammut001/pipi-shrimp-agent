@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RuntimeHost } from './RuntimeHost';
+import { installRuntimeTraceDevDump, sharedRuntimeTraceSink } from './RuntimeTraceSink';
 
 /**
  * Default production RuntimeHost: asks the Tauri backend to stop the session
- * subprocess when SessionRuntime.cancel() runs.
+ * subprocess when SessionRuntime.cancel() runs, and records structured
+ * lifecycle/identity events into the shared ring-buffer sink.
  */
 export function createTauriRuntimeHost(): RuntimeHost {
   return {
@@ -14,8 +16,12 @@ export function createTauriRuntimeHost(): RuntimeHost {
         // Safe fallback if invoke is not bound (e.g. non-Tauri contexts)
       }
     },
+    trace: sharedRuntimeTraceSink.record,
   };
 }
 
 /** Shared default instance used by the session registry when no host is injected. */
 export const defaultTauriRuntimeHost: RuntimeHost = createTauriRuntimeHost();
+
+/** DevTools: `globalThis.__PIPI_RUNTIME_TRACE__.dumpJsonLines()` */
+installRuntimeTraceDevDump();

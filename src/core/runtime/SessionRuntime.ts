@@ -11,6 +11,7 @@ import type {
   RuntimeTraceContext,
   RuntimeTraceEvent,
   RuntimeTraceEventName,
+  RuntimeTraceExtras,
 } from './RuntimeTrace';
 
 export type RuntimeTurnId = string;
@@ -103,6 +104,13 @@ export class SessionRuntime {
     this.host = host;
     this.instanceId = globalThis.crypto?.randomUUID?.()
       ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this.toolResults.setDiscardSink((info) => {
+      this.emitTrace('tool_result_discarded', {
+        requestId: info.requestId,
+        turnId: info.turnId,
+        reason: info.reason,
+      });
+    });
   }
 
   /** Alias for `instanceId` — generation token for ownership-aware release. */
@@ -166,14 +174,17 @@ export class SessionRuntime {
     return this.toolResults;
   }
 
+  /**
+   * Emit a structured identity/status trace event (no tool payloads/secrets).
+   * Prefer this from chat-layer cancel/tool hooks; keep lifecycle emits private.
+   */
+  emitTraceEvent(type: RuntimeTraceEventName, extras?: RuntimeTraceExtras): void {
+    this.emitTrace(type, extras);
+  }
+
   private emitTrace(
     type: RuntimeTraceEventName,
-    extras?: {
-      turnId?: string;
-      requestId?: string;
-      toolCallId?: string;
-      reason?: string;
-    },
+    extras?: RuntimeTraceExtras,
   ): void {
     const sink = this.host.trace;
     if (!sink) {
@@ -189,6 +200,7 @@ export class SessionRuntime {
         ...(turnId !== undefined ? { turnId } : {}),
         ...(extras?.requestId !== undefined ? { requestId: extras.requestId } : {}),
         ...(extras?.toolCallId !== undefined ? { toolCallId: extras.toolCallId } : {}),
+        ...(extras?.executionId !== undefined ? { executionId: extras.executionId } : {}),
       },
       ...(extras?.reason !== undefined ? { reason: extras.reason } : {}),
     };
@@ -228,6 +240,7 @@ export class SessionRuntime {
     }
     this.activeTurn.state = 'waiting_tool';
     this.emitTrace('turn_waiting_tool', { turnId, requestId });
+    this.emitTrace('tool_requested', { turnId, requestId });
   }
 
   /**
@@ -362,15 +375,45 @@ export class SessionRuntime {
       const cancelledTurnId = this.activeTurn.turnId;
       this.activeTurn.state = 'cancelling';
       this.emitTrace('turn_cancelling', { turnId: cancelledTurnId, reason });
+      this.emitTrace('tool_cancel_requested', { turnId: cancelledTurnId, reason });
       this.activeTurn.controller.abort(reason);
+      const pendingRequestIds = this.toolResults.listPendingRequestIds();
       // cancelAll tombstones pending waiters so late results discard only.
       this.toolResults.cancelAll(reason);
+      for (const requestId of pendingRequestIds) {
+        this.emitTrace('tool_cancelled', {
+          turnId: cancelledTurnId,
+          requestId,
+          reason,
+        });
+      }
       this.activeTurn.state = 'terminal';
       this.emitTrace('turn_terminal', { turnId: cancelledTurnId, reason });
     } else if (this.activeTurn) {
+      const pendingRequestIds = this.toolResults.listPendingRequestIds();
+      if (pendingRequestIds.length > 0) {
+        this.emitTrace('tool_cancel_requested', {
+          turnId: this.activeTurn.turnId,
+          reason,
+        });
+      }
       this.toolResults.cancelAll(reason);
+      for (const requestId of pendingRequestIds) {
+        this.emitTrace('tool_cancelled', {
+          turnId: this.activeTurn.turnId,
+          requestId,
+          reason,
+        });
+      }
     } else {
+      const pendingRequestIds = this.toolResults.listPendingRequestIds();
+      if (pendingRequestIds.length > 0) {
+        this.emitTrace('tool_cancel_requested', { reason });
+      }
       this.toolResults.cancelAll(reason);
+      for (const requestId of pendingRequestIds) {
+        this.emitTrace('tool_cancelled', { requestId, reason });
+      }
     }
 
     try {
@@ -434,6 +477,10 @@ export class SessionHandle {
 
   getTraceContext(): RuntimeTraceContext {
     return this._runtime.getTraceContext();
+  }
+
+  emitTraceEvent(type: RuntimeTraceEventName, extras?: RuntimeTraceExtras): void {
+    this._runtime.emitTraceEvent(type, extras);
   }
 
   getActiveTurnId(): RuntimeTurnId | null {
@@ -561,6 +608,10 @@ export function releaseSessionRuntime(
     // Identity mismatch: a newer runtime has taken ownership of this sessionId.
     return;
   }
+  current.emitTraceEvent('runtime_released', {
+    turnId: current.getActiveTurnId() ?? undefined,
+    reason: 'releaseSessionRuntime',
+  });
   current.dispose();
   sessionRuntimes.delete(sessionId);
   sessionHandles.delete(sessionId);
