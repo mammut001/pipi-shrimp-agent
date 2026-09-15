@@ -6,6 +6,7 @@
 use crate::models::CancelToolExecutionResponse;
 use crate::tools::execution_policy::{self, ToolPolicyPreview};
 use crate::tools::process_manager;
+use crate::tools::test_barrier;
 use crate::tools::{
     build_tool_runtime_metadata, classify_tool_error_code, ToolCallRequest, ToolCallResult,
     ToolExecutionSource,
@@ -219,14 +220,50 @@ pub async fn get_available_tools(
 pub async fn cancel_tool_execution(
     #[allow(non_snake_case)] executionId: String,
 ) -> Result<CancelToolExecutionResponse, String> {
-    process_manager::cancel_execution(&executionId)
-        .map_err(|e| e.to_string())
-        .map(|result| CancelToolExecutionResponse {
-            execution_id: result.execution_id,
-            cancelled: result.cancelled,
-            status: result.status,
-            message: result.message,
-        })
+    let process_result = process_manager::cancel_execution(&executionId).map_err(|e| e.to_string())?;
+    if process_result.cancelled {
+        return Ok(CancelToolExecutionResponse {
+            execution_id: process_result.execution_id,
+            cancelled: process_result.cancelled,
+            status: process_result.status,
+            message: process_result.message,
+        });
+    }
+
+    let barrier_result = test_barrier::cancel_by_execution_id(&executionId);
+    if barrier_result.cancelled {
+        return Ok(CancelToolExecutionResponse {
+            execution_id: barrier_result.execution_id,
+            cancelled: barrier_result.cancelled,
+            status: barrier_result.status,
+            message: barrier_result.message,
+        });
+    }
+
+    Ok(CancelToolExecutionResponse {
+        execution_id: process_result.execution_id,
+        cancelled: process_result.cancelled,
+        status: process_result.status,
+        message: process_result.message,
+    })
+}
+
+/// Release waiters blocked in `test_barrier_tool` for the given barrier id.
+#[tauri::command]
+pub async fn release_test_barrier(
+    #[allow(non_snake_case)] barrierId: String,
+) -> Result<serde_json::Value, String> {
+    let trimmed = barrierId.trim();
+    if trimmed.is_empty() {
+        return Err("barrierId must not be empty".to_string());
+    }
+    Ok(test_barrier::release_test_barrier(trimmed))
+}
+
+/// Clear all test barriers and wake any remaining waiters (harness reset).
+#[tauri::command]
+pub async fn reset_test_barriers() -> Result<serde_json::Value, String> {
+    Ok(test_barrier::reset_test_barriers())
 }
 
 #[cfg(test)]

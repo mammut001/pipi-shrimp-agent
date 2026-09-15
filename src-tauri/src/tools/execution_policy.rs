@@ -1787,4 +1787,47 @@ mod tests {
 
         assert!(error.to_string().contains("outside remote root"));
     }
+
+    #[test]
+    fn test_barrier_tool_allows_without_long_running_confirmation() {
+        let mut request = make_request("test_barrier_tool");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        // No work_dir required — barrier has no path binding.
+        request.work_dir = None;
+        request.arguments = serde_json::json!({
+            "barrier_id": "manual-d-a",
+            "executionId": "exec-a"
+        })
+        .to_string();
+
+        let preview = preview_request_policy(
+            &request,
+            &serde_json::json!({
+                "barrier_id": "manual-d-a",
+                "executionId": "exec-a"
+            }),
+            Some("session-barrier"),
+        )
+        .expect("preview should succeed");
+
+        assert_eq!(
+            preview.decision, "allowed",
+            "test_barrier_tool must not require long-running confirmation: {:?}",
+            preview.reason
+        );
+        assert!(preview.approval_token.is_none());
+    }
+
+    #[test]
+    fn test_barrier_tool_does_not_require_work_dir() {
+        let mut request = make_request("test_barrier_tool");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.work_dir = None;
+        let args = serde_json::json!({ "barrier_id": "no-workdir" });
+        request.arguments = args.to_string();
+
+        enforce_request_policy(&request, &args, Some("session-barrier"))
+            .expect("test_barrier_tool must not require work_dir");
+    }
+
 }

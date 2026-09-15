@@ -19,6 +19,7 @@ use crate::commands::file::{
 };
 use crate::tools::shell_profile::WindowsShellProfile;
 use crate::tools::ssh_bridge::{execute_ssh_exec, execute_ssh_read_file, execute_ssh_upload};
+use crate::tools::test_barrier;
 use jsonschema::{JSONSchema, ValidationError};
 
 /// Tool handler: receives parsed JSON arguments, returns result string
@@ -1006,6 +1007,42 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
         false,
         false,
     );
+
+    // --- test_barrier_tool (Manual D deterministic harness) ---
+    registry.register(
+        "test_barrier_tool",
+        Arc::new(|args| test_barrier::execute_test_barrier_tool(&args)),
+        ToolMetadata {
+            name: "test_barrier_tool".to_string(),
+            description: "Deterministic Manual D harness: block until release_test_barrier(barrier_id) or cancel_tool_execution(executionId). Not for production agent use.".to_string(),
+            is_read_only: false,
+            is_concurrency_safe: true,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "barrier_id": {
+                        "type": "string",
+                        "description": "Barrier identifier shared with release_test_barrier."
+                    },
+                    "barrierId": {
+                        "type": "string",
+                        "description": "CamelCase alias for barrier_id."
+                    },
+                    "executionId": {
+                        "type": "string",
+                        "description": "Optional execution identifier used to cancel this wait via cancel_tool_execution."
+                    },
+                    "execution_id": {
+                        "type": "string",
+                        "description": "Legacy snake_case alias for executionId."
+                    }
+                },
+                "required": ["barrier_id"],
+                "additionalProperties": false,
+            }),
+        },
+    );
+
 }
 
 #[cfg(test)]
@@ -1213,4 +1250,44 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(work_dir);
     }
+
+
+    #[test]
+    fn test_barrier_tool_runtime_metadata_is_cancellable_and_concurrent() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        assert!(registry.is_registered("test_barrier_tool"));
+        assert!(registry.is_concurrency_safe("test_barrier_tool"));
+        assert!(!registry.is_read_only("test_barrier_tool"));
+
+        let schema = registry
+            .get_anthropic_tools_schema()
+            .into_iter()
+            .find(|s| s.get("name").and_then(|v| v.as_str()) == Some("test_barrier_tool"))
+            .expect("schema present");
+        let meta = crate::tools::build_tool_runtime_metadata(
+            "test_barrier_tool".to_string(),
+            schema
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            registry.is_read_only("test_barrier_tool"),
+            registry.is_concurrency_safe("test_barrier_tool"),
+            schema
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
+        );
+        assert!(meta.cancellable);
+        assert!(meta.is_concurrency_safe);
+        assert!(!meta.requires_workspace);
+        assert_eq!(
+            meta.concurrency_class,
+            crate::tools::ToolConcurrencyClass::Concurrent
+        );
+        assert_eq!(meta.default_timeout_ms, 300_000);
+    }
+
 }

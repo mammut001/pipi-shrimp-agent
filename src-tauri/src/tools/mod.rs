@@ -18,6 +18,7 @@ pub mod registry;
 pub mod scheduler;
 pub mod shell_profile;
 pub mod ssh_bridge;
+pub mod test_barrier;
 
 use serde::{Deserialize, Serialize};
 
@@ -157,13 +158,13 @@ fn permission_class(name: &str, is_read_only: bool) -> &'static str {
 
 fn default_timeout_ms(name: &str) -> u64 {
     match name {
-        "execute_command" | "ssh_exec" | "code_execution" => 300_000,
+        "execute_command" | "ssh_exec" | "code_execution" | "test_barrier_tool" => 300_000,
         _ => 30_000,
     }
 }
 
 fn is_cancellable(name: &str) -> bool {
-    matches!(name, "execute_command" | "ssh_exec")
+    matches!(name, "execute_command" | "ssh_exec" | "test_barrier_tool")
 }
 
 pub fn build_tool_runtime_metadata(
