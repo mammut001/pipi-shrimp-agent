@@ -217,6 +217,7 @@ pub fn run() {
             commands::database_bridge::db_get_all_sessions,
             commands::database_bridge::db_delete_session,
             commands::database_bridge::db_save_message,
+            commands::database_bridge::db_save_messages,
             commands::database_bridge::db_get_messages,
             commands::database_bridge::db_delete_message,
             commands::database_bridge::delete_messages_by_ids,

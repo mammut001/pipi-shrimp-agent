@@ -5,7 +5,7 @@ use crate::database::{
     get_model_token_stats, get_monthly_token_stats, get_telegram_binding,
     get_telegram_runtime_state, get_telegram_task, get_total_token_stats, list_database_backups,
     list_telegram_bindings, list_telegram_tasks_by_statuses, list_telegram_tasks_for_chat,
-    load_swarm_snapshot, restore_database_from_backup, save_message, save_project, save_session,
+    load_swarm_snapshot, restore_database_from_backup, save_message, save_messages, save_project, save_session,
     save_swarm_snapshot, save_telegram_binding, save_telegram_task, save_token_usage,
     set_telegram_runtime_state, update_project, DailyTokenStats, DbBackupEntry, DbDiagnostics,
     DbMessage, DbProject, DbSession, DbTelegramBinding, DbTelegramTask, DbTokenUsage,
@@ -96,6 +96,12 @@ pub fn db_delete_session(session_id: String) -> Result<(), String> {
 pub fn db_save_message(message: DbMessage) -> Result<(), String> {
     save_message(&message).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn db_save_messages(messages: Vec<DbMessage>) -> Result<(), String> {
+    save_messages(&messages).map_err(|e| e.to_string())
+}
+
 
 #[tauri::command]
 pub fn db_get_messages(session_id: String) -> Result<Vec<DbMessage>, String> {

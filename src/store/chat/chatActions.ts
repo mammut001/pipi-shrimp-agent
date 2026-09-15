@@ -49,7 +49,7 @@ import {
   listUnresolvedSessionTools,
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
-import { scrubDanglingToolCalls } from './scrubDanglingToolCalls';
+import { buildToolCancelNoticeContent, scrubDanglingToolCalls } from './scrubDanglingToolCalls';
 import {
   abortChatTurn,
   clearChatGenerationCancel,
@@ -1284,14 +1284,12 @@ export function createChatActionMethods({
           }),
         }));
         if (unresolvedTools.length > 0) {
-          const toolNames = unresolvedTools.map((tool) => tool.label).join(', ');
+          const toolNames = unresolvedTools.map((tool) => tool.label);
           await get().addMessageToSession(
             owningSessionId,
             createMessage(
               'assistant',
-              `[Tool run cancelled by user: ${toolNames}. `
-              + 'Treat this as a terminal cancel for that attempt — do NOT re-request the same tool '
-              + 'or assume it completed. Ask the user before retrying.]',
+              buildToolCancelNoticeContent(toolNames, 'user_cancel'),
             ),
           );
         }
