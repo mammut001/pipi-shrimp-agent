@@ -3,6 +3,7 @@ export type { ToolExecutionResult };
 
 interface PendingToolResultRequest {
   expectedIds: string[];
+  turnId?: string;
   resolve: (results: ToolExecutionResult[]) => void;
   reject: (error: Error) => void;
   timeoutId?: ReturnType<typeof setTimeout>;
@@ -10,12 +11,14 @@ interface PendingToolResultRequest {
 }
 
 type BufferedToolResponse =
-  | { kind: 'results'; results: ToolExecutionResult[] }
-  | { kind: 'error'; error: Error };
+  | { kind: 'results'; results: ToolExecutionResult[]; turnId?: string }
+  | { kind: 'error'; error: Error; turnId?: string };
 
 export interface WaitForToolResultsOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Bind this waiter to a turn; submit must present the same turnId. */
+  turnId?: string;
 }
 
 const MAX_TOMBSTONES = 1000;
@@ -31,6 +34,18 @@ function normalizeResults(
   }));
 }
 
+function turnIdsCompatible(expected?: string, actual?: string): boolean {
+  // Both unbound: compatible (legacy / tests).
+  if (expected === undefined && actual === undefined) {
+    return true;
+  }
+  // One unbound, one bound: reject (fail closed on identity).
+  if (expected === undefined || actual === undefined) {
+    return expected === actual;
+  }
+  return expected === actual;
+}
+
 /**
  * Process-local command/result channel owned by one SessionRuntime.
  *
@@ -42,7 +57,10 @@ function normalizeResults(
  *
  * Invariants:
  * - Exactly-once delivery per requestId.
+ * - Waiters are bound to turnId in addition to requestId.
+ * - submit validates requestId + turnId; mismatches discard only.
  * - Late results cannot settle cancelled/timed-out waiters.
+ * - Late results after terminal/cancel discard only (no continuation).
  * - Late results cannot settle later requests.
  * - Bounded tombstone history preserves clean memory behavior.
  * - Cancellation emits AbortError so no false error is shown to users.
@@ -86,6 +104,14 @@ export class ToolResultChannel {
 
     const buffered = this.buffered.get(requestId);
     if (buffered) {
+      if (!turnIdsCompatible(options.turnId, buffered.turnId)) {
+        // Buffered result belongs to a different turn — discard and refuse.
+        this.buffered.delete(requestId);
+        this.markTombstone(requestId);
+        return Promise.reject(
+          new Error(`Tool request ${requestId} turnId mismatch (buffered result discarded)`),
+        );
+      }
       this.buffered.delete(requestId);
       this.markTombstone(requestId);
       if (buffered.kind === 'error') {
@@ -103,6 +129,7 @@ export class ToolResultChannel {
     return new Promise<ToolExecutionResult[]>((resolve, reject) => {
       const entry: PendingToolResultRequest = {
         expectedIds: [...expectedIds],
+        turnId: options.turnId,
         resolve,
         reject,
       };
@@ -145,10 +172,14 @@ export class ToolResultChannel {
     });
   }
 
-  submit(requestId: string, results: ToolExecutionResult[]): void {
+  /**
+   * Submit results for a pending (or soon-to-wait) request.
+   * Returns false when the result was discarded (tombstoned, turnId mismatch).
+   */
+  submit(requestId: string, results: ToolExecutionResult[], turnId?: string): boolean {
     if (this.tombstones.has(requestId)) {
       // Late result after cancellation, timeout, or prior settlement: safely drop.
-      return;
+      return false;
     }
 
     const pending = this.pending.get(requestId);
@@ -157,9 +188,15 @@ export class ToolResultChannel {
         this.buffered.set(requestId, {
           kind: 'results',
           results: results.map((result) => ({ ...result })),
+          turnId,
         });
       }
-      return;
+      return true;
+    }
+
+    if (!turnIdsCompatible(pending.turnId, turnId)) {
+      // Wrong turn — discard only; do not settle the waiter.
+      return false;
     }
 
     this.pending.delete(requestId);
@@ -169,21 +206,26 @@ export class ToolResultChannel {
     }
     pending.abortCleanup?.();
     pending.resolve(normalizeResults(pending.expectedIds, results));
+    return true;
   }
 
-  reject(requestId: string, error: unknown): void {
+  reject(requestId: string, error: unknown, turnId?: string): boolean {
     if (this.tombstones.has(requestId)) {
       // Late result after cancellation, timeout, or prior settlement: safely drop.
-      return;
+      return false;
     }
 
     const normalized = error instanceof Error ? error : new Error(String(error));
     const pending = this.pending.get(requestId);
     if (!pending) {
       if (!this.buffered.has(requestId)) {
-        this.buffered.set(requestId, { kind: 'error', error: normalized });
+        this.buffered.set(requestId, { kind: 'error', error: normalized, turnId });
       }
-      return;
+      return true;
+    }
+
+    if (!turnIdsCompatible(pending.turnId, turnId)) {
+      return false;
     }
 
     this.pending.delete(requestId);
@@ -193,6 +235,7 @@ export class ToolResultChannel {
     }
     pending.abortCleanup?.();
     pending.reject(normalized);
+    return true;
   }
 
   cancelAll(reason = 'Session runtime cancelled'): void {

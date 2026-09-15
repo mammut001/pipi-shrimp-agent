@@ -139,6 +139,12 @@ export interface RunChatTurnOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   turnId?: string;
+  /** Runtime-layer ownership guard; refuse late continuation after terminal/cancel. */
+  isTurnActive?: (turnId?: string) => boolean;
+  /** Notify SessionRuntime that the turn entered waiting_tool. */
+  onWaitingTool?: () => void;
+  /** Notify SessionRuntime that tool results resolved and turn is running again. */
+  onToolsResolved?: () => void;
 }
 
 function createToolRequestId(sessionId: string, round: number, turnId?: string): string {
@@ -150,6 +156,14 @@ function createToolRequestId(sessionId: string, round: number, turnId?: string):
 
 function errorMessage(error: unknown, fallback = 'Chat request failed'): string {
   return toError(error, fallback).message;
+}
+
+function ownershipLost(options: RunChatTurnOptions | undefined, turnId?: string): boolean {
+  if (!options?.isTurnActive) {
+    return false;
+  }
+  const id = turnId ?? options.turnId;
+  return !options.isTurnActive(id);
 }
 
 /**
@@ -361,7 +375,16 @@ export async function* runQueryEngineTurn(
       }
     }
 
-    if (retryDueToMalformedToolCall) continue;
+    if (retryDueToMalformedToolCall) {
+      if (ownershipLost(options, effectiveTurnId)) {
+        return;
+      }
+      continue;
+    }
+
+    if (ownershipLost(options, effectiveTurnId) || options?.signal?.aborted) {
+      return;
+    }
 
     const assistantMessage = {
       role: 'assistant',
@@ -384,6 +407,9 @@ export async function* runQueryEngineTurn(
         continue;
       }
 
+      if (ownershipLost(options, effectiveTurnId)) {
+        return;
+      }
       isTurnComplete = true;
       yield { type: 'turn_complete', tokenUsage };
       memoryHook.onTurnComplete(currentMessages);
@@ -411,6 +437,9 @@ export async function* runQueryEngineTurn(
         message: `Executing ${pendingToolCalls.length} tool(s): ${pendingToolCalls.map(t => t.name).join(', ')}`,
       };
 
+      if (ownershipLost(options, effectiveTurnId)) {
+        return;
+      }
       const requestId = createToolRequestId(sessionId, round, effectiveTurnId);
       yield {
         type: 'tool_batch_request',
@@ -418,6 +447,7 @@ export async function* runQueryEngineTurn(
         tools: pendingToolCalls,
       };
 
+      options?.onWaitingTool?.();
       let submittedResults: ToolExecutionResult[];
       try {
         submittedResults = await toolResultChannel.waitFor(
@@ -429,11 +459,13 @@ export async function* runQueryEngineTurn(
               10,
             ) || 300_000,
             signal: options?.signal,
+            turnId: effectiveTurnId,
           },
         );
       } catch (waitError) {
         if (
           options?.signal?.aborted
+          || ownershipLost(options, effectiveTurnId)
           || (waitError instanceof DOMException && waitError.name === 'AbortError')
           || (waitError instanceof Error && (waitError.name === 'AbortError' || waitError.message.toLowerCase().includes('aborted') || waitError.message.toLowerCase().includes('cancelled')))
         ) {
@@ -442,6 +474,12 @@ export async function* runQueryEngineTurn(
         yield { type: 'error', error: errorMessage(waitError) };
         return;
       }
+
+      // Refuse late continuation after terminal/cancelling.
+      if (ownershipLost(options, effectiveTurnId) || options?.signal?.aborted) {
+        return;
+      }
+      options?.onToolsResolved?.();
       const allContent = pendingToolCalls.map((tool) => (
         submittedResults.find((result) => result.id === tool.id)?.content
         ?? 'Error: no result returned for tool'

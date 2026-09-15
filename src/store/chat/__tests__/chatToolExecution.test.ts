@@ -1318,12 +1318,20 @@ describe('chatToolExecution', () => {
   });
 
   describe('resolveWorkspaceToolPreflight (pure)', () => {
+    const workspaceMeta = new Map<string, { requiresWorkspace?: boolean }>([
+      ['list_files', { requiresWorkspace: true }],
+      ['write_file', { requiresWorkspace: true }],
+      ['execute_command', { requiresWorkspace: true }],
+      ['AskUserQuestion', { requiresWorkspace: false }],
+    ]);
+
     it('blocks workspace tools when no project folder is bound', () => {
       const result = resolveWorkspaceToolPreflight({
         projectDir: null,
         pipiOutputDir: '/out',
         ensureResult: null,
         toolNames: ['list_files', 'write_file'],
+        toolMetadataMap: workspaceMeta,
       });
       expect(result.workDir).toBeNull();
       expect(result.needsWorkspaceTools).toBe(true);
@@ -1336,6 +1344,7 @@ describe('chatToolExecution', () => {
         pipiOutputDir: '/out',
         ensureResult: '/out',
         toolNames: ['execute_command'],
+        toolMetadataMap: workspaceMeta,
       });
       expect(result.workDir).toBeNull();
       expect(result.blockWorkspaceTools).toBe(true);
@@ -1347,20 +1356,33 @@ describe('chatToolExecution', () => {
         pipiOutputDir: '/out',
         ensureResult: null,
         toolNames: ['list_files'],
+        toolMetadataMap: workspaceMeta,
       });
       expect(result.workDir).toBe('/repo');
       expect(result.blockWorkspaceTools).toBe(false);
     });
 
-    it('does not block non-workspace tools when unbound', () => {
+    it('does not block non-workspace tools when unbound (with metadata)', () => {
+      const result = resolveWorkspaceToolPreflight({
+        projectDir: null,
+        pipiOutputDir: '/out',
+        ensureResult: null,
+        toolNames: ['AskUserQuestion'],
+        toolMetadataMap: workspaceMeta,
+      });
+      expect(result.needsWorkspaceTools).toBe(false);
+      expect(result.blockWorkspaceTools).toBe(false);
+    });
+
+    it('fail-closed without metadata: treats any tools as workspace-critical', () => {
       const result = resolveWorkspaceToolPreflight({
         projectDir: null,
         pipiOutputDir: '/out',
         ensureResult: null,
         toolNames: ['AskUserQuestion'],
       });
-      expect(result.needsWorkspaceTools).toBe(false);
-      expect(result.blockWorkspaceTools).toBe(false);
+      expect(result.needsWorkspaceTools).toBe(true);
+      expect(result.blockWorkspaceTools).toBe(true);
     });
   });
 

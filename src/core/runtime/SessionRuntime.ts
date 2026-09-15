@@ -9,6 +9,23 @@ import { ToolResultChannel } from './ToolResultChannel';
 
 export type RuntimeTurnId = string;
 
+/**
+ * Explicit turn lifecycle states for SessionRuntime.
+ *
+ * Transitions (happy path):
+ *   created → running → waiting_tool → running → … → terminal
+ * Cancel path:
+ *   (created|running|waiting_tool) → cancelling → terminal
+ *
+ * Late continuations after `cancelling` or `terminal` must be refused.
+ */
+export type TurnState =
+  | 'created'
+  | 'running'
+  | 'waiting_tool'
+  | 'cancelling'
+  | 'terminal';
+
 export interface SessionTurnRequest {
   turnId?: RuntimeTurnId;
   initialMessages: any[];
@@ -23,13 +40,17 @@ export interface SessionTurnRequest {
 interface ActiveTurnState {
   readonly turnId: RuntimeTurnId;
   readonly controller: AbortController;
-  isTerminal: boolean;
+  state: TurnState;
 }
 
 function newTurnId(sessionId: string): RuntimeTurnId {
   const randomId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return `${sessionId}:${randomId}`;
+}
+
+function isLiveTurnState(state: TurnState): boolean {
+  return state !== 'terminal' && state !== 'cancelling';
 }
 
 /**
@@ -43,10 +64,15 @@ function newTurnId(sessionId: string): RuntimeTurnId {
  * - Starting a turn cancels any prior active turn.
  * - Explicit per-turn identity ensures stale continuations cannot mutate subsequent turns.
  * - Cancellation is authoritative across provider stream, tool channel, and runtime state.
- * - Release is ownership-aware to prevent async finally blocks from releasing newer runtimes.
+ * - Release is ownership-aware (runtimeId / instance identity) to prevent async finally
+ *   blocks from releasing newer runtimes that have taken over the same sessionId.
  */
 export class SessionRuntime {
   readonly sessionId: string;
+  /**
+   * Stable identity for this runtime instance. Aliased as `runtimeId` so callers
+   * can pass generation-aware release tokens without caring about the field name.
+   */
   readonly instanceId: string;
 
   private readonly toolResults = new ToolResultChannel();
@@ -59,18 +85,42 @@ export class SessionRuntime {
       ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
+  /** Alias for `instanceId` — generation token for ownership-aware release. */
+  get runtimeId(): string {
+    return this.instanceId;
+  }
+
   get isDisposed(): boolean {
     return this.disposed;
   }
 
   get activeTurnId(): RuntimeTurnId | null {
-    return this.activeTurn && !this.activeTurn.isTerminal
+    return this.activeTurn && isLiveTurnState(this.activeTurn.state)
       ? this.activeTurn.turnId
       : null;
   }
 
+  getState(): TurnState | 'idle' {
+    if (this.disposed) {
+      return 'terminal';
+    }
+    return this.activeTurn?.state ?? 'idle';
+  }
+
+  getActiveTurnId(): RuntimeTurnId | null {
+    return this.activeTurnId;
+  }
+
+  /** @internal Test/support access to the process-local tool channel. */
+  getToolResultChannel(): ToolResultChannel {
+    return this.toolResults;
+  }
+
   isTurnActive(turnId?: string): boolean {
-    if (this.disposed || !this.activeTurn || this.activeTurn.isTerminal) {
+    if (this.disposed || !this.activeTurn) {
+      return false;
+    }
+    if (!isLiveTurnState(this.activeTurn.state)) {
       return false;
     }
     if (this.activeTurn.controller.signal.aborted) {
@@ -82,6 +132,34 @@ export class SessionRuntime {
     return true;
   }
 
+  /**
+   * Mark the active turn as waiting for tool results. No-op if turnId does not
+   * match the live turn (stale continuation).
+   */
+  markWaitingTool(turnId: string): void {
+    if (!this.activeTurn || this.activeTurn.turnId !== turnId) {
+      return;
+    }
+    if (!isLiveTurnState(this.activeTurn.state)) {
+      return;
+    }
+    this.activeTurn.state = 'waiting_tool';
+  }
+
+  /**
+   * Resume from waiting_tool → running after tool results are accepted.
+   * Refuses transition if the turn is no longer live.
+   */
+  markRunning(turnId: string): void {
+    if (!this.activeTurn || this.activeTurn.turnId !== turnId) {
+      return;
+    }
+    if (!isLiveTurnState(this.activeTurn.state)) {
+      return;
+    }
+    this.activeTurn.state = 'running';
+  }
+
   startTurn(turnId?: RuntimeTurnId): RuntimeTurnId {
     if (this.disposed) {
       throw new Error(`SessionRuntime ${this.sessionId} is already disposed`);
@@ -89,7 +167,7 @@ export class SessionRuntime {
 
     // Invariant: only one active turn per session runtime.
     // If a previous turn is still running in this session, cancel it before starting the new turn.
-    if (this.activeTurn && !this.activeTurn.isTerminal) {
+    if (this.activeTurn && isLiveTurnState(this.activeTurn.state)) {
       this.cancel('Superseded by new turn', this.activeTurn.turnId);
     }
 
@@ -98,7 +176,7 @@ export class SessionRuntime {
     this.activeTurn = {
       turnId: id,
       controller,
-      isTerminal: false,
+      state: 'created',
     };
     return id;
   }
@@ -106,6 +184,7 @@ export class SessionRuntime {
   async *runTurn(request: SessionTurnRequest): AsyncGenerator<EngineEvent, void, unknown> {
     const turnId = this.startTurn(request.turnId);
     const turnState = this.activeTurn!;
+    turnState.state = 'running';
     const controller = turnState.controller;
     const externalSignal = request.options?.signal;
     const onExternalAbort = () => {
@@ -114,13 +193,13 @@ export class SessionRuntime {
 
     if (externalSignal?.aborted) {
       controller.abort(externalSignal.reason);
-      turnState.isTerminal = true;
+      turnState.state = 'terminal';
     } else {
       externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
     }
 
     try {
-      if (turnState.isTerminal || controller.signal.aborted) {
+      if (!isLiveTurnState(turnState.state) || controller.signal.aborted) {
         return;
       }
 
@@ -135,12 +214,18 @@ export class SessionRuntime {
           ...request.options,
           signal: controller.signal,
           turnId,
+          isTurnActive: () => this.isTurnActive(turnId),
+          onWaitingTool: () => this.markWaitingTool(turnId),
+          onToolsResolved: () => this.markRunning(turnId),
         },
         request.pipiOutputDir,
         this.toolResults,
         turnId,
       )) {
-        if (turnState.isTerminal || controller.signal.aborted) {
+        if (!isLiveTurnState(turnState.state) || controller.signal.aborted) {
+          return;
+        }
+        if (!this.isTurnActive(turnId)) {
           return;
         }
         yield {
@@ -150,7 +235,8 @@ export class SessionRuntime {
         } as EngineEvent;
       }
     } finally {
-      turnState.isTerminal = true;
+      // Always land in terminal; cancel() may already have moved through cancelling.
+      turnState.state = 'terminal';
       externalSignal?.removeEventListener('abort', onExternalAbort);
       if (this.activeTurn?.turnId === turnId) {
         this.activeTurn = null;
@@ -158,12 +244,16 @@ export class SessionRuntime {
     }
   }
 
-  submitToolResults(requestId: string, results: ToolExecutionResult[]): void {
-    this.toolResults.submit(requestId, results);
+  submitToolResults(
+    requestId: string,
+    results: ToolExecutionResult[],
+    turnId?: string,
+  ): boolean {
+    return this.toolResults.submit(requestId, results, turnId);
   }
 
-  rejectToolResults(requestId: string, error: unknown): void {
-    this.toolResults.reject(requestId, error);
+  rejectToolResults(requestId: string, error: unknown, turnId?: string): boolean {
+    return this.toolResults.reject(requestId, error, turnId);
   }
 
   cancel(reason = 'Session cancelled', turnId?: string): void {
@@ -172,18 +262,27 @@ export class SessionRuntime {
       return;
     }
 
-    if (this.activeTurn) {
-      this.activeTurn.isTerminal = true;
+    if (this.activeTurn && isLiveTurnState(this.activeTurn.state)) {
+      this.activeTurn.state = 'cancelling';
       this.activeTurn.controller.abort(reason);
+      // cancelAll tombstones pending waiters so late results discard only.
+      this.toolResults.cancelAll(reason);
+      this.activeTurn.state = 'terminal';
+    } else if (this.activeTurn) {
+      this.toolResults.cancelAll(reason);
+    } else {
+      this.toolResults.cancelAll(reason);
     }
-
-    this.toolResults.cancelAll(reason);
 
     try {
       void invoke('stop_subprocess', { sessionId: this.sessionId }).catch(() => {});
     } catch {
       // Safe fallback if invoke is not bound in tests
     }
+  }
+
+  cancelActiveTurn(reason = 'Session cancelled'): void {
+    this.cancel(reason);
   }
 
   cancelActiveTurns(reason = 'Session cancelled'): void {
@@ -213,12 +312,24 @@ export class SessionHandle {
     return this.runtime.instanceId;
   }
 
+  get runtimeId(): string {
+    return this.runtime.runtimeId;
+  }
+
   get activeTurnId(): RuntimeTurnId | null {
     return this.runtime.activeTurnId;
   }
 
   get isDisposed(): boolean {
     return this.runtime.isDisposed;
+  }
+
+  getState(): TurnState | 'idle' {
+    return this.runtime.getState();
+  }
+
+  getActiveTurnId(): RuntimeTurnId | null {
+    return this.runtime.getActiveTurnId();
   }
 
   isTurnActive(turnId?: string): boolean {
@@ -233,16 +344,24 @@ export class SessionHandle {
     return this.runtime.runTurn(request);
   }
 
-  submitToolResults(requestId: string, results: ToolExecutionResult[]): void {
-    this.runtime.submitToolResults(requestId, results);
+  submitToolResults(
+    requestId: string,
+    results: ToolExecutionResult[],
+    turnId?: string,
+  ): boolean {
+    return this.runtime.submitToolResults(requestId, results, turnId);
   }
 
-  rejectToolResults(requestId: string, error: unknown): void {
-    this.runtime.rejectToolResults(requestId, error);
+  rejectToolResults(requestId: string, error: unknown, turnId?: string): boolean {
+    return this.runtime.rejectToolResults(requestId, error, turnId);
   }
 
   cancel(reason?: string, turnId?: string): void {
     this.runtime.cancel(reason, turnId);
+  }
+
+  cancelActiveTurn(reason?: string): void {
+    this.runtime.cancelActiveTurn(reason);
   }
 
   dispose(): void {
@@ -270,26 +389,26 @@ export function submitSessionToolResults(
   sessionId: string,
   requestId: string,
   results: ToolExecutionResult[],
+  turnId?: string,
 ): boolean {
   const handle = sessionHandles.get(sessionId);
   if (!handle) {
     return false;
   }
-  handle.submitToolResults(requestId, results);
-  return true;
+  return handle.submitToolResults(requestId, results, turnId);
 }
 
 export function rejectSessionToolResults(
   sessionId: string,
   requestId: string,
   error: unknown,
+  turnId?: string,
 ): boolean {
   const handle = sessionHandles.get(sessionId);
   if (!handle) {
     return false;
   }
-  handle.rejectToolResults(requestId, error);
-  return true;
+  return handle.rejectToolResults(requestId, error, turnId);
 }
 
 export function cancelSessionRuntime(
@@ -305,19 +424,35 @@ export function cancelSessionRuntime(
   return true;
 }
 
+/**
+ * Ownership-aware release.
+ *
+ * Prefer passing the SessionHandle, SessionRuntime, or runtimeId/instanceId that
+ * originally owned the session. When the token does not match the currently
+ * registered runtime (a newer generation took over the same sessionId), this is
+ * a no-op — preventing async finally blocks from disposing the wrong instance.
+ *
+ * Calling without a handle/runtimeId releases whatever is currently registered
+ * (legacy behavior for tests / explicit teardown).
+ */
 export function releaseSessionRuntime(
   sessionId: string,
-  handleOrRuntime?: SessionHandle | SessionRuntime,
+  handleOrRuntimeOrId?: SessionHandle | SessionRuntime | string,
 ): void {
   const current = sessionRuntimes.get(sessionId);
   if (!current) {
     return;
   }
-  if (handleOrRuntime) {
-    const targetRuntime = handleOrRuntime instanceof SessionHandle
-      ? handleOrRuntime.runtime
-      : handleOrRuntime;
-    if (current !== targetRuntime) {
+  if (handleOrRuntimeOrId !== undefined) {
+    let targetRuntimeId: string | undefined;
+    if (typeof handleOrRuntimeOrId === 'string') {
+      targetRuntimeId = handleOrRuntimeOrId;
+    } else if (handleOrRuntimeOrId instanceof SessionHandle) {
+      targetRuntimeId = handleOrRuntimeOrId.runtimeId;
+    } else {
+      targetRuntimeId = handleOrRuntimeOrId.runtimeId;
+    }
+    if (current.runtimeId !== targetRuntimeId) {
       // Identity mismatch: a newer runtime has taken ownership of this sessionId.
       return;
     }

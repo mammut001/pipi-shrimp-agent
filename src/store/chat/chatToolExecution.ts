@@ -44,18 +44,6 @@ type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
 
-const FALLBACK_WORKSPACE_TOOL_NAMES = new Set([
-  'get_current_workspace',
-  'list_files',
-  'search_files',
-  'write_file',
-  'create_directory',
-  'delete_file',
-  'execute_command',
-  'compile_typst_file',
-  'render_typst_to_pdf',
-]);
-
 const CANCELLABLE_TOOL_NAMES = new Set(['execute_command', 'ssh_exec']);
 
 const NO_PROJECT_FOLDER_MESSAGE =
@@ -77,8 +65,10 @@ function buildNoProjectFolderToolError(toolName: string): string {
  *
  * - Prefer the session Project Folder (`projectDir` / legacy workDir).
  * - Never treat the PiPi Output Folder as a project workspace.
- * - When unbound, block tools that require workspace according to metadata
+ * - When unbound, block tools that require workspace according to Rust metadata
  *   so the model gets a clear preflight error instead of multi-round path failures.
+ * - Fail closed: if `toolMetadataMap` is unavailable, treat the batch as
+ *   workspace-critical (block when unbound). There is no second TS catalog.
  */
 export function resolveWorkspaceToolPreflight(input: {
   projectDir: string | null | undefined;
@@ -91,11 +81,11 @@ export function resolveWorkspaceToolPreflight(input: {
   blockWorkspaceTools: boolean;
   needsWorkspaceTools: boolean;
 } {
-  const needsWorkspaceTools = input.toolNames.some((name) =>
-    input.toolMetadataMap
-      ? input.toolMetadataMap.get(name)?.requiresWorkspace === true
-      : FALLBACK_WORKSPACE_TOOL_NAMES.has(name),
-  );
+  // Fail closed: without Rust metadata, any tool batch is treated as
+  // workspace-critical so we never guess from a TS-side catalog.
+  const needsWorkspaceTools = !input.toolMetadataMap
+    ? input.toolNames.length > 0
+    : input.toolNames.some((name) => input.toolMetadataMap!.get(name)?.requiresWorkspace === true);
   let workDir = typeof input.projectDir === 'string' && input.projectDir.trim()
     ? input.projectDir.trim()
     : null;
@@ -950,7 +940,52 @@ export async function handleToolBatchRequest(
   const blockedWorkspaceToolIds = new Set<string>();
   const preBlockedResults: ToolArtifactResult[] = [];
 
-  const toolMetadataMap = await deps.loadToolRuntimeMetadata();
+  let toolMetadataMap: Map<string, { requiresWorkspace?: boolean }> | undefined;
+  try {
+    toolMetadataMap = await deps.loadToolRuntimeMetadata();
+  } catch (error) {
+    // Fail closed: Rust metadata unavailable — block workspace-critical batch
+    // with an explicit error rather than consulting a TS fallback catalog.
+    const message = `Tool runtime metadata unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    for (const tool of chunk.tools) {
+      const errorContent = JSON.stringify({
+        error: true,
+        error_kind: 'metadata_unavailable',
+        message,
+        tool: tool.name,
+        cause: message,
+      });
+      markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
+      uiStore.updateTaskStep(tool.id, 'failed');
+      markSessionToolStatus(activeSessionId, tool.id, tool.name, 'failed', set, get);
+      resolveSessionTool(
+        activeSessionId,
+        tool.id,
+        tool.name,
+        'failed',
+        errorContent,
+        set,
+        get,
+      );
+      preBlockedResults.push({
+        id: tool.id,
+        content: errorContent,
+        toolName: tool.name,
+        toolArgs: tool.arguments,
+      });
+    }
+    const mergedResults = [...preBlockedResults];
+    if (typeof (chunk as any)?._resolveAll === 'function') {
+      (chunk as any)._resolveAll(mergedResults.map(({ id, content }) => ({ id, content })));
+    }
+    submitSessionToolResults(
+      activeSessionId,
+      chunk.requestId,
+      mergedResults.map(({ id, content }) => ({ id, content })),
+      chunk.turnId,
+    );
+    return mergedResults;
+  }
 
   {
     const needsWorkDir = chunk.tools.some((tool) => toolMetadataMap.get(tool.name)?.requiresWorkspace);
@@ -1101,6 +1136,7 @@ export async function handleToolBatchRequest(
     activeSessionId,
     chunk.requestId,
     mergedResults.map(({ id, content }) => ({ id, content })),
+    chunk.turnId,
   );
   if (!accepted) {
     console.warn('[ChatToolExecution] Session runtime was released before tool results were submitted', {
