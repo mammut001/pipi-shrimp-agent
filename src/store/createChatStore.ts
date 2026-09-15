@@ -666,7 +666,12 @@ export const useChatStore = create<ChatState>()(
           }
           if (stored) {
             set({ sessions: (JSON.parse(stored) as Session[]).map(hydrateSessionModes) });
-            await terminalizeInterruptedToolTurnsForSessions(set, get, { kind: 'interrupted' });
+            // GPT P0 — localStorage fallback must write back after terminalize
+            // so the next reload does not re-see orphan tool_calls.
+            await terminalizeInterruptedToolTurnsForSessions(set, get, {
+              kind: 'interrupted',
+              persist: 'localStorage',
+            });
           }
         } catch (localStorageError) {
           console.error('Failed to load from localStorage:', localStorageError);

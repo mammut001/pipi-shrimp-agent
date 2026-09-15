@@ -2,6 +2,7 @@ import type { ChatState, Message, ToolCall } from '../../types/chat';
 import { createMessage } from '../../types/chat';
 import { messageToDb, parseToolResultMessage } from '../../utils/chatHelpers';
 import { safeInvoke } from '../../utils/safeInvoke';
+import { safeSetItem } from '../../utils/safeStorage';
 
 type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
@@ -192,16 +193,39 @@ export async function scrubDanglingToolCalls(
   }
 }
 
+export type TerminalizePersistMode = 'db' | 'localStorage' | 'none';
+
+/** localStorage key used when DB init fails and sessions are loaded from backup. */
+export const SESSIONS_LOCAL_STORAGE_KEY = 'pipi-shrimp-sessions';
+
+export type TerminalizeInterruptedOptions = {
+  kind?: ToolCancelNoticeKind;
+  /**
+   * Where to persist the terminalized history.
+   * - `db` (default): one transactional `db_save_messages` of scrubbed + notice
+   * - `localStorage`: caller/forSessions writes full sessions snapshot after
+   * - `none`: in-memory only (tests)
+   */
+  persist?: TerminalizePersistMode;
+};
+
 /**
  * On session load / DB hydration: terminalize interrupted tool turns using
  * persisted history only (no toolRuntimeState). Scrubs orphan tool_calls and
  * writes a durable cancel/interrupted notice into session + DB.
+ *
+ * Persistence (db mode): scrubbed assistants + interrupted notice are written
+ * in a **single** `db_save_messages` invoke (SQLite transaction on the Rust
+ * side) so a crash mid-hydrate cannot leave scrubbed orphans without notice
+ * (or notice without scrub). Residual: process kill *during* the single
+ * invoke still depends on SQLite commit atomicity of that transaction; there
+ * is no multi-round-trip window between scrub and notice anymore.
  */
 export async function terminalizeInterruptedToolTurns(
   sessionId: string,
   set: ChatSetState,
   get: () => ChatState,
-  options: { kind?: ToolCancelNoticeKind } = {},
+  options: TerminalizeInterruptedOptions = {},
 ): Promise<boolean> {
   const session = get().sessions.find((candidate) => candidate.id === sessionId);
   if (!session || session.messages.length === 0) {
@@ -228,37 +252,68 @@ export async function terminalizeInterruptedToolTurns(
     )),
   }));
 
-  for (const cleanedMessage of result.scrubbedById.values()) {
+  const persist = options.persist ?? 'db';
+  if (persist === 'db') {
+    // Single write path: scrubbed rows + notice together (transactional).
+    const toPersist = [
+      ...result.scrubbedById.values(),
+      result.notice,
+    ].map((message) => messageToDb(message, sessionId));
     try {
-      await safeInvoke('db_save_message', { message: messageToDb(cleanedMessage, sessionId) });
+      await safeInvoke('db_save_messages', { messages: toPersist });
     } catch (error) {
-      console.error('Failed to persist scrubbed tool_calls during hydrate terminalize:', error);
+      console.error('Failed to persist hydrate terminalize (scrub + notice) atomically:', error);
+      // Residual fallback: sequential upserts if bulk command unavailable.
+      for (const message of toPersist) {
+        try {
+          await safeInvoke('db_save_message', { message });
+        } catch (fallbackError) {
+          console.error('Failed to persist message during hydrate terminalize fallback:', fallbackError);
+        }
+      }
     }
-  }
-
-  try {
-    await safeInvoke('db_save_message', { message: messageToDb(result.notice, sessionId) });
-  } catch (error) {
-    console.error('Failed to persist interrupted-turn cancel notice:', error);
   }
 
   return true;
 }
 
 /**
+ * Write the current in-memory sessions snapshot back to localStorage so a
+ * subsequent reload of the localStorage fallback path does not re-see orphans.
+ */
+export function persistSessionsToLocalStorage(get: () => ChatState): boolean {
+  try {
+    return safeSetItem(SESSIONS_LOCAL_STORAGE_KEY, JSON.stringify(get().sessions));
+  } catch (error) {
+    console.error('Failed to persist terminalized sessions to localStorage:', error);
+    return false;
+  }
+}
+
+/**
  * Terminalize every loaded session after DB / localStorage hydration.
+ * When `persist: 'localStorage'`, writes the updated sessions snapshot once
+ * after all sessions are terminalized (in-memory store is already updated).
  */
 export async function terminalizeInterruptedToolTurnsForSessions(
   set: ChatSetState,
   get: () => ChatState,
-  options: { kind?: ToolCancelNoticeKind } = {},
+  options: TerminalizeInterruptedOptions = {},
 ): Promise<number> {
+  const persist = options.persist ?? 'db';
   const sessionIds = get().sessions.map((session) => session.id);
   let terminalized = 0;
   for (const sessionId of sessionIds) {
-    if (await terminalizeInterruptedToolTurns(sessionId, set, get, options)) {
+    if (await terminalizeInterruptedToolTurns(sessionId, set, get, {
+      ...options,
+      // Per-session localStorage writes would race; defer to one snapshot below.
+      persist: persist === 'localStorage' ? 'none' : persist,
+    })) {
       terminalized += 1;
     }
+  }
+  if (persist === 'localStorage' && terminalized > 0) {
+    persistSessionsToLocalStorage(get);
   }
   return terminalized;
 }

@@ -1453,6 +1453,56 @@ pub fn save_message(message: &DbMessage) -> SqliteResult<()> {
 }
 
 /**
+ * Save multiple messages in a single SQLite transaction.
+ *
+ * Used by hydrate terminalize so scrubbed orphan tool_calls and the
+ * interrupted notice land together — a crash mid-batch cannot leave
+ * scrubbed rows without the notice (or the reverse).
+ */
+pub fn save_messages(messages: &[DbMessage]) -> SqliteResult<()> {
+    if messages.is_empty() {
+        return Ok(());
+    }
+    let guard = get_db()?;
+    if let Some(conn) = guard.as_ref() {
+        conn.execute_batch("BEGIN")?;
+        let result = (|| -> SqliteResult<()> {
+            for message in messages {
+                conn.execute(
+                    "INSERT OR REPLACE INTO messages (id, session_id, role, content, reasoning, attachments, artifacts, tool_calls, token_usage, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        message.id,
+                        message.session_id,
+                        message.role,
+                        message.content,
+                        message.reasoning,
+                        message.attachments,
+                        message.artifacts,
+                        message.tool_calls,
+                        message.token_usage,
+                        message.created_at
+                    ],
+                )?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    } else {
+        Ok(())
+    }
+}
+
+/**
  * Save a Telegram binding to database (INSERT OR REPLACE)
  */
 pub fn save_telegram_binding(binding: &DbTelegramBinding) -> SqliteResult<()> {

@@ -9,7 +9,9 @@ jest.mock('../../../utils/safeInvoke', () => ({
 import {
   buildToolCancelNoticeContent,
   listOrphanToolCalls,
+  persistSessionsToLocalStorage,
   scrubDanglingToolCalls,
+  SESSIONS_LOCAL_STORAGE_KEY,
   terminalizeInterruptedMessages,
   terminalizeInterruptedToolTurns,
   terminalizeInterruptedToolTurnsForSessions,
@@ -218,13 +220,18 @@ describe('interrupted-turn persistence (hydrate terminalize)', () => {
       && message.content.includes('Tool run interrupted before completion')
     ))).toBe(true);
 
-    const savedPayloads = mockSafeInvoke.mock.calls
-      .filter((call) => call[0] === 'db_save_message')
-      .map((call) => call[1] as { message: { id: string; tool_calls: string | null; content: string } });
-    expect(savedPayloads.some((payload) => payload.message.id === 'a1' && payload.message.tool_calls === null)).toBe(true);
-    expect(savedPayloads.some((payload) => (
-      payload.message.content.includes('Tool run interrupted before completion')
+    // P0: single write of scrubbed + notice (no scrub/notice failure window)
+    const bulkCalls = mockSafeInvoke.mock.calls.filter((call) => call[0] === 'db_save_messages');
+    expect(bulkCalls).toHaveLength(1);
+    const bulkMessages = (bulkCalls[0][1] as {
+      messages: Array<{ id: string; tool_calls: string | null; content: string }>;
+    }).messages;
+    expect(bulkMessages.some((message) => message.id === 'a1' && message.tool_calls === null)).toBe(true);
+    expect(bulkMessages.some((message) => (
+      message.content.includes('Tool run interrupted before completion')
     ))).toBe(true);
+    // No per-message round-trips on the happy path
+    expect(mockSafeInvoke.mock.calls.filter((call) => call[0] === 'db_save_message')).toHaveLength(0);
   });
 
   it('is idempotent after hydrate terminalize (second pass is a no-op)', async () => {
@@ -308,5 +315,102 @@ describe('interrupted-turn persistence (hydrate terminalize)', () => {
     expect(buildToolCancelNoticeContent(['read_file'], 'user_cancel')).toContain('cancelled by user');
     expect(buildToolCancelNoticeContent(['read_file'], 'user_cancel')).toContain('do NOT re-request');
     expect(buildToolCancelNoticeContent(['execute_command'], 'interrupted')).toContain('session reloaded');
+  });
+
+  it('localStorage persist mode writes terminalized sessions back so reload is clean', async () => {
+    const store: Record<string, string> = {};
+    const localStorageMock = {
+      getItem: (key: string) => store[key] ?? null,
+      setItem: (key: string, value: string) => { store[key] = value; },
+      removeItem: (key: string) => { delete store[key]; },
+      clear: () => { Object.keys(store).forEach((key) => delete store[key]); },
+    };
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: localStorageMock,
+      configurable: true,
+    });
+
+    // Seed orphan history as the localStorage fallback would load it
+    const orphanSessions = [{
+      id: 'ls-session',
+      title: 'LS',
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [{
+        id: 'a1',
+        role: 'assistant' as const,
+        content: 'mid crash',
+        timestamp: 1,
+        tool_calls: [{ id: 'orphan-ls', name: 'execute_command', arguments: '{}' }],
+      }],
+    }];
+    store[SESSIONS_LOCAL_STORAGE_KEY] = JSON.stringify(orphanSessions);
+
+    let state = {
+      sessions: orphanSessions,
+      projects: [],
+      currentSessionId: 'ls-session',
+      isStreaming: false,
+      isInitialized: true,
+      streamingContent: '',
+      streamingReasoning: '',
+      error: null,
+      streamingTimeoutId: null,
+      lastUiUpdateTime: 0,
+      pendingToolCalls: 0,
+      pendingToolResults: [],
+      streamingSessionId: null,
+    } as ChatState;
+
+    const set = (updater: ChatState | Partial<ChatState> | ((s: ChatState) => ChatState | Partial<ChatState>)) => {
+      const patch = typeof updater === 'function' ? updater(state) : updater;
+      state = { ...state, ...patch } as ChatState;
+    };
+
+    const count = await terminalizeInterruptedToolTurnsForSessions(set, () => state, {
+      kind: 'interrupted',
+      persist: 'localStorage',
+    });
+    expect(count).toBe(1);
+    expect(mockSafeInvoke).not.toHaveBeenCalled();
+
+    const written = store[SESSIONS_LOCAL_STORAGE_KEY];
+    expect(written).toBeTruthy();
+    const parsed = JSON.parse(written!) as typeof orphanSessions;
+    expect(parsed[0].messages.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
+    expect(parsed[0].messages.some((message) => (
+      message.content.includes('Tool run interrupted before completion')
+      && message.content.includes('execute_command')
+    ))).toBe(true);
+
+    // Next "reload" from localStorage must not re-see orphans
+    const reloaded = JSON.parse(store[SESSIONS_LOCAL_STORAGE_KEY]!) as typeof orphanSessions;
+    expect(listOrphanToolCalls(reloaded[0].messages)).toEqual([]);
+    expect(persistSessionsToLocalStorage(() => state)).toBe(true);
+  });
+
+  it('hydrate terminalize uses a single db_save_messages for scrub + notice', async () => {
+    const { set, get } = bindState(makeState([
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: 'calling',
+        timestamp: 1,
+        tool_calls: [
+          { id: 'orphan-a', name: 'read_file', arguments: '{}' },
+          { id: 'orphan-b', name: 'list_files', arguments: '{}' },
+        ],
+      },
+    ]));
+
+    await terminalizeInterruptedToolTurns('session-scrub', set, get, { kind: 'interrupted', persist: 'db' });
+
+    const bulk = mockSafeInvoke.mock.calls.filter((call) => call[0] === 'db_save_messages');
+    expect(bulk).toHaveLength(1);
+    const messages = (bulk[0][1] as { messages: Array<{ id: string; content: string; tool_calls: string | null }> }).messages;
+    // One scrubbed assistant + one notice in the same batch
+    expect(messages.filter((message) => message.id === 'a1')).toHaveLength(1);
+    expect(messages.filter((message) => message.content.includes('session reloaded'))).toHaveLength(1);
+    expect(messages).toHaveLength(2);
   });
 });
