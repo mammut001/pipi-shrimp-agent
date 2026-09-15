@@ -3,6 +3,10 @@
  *
  * Reuses Manual D barriers + SessionRuntime / ToolResultChannel latches.
  * Does not rewrite SessionRuntime / queryLoop; no Playwright; no OTel.
+ *
+ * Orphan / cancelled-as-success invariants assert against real session A/B
+ * message histories (produced by the iteration, or accepted via options) —
+ * not only runtime latch/mock state.
  */
 import {
   getSessionHandle,
@@ -25,6 +29,7 @@ import { writeSoakFailureBundle } from './failureBundle';
 import type {
   RunSoakOptions,
   SoakAssertionFailure,
+  SoakIterationOptions,
   SoakIterationResult,
   SoakRunSummary,
 } from './types';
@@ -37,17 +42,146 @@ function pushFail(
   failures.push({ invariant, message });
 }
 
-/** History with a dangling tool_call (pre-terminalize) for orphan invariant. */
-function buildOrphanHistory(): Message[] {
-  const user = createMessage('user', 'run tools');
-  const assistant = createMessage('assistant', 'sure');
-  const toolCall: ToolCall = {
-    id: 'tc-soak-orphan',
+/**
+ * Scenario-accurate A/B message histories for one soak iteration.
+ *
+ * A: cancelled mid-tool → dangling tool_call (orphan until terminalize).
+ * B: successful tool path → tool_call + matching tool result (no orphans).
+ */
+export function buildSoakScenarioHistories(iteration: number): {
+  historyA: Message[];
+  historyB: Message[];
+} {
+  const tcA: ToolCall = {
+    id: `tc-soak-a-${iteration}`,
     name: 'tool-a',
     arguments: '{}',
   };
-  assistant.tool_calls = [toolCall];
-  return [user, assistant];
+  const tcB: ToolCall = {
+    id: `tc-soak-b-${iteration}`,
+    name: 'tool-b',
+    arguments: '{}',
+  };
+
+  const userA = createMessage('user', `soak A iter=${iteration}`);
+  userA.timestamp = iteration * 10;
+  const assistantA = createMessage('assistant', 'calling tool-a');
+  assistantA.timestamp = iteration * 10 + 1;
+  assistantA.tool_calls = [tcA];
+
+  const userB = createMessage('user', `soak B iter=${iteration}`);
+  userB.timestamp = iteration * 10;
+  const assistantB = createMessage('assistant', 'calling tool-b');
+  assistantB.timestamp = iteration * 10 + 1;
+  assistantB.tool_calls = [tcB];
+  const resultB: Message = {
+    id: `msg-soak-b-result-${iteration}`,
+    role: 'user',
+    content: `__TOOL_RESULT__:${tcB.id}:b-ok`,
+    tool_call_id: tcB.id,
+    timestamp: iteration * 10 + 2,
+  };
+
+  return {
+    historyA: [userA, assistantA],
+    historyB: [userB, assistantB, resultB],
+  };
+}
+
+/**
+ * Assert orphan / cancelled-as-success invariants on real A/B message histories.
+ * Returns remaining orphan count on A after terminalize (expect 0).
+ */
+export function assertSoakHistoryInvariants(
+  historyA: Message[],
+  historyB: Message[],
+  failures: SoakAssertionFailure[],
+  iteration: number,
+): number {
+  // --- Session A (cancelled): must have orphans before terminalize ---
+  const orphansABefore = listOrphanToolCalls(historyA);
+  if (orphansABefore.length === 0) {
+    pushFail(
+      failures,
+      'no_orphan_tool_calls',
+      'session A history expected orphan tool_calls after cancel (none found)',
+    );
+  }
+
+  const terminalizedA = terminalizeInterruptedMessages(historyA, {
+    kind: 'user_cancel',
+    now: iteration,
+  });
+  const orphansAAfter = listOrphanToolCalls(terminalizedA.messages);
+  if (orphansAAfter.length > 0) {
+    pushFail(
+      failures,
+      'no_orphan_tool_calls',
+      `session A orphan tool_calls remain after terminalize: ${orphansAAfter.map((o) => o.toolCall.id).join(',')}`,
+    );
+  }
+
+  // Cancelled-as-success: notice must say cancelled, not a successful tool result.
+  if (!terminalizedA.notice && orphansABefore.length > 0) {
+    pushFail(
+      failures,
+      'no_cancelled_as_success',
+      'session A terminalize produced no cancel notice despite orphans',
+    );
+  }
+  const noticeContent = terminalizedA.notice?.content ?? '';
+  if (terminalizedA.notice && /tool result|completed successfully/i.test(noticeContent)) {
+    pushFail(failures, 'no_cancelled_as_success', 'session A terminal notice looks like success');
+  }
+  if (
+    terminalizedA.notice
+    && !/cancelled by user|interrupted before completion/i.test(noticeContent)
+  ) {
+    pushFail(
+      failures,
+      'no_cancelled_as_success',
+      `session A notice missing cancel/interrupted wording: ${noticeContent.slice(0, 120)}`,
+    );
+  }
+
+  // If A history already resolved the cancelled tool_call as a successful result,
+  // orphansABefore was empty (flagged above) — that is cancelled-as-success pollution.
+  // Extra guard: any __TOOL_RESULT__ for A's tool ids without a cancel notice path.
+  if (orphansABefore.length === 0) {
+    const resolvedLikeSuccess = historyA.some(
+      (m) => typeof m.tool_call_id === 'string' && m.tool_call_id.length > 0,
+    );
+    if (resolvedLikeSuccess) {
+      pushFail(
+        failures,
+        'no_cancelled_as_success',
+        'session A history resolves tool_calls as success after cancel (no orphans)',
+      );
+    }
+  }
+
+  // --- Session B (success): must have no orphans; must not need terminalize ---
+  const orphansB = listOrphanToolCalls(historyB);
+  if (orphansB.length > 0) {
+    pushFail(
+      failures,
+      'no_orphan_tool_calls',
+      `session B history has orphan tool_calls after success: ${orphansB.map((o) => o.toolCall.id).join(',')}`,
+    );
+  }
+  const terminalizedB = terminalizeInterruptedMessages(historyB, {
+    kind: 'user_cancel',
+    now: iteration,
+  });
+  if (terminalizedB.changed || terminalizedB.notice) {
+    pushFail(
+      failures,
+      'no_cross_session_cancel',
+      'session B history required terminalize (unexpected orphans / cancel notice)',
+    );
+  }
+
+  return orphansAAfter.length;
 }
 
 /**
@@ -60,6 +194,7 @@ function buildOrphanHistory(): Message[] {
 export async function runSoakIteration(
   iteration: number,
   sessionPrefix = 'soak',
+  options: SoakIterationOptions = {},
 ): Promise<SoakIterationResult> {
   const sessionA = `${sessionPrefix}-a-${iteration}`;
   const sessionB = `${sessionPrefix}-b-${iteration}`;
@@ -254,31 +389,11 @@ export async function runSoakIteration(
       pushFail(failures, 'no_cross_session_cancel', 'B unexpectedly terminal');
     }
 
-    // Orphan tool_calls in terminal histories (where applicable): dangling →
-    // terminalize → none remain; cancelled must not look like success.
-    const orphanHistory = buildOrphanHistory();
-    const before = listOrphanToolCalls(orphanHistory);
-    if (before.length === 0) {
-      pushFail(failures, 'setup', 'expected synthetic orphan history to contain orphans');
-    }
-    const terminalized = terminalizeInterruptedMessages(orphanHistory, {
-      kind: 'user_cancel',
-      now: iteration,
-    });
-    const afterOrphans = listOrphanToolCalls(terminalized.messages);
-    orphanCount = afterOrphans.length;
-    if (afterOrphans.length > 0) {
-      pushFail(
-        failures,
-        'no_orphan_tool_calls',
-        `orphan tool_calls remain after terminalize: ${afterOrphans.map((o) => o.toolCall.id).join(',')}`,
-      );
-    }
-    // Cancelled-as-success: notice must say cancelled, not a successful tool result.
-    const noticeContent = terminalized.notice?.content ?? '';
-    if (terminalized.notice && /tool result|completed successfully/i.test(noticeContent)) {
-      pushFail(failures, 'no_cancelled_as_success', 'terminal notice looks like success');
-    }
+    // Real A/B message-history orphan / cancelled-as-success checks (not latch-only).
+    const produced = buildSoakScenarioHistories(iteration);
+    const historyA = options.historyA ?? produced.historyA;
+    const historyB = options.historyB ?? produced.historyB;
+    orphanCount = assertSoakHistoryInvariants(historyA, historyB, failures, iteration);
 
     // Optional follow-up / switch: new A turn after terminal; old turnId must not settle it.
     const followUpTurn = runtimeA.startTurn();
@@ -388,16 +503,23 @@ export function resolveSoakIterations(explicit?: number): number {
 }
 
 /**
- * Run N soak iterations. On first failure (default), dump a failure bundle and stop.
+ * Run N soak iterations.
+ * Default stopOnFailure=true: dump a failure bundle and stop on first failure.
+ * When stopOnFailure=false: continue after failures, still recording each
+ * failure + bundle; summary.ok is false if any iteration failed.
  */
 export async function runSoak(options: RunSoakOptions = {}): Promise<SoakRunSummary> {
   const iterations = resolveSoakIterations(options.iterations);
   const stopOnFailure = options.stopOnFailure !== false;
   const sessionPrefix = options.sessionPrefix ?? 'soak';
+  const runIteration = options.runIteration ?? runSoakIteration;
   const results: SoakIterationResult[] = [];
+  let failedAt: number | undefined;
+  let failureBundleDir: string | undefined;
+  const failureBundleDirs: string[] = [];
 
   for (let i = 1; i <= iterations; i++) {
-    const result = await runSoakIteration(i, sessionPrefix);
+    const result = await runIteration(i, sessionPrefix);
     results.push(result);
     if (!result.ok) {
       const bundle = writeSoakFailureBundle({
@@ -409,21 +531,33 @@ export async function runSoak(options: RunSoakOptions = {}): Promise<SoakRunSumm
       });
       releaseSessionRuntimeForTests(result.sessionA);
       releaseSessionRuntimeForTests(result.sessionB);
-      return {
-        ok: false,
-        iterationsRequested: iterations,
-        iterationsCompleted: i,
-        failedAt: i,
-        failureBundleDir: bundle.dir,
-        results,
-      };
+      failureBundleDirs.push(bundle.dir);
+      if (failedAt === undefined) {
+        failedAt = i;
+        failureBundleDir = bundle.dir;
+      }
+      if (stopOnFailure) {
+        return {
+          ok: false,
+          iterationsRequested: iterations,
+          iterationsCompleted: i,
+          failedAt,
+          failureBundleDir,
+          failureBundleDirs,
+          results,
+        };
+      }
+      // stopOnFailure=false: keep going; failures/bundles already recorded.
     }
   }
 
   return {
-    ok: true,
+    ok: failedAt === undefined,
     iterationsRequested: iterations,
     iterationsCompleted: iterations,
-    results: stopOnFailure ? results : results,
+    failedAt,
+    failureBundleDir,
+    failureBundleDirs: failureBundleDirs.length > 0 ? failureBundleDirs : undefined,
+    results,
   };
 }

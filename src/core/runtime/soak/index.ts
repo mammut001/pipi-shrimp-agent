@@ -6,6 +6,8 @@ export {
   runSoak,
   runSoakIteration,
   resolveSoakIterations,
+  buildSoakScenarioHistories,
+  assertSoakHistoryInvariants,
 } from './runSoak';
 export {
   writeSoakFailureBundle,
@@ -15,6 +17,7 @@ export {
 export type {
   SoakInvariantName,
   SoakAssertionFailure,
+  SoakIterationOptions,
   SoakIterationResult,
   RunSoakOptions,
   SoakRunSummary,

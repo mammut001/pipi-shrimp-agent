@@ -14,11 +14,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseSessionRuntimeForTests } from '../SessionRuntime';
 import { clearRuntimeTraceSink } from '../RuntimeTraceSink';
+import { createMessage } from '../../../types/chat';
+import type { Message } from '../../../types/chat';
+import { listOrphanToolCalls } from '../../../store/chat/scrubDanglingToolCalls';
 import {
   resolveSoakIterations,
   runSoak,
   runSoakIteration,
+  buildSoakScenarioHistories,
+  assertSoakHistoryInvariants,
 } from './index';
+import type { SoakAssertionFailure, SoakIterationResult } from './types';
 
 describe('soak runner (Manual D loop + failure bundle)', () => {
   let artifactRoot: string;
@@ -64,6 +70,52 @@ describe('soak runner (Manual D loop + failure bundle)', () => {
     releaseSessionRuntimeForTests(result.sessionB);
   });
 
+  it('buildSoakScenarioHistories: A orphans / B resolved (real A/B histories)', () => {
+    const { historyA, historyB } = buildSoakScenarioHistories(3);
+    expect(listOrphanToolCalls(historyA).length).toBeGreaterThan(0);
+    expect(listOrphanToolCalls(historyB)).toEqual([]);
+    const failures: SoakAssertionFailure[] = [];
+    const remaining = assertSoakHistoryInvariants(historyA, historyB, failures, 3);
+    expect(failures).toEqual([]);
+    expect(remaining).toBe(0);
+  });
+
+  it('runSoakIteration accepts custom histories and asserts against them', async () => {
+    const { historyA, historyB } = buildSoakScenarioHistories(7);
+    const result = await runSoakIteration(7, 'jest-soak-hist', { historyA, historyB });
+    expect(result.ok).toBe(true);
+    expect(result.orphanCount).toBe(0);
+    releaseSessionRuntimeForTests(result.sessionA);
+    releaseSessionRuntimeForTests(result.sessionB);
+  });
+
+  it('runSoakIteration fails orphan invariant when A history wrongly has no orphans', async () => {
+    // Inject a "successful" A history (tool result present) — cancelled-as-success pollution.
+    const tcId = 'tc-fake-success';
+    const historyA: Message[] = [
+      createMessage('user', 'a'),
+      (() => {
+        const m = createMessage('assistant', 'calling');
+        m.tool_calls = [{ id: tcId, name: 'tool-a', arguments: '{}' }];
+        return m;
+      })(),
+      {
+        id: 'fake-result',
+        role: 'user',
+        content: `__TOOL_RESULT__:${tcId}:ok`,
+        tool_call_id: tcId,
+        timestamp: 2,
+      },
+    ];
+    const { historyB } = buildSoakScenarioHistories(8);
+    const result = await runSoakIteration(8, 'jest-soak-bad-a', { historyA, historyB });
+    expect(result.ok).toBe(false);
+    expect(result.failures.some((f) => f.invariant === 'no_orphan_tool_calls'
+      || f.invariant === 'no_cancelled_as_success')).toBe(true);
+    releaseSessionRuntimeForTests(result.sessionA);
+    releaseSessionRuntimeForTests(result.sessionB);
+  });
+
   it('runSoak default short loop (N=5) stays green', async () => {
     const summary = await runSoak({
       iterations: 5,
@@ -88,17 +140,77 @@ describe('soak runner (Manual D loop + failure bundle)', () => {
     expect(summary.iterationsCompleted).toBe(10);
   });
 
+  it('stopOnFailure=false continues after failed iteration (still records failures/bundles)', async () => {
+    const summary = await runSoak({
+      iterations: 3,
+      artifactRoot,
+      sessionPrefix: 'jest-continue',
+      stopOnFailure: false,
+      runIteration: async (i, prefix): Promise<SoakIterationResult> => {
+        if (i === 2) {
+          return {
+            ok: false,
+            iteration: i,
+            sessionA: `${prefix}-a-${i}`,
+            sessionB: `${prefix}-b-${i}`,
+            failures: [{
+              invariant: 'scenario',
+              message: 'forced failure for continue-after-fail test',
+            }],
+            orphanCount: 0,
+          };
+        }
+        return runSoakIteration(i, prefix);
+      },
+    });
+
+    expect(summary.ok).toBe(false);
+    expect(summary.iterationsRequested).toBe(3);
+    expect(summary.iterationsCompleted).toBe(3);
+    expect(summary.failedAt).toBe(2);
+    expect(summary.results).toHaveLength(3);
+    expect(summary.results[0]?.ok).toBe(true);
+    expect(summary.results[1]?.ok).toBe(false);
+    expect(summary.results[2]?.ok).toBe(true);
+    expect(summary.failureBundleDir).toBeDefined();
+    expect(existsSync(summary.failureBundleDir!)).toBe(true);
+    expect(summary.failureBundleDirs).toHaveLength(1);
+    expect(existsSync(summary.failureBundleDirs![0]!)).toBe(true);
+  });
+
+  it('stopOnFailure=true (default) stops on first failure', async () => {
+    const summary = await runSoak({
+      iterations: 5,
+      artifactRoot,
+      sessionPrefix: 'jest-stop',
+      // default stopOnFailure=true
+      runIteration: async (i, prefix): Promise<SoakIterationResult> => {
+        if (i === 2) {
+          return {
+            ok: false,
+            iteration: i,
+            sessionA: `${prefix}-a-${i}`,
+            sessionB: `${prefix}-b-${i}`,
+            failures: [{
+              invariant: 'scenario',
+              message: 'forced failure for stop-on-fail test',
+            }],
+            orphanCount: 0,
+          };
+        }
+        return runSoakIteration(i, prefix);
+      },
+    });
+
+    expect(summary.ok).toBe(false);
+    expect(summary.iterationsCompleted).toBe(2);
+    expect(summary.failedAt).toBe(2);
+    expect(summary.results).toHaveLength(2);
+    expect(summary.failureBundleDir).toBeDefined();
+    expect(existsSync(summary.failureBundleDir!)).toBe(true);
+  });
+
   it('failure bundle written on first invariant break (forced)', async () => {
-    // Force a bad iteration count path by monkey-patching is awkward;
-    // instead: run a real iteration then write-bundle via a known-bad summary
-    // by calling runSoak with a custom prefix after poisoning is unnecessary —
-    // verify write path by simulating failure through runSoakIteration + manual
-    // re-check: if somehow ok, skip. Use a tiny helper: zero iterations invalid
-    // is covered elsewhere.
-    //
-    // Direct: corrupt by releasing B mid-flight is hard without hooks.
-    // Assert that when runSoak gets a failed result shape, bundle exists —
-    // use writeSoakFailureBundle via a deliberate failed iteration mock:
     const { writeSoakFailureBundle } = await import('./failureBundle');
     const bundle = writeSoakFailureBundle({
       artifactRoot,

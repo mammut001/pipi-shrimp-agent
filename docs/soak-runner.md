@@ -18,7 +18,7 @@
 
 ```
 src/core/runtime/soak/
-  runSoak.ts          # runSoakIteration + runSoak
+  runSoak.ts          # runSoakIteration + runSoak + history helpers
   failureBundle.ts    # writeSoakFailureBundle
   types.ts
   index.ts
@@ -34,19 +34,37 @@ Each `runSoakIteration()`:
 3. Late A tool submit → discarded (`false`)
 4. B submit succeeds; B wait resolves
 5. Trace checks: A cancel/discard chain; B never cancelled
-6. Orphan invariant via terminalize on synthetic dangling history
+6. **Real A/B message histories** — produce (or accept via `SoakIterationOptions`) scenario histories; run `listOrphanToolCalls` / `terminalizeInterruptedMessages` on them (not latch/mock-only)
 7. Follow-up: new A turn after terminal; submit with old turnId must discard; correct turnId succeeds
+
+### Message-history invariants (A/B)
+
+Histories are scenario-accurate by default (`buildSoakScenarioHistories`):
+
+| Session | History shape | Checks |
+| --- | --- | --- |
+| **A** (cancelled) | user + assistant with dangling `tool-a` tool_call | orphans before terminalize; **0** after; cancel notice must not look like success |
+| **B** (success) | user + assistant `tool-b` + matching `__TOOL_RESULT__` | **0** orphans; terminalize must be a no-op |
+
+Callers may pass `historyA` / `historyB` to assert against external session snapshots.
 
 ### Invariants
 
-- **no_cross_session_cancel** — B still succeeds after A cancel
-- **no_orphan_tool_calls** — terminalized history has no dangling tool_calls
-- **no_cancelled_as_success** — A rejects with `AbortError` / terminal; not a successful wait
+- **no_cross_session_cancel** — B still succeeds after A cancel (latches + B history clean)
+- **no_orphan_tool_calls** — terminalized **A** history has no dangling tool_calls; **B** history never has orphans
+- **no_cancelled_as_success** — A rejects with `AbortError` / terminal; A notice is cancel/interrupted (not success); A history must not resolve cancelled tools as success
 - **no_stale_replay_late_a_discarded** — late A + post-switch stale submit discarded
+
+### `stopOnFailure` semantics
+
+| Option | Behavior |
+| --- | --- |
+| `stopOnFailure: true` (default) | On first failed iteration: write failure bundle, release sessions, **stop**. `iterationsCompleted` = fail index. |
+| `stopOnFailure: false` | On failure: write failure bundle, release sessions, **continue** remaining iterations. Still records every failure in `results` (+ `failureBundleDirs`). `ok` is false if any iteration failed; `failedAt` is the first failure index. |
 
 ## Failure bundle
 
-On first failure, writes under `artifacts/soak/pipi-soak-failure-<ts>/` (or `/tmp/…`, or `PIPI_SOAK_ARTIFACT_DIR`):
+On each failed iteration (and stop if `stopOnFailure`), writes under `artifacts/soak/pipi-soak-failure-<ts>/` (or `/tmp/…`, or `PIPI_SOAK_ARTIFACT_DIR`):
 
 | File | Contents |
 | --- | --- |
@@ -70,6 +88,7 @@ PIPI_SOAK_ITERS=500 pnpm exec jest src/core/runtime/soak/soakRunner.test.ts --ru
 #   import { runSoak } from '@/core/runtime/soak';
 #   await runSoak(); // 50
 #   await runSoak({ iterations: 200 });
+#   await runSoak({ iterations: 10, stopOnFailure: false }); // continue-after-fail
 ```
 
 Prefer `--testPathPatterns` (plural) or a direct file path. See scout notes on Jest CLI.
