@@ -186,5 +186,11 @@ UI Manual D still **INCONCLUSIVE**: sleep and file-barrier harnesses could not r
 Automated: `SessionRuntime.concurrent.test.ts` PASS (56 related jest suite count earlier; concurrent barrier via `SessionHandle.runTurn()`).
 GPT stars after `25eecf6`/`021b897`: Runtime ★★★★½ / Session ★★★★½ / Tool ★★★★. Keep **Draft** until real-path Stop-A-while-B PASS or Rust `test_barrier_tool` integration.
 
+
+### test_barrier_tool Ready gate (2026-09-15)
+- `b816caa` — Rust `test_barrier_tool` + `release_test_barrier` / `reset_test_barriers`; cancel via `cancel_tool_execution(executionId)`.
+- Cargo `test_barrier` **8 passed** including `dual_session_cancel_a_release_b_isolation`.
+- UI Manual D remains optional; deterministic dual-session cancel isolation now proven on real Rust tool wait/cancel path.
+
 ### Merge recommendation (orchestrator)
-**Keep PR #73 Draft.** Runtime/Session/Tool stars (GPT): ★★★★½ / ★★★★½ / ★★★★ after sealed-ownership + STE metadata. Allow smoke PASS. Manual D UI harness still inconclusive (A timed out, not Stopped). Ready gate remains: deterministic Stop-A-while-B on real tool path — prefer Rust `test_barrier_tool` or manual human run; do not block on more flaky UI automation.
+**Ready gate update:** Rust `test_barrier_tool` dual-session cancel isolation PASS (`b816caa`). UI Manual D still flaky/optional. Ask GPT whether #73 can Ready for Review given this deterministic proof + green CI; otherwise keep Draft only for remaining host-adapter / typed-outcome follow-ups in a new PR.
