@@ -141,7 +141,7 @@ Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for th
 | Unbound Project Folder tool denial | **EXPECTED (not a #73 bug)** | `read_file` / workspace tools correctly return `permission_denied` when no Project Folder is bound. |
 
 ### Approval resume fix (2026-09-14 / 09-15 night)
-Local HEAD: `d4e5ad7` (branch ahead of origin; not pushed).
+Local/remote HEAD after GPT follow-up: `5fd1b53` (semantic args binding restored; Allow re-verified).
 
 **Allow smoke (2026-09-15):** **PASS** — `sleep 15 && echo ALLOW_OK` → Allow → tool ran → `ALLOW_OK`.
 
@@ -164,6 +164,14 @@ Commits: `1a7a5d3`, `a93edc7`, `7ced71b`, `d4e5ad7` (+ docs). `execution_policy`
 4. Built-in DeepSeek provider catalog still lists only `deepseek-chat` / `deepseek-reasoner`; configuring `deepseek-flash` required openai-compatible + custom model field (#74).
 5. Local branch is **ahead of remote** with #74 cherry-pick plus DeepSeek tool fixes/docs. Review before Ready; #74 is already on `main`.
 6. Dual-session Manual D still needs a reliable overlap harness (Stop A while B’s long-running tool is visibly running). Single-chat Allow is no longer the blocker.
+
+
+### GPT review follow-up (2026-09-15)
+ChatGPT (logged-in box Chrome) accepted `d4e5ad7` but rejected over-loose `7ced71b` (args/work_dir as diagnostics only → approval TOCTOU).
+- `5fd1b53` restores canonical effective args + normalize_work_dir + source binding; still ignores only `executionId` / key order.
+- P0 tests: command substitution reject, work_dir substitution reject, executionId/key-order allow.
+- Allow smoke retest after `5fd1b53`: **PASS** (`ALLOW_OK2`).
+- Manual D still Draft/inconclusive; PR remains Draft.
 
 ### Merge recommendation (orchestrator)
 **Keep PR #73 Draft.** Manual A/C/E pass; long-running Allow smoke now passes after `d4e5ad7`. Manual D remains inconclusive due to dual-chat timing/Stop harness limits, not a reproduced SessionRuntime cross-session failure. Re-run D with a cleaner overlap, then reconsider Ready.
