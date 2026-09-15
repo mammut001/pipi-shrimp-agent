@@ -6,7 +6,11 @@
 use crate::models::CancelToolExecutionResponse;
 use crate::tools::execution_policy::{self, ToolPolicyPreview};
 use crate::tools::process_manager;
-use crate::tools::{classify_tool_error_code, ToolCallRequest, ToolCallResult, ToolExecutionSource};
+use crate::tools::test_barrier;
+use crate::tools::{
+    build_tool_runtime_metadata, classify_tool_error_code, ToolCallRequest, ToolCallResult,
+    ToolExecutionSource,
+};
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
@@ -155,30 +159,111 @@ pub async fn execute_single_tool(
 }
 
 /**
- * Get the list of available tools and their metadata.
+ * Get available tool definitions from the authoritative Rust registry.
  *
- * Used by the frontend to build the tool list for the API request.
+ * Existing callers receive the Anthropic-compatible schema. Runtime clients
+ * can request the expanded metadata view with includeRuntimeMetadata=true;
+ * this keeps one command/registry authority while preserving API compatibility.
  */
 #[tauri::command]
 pub async fn get_available_tools(
+    #[allow(non_snake_case)] includeRuntimeMetadata: Option<bool>,
     state: State<'_, ToolRegistryState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let registry = state.0.lock().await;
-    Ok(registry.get_anthropic_tools_schema())
+    let schemas = registry.get_anthropic_tools_schema();
+
+    if !includeRuntimeMetadata.unwrap_or(false) {
+        return Ok(schemas);
+    }
+
+    let mut metadata = schemas
+        .into_iter()
+        .filter_map(|schema| {
+            let name = schema.get("name")?.as_str()?.to_string();
+            let description = schema
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let input_schema = schema
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+            let runtime_metadata = build_tool_runtime_metadata(
+                name.clone(),
+                description,
+                registry.is_read_only(&name),
+                registry.is_concurrency_safe(&name),
+                input_schema,
+            );
+            serde_json::to_value(runtime_metadata).ok()
+        })
+        .collect::<Vec<_>>();
+
+    metadata.sort_by(|left, right| {
+        left.get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .cmp(
+                right
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+            )
+    });
+
+    Ok(metadata)
 }
 
 #[tauri::command]
 pub async fn cancel_tool_execution(
     #[allow(non_snake_case)] executionId: String,
 ) -> Result<CancelToolExecutionResponse, String> {
-    process_manager::cancel_execution(&executionId)
-        .map_err(|e| e.to_string())
-        .map(|result| CancelToolExecutionResponse {
-            execution_id: result.execution_id,
-            cancelled: result.cancelled,
-            status: result.status,
-            message: result.message,
-        })
+    let process_result = process_manager::cancel_execution(&executionId).map_err(|e| e.to_string())?;
+    if process_result.cancelled {
+        return Ok(CancelToolExecutionResponse {
+            execution_id: process_result.execution_id,
+            cancelled: process_result.cancelled,
+            status: process_result.status,
+            message: process_result.message,
+        });
+    }
+
+    let barrier_result = test_barrier::cancel_by_execution_id(&executionId);
+    if barrier_result.cancelled {
+        return Ok(CancelToolExecutionResponse {
+            execution_id: barrier_result.execution_id,
+            cancelled: barrier_result.cancelled,
+            status: barrier_result.status,
+            message: barrier_result.message,
+        });
+    }
+
+    Ok(CancelToolExecutionResponse {
+        execution_id: process_result.execution_id,
+        cancelled: process_result.cancelled,
+        status: process_result.status,
+        message: process_result.message,
+    })
+}
+
+/// Release waiters blocked in `test_barrier_tool` for the given barrier id.
+#[tauri::command]
+pub async fn release_test_barrier(
+    #[allow(non_snake_case)] barrierId: String,
+) -> Result<serde_json::Value, String> {
+    let trimmed = barrierId.trim();
+    if trimmed.is_empty() {
+        return Err("barrierId must not be empty".to_string());
+    }
+    Ok(test_barrier::release_test_barrier(trimmed))
+}
+
+/// Clear all test barriers and wake any remaining waiters (harness reset).
+#[tauri::command]
+pub async fn reset_test_barriers() -> Result<serde_json::Value, String> {
+    Ok(test_barrier::reset_test_barriers())
 }
 
 #[cfg(test)]
@@ -271,6 +356,15 @@ mod tests {
         let missing_session_error = enforce_request_policy(&request, &args, None).expect_err(
             "missing session_id must not consume token",
         );
-        assert!(missing_session_error.to_string().contains("approval"));
+        let missing_message = missing_session_error.to_string();
+        assert!(missing_message.contains("approval"));
+        assert!(
+            missing_message.contains("execute path missing session_id"),
+            "None session must use distinct MissingSessionOnExecute wording: {missing_message}"
+        );
+        assert!(
+            !missing_message.contains("identity mismatch"),
+            "None session must not look like UUID mismatch: {missing_message}"
+        );
     }
 }

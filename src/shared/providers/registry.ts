@@ -278,10 +278,12 @@ const deepseekProvider: ProviderDef = {
   baseUrlPlaceholder: 'https://api.deepseek.com',
   baseUrlHelp: 'DeepSeek API address (backend auto-appends /v1).',
   defaultModels: [
-    { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)' },
-    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)' },
+    { id: 'deepseek-flash', name: 'DeepSeek Flash (V4.1)' },
+    { id: 'deepseek-chat', name: 'DeepSeek Chat (legacy)' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (legacy)' },
   ],
   defaultPricing: {
+    'deepseek-flash': { inputPrice: 0.14, outputPrice: 0.28, contextWindow: 128000 },
     'deepseek-chat': { inputPrice: 0.27, outputPrice: 1.1, contextWindow: 128000 },
     'deepseek-reasoner': { inputPrice: 0.55, outputPrice: 2.19, contextWindow: 128000 },
   },

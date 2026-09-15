@@ -45,6 +45,16 @@ jest.mock('@/services/tools/toolResultSanitizer', () => ({
 }));
 
 import { runChatTurn } from '../QueryEngine';
+import { submitSessionToolResults } from '../runtime';
+
+/** Submit tool results using requestId + turnId from a tool_batch_request event. */
+function submitBatchFromEvent(
+  sessionId: string,
+  event: { requestId: string; turnId?: string },
+  results: Array<{ id: string; content: string }>,
+) {
+  return submitSessionToolResults(sessionId, event.requestId, results, event.turnId);
+}
 
 describe('QueryEngine context overflow fallback', () => {
   const resolvedConfig = {
@@ -158,7 +168,7 @@ describe('QueryEngine context overflow fallback', () => {
       events.push(event);
     }
 
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       { type: 'status_update', message: 'Context too large, retrying with a pruned request.' },
       { type: 'text_delta', content: 'OK' },
       {
@@ -212,14 +222,14 @@ describe('QueryEngine context overflow fallback', () => {
     );
 
     const statusEvent = await iterator.next();
-    expect(statusEvent.value).toEqual({
+    expect(statusEvent.value).toMatchObject({
       type: 'status_update',
       message: 'Executing 1 tool(s): read_file',
     });
 
     const toolBatchEvent = await iterator.next();
     expect(toolBatchEvent.value.type).toBe('tool_batch_request');
-    toolBatchEvent.value._resolveAll([{ id: 'tool-1', content: 'README contents' }]);
+    submitBatchFromEvent('session-2', toolBatchEvent.value, [{ id: 'tool-1', content: 'README contents' }]);
 
     let completeEvent = await iterator.next();
     while (completeEvent.value?.type === 'text_delta') {
@@ -232,6 +242,73 @@ describe('QueryEngine context overflow fallback', () => {
       resolvedConfig,
       expect.objectContaining({ noTools: true }),
     );
+  });
+
+  it('passes assistant reasoning through on the continuation request after tool_calls', async () => {
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* reasoningThenToolTurn() {
+        yield { type: 'reasoning_delta', content: 'Need to inspect README first.' };
+        yield {
+          type: 'tool_call',
+          tool: { id: 'tool-reason-1', name: 'read_file', arguments: '{"path":"README.md"}' },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 2, output_tokens: 4 }, model: 'MiniMax-M2.7' },
+        };
+      })
+      .mockImplementationOnce(async function* finalTurn() {
+        yield { type: 'text_delta', content: 'README looks good.' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 3, output_tokens: 2 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const iterator = runChatTurn(
+      'session-reasoning-passback',
+      [{ role: 'user', content: 'check README' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    );
+
+    const events: Array<{ type?: string; content?: string; requestId?: string }> = [];
+    let next = await iterator.next();
+    while (!next.done) {
+      events.push(next.value as { type?: string; content?: string; requestId?: string });
+      if (next.value?.type === 'tool_batch_request') {
+        submitBatchFromEvent(
+          'session-reasoning-passback',
+          next.value as { requestId: string; turnId?: string },
+          [{ id: 'tool-reason-1', content: 'README contents' }],
+        );
+      }
+      next = await iterator.next();
+    }
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'reasoning_delta', content: 'Need to inspect README first.' }),
+      expect.objectContaining({ type: 'tool_batch_request' }),
+      expect.objectContaining({ type: 'text_delta', content: 'README looks good.' }),
+      expect.objectContaining({ type: 'turn_complete' }),
+    ]));
+
+    expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(2);
+    const continuationOptions = mockBuildResolvedChatRequest.mock.calls[1]?.[1] as {
+      messages: Array<Record<string, unknown>>;
+    };
+    const assistantWithTools = continuationOptions.messages.find(
+      (message) => message.role === 'assistant' && Array.isArray(message.tool_calls),
+    );
+    expect(assistantWithTools).toMatchObject({
+      role: 'assistant',
+      reasoning: 'Need to inspect README first.',
+      tool_calls: [
+        expect.objectContaining({ id: 'tool-reason-1', name: 'read_file' }),
+      ],
+    });
   });
 
   it('retries once when the model emits text-form tool calls instead of structured tool_calls', async () => {
@@ -259,7 +336,7 @@ describe('QueryEngine context overflow fallback', () => {
       events.push(event);
     }
 
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       {
         type: 'status_update',
         message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
@@ -315,7 +392,7 @@ describe('QueryEngine context overflow fallback', () => {
       events.push(event);
     }
 
-    expect(events.slice(0, 2)).toEqual([
+    expect(events.slice(0, 2)).toMatchObject([
       {
         type: 'status_update',
         message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
@@ -327,10 +404,10 @@ describe('QueryEngine context overflow fallback', () => {
     ]);
     const errorEvent = events[events.length - 1];
     expect(errorEvent.type).toBe('error');
-    expect(errorEvent.error).toBeInstanceOf(Error);
-    expect(errorEvent.error.message).toMatch(/after 2 automatic retries/i);
-    expect(errorEvent.error.message).toMatch(/not a silent interrupt/i);
-    expect(errorEvent.error.message).toMatch(/malformed_tool_call/);
+    const errorMessage = typeof errorEvent.error === 'string' ? errorEvent.error : (errorEvent.error as Error).message;
+    expect(errorMessage).toMatch(/after 2 automatic retries/i);
+    expect(errorMessage).toMatch(/not a silent interrupt/i);
+    expect(errorMessage).toMatch(/malformed_tool_call/);
     expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(3);
   });
 
@@ -362,7 +439,7 @@ describe('QueryEngine context overflow fallback', () => {
       events.push(event);
     }
 
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       {
         type: 'status_update',
         message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
@@ -480,7 +557,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     );
 
     const status = await iterator.next();
-    expect(status.value).toEqual({
+    expect(status.value).toMatchObject({
       type: 'status_update',
       message: 'Executing 2 tool(s): read_file, execute_command',
     });
@@ -489,14 +566,14 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     expect(batch.value.type).toBe('tool_batch_request');
     // Simulate the consumer rejecting both tool calls (e.g. Ask
     // mode outer guard, dangerous-command hook, etc.).
-    batch.value._resolveAll([
+    submitBatchFromEvent('session-ask-1', batch.value, [
       { id: 'tool-1', content: 'Error: Tool execution is disabled in Ask mode. Switch to Plan or Danger to run tools.' },
       { id: 'tool-2', content: 'Error: Blocked: Attempting to delete root filesystem' },
     ]);
 
     const error = await iterator.next();
     expect(error.value.type).toBe('error');
-    const message = (error.value.error as Error).message;
+    const message = typeof error.value.error === 'string' ? error.value.error : (error.value.error as Error).message;
     expect(message).toMatch(/本轮所有工具调用都被拒绝/);
     expect(message).toMatch(/Ask mode/i);
     expect(message).toMatch(/Plan or Danger/i);
@@ -537,14 +614,14 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     );
 
     const status = await iterator.next();
-    expect(status.value).toEqual({
+    expect(status.value).toMatchObject({
       type: 'status_update',
       message: 'Executing 1 tool(s): read_file',
     });
 
     const batch = await iterator.next();
     expect(batch.value.type).toBe('tool_batch_request');
-    batch.value._resolveAll([
+    submitBatchFromEvent('session-recover-1', batch.value, [
       {
         id: 'tool-1',
         content: "Error: Failed to read file '/Users/dogecoin/Documents/GitHub/FocusApp/README.md': os error 2",
@@ -736,7 +813,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     expect(status.value.type).toBe('status_update');
     const batch = await iterator.next();
     expect(batch.value.type).toBe('tool_batch_request');
-    batch.value._resolveAll([{ id: 'tool-1', content: 'README contents' }]);
+    submitBatchFromEvent('session-final-summary', batch.value, [{ id: 'tool-1', content: 'README contents' }]);
 
     // Drain the final summary turn.
     let event = await iterator.next();
@@ -792,7 +869,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
 
   it('retries once when every Plan-mode tool call is rejected for leaving the allowed tool lane', async () => {
     mockInvokeRustAPIStream
-      .mockImplementationOnce(async function* toolTurn() {
+      .mockImplementationOnce(async function* disallowedTurn() {
         yield {
           type: 'tool_call',
           tool: { id: 'tool-1', name: 'execute_command', arguments: '{"command":"ls"}' },
@@ -802,8 +879,8 @@ describe('QueryEngine Ask-mode noTools contract', () => {
           response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
         };
       })
-      .mockImplementationOnce(async function* recovered() {
-        yield { type: 'text_delta', content: '## Execution Plan: README summary update' };
+      .mockImplementationOnce(async function* recoveredTurn() {
+        yield { type: 'text_delta', content: 'Inspecting with read_file instead.' };
         yield {
           type: 'api_response_complete',
           response: { usage: { input_tokens: 2, output_tokens: 4 }, model: 'MiniMax-M2.7' },
@@ -812,7 +889,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
 
     const iterator = runChatTurn(
       'session-plan-retry',
-      [{ role: 'user', content: 'inspect the repo and draft a plan' }],
+      [{ role: 'user', content: 'check files' }],
       'system prompt',
       undefined,
       false,
@@ -821,19 +898,19 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     );
 
     const status = await iterator.next();
-    expect(status.value).toEqual({
+    expect(status.value).toMatchObject({
       type: 'status_update',
       message: 'Executing 1 tool(s): execute_command',
     });
 
     const batch = await iterator.next();
     expect(batch.value.type).toBe('tool_batch_request');
-    batch.value._resolveAll([
+    submitBatchFromEvent('session-plan-retry', batch.value, [
       { id: 'tool-1', content: 'Error: This tool is not allowed in Plan mode (read-only inspection and plan docs only).' },
     ]);
 
     const retryStatus = await iterator.next();
-    expect(retryStatus.value).toEqual({
+    expect(retryStatus.value).toMatchObject({
       type: 'status_update',
       message: 'Model called disallowed tools. Retrying with a stricter allowlist reminder (read_file, list_files, search_files).',
     });
@@ -842,7 +919,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     while (event.value?.type === 'text_delta') {
       event = await iterator.next();
     }
-    expect(event.value).toEqual({
+    expect(event.value).toMatchObject({
       type: 'turn_complete',
       tokenUsage: { input_tokens: 2, output_tokens: 4, model: 'MiniMax-M2.7' },
     });
@@ -893,9 +970,11 @@ describe('QueryEngine Ask-mode noTools contract', () => {
 
     await iterator.next(); // status_update
     const toolBatchEvent = await iterator.next();
-    toolBatchEvent.value._resolveAll([{ id: 'tool-cleanup-1', content: 'Content' }]);
+    const nextPromise = iterator.next();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    submitBatchFromEvent('session-cleanup-test', toolBatchEvent.value, [{ id: 'tool-cleanup-1', content: 'Content' }]);
 
-    let completeEvent = await iterator.next();
+    let completeEvent = await nextPromise;
     while (completeEvent.value?.type === 'text_delta') {
       completeEvent = await iterator.next();
     }

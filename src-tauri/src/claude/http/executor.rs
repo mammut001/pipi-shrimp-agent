@@ -490,6 +490,7 @@ mod tests {
                 arguments: "{}".to_string(),
             }]),
             tool_call_id: None,
+            reasoning: None,
         };
         // No matching tool result follows → unclosed tool call.
         let messages = vec![assistant_with_tools];
@@ -516,6 +517,7 @@ mod tests {
                 arguments: "{}".to_string(),
             }]),
             tool_call_id: None,
+            reasoning: None,
         };
         let tool_result = Message {
             role: "user".to_string(),
@@ -523,6 +525,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: Some("call_1".to_string()),
+            reasoning: None,
         };
         let messages = vec![assistant_with_tools, tool_result];
         assert!(validate_messages(messages, "test").is_ok());

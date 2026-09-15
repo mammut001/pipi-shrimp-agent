@@ -9,6 +9,7 @@ import {
 import { buildResolvedChatRequest } from '@/services/resolvedChatRequest';
 import { safeInvoke, safeInvokeOrNull } from '../../utils/safeInvoke';
 import { runChatTurn } from '../../core/QueryEngine';
+import { getSessionHandle } from '../../core/runtime';
 import { formatError } from '../../utils/errorFormat';
 import {
   buildApiMessages,
@@ -35,6 +36,7 @@ import {
   resolveSessionExecutionModeId,
   detectAskModeToolNeed,
   shouldOfferExecutionModeUpgrade,
+  type AskModeToolNeedReason,
 } from '@/services/executionMode';
 import { detectBrowserIntent } from '@/services/browser/browserIntent';
 import { BROWSER_TOOL_NAMES, BROWSER_READ_ONLY_TOOLS } from '@/services/browser/browserTools';
@@ -147,8 +149,26 @@ class ChatGenerationCancelledError extends Error {
   }
 }
 
-function isChatGenerationCancelledError(error: unknown): error is ChatGenerationCancelledError {
-  return error instanceof ChatGenerationCancelledError;
+function isChatGenerationCancelledError(error: unknown): boolean {
+  if (error instanceof ChatGenerationCancelledError) {
+    return true;
+  }
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return true;
+  }
+  if (
+    error instanceof Error
+    && (error.name === 'AbortError' || error.message.toLowerCase().includes('abort') || error.message.toLowerCase().includes('cancelled'))
+  ) {
+    return true;
+  }
+  if (
+    typeof error === 'string'
+    && (error.toLowerCase().includes('abort') || error.toLowerCase().includes('cancelled'))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 const ASK_MODE_PSEUDO_TOOL_CALL_PATTERNS = [
@@ -291,6 +311,8 @@ async function tryRecoverFromToolPolicyError(
   return true;
 }
 
+let currentStreamingBuffer = '';
+
 export function createChatActionMethods({
   set,
   get,
@@ -327,6 +349,7 @@ export function createChatActionMethods({
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
       try {
+        currentStreamingBuffer = '';
         setStreaming(true);
         set({ streamingContent: '', streamingSessionId: currentSessionId });
 
@@ -391,11 +414,15 @@ export function createChatActionMethods({
           mapBrowserResponseArtifacts(response.artifacts, () => crypto.randomUUID()),
           mergeReasoningParts(streamingReasoning, parsedReasoning),
           tokenUsage,
+          currentSessionId,
+          assistantMessage.id,
         );
 
+        currentStreamingBuffer = '';
         setStreaming(false);
         set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
       } catch (error) {
+        currentStreamingBuffer = '';
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;
@@ -543,11 +570,13 @@ export function createChatActionMethods({
       // timeout here, which would race with the store timer (each clearTimeout only
       // cleared its own handle). We no longer start a local timer; on completion or
       // cancellation we rely on setStreaming(false) / store cancel logic to clear it.
+      currentStreamingBuffer = '';
       let streamState = createStreamingAccumulator();
       let sessionWorkDir: string | undefined;
       let turnHadError = false;
       let sawTurnComplete = false;
       let planDocSaved = false;
+      let assistantMessage: Message | null = null;
 
       try {
         const userMessage = createMessage('user', content, undefined, options?.attachments);
@@ -617,7 +646,7 @@ export function createChatActionMethods({
           return;
         }
 
-        const assistantMessage = createMessage('assistant', '');
+        assistantMessage = createMessage('assistant', '');
         await addMessage(assistantMessage);
 
         const template = usePromptStore.getState().getActiveTemplate();
@@ -784,6 +813,16 @@ export function createChatActionMethods({
         }
 
         const turnAbort = createChatTurnAbortController(activeSessionId);
+        const turnHostContext = {
+          maxToolRounds: useSettingsStore.getState().agentSettings?.maxToolRounds,
+          executionModeId,
+          onBrowserNotConnected: () => {
+            void useCdpStore.getState().requestChromeConnection();
+          },
+          onExecutionModeUpgradeNeeded: (info: { reason: AskModeToolNeedReason; messagePreview: string }) => {
+            void useUIStore.getState().showExecutionModeUpgradePrompt(info);
+          },
+        };
         const engine = isAskMode
           ? runChatTurn(
               activeSessionId,
@@ -792,7 +831,8 @@ export function createChatActionMethods({
               sessionWorkDir,
               false,
               undefined,
-              { noTools: true, signal: turnAbort.signal },
+              { ...turnHostContext, noTools: true, signal: turnAbort.signal },
+              sessionPipiOutputDir ?? undefined,
             )
           : isPlanMode
           ? runChatTurn(
@@ -803,6 +843,7 @@ export function createChatActionMethods({
               false, // allowBrowserTools — always off in plan mode
               undefined,
               {
+                ...turnHostContext,
                 // Plan mode: read-only inspection only. The chat engine
                 // forwards `allowedTools` through `buildResolvedChatRequest`
                 // (which normalises `[]` -> `undefined`) and the Rust executor
@@ -813,6 +854,7 @@ export function createChatActionMethods({
                 allowedTools: modeAllowedTools,
                 signal: turnAbort.signal,
               },
+              sessionPipiOutputDir ?? undefined,
             )
           : runChatTurn(
               activeSessionId,
@@ -822,6 +864,7 @@ export function createChatActionMethods({
               shouldAllowBrowserTools,
               undefined,
               {
+                ...turnHostContext,
                 ...(modeAllowedTools?.length ? { allowedTools: modeAllowedTools } : {}),
                 signal: turnAbort.signal,
               },
@@ -829,15 +872,22 @@ export function createChatActionMethods({
             );
         const uiStore = useUIStore.getState();
         let tokenUsageResult: TokenUsage | undefined;
+        let activeTurnId: string | undefined;
 
         for await (const chunk of engine) {
+          if (chunk.turnId) {
+            activeTurnId = chunk.turnId;
+          }
+          if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
+            throw new ChatGenerationCancelledError(activeSessionId);
+          }
           if (consumeChatGenerationCancel(activeSessionId)) {
             throw new ChatGenerationCancelledError(activeSessionId);
           }
           streamState = handleStreamChunk(streamState, chunk);
 
           if (chunk.type === 'text_delta') {
-            get().appendStreamingContent(chunk.content);
+            get().appendStreamingContent(chunk.content, chunk.turnId, activeSessionId);
           } else if (chunk.type === 'reasoning_delta') {
             set((state) => ({ streamingReasoning: state.streamingReasoning + chunk.content }));
           } else if (chunk.type === 'status_update') {
@@ -854,7 +904,11 @@ export function createChatActionMethods({
               },
             );
             streamState = clearStreamingRoundBuffers(streamState);
+            currentStreamingBuffer = '';
             set({ streamingReasoning: '', streamingContent: '' });
+            if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
             if (consumeChatGenerationCancel(activeSessionId)) {
               throw new ChatGenerationCancelledError(activeSessionId);
             }
@@ -866,12 +920,16 @@ export function createChatActionMethods({
           }
         }
 
+        if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
+          throw new ChatGenerationCancelledError(activeSessionId);
+        }
         if (consumeChatGenerationCancel(activeSessionId)) {
           throw new ChatGenerationCancelledError(activeSessionId);
         }
 
         const streamed = flushBuffer(streamState);
-        const finalContent = get().streamingContent || streamed.content;
+        const finalContent = currentStreamingBuffer || get().streamingContent || streamed.content;
+        currentStreamingBuffer = '';
         const parsed = parseThinkContent(finalContent);
         const tokenUsage = tokenUsageResult
           ? {
@@ -891,6 +949,8 @@ export function createChatActionMethods({
           undefined,
           mergeReasoningParts(get().streamingReasoning, streamed.reasoning, parsed.reasoning),
           tokenUsage,
+          activeSessionId,
+          assistantMessage.id,
         );
         setError(null);
         set({ streamingContent: displayContent });
@@ -1043,6 +1103,7 @@ export function createChatActionMethods({
           console.debug('[ReactiveCompact] Check failed:', error);
         });
       } catch (error) {
+        currentStreamingBuffer = '';
         if (isChatGenerationCancelledError(error)) {
           clearChatGenerationCancel(activeSessionId);
           setStreaming(false);
@@ -1100,7 +1161,14 @@ export function createChatActionMethods({
           ? `${parsed.content}\n\n⚠️ **Error:** ${errorMsg}`
           : `⚠️ **Error:** ${errorMsg}`;
 
-        void saveLastMsg(finalContent, undefined, mergeReasoningParts(errReasoning, flushed.reasoning, parsed.reasoning)).catch((saveError: unknown) => {
+        void saveLastMsg(
+          finalContent,
+          undefined,
+          mergeReasoningParts(errReasoning, flushed.reasoning, parsed.reasoning),
+          undefined,
+          activeSessionId,
+          assistantMessage?.id,
+        ).catch((saveError: unknown) => {
           console.error('Failed to persist sendMessage error content:', saveError);
         });
 
@@ -1159,6 +1227,7 @@ export function createChatActionMethods({
       abortChatTurn(owningSessionId);
       requestChatGenerationCancel(owningSessionId);
       if (owningSessionId) {
+        getSessionHandle(owningSessionId).cancel('Cancelled by user');
         failUnresolvedSessionTools(
           owningSessionId,
           set,
@@ -1174,15 +1243,17 @@ export function createChatActionMethods({
         setError(`Failed to stop generation: ${formatError(error)}`);
       }
 
+      const finalContent = currentStreamingBuffer || streamingContent;
       const flushed = flushBuffer({
-        content: streamingContent,
+        content: finalContent,
         reasoning: streamingReasoning,
         statusMessages: [],
       });
+      currentStreamingBuffer = '';
       set({ streamingContent: '', streamingReasoning: '' });
 
       if (owningSessionId && (flushed.content || flushed.reasoning)) {
-        await get().updateLastMessage(flushed.content, undefined, flushed.reasoning);
+        await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId);
       }
 
       setStreaming(false);
@@ -1264,9 +1335,16 @@ export function createChatActionMethods({
       }));
     },
 
-    updateLastMessage: async (content: string, artifacts?: Message['artifacts'], reasoning?: string, tokenUsage?: Message['token_usage']) => {
+    updateLastMessage: async (
+      content: string,
+      artifacts?: Message['artifacts'],
+      reasoning?: string,
+      tokenUsage?: Message['token_usage'],
+      targetSessionIdOverride?: string,
+      targetMessageId?: string,
+    ) => {
       const { streamingSessionId, currentSessionId } = get();
-      const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
+      const targetSessionId = targetSessionIdOverride || resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
       if (!targetSessionId) {
         return;
       }
@@ -1279,9 +1357,16 @@ export function createChatActionMethods({
             return session;
           }
 
-          const lastMessageIndex = session.messages.length - 1;
+          let lastMessageIndex = -1;
+          if (targetMessageId) {
+            lastMessageIndex = session.messages.findIndex((message) => message.id === targetMessageId);
+          }
+          if (lastMessageIndex === -1) {
+            lastMessageIndex = session.messages.length - 1;
+          }
+
           const lastMessage = session.messages[lastMessageIndex];
-          if (lastMessage.role !== 'assistant') {
+          if (!lastMessage || lastMessage.role !== 'assistant') {
             return session;
           }
 
@@ -1355,20 +1440,28 @@ export function createChatActionMethods({
       }
     },
 
-    appendStreamingContent: (content: string) => {
+    appendStreamingContent: (content: string, turnId?: string, sessionId?: string) => {
+      if (sessionId && turnId && !getSessionHandle(sessionId).isTurnActive(turnId)) {
+        return;
+      }
       const { streamingContent, streamingSessionId, currentSessionId, lastUiUpdateTime } = get();
-      const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
-      const newContent = streamingContent + stripProviderStreamArtifacts(content);
+      const targetSessionId = sessionId || resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
+      if (!targetSessionId) {
+        return;
+      }
+      const stripped = stripProviderStreamArtifacts(content);
+      currentStreamingBuffer = (currentStreamingBuffer || streamingContent) + stripped;
+      const newContent = currentStreamingBuffer;
       const now = Date.now();
-      set({ streamingContent: newContent });
 
-      if (shouldFlushStreamingUpdate(now, lastUiUpdateTime) && targetSessionId) {
+      if (shouldFlushStreamingUpdate(now, lastUiUpdateTime)) {
         const flushed = flushBuffer({
           content: newContent,
           reasoning: get().streamingReasoning,
           statusMessages: [],
         });
         set((state) => ({
+          streamingContent: newContent,
           lastUiUpdateTime: now,
           sessions: state.sessions.map((session) => {
             if (session.id !== targetSessionId || session.messages.length === 0) {
@@ -1376,6 +1469,9 @@ export function createChatActionMethods({
             }
             const messages = [...session.messages];
             const lastMessage = messages[messages.length - 1];
+            if (lastMessage?.role !== 'assistant') {
+              return session;
+            }
             messages[messages.length - 1] = {
               ...lastMessage,
               content: flushed.content,
@@ -1390,23 +1486,31 @@ export function createChatActionMethods({
     setStreaming: (streaming: boolean) => {
       const { streamingTimeoutId, streamingSessionId, currentSessionId, streamingContent } = get();
       const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
-      if (!streaming && streamingTimeoutId) {
-        clearTimeout(streamingTimeoutId);
-        if (targetSessionId && streamingContent) {
+      if (!streaming) {
+        if (streamingTimeoutId) {
+          clearTimeout(streamingTimeoutId);
+        }
+        const finalContent = currentStreamingBuffer || streamingContent;
+        currentStreamingBuffer = '';
+        if (targetSessionId && finalContent) {
           const flushed = flushBuffer({
-            content: streamingContent,
+            content: finalContent,
             reasoning: get().streamingReasoning,
             statusMessages: [],
           });
           set((state) => ({
             isStreaming: false,
             streamingTimeoutId: null,
+            streamingContent: '',
             sessions: state.sessions.map((session) => {
               if (session.id !== targetSessionId || session.messages.length === 0) {
                 return session;
               }
               const messages = [...session.messages];
               const lastMessage = messages[messages.length - 1];
+              if (lastMessage?.role !== 'assistant') {
+                return session;
+              }
               messages[messages.length - 1] = {
                 ...lastMessage,
                 content: flushed.content,
@@ -1416,12 +1520,13 @@ export function createChatActionMethods({
             }),
           }));
         } else {
-          set({ isStreaming: false, streamingTimeoutId: null });
+          set({ isStreaming: false, streamingTimeoutId: null, streamingContent: '' });
         }
         return;
       }
 
       if (streaming) {
+        currentStreamingBuffer = '';
         const timeoutId = setTimeout(() => {
           const { currentSessionId: fallbackSessionId, setStreaming, streamingSessionId } = get();
           const owningSessionId = resolveStreamingOwnerSessionId(streamingSessionId, fallbackSessionId);

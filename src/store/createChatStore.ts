@@ -26,6 +26,7 @@ import { createChatActionMethods } from './chat/chatActions';
 import { resetTransientSessionStateForNewChat } from './chat/sessionIsolation';
 import { filterSessionsByProject, selectCurrentMessages, selectCurrentSession } from './chat/chatSelectors';
 import { requestChatGenerationCancel, resolveStreamingOwnerSessionId } from './chat/chatStreaming';
+import { getSessionHandle, releaseSessionRuntime } from '../core/runtime';
 import { safeSetItem, safeRemoveItem, safeGetItem, safeMigrateKey } from '@/utils/safeStorage';
 import {
   clearNonCurrentSessionToolRuntime,
@@ -880,6 +881,7 @@ export const useChatStore = create<ChatState>()(
           get().isStreaming ? previousSessionId : null,
         );
         if (owningSessionId) {
+          getSessionHandle(owningSessionId).cancel('Session switched');
           requestChatGenerationCancel(owningSessionId);
           safeInvokeOrNull('stop_subprocess', { sessionId: owningSessionId });
         }
@@ -937,6 +939,7 @@ export const useChatStore = create<ChatState>()(
       if (sessionProjectDir && sessionProjectDir !== sessionPipiOutputDir) {
         await safeInvokeOrNull('delete_session_work_dir', { path: sessionProjectDir });
       }
+      releaseSessionRuntime(sessionId, getSessionHandle(sessionId));
       let nextSessionId: string | null = null;
       set((state) => {
         const newSessions = state.sessions.filter((session) => session.id !== sessionId);
@@ -958,6 +961,7 @@ export const useChatStore = create<ChatState>()(
       const deletedSessionIds: string[] = [];
       for (const sessionId of sessionIds) {
         try {
+          releaseSessionRuntime(sessionId, getSessionHandle(sessionId));
           await safeInvoke('db_delete_session', { sessionId });
           deletedSessionIds.push(sessionId);
           await safeInvokeOrNull('delete_app_chat_dir', { sessionId });

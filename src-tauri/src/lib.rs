@@ -355,6 +355,8 @@ pub fn run() {
             commands::execute_single_tool,
             commands::preview_tool_policy,
             commands::cancel_tool_execution,
+            commands::release_test_barrier,
+            commands::reset_test_barriers,
             commands::get_available_tools,
             // Multi-agent commands
             commands::run_agent,

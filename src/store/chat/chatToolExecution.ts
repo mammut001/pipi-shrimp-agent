@@ -1,13 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { EngineEvent } from '../../core/types';
+import { submitSessionToolResults } from '../../core/runtime';
 import { t } from '../../i18n';
 import { recordToolForReactiveCompact } from '../../services/compact/reactiveCompact';
-import { StreamingToolExecutor, partitionTools, type ToolRequest } from '../../services/StreamingToolExecutor';
+import { StreamingToolExecutor, type ToolRequest } from '../../services/StreamingToolExecutor';
 import { getCurrentAgentContext } from '../../services/multiagent/agentContext';
 import { runAgentBackground, runAgentSync } from '../../services/multiagent/subagent';
 import { runPostToolUseHooks, type PostHookContext } from '../../services/tools/postToolUseHooks';
 import { runPreToolUseHooks } from '../../services/tools/preToolUseHooks';
+import { partitionToolsByMetadata, loadToolRuntimeMetadata } from '../../services/tools/toolMetadata';
 import { detectBrowserIntent } from '../../services/browser/browserIntent';
 import {
   canAutoApproveTool,
@@ -42,20 +44,6 @@ type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
 
-const WORKSPACE_TOOL_NAMES = new Set([
-  'get_current_workspace',
-  'list_files',
-  'search_files',
-  'write_file',
-  'create_directory',
-  'delete_file',
-  'execute_command',
-  'compile_typst_file',
-  'render_typst_to_pdf',
-]);
-
-const CANCELLABLE_TOOL_NAMES = new Set(['execute_command', 'ssh_exec']);
-
 const NO_PROJECT_FOLDER_MESSAGE =
   'No Project Folder is bound to this session. Set a Project Folder (the user\'s repo) before running workspace tools like list_files, write_file, create_directory, execute_command, or compile_typst_file.';
 
@@ -75,20 +63,27 @@ function buildNoProjectFolderToolError(toolName: string): string {
  *
  * - Prefer the session Project Folder (`projectDir` / legacy workDir).
  * - Never treat the PiPi Output Folder as a project workspace.
- * - When unbound, block tools in WORKSPACE_TOOL_NAMES so the model gets a
- *   clear preflight error instead of multi-round path failures.
+ * - When unbound, block tools that require workspace according to Rust metadata
+ *   so the model gets a clear preflight error instead of multi-round path failures.
+ * - Fail closed: if `toolMetadataMap` is unavailable, treat the batch as
+ *   workspace-critical (block when unbound). There is no second TS catalog.
  */
 export function resolveWorkspaceToolPreflight(input: {
   projectDir: string | null | undefined;
   pipiOutputDir: string | null | undefined;
   ensureResult: string | null | undefined;
   toolNames: string[];
+  toolMetadataMap?: Map<string, { requiresWorkspace?: boolean }>;
 }): {
   workDir: string | null;
   blockWorkspaceTools: boolean;
   needsWorkspaceTools: boolean;
 } {
-  const needsWorkspaceTools = input.toolNames.some((name) => WORKSPACE_TOOL_NAMES.has(name));
+  // Fail closed: without Rust metadata, any tool batch is treated as
+  // workspace-critical so we never guess from a TS-side catalog.
+  const needsWorkspaceTools = !input.toolMetadataMap
+    ? input.toolNames.length > 0
+    : input.toolNames.some((name) => input.toolMetadataMap!.get(name)?.requiresWorkspace === true);
   let workDir = typeof input.projectDir === 'string' && input.projectDir.trim()
     ? input.projectDir.trim()
     : null;
@@ -124,7 +119,7 @@ export interface ToolBatchExecutionContext {
 export interface ToolBatchExecutionDeps {
   uiStore: typeof useUIStore;
   createExecutor: () => Pick<StreamingToolExecutor, 'executeBatch'>;
-  partitionTools: typeof partitionTools;
+  partitionToolsByMetadata: typeof partitionToolsByMetadata;
   runPreToolUseHooks: typeof runPreToolUseHooks;
   runPostToolUseHooks: typeof runPostToolUseHooks;
   normalizeResumeWorkspaceToolArgs: typeof normalizeResumeWorkspaceToolArgs;
@@ -140,12 +135,14 @@ export interface ToolBatchExecutionDeps {
   loadSwarmModule: () => Promise<typeof import('../../services/swarm')>;
   loadInboxCoordinator: () => Promise<typeof import('../../services/swarm/inboxCoordinator')>;
   loadSwarmStore: () => Promise<typeof import('../swarmStore')>;
+  loadToolRuntimeMetadata: typeof loadToolRuntimeMetadata;
 }
 
 const defaultDeps: ToolBatchExecutionDeps = {
   uiStore: useUIStore,
-  createExecutor: () => new StreamingToolExecutor(),
-  partitionTools,
+  createExecutor: () => new StreamingToolExecutor(300_000),
+  partitionToolsByMetadata,
+  loadToolRuntimeMetadata,
   runPreToolUseHooks,
   runPostToolUseHooks,
   normalizeResumeWorkspaceToolArgs,
@@ -244,8 +241,9 @@ async function previewBackendToolPolicy(
 function prepareCancellableToolArgs(
   toolName: string,
   toolArgs: string,
+  cancellable: boolean,
 ): { toolArgs: string; executionId: string | null } {
-  if (!CANCELLABLE_TOOL_NAMES.has(toolName)) {
+  if (!cancellable) {
     return { toolArgs, executionId: null };
   }
 
@@ -367,13 +365,6 @@ async function executeConcurrentTools(
       executionMode: executionModeId,
       browserIntent: allowBrowserTools,
       requestPermission: async (request) => {
-        // Bypass: auto-approve normal project-scoped tools without
-        // showing the permission modal. Hard safety blocks still
-        // happen upstream via preToolUseHooks, and the backend
-        // `rejected` decision already short-circuits before this
-        // callback fires. SSH / browser / MCP tools still fall
-        // through to the modal because canAutoApproveTool returns
-        // false for them.
         if (canAutoApproveTool(permissionMode, request.name, { browserIntent: allowBrowserTools })) {
           return true;
         }
@@ -479,15 +470,10 @@ async function resolveSerialToolPermission(
     approvalToken?: string | null;
   },
 ): Promise<boolean> {
-  // Bypass auto-approves normal project-scoped tools even when the
-  // backend preview asks for confirmation (e.g. `curl` in a benign
-  // command). The hard safety hooks (dangerous-command,
-  // path-validation) have already run before we get here, so we know
-  // the request isn't a critical destructive command or an
-  // out-of-project write. We only fall through to the UI prompt for
-  // SSH / browser / MCP tools which `canAutoApproveTool` still
-  // rejects, and for tools that the policy preview explicitly
-  // rejected (caller already handled `rejected` separately).
+  // Frontend auto-approve still returns true here; callers must pass any
+  // backend-issued approvalToken through to execute so RequireConfirmation
+  // can be consumed. Do not gate this on requiresConfirmation or Bypass
+  // write tools will regress to a modal.
   if (canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
     return true;
   }
@@ -717,6 +703,7 @@ async function executeSerialTool(
   get: () => ChatState,
   set: ChatSetState,
   deps: ToolBatchExecutionDeps,
+  toolMetadataMap?: Map<string, { cancellable?: boolean }>,
 ): Promise<ToolArtifactResult> {
   const uiStore = deps.uiStore.getState();
 
@@ -787,7 +774,11 @@ async function executeSerialTool(
   effectiveArgs = hookResult.modifiedArgs || normalizedToolArgs;
   let pendingExecutionId: string | null = null;
   try {
-    const preparedArgs = prepareCancellableToolArgs(tool.name, effectiveArgs);
+    const preparedArgs = prepareCancellableToolArgs(
+      tool.name,
+      effectiveArgs,
+      toolMetadataMap?.get(tool.name)?.cancellable === true,
+    );
     effectiveArgs = preparedArgs.toolArgs;
     pendingExecutionId = preparedArgs.executionId;
   } catch (error) {
@@ -946,49 +937,66 @@ export async function handleToolBatchRequest(
   const { chunk, activeSessionId, assistantMessageId, get, set, ensureSessionWorkDir } = context;
   const uiStore = deps.uiStore.getState();
   let currentSession = get().sessions.find((session) => session.id === activeSessionId);
-  // Two-folder model: the tool cwd is the **Project Folder** — the
-  // folder tools (bash, read/write/list/...) run against. We resolve
-  // it via `getSessionProjectDir(session)` which prefers the new
-  // `projectDir` column and falls back to the legacy `workDir`
-  // mirror. Raw `session.workDir` reads are wrong in the two-folder
-  // world — `workDir` is only a backwards-compat mirror of
-  // `projectDir`, never the canonical source.
-  //
-  // We do NOT fall back to the PiPi Output Folder when the Project
-  // Folder is missing: tools that mutate project state have no
-  // meaning in the app-owned output root, and silently using the PiPi
-  // Output Folder as the tool cwd would let the model "edit"
-  // `.pipi-shrimp/...` files it considers source code.
-  //
-  // The legacy `ensureSessionWorkDir()` helper used to paper over
-  // this by returning whichever single folder the session had bound;
-  // in the two-folder world that helper now provisions the **PiPi
-  // Output Folder**. We use it only as a backstop: if it returns a
-  // path that equals the session's `pipiOutputDir` we discard the
-  // result and surface a hard error so the model can prompt the user
-  // to bind a Project Folder. Otherwise the helper is treated as a
-  // no-op.
   let workDir = resolveSessionProjectDir(currentSession) ?? null;
   const executionModeId = resolveSessionExecutionModeId(currentSession);
   const permissionMode = resolvePermissionMode(executionModeId);
-  // Mirror the 5-mode execution mode id into the hook context so the
-  // preToolUseHooks.executionModeGuardCheck can enforce mode-specific
-  // policy. Falls back to legacy PermissionMode behavior when the
-  // session was created before the 5-mode system shipped.
   const windowsShellProfile = useSettingsStore.getState().windowsShellProfile;
   const blockedWorkspaceToolIds = new Set<string>();
   const preBlockedResults: ToolArtifactResult[] = [];
 
-  // Preflight: if any tool needs a Project Folder and none is bound,
-  // try ensureSessionWorkDir once, then block workspace tools with a
-  // clear error instead of multi-round path failures.
+  let toolMetadataMap: Map<string, { requiresWorkspace?: boolean; cancellable?: boolean }> | undefined;
+  try {
+    toolMetadataMap = await deps.loadToolRuntimeMetadata();
+  } catch (error) {
+    // Fail closed: Rust metadata unavailable — block workspace-critical batch
+    // with an explicit error rather than consulting a TS fallback catalog.
+    const message = `Tool runtime metadata unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    for (const tool of chunk.tools) {
+      const errorContent = JSON.stringify({
+        error: true,
+        error_kind: 'metadata_unavailable',
+        message,
+        tool: tool.name,
+        cause: message,
+      });
+      markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
+      uiStore.updateTaskStep(tool.id, 'failed');
+      markSessionToolStatus(activeSessionId, tool.id, tool.name, 'failed', set, get);
+      resolveSessionTool(
+        activeSessionId,
+        tool.id,
+        tool.name,
+        'failed',
+        errorContent,
+        set,
+        get,
+      );
+      preBlockedResults.push({
+        id: tool.id,
+        content: errorContent,
+        toolName: tool.name,
+        toolArgs: tool.arguments,
+      });
+    }
+    const mergedResults = [...preBlockedResults];
+    if (typeof (chunk as any)?._resolveAll === 'function') {
+      (chunk as any)._resolveAll(mergedResults.map(({ id, content }) => ({ id, content })));
+    }
+    submitSessionToolResults(
+      activeSessionId,
+      chunk.requestId,
+      mergedResults.map(({ id, content }) => ({ id, content })),
+      chunk.turnId,
+    );
+    return mergedResults;
+  }
+
   {
-    const needsWorkDir = chunk.tools.some((tool) => WORKSPACE_TOOL_NAMES.has(tool.name));
+    const needsWorkDir = chunk.tools.some((tool) => toolMetadataMap.get(tool.name)?.requiresWorkspace);
     let ensureResult: string | null = null;
     if (!workDir && needsWorkDir) {
       ensureResult = await ensureSessionWorkDir();
       currentSession = get().sessions.find((session) => session.id === activeSessionId);
-      // Re-resolve after ensure — may have set projectDir or only pipi output.
       workDir = resolveSessionProjectDir(currentSession) ?? null;
     }
 
@@ -998,12 +1006,13 @@ export async function handleToolBatchRequest(
       pipiOutputDir: sessionPipiOutputDir,
       ensureResult,
       toolNames: chunk.tools.map((tool) => tool.name),
+      toolMetadataMap,
     });
     workDir = preflight.workDir;
 
     if (preflight.blockWorkspaceTools) {
       for (const tool of chunk.tools) {
-        if (!WORKSPACE_TOOL_NAMES.has(tool.name)) continue;
+        if (!toolMetadataMap.get(tool.name)?.requiresWorkspace) continue;
         const errorContent = buildNoProjectFolderToolError(tool.name);
         blockedWorkspaceToolIds.add(tool.id);
         markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
@@ -1041,19 +1050,9 @@ export async function handleToolBatchRequest(
     }
   }
 
-  // Only seed tools that will still run. Pre-blocked workspace tools were
-  // already resolveSessionTool(failed); re-seeding them would put their IDs
-  // back into unresolvedIds and wipe UI steps back to pending.
   const executableTools = chunk.tools.filter((tool) => !blockedWorkspaceToolIds.has(tool.id));
   seedSessionToolRuntime(activeSessionId, executableTools, set, get);
-  // Prefer runtime-synced progress (includes pre-blocked failed steps). If
-  // there are only pre-blocked tools, seed is a no-op and sync already
-  // reported pendingToolCalls=0 with failed steps.
 
-  // Always resolve the normalization cwd through the canonical helper
-  // so a session that only has `workDir` (legacy mirror) still picks
-  // up the right folder. We never use the raw `currentSession.workDir`
-  // directly here — that was the bug.
   const projectFolderForNormalization = workDir ?? resolveSessionProjectDir(currentSession);
   const normalizedToolArgsById = new Map<string, string>();
   for (const tool of executableTools) {
@@ -1082,7 +1081,7 @@ export async function handleToolBatchRequest(
     return { id: tool.id, name: tool.name, arguments: parsedArgs };
   });
 
-  const { concurrent, serial } = deps.partitionTools(toolRequests);
+  const { concurrent, serial } = await deps.partitionToolsByMetadata(toolRequests);
   const serialIds = new Set(serial.map((tool) => tool.id));
   const allResults: ToolArtifactResult[] = [];
 
@@ -1115,6 +1114,7 @@ export async function handleToolBatchRequest(
         get,
         set,
         deps,
+        toolMetadataMap,
       ),
     );
   }
@@ -1134,6 +1134,20 @@ export async function handleToolBatchRequest(
   }
 
   const mergedResults = [...preBlockedResults, ...allResults];
-  chunk._resolveAll(mergedResults.map(({ id, content }) => ({ id, content })));
+  if (typeof (chunk as any)?._resolveAll === 'function') {
+    (chunk as any)._resolveAll(mergedResults.map(({ id, content }) => ({ id, content })));
+  }
+  const accepted = submitSessionToolResults(
+    activeSessionId,
+    chunk.requestId,
+    mergedResults.map(({ id, content }) => ({ id, content })),
+    chunk.turnId,
+  );
+  if (!accepted) {
+    console.warn('[ChatToolExecution] Session runtime was released before tool results were submitted', {
+      activeSessionId,
+      requestId: chunk.requestId,
+    });
+  }
   return mergedResults;
 }

@@ -106,6 +106,7 @@ export async function* invokeRustAPIStream(
         error = new DOMException('Streaming request aborted', 'AbortError');
         isDone = true;
         streamTimeout?.clear();
+        void Promise.resolve(invoke('stop_subprocess', { sessionId })).catch(() => {});
         if (resolveNext) {
           const r = resolveNext;
           resolveNext = null;
@@ -187,6 +188,9 @@ export async function* invokeRustAPIStream(
 
     // Continuously yield from queue until Rust signifies it is "done"
     while (!isDone || queue.length > 0) {
+      if (params.signal?.aborted) {
+        throw error ?? new DOMException('Streaming request aborted', 'AbortError');
+      }
       if (queue.length > 0) {
         yield queue.shift()!;
       } else {

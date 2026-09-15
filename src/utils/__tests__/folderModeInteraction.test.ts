@@ -90,7 +90,7 @@ describe('Two-folder model: Project vs PiPi Output', () => {
     expect(source).toMatch(/fallback.*PiPi Output Folder|PiPi Output Folder.*fallback|No Project Folder is bound/i);
     // Must hard-fail the workspace tool rather than proceeding with
     // the output folder as a silent tool cwd.
-    expect(source).toMatch(/WORKSPACE_TOOL_NAMES\.has\(tool\.name\)/);
+    expect(source).toMatch(/toolMetadataMap\.get\(tool\.name\)\?\.requiresWorkspace/);
     expect(source).toMatch(/No Project Folder is bound/i);
   });
 

@@ -76,7 +76,8 @@ fn sample_messages() -> Vec<Message> {
         attachments: None,
         tool_calls: None,
         tool_call_id: None,
-    }]
+            reasoning: None,
+        }]
 }
 
 struct FlakyOpenAIResponder {

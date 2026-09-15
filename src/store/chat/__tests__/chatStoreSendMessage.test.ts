@@ -125,6 +125,13 @@ jest.mock('../../../services/StreamingToolExecutor', () => ({
   })),
 }));
 
+jest.mock('../../../services/tools/toolMetadata', () => ({
+  partitionToolsByMetadata: jest.fn(async (tools: any[]) => ({ concurrent: tools, serial: [] })),
+  loadToolRuntimeMetadata: jest.fn(async () => new Map()),
+  getToolRuntimeMetadata: jest.fn(async () => undefined),
+  toolNamesRequireWorkspace: jest.fn(async () => true),
+}));
+
 jest.mock('../../../services/artifactDetector', () => ({
   detectAndRegisterArtifacts: (...args: unknown[]) => mockDetectAndRegisterArtifacts(...args),
 }));
@@ -361,6 +368,7 @@ describe('chatStore sendMessage integration', () => {
       false,
       undefined,
       expect.objectContaining({ noTools: true }),
+      undefined,
     );
     expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
       ['user', 'hello world'],
@@ -465,6 +473,7 @@ describe('chatStore sendMessage integration', () => {
         allowedTools: ['read_file', 'list_files', 'search_files'],
         signal: expect.any(AbortSignal),
       }),
+      pipiOutputDir,
     );
     // Two-folder model: `savePlanModeDoc` is called with the PiPi
     // Output Folder path, NOT the Project Folder (`/tmp/pipi/session-1`
@@ -630,6 +639,7 @@ describe('chatStore sendMessage integration', () => {
         allowedTools: ['read_file', 'list_files', 'search_files'],
         signal: expect.any(AbortSignal),
       }),
+      undefined,
     );
     expect(mockSavePlanModeDoc).not.toHaveBeenCalled();
   });
@@ -729,6 +739,7 @@ describe('chatStore sendMessage integration', () => {
       false,
       undefined,
       expect.objectContaining({ noTools: true }),
+      undefined,
     );
   });
 
@@ -792,5 +803,53 @@ describe('chatStore sendMessage integration', () => {
         expect(seventh.allowedTools).not.toContain('save_plan_doc');
       }
     }
+  });
+
+  it('P0-1 regression: stopGeneration halts active streaming and resets streaming flags', async () => {
+    async function* stoppingStream() {
+      yield { type: 'text_delta' as const, content: 'first chunk' };
+      await useChatStore.getState().stopGeneration();
+      yield { type: 'text_delta' as const, content: 'second chunk' };
+    }
+
+    mockRunChatTurn.mockImplementation(() => stoppingStream());
+
+    await useChatStore.getState().sendMessage('test streaming stop');
+
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+  });
+
+  it('P0-2 regression: switching session while streaming cancels turn and prevents replaying to new session', async () => {
+    const currentSessions = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...currentSessions,
+        {
+          id: 'session-2',
+          title: 'Second Session',
+          messages: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          permissionMode: 'standard',
+          executionMode: 'agent',
+        },
+      ],
+    });
+
+    async function* streamToSwitch() {
+      yield { type: 'text_delta' as const, content: 'chunk from session 1' };
+      useChatStore.getState().selectSession('session-2');
+      yield { type: 'text_delta' as const, content: 'bleed chunk' };
+    }
+    mockRunChatTurn.mockImplementation(() => streamToSwitch());
+
+    await useChatStore.getState().sendMessage('send in session 1');
+
+    const session2 = useChatStore.getState().sessions.find((s) => s.id === 'session-2');
+    // Session 2 should have NO messages from session 1
+    expect(session2?.messages).toEqual([]);
+    expect(useChatStore.getState().currentSessionId).toBe('session-2');
+    expect(useChatStore.getState().isStreaming).toBe(false);
   });
 });

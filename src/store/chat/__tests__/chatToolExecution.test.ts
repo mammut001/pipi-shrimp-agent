@@ -147,7 +147,9 @@ function legacyPermissionModeToExecutionMode(
   }
 }
 
-function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchExecutionDeps {
+function createDeps(
+  overrides: Partial<ToolBatchExecutionDeps> & { partitionTools?: any } = {},
+): ToolBatchExecutionDeps {
   const mockUiState = {
     activeSkill: null,
     setActiveSkill: jest.fn(),
@@ -158,6 +160,30 @@ function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchE
     addNotification: jest.fn(),
   };
 
+  const partitionToolsByMetadata = overrides.partitionToolsByMetadata
+    ?? (overrides.partitionTools
+      ? jest.fn(async (...args: any[]) => overrides.partitionTools(...args))
+      : jest.fn(async (tools: any) => ({
+          concurrent: tools.filter((t: any) => t.name === 'read_file' || t.name === 'list_files'),
+          serial: tools.filter((t: any) => t.name !== 'read_file' && t.name !== 'list_files'),
+        })));
+
+  const defaultToolMetadataMap = new Map<string, any>([
+    ['get_current_workspace', { requiresWorkspace: true, cancellable: false }],
+    ['read_file', { requiresWorkspace: false, cancellable: false }],
+    ['write_file', { requiresWorkspace: true, cancellable: false }],
+    ['list_files', { requiresWorkspace: true, cancellable: false }],
+    ['create_directory', { requiresWorkspace: true, cancellable: false }],
+    ['path_exists', { requiresWorkspace: true, cancellable: false }],
+    ['search_files', { requiresWorkspace: true, cancellable: false }],
+    ['glob_search', { requiresWorkspace: true, cancellable: false }],
+    ['grep_files', { requiresWorkspace: true, cancellable: false }],
+    ['execute_command', { requiresWorkspace: true, cancellable: true }],
+    ['ssh_exec', { requiresWorkspace: false, cancellable: true }],
+    ['compile_typst_file', { requiresWorkspace: true, cancellable: false }],
+    ['render_typst_to_pdf', { requiresWorkspace: true, cancellable: false }],
+  ]);
+
   return {
     uiStore: { getState: () => mockUiState } as unknown as ToolBatchExecutionDeps['uiStore'],
     createExecutor: () => ({
@@ -167,7 +193,8 @@ function createDeps(overrides: Partial<ToolBatchExecutionDeps> = {}): ToolBatchE
         errors: [],
       })),
     }),
-    partitionTools: jest.fn((tools: any) => ({ concurrent: tools, serial: [] })),
+    partitionToolsByMetadata,
+    loadToolRuntimeMetadata: overrides.loadToolRuntimeMetadata ?? jest.fn(async () => defaultToolMetadataMap),
     runPreToolUseHooks: jest.fn(async () => ({ approved: true })),
     runPostToolUseHooks: jest.fn(async () => {}),
     normalizeResumeWorkspaceToolArgs: jest.fn((_toolName: any, args: any) => args),
@@ -532,6 +559,75 @@ describe('chatToolExecution', () => {
     expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'approved');
     expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'running');
     expect(updateTaskStep).toHaveBeenCalledWith('tool-5', 'done');
+  });
+
+  it('does not inject executionId for tools without cancellable metadata', async () => {
+    const resolved = jest.fn();
+    const waitForPermission = jest.fn(async () => true);
+    const updateTaskStep = jest.fn();
+    const invoke = jest.fn(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-write-1',
+          toolName: 'write_file',
+          decision: 'allowed',
+          reason: null,
+          approvalToken: null,
+        };
+      }
+      if (command === 'execute_single_tool') {
+        return {
+          content: '{"status":"succeeded"}',
+          is_error: false,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const deps = createDeps({
+      uiStore: { getState: () => ({
+        activeSkill: null,
+        setActiveSkill: jest.fn(),
+        setTaskProgress: jest.fn(),
+        updateTaskStep,
+        showQuestionnaire: jest.fn(async () => 'user response'),
+        waitForPermission,
+        addNotification: jest.fn(),
+      }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+      invoke: invoke as ToolBatchExecutionDeps['invoke'],
+      partitionTools: jest.fn(() => ({
+        concurrent: [],
+        serial: [{
+          id: 'tool-write-1',
+          name: 'write_file',
+          arguments: { path: 'a.txt', content: 'hi' },
+        }],
+      })),
+    });
+    const state = createChatState();
+    const chunk: Extract<EngineEvent, { type: 'tool_batch_request' }> = {
+      type: 'tool_batch_request',
+      tools: [{
+        id: 'tool-write-1',
+        name: 'write_file',
+        arguments: JSON.stringify({ path: 'a.txt', content: 'hi' }),
+      }],
+      _resolveAll: resolved,
+    } as any;
+
+    await handleToolBatchRequest({
+      chunk,
+      activeSessionId: 'session-1',
+      assistantMessageId: 'assistant-1',
+      get: () => state,
+      set: jest.fn(),
+      ensureSessionWorkDir: async () => '/tmp/workspace',
+    }, deps);
+
+    const executeSingleToolCall = (invoke as jest.Mock).mock.calls.find(([command]) => command === 'execute_single_tool');
+    expect(executeSingleToolCall).toBeDefined();
+    const parsedArgs = JSON.parse(executeSingleToolCall?.[1].arguments as string);
+    expect(parsedArgs.executionId).toBeUndefined();
+    expect(parsedArgs.path).toBe('a.txt');
   });
 
   it('marks serial tools as rejected when backend policy blocks them before execution', async () => {
@@ -1292,12 +1388,20 @@ describe('chatToolExecution', () => {
   });
 
   describe('resolveWorkspaceToolPreflight (pure)', () => {
+    const workspaceMeta = new Map<string, { requiresWorkspace?: boolean }>([
+      ['list_files', { requiresWorkspace: true }],
+      ['write_file', { requiresWorkspace: true }],
+      ['execute_command', { requiresWorkspace: true }],
+      ['AskUserQuestion', { requiresWorkspace: false }],
+    ]);
+
     it('blocks workspace tools when no project folder is bound', () => {
       const result = resolveWorkspaceToolPreflight({
         projectDir: null,
         pipiOutputDir: '/out',
         ensureResult: null,
         toolNames: ['list_files', 'write_file'],
+        toolMetadataMap: workspaceMeta,
       });
       expect(result.workDir).toBeNull();
       expect(result.needsWorkspaceTools).toBe(true);
@@ -1310,6 +1414,7 @@ describe('chatToolExecution', () => {
         pipiOutputDir: '/out',
         ensureResult: '/out',
         toolNames: ['execute_command'],
+        toolMetadataMap: workspaceMeta,
       });
       expect(result.workDir).toBeNull();
       expect(result.blockWorkspaceTools).toBe(true);
@@ -1321,20 +1426,33 @@ describe('chatToolExecution', () => {
         pipiOutputDir: '/out',
         ensureResult: null,
         toolNames: ['list_files'],
+        toolMetadataMap: workspaceMeta,
       });
       expect(result.workDir).toBe('/repo');
       expect(result.blockWorkspaceTools).toBe(false);
     });
 
-    it('does not block non-workspace tools when unbound', () => {
+    it('does not block non-workspace tools when unbound (with metadata)', () => {
+      const result = resolveWorkspaceToolPreflight({
+        projectDir: null,
+        pipiOutputDir: '/out',
+        ensureResult: null,
+        toolNames: ['AskUserQuestion'],
+        toolMetadataMap: workspaceMeta,
+      });
+      expect(result.needsWorkspaceTools).toBe(false);
+      expect(result.blockWorkspaceTools).toBe(false);
+    });
+
+    it('fail-closed without metadata: treats any tools as workspace-critical', () => {
       const result = resolveWorkspaceToolPreflight({
         projectDir: null,
         pipiOutputDir: '/out',
         ensureResult: null,
         toolNames: ['AskUserQuestion'],
       });
-      expect(result.needsWorkspaceTools).toBe(false);
-      expect(result.blockWorkspaceTools).toBe(false);
+      expect(result.needsWorkspaceTools).toBe(true);
+      expect(result.blockWorkspaceTools).toBe(true);
     });
   });
 

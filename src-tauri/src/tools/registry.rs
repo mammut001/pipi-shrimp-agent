@@ -19,6 +19,7 @@ use crate::commands::file::{
 };
 use crate::tools::shell_profile::WindowsShellProfile;
 use crate::tools::ssh_bridge::{execute_ssh_exec, execute_ssh_read_file, execute_ssh_upload};
+use crate::tools::test_barrier;
 use jsonschema::{JSONSchema, ValidationError};
 
 /// Tool handler: receives parsed JSON arguments, returns result string
@@ -107,33 +108,51 @@ impl ToolRegistry {
         Ok((entry, args))
     }
 
-    /// Execute a single tool call request
-    pub fn execute(&self, req: &ToolCallRequest) -> anyhow::Result<ToolCallResult> {
-        let (entry, args) = self.validate_request(req, None)?;
-
-        if args
+    fn schema_validation_result(
+        req: &ToolCallRequest,
+        args: &serde_json::Value,
+    ) -> Option<ToolCallResult> {
+        if !args
             .get("__schema_validation_error")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
         {
-            let error_msgs = args
-                .get("messages")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Ok(ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
-                content: format!(
-                    "Schema validation failed for tool '{}': {}",
-                    req.name, error_msgs
-                ),
-                is_error: true,
-                error_code: Some("schema_validation".to_string()),
-            });
+            return None;
+        }
+
+        let error_msgs = args
+            .get("messages")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(ToolCallResult {
+            id: req.id.clone(),
+            name: req.name.clone(),
+            content: format!(
+                "Schema validation failed for tool '{}': {}",
+                req.name, error_msgs
+            ),
+            is_error: true,
+            error_code: Some("schema_validation".to_string()),
+        })
+    }
+
+    /// Run a sync registry handler with already-validated args.
+    ///
+    /// Must not re-enter `validate_request` / `enforce_request_policy`: approval
+    /// tokens are one-shot, and a second enforce with `session_id: None` was
+    /// producing "Approval token identity mismatch (session_id)" after Allow.
+    fn dispatch_validated(
+        &self,
+        req: &ToolCallRequest,
+        entry: &ToolEntry,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolCallResult> {
+        if let Some(result) = Self::schema_validation_result(req, &args) {
+            return Ok(result);
         }
 
         if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
@@ -167,36 +186,23 @@ impl ToolRegistry {
         }
     }
 
+    /// Execute a single tool call request
+    pub fn execute(&self, req: &ToolCallRequest) -> anyhow::Result<ToolCallResult> {
+        let (entry, args) = self.validate_request(req, None)?;
+        self.dispatch_validated(req, entry, args)
+    }
+
     pub async fn execute_with_context(
         &self,
         req: &ToolCallRequest,
         session_id: Option<&str>,
     ) -> anyhow::Result<ToolCallResult> {
-        let (_entry, args) = self.validate_request(req, session_id)?;
+        // Validate exactly once with the caller-provided session identity so
+        // approval tokens stored at preview can be consumed here.
+        let (entry, args) = self.validate_request(req, session_id)?;
 
-        if args
-            .get("__schema_validation_error")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-        {
-            let error_msgs = args
-                .get("messages")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Ok(ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
-                content: format!(
-                    "Schema validation failed for tool '{}': {}",
-                    req.name, error_msgs
-                ),
-                is_error: true,
-                error_code: Some("schema_validation".to_string()),
-            });
+        if let Some(result) = Self::schema_validation_result(req, &args) {
+            return Ok(result);
         }
 
         if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
@@ -220,38 +226,32 @@ impl ToolRegistry {
                 provider: provider_context,
             };
 
-            match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
-                Ok(Some(content)) => {
-                    return Ok(ToolCallResult {
-                        id: req.id.clone(),
-                        name: req.name.clone(),
-                        content,
-                        is_error: false,
-                        error_code: None,
-                    })
-                }
-                Ok(None) => {
-                    return Ok(ToolCallResult {
-                        id: req.id.clone(),
-                        name: req.name.clone(),
-                        content: format!("Error: Unknown tool: {}", req.name),
-                        is_error: true,
-                        error_code: Some("not_found".to_string()),
-                    })
-                }
-                Err(error) => {
-                    return Ok(ToolCallResult {
-                        id: req.id.clone(),
-                        name: req.name.clone(),
-                        content: format!("Error: {}", error),
-                        is_error: true,
-                        error_code: Some(error.code.clone()),
-                    })
-                }
-            }
+            return match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
+                Ok(Some(content)) => Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content,
+                    is_error: false,
+                    error_code: None,
+                }),
+                Ok(None) => Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content: format!("Error: Unknown tool: {}", req.name),
+                    is_error: true,
+                    error_code: Some("not_found".to_string()),
+                }),
+                Err(error) => Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content: format!("Error: {}", error),
+                    is_error: true,
+                    error_code: Some(error.code.clone()),
+                }),
+            };
         }
 
-        self.execute(req)
+        self.dispatch_validated(req, entry, args)
     }
 
     /// Returns true when the tool is registered in the authoritative registry.
@@ -1007,6 +1007,42 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
         false,
         false,
     );
+
+    // --- test_barrier_tool (Manual D deterministic harness) ---
+    registry.register(
+        "test_barrier_tool",
+        Arc::new(|args| test_barrier::execute_test_barrier_tool(&args)),
+        ToolMetadata {
+            name: "test_barrier_tool".to_string(),
+            description: "Deterministic Manual D harness: block until release_test_barrier(barrier_id) or cancel_tool_execution(executionId). Not for production agent use.".to_string(),
+            is_read_only: false,
+            is_concurrency_safe: true,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "barrier_id": {
+                        "type": "string",
+                        "description": "Barrier identifier shared with release_test_barrier."
+                    },
+                    "barrierId": {
+                        "type": "string",
+                        "description": "CamelCase alias for barrier_id."
+                    },
+                    "executionId": {
+                        "type": "string",
+                        "description": "Optional execution identifier used to cancel this wait via cancel_tool_execution."
+                    },
+                    "execution_id": {
+                        "type": "string",
+                        "description": "Legacy snake_case alias for executionId."
+                    }
+                },
+                "required": ["barrier_id"],
+                "additionalProperties": false,
+            }),
+        },
+    );
+
 }
 
 #[cfg(test)]
@@ -1109,6 +1145,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_with_context_consumes_approval_once_with_matching_session() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        let work_dir =
+            std::env::temp_dir().join(format!("pipi-registry-approval-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir");
+
+        let args = serde_json::json!({
+            "command": "sleep 0",
+            "cwd": work_dir.to_string_lossy(),
+        });
+        let mut request = make_request("execute_command", args.clone());
+        request.work_dir = Some(work_dir.to_string_lossy().to_string());
+        request.source = super::super::ToolExecutionSource::AssistantToolCall;
+
+        let preview = crate::tools::execution_policy::preview_request_policy(
+            &request,
+            &args,
+            Some("session-approval"),
+        )
+        .expect("preview should require confirmation for sleep");
+        assert_eq!(preview.decision, "awaiting_confirmation");
+        request.approval_token = preview.approval_token;
+
+        let result = registry
+            .execute_with_context(&request, Some("session-approval"))
+            .await
+            .expect("execute_with_context should return a result");
+
+        assert!(
+            !result.is_error,
+            "matching session must not fail after Allow: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("identity mismatch"),
+            "double-validate with None must not surface session_id mismatch: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("missing session_id"),
+            "execute_with_context must pass session through: {}",
+            result.content
+        );
+
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    #[tokio::test]
     async fn modern_single_tool_path_still_executes_read_file() {
         let mut registry = ToolRegistry::new();
         register_builtin_tools(&mut registry);
@@ -1164,4 +1250,44 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(work_dir);
     }
+
+
+    #[test]
+    fn test_barrier_tool_runtime_metadata_is_cancellable_and_concurrent() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        assert!(registry.is_registered("test_barrier_tool"));
+        assert!(registry.is_concurrency_safe("test_barrier_tool"));
+        assert!(!registry.is_read_only("test_barrier_tool"));
+
+        let schema = registry
+            .get_anthropic_tools_schema()
+            .into_iter()
+            .find(|s| s.get("name").and_then(|v| v.as_str()) == Some("test_barrier_tool"))
+            .expect("schema present");
+        let meta = crate::tools::build_tool_runtime_metadata(
+            "test_barrier_tool".to_string(),
+            schema
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            registry.is_read_only("test_barrier_tool"),
+            registry.is_concurrency_safe("test_barrier_tool"),
+            schema
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
+        );
+        assert!(meta.cancellable);
+        assert!(meta.is_concurrency_safe);
+        assert!(!meta.requires_workspace);
+        assert_eq!(
+            meta.concurrency_class,
+            crate::tools::ToolConcurrencyClass::Concurrent
+        );
+        assert_eq!(meta.default_timeout_ms, 300_000);
+    }
+
 }

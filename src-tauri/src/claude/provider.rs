@@ -182,12 +182,20 @@ pub struct ResolvedProviderConfig {
 }
 
 fn deepseek_model_is_reasoning(model_lower: &str) -> bool {
+    // Classic reasoner-only ids (no tools). flash/v4-pro stream reasoning_content
+    // but still support tools — handled separately via deepseek_model_streams_reasoning.
     model_lower.contains("reasoner")
-        || model_lower.contains("reasoning")
-        || model_lower.contains("v4")
         || model_lower
             .split(|value: char| !value.is_ascii_alphanumeric())
             .any(|part| part == "r1")
+}
+
+fn deepseek_model_streams_reasoning(model_lower: &str) -> bool {
+    deepseek_model_is_reasoning(model_lower)
+        || model_lower.contains("reasoning")
+        || model_lower.contains("v4")
+        || model_lower.contains("flash")
+        || model_lower.contains("deepseek")
 }
 
 fn minimax_model_is_reasoning(model_lower: &str) -> bool {
@@ -360,8 +368,10 @@ impl ResolvedProviderConfig {
             }
             ProviderId::DeepSeek => {
                 // DeepSeek: OpenAI-compatible, streams reasoning_content, max_tokens capped at 8192.
-                let supports_reasoning = deepseek_model_is_reasoning(&model_lower);
-                let supports_tool_calls = !model_lower.is_empty() && !supports_reasoning;
+                // reasoner/r1: reasoning without tools. flash/v4: reasoning_content + tools.
+                let reasoner_only = deepseek_model_is_reasoning(&model_lower);
+                let supports_reasoning = deepseek_model_streams_reasoning(&model_lower);
+                let supports_tool_calls = !model_lower.is_empty() && !reasoner_only;
 
                 ProviderCapabilities {
                     supports_thinking: false,
@@ -383,11 +393,18 @@ impl ResolvedProviderConfig {
                 }
             }
             ProviderId::Custom => {
-                // Custom provider: assume OpenAI-compatible, no token cap assumed
+                // Custom provider: assume OpenAI-compatible, no token cap assumed.
+                // DeepSeek flash/v4 via openai-compatible still stream reasoning_content.
+                let deepseek_like = model_lower.contains("deepseek")
+                    || model_lower.contains("flash")
+                    || model_lower.contains("reasoner")
+                    || model_lower.contains("v4");
+                let supports_reasoning =
+                    model_lower.contains("reasoning") || deepseek_like;
                 ProviderCapabilities {
                     supports_thinking: false,
-                    supports_reasoning: model_lower.contains("reasoning"),
-                    supports_reasoning_stream: false,
+                    supports_reasoning,
+                    supports_reasoning_stream: supports_reasoning,
                     supports_tool_calls: true,
                     supports_tool_openai: true,
                     supports_streaming: true,
@@ -518,7 +535,8 @@ mod tests {
         );
         assert!(chat.capabilities.supports_tool_calls);
         assert!(chat.capabilities.supports_tool_openai);
-        assert!(!chat.capabilities.supports_reasoning);
+        // Legacy chat id still streams reasoning_content on current DeepSeek API.
+        assert!(chat.capabilities.supports_reasoning);
 
         let reasoner = ResolvedProviderConfig::resolve(
             "deepseek-reasoner",
@@ -536,9 +554,18 @@ mod tests {
             Some("https://api.deepseek.com"),
             Some(ProviderId::DeepSeek),
         );
-        assert!(!v4_pro.capabilities.supports_tool_calls);
-        assert!(!v4_pro.capabilities.supports_tool_openai);
+        assert!(v4_pro.capabilities.supports_tool_calls);
+        assert!(v4_pro.capabilities.supports_tool_openai);
         assert!(v4_pro.capabilities.supports_reasoning);
+
+        let flash = ResolvedProviderConfig::resolve(
+            "deepseek-flash",
+            "sk-...",
+            Some("https://api.deepseek.com"),
+            Some(ProviderId::DeepSeek),
+        );
+        assert!(flash.capabilities.supports_tool_calls);
+        assert!(flash.capabilities.supports_reasoning);
     }
 
     #[test]

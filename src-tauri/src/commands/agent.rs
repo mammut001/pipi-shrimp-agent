@@ -156,7 +156,8 @@ async fn execute_agent(request: &AgentRequest) -> AgentResponse {
         attachments: None,
         tool_calls: None,
         tool_call_id: None,
-    }];
+            reasoning: None,
+        }];
 
     // Create a fresh client for this subagent call
     let client = ClaudeClient::new();
