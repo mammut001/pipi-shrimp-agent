@@ -35,16 +35,22 @@ Common fields: `sessionId`, `runtimeId`, `turnId`, `requestId`, `toolCallId`, `e
 ## Dump (dev)
 
 ```js
-// DevTools / globalThis
+// DevTools / globalThis — full ring buffer as JSON Lines
 __PIPI_RUNTIME_TRACE__.dumpJsonLines()
 __PIPI_RUNTIME_TRACE__.getEvents()
 __PIPI_RUNTIME_TRACE__.clear()
+
+// Recent N events and/or filter by sessionId (no tool payloads)
+__PIPI_RUNTIME_TRACE__.dumpJsonLines({ limit: 50 })
+__PIPI_RUNTIME_TRACE__.dumpJsonLines({ sessionId: 'manual-d-a', limit: 100 })
 ```
 
 Or import:
 
 ```ts
 import { dumpRuntimeTraceJsonLines, getRuntimeTraceEvents } from '@/core/runtime';
+
+dumpRuntimeTraceJsonLines({ sessionId: 's1', limit: 40 });
 ```
 
 Grep one session chain:
@@ -53,6 +59,31 @@ Grep one session chain:
 # from a saved dump file
 rg 'manual-d-a' runtime-trace.jsonl
 rg 'tool_result_discarded|tombstoned_late_result' runtime-trace.jsonl
+```
+
+## Runtime diagnostics snapshot (dev)
+
+Live session/runtime introspection (extends `getSnapshot` from #78):
+
+| Field | Meaning |
+| --- | --- |
+| `sessionId` / `runtimeId` | Identity spine |
+| `activeTurnId` | Live turn only (`null` when idle/cancelling/terminal) |
+| `turnId` | Raw active-turn record id (may still be set while cancelling) |
+| `state` | `idle` / `created` / `running` / `waiting_tool` / `cancelling` / `terminal` |
+| `pendingToolCount` | Approximate tools still waiting on the result channel |
+| `waitingRequestIds` | Pending tool-result request IDs |
+
+```js
+// One command: snapshots for all live sessions
+__PIPI_RUNTIME_DIAG__.dump()
+__PIPI_RUNTIME_DIAG__.getSnapshots()
+```
+
+```ts
+import { dumpRuntimeDiagnostics, listLiveRuntimeSnapshots } from '@/core/runtime';
+
+console.log(dumpRuntimeDiagnostics());
 ```
 
 ## Non-goals

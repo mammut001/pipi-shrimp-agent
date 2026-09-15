@@ -18,3 +18,9 @@ Principle: **prove + persist + observe**, not redesign. Do not rewrite SessionRu
 
 4. Manual D repeatable product harness — `src/core/runtime/__tests__/manualDProductHarness.test.ts` (+ Rust `test_barrier_tool`)
 5. Interrupted-turn recovery policy — `docs/interrupted-turn-recovery-policy.md` + helpers/tests
+
+## Next knives (P2)
+
+6. Runtime diagnostics snapshot — `dumpRuntimeDiagnostics` / `__PIPI_RUNTIME_DIAG__` (+ extended `getSnapshot`)
+7. Trace retention / export (light) — `dumpJsonLines({ sessionId, limit })` documented; no OpenTelemetry
+
