@@ -319,6 +319,15 @@ mod tests {
         let missing_session_error = enforce_request_policy(&request, &args, None).expect_err(
             "missing session_id must not consume token",
         );
-        assert!(missing_session_error.to_string().contains("approval"));
+        let missing_message = missing_session_error.to_string();
+        assert!(missing_message.contains("approval"));
+        assert!(
+            missing_message.contains("execute path missing session_id"),
+            "None session must use distinct MissingSessionOnExecute wording: {missing_message}"
+        );
+        assert!(
+            !missing_message.contains("identity mismatch"),
+            "None session must not look like UUID mismatch: {missing_message}"
+        );
     }
 }

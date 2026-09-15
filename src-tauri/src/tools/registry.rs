@@ -107,33 +107,51 @@ impl ToolRegistry {
         Ok((entry, args))
     }
 
-    /// Execute a single tool call request
-    pub fn execute(&self, req: &ToolCallRequest) -> anyhow::Result<ToolCallResult> {
-        let (entry, args) = self.validate_request(req, None)?;
-
-        if args
+    fn schema_validation_result(
+        req: &ToolCallRequest,
+        args: &serde_json::Value,
+    ) -> Option<ToolCallResult> {
+        if !args
             .get("__schema_validation_error")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
         {
-            let error_msgs = args
-                .get("messages")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Ok(ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
-                content: format!(
-                    "Schema validation failed for tool '{}': {}",
-                    req.name, error_msgs
-                ),
-                is_error: true,
-                error_code: Some("schema_validation".to_string()),
-            });
+            return None;
+        }
+
+        let error_msgs = args
+            .get("messages")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(ToolCallResult {
+            id: req.id.clone(),
+            name: req.name.clone(),
+            content: format!(
+                "Schema validation failed for tool '{}': {}",
+                req.name, error_msgs
+            ),
+            is_error: true,
+            error_code: Some("schema_validation".to_string()),
+        })
+    }
+
+    /// Run a sync registry handler with already-validated args.
+    ///
+    /// Must not re-enter `validate_request` / `enforce_request_policy`: approval
+    /// tokens are one-shot, and a second enforce with `session_id: None` was
+    /// producing "Approval token identity mismatch (session_id)" after Allow.
+    fn dispatch_validated(
+        &self,
+        req: &ToolCallRequest,
+        entry: &ToolEntry,
+        args: serde_json::Value,
+    ) -> anyhow::Result<ToolCallResult> {
+        if let Some(result) = Self::schema_validation_result(req, &args) {
+            return Ok(result);
         }
 
         if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
@@ -167,36 +185,23 @@ impl ToolRegistry {
         }
     }
 
+    /// Execute a single tool call request
+    pub fn execute(&self, req: &ToolCallRequest) -> anyhow::Result<ToolCallResult> {
+        let (entry, args) = self.validate_request(req, None)?;
+        self.dispatch_validated(req, entry, args)
+    }
+
     pub async fn execute_with_context(
         &self,
         req: &ToolCallRequest,
         session_id: Option<&str>,
     ) -> anyhow::Result<ToolCallResult> {
-        let (_entry, args) = self.validate_request(req, session_id)?;
+        // Validate exactly once with the caller-provided session identity so
+        // approval tokens stored at preview can be consumed here.
+        let (entry, args) = self.validate_request(req, session_id)?;
 
-        if args
-            .get("__schema_validation_error")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-        {
-            let error_msgs = args
-                .get("messages")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Ok(ToolCallResult {
-                id: req.id.clone(),
-                name: req.name.clone(),
-                content: format!(
-                    "Schema validation failed for tool '{}': {}",
-                    req.name, error_msgs
-                ),
-                is_error: true,
-                error_code: Some("schema_validation".to_string()),
-            });
+        if let Some(result) = Self::schema_validation_result(req, &args) {
+            return Ok(result);
         }
 
         if BOOTSTRAP_TOOL_NAMES.contains(&req.name.as_str()) {
@@ -220,38 +225,32 @@ impl ToolRegistry {
                 provider: provider_context,
             };
 
-            match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
-                Ok(Some(content)) => {
-                    return Ok(ToolCallResult {
-                        id: req.id.clone(),
-                        name: req.name.clone(),
-                        content,
-                        is_error: false,
-                        error_code: None,
-                    })
-                }
-                Ok(None) => {
-                    return Ok(ToolCallResult {
-                        id: req.id.clone(),
-                        name: req.name.clone(),
-                        content: format!("Error: Unknown tool: {}", req.name),
-                        is_error: true,
-                        error_code: Some("not_found".to_string()),
-                    })
-                }
-                Err(error) => {
-                    return Ok(ToolCallResult {
-                        id: req.id.clone(),
-                        name: req.name.clone(),
-                        content: format!("Error: {}", error),
-                        is_error: true,
-                        error_code: Some(error.code.clone()),
-                    })
-                }
-            }
+            return match autoresearch_bootstrap::execute_tool(&req.name, &args, &context).await {
+                Ok(Some(content)) => Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content,
+                    is_error: false,
+                    error_code: None,
+                }),
+                Ok(None) => Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content: format!("Error: Unknown tool: {}", req.name),
+                    is_error: true,
+                    error_code: Some("not_found".to_string()),
+                }),
+                Err(error) => Ok(ToolCallResult {
+                    id: req.id.clone(),
+                    name: req.name.clone(),
+                    content: format!("Error: {}", error),
+                    is_error: true,
+                    error_code: Some(error.code.clone()),
+                }),
+            };
         }
 
-        self.execute(req)
+        self.dispatch_validated(req, entry, args)
     }
 
     /// Returns true when the tool is registered in the authoritative registry.
@@ -1106,6 +1105,56 @@ mod tests {
         register_builtin_tools(&mut registry);
         assert!(registry.is_registered("glob_search"));
         assert!(registry.is_registered("grep_files"));
+    }
+
+    #[tokio::test]
+    async fn execute_with_context_consumes_approval_once_with_matching_session() {
+        let mut registry = ToolRegistry::new();
+        register_builtin_tools(&mut registry);
+
+        let work_dir =
+            std::env::temp_dir().join(format!("pipi-registry-approval-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&work_dir).expect("temp dir");
+
+        let args = serde_json::json!({
+            "command": "sleep 0",
+            "cwd": work_dir.to_string_lossy(),
+        });
+        let mut request = make_request("execute_command", args.clone());
+        request.work_dir = Some(work_dir.to_string_lossy().to_string());
+        request.source = super::super::ToolExecutionSource::AssistantToolCall;
+
+        let preview = crate::tools::execution_policy::preview_request_policy(
+            &request,
+            &args,
+            Some("session-approval"),
+        )
+        .expect("preview should require confirmation for sleep");
+        assert_eq!(preview.decision, "awaiting_confirmation");
+        request.approval_token = preview.approval_token;
+
+        let result = registry
+            .execute_with_context(&request, Some("session-approval"))
+            .await
+            .expect("execute_with_context should return a result");
+
+        assert!(
+            !result.is_error,
+            "matching session must not fail after Allow: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("identity mismatch"),
+            "double-validate with None must not surface session_id mismatch: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains("missing session_id"),
+            "execute_with_context must pass session through: {}",
+            result.content
+        );
+
+        let _ = std::fs::remove_dir_all(work_dir);
     }
 
     #[tokio::test]

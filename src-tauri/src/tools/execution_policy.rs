@@ -219,8 +219,18 @@ fn approval_arguments_match(stored: &str, incoming: &str) -> bool {
 enum ApprovalConsumeOutcome {
     MissingToken,
     UnknownOrExpiredToken,
-    Mismatch { fields: Vec<&'static str> },
+    /// Execute path omitted session_id entirely (distinct from wrong UUID).
+    MissingSessionOnExecute,
+    Mismatch {
+        fields: Vec<&'static str>,
+        stored_session_prefix: Option<String>,
+        expected_session_prefix: Option<String>,
+    },
     Consumed,
+}
+
+fn session_id_prefix(value: &str) -> String {
+    value.chars().take(8).collect()
 }
 
 impl ApprovalConsumeOutcome {
@@ -232,10 +242,28 @@ impl ApprovalConsumeOutcome {
             Self::UnknownOrExpiredToken => {
                 "Approval token is unknown, expired, or was already used.".to_string()
             }
-            Self::Mismatch { fields } => format!(
-                "Approval token identity mismatch ({}).",
-                fields.join(", ")
-            ),
+            Self::MissingSessionOnExecute => {
+                "Approval token could not be consumed: execute path missing session_id (preview stores under a session; execute must pass the same chat session id)."
+                    .to_string()
+            }
+            Self::Mismatch {
+                fields,
+                stored_session_prefix,
+                expected_session_prefix,
+            } => {
+                let mut detail = format!(
+                    "Approval token identity mismatch ({}).",
+                    fields.join(", ")
+                );
+                if fields.iter().any(|field| *field == "session_id") {
+                    detail.push_str(&format!(
+                        " stored_session_prefix={} expected_session_prefix={}",
+                        stored_session_prefix.as_deref().unwrap_or("<none>"),
+                        expected_session_prefix.as_deref().unwrap_or("<none>"),
+                    ));
+                }
+                detail
+            }
             Self::Consumed => String::new(),
         }
     }
@@ -278,9 +306,7 @@ fn consume_matching_approval(
         return ApprovalConsumeOutcome::MissingToken;
     };
     let Some(expected_session_id) = session_id else {
-        return ApprovalConsumeOutcome::Mismatch {
-            fields: vec!["session_id"],
-        };
+        return ApprovalConsumeOutcome::MissingSessionOnExecute;
     };
 
     let mut approvals = APPROVALS.lock().expect("approvals lock poisoned");
@@ -295,7 +321,8 @@ fn consume_matching_approval(
     }
 
     let mut mismatched: Vec<&'static str> = Vec::new();
-    if record.session_id != expected_session_id {
+    let session_mismatch = record.session_id != expected_session_id;
+    if session_mismatch {
         mismatched.push("session_id");
     }
     if record.tool_call_id != req.id {
@@ -307,6 +334,10 @@ fn consume_matching_approval(
     if !mismatched.is_empty() {
         return ApprovalConsumeOutcome::Mismatch {
             fields: mismatched,
+            stored_session_prefix: session_mismatch
+                .then(|| session_id_prefix(&record.session_id)),
+            expected_session_prefix: session_mismatch
+                .then(|| session_id_prefix(expected_session_id)),
         };
     }
 
@@ -1210,6 +1241,63 @@ mod tests {
             message.contains("identity mismatch") && message.contains("session_id"),
             "unexpected error: {message}"
         );
+        assert!(
+            message.contains("stored_session_prefix=session-")
+                && message.contains("expected_session_prefix=session-"),
+            "mismatch should include safe session prefixes: {message}"
+        );
+        assert!(
+            !message.contains("missing session_id"),
+            "wrong UUID must not use the missing-session wording: {message}"
+        );
+    }
+
+    #[test]
+    fn approval_token_rejects_missing_session_on_execute_distinctly() {
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        let args = serde_json::json!({
+            "command": "sleep 20",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = args.to_string();
+        let preview = preview_request_policy(&request, &args, Some("session-1"))
+            .expect("preview");
+        request.approval_token = preview.approval_token.clone();
+
+        let error = enforce_request_policy(&request, &args, None)
+            .expect_err("execute without session_id must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("execute path missing session_id"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !message.contains("identity mismatch"),
+            "missing session must not look like a UUID mismatch: {message}"
+        );
+
+        // Token must remain consumable with the original preview session.
+        enforce_request_policy(&request, &args, Some("session-1"))
+            .expect("matching session should still consume after missing-session reject");
+    }
+
+    #[test]
+    fn approval_token_matching_session_allows_long_running_command() {
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        let args = serde_json::json!({
+            "command": "sleep 20",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = args.to_string();
+        let preview = preview_request_policy(&request, &args, Some("chat-session-abc"))
+            .expect("preview");
+        assert_eq!(preview.decision, "awaiting_confirmation");
+        request.approval_token = preview.approval_token;
+
+        enforce_request_policy(&request, &args, Some("chat-session-abc"))
+            .expect("matching chat session_id must allow after Allow");
     }
 
     #[test]
