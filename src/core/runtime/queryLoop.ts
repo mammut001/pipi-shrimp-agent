@@ -184,6 +184,61 @@ function ownershipLost(options: RunChatTurnOptions | undefined, turnId?: string)
   return !options.isTurnActive(id);
 }
 
+/** True only for abort/cancel primitives — do not match unrelated error text. */
+function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return true;
+  }
+  if (error instanceof Error && error.name === 'AbortError') {
+    return true;
+  }
+  return false;
+}
+
+type ToolsCancelReason = 'user_cancel' | 'ownership_lost' | 'aborted';
+
+function resolveToolsCancelReason(
+  options: RunChatTurnOptions | undefined,
+  turnId: string | undefined,
+): ToolsCancelReason {
+  if (ownershipLost(options, turnId)) {
+    return 'ownership_lost';
+  }
+  if (options?.signal?.aborted) {
+    return 'aborted';
+  }
+  return 'user_cancel';
+}
+
+function pushCancelledToolResults(
+  currentMessages: any[],
+  pendingToolCalls: Array<{ id: string; name: string }>,
+  reason: ToolsCancelReason,
+): void {
+  const detail = reason === 'ownership_lost'
+    ? 'Error: cancelled (turn ownership lost)'
+    : 'Error: cancelled by user';
+  for (const tool of pendingToolCalls) {
+    currentMessages.push({
+      role: 'user',
+      content: `__TOOL_RESULT__:${tool.id}:${detail}`,
+      tool_call_id: tool.id,
+      metadata: { toolResult: true, hidden: true },
+    });
+  }
+}
+
+function toolsCancelledEvent(
+  pendingToolCalls: Array<{ id: string; name: string }>,
+  reason: ToolsCancelReason,
+) {
+  return {
+    type: 'tools_cancelled' as const,
+    tools: pendingToolCalls.map((tool) => ({ id: tool.id, name: tool.name })),
+    reason,
+  };
+}
+
 /**
  * The model/tool continuation loop. It is intentionally not exported through
  * the old UI-facing module directly; SessionRuntime owns the ToolResultChannel
@@ -327,11 +382,7 @@ export async function* runQueryEngineTurn(
         console.info(`[QueryEngine] Stream finished for session ${sessionId}`);
         break;
       } catch (e) {
-        if (
-          options?.signal?.aborted
-          || (e instanceof DOMException && e.name === 'AbortError')
-          || (e instanceof Error && (e.name === 'AbortError' || e.message.toLowerCase().includes('aborted') || e.message.toLowerCase().includes('cancelled')))
-        ) {
+        if (options?.signal?.aborted || isAbortLikeError(e)) {
           return;
         }
 
@@ -453,7 +504,10 @@ export async function* runQueryEngineTurn(
         message: `Executing ${pendingToolCalls.length} tool(s): ${pendingToolCalls.map(t => t.name).join(', ')}`,
       };
 
-      if (ownershipLost(options, effectiveTurnId)) {
+      if (ownershipLost(options, effectiveTurnId) || options?.signal?.aborted) {
+        const cancelReason = resolveToolsCancelReason(options, effectiveTurnId);
+        pushCancelledToolResults(currentMessages, pendingToolCalls, cancelReason);
+        yield toolsCancelledEvent(pendingToolCalls, cancelReason);
         return;
       }
       const requestId = createToolRequestId(sessionId, round, effectiveTurnId);
@@ -482,35 +536,23 @@ export async function* runQueryEngineTurn(
         if (
           options?.signal?.aborted
           || ownershipLost(options, effectiveTurnId)
-          || (waitError instanceof DOMException && waitError.name === 'AbortError')
-          || (waitError instanceof Error && (waitError.name === 'AbortError' || waitError.message.toLowerCase().includes('aborted') || waitError.message.toLowerCase().includes('cancelled')))
+          || isAbortLikeError(waitError)
         ) {
-          for (const tool of pendingToolCalls) {
-            currentMessages.push({
-              role: 'user',
-              content: `__TOOL_RESULT__:${tool.id}:Error: cancelled by user`,
-              tool_call_id: tool.id,
-              metadata: { toolResult: true, hidden: true },
-            });
-          }
-          const cancelReason = ownershipLost(options, effectiveTurnId)
-            ? 'ownership_lost' as const
-            : options?.signal?.aborted
-              ? 'aborted' as const
-              : 'user_cancel' as const;
-          yield {
-            type: 'tools_cancelled',
-            tools: pendingToolCalls.map((tool) => ({ id: tool.id, name: tool.name })),
-            reason: cancelReason,
-          };
+          const cancelReason = resolveToolsCancelReason(options, effectiveTurnId);
+          pushCancelledToolResults(currentMessages, pendingToolCalls, cancelReason);
+          yield toolsCancelledEvent(pendingToolCalls, cancelReason);
           return;
         }
         yield { type: 'error', error: errorMessage(waitError) };
         return;
       }
 
-      // Refuse late continuation after terminal/cancelling.
+      // Refuse late continuation after terminal/cancelling — still emit cancelled
+      // results so ownership-loss matches user AbortError (no orphaned tool_calls).
       if (ownershipLost(options, effectiveTurnId) || options?.signal?.aborted) {
+        const cancelReason = resolveToolsCancelReason(options, effectiveTurnId);
+        pushCancelledToolResults(currentMessages, pendingToolCalls, cancelReason);
+        yield toolsCancelledEvent(pendingToolCalls, cancelReason);
         return;
       }
       options?.onToolsResolved?.();

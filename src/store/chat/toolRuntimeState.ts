@@ -208,6 +208,33 @@ export function listUnresolvedSessionToolExecutions(
     ));
 }
 
+/**
+ * Best-effort snapshot of every native executionId still associated with a
+ * non-terminal tool step. Broader than unresolvedIds alone so Stop can cancel
+ * tools that raced out of the unresolved set but are still running natively.
+ */
+export function listCancellableSessionExecutionIds(sessionId: string): string[] {
+  const runtime = toolRuntimeBySession.get(sessionId);
+  if (!runtime) {
+    return [];
+  }
+
+  const ids = new Set<string>();
+  for (const tool of listUnresolvedSessionToolExecutions(sessionId)) {
+    ids.add(tool.executionId);
+  }
+  for (const step of runtime.steps.values()) {
+    if (
+      !isTerminalStepStatus(step.status)
+      && typeof step.executionId === 'string'
+      && step.executionId.length > 0
+    ) {
+      ids.add(step.executionId);
+    }
+  }
+  return [...ids];
+}
+
 export function failUnresolvedSessionTools(
   sessionId: string,
   set: ChatSetState,

@@ -647,6 +647,7 @@ describe('chatStore sendMessage integration', () => {
       typeof content === 'string'
       && content.includes('Tool run cancelled by user')
       && content.includes('read_file')
+      && content.includes('do NOT re-request')
     ))).toBe(true);
     expect(session?.messages.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
     expect(useChatStore.getState().isStreaming).toBe(false);
@@ -671,8 +672,68 @@ describe('chatStore sendMessage integration', () => {
       typeof message.content === 'string'
       && message.content.includes('Tool run cancelled by user')
       && message.content.includes('read_file')
+      && message.content.includes('do NOT re-request')
     ))).toBe(true);
     expect(initialMessages.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
+  });
+
+  it('keeps cancel notice in follow-up history even if tools_cancelled is ignored by host', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    // Simulate a host that never observes tools_cancelled: stopGeneration alone
+    // must persist the durable cancel notice into session.messages / initialMessages.
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-ignore', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-ignore',
+      'execute_command',
+      'exec-ignore-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    await useChatStore.getState().stopGeneration();
+
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.messages.some((message) => (
+      typeof message.content === 'string'
+      && message.content.includes('Tool run cancelled by user')
+      && message.content.includes('execute_command')
+      && message.content.includes('do NOT re-request')
+    ))).toBe(true);
+    expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-ignore-1' });
+
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+    await useChatStore.getState().sendMessage('follow-up without tools_cancelled');
+
+    const followUpCall = mockRunChatTurn.mock.calls.find((call) => (
+      Array.isArray(call[1])
+      && call[1].some((message: { content?: string }) => (
+        typeof message.content === 'string' && message.content.includes('follow-up without tools_cancelled')
+      ))
+    )) ?? mockRunChatTurn.mock.calls[mockRunChatTurn.mock.calls.length - 1];
+    const initialMessages = followUpCall?.[1] as Array<{ role: string; content: string; tool_calls?: unknown[] }>;
+    expect(initialMessages.some((message) => (
+      typeof message.content === 'string'
+      && message.content.includes('Tool run cancelled by user')
+      && message.content.includes('execute_command')
+      && message.content.includes('do NOT re-request')
+    ))).toBe(true);
   });
 
   it('does not save non-plan replies in plan-only mode', async () => {

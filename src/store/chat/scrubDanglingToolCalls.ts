@@ -1,14 +1,46 @@
 import type { ChatState, Message } from '../../types/chat';
-import { messageToDb } from '../../utils/chatHelpers';
+import { messageToDb, parseToolResultMessage } from '../../utils/chatHelpers';
 import { safeInvoke } from '../../utils/safeInvoke';
 
 type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
 
+function collectResolvedToolCallIds(messages: Message[]): Set<string> {
+  const resolved = new Set<string>();
+  for (const message of messages) {
+    if (typeof message.tool_call_id === 'string' && message.tool_call_id.length > 0) {
+      resolved.add(message.tool_call_id);
+    }
+    const parsed = parseToolResultMessage(message);
+    if (parsed) {
+      resolved.add(parsed.toolCallId);
+    }
+  }
+  return resolved;
+}
+
+function scrubAssistantToolCalls(message: Message, resolvedIds: Set<string>): Message | null {
+  if (message.role !== 'assistant' || !message.tool_calls?.length) {
+    return null;
+  }
+
+  const remaining = message.tool_calls.filter((toolCall) => resolvedIds.has(toolCall.id));
+  if (remaining.length === message.tool_calls.length) {
+    return null;
+  }
+
+  return {
+    ...message,
+    content: message.content.trim()
+      || (remaining.length === 0 ? '[Tool execution cancelled before completion.]' : message.content),
+    tool_calls: remaining.length > 0 ? remaining : undefined,
+  };
+}
+
 /**
- * Strip orphan tool_calls from the last assistant message so a follow-up turn
- * does not present an unfinished tool request to the model.
+ * Strip orphan tool_calls from any assistant message that lacks a matching
+ * tool result, so a follow-up turn does not present unfinished tool requests.
  */
 export async function scrubDanglingToolCalls(
   sessionId: string,
@@ -20,16 +52,20 @@ export async function scrubDanglingToolCalls(
     return;
   }
 
-  const lastMessage = session.messages[session.messages.length - 1];
-  if (lastMessage.role !== 'assistant' || !lastMessage.tool_calls?.length) {
+  const resolvedIds = collectResolvedToolCallIds(session.messages);
+  const cleanedById = new Map<string, Message>();
+  const nextMessages = session.messages.map((message) => {
+    const cleaned = scrubAssistantToolCalls(message, resolvedIds);
+    if (!cleaned) {
+      return message;
+    }
+    cleanedById.set(cleaned.id, cleaned);
+    return cleaned;
+  });
+
+  if (cleanedById.size === 0) {
     return;
   }
-
-  const cleanedMessage: Message = {
-    ...lastMessage,
-    content: lastMessage.content.trim() || '[Tool execution cancelled before completion.]',
-    tool_calls: undefined,
-  };
 
   set((state) => ({
     sessions: state.sessions.map((candidate) => (
@@ -37,17 +73,17 @@ export async function scrubDanglingToolCalls(
         ? {
             ...candidate,
             updatedAt: Date.now(),
-            messages: candidate.messages.map((message, index) => (
-              index === candidate.messages.length - 1 ? cleanedMessage : message
-            )),
+            messages: nextMessages,
           }
         : candidate
     )),
   }));
 
-  try {
-    await safeInvoke('db_save_message', { message: messageToDb(cleanedMessage, sessionId) });
-  } catch (error) {
-    console.error('Failed to scrub dangling tool_calls from database:', error);
+  for (const cleanedMessage of cleanedById.values()) {
+    try {
+      await safeInvoke('db_save_message', { message: messageToDb(cleanedMessage, sessionId) });
+    } catch (error) {
+      console.error('Failed to scrub dangling tool_calls from database:', error);
+    }
   }
 }
