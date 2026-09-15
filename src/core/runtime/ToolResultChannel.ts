@@ -89,6 +89,22 @@ export class ToolResultChannel {
     return [...this.pending.keys()];
   }
 
+  /**
+   * Dev/diagnostics: waiting request IDs + approximate pending tool count
+   * (sum of expected tool call ids per waiter; 1 if expectedIds empty).
+   */
+  getPendingDiagnostics(): {
+    waitingRequestIds: string[];
+    pendingToolCount: number;
+  } {
+    const waitingRequestIds = [...this.pending.keys()];
+    let pendingToolCount = 0;
+    for (const entry of this.pending.values()) {
+      pendingToolCount += entry.expectedIds.length > 0 ? entry.expectedIds.length : 1;
+    }
+    return { waitingRequestIds, pendingToolCount };
+  }
+
   private notifyDiscard(requestId: string, reason: string, turnId?: string): void {
     try {
       this.discardSink?.({

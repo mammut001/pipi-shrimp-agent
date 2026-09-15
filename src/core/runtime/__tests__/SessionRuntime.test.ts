@@ -263,8 +263,11 @@ describe('SessionRuntime introspection + trace', () => {
       sessionId,
       runtimeId: handle.runtimeId,
       turnId: null,
+      activeTurnId: null,
       state: 'idle',
       disposed: false,
+      pendingToolCount: 0,
+      waitingRequestIds: [],
     });
 
     const runtime = getSessionRuntimeForTests(sessionId)!;
@@ -273,8 +276,11 @@ describe('SessionRuntime introspection + trace', () => {
       sessionId,
       runtimeId: handle.runtimeId,
       turnId,
+      activeTurnId: turnId,
       state: 'created',
       disposed: false,
+      pendingToolCount: 0,
+      waitingRequestIds: [],
     });
 
     expect(handle.getTraceContext()).toEqual({

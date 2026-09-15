@@ -41,9 +41,16 @@ export type TurnState =
 export interface SessionRuntimeSnapshot {
   sessionId: string;
   runtimeId: string;
+  /** Raw active-turn record id (may be cancelling/terminal); prefer activeTurnId for live. */
   turnId: string | null;
+  /** Live turn only (null when idle / cancelling / terminal). */
+  activeTurnId: string | null;
   state: TurnState | 'idle';
   disposed: boolean;
+  /** Approximate count of tools still waiting on the result channel. */
+  pendingToolCount: number;
+  /** Pending tool-result requestIds currently waiting. */
+  waitingRequestIds: string[];
 }
 
 export interface SessionTurnRequest {
@@ -141,15 +148,19 @@ export class SessionRuntime {
   }
 
   /**
-   * Clear introspection snapshot: sessionId / runtimeId / turnId / state / disposed.
+   * Clear introspection snapshot: identity + state + pending tool waits.
    */
   getSnapshot(): SessionRuntimeSnapshot {
+    const pending = this.toolResults.getPendingDiagnostics();
     return {
       sessionId: this.sessionId,
       runtimeId: this.runtimeId,
       turnId: this.activeTurn?.turnId ?? null,
+      activeTurnId: this.activeTurnId,
       state: this.getState(),
       disposed: this.disposed,
+      pendingToolCount: pending.pendingToolCount,
+      waitingRequestIds: pending.waitingRequestIds,
     };
   }
 
@@ -649,9 +660,47 @@ export function releaseSessionRuntimeForTests(sessionId: string): void {
 }
 
 /**
+ * Snapshots for every live (registered) SessionRuntime — Manual D / dev diagnostics.
+ */
+export function listLiveRuntimeSnapshots(): SessionRuntimeSnapshot[] {
+  return [...sessionRuntimes.values()].map((runtime) => runtime.getSnapshot());
+}
+
+/**
+ * Pretty JSON dump of all live session runtime snapshots (one-command diagnostics).
+ */
+export function dumpRuntimeDiagnostics(): string {
+  return JSON.stringify(listLiveRuntimeSnapshots(), null, 2);
+}
+
+export type RuntimeDiagnosticsDumpApi = {
+  /** Pretty JSON for all live sessions. */
+  dump: () => string;
+  getSnapshots: () => SessionRuntimeSnapshot[];
+};
+
+/**
+ * Install DevTools helper: `globalThis.__PIPI_RUNTIME_DIAG__.dump()`.
+ * Safe to call multiple times.
+ */
+export function installRuntimeDiagnosticsDevDump(
+  target: Record<string, unknown> = globalThis as unknown as Record<string, unknown>,
+): RuntimeDiagnosticsDumpApi {
+  const api: RuntimeDiagnosticsDumpApi = {
+    dump: () => dumpRuntimeDiagnostics(),
+    getSnapshots: () => listLiveRuntimeSnapshots(),
+  };
+  target.__PIPI_RUNTIME_DIAG__ = api;
+  return api;
+}
+
+/**
  * Test-only access to the sealed SessionRuntime behind a handle.
  * Prefer SessionHandle.runTurn / cancel / submitToolResults in production.
  */
 export function getSessionRuntimeForTests(sessionId: string): SessionRuntime | undefined {
   return sessionRuntimes.get(sessionId);
 }
+
+/** DevTools: `globalThis.__PIPI_RUNTIME_DIAG__.dump()` — all live session snapshots */
+installRuntimeDiagnosticsDevDump();
