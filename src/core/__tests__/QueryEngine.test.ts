@@ -45,7 +45,7 @@ jest.mock('@/services/tools/toolResultSanitizer', () => ({
 }));
 
 import { runChatTurn } from '../QueryEngine';
-import { submitSessionToolResults } from '../runtime';
+import { getSessionHandle, submitSessionToolResults } from '../runtime';
 
 /** Submit tool results using requestId + turnId from a tool_batch_request event. */
 function submitBatchFromEvent(
@@ -981,5 +981,62 @@ describe('QueryEngine Ask-mode noTools contract', () => {
 
     expect(clearTimeoutSpy).toHaveBeenCalled();
     clearTimeoutSpy.mockRestore();
+  });
+
+  it('on AbortSignal during waitFor, yields tools_cancelled and does not continue model rounds', async () => {
+    const controller = new AbortController();
+
+    mockInvokeRustAPIStream
+      .mockImplementationOnce(async function* toolTurn() {
+        yield {
+          type: 'tool_call',
+          tool: {
+            id: 'tool-abort-1',
+            name: 'execute_command',
+            arguments: '{"command":"sleep 20"}',
+          },
+        };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      })
+      .mockImplementationOnce(async function* shouldNotRun() {
+        yield { type: 'text_delta', content: 'second round should not happen' };
+        yield {
+          type: 'api_response_complete',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+        };
+      });
+
+    const events: Array<{ type: string; content?: string }> = [];
+    const iterator = runChatTurn(
+      'session-abort-tools',
+      [{ role: 'user', content: 'sleep then done' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+      { signal: controller.signal },
+    );
+
+    for await (const event of iterator) {
+      events.push(event as { type: string; content?: string });
+      if (event.type === 'tool_batch_request') {
+        controller.abort();
+        getSessionHandle('session-abort-tools').cancel('Cancelled by user');
+      }
+    }
+
+    expect(events.some((event) => event.type === 'tools_cancelled')).toBe(true);
+    expect(events.find((event) => event.type === 'tools_cancelled')).toMatchObject({
+      type: 'tools_cancelled',
+      tools: [{ id: 'tool-abort-1', name: 'execute_command' }],
+    });
+    expect(events.some((event) => (
+      event.type === 'text_delta' && String(event.content ?? '').includes('second round')
+    ))).toBe(false);
+    expect(events.some((event) => event.type === 'turn_complete')).toBe(false);
+    expect(mockInvokeRustAPIStream).toHaveBeenCalledTimes(1);
   });
 });

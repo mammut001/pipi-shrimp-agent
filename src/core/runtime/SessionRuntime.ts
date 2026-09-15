@@ -311,17 +311,20 @@ export class SessionRuntime {
         this.toolResults,
         turnId,
       )) {
-        if (!isLiveTurnState(turnState.state) || controller.signal.aborted) {
-          return;
-        }
-        if (!this.isTurnActive(turnId)) {
-          return;
-        }
-        yield {
+        const annotated = {
           ...event,
           sessionId: this.sessionId,
           turnId,
         } as EngineEvent;
+        // Cancel ends the turn, but still forward tools_cancelled so hosts can
+        // persist a terminal cancel signal for the next model turn.
+        if (!isLiveTurnState(turnState.state) || controller.signal.aborted || !this.isTurnActive(turnId)) {
+          if (event.type === 'tools_cancelled') {
+            yield annotated;
+          }
+          return;
+        }
+        yield annotated;
       }
     } finally {
       // Always land in terminal; cancel() may already have moved through cancelling.

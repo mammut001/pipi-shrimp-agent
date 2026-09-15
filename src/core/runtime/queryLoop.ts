@@ -485,6 +485,24 @@ export async function* runQueryEngineTurn(
           || (waitError instanceof DOMException && waitError.name === 'AbortError')
           || (waitError instanceof Error && (waitError.name === 'AbortError' || waitError.message.toLowerCase().includes('aborted') || waitError.message.toLowerCase().includes('cancelled')))
         ) {
+          for (const tool of pendingToolCalls) {
+            currentMessages.push({
+              role: 'user',
+              content: `__TOOL_RESULT__:${tool.id}:Error: cancelled by user`,
+              tool_call_id: tool.id,
+              metadata: { toolResult: true, hidden: true },
+            });
+          }
+          const cancelReason = ownershipLost(options, effectiveTurnId)
+            ? 'ownership_lost' as const
+            : options?.signal?.aborted
+              ? 'aborted' as const
+              : 'user_cancel' as const;
+          yield {
+            type: 'tools_cancelled',
+            tools: pendingToolCalls.map((tool) => ({ id: tool.id, name: tool.name })),
+            reason: cancelReason,
+          };
           return;
         }
         yield { type: 'error', error: errorMessage(waitError) };

@@ -45,8 +45,11 @@ import { useCdpStore } from '@/store/cdpStore';
 import {
   clearSessionToolRuntime,
   failUnresolvedSessionTools,
+  listUnresolvedSessionToolExecutions,
+  listUnresolvedSessionTools,
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
+import { scrubDanglingToolCalls } from './scrubDanglingToolCalls';
 import {
   abortChatTurn,
   clearChatGenerationCancel,
@@ -1227,13 +1230,46 @@ export function createChatActionMethods({
       abortChatTurn(owningSessionId);
       requestChatGenerationCancel(owningSessionId);
       if (owningSessionId) {
+        const unresolvedTools = listUnresolvedSessionTools(owningSessionId);
+        const cancellableExecutions = listUnresolvedSessionToolExecutions(owningSessionId);
+        await Promise.all(
+          cancellableExecutions.map(({ executionId }) => (
+            safeInvoke('cancel_tool_execution', { executionId }, { silent: true }).catch(() => undefined)
+          )),
+        );
+        useUIStore.getState().clearAllPermissions();
         getSessionHandle(owningSessionId).cancel('Cancelled by user');
         failUnresolvedSessionTools(
           owningSessionId,
           set,
           get,
           (_toolCallId, label) => `Error: ${label} cancelled by user`,
+          'cancelled',
         );
+        await scrubDanglingToolCalls(owningSessionId, set, get);
+        // Drop an empty assistant placeholder so the cancel notice is not stranded after it.
+        set((state) => ({
+          sessions: state.sessions.map((session) => {
+            if (session.id !== owningSessionId || session.messages.length === 0) {
+              return session;
+            }
+            const last = session.messages[session.messages.length - 1];
+            if (!shouldRemoveEmptyAssistantPlaceholder(last)) {
+              return session;
+            }
+            return { ...session, messages: session.messages.slice(0, -1), updatedAt: Date.now() };
+          }),
+        }));
+        if (unresolvedTools.length > 0) {
+          const toolNames = unresolvedTools.map((tool) => tool.label).join(', ');
+          await get().addMessageToSession(
+            owningSessionId,
+            createMessage(
+              'assistant',
+              `[Tool run cancelled by user: ${toolNames}. Do not assume it completed.]`,
+            ),
+          );
+        }
       }
 
       try {
