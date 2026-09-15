@@ -2,7 +2,7 @@
 
 **Repository:** `mammut001/pipi-shrimp-agent`  
 **Branch:** `agent/runtime-p0-session-channel-tool-metadata`  
-**PR:** #73 (Remains **DRAFT**)  
+**PR:** #73 (**Ready for Review** — GPT confirmed after scheduler-path barrier)  
 **Status:** All P0 and P1 issues resolved, all automated verification gates passed.
 
 ---
@@ -108,7 +108,7 @@ All identified defects have been fixed conservatively in accordance with PR #73'
 
 ## 4. PR Status & Policy Confirmation
 
-- **PR #73:** Remains in **DRAFT** state.
+- **PR #73:** Marked **Ready for Review** (2026-09-15) after GPT Ready-gate confirm.
 - **Remote Target Branch:** `agent/runtime-p0-session-channel-tool-metadata`
 - **History:** No force-push, fast-forward commits only.
 
@@ -193,4 +193,4 @@ GPT stars after `25eecf6`/`021b897`: Runtime ★★★★½ / Session ★★★�
 - UI Manual D remains optional; deterministic dual-session cancel isolation now proven on real Rust tool wait/cancel path.
 
 ### Merge recommendation (orchestrator)
-**Ready gate update:** `b816caa` barrier tool + `341092f` **scheduler/registry-path** dual-session test `dual_session_cancel_a_release_b_via_registry_scheduler` PASS (9 `test_barrier` tests). UI Manual D optional. Pending GPT confirm → Ready for Review; host-adapter / typed-outcome stay follow-up PR.
+**Ready for Review (2026-09-15):** GPT confirmed Ready gate met (`341092f` registry/scheduler dual-session barrier). UI Manual D optional. Follow-up PRs (not in #73): (1) RuntimeHost adapter / stop_subprocess injection (2) typed tool terminal outcomes (3) STE metadata — already largely done in `021b897`.
