@@ -193,4 +193,4 @@ GPT stars after `25eecf6`/`021b897`: Runtime ★★★★½ / Session ★★★�
 - UI Manual D remains optional; deterministic dual-session cancel isolation now proven on real Rust tool wait/cancel path.
 
 ### Merge recommendation (orchestrator)
-**Ready gate update:** Rust `test_barrier_tool` dual-session cancel isolation PASS (`b816caa`). UI Manual D still flaky/optional. Ask GPT whether #73 can Ready for Review given this deterministic proof + green CI; otherwise keep Draft only for remaining host-adapter / typed-outcome follow-ups in a new PR.
+**Ready gate update:** `b816caa` barrier tool + `341092f` **scheduler/registry-path** dual-session test `dual_session_cancel_a_release_b_via_registry_scheduler` PASS (9 `test_barrier` tests). UI Manual D optional. Pending GPT confirm → Ready for Review; host-adapter / typed-outcome stay follow-up PR.
