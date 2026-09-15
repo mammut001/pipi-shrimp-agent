@@ -337,18 +337,18 @@ fn sanitize_assistant_message_for_openai_record(
 
     // DeepSeek (and similar OpenAI-compatible reasoners) require the prior
     // assistant turn's reasoning_content to be passed back on tool continuation
-    // rounds. This is message-history passback, distinct from request-level
-    // reasoning/reasoning_effort params gated by accepts_reasoning_param.
-    if capabilities.supports_reasoning {
-        if let Some(reasoning_content) = record.get("reasoning_content") {
-            let keep = match reasoning_content {
-                Value::String(s) => !s.trim().is_empty(),
-                Value::Null => false,
-                _ => true,
-            };
-            if keep {
-                sanitized.insert("reasoning_content".to_string(), reasoning_content.clone());
-            }
+    // rounds. Preserve non-empty history passback even when supports_reasoning
+    // is false (e.g. Custom openai-compatible + deepseek-flash), distinct from
+    // request-level reasoning/reasoning_effort params gated by
+    // accepts_reasoning_param.
+    if let Some(reasoning_content) = record.get("reasoning_content") {
+        let keep = match reasoning_content {
+            Value::String(s) => !s.trim().is_empty(),
+            Value::Null => false,
+            _ => true,
+        };
+        if keep {
+            sanitized.insert("reasoning_content".to_string(), reasoning_content.clone());
         }
     }
 
@@ -733,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitizes_openai_history_for_reasoning_unsupported_providers() {
+    fn sanitizes_openai_history_keeps_reasoning_content_without_request_params() {
         let mut messages = vec![serde_json::json!({
             "role": "assistant",
             "content": "visible answer",
@@ -774,7 +774,13 @@ mod tests {
             },
         );
 
-        assert_eq!(messages[0].get("reasoning_content"), None);
+        // Message-history reasoning_content must survive even when the provider
+        // capability map says supports_reasoning=false (DeepSeek flash via Custom).
+        assert_eq!(
+            messages[0].get("reasoning_content"),
+            Some(&serde_json::json!("internal trace"))
+        );
+        // Request-level / hidden reasoning params stay stripped.
         assert_eq!(messages[0].get("reasoning"), None);
         assert_eq!(messages[0].get("reasoning_effort"), None);
         assert_eq!(messages[0].get("thinking"), None);
@@ -853,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn strips_assistant_reasoning_content_when_provider_lacks_reasoning_support() {
+    fn keeps_assistant_reasoning_content_even_when_supports_reasoning_false() {
         let mut messages = vec![serde_json::json!({
             "role": "assistant",
             "content": null,
@@ -890,7 +896,7 @@ mod tests {
             },
         );
 
-        assert_eq!(messages[0].get("reasoning_content"), None);
+        assert_eq!(messages[0].get("reasoning_content"), Some(&serde_json::json!("internal trace")));
         assert!(messages[0].get("tool_calls").is_some());
     }
 
