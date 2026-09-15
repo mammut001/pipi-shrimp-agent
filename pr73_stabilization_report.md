@@ -121,30 +121,37 @@ All identified defects have been fixed conservatively in accordance with PR #73'
 - Key Jest suites (SessionRuntime / QueryEngine / StreamingToolExecutor / agentRunner / chatToolExecution / chatStoreSendMessage): 6 suites / 99 tests PASS
 - PR #73 remains Draft at `56222249cdb2f8c04d857e7eadb600c5ba98c1fd`
 
-### Manual retest (Phase 11) — PARTIAL PASS (2026-09-14 evening)
+### Manual retest (Phase 11) — PARTIAL PASS (2026-09-14 night)
 
 **Provider used:** DeepSeek via OpenAI-compatible Settings entry  
 **Base URL:** `https://api.deepseek.com`  
 **Model:** `deepseek-flash`  
-**Local HEAD when retested:** `e93349b` (includes cherry-pick of Settings custom-model #74 so `deepseek-flash` can be typed; #74 is already on `main`)
+**Local HEAD when retested:** `7b98aca` (includes #74 cherry-pick for custom model IDs, plus DeepSeek tool-continuation fixes below)
 
-Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for those keys; DeepSeek unblocked streaming.
+Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for those keys; DeepSeek unblocked streaming/tools after fixes.
 
 | Scenario | Result | Evidence |
 |----------|--------|----------|
-| Smoke (`reply only ping-ok`) | **INCONCLUSIVE (provider truncation)** | App often returned `ping` only. External `curl` with the same key/model returned full `ping-ok`. Likely DeepSeek default thinking consuming completion budget, not a SessionRuntime failure. |
-| Manual A ×2 (Stop mid-stream → immediate follow-up) | **PASS (behavior)** | Stop interrupted streaming; follow-up turn ran clean with no ghost continuation. Exact reply string often `runtime` instead of `runtime-ok` (same truncation class as smoke). |
-| Manual C (A streaming → switch to B → B reply → back to A) | **PASS (behavior)** | No cross-chat replay. Chat A later answered `A-new`. Chat B truncated to `B` instead of `B-ok`. |
-| Manual D/E (dual concurrent sessions / cancel-during-tool) | **NOT RETESTED** | Not re-run in this DeepSeek pass. |
+| Smoke (`reply only ping-ok`) | **INCONCLUSIVE (provider truncation)** | App often returned `ping` only before thinking was disabled. External `curl` returned full `ping-ok`. |
+| Manual A ×2 (Stop mid-stream → immediate follow-up) | **PASS (behavior)** | Stop interrupted streaming; follow-up turn clean; no ghost continuation. |
+| Manual C (A streaming → switch to B → B reply → back to A) | **PASS (behavior)** | No cross-chat replay; Chat A later answered `A-new`. |
+| Tool preflight (`read_file` package.json) | **PASS** | After thinking-disable + reasoning passback; tool card completed without `reasoning_content` 400. |
+| Manual E (cancel during `sleep 20` tool) | **PASS** | Tool card visibly running → Stop → follow-up `AFTER-CANCEL` succeeded; no stuck busy / ghost tool continuation. |
+| Manual D (dual concurrent sessions; cancel A while B runs) | **INCONCLUSIVE (harness)** | Could not keep two long-running tools overlapping: long-running shell approvals clicked Allow but still rejected; multi-file reads finished too fast to Stop mid-flight. No cross-session leak observed in the runs that did complete, but cancel-isolation under true concurrency was not demonstrated. |
+| Unbound Project Folder tool denial | **EXPECTED (not a #73 bug)** | `read_file` / workspace tools correctly return `permission_denied` when no Project Folder is bound. |
 
-Screenshots (box assets from computerUse): Settings DeepSeek config; smoke truncated `ping`; Manual C final `A-new`.
+### DeepSeek-related fixes landed on this branch (to unblock tool retests)
+1. `006cdc6` / `91dd670` — pass/serialize assistant `reasoning` as `reasoning_content` on tool continuation.
+2. `47dbd27` — keep `reasoning_content` passback even when `supports_reasoning` capability is false (Custom + `deepseek-flash`); treat flash/v4 as tools+reasoning.
+3. `7b98aca` — send `thinking: { type: "disabled" }` for DeepSeek-like OpenAI-compatible requests so tool rounds stay reliable.
 
 ### Residual non-blocking notes
 1. Production `chatToolExecution.ts` still optionally calls `(chunk as any)._resolveAll(...)` when present (compat shim for old fixtures). EngineEvent itself remains serializable; prefer deleting this shim once tests no longer attach callbacks.
 2. `FALLBACK_WORKSPACE_TOOL_NAMES` remains as fail-closed fallback when Rust metadata is unavailable (renamed from `WORKSPACE_TOOL_NAMES`). Prefer eventually removing even the fallback once metadata load is guaranteed.
 3. Jest may leave open handles after some suites (observed warning); not a failure.
-4. Built-in DeepSeek provider catalog still lists only `deepseek-chat` / `deepseek-reasoner`; configuring `deepseek-flash` required openai-compatible + custom model field (#74). Consider updating the first-party DeepSeek model list separately from #73.
-5. Local branch is **ahead 1** with cherry-picked #74 for retest UX. Drop or leave that commit before Ready; it is already merged on `main` and is not a #73 runtime change.
+4. Built-in DeepSeek provider catalog still lists only `deepseek-chat` / `deepseek-reasoner`; configuring `deepseek-flash` required openai-compatible + custom model field (#74).
+5. Local branch is **ahead of remote** with #74 cherry-pick plus DeepSeek tool fixes/docs. Review before Ready; #74 is already on `main`.
+6. Dual-session Manual D still needs a harness that can grant long-running shell approval reliably (or another slow overlapping tool).
 
 ### Merge recommendation (orchestrator)
-**Keep PR #73 Draft.** Manual A/C cancel and session-switch behavior now look good on DeepSeek, but dual-session and cancel-during-tool paths are still unexercised, and short-reply truncation under thinking models should be treated as environment noise rather than a green light for Ready.
+**Keep PR #73 Draft.** Manual A/C/E look good on DeepSeek after the tool-continuation fixes. Manual D remains inconclusive due to approval/harness limits, not a reproduced SessionRuntime cross-session failure. Re-run D once long-running dual-shell overlap is achievable, then reconsider Ready.
