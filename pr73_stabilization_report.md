@@ -137,13 +137,20 @@ Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for th
 | Manual C (A streaming → switch to B → B reply → back to A) | **PASS (behavior)** | No cross-chat replay; Chat A later answered `A-new`. |
 | Tool preflight (`read_file` package.json) | **PASS** | After thinking-disable + reasoning passback; tool card completed without `reasoning_content` 400. |
 | Manual E (cancel during `sleep 20` tool) | **PASS** | Tool card visibly running → Stop → follow-up `AFTER-CANCEL` succeeded; no stuck busy / ghost tool continuation. |
-| Manual D (dual concurrent sessions; cancel A while B runs) | **INCONCLUSIVE (harness)** | Could not keep two long-running tools overlapping: long-running shell approvals clicked Allow but still rejected; multi-file reads finished too fast to Stop mid-flight. No cross-session leak observed in the runs that did complete, but cancel-isolation under true concurrency was not demonstrated. |
+| Manual D (dual concurrent sessions; cancel A while B runs) | **INCONCLUSIVE (harness)** | After Allow fix, single long-running Allow works. Dual overlap still not cleanly demonstrated: Chat B approval often late; Stop on A disappears before cancel can be confirmed; no `B_DONE`/`A_DONE` observed in the last harness run. No cross-session leak proven; cancel-isolation under true concurrency still not shown. |
 | Unbound Project Folder tool denial | **EXPECTED (not a #73 bug)** | `read_file` / workspace tools correctly return `permission_denied` when no Project Folder is bound. |
 
-### Approval resume fix (2026-09-14 night)
-- Root cause addressed: approval token fingerprint compared raw argument JSON strings, so `executionId` / key-order drift between preview and execute could make Allow look like a fresh policy denial (`Assistant tool calls need approval for long-running commands`).
-- Fix: canonicalize approval argument fingerprints (stable key order, strip `executionId`/`execution_id`), TTL-check on consume, clearer mismatch errors; StreamingToolExecutor assigns `executionId` before preview; built-in DeepSeek catalog now includes `deepseek-flash`.
-- Note: `agy` stalled on Antigravity auth for this batch; fix landed directly on the branch.
+### Approval resume fix (2026-09-14 / 09-15 night)
+Local HEAD: `d4e5ad7` (branch ahead of origin; not pushed).
+
+**Allow smoke (2026-09-15):** **PASS** — `sleep 15 && echo ALLOW_OK` → Allow → tool ran → `ALLOW_OK`.
+
+Root causes (stacked):
+1. Fingerprint drift (`executionId` / key order / `work_dir` injection) between preview and execute made Allow look like a fresh long-running denial.
+2. `consume_matching_approval` was too brittle on args/source/work_dir; now succeeds on token + `session_id` + `tool_call_id` + `tool_name` (one-shot, TTL); args/work_dir/source are diagnostic-only.
+3. **Critical:** `execute_with_context` consumed the approval with the chat `session_id`, then `execute()` re-ran `enforce_request_policy` with `session_id = None`, which was mis-reported as `identity mismatch (session_id)`. Fix: validate once; dispatch handler without a second enforce (`registry.rs`). Errors now distinguish missing session vs UUID mismatch.
+
+Commits: `1a7a5d3`, `a93edc7`, `7ced71b`, `d4e5ad7` (+ docs). `execution_policy` cargo tests: 26 passed. Note: `agy` stalled on Antigravity auth; fixes landed directly on the branch.
 
 ### DeepSeek-related fixes landed on this branch (to unblock tool retests)
 1. `006cdc6` / `91dd670` — pass/serialize assistant `reasoning` as `reasoning_content` on tool continuation.
@@ -156,7 +163,7 @@ Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for th
 3. Jest may leave open handles after some suites (observed warning); not a failure.
 4. Built-in DeepSeek provider catalog still lists only `deepseek-chat` / `deepseek-reasoner`; configuring `deepseek-flash` required openai-compatible + custom model field (#74).
 5. Local branch is **ahead of remote** with #74 cherry-pick plus DeepSeek tool fixes/docs. Review before Ready; #74 is already on `main`.
-6. Dual-session Manual D still needs a harness that can grant long-running shell approval reliably (or another slow overlapping tool).
+6. Dual-session Manual D still needs a reliable overlap harness (Stop A while B’s long-running tool is visibly running). Single-chat Allow is no longer the blocker.
 
 ### Merge recommendation (orchestrator)
-**Keep PR #73 Draft.** Manual A/C/E look good on DeepSeek after the tool-continuation fixes. Manual D remains inconclusive due to approval/harness limits, not a reproduced SessionRuntime cross-session failure. Re-run D once long-running dual-shell overlap is achievable, then reconsider Ready.
+**Keep PR #73 Draft.** Manual A/C/E pass; long-running Allow smoke now passes after `d4e5ad7`. Manual D remains inconclusive due to dual-chat timing/Stop harness limits, not a reproduced SessionRuntime cross-session failure. Re-run D with a cleaner overlap, then reconsider Ready.
