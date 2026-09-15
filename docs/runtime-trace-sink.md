@@ -14,7 +14,7 @@
 | --- | --- |
 | `turn_started` / `turn_waiting_tool` / `turn_cancelling` / `turn_terminal` | `SessionRuntime` |
 | `tool_requested` | `markWaitingTool` + chat tool start |
-| `tool_execution_started` / `tool_completed` / `tool_cancelled` | chat tool execution / cancel paths |
+| `tool_execution_started` / `tool_completed` / `tool_cancelled` | chat tool execution / cancel paths (`tool_completed` reason `metadata_unavailable` on metadata-load failure) |
 | `tool_cancel_requested` | `SessionRuntime.cancel`, `stopGeneration` |
 | `tool_result_discarded` | late / mismatched `ToolResultChannel` submit (`reason` e.g. `tombstoned_late_result`); also `runtime_released_late_submit` when submit happens after release |
 | `runtime_released` | `releaseSessionRuntime` |

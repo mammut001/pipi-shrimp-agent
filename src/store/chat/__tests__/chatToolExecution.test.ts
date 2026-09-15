@@ -2336,6 +2336,123 @@ describe('chatToolExecution', () => {
         warnSpy.mockRestore();
       }
     });
+
+    it('cancel-branch: native cancelled status emits tool_cancelled terminal trace', async () => {
+      clearRuntimeTraceSink();
+      releaseSessionRuntimeForTests('session-1');
+      getSessionHandle('session-1');
+
+      const updateTaskStep = jest.fn();
+      const deps = createDeps({
+        uiStore: { getState: () => ({
+          activeSkill: null,
+          setActiveSkill: jest.fn(),
+          setTaskProgress: jest.fn(),
+          updateTaskStep,
+          showQuestionnaire: jest.fn(async () => 'user response'),
+          waitForPermission: jest.fn(async () => true),
+          addNotification: jest.fn(),
+        }) } as unknown as ToolBatchExecutionDeps['uiStore'],
+        invoke: jest.fn(async (command: string) => {
+          if (command === 'preview_tool_policy') {
+            return { toolCallId: 'tool-cancel-trace', toolName: 'execute_command', decision: 'allowed' };
+          }
+          if (command === 'execute_single_tool') {
+            return {
+              content: '{"status":"cancelled","stdout":"","stderr":""}',
+              is_error: true,
+              status: 'cancelled',
+            };
+          }
+          throw new Error(`Unexpected command: ${command}`);
+        }) as any,
+        partitionTools: jest.fn(() => ({
+          concurrent: [],
+          serial: [{
+            id: 'tool-cancel-trace',
+            name: 'execute_command',
+            arguments: { command: 'sleep 20', cwd: '/tmp/workspace' },
+          }],
+        })),
+      });
+      const state = createChatState();
+      state.sessions[0].projectDir = '/tmp/workspace';
+
+      await handleToolBatchRequest({
+        chunk: {
+          type: 'tool_batch_request',
+          requestId: 'req-cancel-branch',
+          turnId: 'turn-cancel-branch',
+          tools: [{
+            id: 'tool-cancel-trace',
+            name: 'execute_command',
+            arguments: JSON.stringify({ command: 'sleep 20', cwd: '/tmp/workspace' }),
+          }],
+          _resolveAll: jest.fn(),
+        } as any,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      expect(updateTaskStep).toHaveBeenCalledWith('tool-cancel-trace', 'cancelled');
+      const toolEvents = getRuntimeTraceEvents().filter((e) => e.context.toolCallId === 'tool-cancel-trace');
+      const types = toolEvents.map((e) => e.type);
+      expect(types).toContain('tool_requested');
+      expect(types).toContain('tool_execution_started');
+      expect(types).toContain('tool_cancelled');
+      expect(types).not.toContain('tool_completed');
+      const cancelled = toolEvents.find((e) => e.type === 'tool_cancelled');
+      expect(cancelled?.reason).toBe('cancelled');
+      expect(cancelled?.context.requestId).toBe('req-cancel-branch');
+    });
+
+    it('metadata-load-failure: emits tool_requested → tool_completed(reason=metadata_unavailable)', async () => {
+      clearRuntimeTraceSink();
+      releaseSessionRuntimeForTests('session-1');
+      getSessionHandle('session-1');
+
+      const deps = createDeps({
+        loadToolRuntimeMetadata: jest.fn(async () => {
+          throw new Error('metadata IPC down');
+        }) as any,
+      });
+      const state = createChatState();
+      const resolved = jest.fn();
+
+      const results = await handleToolBatchRequest({
+        chunk: {
+          type: 'tool_batch_request',
+          requestId: 'req-meta-fail',
+          turnId: 'turn-meta-fail',
+          tools: [{
+            id: 'tool-meta-1',
+            name: 'execute_command',
+            arguments: JSON.stringify({ command: 'echo hi' }),
+          }],
+          _resolveAll: resolved,
+        } as any,
+        activeSessionId: 'session-1',
+        assistantMessageId: 'assistant-1',
+        get: () => state,
+        set: jest.fn(),
+        ensureSessionWorkDir: async () => '/tmp/workspace',
+      }, deps);
+
+      expect(results[0]?.content).toContain('metadata_unavailable');
+      expect(resolved).toHaveBeenCalled();
+      const toolEvents = getRuntimeTraceEvents().filter((e) => e.context.toolCallId === 'tool-meta-1');
+      const types = toolEvents.map((e) => e.type);
+      expect(types).toContain('tool_requested');
+      expect(types).toContain('tool_completed');
+      expect(types).not.toContain('tool_execution_started');
+      const completed = toolEvents.find((e) => e.type === 'tool_completed');
+      expect(completed?.reason).toBe('metadata_unavailable');
+      expect(completed?.context.requestId).toBe('req-meta-fail');
+    });
+
   });
 
 });

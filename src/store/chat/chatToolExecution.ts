@@ -1119,6 +1119,10 @@ export async function handleToolBatchRequest(
     // Fail closed: Rust metadata unavailable — block workspace-critical batch
     // with an explicit error rather than consulting a TS fallback catalog.
     const message = `Tool runtime metadata unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    const metaFailExtras = {
+      requestId: chunk.requestId,
+      ...(chunk.turnId !== undefined ? { turnId: chunk.turnId } : {}),
+    };
     for (const tool of chunk.tools) {
       const errorContent = JSON.stringify({
         error: true,
@@ -1128,6 +1132,10 @@ export async function handleToolBatchRequest(
         cause: message,
       });
       markSessionToolRunning(activeSessionId, tool.id, tool.name, set, get);
+      emitSessionToolTrace(activeSessionId, 'tool_requested', {
+        toolCallId: tool.id,
+        ...metaFailExtras,
+      });
       uiStore.updateTaskStep(tool.id, 'failed');
       markSessionToolStatus(activeSessionId, tool.id, tool.name, 'failed', set, get);
       resolveSessionTool(
@@ -1139,6 +1147,11 @@ export async function handleToolBatchRequest(
         set,
         get,
       );
+      emitSessionToolTrace(activeSessionId, 'tool_completed', {
+        toolCallId: tool.id,
+        reason: 'metadata_unavailable',
+        ...metaFailExtras,
+      });
       preBlockedResults.push({
         id: tool.id,
         content: errorContent,
