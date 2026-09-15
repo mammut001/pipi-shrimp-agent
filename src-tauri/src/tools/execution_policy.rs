@@ -211,10 +211,11 @@ fn approval_arguments_match(stored: &str, incoming: &str) -> bool {
 
 /// Outcome of attempting to consume a one-shot approval token.
 ///
-/// Success requires only token presence + TTL + session_id + tool_call_id +
-/// tool_name. Argument / work_dir / source fingerprints are diagnostic-only:
-/// preview vs execute often drift (work_dir injection, windowsShellProfile,
-/// JSON key order) even when the user confirmed the same tool call.
+/// Success requires: token present, TTL ok, session_id match, tool_call_id
+/// match, tool_name match, canonical effective args match (same normalize /
+/// work_dir inject as store), effective work_dir match via normalize_work_dir,
+/// and source match. Only volatile fields stripped by canonicalize_json_value
+/// (`executionId` / `execution_id`) and JSON key order may differ.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ApprovalConsumeOutcome {
     MissingToken,
@@ -331,6 +332,22 @@ fn consume_matching_approval(
     if record.tool_name != req.name {
         mismatched.push("tool_name");
     }
+
+    // Semantic binding: same effective args / work_dir / source as preview.
+    // Canonicalization already ignores executionId/execution_id and key order;
+    // do not accept any other fingerprint drift.
+    let incoming_args = canonicalize_json_value(args).to_string();
+    let incoming_work_dir = normalize_work_dir(&req.work_dir);
+    if record.arguments != incoming_args {
+        mismatched.push("arguments");
+    }
+    if record.work_dir != incoming_work_dir {
+        mismatched.push("work_dir");
+    }
+    if record.source != req.source {
+        mismatched.push("source");
+    }
+
     if !mismatched.is_empty() {
         return ApprovalConsumeOutcome::Mismatch {
             fields: mismatched,
@@ -339,26 +356,6 @@ fn consume_matching_approval(
             expected_session_prefix: session_mismatch
                 .then(|| session_id_prefix(expected_session_id)),
         };
-    }
-
-    // Opaque UUID already proves the user confirmed the previewed call.
-    // Do not require args / work_dir / source equality — those fingerprints
-    // drift across preview vs execute (work_dir injection, windowsShellProfile,
-    // key order, etc.) and caused false rejects after Allow.
-    let incoming_args = canonicalize_json_value(args).to_string();
-    if record.arguments != incoming_args
-        || record.work_dir != normalize_work_dir(&req.work_dir)
-        || record.source != req.source
-    {
-        tracing::warn!(
-            tool_call_id = %req.id,
-            tool_name = %req.name,
-            session_id = %expected_session_id,
-            args_match = record.arguments == incoming_args,
-            work_dir_match = record.work_dir == normalize_work_dir(&req.work_dir),
-            source_match = record.source == req.source,
-            "approval token accepted despite preview/execute fingerprint drift"
-        );
     }
 
     approvals.remove(token);
@@ -1193,10 +1190,9 @@ mod tests {
     }
 
     #[test]
-    fn approval_token_allows_when_args_fingerprint_drifts() {
-        // Preview without work_dir in args; execute injects work_dir and may
-        // carry extra harmless fields / different key order. Identity binding
-        // (token + session + tool_call_id + tool_name) must still allow.
+    fn approval_substitution_rejects_command_change() {
+        // Preview sleep 20 → token → execute with same token/session/id/name
+        // but a substituted command must fail (semantic args binding).
         let mut request = make_request("execute_command");
         request.source = ToolExecutionSource::AssistantToolCall;
         request.work_dir = Some("/tmp/project".to_string());
@@ -1208,17 +1204,77 @@ mod tests {
             .expect("preview");
         let token = preview.approval_token.clone().expect("token");
 
-        // Simulate execute-side drift: different key order, injected work_dir,
-        // and an extra harmless field that preview never saw.
+        // Keep a long-running command so policy still RequireConfirmation and
+        // the consume fingerprint path runs (benign non-LR commands Allow).
         let execute_args = serde_json::json!({
-            "windowsShellProfile": "powershell",
+            "command": "sleep 999"
+        });
+        request.arguments = execute_args.to_string();
+        request.approval_token = Some(token);
+        let error = enforce_request_policy(&request, &execute_args, Some("session-1"))
+            .expect_err("command substitution must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("identity mismatch") && message.contains("arguments"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn approval_work_dir_substitution_rejects() {
+        // Same token but different effective work_dir must fail.
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.work_dir = Some("/tmp/project".to_string());
+        let preview_args = serde_json::json!({
+            "command": "sleep 20"
+        });
+        request.arguments = preview_args.to_string();
+        let preview = preview_request_policy(&request, &preview_args, Some("session-1"))
+            .expect("preview");
+        let token = preview.approval_token.clone().expect("token");
+
+        request.work_dir = Some("/tmp/other".to_string());
+        let execute_args = serde_json::json!({
+            "command": "sleep 20"
+        });
+        request.arguments = execute_args.to_string();
+        request.approval_token = Some(token);
+        let error = enforce_request_policy(&request, &execute_args, Some("session-1"))
+            .expect_err("work_dir substitution must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("identity mismatch")
+                && (message.contains("work_dir") || message.contains("arguments")),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn approval_allows_execution_id_and_key_order_drift() {
+        // Canonicalization ignores executionId/execution_id and JSON key order.
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AssistantToolCall;
+        request.work_dir = Some("/tmp/project".to_string());
+        let preview_args = serde_json::json!({
             "command": "sleep 20",
-            "work_dir": "/tmp/project"
+            "executionId": "preview-exec-1",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = preview_args.to_string();
+        let preview = preview_request_policy(&request, &preview_args, Some("session-1"))
+            .expect("preview");
+        let token = preview.approval_token.clone().expect("token");
+
+        let execute_args = serde_json::json!({
+            "execution_id": "execute-exec-2",
+            "cwd": "/tmp/project",
+            "command": "sleep 20"
         });
         request.arguments = execute_args.to_string();
         request.approval_token = Some(token);
         enforce_request_policy(&request, &execute_args, Some("session-1"))
-            .expect("args JSON drift must not invalidate approval token");
+            .expect("executionId/key-order drift must still allow");
     }
 
     #[test]
@@ -1250,6 +1306,10 @@ mod tests {
             !message.contains("missing session_id"),
             "wrong UUID must not use the missing-session wording: {message}"
         );
+
+        // Identity mismatch must not consume the one-shot token.
+        enforce_request_policy(&request, &args, Some("session-1"))
+            .expect("matching session should still consume after wrong-session reject");
     }
 
     #[test]
