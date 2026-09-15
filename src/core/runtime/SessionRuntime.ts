@@ -7,6 +7,11 @@ import {
 import { ToolResultChannel } from './ToolResultChannel';
 import type { RuntimeHost } from './RuntimeHost';
 import { defaultTauriRuntimeHost } from './tauriRuntimeHost';
+import type {
+  RuntimeTraceContext,
+  RuntimeTraceEvent,
+  RuntimeTraceEventName,
+} from './RuntimeTrace';
 
 export type RuntimeTurnId = string;
 
@@ -26,6 +31,18 @@ export type TurnState =
   | 'waiting_tool'
   | 'cancelling'
   | 'terminal';
+
+/**
+ * Clear introspection snapshot for SessionHandle / SessionRuntime.
+ * Prefer this over reading individual getters when correlating identity + state.
+ */
+export interface SessionRuntimeSnapshot {
+  sessionId: string;
+  runtimeId: string;
+  turnId: string | null;
+  state: TurnState | 'idle';
+  disposed: boolean;
+}
 
 export interface SessionTurnRequest {
   turnId?: RuntimeTurnId;
@@ -103,11 +120,41 @@ export class SessionRuntime {
       : null;
   }
 
+  /**
+   * Turn lifecycle state only (legacy / narrow callers).
+   * Prefer {@link getSnapshot} for identity + state together.
+   */
   getState(): TurnState | 'idle' {
     if (this.disposed) {
       return 'terminal';
     }
     return this.activeTurn?.state ?? 'idle';
+  }
+
+  /**
+   * Clear introspection snapshot: sessionId / runtimeId / turnId / state / disposed.
+   */
+  getSnapshot(): SessionRuntimeSnapshot {
+    return {
+      sessionId: this.sessionId,
+      runtimeId: this.runtimeId,
+      turnId: this.activeTurn?.turnId ?? null,
+      state: this.getState(),
+      disposed: this.disposed,
+    };
+  }
+
+  /**
+   * Current unified trace context (session / runtime / active turn).
+   * requestId / toolCallId are filled in when emitting wait/tool events.
+   */
+  getTraceContext(): RuntimeTraceContext {
+    const turnId = this.activeTurn?.turnId;
+    return {
+      sessionId: this.sessionId,
+      runtimeId: this.runtimeId,
+      ...(turnId !== undefined ? { turnId } : {}),
+    };
   }
 
   getActiveTurnId(): RuntimeTurnId | null {
@@ -117,6 +164,39 @@ export class SessionRuntime {
   /** @internal Test/support access to the process-local tool channel. */
   getToolResultChannel(): ToolResultChannel {
     return this.toolResults;
+  }
+
+  private emitTrace(
+    type: RuntimeTraceEventName,
+    extras?: {
+      turnId?: string;
+      requestId?: string;
+      toolCallId?: string;
+      reason?: string;
+    },
+  ): void {
+    const sink = this.host.trace;
+    if (!sink) {
+      return;
+    }
+    const turnId = extras?.turnId ?? this.activeTurn?.turnId;
+    const event: RuntimeTraceEvent = {
+      type,
+      at: Date.now(),
+      context: {
+        sessionId: this.sessionId,
+        runtimeId: this.runtimeId,
+        ...(turnId !== undefined ? { turnId } : {}),
+        ...(extras?.requestId !== undefined ? { requestId: extras.requestId } : {}),
+        ...(extras?.toolCallId !== undefined ? { toolCallId: extras.toolCallId } : {}),
+      },
+      ...(extras?.reason !== undefined ? { reason: extras.reason } : {}),
+    };
+    try {
+      sink(event);
+    } catch {
+      // Trace must never break the runtime
+    }
   }
 
   isTurnActive(turnId?: string): boolean {
@@ -139,7 +219,7 @@ export class SessionRuntime {
    * Mark the active turn as waiting for tool results. No-op if turnId does not
    * match the live turn (stale continuation).
    */
-  markWaitingTool(turnId: string): void {
+  markWaitingTool(turnId: string, requestId?: string): void {
     if (!this.activeTurn || this.activeTurn.turnId !== turnId) {
       return;
     }
@@ -147,6 +227,7 @@ export class SessionRuntime {
       return;
     }
     this.activeTurn.state = 'waiting_tool';
+    this.emitTrace('turn_waiting_tool', { turnId, requestId });
   }
 
   /**
@@ -181,6 +262,7 @@ export class SessionRuntime {
       controller,
       state: 'created',
     };
+    this.emitTrace('turn_started', { turnId: id });
     return id;
   }
 
@@ -197,6 +279,10 @@ export class SessionRuntime {
     if (externalSignal?.aborted) {
       controller.abort(externalSignal.reason);
       turnState.state = 'terminal';
+      this.emitTrace('turn_terminal', {
+        turnId,
+        reason: String(externalSignal.reason ?? 'External abort'),
+      });
     } else {
       externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
     }
@@ -218,7 +304,7 @@ export class SessionRuntime {
           signal: controller.signal,
           turnId,
           isTurnActive: () => this.isTurnActive(turnId),
-          onWaitingTool: () => this.markWaitingTool(turnId),
+          onWaitingTool: (info) => this.markWaitingTool(turnId, info?.requestId),
           onToolsResolved: () => this.markRunning(turnId),
         },
         request.pipiOutputDir,
@@ -239,7 +325,11 @@ export class SessionRuntime {
       }
     } finally {
       // Always land in terminal; cancel() may already have moved through cancelling.
+      const alreadyTerminal = turnState.state === 'terminal';
       turnState.state = 'terminal';
+      if (!alreadyTerminal) {
+        this.emitTrace('turn_terminal', { turnId });
+      }
       externalSignal?.removeEventListener('abort', onExternalAbort);
       if (this.activeTurn?.turnId === turnId) {
         this.activeTurn = null;
@@ -266,11 +356,14 @@ export class SessionRuntime {
     }
 
     if (this.activeTurn && isLiveTurnState(this.activeTurn.state)) {
+      const cancelledTurnId = this.activeTurn.turnId;
       this.activeTurn.state = 'cancelling';
+      this.emitTrace('turn_cancelling', { turnId: cancelledTurnId, reason });
       this.activeTurn.controller.abort(reason);
       // cancelAll tombstones pending waiters so late results discard only.
       this.toolResults.cancelAll(reason);
       this.activeTurn.state = 'terminal';
+      this.emitTrace('turn_terminal', { turnId: cancelledTurnId, reason });
     } else if (this.activeTurn) {
       this.toolResults.cancelAll(reason);
     } else {
@@ -330,6 +423,14 @@ export class SessionHandle {
 
   getState(): TurnState | 'idle' {
     return this._runtime.getState();
+  }
+
+  getSnapshot(): SessionRuntimeSnapshot {
+    return this._runtime.getSnapshot();
+  }
+
+  getTraceContext(): RuntimeTraceContext {
+    return this._runtime.getTraceContext();
   }
 
   getActiveTurnId(): RuntimeTurnId | null {
