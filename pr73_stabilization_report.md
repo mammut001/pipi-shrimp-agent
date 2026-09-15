@@ -137,7 +137,7 @@ Earlier blockers (Vercel `insufficient_funds`, 阿里云 402) remain true for th
 | Manual C (A streaming → switch to B → B reply → back to A) | **PASS (behavior)** | No cross-chat replay; Chat A later answered `A-new`. |
 | Tool preflight (`read_file` package.json) | **PASS** | After thinking-disable + reasoning passback; tool card completed without `reasoning_content` 400. |
 | Manual E (cancel during `sleep 20` tool) | **PASS** | Tool card visibly running → Stop → follow-up `AFTER-CANCEL` succeeded; no stuck busy / ghost tool continuation. |
-| Manual D (dual concurrent sessions; cancel A while B runs) | **INCONCLUSIVE (harness)** | After Allow fix, single long-running Allow works. Dual overlap still not cleanly demonstrated: Chat B approval often late; Stop on A disappears before cancel can be confirmed; no `B_DONE`/`A_DONE` observed in the last harness run. No cross-session leak proven; cancel-isolation under true concurrency still not shown. |
+| Manual D (dual concurrent sessions; cancel A while B runs) | **INCONCLUSIVE (UI harness)** | File-barrier attempt: A ended **TIMED OUT** (Stop not confirmed); B later green after `/tmp/pipi-d-release-b`. No cross-session cancel observed. Deterministic coverage lives in `SessionRuntime.concurrent.test.ts` via `runTurn()` mock barrier. GPT Ready gate (real Stop-A-while-B) still unmet. |
 | Unbound Project Folder tool denial | **EXPECTED (not a #73 bug)** | `read_file` / workspace tools correctly return `permission_denied` when no Project Folder is bound. |
 
 ### Approval resume fix (2026-09-14 / 09-15 night)
@@ -180,5 +180,11 @@ Pushed after GPT 皮皮虾/后端架构对比 scoring:
 - `25eecf6` — host-neutral sealed ownership: cancellable from metadata, owner-required release, narrowed SessionHandle, queryLoop zero `@/store`, runTurn integration barrier
 GPT interim stars after `5d7e06c`: Runtime ★★★★ / Session ★★★★ / Tool ★★★½. Ready still gated on Manual D deterministic PASS via real execution path.
 
+
+### Manual D status (2026-09-15 morning)
+UI Manual D still **INCONCLUSIVE**: sleep and file-barrier harnesses could not reliably click Stop while both tools blocked (GTK folder dialog, danger/long-running UX, timing). Last run: A `TIMED OUT`, B succeeded after release file; no cross-session kill observed.
+Automated: `SessionRuntime.concurrent.test.ts` PASS (56 related jest suite count earlier; concurrent barrier via `SessionHandle.runTurn()`).
+GPT stars after `25eecf6`/`021b897`: Runtime ★★★★½ / Session ★★★★½ / Tool ★★★★. Keep **Draft** until real-path Stop-A-while-B PASS or Rust `test_barrier_tool` integration.
+
 ### Merge recommendation (orchestrator)
-**Keep PR #73 Draft.** Manual A/C/E pass; long-running Allow smoke now passes after `d4e5ad7`. Manual D remains inconclusive due to dual-chat timing/Stop harness limits, not a reproduced SessionRuntime cross-session failure. Re-run D with a cleaner overlap, then reconsider Ready.
+**Keep PR #73 Draft.** Runtime/Session/Tool stars (GPT): ★★★★½ / ★★★★½ / ★★★★ after sealed-ownership + STE metadata. Allow smoke PASS. Manual D UI harness still inconclusive (A timed out, not Stopped). Ready gate remains: deterministic Stop-A-while-B on real tool path — prefer Rust `test_barrier_tool` or manual human run; do not block on more flaky UI automation.
