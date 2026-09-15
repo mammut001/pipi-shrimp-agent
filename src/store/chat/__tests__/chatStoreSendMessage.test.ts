@@ -9,6 +9,7 @@ const mockClearTaskProgress = jest.fn();
 const mockSetTaskProgress = jest.fn();
 const mockSetActiveSkill = jest.fn();
 const mockUpdateTaskStep = jest.fn();
+const mockClearAllPermissions = jest.fn();
 const mockGetActiveConfig = jest.fn();
 const mockGetActiveTemplate = jest.fn();
 const mockBuildPrompt = jest.fn();
@@ -54,7 +55,7 @@ jest.mock('../../uiStore', () => ({
       updateTaskStep: mockUpdateTaskStep,
       waitForPermission: jest.fn(async () => true),
       showQuestionnaire: jest.fn(async () => 'questionnaire response'),
-      clearAllPermissions: jest.fn(),
+      clearAllPermissions: (...args: unknown[]) => mockClearAllPermissions(...args),
       permissionQueue: [],
       clearQuestionnaire: jest.fn(),
       showExecutionModeUpgradePrompt: (...args: unknown[]) => mockShowExecutionModeUpgradePrompt(...args),
@@ -148,6 +149,11 @@ jest.mock('../../../i18n', () => ({
 }));
 
 import { useChatStore } from '../index';
+import {
+  resetAllSessionToolRuntime,
+  setSessionToolExecutionId,
+  seedSessionToolRuntime,
+} from '../toolRuntimeState';
 
 async function* streamOneAssistantReply() {
   yield { type: 'text_delta' as const, content: 'Hello ' };
@@ -213,7 +219,7 @@ async function* streamWithToolBatchThenContinuation() {
 
   yield {
     type: 'tool_batch_request' as const,
-    tools: [{ id: 'tool-cancel', name: 'execute_command', arguments: '{"command":"pwd"}' }],
+    tools: [{ id: 'tool-cancel', name: 'read_file', arguments: '{"path":"README.md"}' }],
     _resolveAll: () => {
       resolved = true;
     },
@@ -262,6 +268,7 @@ function resetChatState(overrides: Partial<Session> = {}) {
 describe('chatStore sendMessage integration', () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    resetAllSessionToolRuntime();
     mockInvoke.mockReset();
     mockRunChatTurn.mockReset();
     mockAddNotification.mockReset();
@@ -271,6 +278,7 @@ describe('chatStore sendMessage integration', () => {
     mockSetTaskProgress.mockReset();
     mockSetActiveSkill.mockReset();
     mockUpdateTaskStep.mockReset();
+    mockClearAllPermissions.mockReset();
     mockGetActiveConfig.mockReset();
     mockGetActiveTemplate.mockReset();
     mockBuildPrompt.mockReset();
@@ -597,8 +605,28 @@ describe('chatStore sendMessage integration', () => {
   });
 
   it('cancels after an in-flight tool batch and prevents the next model round from running', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
     mockRunChatTurn.mockImplementation(() => streamWithToolBatchThenContinuation());
     mockExecuteBatch.mockImplementation(async () => {
+      seedSessionToolRuntime(
+        'session-1',
+        [{ id: 'tool-cancel', name: 'read_file' }],
+        useChatStore.setState,
+        useChatStore.getState,
+      );
+      setSessionToolExecutionId(
+        'session-1',
+        'tool-cancel',
+        'read_file',
+        'exec-cancel-1',
+        useChatStore.setState,
+        useChatStore.getState,
+      );
       await useChatStore.getState().stopGeneration();
       return {
         results: [{ id: 'tool-cancel', content: '{"stdout":"/tmp","stderr":"","exit_code":0}', is_error: false }],
@@ -609,13 +637,103 @@ describe('chatStore sendMessage integration', () => {
 
     await useChatStore.getState().sendMessage('cancel this run');
 
+    expect(mockExecuteBatch).toHaveBeenCalled();
+    expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-cancel-1' });
+    expect(mockClearAllPermissions).toHaveBeenCalled();
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
-    expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
-      ['user', 'cancel this run'],
-      ['assistant', 'should not continue after cancel'],
-    ]);
+    const messagePairs = session?.messages.map((message) => [message.role, message.content]) ?? [];
+    expect(messagePairs[0]).toEqual(['user', 'cancel this run']);
+    expect(messagePairs.some(([, content]) => (
+      typeof content === 'string'
+      && content.includes('Tool run cancelled by user')
+      && content.includes('read_file')
+      && content.includes('do NOT re-request')
+    ))).toBe(true);
+    expect(session?.messages.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
     expect(useChatStore.getState().isStreaming).toBe(false);
     expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(mockSetTaskProgress).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'tool-cancel', label: 'read_file', status: 'cancelled' }),
+      ]),
+    );
+
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+    await useChatStore.getState().sendMessage('follow-up after cancel');
+
+    const followUpCall = mockRunChatTurn.mock.calls.find((call) => (
+      Array.isArray(call[1])
+      && call[1].some((message: { content?: string }) => (
+        typeof message.content === 'string' && message.content.includes('follow-up after cancel')
+      ))
+    )) ?? mockRunChatTurn.mock.calls[mockRunChatTurn.mock.calls.length - 1];
+    const initialMessages = followUpCall?.[1] as Array<{ role: string; content: string; tool_calls?: unknown[] }>;
+    expect(initialMessages.some((message) => (
+      typeof message.content === 'string'
+      && message.content.includes('Tool run cancelled by user')
+      && message.content.includes('read_file')
+      && message.content.includes('do NOT re-request')
+    ))).toBe(true);
+    expect(initialMessages.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
+  });
+
+  it('keeps cancel notice in follow-up history even if tools_cancelled is ignored by host', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    // Simulate a host that never observes tools_cancelled: stopGeneration alone
+    // must persist the durable cancel notice into session.messages / initialMessages.
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-ignore', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-ignore',
+      'execute_command',
+      'exec-ignore-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    await useChatStore.getState().stopGeneration();
+
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.messages.some((message) => (
+      typeof message.content === 'string'
+      && message.content.includes('Tool run cancelled by user')
+      && message.content.includes('execute_command')
+      && message.content.includes('do NOT re-request')
+    ))).toBe(true);
+    expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-ignore-1' });
+
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+    await useChatStore.getState().sendMessage('follow-up without tools_cancelled');
+
+    const followUpCall = mockRunChatTurn.mock.calls.find((call) => (
+      Array.isArray(call[1])
+      && call[1].some((message: { content?: string }) => (
+        typeof message.content === 'string' && message.content.includes('follow-up without tools_cancelled')
+      ))
+    )) ?? mockRunChatTurn.mock.calls[mockRunChatTurn.mock.calls.length - 1];
+    const initialMessages = followUpCall?.[1] as Array<{ role: string; content: string; tool_calls?: unknown[] }>;
+    expect(initialMessages.some((message) => (
+      typeof message.content === 'string'
+      && message.content.includes('Tool run cancelled by user')
+      && message.content.includes('execute_command')
+      && message.content.includes('do NOT re-request')
+    ))).toBe(true);
   });
 
   it('does not save non-plan replies in plan-only mode', async () => {

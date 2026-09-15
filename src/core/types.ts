@@ -66,6 +66,9 @@ export type EngineEventBase =
   // Status updates for UI
   | { type: 'status_update'; message: string }
 
+  // Host-visible cancel of in-flight tool wait (no further model round)
+  | { type: 'tools_cancelled'; tools: Array<{ id: string; name: string }>; reason: 'user_cancel' | 'ownership_lost' | 'aborted' }
+
   // Turn completion
   | { type: 'turn_complete'; tokenUsage?: TokenUsage }
 

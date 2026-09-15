@@ -175,11 +175,72 @@ export function resolveSessionTool(
   syncCurrentSessionToolRuntime(set, get);
 }
 
+export interface UnresolvedSessionToolExecution {
+  toolCallId: string;
+  label: string;
+  executionId: string | null;
+}
+
+/** Snapshot unresolved tool steps (including optional native executionId). */
+export function listUnresolvedSessionTools(sessionId: string): UnresolvedSessionToolExecution[] {
+  const runtime = toolRuntimeBySession.get(sessionId);
+  if (!runtime) {
+    return [];
+  }
+
+  return [...runtime.unresolvedIds].map((toolCallId) => {
+    const step = runtime.steps.get(toolCallId);
+    return {
+      toolCallId,
+      label: step?.label ?? toolCallId,
+      executionId: step?.executionId ?? null,
+    };
+  });
+}
+
+/** Unresolved tools that have a native executionId for cancel_tool_execution. */
+export function listUnresolvedSessionToolExecutions(
+  sessionId: string,
+): Array<{ toolCallId: string; label: string; executionId: string }> {
+  return listUnresolvedSessionTools(sessionId)
+    .filter((tool): tool is { toolCallId: string; label: string; executionId: string } => (
+      typeof tool.executionId === 'string' && tool.executionId.length > 0
+    ));
+}
+
+/**
+ * Best-effort snapshot of every native executionId still associated with a
+ * non-terminal tool step. Broader than unresolvedIds alone so Stop can cancel
+ * tools that raced out of the unresolved set but are still running natively.
+ */
+export function listCancellableSessionExecutionIds(sessionId: string): string[] {
+  const runtime = toolRuntimeBySession.get(sessionId);
+  if (!runtime) {
+    return [];
+  }
+
+  const ids = new Set<string>();
+  for (const tool of listUnresolvedSessionToolExecutions(sessionId)) {
+    ids.add(tool.executionId);
+  }
+  for (const step of runtime.steps.values()) {
+    if (
+      !isTerminalStepStatus(step.status)
+      && typeof step.executionId === 'string'
+      && step.executionId.length > 0
+    ) {
+      ids.add(step.executionId);
+    }
+  }
+  return [...ids];
+}
+
 export function failUnresolvedSessionTools(
   sessionId: string,
   set: ChatSetState,
   get: () => ChatState,
   resultFactory?: (toolCallId: string, label: string) => string,
+  status: TaskStep['status'] = 'failed',
 ): void {
   const runtime = toolRuntimeBySession.get(sessionId);
   if (!runtime) {
@@ -190,7 +251,7 @@ export function failUnresolvedSessionTools(
   for (const toolCallId of [...runtime.unresolvedIds]) {
     const step = runtime.steps.get(toolCallId);
     const label = step?.label ?? toolCallId;
-    setStepStatus(runtime, toolCallId, label, 'failed');
+    setStepStatus(runtime, toolCallId, label, status);
     if (resultFactory) {
       runtime.results.set(toolCallId, resultFactory(toolCallId, label));
     }

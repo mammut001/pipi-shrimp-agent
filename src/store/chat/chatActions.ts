@@ -45,8 +45,11 @@ import { useCdpStore } from '@/store/cdpStore';
 import {
   clearSessionToolRuntime,
   failUnresolvedSessionTools,
+  listCancellableSessionExecutionIds,
+  listUnresolvedSessionTools,
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
+import { scrubDanglingToolCalls } from './scrubDanglingToolCalls';
 import {
   abortChatTurn,
   clearChatGenerationCancel,
@@ -153,19 +156,12 @@ function isChatGenerationCancelledError(error: unknown): boolean {
   if (error instanceof ChatGenerationCancelledError) {
     return true;
   }
+  // Only treat true AbortError primitives as cancel — do not match unrelated
+  // failures whose messages happen to mention "abort" / "cancelled".
   if (error instanceof DOMException && error.name === 'AbortError') {
     return true;
   }
-  if (
-    error instanceof Error
-    && (error.name === 'AbortError' || error.message.toLowerCase().includes('abort') || error.message.toLowerCase().includes('cancelled'))
-  ) {
-    return true;
-  }
-  if (
-    typeof error === 'string'
-    && (error.toLowerCase().includes('abort') || error.toLowerCase().includes('cancelled'))
-  ) {
+  if (error instanceof Error && error.name === 'AbortError') {
     return true;
   }
   return false;
@@ -878,6 +874,13 @@ export function createChatActionMethods({
           if (chunk.turnId) {
             activeTurnId = chunk.turnId;
           }
+          // SessionRuntime may forward tools_cancelled after the turn is no
+          // longer active. Do not drop it on the isTurnActive gate — observe
+          // it (durable cancel notice still comes from stopGeneration).
+          if (chunk.type === 'tools_cancelled') {
+            streamState = handleStreamChunk(streamState, chunk);
+            continue;
+          }
           if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
             throw new ChatGenerationCancelledError(activeSessionId);
           }
@@ -1227,13 +1230,71 @@ export function createChatActionMethods({
       abortChatTurn(owningSessionId);
       requestChatGenerationCancel(owningSessionId);
       if (owningSessionId) {
+        // Snapshot unresolved tools + executionIds BEFORE failUnresolved clears them.
+        const unresolvedTools = listUnresolvedSessionTools(owningSessionId);
+        const executionIds = listCancellableSessionExecutionIds(owningSessionId);
+        await Promise.all(
+          executionIds.map(async (executionId) => {
+            try {
+              const result = await safeInvoke<{
+                cancelled?: boolean;
+                status?: string;
+                message?: string;
+              }>('cancel_tool_execution', { executionId }, { silent: true });
+              // already_finished / not_found must not fail Stop.
+              if (
+                result
+                && result.cancelled !== true
+                && result.status
+                && result.status !== 'already_finished'
+                && result.status !== 'not_found'
+              ) {
+                console.debug(
+                  '[stopGeneration] cancel_tool_execution non-terminal status:',
+                  result.status,
+                  result.message,
+                );
+              }
+            } catch {
+              // Best-effort native cancel; Stop must still complete.
+            }
+          }),
+        );
+        useUIStore.getState().clearAllPermissions();
         getSessionHandle(owningSessionId).cancel('Cancelled by user');
         failUnresolvedSessionTools(
           owningSessionId,
           set,
           get,
           (_toolCallId, label) => `Error: ${label} cancelled by user`,
+          'cancelled',
         );
+        await scrubDanglingToolCalls(owningSessionId, set, get);
+        // Drop an empty assistant placeholder so the cancel notice is not stranded after it.
+        set((state) => ({
+          sessions: state.sessions.map((session) => {
+            if (session.id !== owningSessionId || session.messages.length === 0) {
+              return session;
+            }
+            const last = session.messages[session.messages.length - 1];
+            if (!shouldRemoveEmptyAssistantPlaceholder(last)) {
+              return session;
+            }
+            return { ...session, messages: session.messages.slice(0, -1), updatedAt: Date.now() };
+          }),
+        }));
+        if (unresolvedTools.length > 0) {
+          const toolNames = unresolvedTools.map((tool) => tool.label).join(', ');
+          await get().addMessageToSession(
+            owningSessionId,
+            createMessage(
+              'assistant',
+              `[Tool run cancelled by user: ${toolNames}. `
+              + 'Treat this as a terminal cancel for that attempt — do NOT re-request the same tool '
+              + 'or assume it completed. Ask the user before retrying.]',
+            ),
+          );
+        }
       }
 
       try {
