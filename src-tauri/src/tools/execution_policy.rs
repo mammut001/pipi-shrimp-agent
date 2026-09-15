@@ -209,7 +209,7 @@ fn approval_arguments_match(stored: &str, incoming: &str) -> bool {
     canonicalize_approval_arguments(stored) == canonicalize_approval_arguments(incoming)
 }
 
-fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
+fn store_approval(req: &ToolCallRequest, session_id: &str, args: &serde_json::Value) -> String {
     let token = uuid::Uuid::new_v4().to_string();
     let mut map = APPROVALS.lock().expect("approvals lock poisoned");
     // AUDIT-FIX [fix-3#2] — Opportunistic GC: any tokens older than
@@ -223,8 +223,8 @@ fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
             session_id: session_id.to_string(),
             tool_call_id: req.id.clone(),
             tool_name: req.name.clone(),
-            arguments: canonicalize_approval_arguments(&req.arguments),
-            work_dir: req.work_dir.clone(),
+            arguments: canonicalize_json_value(args).to_string(),
+            work_dir: normalize_work_dir(&req.work_dir),
             source: req.source,
             created_at: now,
         },
@@ -232,7 +232,11 @@ fn store_approval(req: &ToolCallRequest, session_id: &str) -> String {
     token
 }
 
-fn consume_matching_approval(req: &ToolCallRequest, session_id: Option<&str>) -> bool {
+fn consume_matching_approval(
+    req: &ToolCallRequest,
+    args: &serde_json::Value,
+    session_id: Option<&str>,
+) -> bool {
     let Some(token) = req.approval_token.as_deref() else {
         return false;
     };
@@ -251,15 +255,15 @@ fn consume_matching_approval(req: &ToolCallRequest, session_id: Option<&str>) ->
         return false;
     }
 
-    // AUDIT-FIX [fix-3#2] — Treat the token as one-shot even if the user
-    // never confirmed: remove it unconditionally *after* we verified all
-    // fields match. Argument compare ignores volatile executionId fields and
-    // JSON key order so preview/execute stringification cannot false-mismatch.
+    let incoming_args = canonicalize_json_value(args).to_string();
+
+    // Token is bound to this exact tool_call_id + session. Do not require
+    // work_dir equality: preview/execute often differ on whether Project
+    // Folder was attached as workDir vs only present inside args.
     if record.session_id != expected_session_id
         || record.tool_call_id != req.id
         || record.tool_name != req.name
-        || !approval_arguments_match(&record.arguments, &req.arguments)
-        || record.work_dir != req.work_dir
+        || record.arguments != incoming_args
         || record.source != req.source
     {
         return false;
@@ -683,14 +687,33 @@ fn evaluate_ssh_read_policy(
     })
 }
 
+fn inject_work_dir_into_args(req: &ToolCallRequest, args: &mut serde_json::Value) {
+    if let Some(object) = args.as_object_mut() {
+        if let Some(work_dir) = req.work_dir.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+            object
+                .entry("work_dir".to_string())
+                .or_insert_with(|| serde_json::Value::String(work_dir.to_string()));
+        }
+    }
+}
+
+fn normalize_work_dir(work_dir: &Option<String>) -> Option<String> {
+    work_dir
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 pub fn preview_request_policy(
     req: &ToolCallRequest,
     args: &serde_json::Value,
     session_id: Option<&str>,
 ) -> AppResult<ToolPolicyPreview> {
-    let decision = evaluate_request_policy(req, args)?;
+    let mut normalized_args = args.clone();
+    inject_work_dir_into_args(req, &mut normalized_args);
+    let decision = evaluate_request_policy(req, &normalized_args)?;
     let approval_token = if decision.action == PolicyAction::RequireConfirmation {
-        session_id.map(|value| store_approval(req, value))
+        session_id.map(|value| store_approval(req, value, &normalized_args))
     } else {
         None
     };
@@ -796,7 +819,9 @@ pub fn enforce_cdp_execute_script_policy(
                     source.as_str()
                 )));
             };
-            if consume_matching_approval(&request, Some(expected_session_id)) {
+            let mut normalized_args = serde_json::json!({ "script": script });
+            inject_work_dir_into_args(&request, &mut normalized_args);
+            if consume_matching_approval(&request, &normalized_args, Some(expected_session_id)) {
                 Ok(())
             } else {
                 Err(AppError::SecurityError(
@@ -814,7 +839,9 @@ pub fn enforce_request_policy(
     args: &serde_json::Value,
     session_id: Option<&str>,
 ) -> AppResult<()> {
-    let decision = evaluate_request_policy(req, args)?;
+    let mut normalized_args = args.clone();
+    inject_work_dir_into_args(req, &mut normalized_args);
+    let decision = evaluate_request_policy(req, &normalized_args)?;
     match decision.action {
         PolicyAction::Allow => Ok(()),
         PolicyAction::Reject => {
@@ -823,7 +850,7 @@ pub fn enforce_request_policy(
             )))
         }
         PolicyAction::RequireConfirmation => {
-            if consume_matching_approval(req, session_id) {
+            if consume_matching_approval(req, &normalized_args, session_id) {
                 Ok(())
             } else {
                 let base = decision.reason.unwrap_or_else(|| {
