@@ -14,3 +14,8 @@ export {
 } from './SessionRuntime';
 export { ToolResultChannel, type WaitForToolResultsOptions } from './ToolResultChannel';
 export type { RunChatTurnOptions, RuntimeTurnContext } from './queryLoop';
+export { noopRuntimeHost, type RuntimeHost } from './RuntimeHost';
+export {
+  createTauriRuntimeHost,
+  defaultTauriRuntimeHost,
+} from './tauriRuntimeHost';

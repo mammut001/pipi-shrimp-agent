@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { EngineEvent, ToolExecutionResult } from '@/core/types';
 import type { ResolvedAgentConfig } from '@/services/agentConfig';
 import {
@@ -6,6 +5,8 @@ import {
   type RunChatTurnOptions,
 } from './queryLoop';
 import { ToolResultChannel } from './ToolResultChannel';
+import type { RuntimeHost } from './RuntimeHost';
+import { defaultTauriRuntimeHost } from './tauriRuntimeHost';
 
 export type RuntimeTurnId = string;
 
@@ -76,11 +77,13 @@ export class SessionRuntime {
   readonly instanceId: string;
 
   private readonly toolResults = new ToolResultChannel();
+  private readonly host: RuntimeHost;
   private activeTurn: ActiveTurnState | null = null;
   private disposed = false;
 
-  constructor(sessionId: string) {
+  constructor(sessionId: string, host: RuntimeHost = defaultTauriRuntimeHost) {
     this.sessionId = sessionId;
+    this.host = host;
     this.instanceId = globalThis.crypto?.randomUUID?.()
       ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
@@ -275,9 +278,9 @@ export class SessionRuntime {
     }
 
     try {
-      void invoke('stop_subprocess', { sessionId: this.sessionId }).catch(() => {});
+      void Promise.resolve(this.host.cancelSubprocess(this.sessionId)).catch(() => {});
     } catch {
-      // Safe fallback if invoke is not bound in tests
+      // Safe fallback if host throws synchronously
     }
   }
 
@@ -369,13 +372,16 @@ export class SessionHandle {
 const sessionRuntimes = new Map<string, SessionRuntime>();
 const sessionHandles = new Map<string, SessionHandle>();
 
-export function getSessionHandle(sessionId: string): SessionHandle {
+export function getSessionHandle(
+  sessionId: string,
+  host: RuntimeHost = defaultTauriRuntimeHost,
+): SessionHandle {
   const existing = sessionHandles.get(sessionId);
   if (existing) {
     return existing;
   }
 
-  const runtime = new SessionRuntime(sessionId);
+  const runtime = new SessionRuntime(sessionId, host);
   const handle = new SessionHandle(runtime);
   sessionRuntimes.set(sessionId, runtime);
   sessionHandles.set(sessionId, handle);

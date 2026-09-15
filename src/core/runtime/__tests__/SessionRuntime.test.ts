@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import {
   SessionRuntime,
   getSessionHandle,
@@ -9,6 +9,8 @@ import {
   submitSessionToolResults,
 } from '../SessionRuntime';
 import { ToolResultChannel } from '../ToolResultChannel';
+import type { RuntimeHost } from '../RuntimeHost';
+import { noopRuntimeHost } from '../RuntimeHost';
 
 describe('ToolResultChannel', () => {
   let channel: ToolResultChannel;
@@ -208,5 +210,41 @@ describe('SessionRuntime lifecycle and turn ownership', () => {
       turnId,
     );
     expect(afterRelease).toBe(false);
+  });
+});
+
+describe('SessionRuntime RuntimeHost adapter', () => {
+  it('cancel() calls host.cancelSubprocess with the sessionId', () => {
+    const cancelSubprocess = jest.fn();
+    const host: RuntimeHost = { cancelSubprocess };
+    const runtime = new SessionRuntime('host-adapter-session', host);
+    const turnId = runtime.startTurn();
+    expect(runtime.isTurnActive(turnId)).toBe(true);
+
+    runtime.cancel('User cancelled');
+
+    expect(cancelSubprocess).toHaveBeenCalledTimes(1);
+    expect(cancelSubprocess).toHaveBeenCalledWith('host-adapter-session');
+    expect(runtime.isTurnActive(turnId)).toBe(false);
+    expect(runtime.getState()).toBe('terminal');
+  });
+
+  it('accepts noopRuntimeHost without throwing on cancel', () => {
+    const runtime = new SessionRuntime('noop-host-session', noopRuntimeHost);
+    runtime.startTurn();
+    expect(() => runtime.cancel('stop')).not.toThrow();
+    expect(runtime.getState()).toBe('terminal');
+  });
+
+  it('getSessionHandle uses injected host for a new session', () => {
+    const sessionId = 'injected-host-session';
+    releaseSessionRuntimeForTests(sessionId);
+    const cancelSubprocess = jest.fn();
+    const host: RuntimeHost = { cancelSubprocess };
+    const handle = getSessionHandle(sessionId, host);
+    getSessionRuntimeForTests(sessionId)!.startTurn();
+    handle.cancel('injected');
+    expect(cancelSubprocess).toHaveBeenCalledWith(sessionId);
+    releaseSessionRuntimeForTests(sessionId);
   });
 });
