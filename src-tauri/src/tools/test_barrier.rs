@@ -240,7 +240,14 @@ pub fn reset_test_barriers() -> serde_json::Value {
 }
 
 /// Tool handler entry used by ToolRegistry.
-pub fn execute_test_barrier_tool(args: &serde_json::Value) -> anyhow::Result<String> {
+///
+/// Terminal status is set from [`BarrierWaitOutcome`] at this call site —
+/// content JSON is informational only and must not be sniffed for status.
+pub fn execute_test_barrier_tool(
+    args: &serde_json::Value,
+) -> anyhow::Result<crate::tools::ToolHandlerOutput> {
+    use crate::tools::{ToolHandlerOutput, ToolTerminalStatus};
+
     let barrier_id = args
         .get("barrier_id")
         .or_else(|| args.get("barrierId"))
@@ -257,18 +264,24 @@ pub fn execute_test_barrier_tool(args: &serde_json::Value) -> anyhow::Result<Str
         .filter(|v| !v.is_empty());
 
     match wait_on_barrier(barrier_id, execution_id)? {
-        BarrierWaitOutcome::Released => Ok(serde_json::json!({
-            "status": "done",
-            "barrier_id": barrier_id,
-            "executionId": execution_id,
-        })
-        .to_string()),
-        BarrierWaitOutcome::Cancelled => Ok(serde_json::json!({
-            "status": "cancelled",
-            "barrier_id": barrier_id,
-            "executionId": execution_id,
-        })
-        .to_string()),
+        BarrierWaitOutcome::Released => Ok(ToolHandlerOutput::success(
+            serde_json::json!({
+                "status": "done",
+                "barrier_id": barrier_id,
+                "executionId": execution_id,
+            })
+            .to_string(),
+        )),
+        BarrierWaitOutcome::Cancelled => Ok(ToolHandlerOutput::terminal(
+            serde_json::json!({
+                "status": "cancelled",
+                "barrier_id": barrier_id,
+                "executionId": execution_id,
+            })
+            .to_string(),
+            ToolTerminalStatus::Cancelled,
+            Some("cancelled".to_string()),
+        )),
     }
 }
 
@@ -385,9 +398,42 @@ mod tests {
         wait_until(|| is_execution_waiting(&exec_id), Duration::from_secs(2));
         release_test_barrier(&barrier_id);
 
-        let content = handle.join().expect("join").expect("tool ok");
-        let parsed: serde_json::Value = serde_json::from_str(&content).expect("json");
+        let output = handle.join().expect("join").expect("tool ok");
+        assert_eq!(output.status, ToolTerminalStatus::Success);
+        assert!(output.error_code.is_none());
+        let parsed: serde_json::Value = serde_json::from_str(&output.content).expect("json");
         assert_eq!(parsed["status"], "done");
+        assert_eq!(parsed["barrier_id"], barrier_id);
+    }
+
+    #[test]
+    fn tool_cancel_sets_cancelled_status_explicitly() {
+        let _guard = TEST_LOCK.lock().expect("test lock");
+        let barrier_id = unique("tool-cancel-status");
+        let barrier_for_thread = barrier_id.clone();
+        let exec_id = unique("exec-cancel-status");
+        let exec_for_thread = exec_id.clone();
+
+        let handle = thread::spawn(move || {
+            execute_test_barrier_tool(&serde_json::json!({
+                "barrier_id": barrier_for_thread,
+                "executionId": exec_for_thread,
+            }))
+        });
+
+        wait_until(|| is_execution_waiting(&exec_id), Duration::from_secs(2));
+        let cancel = cancel_by_execution_id(&exec_id);
+        assert!(cancel.cancelled);
+
+        let output = handle.join().expect("join").expect("tool ok");
+        assert_eq!(
+            output.status,
+            ToolTerminalStatus::Cancelled,
+            "status must come from BarrierWaitOutcome, not content sniff"
+        );
+        assert_eq!(output.error_code.as_deref(), Some("cancelled"));
+        let parsed: serde_json::Value = serde_json::from_str(&output.content).expect("json");
+        assert_eq!(parsed["status"], "cancelled");
         assert_eq!(parsed["barrier_id"], barrier_id);
     }
 

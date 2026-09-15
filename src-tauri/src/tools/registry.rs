@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::autoresearch_bootstrap::{self, BootstrapExecutionContext, BootstrapProviderContext};
-use super::{ToolCallRequest, ToolCallResult, ToolMetadata};
+use super::{ToolCallRequest, ToolCallResult, ToolHandlerOutput, ToolMetadata, classify_tool_error_code, handler_output_from_execute_code};
 use crate::commands::code::execute_bash_for_tool;
 use crate::commands::file::{
     create_directory_for_tool, read_file_for_tool, resolve_path as resolve_tool_path,
@@ -22,8 +22,9 @@ use crate::tools::ssh_bridge::{execute_ssh_exec, execute_ssh_read_file, execute_
 use crate::tools::test_barrier;
 use jsonschema::{JSONSchema, ValidationError};
 
-/// Tool handler: receives parsed JSON arguments, returns result string
-pub type ToolHandler = Arc<dyn Fn(serde_json::Value) -> anyhow::Result<String> + Send + Sync>;
+/// Tool handler: receives parsed JSON arguments, returns content + explicit terminal status.
+pub type ToolHandler =
+    Arc<dyn Fn(serde_json::Value) -> anyhow::Result<ToolHandlerOutput> + Send + Sync>;
 
 /// Registered tool entry
 struct ToolEntry {
@@ -167,17 +168,20 @@ impl ToolRegistry {
         }
 
         match (entry.handler)(args) {
-            Ok(content) => Ok(ToolCallResult::success(
+            Ok(output) => Ok(ToolCallResult::from_handler_output(
                 req.id.clone(),
                 req.name.clone(),
-                content,
+                output,
             )),
-            Err(e) => Ok(ToolCallResult::error(
-                req.id.clone(),
-                req.name.clone(),
-                format!("Error: {}", e),
-                Some("internal_error".to_string()),
-            )),
+            Err(e) => {
+                let code = classify_tool_error_code(&e.to_string()).to_string();
+                Ok(ToolCallResult::error(
+                    req.id.clone(),
+                    req.name.clone(),
+                    format!("Error: {}", e),
+                    Some(code),
+                ))
+            }
         }
     }
 
@@ -354,7 +358,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
             read_file_for_tool(path, work_dir)
-                .map(|result| result.content)
+                .map(|result| ToolHandlerOutput::success(result.content))
                 .map_err(|error| anyhow::anyhow!(error.message))
         }),
         ToolMetadata {
@@ -387,7 +391,9 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: content"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
-            write_file_for_tool(path, content, work_dir).map_err(|error| anyhow::anyhow!(error.message))
+            write_file_for_tool(path, content, work_dir)
+                .map(ToolHandlerOutput::success)
+                .map_err(|error| anyhow::anyhow!(error.message))
         }),
         ToolMetadata {
             name: "write_file".to_string(),
@@ -442,7 +448,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 entries.push(format!("{}{}", prefix, name));
             }
             entries.sort();
-            Ok(entries.join("\n"))
+            Ok(ToolHandlerOutput::success(entries.join("\n")))
         }),
         ToolMetadata {
             name: "list_files".to_string(),
@@ -472,6 +478,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .ok_or_else(|| anyhow::anyhow!("Missing required parameter: path"))?;
             let work_dir = args.get("work_dir").and_then(|v| v.as_str());
             create_directory_for_tool(path, work_dir)
+                .map(ToolHandlerOutput::success)
                 .map_err(|error| anyhow::anyhow!(error.message))
         }),
         ToolMetadata {
@@ -507,7 +514,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             let is_dir = resolved.is_dir();
             let is_file = resolved.is_file();
             let kind = if is_dir { "directory" } else if is_file { "file" } else { "unknown" };
-            Ok(format!("{}: {} ({})", resolved.display(), exists, kind))
+            Ok(ToolHandlerOutput::success(format!("{}: {} ({})", resolved.display(), exists, kind)))
         }),
         ToolMetadata {
             name: "path_exists".to_string(),
@@ -579,15 +586,21 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.is_empty() {
-                    Ok(format!("No matches found for '{}' in {}", pattern, path))
+                    Ok(ToolHandlerOutput::success(format!(
+                        "No matches found for '{}' in {}",
+                        pattern, path
+                    )))
                 } else {
-                    Ok(stdout.to_string())
+                    Ok(ToolHandlerOutput::success(stdout.to_string()))
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 // rg returns exit code 1 for no matches (not an error)
                 if output.status.code() == Some(1) {
-                    Ok(format!("No matches found for '{}' in {}", pattern, path))
+                    Ok(ToolHandlerOutput::success(format!(
+                        "No matches found for '{}' in {}",
+                        pattern, path
+                    )))
                 } else {
                     Err(anyhow::anyhow!("ripgrep error: {}", stderr))
                 }
@@ -649,8 +662,8 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 windows_shell_profile,
             )
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            serde_json::to_string(&result)
-                .map_err(|e| anyhow::anyhow!("Failed to serialize command result: {}", e))
+            // Status comes from typed ExecuteCodeResponse — not JSON sniffing.
+            handler_output_from_execute_code(result)
         }),
         ToolMetadata {
             name: "execute_command".to_string(),
@@ -723,7 +736,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
 
     registry.register(
         "ssh_upload_file",
-        Arc::new(|args| execute_ssh_upload(&args)),
+        Arc::new(|args| execute_ssh_upload(&args).map(ToolHandlerOutput::success)),
         ToolMetadata {
             name: "ssh_upload_file".to_string(),
             description: "Upload a local file or inline content to a local or remote SSH target within the bound remote work directory.".to_string(),
@@ -752,7 +765,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
 
     registry.register(
         "ssh_read_file",
-        Arc::new(|args| execute_ssh_read_file(&args)),
+        Arc::new(|args| execute_ssh_read_file(&args).map(ToolHandlerOutput::success)),
         ToolMetadata {
             name: "ssh_read_file".to_string(),
             description: "Read a file from a local or remote SSH target within the bound remote work directory.".to_string(),
@@ -805,6 +818,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 }
             }
             serde_json::to_string(&files)
+                .map(ToolHandlerOutput::success)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize glob results: {}", e))
         }),
         ToolMetadata {
@@ -848,9 +862,14 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 .output()
                 .map_err(|e| anyhow::anyhow!("Cannot run grep: {}", e))?;
             if output.status.success() {
-                Ok(String::from_utf8_lossy(&output.stdout).to_string())
+                Ok(ToolHandlerOutput::success(
+                    String::from_utf8_lossy(&output.stdout).to_string(),
+                ))
             } else if output.status.code() == Some(1) {
-                Ok(format!("No matches found for '{}' in {}", pattern, path))
+                Ok(ToolHandlerOutput::success(format!(
+                    "No matches found for '{}' in {}",
+                    pattern, path
+                )))
             } else {
                 Err(anyhow::anyhow!(
                     "grep error: {}",
