@@ -68,6 +68,7 @@ import {
   getChatSessionTurnEpoch,
   handleStreamChunk,
   requestChatGenerationCancel,
+  ownsSelectedStreamChrome,
   resolveStreamingOwnerSessionId,
   shouldFlushStreamingUpdate,
   STREAMING_TIMEOUT_MS,
@@ -349,11 +350,8 @@ async function tryRecoverFromToolPolicyError(
   }
   pinChatSession(activeSessionId, get);
 
-  get().setStreaming(false);
-  set({
-    streamingContent: '',
-    streamingReasoning: '',
-    streamingSessionId: null,
+  currentStreamingBuffer = '';
+  clearStreamChromeIfSelected(set, get, activeSessionId, {
     pendingToolCalls: 0,
     pendingToolResults: [],
   });
@@ -384,6 +382,46 @@ let currentStreamingBuffer = '';
 /** Test-only: inspect module stream buffer (Stop→send race proofs). */
 export function getCurrentStreamingBufferForTests(): string {
   return currentStreamingBuffer;
+}
+
+/**
+ * Clear selected-session stream chrome only when `owningSessionId` is currently
+ * selected. Background completion/cancel must not flip another session's
+ * isStreaming / stream buffers / busy chrome / streamingTimeoutId.
+ *
+ * Owner-gated timeout cleanup: `streamingTimeoutId` is selected-session chrome.
+ * Only clear/reset it when this owning session is the selected session. A
+ * background completion may drop a stale `streamingSessionId` pointer that still
+ * names the completing session, but must never clearTimeout/null B's timeout.
+ */
+function clearStreamChromeIfSelected(
+  set: ChatActionFactoryDeps['set'],
+  get: ChatActionFactoryDeps['get'],
+  owningSessionId: string,
+  extra: Record<string, unknown> = {},
+): void {
+  const { currentSessionId, streamingSessionId, streamingTimeoutId } = get();
+  const ownsSelected = ownsSelectedStreamChrome(owningSessionId, currentSessionId);
+
+  if (!ownsSelected) {
+    // Drop stale ownership pointer only. Never touch streamingTimeoutId — after
+    // switch, B may already own the selected-session timeout timer.
+    if (streamingSessionId === owningSessionId) {
+      set({ streamingSessionId: null });
+    }
+    return;
+  }
+  if (streamingTimeoutId) {
+    clearTimeout(streamingTimeoutId);
+  }
+  set({
+    isStreaming: false,
+    streamingTimeoutId: null,
+    streamingContent: '',
+    streamingReasoning: '',
+    streamingSessionId: null,
+    ...extra,
+  });
 }
 
 export function createChatActionMethods({
@@ -880,11 +918,8 @@ export function createChatActionMethods({
               await get().updateLastMessage(
                 '需要先连接 Chrome 才能执行浏览器任务。连接成功后请重新发送你的请求。',
               );
-              setStreaming(false);
-              set({
-                streamingContent: '',
-                streamingReasoning: '',
-                streamingSessionId: null,
+              currentStreamingBuffer = '';
+              clearStreamChromeIfSelected(set, get, activeSessionId, {
                 pendingToolCalls: 0,
                 pendingToolResults: [],
               });
@@ -989,7 +1024,10 @@ export function createChatActionMethods({
           if (chunk.type === 'text_delta') {
             get().appendStreamingContent(chunk.content, chunk.turnId, activeSessionId);
           } else if (chunk.type === 'reasoning_delta') {
-            if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+            if (
+              getChatSessionTurnEpoch(activeSessionId) === turnEpoch
+              && ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)
+            ) {
               set((state) => ({ streamingReasoning: state.streamingReasoning + chunk.content }));
             }
           } else if (chunk.type === 'status_update') {
@@ -1044,10 +1082,13 @@ export function createChatActionMethods({
               );
             }
             streamState = clearStreamingRoundBuffers(streamState);
-            // After await: only clear shared stream UI if this turn still owns the epoch.
+            // After await: only clear shared stream UI if this turn still owns the epoch
+            // AND the owning session is selected (background A must not wipe B chrome).
             if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
               currentStreamingBuffer = '';
-              set({ streamingReasoning: '', streamingContent: '' });
+              if (ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)) {
+                set({ streamingReasoning: '', streamingContent: '' });
+              }
             }
             if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
               throw new ChatGenerationCancelledError(activeSessionId);
@@ -1107,8 +1148,10 @@ export function createChatActionMethods({
         );
         const successOwnsTurn = getChatSessionTurnEpoch(activeSessionId) === turnEpoch;
         if (successOwnsTurn) {
-          setError(null);
-          set({ streamingContent: displayContent });
+          if (ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)) {
+            setError(null);
+            set({ streamingContent: displayContent });
+          }
         }
 
         if (successOwnsTurn && activeGoal && displayContent.trim()) {
@@ -1169,10 +1212,13 @@ export function createChatActionMethods({
         }
 
         // After awaits (token usage etc.): stale turn must not clear newer turn UI.
+        // Background session A completing while B is selected must not flip B chrome.
         if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-          useUIStore.getState().setActiveSkill(null);
+          currentStreamingBuffer = '';
+          clearStreamChromeIfSelected(set, get, activeSessionId);
+          if (ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)) {
+            useUIStore.getState().setActiveSkill(null);
+          }
         }
         updateDiagnosticsTask(diagnosticsTaskId, {
           state: 'completed',
@@ -1280,17 +1326,16 @@ export function createChatActionMethods({
           // Epoch still matches: safe to clear THIS turn's stream buffer + cancel
           // marker. Doing either before the guard lets a stale cancelled turn wipe
           // a newer same-session turn's buffer / Stop marker.
+          // Only touch selected-session chrome when this owning session is selected.
           currentStreamingBuffer = '';
           clearChatGenerationCancel(activeSessionId);
-          setStreaming(false);
-          set({
-            streamingContent: '',
-            streamingReasoning: '',
-            streamingSessionId: null,
+          clearStreamChromeIfSelected(set, get, activeSessionId, {
             pendingToolCalls: 0,
             pendingToolResults: [],
           });
-          useUIStore.getState().setActiveSkill(null);
+          if (ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)) {
+            useUIStore.getState().setActiveSkill(null);
+          }
 
           // Bind removal to THIS turn's assistant placeholder id only.
           removeEmptyAssistantPlaceholderById(set, activeSessionId, assistantMessage?.id);
@@ -1310,12 +1355,13 @@ export function createChatActionMethods({
             setActiveChatDiagnosticsTaskId(activeSessionId, null);
           }
           // Recovery may have started a newer sendMessage (epoch bumped) — only
-          // clear shared UI if this turn still owns the epoch.
+          // clear shared UI if this turn still owns the epoch and is selected.
           if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
             currentStreamingBuffer = '';
-            setStreaming(false);
-            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-            useUIStore.getState().setActiveSkill(null);
+            clearStreamChromeIfSelected(set, get, activeSessionId);
+            if (ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)) {
+              useUIStore.getState().setActiveSkill(null);
+            }
           }
           return;
         }
@@ -1364,10 +1410,11 @@ export function createChatActionMethods({
         // or delete a newer turn's placeholder via last-message heuristics.
         if (errorOwnsTurn && getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
           currentStreamingBuffer = '';
-          setError(errorMsg);
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
-          useUIStore.getState().setActiveSkill(null);
+          clearStreamChromeIfSelected(set, get, activeSessionId);
+          if (ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)) {
+            setError(errorMsg);
+            useUIStore.getState().setActiveSkill(null);
+          }
           removeEmptyAssistantPlaceholderById(set, activeSessionId, assistantMessage?.id);
         }
       } finally {
@@ -1834,9 +1881,13 @@ export function createChatActionMethods({
           reasoning: get().streamingReasoning,
           statusMessages: [],
         });
+        // Background session streams must update their own messages, but must
+        // not paint into the selected session's stream chrome after a switch.
+        const updateSelectedStreamChrome = ownsSelectedStreamChrome(targetSessionId, currentSessionId);
         set((state) => ({
-          streamingContent: newContent,
-          lastUiUpdateTime: now,
+          ...(updateSelectedStreamChrome
+            ? { streamingContent: newContent, lastUiUpdateTime: now }
+            : { lastUiUpdateTime: now }),
           sessions: state.sessions.map((session) => {
             if (session.id !== targetSessionId || session.messages.length === 0) {
               return session;
@@ -1859,25 +1910,32 @@ export function createChatActionMethods({
 
     setStreaming: (streaming: boolean) => {
       const { streamingTimeoutId, streamingSessionId, currentSessionId, streamingContent } = get();
-      const targetSessionId = resolveStreamingOwnerSessionId(streamingSessionId, currentSessionId);
+      // Flush target is the stream owner only — never fall back to currentSessionId.
+      // After selectSession, streamingSessionId is null while a background turn may
+      // still complete; falling back would paint/flush into the selected session.
+      const flushTargetId = streamingSessionId;
+      const clearSelectedChrome = ownsSelectedStreamChrome(streamingSessionId, currentSessionId)
+        || streamingSessionId == null;
       if (!streaming) {
-        if (streamingTimeoutId) {
-          clearTimeout(streamingTimeoutId);
-        }
         const finalContent = currentStreamingBuffer || streamingContent;
         currentStreamingBuffer = '';
-        if (targetSessionId && finalContent) {
+        // Owner-gate timeout cleanup: background setStreaming(false) must not
+        // clearTimeout / null another session's streamingTimeoutId.
+        if (clearSelectedChrome && streamingTimeoutId) {
+          clearTimeout(streamingTimeoutId);
+        }
+        if (flushTargetId && finalContent) {
           const flushed = flushBuffer({
             content: finalContent,
             reasoning: get().streamingReasoning,
             statusMessages: [],
           });
           set((state) => ({
-            isStreaming: false,
-            streamingTimeoutId: null,
-            streamingContent: '',
+            ...(clearSelectedChrome
+              ? { isStreaming: false, streamingTimeoutId: null, streamingContent: '' }
+              : {}),
             sessions: state.sessions.map((session) => {
-              if (session.id !== targetSessionId || session.messages.length === 0) {
+              if (session.id !== flushTargetId || session.messages.length === 0) {
                 return session;
               }
               const messages = [...session.messages];
@@ -1893,7 +1951,7 @@ export function createChatActionMethods({
               return { ...session, messages, updatedAt: Date.now() };
             }),
           }));
-        } else {
+        } else if (clearSelectedChrome) {
           set({ isStreaming: false, streamingTimeoutId: null, streamingContent: '' });
         }
         return;
@@ -1902,13 +1960,14 @@ export function createChatActionMethods({
       if (streaming) {
         currentStreamingBuffer = '';
         const timeoutId = setTimeout(() => {
-          const { currentSessionId: fallbackSessionId, setStreaming, streamingSessionId } = get();
-          const owningSessionId = resolveStreamingOwnerSessionId(streamingSessionId, fallbackSessionId);
-          if (owningSessionId) {
-            safeInvokeOrNull('stop_subprocess', { sessionId: owningSessionId });
+          const { setStreaming, streamingSessionId: ownerId } = get();
+          if (ownerId) {
+            safeInvokeOrNull('stop_subprocess', { sessionId: ownerId });
+            clearStreamChromeIfSelected(set, get, ownerId);
+          } else {
+            setStreaming(false);
+            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
           }
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
         }, STREAMING_TIMEOUT_MS);
 
         void import('../../services/compact/microCompact').then(({ resetMicrocompactForNewTurn }) => {

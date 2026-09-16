@@ -86,6 +86,18 @@ export function resolveStreamingOwnerSessionId(
   return streamingSessionId || currentSessionId;
 }
 
+/**
+ * Global stream chrome (`isStreaming` / `streamingContent` / `streamingReasoning` /
+ * `streamingSessionId`) is selected-session UI. Background turns may finish while
+ * another session is selected — only the owning selected session may mutate chrome.
+ */
+export function ownsSelectedStreamChrome(
+  owningSessionId: string | null | undefined,
+  currentSessionId: string | null | undefined,
+): boolean {
+  return Boolean(owningSessionId && currentSessionId && owningSessionId === currentSessionId);
+}
+
 const cancellationRequestedSessions = new Set<string>();
 const chatTurnAbortControllers = new Map<string, AbortController>();
 

@@ -25,7 +25,6 @@ import { useArtifactsStore } from './artifactsStore';
 import { createChatActionMethods } from './chat/chatActions';
 import { resetTransientSessionStateForNewChat } from './chat/sessionIsolation';
 import { filterSessionsByProject, selectCurrentMessages, selectCurrentSession } from './chat/chatSelectors';
-import { requestChatGenerationCancel, resolveStreamingOwnerSessionId } from './chat/chatStreaming';
 import { getSessionHandle, releaseSessionRuntime } from '../core/runtime';
 import { safeSetItem, safeRemoveItem, safeGetItem, safeMigrateKey } from '@/utils/safeStorage';
 import {
@@ -871,49 +870,26 @@ export const useChatStore = create<ChatState>()(
         return;
       }
       const previousSessionId = get().currentSessionId;
+      if (previousSessionId === sessionId) {
+        return;
+      }
       if (get().streamingTimeoutId) {
         clearTimeout(get().streamingTimeoutId!);
       }
-      // AUDIT-FIX [audit-1#4] — When switching sessions, stop the subprocess
-      // that OWNS the running stream (streamingSessionId), not just the
-      // session we're leaving. The previous check only fired when both
-      // previousSessionId was set AND isStreaming was true, but streaming
-      // state can already have been cleared by other code paths while the
-      // backend subprocess is still alive — particularly during a session
-      // change initiated from a different code path. Use the helper that
-      // falls back to streamingSessionId before currentSessionId.
-      if (previousSessionId && previousSessionId !== sessionId) {
-        const owningSessionId = resolveStreamingOwnerSessionId(
-          get().streamingSessionId,
-          get().isStreaming ? previousSessionId : null,
-        );
-        if (owningSessionId) {
-          getSessionHandle(owningSessionId).cancel('Session switched');
-          requestChatGenerationCancel(owningSessionId);
-          safeInvokeOrNull('stop_subprocess', { sessionId: owningSessionId });
-        }
-      }
+      // Soak knife 3 / live soak 2026-09-16 — session switch only rebinds the
+      // selected session's busy UI. Do NOT cancel/stop/scrub the previous
+      // session's in-flight tools or generation; background turns keep running.
+      // Stop remains explicit via stopGeneration (A ≠ B).
       useUIStore.getState().clearAllPermissions();
-      if (previousSessionId && previousSessionId !== sessionId) {
+      if (previousSessionId) {
         useUIStore.getState().clearQuestionnaire(previousSessionId);
-      }
-      if (
-        previousSessionId &&
-        previousSessionId !== sessionId &&
-        (get().pendingToolCalls > 0 || get().pendingToolResults.length > 0 || useUIStore.getState().permissionQueue.length > 0)
-      ) {
-        failUnresolvedSessionTools(
-          previousSessionId,
-          set,
-          get,
-          (_toolCallId, label) => `Error: ${label} cancelled due to session change`,
-        );
-        void scrubDanglingToolCalls(previousSessionId, set, get);
       }
       safeSetItem(CURRENT_SESSION_ID_STORAGE_KEY, sessionId);
       set({
         currentSessionId: sessionId,
         error: null,
+        // Clear selected-session stream chrome only. Background sessions keep
+        // their SessionRuntime / toolRuntimeBySession entries intact.
         isStreaming: false,
         streamingContent: '',
         streamingReasoning: '',
@@ -922,9 +898,6 @@ export const useChatStore = create<ChatState>()(
         pendingToolResults: [],
         streamingSessionId: null,
       });
-      // AUDIT-FIX [audit-1#2] — Drop runtime for any session that isn't the
-      // newly-selected one, so stale tool steps don't outlive a session switch.
-      clearNonCurrentSessionToolRuntime(set, get);
       syncSessionToolRuntimeToCurrentSession(set, get);
     },
 

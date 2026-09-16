@@ -68,7 +68,7 @@ Build a **deterministic soak runner** that loops the Manual D style scenario and
 
 1. Optimistic `stopGeneration` UI clear before native `cancel_tool_execution` awaits
 2. `shouldShowStopControl` — Stop when streaming **or** pending tools/results (`ChatInput`)
-3. Session-switch busy binding — selected session only (`selectSession` + tool-runtime sync)
+3. Session-switch busy binding — selected session only (`selectSession` + tool-runtime sync); switch must **not** cancel previous session in-flight tools
 4. Jest: optimistic clear under slow cancel; A≠B isolation; selector visibility
 
 Docs: `docs/stop-session-switch-polish.md`
