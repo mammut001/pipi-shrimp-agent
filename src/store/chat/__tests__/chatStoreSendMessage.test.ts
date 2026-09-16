@@ -1687,4 +1687,248 @@ describe('chatStore sendMessage integration', () => {
     await Promise.all([stopPromise, sendNew]);
   });
 
+  it('GPT FIX: stale real-error catch must not clear newer turn streaming/error/skill', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'error' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'error' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-real-error ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          if (mode === 'error') {
+            throw new Error('boom-stale-real-error');
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'NEW-TURN-KEEP-STREAMING' };
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for real-error race');
+    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-real-error-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for real-error race');
+    for (let i = 0; i < 80; i += 1) {
+      if (getCurrentStreamingBufferForTests().includes('NEW-TURN-KEEP-STREAMING')) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-KEEP-STREAMING');
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().error).toBeNull();
+
+    mockSetActiveSkill.mockClear();
+
+    // Stale older turn fails with a real (non-cancel) error while newer turn owns UI.
+    releaseOldStream('error');
+    await sendOld;
+
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-KEEP-STREAMING');
+    expect(useChatStore.getState().error).toBeNull();
+    expect(mockSetActiveSkill).not.toHaveBeenCalledWith(null);
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('NEW-TURN-KEEP-STREAMING')
+    ))).toBe(true);
+  });
+
+  it('GPT FIX: stale real-error catch must not delete newer turn placeholder by last-message', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'error' | 'continue') => void;
+    const oldStreamGate = new Promise<'error' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+    let newAssistantPlaceholderId: string | null = null;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          // No deltas — leave old assistant as empty placeholder until error.
+          const mode = await oldStreamGate;
+          if (mode === 'error') {
+            throw new Error('boom-stale-placeholder');
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        // Capture the new turn's empty assistant id before any content arrives.
+        const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1');
+        const assistants = session?.messages.filter((m) => m.role === 'assistant') ?? [];
+        newAssistantPlaceholderId = assistants[assistants.length - 1]?.id ?? null;
+        // Hold with empty placeholder still present (no text_delta yet).
+        await newStreamGate;
+        yield { type: 'text_delta' as const, content: 'new-placeholder-survived' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for placeholder race');
+    for (let i = 0; i < 80; i += 1) {
+      const msgs = useChatStore.getState().sessions[0]?.messages ?? [];
+      if (msgs.some((m) => m.role === 'assistant' && !m.content)) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().sessions[0]?.messages.some((m) => m.role === 'assistant')).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-placeholder-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1, isStreaming: true, streamingSessionId: 'session-1' });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for placeholder race');
+    for (let i = 0; i < 100; i += 1) {
+      if (newAssistantPlaceholderId) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(newAssistantPlaceholderId).toBeTruthy();
+    const placeholderIdAtRisk = newAssistantPlaceholderId!;
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => m.id === placeholderIdAtRisk),
+    ).toBe(true);
+
+    // Stale real-error path (unguarded last-message delete) would remove the
+    // newer turn's empty assistant placeholder that is currently last.
+    releaseOldStream('error');
+    await sendOld;
+
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => m.id === placeholderIdAtRisk),
+    ).toBe(true);
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('new-placeholder-survived')
+    ))).toBe(true);
+  });
+
 });

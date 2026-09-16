@@ -90,6 +90,42 @@ type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
 
+/**
+ * Remove an empty assistant placeholder by closed-over message id only.
+ * Never delete by "last message" — a stale turn must not remove a newer turn's placeholder.
+ */
+export function removeEmptyAssistantPlaceholderById(
+  set: ChatSetState,
+  sessionId: string,
+  messageId: string | null | undefined,
+): void {
+  if (!messageId) {
+    return;
+  }
+  set((state) => ({
+    sessions: state.sessions.map((session) => {
+      if (session.id !== sessionId) {
+        return session;
+      }
+      const index = session.messages.findIndex((message) => message.id === messageId);
+      if (index < 0) {
+        return session;
+      }
+      const target = session.messages[index];
+      if (!shouldRemoveEmptyAssistantPlaceholder(target)) {
+        return session;
+      }
+      return {
+        ...session,
+        messages: [
+          ...session.messages.slice(0, index),
+          ...session.messages.slice(index + 1),
+        ],
+      };
+    }),
+  }));
+}
+
 type ChatActionMethodKeys =
   | 'generateBrowserResultResponse'
   | 'sendMessage'
@@ -275,6 +311,7 @@ async function tryRecoverFromToolPolicyError(
   activeSessionId: string,
   get: () => ChatState,
   set: ChatSetState,
+  turnEpoch: number,
 ): Promise<boolean> {
   const session = get().sessions.find((candidate) => candidate.id === activeSessionId);
   const executionModeId = resolveSessionExecutionModeId(session);
@@ -287,11 +324,18 @@ async function tryRecoverFromToolPolicyError(
     reason: toolNeed.reason,
     messagePreview: userContent.trim().slice(0, 240),
   });
+  // Prompt await: a newer same-session turn may have started — do not mutate it.
+  if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+    return false;
+  }
   if (choice === 'cancel') {
     return false;
   }
 
   await get().updateSessionExecutionMode(activeSessionId, choice);
+  if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+    return false;
+  }
   pinChatSession(activeSessionId, get);
 
   get().setStreaming(false);
@@ -908,7 +952,9 @@ export function createChatActionMethods({
           if (chunk.type === 'text_delta') {
             get().appendStreamingContent(chunk.content, chunk.turnId, activeSessionId);
           } else if (chunk.type === 'reasoning_delta') {
-            set((state) => ({ streamingReasoning: state.streamingReasoning + chunk.content }));
+            if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+              set((state) => ({ streamingReasoning: state.streamingReasoning + chunk.content }));
+            }
           } else if (chunk.type === 'status_update') {
             uiStore.addNotification('info', chunk.message, activeSessionId);
           } else if (chunk.type === 'tool_batch_request') {
@@ -923,8 +969,11 @@ export function createChatActionMethods({
               },
             );
             streamState = clearStreamingRoundBuffers(streamState);
-            currentStreamingBuffer = '';
-            set({ streamingReasoning: '', streamingContent: '' });
+            // After await: only clear shared stream UI if this turn still owns the epoch.
+            if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+              currentStreamingBuffer = '';
+              set({ streamingReasoning: '', streamingContent: '' });
+            }
             if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
               throw new ChatGenerationCancelledError(activeSessionId);
             }
@@ -947,8 +996,14 @@ export function createChatActionMethods({
         }
 
         const streamed = flushBuffer(streamState);
-        const finalContent = currentStreamingBuffer || get().streamingContent || streamed.content;
-        currentStreamingBuffer = '';
+        const completionOwnsTurn = getChatSessionTurnEpoch(activeSessionId) === turnEpoch;
+        // Prefer closed-over streamState when stale so we do not read/clear a newer turn's buffer.
+        const finalContent = completionOwnsTurn
+          ? (currentStreamingBuffer || get().streamingContent || streamed.content)
+          : streamed.content;
+        if (completionOwnsTurn) {
+          currentStreamingBuffer = '';
+        }
         const parsed = parseThinkContent(finalContent);
         const tokenUsage = tokenUsageResult
           ? {
@@ -966,20 +1021,27 @@ export function createChatActionMethods({
         await get().updateLastMessage(
           displayContent,
           undefined,
-          mergeReasoningParts(get().streamingReasoning, streamed.reasoning, parsed.reasoning),
+          mergeReasoningParts(
+            getChatSessionTurnEpoch(activeSessionId) === turnEpoch ? get().streamingReasoning : '',
+            streamed.reasoning,
+            parsed.reasoning,
+          ),
           tokenUsage,
           activeSessionId,
           assistantMessage.id,
         );
-        setError(null);
-        set({ streamingContent: displayContent });
+        const successOwnsTurn = getChatSessionTurnEpoch(activeSessionId) === turnEpoch;
+        if (successOwnsTurn) {
+          setError(null);
+          set({ streamingContent: displayContent });
+        }
 
-        if (activeGoal && displayContent.trim()) {
+        if (successOwnsTurn && activeGoal && displayContent.trim()) {
           useSessionGoalStore.getState().recordTrace(activeSessionId, 'assistant_turn', displayContent);
         }
 
         const tokenDelta = (tokenUsage?.input_tokens ?? 0) + (tokenUsage?.output_tokens ?? 0);
-        if (activeGoal && shouldRunGoalLoop({ goalLoopContinuation: options?.goalLoopContinuation, isPlanMode })) {
+        if (successOwnsTurn && activeGoal && shouldRunGoalLoop({ goalLoopContinuation: options?.goalLoopContinuation, isPlanMode })) {
           const latestGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
           if (latestGoal) {
             useSessionGoalStore.getState().consumeTurnBudget(activeSessionId, tokenDelta);
@@ -1031,15 +1093,20 @@ export function createChatActionMethods({
           });
         }
 
-        setStreaming(false);
-        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+        // After awaits (token usage etc.): stale turn must not clear newer turn UI.
+        if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+          setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+          useUIStore.getState().setActiveSkill(null);
+        }
         updateDiagnosticsTask(diagnosticsTaskId, {
           state: 'completed',
           cancelable: false,
           detail: displayContent.slice(0, 240),
         });
-        setActiveChatDiagnosticsTaskId(activeSessionId, null);
-        useUIStore.getState().setActiveSkill(null);
+        if (getActiveChatDiagnosticsTaskId(activeSessionId) === diagnosticsTaskId) {
+          setActiveChatDiagnosticsTaskId(activeSessionId, null);
+        }
 
         if (
           isPlanMode
@@ -1150,85 +1217,84 @@ export function createChatActionMethods({
           });
           useUIStore.getState().setActiveSkill(null);
 
-          set((state) => ({
-            sessions: state.sessions.map((session) => {
-              if (session.id !== activeSessionId || session.messages.length === 0) {
-                return session;
-              }
-              const last = session.messages[session.messages.length - 1];
-              if (shouldRemoveEmptyAssistantPlaceholder(last)) {
-                return { ...session, messages: session.messages.slice(0, -1) };
-              }
-              return session;
-            }),
-          }));
+          // Bind removal to THIS turn's assistant placeholder id only.
+          removeEmptyAssistantPlaceholderById(set, activeSessionId, assistantMessage?.id);
           syncSessionToolRuntimeToCurrentSession(set, get);
           return;
-        }
-
-        // Real errors: only clear the shared stream buffer if this turn still owns
-        // the epoch (otherwise a late failure would blank a newer turn's buffer).
-        if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
-          currentStreamingBuffer = '';
         }
 
         turnHadError = true;
         const errorMsg = normalizeCaughtErrorMessage(error, CHAT_ERROR_MESSAGES.sendFailed);
 
-        if (await tryRecoverFromToolPolicyError(errorMsg, content, activeSessionId, get, set)) {
-          setStreaming(false);
-          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+        if (await tryRecoverFromToolPolicyError(errorMsg, content, activeSessionId, get, set, turnEpoch)) {
           updateDiagnosticsTask(diagnosticsTaskId, {
             state: 'cancelled',
             cancelable: false,
           });
-          setActiveChatDiagnosticsTaskId(activeSessionId, null);
-          useUIStore.getState().setActiveSkill(null);
+          if (getActiveChatDiagnosticsTaskId(activeSessionId) === diagnosticsTaskId) {
+            setActiveChatDiagnosticsTaskId(activeSessionId, null);
+          }
+          // Recovery may have started a newer sendMessage (epoch bumped) — only
+          // clear shared UI if this turn still owns the epoch.
+          if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+            currentStreamingBuffer = '';
+            setStreaming(false);
+            set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+            useUIStore.getState().setActiveSkill(null);
+          }
           return;
         }
 
-        setError(errorMsg);
-
+        // Persist error onto THIS turn's assistant message (id-bound). Prefer
+        // closed-over streamState when stale so we do not copy a newer turn's
+        // live streamingContent onto the old placeholder.
+        const errorOwnsTurn = getChatSessionTurnEpoch(activeSessionId) === turnEpoch;
         const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
         const flushed = flushBuffer(streamState);
-        const parsed = parseThinkContent(errContent || flushed.content || '');
+        const parsed = parseThinkContent(
+          (errorOwnsTurn ? errContent : '') || flushed.content || '',
+        );
         const finalContent = parsed.content.trim()
           ? `${parsed.content}\n\n⚠️ **Error:** ${errorMsg}`
           : `⚠️ **Error:** ${errorMsg}`;
 
-        void saveLastMsg(
-          finalContent,
-          undefined,
-          mergeReasoningParts(errReasoning, flushed.reasoning, parsed.reasoning),
-          undefined,
-          activeSessionId,
-          assistantMessage?.id,
-        ).catch((saveError: unknown) => {
-          console.error('Failed to persist sendMessage error content:', saveError);
-        });
+        if (assistantMessage?.id) {
+          void saveLastMsg(
+            finalContent,
+            undefined,
+            mergeReasoningParts(
+              errorOwnsTurn ? errReasoning : '',
+              flushed.reasoning,
+              parsed.reasoning,
+            ),
+            undefined,
+            activeSessionId,
+            assistantMessage.id,
+          ).catch((saveError: unknown) => {
+            console.error('Failed to persist sendMessage error content:', saveError);
+          });
+        }
 
-        setStreaming(false);
-        set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
         updateDiagnosticsTask(diagnosticsTaskId, {
           state: 'failed',
           cancelable: false,
           error: errorMsg,
         });
-        setActiveChatDiagnosticsTaskId(activeSessionId, null);
-        useUIStore.getState().setActiveSkill(null);
+        if (getActiveChatDiagnosticsTaskId(activeSessionId) === diagnosticsTaskId) {
+          setActiveChatDiagnosticsTaskId(activeSessionId, null);
+        }
 
-        set((state) => ({
-          sessions: state.sessions.map((session) => {
-            if (session.id !== activeSessionId || session.messages.length === 0) {
-              return session;
-            }
-            const last = session.messages[session.messages.length - 1];
-            if (shouldRemoveEmptyAssistantPlaceholder(last)) {
-              return { ...session, messages: session.messages.slice(0, -1) };
-            }
-            return session;
-          }),
-        }));
+        // Stale non-cancel / real-error path must not mutate a newer turn:
+        // setError, setStreaming(false), clear streaming, setActiveSkill(null),
+        // or delete a newer turn's placeholder via last-message heuristics.
+        if (errorOwnsTurn && getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+          currentStreamingBuffer = '';
+          setError(errorMsg);
+          setStreaming(false);
+          set({ streamingContent: '', streamingReasoning: '', streamingSessionId: null });
+          useUIStore.getState().setActiveSkill(null);
+          removeEmptyAssistantPlaceholderById(set, activeSessionId, assistantMessage?.id);
+        }
       } finally {
         // Stale turn must not clear a newer same-session Stop/cancel marker.
         if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
