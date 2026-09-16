@@ -22,5 +22,5 @@ Principle: **prove + persist + observe**, not redesign. Do not rewrite SessionRu
 ## Next knives (P2)
 
 6. **DONE** Runtime diagnostics snapshot — [`docs/runtime-diagnostics-snapshot.md`](./runtime-diagnostics-snapshot.md) (#84; `src/core/runtime/SessionRuntime.ts` dumpRuntimeDiagnostics / __PIPI_RUNTIME_DIAG__ + extended getSnapshot; `__tests__/RuntimeDiagnostics.test.ts`)
-7. Trace retention / export (light) — `dumpJsonLines({ sessionId, limit })` documented; no OpenTelemetry
+7. **DONE** Trace retention / export (light) — [`docs/runtime-trace-sink.md`](./runtime-trace-sink.md) (#82 sink, #84 filtered dump; `dumpJsonLines({ sessionId, limit })` / `__PIPI_RUNTIME_TRACE__`; `__tests__/RuntimeDiagnostics.test.ts` + `RuntimeTraceSink.test.ts`; no OpenTelemetry)
 

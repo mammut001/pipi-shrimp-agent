@@ -106,6 +106,22 @@ pnpm exec jest src/core/runtime/__tests__/RuntimeDiagnostics.test.ts --runInBand
 
 ---
 
+## 1d. Trace retention / export (light)
+
+**Canonical runbook:** [`runtime-trace-sink.md`](./runtime-trace-sink.md)
+
+| File | Role |
+|------|------|
+| `src/core/runtime/RuntimeTraceSink.ts` | Ring buffer (cap 1000), `dumpJsonLines({ sessionId, limit })`, `__PIPI_RUNTIME_TRACE__` |
+| `src/core/runtime/__tests__/RuntimeDiagnostics.test.ts` | P2 #7 filter suite (`Trace export filter`) |
+| `src/core/runtime/__tests__/RuntimeTraceSink.test.ts` | Capacity / dump / DevTools install |
+
+```bash
+pnpm exec jest src/core/runtime/__tests__/RuntimeDiagnostics.test.ts src/core/runtime/__tests__/RuntimeTraceSink.test.ts --runInBand --no-coverage
+```
+
+---
+
 ## 2. Soak / stress scripts under `tests/` or `docs/`
 
 **None found.**

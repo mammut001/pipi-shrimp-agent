@@ -87,7 +87,7 @@ echo "runtime diagnostics soak: $N/$N passed"
 
 - No OpenTelemetry integration or external distributed tracing dependencies
 - No `SessionRuntime` / `queryLoop` rewrite
-- Knife 7 trace retention/export policy is separate (see [`runtime-trace-sink.md`](./runtime-trace-sink.md))
+- Knife 7 trace retention/export is **DONE** — see [`runtime-trace-sink.md`](./runtime-trace-sink.md)
 - No large E2E / browser automation framework; verified via unit and soak harnesses
 
 ## Related
