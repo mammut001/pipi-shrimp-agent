@@ -16,7 +16,7 @@ Principle: **prove + persist + observe**, not redesign. Do not rewrite SessionRu
 
 ## Next knives (P1)
 
-4. Manual D repeatable product harness — `src/core/runtime/__tests__/manualDProductHarness.test.ts` (+ Rust `test_barrier_tool`)
+4. **DONE** Manual D repeatable product harness — [`docs/manual-d-product-harness.md`](./manual-d-product-harness.md) (#83 TS harness, #92 Rust catalog; `src/core/runtime/__tests__/manualDProductHarness.test.ts` + Rust `test_barrier_tool`)
 5. Interrupted-turn recovery policy — `docs/interrupted-turn-recovery-policy.md` + helpers/tests
 
 ## Next knives (P2)
