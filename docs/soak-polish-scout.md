@@ -90,6 +90,22 @@ pnpm exec jest src/store/chat/__tests__/interruptedTurnRecoveryPolicy.test.ts --
 
 ---
 
+## 1c. Runtime diagnostics snapshot
+
+**Canonical runbook:** [`runtime-diagnostics-snapshot.md`](./runtime-diagnostics-snapshot.md)
+
+| File | Role |
+|------|------|
+| `src/core/runtime/SessionRuntime.ts` | Dump APIs (`dumpRuntimeDiagnostics`, `listLiveRuntimeSnapshots`, `installRuntimeDiagnosticsDevDump`) + `getSnapshot` |
+| `src/core/runtime/__tests__/RuntimeDiagnostics.test.ts` | Diagnostics snapshot and filtered trace export suite |
+| `src/core/runtime/soak/failureBundle.ts` | Soak failure bundle consumer (`diagnostics.json` via `dumpRuntimeDiagnostics()`) |
+
+```bash
+pnpm exec jest src/core/runtime/__tests__/RuntimeDiagnostics.test.ts --runInBand --no-coverage
+```
+
+---
+
 ## 2. Soak / stress scripts under `tests/` or `docs/`
 
 **None found.**
@@ -182,6 +198,7 @@ src-tauri/src/tools/test_barrier.rs
 docs/gpt-next-gaps-guidance.md
 docs/runtime-trace-sink.md
 docs/interrupted-turn-recovery-policy.md
+docs/runtime-diagnostics-snapshot.md
 docs/concepts/folders-and-runs.md
 docs/concepts/execution-modes.md
 pr73_stabilization_report.md          # truncation / Manual D UI / folder denial
