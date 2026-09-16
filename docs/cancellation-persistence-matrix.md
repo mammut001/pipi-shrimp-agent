@@ -32,7 +32,7 @@ in-memory DB mock (FK-aware), reuse #80 helpers. No SessionRuntime / queryLoop r
 
 ## Deferred
 
-- Full real SQLite crash/WAL kill matrix (process kill mid-commit) — still knife-1 residual / integration. FK reject covers post-delete late-save resurrection, not mid-WAL kill.
+- Mid-COMMIT WAL tear fault-injection still deferred. Soak knife 2 covers headless kill→hydrate→follow-up + DB reopen durability (`docs/soak-crash-reload.md`); FK reject covers post-delete late-save resurrection.
 - Full `useChatStore` E2E with live `stopGeneration` + `selectSession` + `deleteSession` under Tauri invoke (covered partially by `chatStoreSendMessage.test.ts` cancel cases).
 - Persisting ephemeral `__TOOL_RESULT__` transport rows as durable rows.
 - Pre-marker cancel notices (without `cancelled_tool_call_ids`) cannot scrub late successes by ID after reload — new cancels embed the marker.

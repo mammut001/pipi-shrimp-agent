@@ -2523,6 +2523,123 @@ mod tests {
         });
     }
 
+    /// Soak knife 2: mid-tool orphan rows must survive process-restart stand-in
+    /// (drop global connection + reopen same data dir). Sibling session intact.
+    /// Does not fault-inject mid-COMMIT WAL tear — that remains deferred.
+    #[test]
+    fn orphan_messages_survive_db_reopen_after_mid_tool() {
+        with_temp_data_dir(|_temp_dir| {
+            {
+                let mut guard = DATABASE.lock().expect("db lock");
+                *guard = None;
+            }
+            init_database().expect("init database");
+
+            let session_a = DbSession {
+                id: "sess-crash-a".to_string(),
+                title: "crash A".to_string(),
+                created_at: 1,
+                updated_at: 1,
+                cwd: None,
+                project_id: None,
+                model: None,
+                work_dir: None,
+                working_files: None,
+                permission_mode: None,
+                project_dir: None,
+                pipi_output_dir: None,
+                execution_mode: None,
+            };
+            let session_b = DbSession {
+                id: "sess-crash-b".to_string(),
+                title: "crash B".to_string(),
+                created_at: 1,
+                updated_at: 1,
+                cwd: None,
+                project_id: None,
+                model: None,
+                work_dir: None,
+                working_files: None,
+                permission_mode: None,
+                project_dir: None,
+                pipi_output_dir: None,
+                execution_mode: None,
+            };
+            save_session(&session_a).expect("save A");
+            save_session(&session_b).expect("save B");
+
+            // Mid-tool orphan on A (tool_calls, no matching result row).
+            let orphan_a = DbMessage {
+                id: "a-assistant-orphan".to_string(),
+                session_id: "sess-crash-a".to_string(),
+                role: "assistant".to_string(),
+                content: "calling barrier".to_string(),
+                reasoning: None,
+                attachments: None,
+                artifacts: None,
+                tool_calls: Some(
+                    r#"[{"id":"tc-crash-a","name":"test_barrier_tool","arguments":"{}"}]"#
+                        .to_string(),
+                ),
+                token_usage: None,
+                created_at: 2,
+            };
+            let clean_b = DbMessage {
+                id: "b-user".to_string(),
+                session_id: "sess-crash-b".to_string(),
+                role: "user".to_string(),
+                content: "hello B".to_string(),
+                reasoning: None,
+                attachments: None,
+                artifacts: None,
+                tool_calls: None,
+                token_usage: None,
+                created_at: 2,
+            };
+            save_messages(&[orphan_a.clone(), clean_b.clone()]).expect("save mid-tool batch");
+
+            let before_a = get_messages_for_session("sess-crash-a").expect("load A before");
+            assert_eq!(before_a.len(), 1);
+            assert!(
+                before_a[0]
+                    .tool_calls
+                    .as_ref()
+                    .map(|t| t.contains("tc-crash-a"))
+                    .unwrap_or(false),
+                "A must persist orphan tool_calls before reopen"
+            );
+
+            // Simulate process death: drop connection (do not delete DB files).
+            {
+                let mut guard = DATABASE.lock().expect("db lock");
+                *guard = None;
+            }
+
+            // Reopen same PIPI_SHRIMP_DATA_DIR (WAL recovery / restart stand-in).
+            init_database().expect("re-init database after crash");
+
+            let after_a = get_messages_for_session("sess-crash-a").expect("load A after reopen");
+            assert_eq!(after_a.len(), 1, "A orphan row must survive reopen");
+            assert_eq!(after_a[0].id, "a-assistant-orphan");
+            assert!(
+                after_a[0]
+                    .tool_calls
+                    .as_ref()
+                    .map(|t| t.contains("tc-crash-a") && t.contains("test_barrier_tool"))
+                    .unwrap_or(false),
+                "A tool_calls payload must survive reopen for hydrate to terminalize"
+            );
+
+            let after_b = get_messages_for_session("sess-crash-b").expect("load B after reopen");
+            assert_eq!(after_b.len(), 1);
+            assert_eq!(after_b[0].content, "hello B");
+            assert!(
+                after_b[0].tool_calls.is_none(),
+                "B must not gain A's orphan tool_calls across reopen"
+            );
+        });
+    }
+
     #[test]
     fn delete_session_then_late_save_messages_does_not_resurrect() {
         with_temp_data_dir(|_| {

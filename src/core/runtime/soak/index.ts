@@ -1,5 +1,5 @@
 /**
- * Soak runner + failure bundle (GPT soak P0 knife 1).
+ * Soak runner + failure bundle (knife 1) + crash/reload soak (knife 2).
  * @see docs/soak-runner.md
  */
 export {
@@ -24,3 +24,17 @@ export type {
   SoakRunSummary,
   FailureBundlePaths,
 } from './types';
+
+export {
+  runCrashReloadSoak,
+  runCrashReloadSoakIteration,
+  resolveCrashReloadSoakIterations,
+} from './crashReloadSoak';
+export type {
+  CrashReloadInvariantName,
+  CrashReloadAssertionFailure,
+  CrashReloadIterationResult,
+  CrashReloadRunOptions,
+  CrashReloadRunSummary,
+} from './types';
+

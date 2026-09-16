@@ -111,3 +111,8 @@ Prefer `--testPathPatterns` (plural) or a direct file path. See scout notes on J
 - [`runtime-diagnostics-snapshot.md`](./runtime-diagnostics-snapshot.md)
 - [`runtime-trace-sink.md`](./runtime-trace-sink.md)
 - [`soak-polish-plan.md`](./soak-polish-plan.md)
+
+## Next knife
+
+- [`soak-crash-reload.md`](./soak-crash-reload.md) — knife 2: kill mid-tool → reopen → hydrate → follow-up
+
