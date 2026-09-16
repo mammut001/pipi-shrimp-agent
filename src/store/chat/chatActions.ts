@@ -709,6 +709,9 @@ export function createChatActionMethods({
           detail: content.trim().slice(0, 240),
         });
 
+        // Gate: never ship outbound API history with dangling tool_calls from a
+        // stopped prior turn (Stop may still be awaiting native cancel).
+        await scrubDanglingToolCalls(activeSessionId, set, get);
         const messages = buildApiMessages(currentMessages());
         if (messages.length === 0) {
           setError('Message content is empty. Cannot send.');
@@ -1394,6 +1397,8 @@ export function createChatActionMethods({
 
       if (owningSessionId) {
         const stopHandle = getSessionHandle(owningSessionId);
+        // Re-validate epoch after EVERY await before further mutations.
+        const stillOwnsStoppedTurn = () => getChatSessionTurnEpoch(owningSessionId) === stopEpoch;
         for (const tool of unresolvedTools) {
           stopHandle.emitTraceEvent('tool_cancel_requested', {
             toolCallId: tool.toolCallId,
@@ -1409,6 +1414,14 @@ export function createChatActionMethods({
             });
           }
         }
+
+        // Eager scrub BEFORE slow native cancel so an immediate same-session
+        // Send cannot build API history with dangling tool_calls from this turn.
+        // In-memory rewrite runs synchronously inside scrub; DB awaits follow.
+        if (stillOwnsStoppedTurn()) {
+          await scrubDanglingToolCalls(owningSessionId, set, get);
+        }
+
         await Promise.all(
           executionIds.map(async (executionId) => {
             try {
@@ -1437,11 +1450,9 @@ export function createChatActionMethods({
           }),
         );
 
-        // If a new same-session turn started after optimistic busy clear,
-        // skip session-mutating cancel completion (handle.cancel without
-        // turnId, failUnresolved, scrub, stop_subprocess, pending wipe).
-        // Re-validate epoch after EVERY await before further mutations.
-        const stillOwnsStoppedTurn = () => getChatSessionTurnEpoch(owningSessionId) === stopEpoch;
+        // If a new same-session turn started after optimistic busy clear /
+        // scrub, skip session-mutating cancel completion (handle.cancel,
+        // failUnresolved, notice, stop_subprocess, pending wipe).
         if (stillOwnsStoppedTurn()) {
           useUIStore.getState().clearAllPermissions();
           getSessionHandle(owningSessionId).cancel('Cancelled by user');
@@ -1452,57 +1463,54 @@ export function createChatActionMethods({
             (_toolCallId, label) => `Error: ${label} cancelled by user`,
             'cancelled',
           );
-          await scrubDanglingToolCalls(owningSessionId, set, get);
-          // Newer turn may have started during scrub — re-check before mutations.
+          // Bind removal to the stopped turn's assistant id only (never last-message).
+          removeEmptyAssistantPlaceholderById(set, owningSessionId, stoppedAssistantMessageId);
+          if (unresolvedTools.length > 0) {
+            const toolNames = unresolvedTools.map((tool) => tool.label);
+            const toolCallIds = unresolvedTools.map((tool) => tool.toolCallId);
+            await get().addMessageToSession(
+              owningSessionId,
+              createMessage(
+                'assistant',
+                buildToolCancelNoticeContent(toolNames, 'user_cancel', toolCallIds),
+              ),
+              { expectedTurnEpoch: stopEpoch },
+            );
+          }
+
           if (stillOwnsStoppedTurn()) {
-            // Bind removal to the stopped turn's assistant id only (never last-message).
-            removeEmptyAssistantPlaceholderById(set, owningSessionId, stoppedAssistantMessageId);
-            if (unresolvedTools.length > 0) {
-              const toolNames = unresolvedTools.map((tool) => tool.label);
-              const toolCallIds = unresolvedTools.map((tool) => tool.toolCallId);
-              await get().addMessageToSession(
+            try {
+              await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
+            } catch (error) {
+              console.error('Failed to stop subprocess:', error);
+              if (stillOwnsStoppedTurn()) {
+                setError(`Failed to stop generation: ${formatError(error)}`);
+              }
+            }
+          }
+
+          if (stillOwnsStoppedTurn()) {
+            const flushed = flushBuffer({
+              content: finalContent,
+              reasoning: finalReasoning,
+              statusMessages: [],
+            });
+
+            if ((flushed.content || flushed.reasoning) && stoppedAssistantMessageId) {
+              await get().updateLastMessage(
+                flushed.content,
+                undefined,
+                flushed.reasoning,
+                undefined,
                 owningSessionId,
-                createMessage(
-                  'assistant',
-                  buildToolCancelNoticeContent(toolNames, 'user_cancel', toolCallIds),
-                ),
+                stoppedAssistantMessageId,
               );
             }
+          }
 
-            if (stillOwnsStoppedTurn()) {
-              try {
-                await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
-              } catch (error) {
-                console.error('Failed to stop subprocess:', error);
-                if (stillOwnsStoppedTurn()) {
-                  setError(`Failed to stop generation: ${formatError(error)}`);
-                }
-              }
-            }
-
-            if (stillOwnsStoppedTurn()) {
-              const flushed = flushBuffer({
-                content: finalContent,
-                reasoning: finalReasoning,
-                statusMessages: [],
-              });
-
-              if ((flushed.content || flushed.reasoning) && stoppedAssistantMessageId) {
-                await get().updateLastMessage(
-                  flushed.content,
-                  undefined,
-                  flushed.reasoning,
-                  undefined,
-                  owningSessionId,
-                  stoppedAssistantMessageId,
-                );
-              }
-            }
-
-            // Re-assert idle busy flags only while this Stop still owns the turn.
-            if (stillOwnsStoppedTurn()) {
-              set({ pendingToolCalls: 0, pendingToolResults: [] });
-            }
+          // Re-assert idle busy flags only while this Stop still owns the turn.
+          if (stillOwnsStoppedTurn()) {
+            set({ pendingToolCalls: 0, pendingToolResults: [] });
           }
         }
       } else {
@@ -1593,13 +1601,40 @@ export function createChatActionMethods({
       }));
     },
 
-    addMessageToSession: async (sessionId: string, message: Message) => {
+    addMessageToSession: async (
+      sessionId: string,
+      message: Message,
+      options?: { expectedTurnEpoch?: number },
+    ) => {
+      const expectedEpoch = options?.expectedTurnEpoch;
+      const epochMatches = () => (
+        typeof expectedEpoch !== 'number'
+        || getChatSessionTurnEpoch(sessionId) === expectedEpoch
+      );
+
+      // Discard before DB if the turn already moved on (e.g. Stop→Send race).
+      if (!epochMatches()) {
+        return;
+      }
+
       if (shouldPersistMessage(message)) {
         try {
           await safeInvoke('db_save_message', { message: messageToDb(message, sessionId) });
         } catch (error) {
           console.warn('[addMessageToSession] DB persist failed:', error);
         }
+      }
+
+      // After DB await: re-check epoch before local list mutation. If a newer
+      // same-session turn started mid-persist, drop the stale notice locally
+      // and best-effort delete the just-written DB row.
+      if (!epochMatches()) {
+        try {
+          await safeInvoke('db_delete_message', { messageId: message.id }, { silent: true });
+        } catch (error) {
+          console.warn('[addMessageToSession] stale message DB delete failed:', error);
+        }
+        return;
       }
 
       set((state) => ({

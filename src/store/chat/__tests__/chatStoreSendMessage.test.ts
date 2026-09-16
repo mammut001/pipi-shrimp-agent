@@ -1988,7 +1988,7 @@ describe('chatStore sendMessage integration', () => {
         return { cancelled: true, status: 'cancelled' };
       }
       if (command === 'db_save_message') {
-        // scrubDanglingToolCalls persists cleaned assistants after the first epoch check.
+        // Eager scrub persists cleaned assistants BEFORE native cancel settles.
         scrubSaveHolds += 1;
         await scrubSaveGate;
         return undefined;
@@ -2004,8 +2004,7 @@ describe('chatStore sendMessage integration', () => {
     await Promise.resolve();
     expect(useChatStore.getState().isStreaming).toBe(false);
 
-    // Let cancel settle so cancel-completion enters the non-stale block and hits scrub await.
-    releaseCancel();
+    // Eager scrub runs before cancel — wait for scrub DB await without releasing cancel.
     for (let i = 0; i < 80 && scrubSaveHolds === 0; i += 1) {
       await Promise.resolve();
     }
@@ -2047,11 +2046,10 @@ describe('chatStore sendMessage integration', () => {
       )),
     }));
 
-    // handle.cancel (pre-scrub, epoch still matched) may already have invoked
-    // stop_subprocess for the OLD turn — that is fine. After epoch bump, cancel
-    // completion must not call stop_subprocess again or wipe the new turn.
+    // After epoch bump, cancel completion must not call stop_subprocess or wipe the new turn.
     const stopCallsBeforeRelease = stopSubprocessCalls.length;
     releaseScrubSave();
+    releaseCancel();
     await stopPromise;
 
     expect(stopSubprocessCalls.length).toBe(stopCallsBeforeRelease);
@@ -2239,5 +2237,186 @@ describe('chatStore sendMessage integration', () => {
       )),
     ).toBe(false);
   });
+
+  it('GPT FIX FIRST #6: Stop(slow cancel) → immediate Send must not ship dangling tool_calls in outbound API messages', async () => {
+    const oldAssistant = createMessage('assistant', 'calling tool');
+    oldAssistant.tool_calls = [{
+      id: 'tool-dangling',
+      name: 'execute_command',
+      arguments: '{"command":"sleep 30"}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'run a long tool'),
+        oldAssistant,
+      ],
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-dangling', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-dangling',
+      'execute_command',
+      'exec-dangling-slow',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+      streamingContent: 'calling tool',
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Immediate same-session send while native cancel is still gated.
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('fresh send mid-cancel');
+    for (let i = 0; i < 100 && mockRunChatTurn.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(mockRunChatTurn.mock.calls.length).toBeGreaterThan(0);
+
+    const outbound = mockRunChatTurn.mock.calls[0]?.[1] as Array<{
+      role?: string;
+      content?: string;
+      tool_calls?: unknown[];
+    }>;
+    expect(Array.isArray(outbound)).toBe(true);
+    expect(outbound.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
+    expect(outbound.some((message) => (
+      typeof message.content === 'string' && message.content.includes('fresh send mid-cancel')
+    ))).toBe(true);
+
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+  });
+
+  it('GPT FIX FIRST #6: addMessageToSession must discard cancel notice after DB await if epoch moved', async () => {
+    const oldAssistant = createMessage('assistant', '');
+    oldAssistant.tool_calls = [{
+      id: 'tool-notice-race',
+      name: 'execute_command',
+      arguments: '{}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'old for notice race'),
+        oldAssistant,
+      ],
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-notice-race', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-notice-race',
+      'execute_command',
+      'exec-notice-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseNoticeSave!: () => void;
+    const noticeSaveGate = new Promise<void>((resolve) => {
+      releaseNoticeSave = resolve;
+    });
+    let noticeSaveHolds = 0;
+    const deletedMessageIds: string[] = [];
+
+    mockInvoke.mockImplementation(async (command: unknown, args?: any) => {
+      if (command === 'cancel_tool_execution') {
+        return { cancelled: true, status: 'cancelled' };
+      }
+      if (command === 'db_save_message') {
+        const content = args?.message?.content;
+        if (typeof content === 'string' && content.includes('Tool run cancelled by user')) {
+          noticeSaveHolds += 1;
+          await noticeSaveGate;
+        }
+        return undefined;
+      }
+      if (command === 'db_delete_message') {
+        deletedMessageIds.push(String(args?.messageId ?? ''));
+        return undefined;
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    for (let i = 0; i < 120 && noticeSaveHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(noticeSaveHolds).toBeGreaterThan(0);
+
+    // Newer turn starts while cancel-notice DB persist is still awaiting.
+    bumpChatSessionTurnEpoch('session-1');
+    const newUser = createMessage('user', 'new turn during notice persist');
+    const newAssistant = createMessage('assistant', 'new-turn-body');
+    useChatStore.setState((state) => ({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 0,
+      sessions: state.sessions.map((session) => (
+        session.id === 'session-1'
+          ? {
+              ...session,
+              messages: [...session.messages, newUser, newAssistant],
+            }
+          : session
+      )),
+    }));
+
+    releaseNoticeSave();
+    await stopPromise;
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant'
+      && typeof m.content === 'string'
+      && m.content.includes('Tool run cancelled by user')
+    ))).toBe(false);
+    expect(session.messages.some((m) => m.id === newUser.id)).toBe(true);
+    expect(session.messages.some((m) => m.id === newAssistant.id)).toBe(true);
+    expect(deletedMessageIds.length).toBeGreaterThan(0);
+  });
+
 
 });
