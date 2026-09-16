@@ -59,6 +59,26 @@ Build a **deterministic soak runner** that loops the Manual D style scenario and
 - Full Playwright E2E platform
 - Fault-injected mid-WAL tear during COMMIT
 
+
+## Knife 3: Stop + session-switch product feel
+
+**PR target:** UI ≤1s cancelled feel on Stop; A stop does not touch B; Stop visible during stream / long tools.
+
+### Implement
+
+1. Optimistic `stopGeneration` UI clear before native `cancel_tool_execution` awaits
+2. `shouldShowStopControl` — Stop when streaming **or** pending tools/results (`ChatInput`)
+3. Session-switch busy binding — selected session only (`selectSession` + tool-runtime sync)
+4. Jest: optimistic clear under slow cancel; A≠B isolation; selector visibility
+
+Docs: `docs/stop-session-switch-polish.md`
+
+### Intentionally not this knife
+
+- Intermediate `cancelling` step status / terminal vocabulary unify (unless already planned elsewhere)
+- Truncated replies / Project Folder / Danger affordance (scout leftovers)
+- Full Playwright E2E
+
 ## Later polish leftovers (not this knife)
 
 From scout (`docs/soak-polish-scout.md`):
@@ -66,7 +86,7 @@ From scout (`docs/soak-polish-scout.md`):
 - Truncated replies / provider stream finalize
 - Project Folder binding UX (GTK dialog / unbound denial)
 - Danger mode defaults affordance
-- Stop button visibility during short streams
+- Stop button visibility during short streams — **addressed in knife 3** (`shouldShowStopControl`)
 
 ## Entry points (paths only)
 

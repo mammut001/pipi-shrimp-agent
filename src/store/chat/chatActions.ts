@@ -1207,12 +1207,12 @@ export function createChatActionMethods({
         isStreaming,
         streamingContent,
         streamingReasoning,
-        setStreaming,
         currentSessionId,
         streamingSessionId,
         setError,
         pendingToolCalls,
         pendingToolResults,
+        streamingTimeoutId,
       } = get();
       if (!isStreaming && pendingToolCalls === 0 && pendingToolResults.length === 0) {
         return;
@@ -1229,10 +1229,35 @@ export function createChatActionMethods({
 
       abortChatTurn(owningSessionId);
       requestChatGenerationCancel(owningSessionId);
+
+      // Snapshot unresolved tools + executionIds BEFORE failUnresolved clears them.
+      const unresolvedTools = owningSessionId
+        ? listUnresolvedSessionTools(owningSessionId)
+        : [];
+      const executionIds = owningSessionId
+        ? listCancellableSessionExecutionIds(owningSessionId)
+        : [];
+
+      // Soak knife 3 — optimistic UI: cancelled feel ≤1s. Clear Stop/busy
+      // before awaiting native cancel_tool_execution (can be slow). Capture
+      // stream text first; only the owning session is cancelled (A≠B).
+      const finalContent = currentStreamingBuffer || streamingContent;
+      const finalReasoning = streamingReasoning;
+      currentStreamingBuffer = '';
+      if (streamingTimeoutId) {
+        clearTimeout(streamingTimeoutId);
+      }
+      set({
+        isStreaming: false,
+        streamingTimeoutId: null,
+        pendingToolCalls: 0,
+        pendingToolResults: [],
+        streamingContent: '',
+        streamingReasoning: '',
+        streamingSessionId: null,
+      });
+
       if (owningSessionId) {
-        // Snapshot unresolved tools + executionIds BEFORE failUnresolved clears them.
-        const unresolvedTools = listUnresolvedSessionTools(owningSessionId);
-        const executionIds = listCancellableSessionExecutionIds(owningSessionId);
         const stopHandle = getSessionHandle(owningSessionId);
         for (const tool of unresolvedTools) {
           stopHandle.emitTraceEvent('tool_cancel_requested', {
@@ -1319,20 +1344,18 @@ export function createChatActionMethods({
         setError(`Failed to stop generation: ${formatError(error)}`);
       }
 
-      const finalContent = currentStreamingBuffer || streamingContent;
       const flushed = flushBuffer({
         content: finalContent,
-        reasoning: streamingReasoning,
+        reasoning: finalReasoning,
         statusMessages: [],
       });
-      currentStreamingBuffer = '';
-      set({ streamingContent: '', streamingReasoning: '' });
 
       if (owningSessionId && (flushed.content || flushed.reasoning)) {
         await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId);
       }
 
-      setStreaming(false);
+      // Re-assert idle busy flags after durable cancel work (sync may have
+      // briefly restored pending counters while tools were failing).
       set({ pendingToolCalls: 0, pendingToolResults: [] });
       // AUDIT-FIX [audit-1#2] — Look up the task id for the session that
       // actually owns this stream (the one we just stopped). Fall back to

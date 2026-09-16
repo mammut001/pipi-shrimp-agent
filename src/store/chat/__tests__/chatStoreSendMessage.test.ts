@@ -970,4 +970,189 @@ describe('chatStore sendMessage integration', () => {
     expect(useChatStore.getState().currentSessionId).toBe('session-2');
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
+
+  it('soak knife 3: Stop clears busy UI before slow native cancel resolves (≤1s feel)', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-slow', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-slow',
+      'execute_command',
+      'exec-slow-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    // Optimistic UI must clear before native cancel finishes.
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+
+    releaseCancel();
+    await stopPromise;
+
+    expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-slow-1' });
+    expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it('soak knife 3: Stop on A does not mutate B history or tool runtime', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const historyB = [
+      {
+        id: 'b-u0',
+        role: 'user' as const,
+        content: 'hello B',
+        timestamp: 1,
+      },
+      {
+        id: 'b-a0',
+        role: 'assistant' as const,
+        content: 'B is fine',
+        timestamp: 2,
+      },
+    ];
+    const current = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...current,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: historyB,
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+          workDir: '/tmp/pipi/session-B',
+          projectDir: '/tmp/pipi/session-B',
+        },
+      ],
+    });
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-a', name: 'read_file' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-a',
+      'read_file',
+      'exec-a-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    seedSessionToolRuntime(
+      'session-B',
+      [{ id: 'tool-b', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-B',
+      'tool-b',
+      'execute_command',
+      'exec-b-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+
+    useChatStore.setState({
+      currentSessionId: 'session-1',
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    mockInvoke.mockResolvedValue({ cancelled: true, status: 'cancelled' });
+    await useChatStore.getState().stopGeneration();
+
+    const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    const sessionB = useChatStore.getState().sessions.find((s) => s.id === 'session-B')!;
+    expect(sessionA.messages.some((m) => (
+      typeof m.content === 'string' && m.content.includes('Tool run cancelled by user')
+    ))).toBe(true);
+    expect(sessionB.messages).toEqual(historyB);
+    expect(sessionB.messages.some((m) => (
+      typeof m.content === 'string' && m.content.includes('cancelled by user')
+    ))).toBe(false);
+
+    // Native cancel only for A's execution id
+    const cancelCalls = mockInvoke.mock.calls.filter((call) => call[0] === 'cancel_tool_execution');
+    expect(cancelCalls).toEqual([
+      ['cancel_tool_execution', { executionId: 'exec-a-1' }],
+    ]);
+  });
+
+  it('soak knife 3: selectSession rebinds busy flags to the selected session only', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const current = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...current,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 2,
+      pendingToolResults: [{ toolCallId: 'x', result: '' }],
+    });
+
+    useChatStore.getState().selectSession('session-B');
+
+    expect(useChatStore.getState().currentSessionId).toBe('session-B');
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(useChatStore.getState().pendingToolResults).toEqual([]);
+  });
+
 });
