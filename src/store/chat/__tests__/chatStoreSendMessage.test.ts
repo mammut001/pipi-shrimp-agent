@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, jest } from '@jest/globals';
+import { describe, expect, it, beforeEach, afterEach, jest } from '@jest/globals';
 import type { Session } from '../../../types/chat';
 
 const mockInvoke = jest.fn<(...args: unknown[]) => Promise<unknown>>();
@@ -149,11 +149,27 @@ jest.mock('../../../i18n', () => ({
 }));
 
 import { useChatStore } from '../index';
+import { createMessage } from '../../../types/chat';
 import {
+  listCancellableSessionExecutionIds,
+  listUnresolvedSessionTools,
   resetAllSessionToolRuntime,
   setSessionToolExecutionId,
   seedSessionToolRuntime,
+  clearSessionToolRuntime,
 } from '../toolRuntimeState';
+import {
+  bumpChatSessionTurnEpoch,
+  consumeChatGenerationCancel,
+  getChatSessionTurnEpoch,
+  requestChatGenerationCancel,
+  resetChatSessionTurnEpochForTests,
+} from '../chatStreaming';
+import {
+  getCurrentStreamingBufferForTests,
+  resetActiveChatDiagnosticsTaskIdsForTests,
+} from '../chatActions';
+import { useTaskRegistryStore } from '../../taskRegistryStore';
 
 async function* streamOneAssistantReply() {
   yield { type: 'text_delta' as const, content: 'Hello ' };
@@ -269,6 +285,9 @@ describe('chatStore sendMessage integration', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     resetAllSessionToolRuntime();
+    resetChatSessionTurnEpochForTests();
+    resetActiveChatDiagnosticsTaskIdsForTests();
+    useTaskRegistryStore.getState().clearTasks();
     mockInvoke.mockReset();
     mockRunChatTurn.mockReset();
     mockAddNotification.mockReset();
@@ -970,4 +989,1629 @@ describe('chatStore sendMessage integration', () => {
     expect(useChatStore.getState().currentSessionId).toBe('session-2');
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
+
+  it('soak knife 3: Stop clears busy UI before slow native cancel resolves (≤1s feel)', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-slow', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-slow',
+      'execute_command',
+      'exec-slow-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    // Optimistic UI must clear before native cancel finishes.
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+
+    releaseCancel();
+    await stopPromise;
+
+    expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-slow-1' });
+    expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it('soak knife 3: Stop on A does not mutate B history or tool runtime', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const historyB = [
+      {
+        id: 'b-u0',
+        role: 'user' as const,
+        content: 'hello B',
+        timestamp: 1,
+      },
+      {
+        id: 'b-a0',
+        role: 'assistant' as const,
+        content: 'B is fine',
+        timestamp: 2,
+      },
+    ];
+    const current = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...current,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: historyB,
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+          workDir: '/tmp/pipi/session-B',
+          projectDir: '/tmp/pipi/session-B',
+        },
+      ],
+    });
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-a', name: 'read_file' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-a',
+      'read_file',
+      'exec-a-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    seedSessionToolRuntime(
+      'session-B',
+      [{ id: 'tool-b', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-B',
+      'tool-b',
+      'execute_command',
+      'exec-b-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+
+    useChatStore.setState({
+      currentSessionId: 'session-1',
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    mockInvoke.mockResolvedValue({ cancelled: true, status: 'cancelled' });
+    await useChatStore.getState().stopGeneration();
+
+    const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    const sessionB = useChatStore.getState().sessions.find((s) => s.id === 'session-B')!;
+    expect(sessionA.messages.some((m) => (
+      typeof m.content === 'string' && m.content.includes('Tool run cancelled by user')
+    ))).toBe(true);
+    expect(sessionB.messages).toEqual(historyB);
+    expect(sessionB.messages.some((m) => (
+      typeof m.content === 'string' && m.content.includes('cancelled by user')
+    ))).toBe(false);
+
+    // Native cancel only for A's execution id
+    const cancelCalls = mockInvoke.mock.calls.filter((call) => call[0] === 'cancel_tool_execution');
+    expect(cancelCalls).toEqual([
+      ['cancel_tool_execution', { executionId: 'exec-a-1' }],
+    ]);
+
+    // B's in-flight tool runtime remains complete (not just history untouched).
+    expect(listUnresolvedSessionTools('session-B')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-b',
+        label: 'execute_command',
+        executionId: 'exec-b-1',
+      }),
+    ]);
+    expect(listCancellableSessionExecutionIds('session-B')).toEqual(['exec-b-1']);
+    expect(listUnresolvedSessionTools('session-1')).toEqual([]);
+  });
+
+  it('soak knife 3: selectSession rebinds busy flags to the selected session only', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const current = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...current,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 2,
+      pendingToolResults: [{ toolCallId: 'x', result: '' }],
+    });
+
+    // B already has in-flight tools while A is selected — switch must rebind
+    // global busy to B's runtime, not merely clear to idle.
+    seedSessionToolRuntime(
+      'session-B',
+      [{ id: 'tool-b', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-B',
+      'tool-b',
+      'execute_command',
+      'exec-b-rebind',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+
+    useChatStore.getState().selectSession('session-B');
+
+    expect(useChatStore.getState().currentSessionId).toBe('session-B');
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().pendingToolResults).toEqual([]);
+    expect(listUnresolvedSessionTools('session-B')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-b',
+        executionId: 'exec-b-rebind',
+      }),
+    ]);
+  });
+
+  it('soak knife 3: same-session new-turn race — stale Stop completion does not wipe post-Stop turn', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-old-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Simulate sendMessage starting a new same-session turn while cancel settles.
+    bumpChatSessionTurnEpoch('session-1');
+    clearSessionToolRuntime('session-1', useChatStore.setState, useChatStore.getState);
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-new', name: 'read_file' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-new',
+      'read_file',
+      'exec-new-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    releaseCancel();
+    await stopPromise;
+
+    expect(listUnresolvedSessionTools('session-1')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-new',
+        label: 'read_file',
+        executionId: 'exec-new-1',
+      }),
+    ]);
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+  });
+
+  it('soak knife 3: concurrent old-send → Stop(slow cancel) → new-send does not wipe new turn', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-turn ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'fresh-after-stop' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old message');
+    // isStreaming flips before createChatTurnAbortController / runChatTurn — wait
+    // until the old turn owns the abort controller + engine, or Stop→Send during
+    // the post-scrub window correctly aborts the stale path (call-order mocks break).
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
+      await Promise.resolve();
+    }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-old-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    expect(useTaskRegistryStore.getState().tasks.some((t) => t.source === 'session:session-1')).toBe(true);
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Distinct Date.now() for the new diagnostics task id under fake timers.
+    jest.advanceTimersByTime(25);
+
+    const sendNew = useChatStore.getState().sendMessage('new message after stop');
+    for (let i = 0; i < 80 && useChatStore.getState().sessions[0]?.messages.filter((m) => m.role === 'user').length < 2; i += 1) {
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().sessions[0]?.messages.filter((m) => m.role === 'user')).toHaveLength(2);
+
+    // Old send's cancel catch runs after new send bumped the epoch.
+    releaseOldStream('abort');
+    await sendOld;
+
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    const userContents = session.messages.filter((m) => m.role === 'user').map((m) => m.content);
+    expect(userContents).toEqual(expect.arrayContaining(['old message', 'new message after stop']));
+    expect(useChatStore.getState().error).toBeNull();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('fresh-after-stop')
+    ))).toBe(true);
+
+    const newTask = useTaskRegistryStore.getState().tasks.find((t) => (
+      t.source === 'session:session-1' && (t.title ?? '').includes('new message after stop')
+    ));
+    expect(newTask).toBeDefined();
+    expect(newTask!.state).toBe('completed');
+  });
+
+  it('soak knife 3: Stop with null diagnostics snapshot must not cancel newer turn task', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    // Streaming/tools without a registered diagnostics binding (snapshot null).
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-orphan', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-orphan',
+      'execute_command',
+      'exec-orphan-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(5);
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+    const sendNew = useChatStore.getState().sendMessage('fresh turn mid-cancel');
+    for (let i = 0; i < 40 && !useChatStore.getState().isStreaming && useTaskRegistryStore.getState().tasks.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+
+    const midTasks = useTaskRegistryStore.getState().tasks.filter((t) => t.source === 'session:session-1');
+    expect(midTasks.length).toBeGreaterThan(0);
+    const newTaskId = midTasks[midTasks.length - 1]!.id;
+
+    releaseCancel();
+    await stopPromise;
+    await sendNew;
+
+    const after = useTaskRegistryStore.getState().tasks.find((t) => t.id === newTaskId);
+    expect(after).toBeDefined();
+    expect(after!.state).toBe('completed');
+    expect(after!.state).not.toBe('cancelled');
+  });
+
+  it('GPT FIX: stale cancel catch must not clear newer turn streaming buffer', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-stale ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'NEW-TURN-BUFFER-KEEP' };
+        // Hold mid-stream so buffer is populated while old cancel catch runs.
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for buffer race');
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
+      await Promise.resolve();
+    }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-buffer-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for buffer race');
+    for (let i = 0; i < 80; i += 1) {
+      if (getCurrentStreamingBufferForTests().includes('NEW-TURN-BUFFER-KEEP')) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-BUFFER-KEEP');
+
+    // Stale cancelled turn's catch runs while new turn owns the buffer.
+    releaseOldStream('abort');
+    await sendOld;
+
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-BUFFER-KEEP');
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('NEW-TURN-BUFFER-KEEP')
+    ))).toBe(true);
+  });
+
+  it('GPT FIX: stale send finally must not clear newer turn cancel marker', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-cancel-marker ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'new-still-streaming' };
+        // Hold AFTER first chunk was pulled+consume-checked, so a later
+        // requestChatGenerationCancel stays parked for the finally proof.
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for cancel-marker race');
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
+      await Promise.resolve();
+    }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-cancel-marker-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for cancel-marker race');
+    // Wait until new turn has processed its first delta (consume check already ran).
+    for (let i = 0; i < 80; i += 1) {
+      if (getCurrentStreamingBufferForTests().includes('new-still-streaming')) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(getCurrentStreamingBufferForTests()).toContain('new-still-streaming');
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    // New turn is mid-stream past its consume check: Stop marker belongs to it.
+    requestChatGenerationCancel('session-1');
+
+    // Stale old send settles; unguarded finally would clear the new turn's marker.
+    releaseOldStream('abort');
+    await sendOld;
+
+    // Marker must still be present for the new turn to observe Stop.
+    expect(consumeChatGenerationCancel('session-1')).toBe(true);
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+  });
+
+  it('GPT FIX: stale real-error catch must not clear newer turn streaming/error/skill', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'error' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'error' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-real-error ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          if (mode === 'error') {
+            throw new Error('boom-stale-real-error');
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'NEW-TURN-KEEP-STREAMING' };
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for real-error race');
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
+      await Promise.resolve();
+    }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-real-error-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for real-error race');
+    for (let i = 0; i < 80; i += 1) {
+      if (getCurrentStreamingBufferForTests().includes('NEW-TURN-KEEP-STREAMING')) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-KEEP-STREAMING');
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().error).toBeNull();
+
+    mockSetActiveSkill.mockClear();
+
+    // Stale older turn fails with a real (non-cancel) error while newer turn owns UI.
+    releaseOldStream('error');
+    await sendOld;
+
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-KEEP-STREAMING');
+    expect(useChatStore.getState().error).toBeNull();
+    expect(mockSetActiveSkill).not.toHaveBeenCalledWith(null);
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('NEW-TURN-KEEP-STREAMING')
+    ))).toBe(true);
+  });
+
+  it('GPT FIX: stale real-error catch must not delete newer turn placeholder by last-message', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'error' | 'continue') => void;
+    const oldStreamGate = new Promise<'error' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+    let newAssistantPlaceholderId: string | null = null;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          // No deltas — leave old assistant as empty placeholder until error.
+          const mode = await oldStreamGate;
+          if (mode === 'error') {
+            throw new Error('boom-stale-placeholder');
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        // Capture the new turn's empty assistant id before any content arrives.
+        const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1');
+        const assistants = session?.messages.filter((m) => m.role === 'assistant') ?? [];
+        newAssistantPlaceholderId = assistants[assistants.length - 1]?.id ?? null;
+        // Hold with empty placeholder still present (no text_delta yet).
+        await newStreamGate;
+        yield { type: 'text_delta' as const, content: 'new-placeholder-survived' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for placeholder race');
+    for (let i = 0; i < 100; i += 1) {
+      const msgs = useChatStore.getState().sessions[0]?.messages ?? [];
+      if (runChatTurnCalls >= 1 && msgs.some((m) => m.role === 'assistant' && !m.content)) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
+    expect(useChatStore.getState().sessions[0]?.messages.some((m) => m.role === 'assistant')).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-placeholder-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1, isStreaming: true, streamingSessionId: 'session-1' });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for placeholder race');
+    for (let i = 0; i < 100; i += 1) {
+      if (newAssistantPlaceholderId) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(newAssistantPlaceholderId).toBeTruthy();
+    const placeholderIdAtRisk = newAssistantPlaceholderId!;
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => m.id === placeholderIdAtRisk),
+    ).toBe(true);
+
+    // Stale real-error path (unguarded last-message delete) would remove the
+    // newer turn's empty assistant placeholder that is currently last.
+    releaseOldStream('error');
+    await sendOld;
+
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => m.id === placeholderIdAtRisk),
+    ).toBe(true);
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('new-placeholder-survived')
+    ))).toBe(true);
+  });
+
+  it('GPT FIX: stopGeneration must re-check epoch after scrub await before pending wipe / stop_subprocess / placeholder', async () => {
+    const oldAssistant = createMessage('assistant', '');
+    oldAssistant.tool_calls = [{
+      id: 'tool-old',
+      name: 'execute_command',
+      arguments: '{}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'old stop mid-await'),
+        oldAssistant,
+      ],
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-old-mid-await',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+      streamingContent: 'old-partial',
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    let releaseScrubSave!: () => void;
+    const scrubSaveGate = new Promise<void>((resolve) => {
+      releaseScrubSave = resolve;
+    });
+    const stopSubprocessCalls: unknown[] = [];
+    let scrubSaveHolds = 0;
+
+    mockInvoke.mockImplementation(async (command: unknown, args?: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      if (command === 'db_save_message') {
+        // Eager scrub persists cleaned assistants BEFORE native cancel settles.
+        scrubSaveHolds += 1;
+        await scrubSaveGate;
+        return undefined;
+      }
+      if (command === 'stop_subprocess') {
+        stopSubprocessCalls.push(args);
+        return undefined;
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Eager scrub runs before cancel — wait for scrub DB await without releasing cancel.
+    for (let i = 0; i < 80 && scrubSaveHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(scrubSaveHolds).toBeGreaterThan(0);
+
+    // New same-session turn starts while scrub DB save is still awaiting.
+    bumpChatSessionTurnEpoch('session-1');
+    clearSessionToolRuntime('session-1', useChatStore.setState, useChatStore.getState);
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-new', name: 'read_file' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-new',
+      'read_file',
+      'exec-new-mid-await',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    const newPlaceholder = createMessage('assistant', '');
+    useChatStore.setState((state) => ({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+      sessions: state.sessions.map((session) => (
+        session.id === 'session-1'
+          ? {
+              ...session,
+              messages: [
+                ...session.messages,
+                createMessage('user', 'new after stop scrub'),
+                newPlaceholder,
+              ],
+            }
+          : session
+      )),
+    }));
+
+    // After epoch bump, cancel completion must not call stop_subprocess or wipe the new turn.
+    const stopCallsBeforeRelease = stopSubprocessCalls.length;
+    releaseScrubSave();
+    releaseCancel();
+    await stopPromise;
+
+    expect(stopSubprocessCalls.length).toBe(stopCallsBeforeRelease);
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(listUnresolvedSessionTools('session-1')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-new',
+        executionId: 'exec-new-mid-await',
+      }),
+    ]);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => m.id === newPlaceholder.id),
+    ).toBe(true);
+  });
+
+  it('GPT FIX: stale policy recovery must not show upgrade prompt', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: () => void;
+    const oldStreamGate = new Promise<void>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'policy-old ' };
+          await oldStreamGate;
+          throw new Error('Every tool call in the last round was rejected by the safety policy.');
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'new-turn-ok' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('读取 README 并总结');
+    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    const oldEpoch = getChatSessionTurnEpoch('session-1');
+
+    // Simulate a newer same-session turn owning the epoch before recovery runs.
+    bumpChatSessionTurnEpoch('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).not.toBe(oldEpoch);
+
+    mockShowExecutionModeUpgradePrompt.mockClear();
+    releaseOldStream();
+    await sendOld;
+
+    expect(mockShowExecutionModeUpgradePrompt).not.toHaveBeenCalled();
+  });
+
+  it('GPT FIX: policy recovery must not auto-retry after epoch moves during upgrade prompt', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releasePrompt!: (choice: 'agent' | 'cancel') => void;
+    const promptGate = new Promise<'agent' | 'cancel'>((resolve) => {
+      releasePrompt = resolve;
+    });
+    mockShowExecutionModeUpgradePrompt.mockImplementation(async () => promptGate);
+
+    let runChatTurnCalls = 0;
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'before-policy ' };
+          throw new Error('Every tool call in the last round was rejected by the safety policy.');
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'should-not-auto-retry' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('读取 README 并总结');
+    for (let i = 0; i < 80 && mockShowExecutionModeUpgradePrompt.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(mockShowExecutionModeUpgradePrompt).toHaveBeenCalled();
+    const epochAtPrompt = getChatSessionTurnEpoch('session-1');
+
+    // Newer turn starts while the user is staring at the upgrade dialog.
+    bumpChatSessionTurnEpoch('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).not.toBe(epochAtPrompt);
+    const runCallsBeforeRelease = runChatTurnCalls;
+
+    releasePrompt('agent');
+    await sendOld;
+
+    // Stale recovery must not kick off rollback+sendMessage retry.
+    expect(runChatTurnCalls).toBe(runCallsBeforeRelease);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => (
+        typeof m.content === 'string' && m.content.includes('should-not-auto-retry')
+      )),
+    ).toBe(false);
+  });
+
+  it('GPT FIX: policy recovery must not auto-retry after epoch moves during rollback await', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    mockShowExecutionModeUpgradePrompt.mockResolvedValue('agent');
+
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    let deleteHolds = 0;
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'db_delete_message') {
+        deleteHolds += 1;
+        await deleteGate;
+        return undefined;
+      }
+      return undefined;
+    });
+
+    let runChatTurnCalls = 0;
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'before-rollback-race ' };
+          throw new Error('Every tool call in the last round was rejected by the safety policy.');
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'extra-retry-should-not-run' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('读取 README 并总结');
+    for (let i = 0; i < 120 && deleteHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(deleteHolds).toBeGreaterThan(0);
+    expect(mockShowExecutionModeUpgradePrompt).toHaveBeenCalled();
+
+    const epochAtRollback = getChatSessionTurnEpoch('session-1');
+    bumpChatSessionTurnEpoch('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).not.toBe(epochAtRollback);
+    const runCallsAtRollback = runChatTurnCalls;
+
+    releaseDelete();
+    await sendOld;
+
+    expect(runChatTurnCalls).toBe(runCallsAtRollback);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => (
+        typeof m.content === 'string' && m.content.includes('extra-retry-should-not-run')
+      )),
+    ).toBe(false);
+  });
+
+  it('GPT FIX FIRST #6: Stop(slow cancel) → immediate Send must not ship dangling tool_calls in outbound API messages', async () => {
+    const oldAssistant = createMessage('assistant', 'calling tool');
+    oldAssistant.tool_calls = [{
+      id: 'tool-dangling',
+      name: 'execute_command',
+      arguments: '{"command":"sleep 30"}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'run a long tool'),
+        oldAssistant,
+      ],
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-dangling', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-dangling',
+      'execute_command',
+      'exec-dangling-slow',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+      streamingContent: 'calling tool',
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Immediate same-session send while native cancel is still gated.
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('fresh send mid-cancel');
+    for (let i = 0; i < 100 && mockRunChatTurn.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(mockRunChatTurn.mock.calls.length).toBeGreaterThan(0);
+
+    const outbound = mockRunChatTurn.mock.calls[0]?.[1] as Array<{
+      role?: string;
+      content?: string;
+      tool_calls?: unknown[];
+    }>;
+    expect(Array.isArray(outbound)).toBe(true);
+    expect(outbound.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
+    expect(outbound.some((message) => (
+      typeof message.content === 'string' && message.content.includes('fresh send mid-cancel')
+    ))).toBe(true);
+
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+  });
+
+  it('GPT FIX FIRST #6: addMessageToSession must discard cancel notice after DB await if epoch moved', async () => {
+    const oldAssistant = createMessage('assistant', '');
+    oldAssistant.tool_calls = [{
+      id: 'tool-notice-race',
+      name: 'execute_command',
+      arguments: '{}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'old for notice race'),
+        oldAssistant,
+      ],
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-notice-race', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-notice-race',
+      'execute_command',
+      'exec-notice-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseNoticeSave!: () => void;
+    const noticeSaveGate = new Promise<void>((resolve) => {
+      releaseNoticeSave = resolve;
+    });
+    let noticeSaveHolds = 0;
+    const deletedMessageIds: string[] = [];
+
+    mockInvoke.mockImplementation(async (command: unknown, args?: any) => {
+      if (command === 'cancel_tool_execution') {
+        return { cancelled: true, status: 'cancelled' };
+      }
+      if (command === 'db_save_message') {
+        const content = args?.message?.content;
+        if (typeof content === 'string' && content.includes('Tool run cancelled by user')) {
+          noticeSaveHolds += 1;
+          await noticeSaveGate;
+        }
+        return undefined;
+      }
+      if (command === 'db_delete_message') {
+        deletedMessageIds.push(String(args?.messageId ?? ''));
+        return undefined;
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    for (let i = 0; i < 120 && noticeSaveHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(noticeSaveHolds).toBeGreaterThan(0);
+
+    // Newer turn starts while cancel-notice DB persist is still awaiting.
+    bumpChatSessionTurnEpoch('session-1');
+    const newUser = createMessage('user', 'new turn during notice persist');
+    const newAssistant = createMessage('assistant', 'new-turn-body');
+    useChatStore.setState((state) => ({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 0,
+      sessions: state.sessions.map((session) => (
+        session.id === 'session-1'
+          ? {
+              ...session,
+              messages: [...session.messages, newUser, newAssistant],
+            }
+          : session
+      )),
+    }));
+
+    releaseNoticeSave();
+    await stopPromise;
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant'
+      && typeof m.content === 'string'
+      && m.content.includes('Tool run cancelled by user')
+    ))).toBe(false);
+    expect(session.messages.some((m) => m.id === newUser.id)).toBe(true);
+    expect(session.messages.some((m) => m.id === newAssistant.id)).toBe(true);
+    expect(deletedMessageIds.length).toBeGreaterThan(0);
+  });
+
+
+  it('GPT FIX FIRST #7: sendMessage must re-check epoch after scrub await before build/run', async () => {
+    const danglingAssistant = createMessage('assistant', 'calling tool');
+    danglingAssistant.tool_calls = [{
+      id: 'tool-send-scrub-race',
+      name: 'execute_command',
+      arguments: '{"command":"sleep 30"}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'prior dangling turn'),
+        danglingAssistant,
+      ],
+    });
+
+    let releaseScrubSave!: () => void;
+    const scrubSaveGate = new Promise<void>((resolve) => {
+      releaseScrubSave = resolve;
+    });
+    let scrubSaveHolds = 0;
+    mockInvoke.mockImplementation(async (command: unknown, args?: unknown) => {
+      if (command === 'db_save_message') {
+        const message = (args as { message?: { id?: string; role?: string } } | undefined)?.message;
+        // send-side scrub persists the cleaned dangling assistant (same id).
+        if (message?.id === danglingAssistant.id) {
+          scrubSaveHolds += 1;
+          await scrubSaveGate;
+        }
+        return undefined;
+      }
+      return undefined;
+    });
+
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+
+    const staleSend = useChatStore.getState().sendMessage('stale send mid-scrub');
+    for (let i = 0; i < 120 && scrubSaveHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(scrubSaveHolds).toBeGreaterThan(0);
+    expect(mockRunChatTurn).not.toHaveBeenCalled();
+
+    // Newer same-session turn owns the epoch while send-side scrub is still awaiting.
+    // (Stop alone does not bump; a newer Send — or Stop→Send — does.)
+    bumpChatSessionTurnEpoch('session-1');
+    const newerPlaceholder = createMessage('assistant', 'newer-turn-alive');
+    useChatStore.setState((state) => ({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      streamingContent: 'newer-partial',
+      pendingToolCalls: 1,
+      error: null,
+      sessions: state.sessions.map((session) => (
+        session.id === 'session-1'
+          ? {
+              ...session,
+              messages: [
+                ...session.messages,
+                createMessage('user', 'newer send after epoch bump'),
+                newerPlaceholder,
+              ],
+            }
+          : session
+      )),
+    }));
+
+    const runCallsBeforeRelease = mockRunChatTurn.mock.calls.length;
+    releaseScrubSave();
+    await staleSend;
+
+    // Stale send must not build/run the model or wipe the newer turn.
+    expect(mockRunChatTurn.mock.calls.length).toBe(runCallsBeforeRelease);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(useChatStore.getState().streamingContent).toBe('newer-partial');
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().error).toBeNull();
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => m.id === newerPlaceholder.id)).toBe(true);
+    // Stale send already appended its user message before scrub; it must not
+    // append an empty assistant placeholder after a stale scrub await.
+    expect(session.messages.some((m) => (
+      m.role === 'assistant'
+      && m.id !== danglingAssistant.id
+      && m.id !== newerPlaceholder.id
+      && (m.content === '' || m.content.trim() === '')
+    ))).toBe(false);
+  });
+
+
+
+  it('GPT FIX FIRST #8: post-scrub Stop→Send must not let stale path take over abort controller / runChatTurn', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releasePipiDir!: () => void;
+    const pipiDirGate = new Promise<void>((resolve) => {
+      releasePipiDir = resolve;
+    });
+    let pipiDirHolds = 0;
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'get_app_default_dir') {
+        pipiDirHolds += 1;
+        // Hold only the stale send's first resolve after scrub; newer Send proceeds.
+        if (pipiDirHolds === 1) {
+          await pipiDirGate;
+        }
+        return '/tmp/pipi-output/session-1';
+      }
+      if (command === 'cancel_tool_execution') {
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'newer-turn-alive ' };
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const staleSend = useChatStore.getState().sendMessage('stale send post-scrub window');
+    for (let i = 0; i < 120 && pipiDirHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(pipiDirHolds).toBe(1);
+    expect(runChatTurnCalls).toBe(0);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    // Stop → new Send advances epoch while stale is still in the post-scrub await gap
+    // (after scrub epoch check, before createChatTurnAbortController / runChatTurn).
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const newSend = useChatStore.getState().sendMessage('fresh send after stop mid post-scrub');
+    for (let i = 0; i < 120 && runChatTurnCalls === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(runChatTurnCalls).toBe(1);
+
+    const newerHost = mockRunChatTurn.mock.calls[0]?.[6] as { signal?: AbortSignal } | undefined;
+    expect(newerHost?.signal).toBeDefined();
+    expect(newerHost!.signal!.aborted).toBe(false);
+
+    const epochAfterNewSend = getChatSessionTurnEpoch('session-1');
+    expect(epochAfterNewSend).toBeGreaterThan(0);
+
+    releasePipiDir();
+    await staleSend;
+
+    // Stale must not create/take over the session abort controller or call runChatTurn.
+    expect(runChatTurnCalls).toBe(1);
+    expect(newerHost!.signal!.aborted).toBe(false);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).toBe(epochAfterNewSend);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => (
+        typeof m.content === 'string' && m.content.includes('fresh send after stop mid post-scrub')
+      )),
+    ).toBe(true);
+
+    releaseNewStream();
+    await Promise.all([stopPromise, newSend]);
+  });
+
+
 });

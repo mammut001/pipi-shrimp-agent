@@ -1,9 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  bumpChatSessionTurnEpoch,
   clearChatGenerationCancel,
   consumeChatGenerationCancel,
+  getChatSessionTurnEpoch,
   requestChatGenerationCancel,
+  resetChatSessionTurnEpochForTests,
   resolveStreamingOwnerSessionId,
 } from '../chatStreaming';
 
@@ -26,5 +29,14 @@ describe('chat streaming session isolation (TOP-15-01)', () => {
     requestChatGenerationCancel('session-a');
     clearChatGenerationCancel('session-a');
     expect(consumeChatGenerationCancel('session-b')).toBe(false);
+  });
+
+  it('turn epoch bumps so stale Stop completion can be detected', () => {
+    resetChatSessionTurnEpochForTests();
+    expect(getChatSessionTurnEpoch('session-a')).toBe(0);
+    const stopEpoch = getChatSessionTurnEpoch('session-a');
+    bumpChatSessionTurnEpoch('session-a');
+    expect(getChatSessionTurnEpoch('session-a')).not.toBe(stopEpoch);
+    expect(getChatSessionTurnEpoch('session-b')).toBe(0);
   });
 });

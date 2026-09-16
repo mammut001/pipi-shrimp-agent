@@ -24,3 +24,21 @@ export function filterSessionsByProject(
 ): Session[] {
   return sessions.filter((session) => (projectId ? session.projectId === projectId : !session.projectId));
 }
+
+/** Busy inputs that should show Stop (stream and/or long tools). */
+export type StopControlBusyState = {
+  isStreaming: boolean;
+  pendingToolCalls: number;
+  pendingToolResultsLength: number;
+};
+
+/**
+ * Stop is visible while the current session turn is busy: active stream OR
+ * unresolved/pending tools. Keeps Stop clickable during long tools even if
+ * `isStreaming` briefly flickers false.
+ */
+export function shouldShowStopControl(state: StopControlBusyState): boolean {
+  return state.isStreaming
+    || state.pendingToolCalls > 0
+    || state.pendingToolResultsLength > 0;
+}

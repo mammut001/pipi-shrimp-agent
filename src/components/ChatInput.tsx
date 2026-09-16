@@ -14,6 +14,7 @@ import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
 import { buildImageDataUrl, fileToImageAttachment } from '@/services/vision/imageAttachments';
 import { useChatStore } from '@/store';
 import { useUIStore } from '@/store';
+import { shouldShowStopControl } from '@/store/chat/chatSelectors';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { useMCPStore } from '@/store/mcpStore';
 import { MCPChatButton, MCPDropdown } from '@/components/mcp';
@@ -197,6 +198,8 @@ export function ChatInput({
 
   const {
     isStreaming,
+    pendingToolCalls,
+    pendingToolResults,
     sendMessage,
     stopGeneration,
     currentSessionId,
@@ -208,6 +211,11 @@ export function ChatInput({
     clearSessionPipiOutputDir,
     updateSessionExecutionMode,
   } = useChatStore();
+  const showStopControl = shouldShowStopControl({
+    isStreaming,
+    pendingToolCalls,
+    pendingToolResultsLength: pendingToolResults.length,
+  });
   const { toggleSettings, addNotification } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
@@ -541,7 +549,7 @@ export function ChatInput({
     const decision = decideChatInputSubmission({
       input: message,
       hasAttachments: messageAttachments.length > 0,
-      isStreaming,
+      isStreaming: showStopControl,
       isSubmitting,
       isBrowserIntent: quickCheckBrowserIntent,
     });
@@ -562,7 +570,7 @@ export function ChatInput({
     composerBlocks,
     composerOpen,
     input,
-    isStreaming,
+    showStopControl,
     isSubmitting,
     onSend,
     pipiOutputDir,
@@ -653,7 +661,7 @@ export function ChatInput({
   }, [appendImageAttachments]);
 
 
-  const isDisabled = isStreaming || isSubmitting;
+  const isDisabled = showStopControl || isSubmitting;
 
   return (
     <div className={rootClassName}>
@@ -998,7 +1006,7 @@ export function ChatInput({
             </button>
 
             {/* Send/Stop Button */}
-            {isStreaming ? (
+            {showStopControl ? (
               <button
                 onClick={handleStop}
                 className={`${actionButtonClassName} bg-red-600 hover:bg-red-700 text-white transition-colors`}

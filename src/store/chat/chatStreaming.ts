@@ -126,3 +126,30 @@ export function consumeChatGenerationCancel(sessionId: string | null | undefined
   }
   return requested;
 }
+
+/**
+ * Per-session turn epoch for Stop vs same-session new-turn races.
+ * `stopGeneration` snapshots the epoch before awaiting native cancel; a new
+ * `sendMessage` bumps it so stale cancel completion skips session mutations.
+ */
+const chatSessionTurnEpochBySession = new Map<string, number>();
+
+export function bumpChatSessionTurnEpoch(sessionId: string | null | undefined): number {
+  if (!sessionId) {
+    return 0;
+  }
+  const next = (chatSessionTurnEpochBySession.get(sessionId) ?? 0) + 1;
+  chatSessionTurnEpochBySession.set(sessionId, next);
+  return next;
+}
+
+export function getChatSessionTurnEpoch(sessionId: string | null | undefined): number {
+  if (!sessionId) {
+    return 0;
+  }
+  return chatSessionTurnEpochBySession.get(sessionId) ?? 0;
+}
+
+export function resetChatSessionTurnEpochForTests(): void {
+  chatSessionTurnEpochBySession.clear();
+}
