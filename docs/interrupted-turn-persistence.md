@@ -45,10 +45,25 @@ explicit user retry only.
    does not re-see orphans. In-memory store is updated first via
    `set()`.
 
+
+### Mid-tool durability (live kill -9)
+
+Hydrate can only terminalize what SQLite still holds. The in-flight assistant
+placeholder used to be saved with **empty content and NULL `tool_calls`** while
+tools ran, so a process kill left a blank agent row and hydrate found **no**
+orphans → no interrupted notice (live soak failure on Session A).
+
+Before `handleToolBatchRequest` waits on tools, Chat now calls
+`persistAssistantPendingToolCalls` (store + `db_save_message`). After the batch
+completes, `clearAssistantPendingToolCalls` removes them. Kill mid-wait never
+reaches clear, so reopen hydrate still sees orphans.
+
 ## Key APIs
 
 | API | Role |
 |-----|------|
+| `persistAssistantPendingToolCalls(…)` | Mid-tool: write pending `tool_calls` to assistant + DB |
+| `clearAssistantPendingToolCalls(…)` | After batch: drop pending `tool_calls` (kill never reaches this) |
 | `listOrphanToolCalls(messages)` | Pure orphan detection from history |
 | `terminalizeInterruptedMessages(messages)` | Pure scrub + notice |
 | `terminalizeInterruptedToolTurns(sessionId, …)` | Store + DB hydrate path |
@@ -85,4 +100,5 @@ Live Stop still uses `user_cancel` wording via the same builder.
 `src/store/chat/__tests__/scrubDanglingToolCalls.test.ts` — orphan scan,
 hydrate terminalize, `buildApiMessages` follow-up history, idempotency,
 multi-session hydrate, **single `db_save_messages` batch**, **localStorage
-write-back after terminalize**.
+write-back after terminalize**, **mid-tool `persistAssistantPendingToolCalls` →
+hydrate interrupted notice**.
