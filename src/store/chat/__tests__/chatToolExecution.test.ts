@@ -41,6 +41,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 import { isPolicyToolFailureText, isToolFailureText } from '@/services/tools/toolFailureClassification';
 import {
   handleToolBatchRequest,
+  NO_PROJECT_FOLDER_MESSAGE,
   resolveWorkspaceToolPreflight,
   type ToolBatchExecutionDeps,
 } from '../chatToolExecution';
@@ -1462,6 +1463,11 @@ describe('chatToolExecution', () => {
   });
 
   describe('resolveWorkspaceToolPreflight (pure)', () => {
+    it('exports a greppable No Project Folder is bound denial message', () => {
+      expect(NO_PROJECT_FOLDER_MESSAGE).toMatch(/No Project Folder is bound/i);
+      expect(NO_PROJECT_FOLDER_MESSAGE).toMatch(/Project Folder chip/i);
+    });
+
     const workspaceMeta = new Map<string, { requiresWorkspace?: boolean }>([
       ['list_files', { requiresWorkspace: true }],
       ['write_file', { requiresWorkspace: true }],

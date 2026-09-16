@@ -84,7 +84,7 @@ Docs: `docs/stop-session-switch-polish.md`
 From scout (`docs/soak-polish-scout.md`):
 
 - Truncated replies / provider stream finalize — **addressed** (`docs/provider-stream-finalize.md`)
-- Project Folder binding UX (GTK dialog / unbound denial)
+- Project Folder binding UX (GTK dialog / unbound denial) — **addressed** (`docs/project-folder-binding-ux.md`)
 - Danger mode defaults affordance
 - Stop button visibility during short streams — **addressed in knife 3** (`shouldShowStopControl`)
 

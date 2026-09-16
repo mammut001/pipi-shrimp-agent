@@ -13,7 +13,11 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri_plugin_dialog::DialogExt;
+
+/// Prevents stacked GTK/OS folder pickers (second open returns Err).
+static FOLDER_DIALOG_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// Summary of one dated output folder inside .pipi-shrimp/
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,19 +31,65 @@ pub struct OutputFolder {
 }
 
 /// Open the native OS folder-picker dialog.
-/// Returns the selected absolute path, or None if the user cancelled.
 ///
-/// 使用 async + oneshot channel 避免在主线程上 blocking 导致的卡死问题。
+/// Returns `Ok(Some(path))` on selection, `Ok(None)` if the user cancelled.
+/// Returns `Err("folder_dialog_busy")` if another picker is already open
+/// (avoids stacked GTK dialogs that hang Manual D / bind UX).
+///
+/// Optional `title` is shown in the OS dialog chrome (e.g. "Select Project Folder").
+///
+/// Uses async + oneshot so the dialog is non-blocking on the main thread.
 #[tauri::command]
-pub async fn open_folder_dialog(app: tauri::AppHandle) -> Option<String> {
+pub async fn open_folder_dialog(
+    app: tauri::AppHandle,
+    title: Option<String>,
+) -> Result<Option<String>, String> {
+    if FOLDER_DIALOG_OPEN
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("folder_dialog_busy".to_string());
+    }
+
     let (tx, rx) = tokio::sync::oneshot::channel();
 
-    // FileDialogBuilder (非 blocking 版本) 在主线程上展示对话框，通过 callback 返回结果
-    app.dialog().file().pick_folder(move |path| {
+    let mut builder = app.dialog().file();
+    if let Some(title) = title.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        builder = builder.set_title(title);
+    }
+
+    // FileDialogBuilder (non-blocking) shows on the main thread; callback delivers the path.
+    builder.pick_folder(move |path| {
         let _ = tx.send(path);
     });
 
-    rx.await.ok().flatten().map(|p| p.to_string())
+    let result = rx.await.ok().flatten().map(|p| p.to_string());
+    FOLDER_DIALOG_OPEN.store(false, Ordering::SeqCst);
+    Ok(result)
+}
+
+#[cfg(test)]
+mod folder_dialog_guard_tests {
+    use super::FOLDER_DIALOG_OPEN;
+    use std::sync::atomic::Ordering;
+
+    /// One serial test owns the global flag. Cargo runs `#[test]`s in parallel by
+    /// default; two tests mutating `FOLDER_DIALOG_OPEN` raced and flake false-red.
+    #[test]
+    fn folder_dialog_busy_flag_clears_and_rejects_second_open() {
+        FOLDER_DIALOG_OPEN.store(false, Ordering::SeqCst);
+        assert!(!FOLDER_DIALOG_OPEN.load(Ordering::SeqCst));
+
+        assert!(FOLDER_DIALOG_OPEN
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok());
+        assert!(FOLDER_DIALOG_OPEN
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err());
+
+        FOLDER_DIALOG_OPEN.store(false, Ordering::SeqCst);
+        assert!(!FOLDER_DIALOG_OPEN.load(Ordering::SeqCst));
+    }
 }
 
 /// Initialise the `.pipi-shrimp/` directory inside `work_dir`.
