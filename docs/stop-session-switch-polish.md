@@ -28,6 +28,6 @@ src/store/chat/__tests__/chatStoreSendMessage.test.ts  # knife 3 cases
 
 ## Intentionally not this knife
 
-- Long-tool intermediate `cancelling` TaskStep status / vocabulary unify
+- Long-tool intermediate `cancelling` TaskStep status / vocabulary unify — **done** in [`cancelling-status-vocab.md`](./cancelling-status-vocab.md)
 - Truncated replies / Project Folder UX / Danger defaults (scout leftovers)
 - Playwright mega-framework; OTel; durable half-tool resume

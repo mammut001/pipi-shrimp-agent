@@ -242,12 +242,19 @@ describe('AgentPanel', () => {
     }
   });
 
-  it('shows a cancel button for running steps with execution ids and marks them cancelled after click', async () => {
-    mockInvoke.mockResolvedValue({
-      executionId: 'exec-1',
-      cancelled: true,
-      status: 'cancelled',
-      message: 'Cancellation signal sent to the running process.',
+  it('shows a cancel button for running steps with execution ids and marks them cancelling then cancelled', async () => {
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async () => {
+      await cancelGate;
+      return {
+        executionId: 'exec-1',
+        cancelled: true,
+        status: 'cancelled',
+        message: 'Cancellation signal sent to the running process.',
+      };
     });
 
     const view = renderPanel();
@@ -264,8 +271,17 @@ describe('AgentPanel', () => {
     expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', {
       executionId: 'exec-1',
     });
-    expect(view.container.textContent).toContain('Cancelled');
+    expect(view.container.textContent).toContain('Cancelling');
     expect(view.container.textContent).not.toContain('Thinking');
+
+    await act(async () => {
+      releaseCancel();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(view.container.textContent).toContain('Cancelled');
+    expect(view.container.textContent).not.toContain('Cancelling');
   });
 
   it('does not show a cancel button when a running step has no execution id', () => {

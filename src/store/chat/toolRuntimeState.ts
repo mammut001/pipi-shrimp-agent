@@ -124,6 +124,47 @@ export function markSessionToolRunning(
   syncCurrentSessionToolRuntime(set, get);
 }
 
+/**
+ * Intermediate Stop UX: mark unresolved (non-terminal) steps as `cancelling`
+ * while native cancel is in flight. Updates TaskStep progress for the current
+ * session without restoring optimistic-cleared pendingToolCalls counters.
+ */
+export function markSessionToolsCancelling(
+  sessionId: string,
+  _set: ChatSetState,
+  get: () => ChatState,
+): void {
+  const runtime = toolRuntimeBySession.get(sessionId);
+  if (!runtime) {
+    return;
+  }
+
+  let changed = false;
+  for (const toolCallId of [...runtime.unresolvedIds]) {
+    const step = runtime.steps.get(toolCallId);
+    const label = step?.label ?? toolCallId;
+    if (step && isTerminalStepStatus(step.status)) {
+      continue;
+    }
+    if (step?.status === 'cancelling') {
+      continue;
+    }
+    setStepStatus(runtime, toolCallId, label, 'cancelling');
+    changed = true;
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  // Keep unresolvedIds so failUnresolved can still terminalize to `cancelled`.
+  // Do not call syncCurrentSessionToolRuntime — that would undo Stop's
+  // optimistic pendingToolCalls / pendingToolResults clear.
+  if (get().currentSessionId === sessionId) {
+    useUIStore.getState().setTaskProgress(buildTaskSteps(runtime));
+  }
+}
+
 export function markSessionToolStatus(
   sessionId: string,
   toolCallId: string,
@@ -165,6 +206,14 @@ export function resolveSessionTool(
   get: () => ChatState,
 ): void {
   const runtime = getOrCreateSessionToolRuntime(sessionId);
+  const existing = runtime.steps.get(toolCallId);
+  // Late tool-complete / tool-error after Stop mass-terminalize must not
+  // overwrite `cancelled`, rewrite runtime.results, or sync pendingToolResults
+  // (Stop / busy rebound). Other terminal statuses (e.g. preflight `failed`
+  // then resolve with error payload) still record results.
+  if (existing?.status === 'cancelled') {
+    return;
+  }
   setStepStatus(runtime, toolCallId, label, status);
   if (isTerminalStepStatus(status)) {
     runtime.unresolvedIds.delete(toolCallId);
@@ -257,6 +306,10 @@ export function failUnresolvedSessionTools(
     }
   }
   runtime.unresolvedIds.clear();
+  // Mass-terminalize abandons the in-flight turn. Drop accumulated results so
+  // syncCurrentSessionToolRuntime cannot rewrite them into pendingToolResults
+  // and bounce Stop/busy back after an optimistic stopGeneration clear.
+  runtime.results.clear();
   syncCurrentSessionToolRuntime(set, get);
 }
 

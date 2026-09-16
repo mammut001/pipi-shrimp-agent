@@ -47,6 +47,7 @@ import {
   failUnresolvedSessionTools,
   listCancellableSessionExecutionIds,
   listUnresolvedSessionTools,
+  markSessionToolsCancelling,
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
 import { buildToolCancelNoticeContent, scrubDanglingToolCalls } from './scrubDanglingToolCalls';
@@ -1409,6 +1410,8 @@ export function createChatActionMethods({
       });
 
       if (owningSessionId) {
+        // Intermediate TaskStep status while native cancel settles (knife leftover).
+        markSessionToolsCancelling(owningSessionId, set, get);
         const stopHandle = getSessionHandle(owningSessionId);
         // Re-validate epoch after EVERY await before further mutations.
         const stillOwnsStoppedTurn = () => getChatSessionTurnEpoch(owningSessionId) === stopEpoch;
@@ -1476,6 +1479,10 @@ export function createChatActionMethods({
             (_toolCallId, label) => `Error: ${label} cancelled by user`,
             'cancelled',
           );
+          // Re-assert idle immediately after terminalize — before notice /
+          // stop_subprocess awaits — so pendingToolResults cannot rebound
+          // shouldShowStopControl true mid-completion.
+          set({ pendingToolCalls: 0, pendingToolResults: [] });
           // Bind removal to the stopped turn's assistant id only (never last-message).
           removeEmptyAssistantPlaceholderById(set, owningSessionId, stoppedAssistantMessageId);
           if (unresolvedTools.length > 0) {
