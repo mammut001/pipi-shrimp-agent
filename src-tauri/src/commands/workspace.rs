@@ -73,23 +73,22 @@ mod folder_dialog_guard_tests {
     use super::FOLDER_DIALOG_OPEN;
     use std::sync::atomic::Ordering;
 
+    /// One serial test owns the global flag. Cargo runs `#[test]`s in parallel by
+    /// default; two tests mutating `FOLDER_DIALOG_OPEN` raced and flake false-red.
     #[test]
-    fn folder_dialog_busy_flag_starts_clear() {
-        // Other tests must not leave the flag set; reset defensively.
+    fn folder_dialog_busy_flag_clears_and_rejects_second_open() {
         FOLDER_DIALOG_OPEN.store(false, Ordering::SeqCst);
         assert!(!FOLDER_DIALOG_OPEN.load(Ordering::SeqCst));
-    }
 
-    #[test]
-    fn folder_dialog_busy_compare_exchange_rejects_second_open() {
-        FOLDER_DIALOG_OPEN.store(false, Ordering::SeqCst);
         assert!(FOLDER_DIALOG_OPEN
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok());
         assert!(FOLDER_DIALOG_OPEN
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err());
+
         FOLDER_DIALOG_OPEN.store(false, Ordering::SeqCst);
+        assert!(!FOLDER_DIALOG_OPEN.load(Ordering::SeqCst));
     }
 }
 
