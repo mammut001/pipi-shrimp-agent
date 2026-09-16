@@ -50,6 +50,8 @@ pub struct StreamContext {
     pub in_think_tag: bool,
     pub emitted_tool_calls: usize,
     pub no_tools: bool,
+    /// Last provider finish/stop reason observed while parsing the stream.
+    pub finish_reason: Option<String>,
 }
 
 impl StreamContext {
@@ -79,6 +81,7 @@ impl StreamContext {
             in_think_tag: false,
             emitted_tool_calls: 0,
             no_tools,
+            finish_reason: None,
         }
     }
 
@@ -260,7 +263,10 @@ pub trait ProviderAdapter: Send + Sync {
             model: ctx.model,
             usage: ctx.usage,
             tool_calls: ctx.tool_calls,
-        })
+            finish_reason: None,
+            truncated: false,
+        }
+        .with_finish(ctx.finish_reason))
     }
 
     #[allow(dead_code)]

@@ -228,6 +228,8 @@ pub trait ProviderAdapter: Send + Sync {
             model: ctx.model,
             usage: ctx.usage,
             tool_calls: ctx.tool_calls,
+            finish_reason: None,
+            truncated: false,
         })
     }
 
@@ -369,6 +371,8 @@ impl ProviderAdapter for AnthropicAdapter {
             model: model_name,
             usage,
             tool_calls,
+            finish_reason: None,
+            truncated: false,
         })
     }
 
@@ -453,6 +457,8 @@ impl ProviderAdapter for AnthropicAdapter {
             model: ctx.model,
             usage: ctx.usage,
             tool_calls: ctx.tool_calls,
+            finish_reason: None,
+            truncated: false,
         })
     }
 }
@@ -617,6 +623,8 @@ impl ProviderAdapter for OpenAIAdapter {
             model: model_name,
             usage,
             tool_calls,
+            finish_reason: None,
+            truncated: false,
         })
     }
 

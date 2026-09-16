@@ -153,3 +153,11 @@ export function getChatSessionTurnEpoch(sessionId: string | null | undefined): n
 export function resetChatSessionTurnEpochForTests(): void {
   chatSessionTurnEpochBySession.clear();
 }
+
+export {
+  appendTruncatedReplyNotice,
+  isTruncatedProviderResponse,
+  PROVIDER_STREAM_TRUNCATED_NOTICE,
+  type ProviderStreamCompletionMeta,
+} from '../../core/providerStreamFinalize';
+

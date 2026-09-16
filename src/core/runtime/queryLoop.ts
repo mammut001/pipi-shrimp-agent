@@ -1,4 +1,8 @@
 import { invokeRustAPIStream } from '../streamAdapter';
+import {
+  appendTruncatedReplyNotice,
+  isTruncatedProviderResponse,
+} from '../providerStreamFinalize';
 import type { EngineEvent, ToolCallParams } from '../types';
 import {
   formatAgentConfigValidationError,
@@ -374,6 +378,20 @@ export async function* runQueryEngineTurn(
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 model: chunk.response?.model || resolvedConfig!.model,
+              };
+            }
+            // Provider stream finalize: surface truncated cutoffs instead of a
+            // silent half-visible assistant reply.
+            if (isTruncatedProviderResponse(chunk.response)) {
+              const marked = appendTruncatedReplyNotice(assistantMessageContent);
+              if (marked !== assistantMessageContent) {
+                const suffix = marked.slice(assistantMessageContent.length);
+                assistantMessageContent = marked;
+                yield { type: 'text_delta', content: suffix };
+              }
+              yield {
+                type: 'status_update',
+                message: 'Reply truncated — provider stream ended before a clean finish.',
               };
             }
           }
