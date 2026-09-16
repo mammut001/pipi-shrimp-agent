@@ -19,6 +19,7 @@ import {
   getRuntimeTraceEvents,
 } from '../RuntimeTraceSink';
 import { createManualDBarrier, awaitCondition } from '../__tests__/manualDBarrier';
+import { harnessSessionEvents } from '../__tests__/manualDProductHarness';
 import {
   listOrphanToolCalls,
   terminalizeInterruptedMessages,
@@ -390,10 +391,12 @@ export async function runCrashReloadSoakIteration(
 
     // Trace: B never cancelled; A may show runtime_released / no tool_cancelled required
     // (kill ≠ Stop — no cancel path).
+    // MUST filter via e.context.sessionId (RuntimeTraceEvent has no top-level sessionId;
+    // checking e.sessionId false-greens — always undefined).
     const events = getRuntimeTraceEvents();
-    const bCancelled = events.some((e) => (
-      e.sessionId === sessionB
-      && (e.type === 'tool_cancelled' || e.type === 'turn_cancelling')
+    const bEvents = harnessSessionEvents(events, sessionB);
+    const bCancelled = bEvents.some((e) => (
+      e.type === 'tool_cancelled' || e.type === 'turn_cancelling'
     ));
     if (bCancelled) {
       pushFail(

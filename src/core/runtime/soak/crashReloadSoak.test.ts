@@ -11,9 +11,11 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseSessionRuntimeForTests } from '../SessionRuntime';
-import { clearRuntimeTraceSink } from '../RuntimeTraceSink';
+import { clearRuntimeTraceSink, getRuntimeTraceEvents } from '../RuntimeTraceSink';
 import { listOrphanToolCalls } from '../../../store/chat/scrubDanglingToolCalls';
 import { buildApiMessages } from '../../../utils/chatHelpers';
+import { harnessSessionEvents } from '../__tests__/manualDProductHarness';
+import type { RuntimeTraceEvent } from '../RuntimeTrace';
 import {
   resolveCrashReloadSoakIterations,
   runCrashReloadSoak,
@@ -130,6 +132,60 @@ describe('crash/reload soak (kill mid-tool → hydrate → follow-up)', () => {
     expect(summary.iterationsCompleted).toBe(5);
     expect(summary.failedAt).toBeUndefined();
     expect(summary.results.every((r) => r.ok)).toBe(true);
+  });
+
+  /**
+   * GPT FIX FIRST residual: B contamination must use e.context.sessionId.
+   * RuntimeTraceEvent has no top-level sessionId — checking e.sessionId always
+   * false-greens (undefined !== sessionB). This test fails if that bug returns.
+   */
+  it('B cancel contamination filter uses context.sessionId (not top-level)', () => {
+    const sessionB = 'reg-crash-b';
+    const cancelOnB: RuntimeTraceEvent = {
+      type: 'tool_cancelled',
+      at: 1,
+      context: { sessionId: sessionB, runtimeId: 'rt-b' },
+    };
+    const cancelOnA: RuntimeTraceEvent = {
+      type: 'tool_cancelled',
+      at: 2,
+      context: { sessionId: 'reg-crash-a', runtimeId: 'rt-a' },
+    };
+    const events = [cancelOnA, cancelOnB];
+
+    // Correct path (same as crashReloadSoak + harnessSessionEvents)
+    const bEvents = harnessSessionEvents(events, sessionB);
+    expect(bEvents.some((e) => e.type === 'tool_cancelled' || e.type === 'turn_cancelling')).toBe(true);
+
+    // Wrong top-level field would miss the cancel → false-green isolation check
+    const wrongFieldMisses = !events.some((e) => (
+      (e as { sessionId?: string }).sessionId === sessionB
+      && (e.type === 'tool_cancelled' || e.type === 'turn_cancelling')
+    ));
+    expect(wrongFieldMisses).toBe(true);
+    expect((cancelOnB as { sessionId?: string }).sessionId).toBeUndefined();
+    expect(cancelOnB.context.sessionId).toBe(sessionB);
+  });
+
+  it('iteration sink events expose sessionId only under context', async () => {
+    clearRuntimeTraceSink();
+    const result = await runCrashReloadSoakIteration(99, 'jest-ctx-sid');
+    expect(result.ok).toBe(true);
+    // Iteration already asserted no B cancel via context.sessionId; here we only
+    // prove the event shape so a top-level e.sessionId check cannot work.
+    const events = getRuntimeTraceEvents();
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) {
+      expect((e as { sessionId?: string }).sessionId).toBeUndefined();
+      expect(typeof e.context.sessionId).toBe('string');
+      expect(e.context.sessionId.length).toBeGreaterThan(0);
+    }
+    const bEvents = harnessSessionEvents(events, result.sessionB);
+    expect(bEvents.length).toBeGreaterThan(0);
+    // Wrong field would match zero events even when B has real traces
+    expect(events.filter((e) => (e as { sessionId?: string }).sessionId === result.sessionB)).toEqual([]);
+    releaseSessionRuntimeForTests(result.sessionA);
+    releaseSessionRuntimeForTests(result.sessionB);
   });
 });
 

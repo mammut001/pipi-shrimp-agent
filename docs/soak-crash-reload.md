@@ -66,10 +66,24 @@ Prefer `--testPathPatterns` (plural) or a direct file path.
 
 ## How to run (Rust reopen)
 
+Requires **rustc ≥ 1.88** (crate graph: darling/serde_with/time/image/zbus). System
+`rustc` 1.85 fails resolve before compile. Prefer a scoped rustup toolchain (do not
+replace project sources — only the compiler):
+
 ```bash
+# if needed: curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
+. "$HOME/.cargo/env"   # or ensure ~/.cargo/bin is on PATH
+rustc --version          # expect ≥ 1.88 (verified with 1.98.x stable)
+
+# Tauri generate_context needs frontendDist; a stub is enough for this unit test:
+mkdir -p dist && printf '%s\n' '<!doctype html><title>stub</title>' > dist/index.html
+
 cargo test --manifest-path src-tauri/Cargo.toml \
   orphan_messages_survive_db_reopen_after_mid_tool -- --nocapture
 ```
+
+Also needs typical Tauri Linux sysdeps (`pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, …)
+if building from a minimal image.
 
 ## Manual Tauri checklist (true process kill)
 
