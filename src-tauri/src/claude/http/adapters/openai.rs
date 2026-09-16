@@ -340,8 +340,8 @@ impl ProviderAdapter for OpenAIAdapter {
                     {
                         events.extend(ctx.emit_pending_tool_calls()?);
                     }
-                    // Emit Done on any non-null finish_reason so we do not wait for a
-                    // possibly-missing `[DONE]` / TCP close before returning a terminal state.
+                    // Emit Done so callers observe finish. stream_response keeps consuming
+                    // until `[DONE]` / EOF so a following usage-only chunk is not dropped.
                     events.push(StreamEvent::Done);
                 }
             }

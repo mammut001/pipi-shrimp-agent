@@ -609,6 +609,60 @@ async fn send_request_finalizes_openai_stream_without_trailing_newline() {
 }
 
 #[tokio::test]
+async fn send_request_consumes_usage_only_chunk_after_finish_reason() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                // OpenAI stream_options.include_usage shape: finish_reason first,
+                // then a usage-only frame, then [DONE]. Early Done→finalize must
+                // not drop the usage frame.
+                .set_body_string(concat!(
+                    "data: {\"id\":\"chatcmpl-usage\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ping-ok\"},\"finish_reason\":\"stop\"}]}\n",
+                    "data: {\"id\":\"chatcmpl-usage\",\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":7,\"total_tokens\":49}}\n",
+                    "data: [DONE]\n"
+                )),
+        )
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::new();
+    let base_url = format!("{}/v1", server.uri());
+
+    let response = send_request(
+        &client,
+        &sample_messages(),
+        "test-token",
+        "gpt-4o",
+        Some(&base_url),
+        Some("system"),
+        true,
+        false,
+        None,
+        false,
+        Some("stream-usage-after-finish"),
+        Some("openai"),
+        Some("openai"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("usage-only trailing chunk should be consumed");
+
+    assert_eq!(response.content, "ping-ok");
+    assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+    assert!(!response.truncated);
+    // Distinctive usage values prove the trailing frame was observed (not
+    // estimated_input / estimate_tokens fallback after an early cut).
+    assert_eq!(response.usage.input_tokens, 42);
+    assert_eq!(response.usage.output_tokens, 7);
+}
+
+#[tokio::test]
 async fn send_request_skips_response_format_when_capability_disables_it() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

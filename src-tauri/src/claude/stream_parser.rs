@@ -138,9 +138,10 @@ pub async fn stream_response(
                 Ok(events) => {
                     for event in &events {
                         match event {
-                            StreamEvent::Done => {
-                                return adapter.finalize_stream(ctx, config);
-                            }
+                            // Soft terminal only: finish_reason may arrive before a
+                            // usage-only trailing frame (`stream_options.include_usage`).
+                            // Keep consuming until `[DONE]` / EOF so usage is not dropped.
+                            StreamEvent::Done => {}
                             StreamEvent::Error(msg) => {
                                 return Err(AppError::ProcessError(format!(
                                     "Stream error: {}",

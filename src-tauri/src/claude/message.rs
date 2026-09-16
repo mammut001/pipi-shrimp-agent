@@ -115,6 +115,9 @@ pub fn is_truncated_finish_reason(
         | Some("done")
         | Some("cancelled") => false,
         Some("length") | Some("content_filter") => true,
+        // Unknown reasons default to truncated to avoid silent "success" on
+        // partial cutoffs. Expand the clean allowlist above if a provider
+        // introduces a new non-truncated terminal reason.
         Some(_) => true,
         None => has_partial_output,
     }

@@ -21,6 +21,7 @@ Provider SSE streams sometimes:
 | Flush leftover SSE buffer on EOF (`take_sse_buffer_remainder`) | `stream_parser.rs` |
 | Treat `data: [DONE]` as terminal finalize | `stream_parser.rs` |
 | Emit `StreamEvent::Done` on OpenAI `finish_reason` | `http/adapters/openai.rs` |
+| After `Done` / `finish_reason`, keep consuming until `[DONE]` / EOF (do not drop usage-only trailing frame) | `stream_parser.rs` |
 | Track `finish_reason` on `StreamContext` / `ChatResponse` | `adapters/mod.rs`, `message.rs` |
 | Set `truncated: true` for EOF / `length` / `content_filter` / unknown | `ChatResponse::with_finish` |
 
@@ -44,6 +45,7 @@ cargo test --manifest-path src-tauri/Cargo.toml \
   marks_length_finish_reason \
   send_request_finalizes_truncated \
   send_request_finalizes_openai_stream_without_trailing_newline \
+  send_request_consumes_usage_only_chunk_after_finish_reason \
   -- --nocapture
 
 # Jest
@@ -59,3 +61,4 @@ pnpm exec jest \
 - Project Folder GTK binding UX
 - Danger mode defaults affordance
 - Full Playwright product check of short `ping-ok` prompt against live provider
+- Unknown `finish_reason` values still classify as truncated (`is_truncated_finish_reason` allowlist). Expand the clean allowlist only when a provider ships a new non-truncated terminal reason — avoid false-positive truncated notices later.
