@@ -712,6 +712,12 @@ export function createChatActionMethods({
         // Gate: never ship outbound API history with dangling tool_calls from a
         // stopped prior turn (Stop may still be awaiting native cancel).
         await scrubDanglingToolCalls(activeSessionId, set, get);
+        // Stop / newer Send may advance the epoch during scrub DB awaits.
+        // Abort before buildApiMessages / placeholder / runChatTurn so cleanup
+        // cannot mutate a newer same-session turn (cancel catch is epoch-gated).
+        if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+          throw new ChatGenerationCancelledError(activeSessionId);
+        }
         const messages = buildApiMessages(currentMessages());
         if (messages.length === 0) {
           setError('Message content is empty. Cannot send.');

@@ -12,7 +12,7 @@ Companion plan: [`soak-polish-plan.md`](./soak-polish-plan.md) · scout: [`soak-
 | **A ≠ B isolation** | Stop cancels only `owningSessionId` tools/messages; B history untouched |
 | **Stop visible while streaming / long tool** | `shouldShowStopControl` — Stop when `isStreaming` **or** pending tools/results |
 | **Session-switch busy binding** | `selectSession` clears global busy flags then syncs selected session tool runtime (rebind, not idle-only) |
-| **Same-session Stop→send race** | Per-session turn epoch: `sendMessage` bumps; `stopGeneration` **eager-scrubs dangling tool_calls before slow native cancel**; `sendMessage` re-scrubs before `buildApiMessages`; cancel-notice `addMessageToSession` re-checks epoch after DB await and discards stale local append; stale cancel completion **re-checks epoch after every await** before placeholder/`stop_subprocess`/pending wipe; placeholder/message ops id-bound to stopped turn; diagnostics cancel uses Stop snapshot only |
+| **Same-session Stop→send race** | Per-session turn epoch: `sendMessage` bumps; `stopGeneration` **eager-scrubs dangling tool_calls before slow native cancel**; `sendMessage` re-scrubs before `buildApiMessages` and **re-checks epoch after scrub await** (abort stale turn before build/run); cancel-notice `addMessageToSession` re-checks epoch after DB await and discards stale local append; stale cancel completion **re-checks epoch after every await** before placeholder/`stop_subprocess`/pending wipe; placeholder/message ops id-bound to stopped turn; diagnostics cancel uses Stop snapshot only |
 | **Stop A leaves B runtime** | Stop cancels only A's executionIds; B unresolved tools / executionIds remain |
 
 ## Entry points

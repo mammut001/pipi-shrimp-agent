@@ -2419,4 +2419,97 @@ describe('chatStore sendMessage integration', () => {
   });
 
 
+  it('GPT FIX FIRST #7: sendMessage must re-check epoch after scrub await before build/run', async () => {
+    const danglingAssistant = createMessage('assistant', 'calling tool');
+    danglingAssistant.tool_calls = [{
+      id: 'tool-send-scrub-race',
+      name: 'execute_command',
+      arguments: '{"command":"sleep 30"}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'prior dangling turn'),
+        danglingAssistant,
+      ],
+    });
+
+    let releaseScrubSave!: () => void;
+    const scrubSaveGate = new Promise<void>((resolve) => {
+      releaseScrubSave = resolve;
+    });
+    let scrubSaveHolds = 0;
+    mockInvoke.mockImplementation(async (command: unknown, args?: unknown) => {
+      if (command === 'db_save_message') {
+        const message = (args as { message?: { id?: string; role?: string } } | undefined)?.message;
+        // send-side scrub persists the cleaned dangling assistant (same id).
+        if (message?.id === danglingAssistant.id) {
+          scrubSaveHolds += 1;
+          await scrubSaveGate;
+        }
+        return undefined;
+      }
+      return undefined;
+    });
+
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+
+    const staleSend = useChatStore.getState().sendMessage('stale send mid-scrub');
+    for (let i = 0; i < 120 && scrubSaveHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(scrubSaveHolds).toBeGreaterThan(0);
+    expect(mockRunChatTurn).not.toHaveBeenCalled();
+
+    // Newer same-session turn owns the epoch while send-side scrub is still awaiting.
+    // (Stop alone does not bump; a newer Send — or Stop→Send — does.)
+    bumpChatSessionTurnEpoch('session-1');
+    const newerPlaceholder = createMessage('assistant', 'newer-turn-alive');
+    useChatStore.setState((state) => ({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      streamingContent: 'newer-partial',
+      pendingToolCalls: 1,
+      error: null,
+      sessions: state.sessions.map((session) => (
+        session.id === 'session-1'
+          ? {
+              ...session,
+              messages: [
+                ...session.messages,
+                createMessage('user', 'newer send after epoch bump'),
+                newerPlaceholder,
+              ],
+            }
+          : session
+      )),
+    }));
+
+    const runCallsBeforeRelease = mockRunChatTurn.mock.calls.length;
+    releaseScrubSave();
+    await staleSend;
+
+    // Stale send must not build/run the model or wipe the newer turn.
+    expect(mockRunChatTurn.mock.calls.length).toBe(runCallsBeforeRelease);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(useChatStore.getState().streamingContent).toBe('newer-partial');
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().error).toBeNull();
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => m.id === newerPlaceholder.id)).toBe(true);
+    // Stale send already appended its user message before scrub; it must not
+    // append an empty assistant placeholder after a stale scrub await.
+    expect(session.messages.some((m) => (
+      m.role === 'assistant'
+      && m.id !== danglingAssistant.id
+      && m.id !== newerPlaceholder.id
+      && (m.content === '' || m.content.trim() === '')
+    ))).toBe(false);
+  });
+
+
 });
