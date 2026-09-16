@@ -136,12 +136,17 @@ function getActiveChatDiagnosticsTaskId(sessionId: string | null): string | null
 
 function getAnyActiveChatDiagnosticsTaskId(): string | null {
   // Fallback: if the caller doesn't know the session, return whichever task
-  // was most recently set. Used by stopGeneration when the owning session
-  // can't be resolved.
+  // was most recently set. Used by stopGeneration only when owningSessionId
+  // cannot be resolved (never when a same-session newer turn may exist).
   const it = activeChatDiagnosticsTaskIds.values();
   let last: string | null = null;
   for (const id of it) last = id;
   return last;
+}
+
+/** @internal test helper — clear per-session diagnostics task bindings. */
+export function resetActiveChatDiagnosticsTaskIdsForTests(): void {
+  activeChatDiagnosticsTaskIds.clear();
 }
 
 class ChatGenerationCancelledError extends Error {
@@ -554,8 +559,9 @@ export function createChatActionMethods({
       useUIStore.getState().clearTaskProgress();
       clearChatGenerationCancel(activeSessionId);
       // Bump turn epoch so an in-flight stopGeneration (optimistic busy clear
-      // before cancel_tool_execution settles) ignores stale cancel completion.
-      bumpChatSessionTurnEpoch(activeSessionId);
+      // before cancel_tool_execution settles) ignores stale cancel completion,
+      // and so this turn's cancel catch cannot mutate a newer same-session turn.
+      const turnEpoch = bumpChatSessionTurnEpoch(activeSessionId);
       clearSessionToolRuntime(activeSessionId, set, get);
       setError(null);
 
@@ -1114,6 +1120,18 @@ export function createChatActionMethods({
         currentStreamingBuffer = '';
         if (isChatGenerationCancelledError(error)) {
           clearChatGenerationCancel(activeSessionId);
+          // Always mark THIS turn's diagnostics cancelled; never touch a newer
+          // turn's UI/runtime when the epoch has moved (Stop→send race).
+          updateDiagnosticsTask(diagnosticsTaskId, {
+            state: 'cancelled',
+            cancelable: false,
+          });
+          if (getActiveChatDiagnosticsTaskId(activeSessionId) === diagnosticsTaskId) {
+            setActiveChatDiagnosticsTaskId(activeSessionId, null);
+          }
+          if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+            return;
+          }
           setStreaming(false);
           set({
             streamingContent: '',
@@ -1122,11 +1140,6 @@ export function createChatActionMethods({
             pendingToolCalls: 0,
             pendingToolResults: [],
           });
-          updateDiagnosticsTask(diagnosticsTaskId, {
-            state: 'cancelled',
-            cancelable: false,
-          });
-          setActiveChatDiagnosticsTaskId(activeSessionId, null);
           useUIStore.getState().setActiveSkill(null);
 
           set((state) => ({
@@ -1394,16 +1407,24 @@ export function createChatActionMethods({
         set({ pendingToolCalls: 0, pendingToolResults: [] });
       }
 
-      // AUDIT-FIX [audit-1#2] — Cancel the diagnostics task that owned this
-      // Stop, not a newer task registered by a same-session send mid-cancel.
-      const cancelledTaskId = diagnosticsTaskIdAtStop ?? getAnyActiveChatDiagnosticsTaskId();
-      if (cancelledTaskId) {
-        updateDiagnosticsTask(cancelledTaskId, {
+      // AUDIT-FIX [audit-1#2] — Cancel only the snapshotted diagnostics task
+      // from Stop start. Never fall back to "any active" when we know the
+      // owning session — that can mis-mark a newer same-session turn's task.
+      if (diagnosticsTaskIdAtStop) {
+        updateDiagnosticsTask(diagnosticsTaskIdAtStop, {
           state: 'cancelled',
           cancelable: false,
         });
-        if (getActiveChatDiagnosticsTaskId(owningSessionId) === cancelledTaskId) {
+        if (getActiveChatDiagnosticsTaskId(owningSessionId) === diagnosticsTaskIdAtStop) {
           setActiveChatDiagnosticsTaskId(owningSessionId, null);
+        }
+      } else if (!owningSessionId) {
+        const fallbackTaskId = getAnyActiveChatDiagnosticsTaskId();
+        if (fallbackTaskId) {
+          updateDiagnosticsTask(fallbackTaskId, {
+            state: 'cancelled',
+            cancelable: false,
+          });
         }
       }
     },

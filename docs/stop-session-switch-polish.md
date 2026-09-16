@@ -12,7 +12,7 @@ Companion plan: [`soak-polish-plan.md`](./soak-polish-plan.md) · scout: [`soak-
 | **A ≠ B isolation** | Stop cancels only `owningSessionId` tools/messages; B history untouched |
 | **Stop visible while streaming / long tool** | `shouldShowStopControl` — Stop when `isStreaming` **or** pending tools/results |
 | **Session-switch busy binding** | `selectSession` clears global busy flags then syncs selected session tool runtime (rebind, not idle-only) |
-| **Same-session Stop→send race** | Per-session turn epoch: `sendMessage` bumps; stale `stopGeneration` cancel completion skips session mutations |
+| **Same-session Stop→send race** | Per-session turn epoch: `sendMessage` bumps; stale `stopGeneration` cancel completion **and** stale `sendMessage` cancel catch skip session mutations; diagnostics cancel uses Stop snapshot only (no newer-turn fallback) |
 | **Stop A leaves B runtime** | Stop cancels only A's executionIds; B unresolved tools / executionIds remain |
 
 ## Entry points

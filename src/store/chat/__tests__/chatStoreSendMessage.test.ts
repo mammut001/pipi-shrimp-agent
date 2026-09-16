@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, jest } from '@jest/globals';
+import { describe, expect, it, beforeEach, afterEach, jest } from '@jest/globals';
 import type { Session } from '../../../types/chat';
 
 const mockInvoke = jest.fn<(...args: unknown[]) => Promise<unknown>>();
@@ -161,6 +161,8 @@ import {
   bumpChatSessionTurnEpoch,
   resetChatSessionTurnEpochForTests,
 } from '../chatStreaming';
+import { resetActiveChatDiagnosticsTaskIdsForTests } from '../chatActions';
+import { useTaskRegistryStore } from '../../taskRegistryStore';
 
 async function* streamOneAssistantReply() {
   yield { type: 'text_delta' as const, content: 'Hello ' };
@@ -277,6 +279,8 @@ describe('chatStore sendMessage integration', () => {
     jest.useFakeTimers();
     resetAllSessionToolRuntime();
     resetChatSessionTurnEpochForTests();
+    resetActiveChatDiagnosticsTaskIdsForTests();
+    useTaskRegistryStore.getState().clearTasks();
     mockInvoke.mockReset();
     mockRunChatTurn.mockReset();
     mockAddNotification.mockReset();
@@ -1276,6 +1280,185 @@ describe('chatStore sendMessage integration', () => {
     expect(useChatStore.getState().pendingToolCalls).toBe(1);
     expect(useChatStore.getState().isStreaming).toBe(true);
     expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+  });
+
+  it('soak knife 3: concurrent old-send → Stop(slow cancel) → new-send does not wipe new turn', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-turn ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'fresh-after-stop' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old message');
+    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-old-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    expect(useTaskRegistryStore.getState().tasks.some((t) => t.source === 'session:session-1')).toBe(true);
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Distinct Date.now() for the new diagnostics task id under fake timers.
+    jest.advanceTimersByTime(25);
+
+    const sendNew = useChatStore.getState().sendMessage('new message after stop');
+    for (let i = 0; i < 80 && useChatStore.getState().sessions[0]?.messages.filter((m) => m.role === 'user').length < 2; i += 1) {
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().sessions[0]?.messages.filter((m) => m.role === 'user')).toHaveLength(2);
+
+    // Old send's cancel catch runs after new send bumped the epoch.
+    releaseOldStream('abort');
+    await sendOld;
+
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    const userContents = session.messages.filter((m) => m.role === 'user').map((m) => m.content);
+    expect(userContents).toEqual(expect.arrayContaining(['old message', 'new message after stop']));
+    expect(useChatStore.getState().error).toBeNull();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('fresh-after-stop')
+    ))).toBe(true);
+
+    const newTask = useTaskRegistryStore.getState().tasks.find((t) => (
+      t.source === 'session:session-1' && (t.title ?? '').includes('new message after stop')
+    ));
+    expect(newTask).toBeDefined();
+    expect(newTask!.state).toBe('completed');
+  });
+
+  it('soak knife 3: Stop with null diagnostics snapshot must not cancel newer turn task', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    // Streaming/tools without a registered diagnostics binding (snapshot null).
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-orphan', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-orphan',
+      'execute_command',
+      'exec-orphan-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(5);
+    mockRunChatTurn.mockImplementation(() => streamOneAssistantReply());
+    const sendNew = useChatStore.getState().sendMessage('fresh turn mid-cancel');
+    for (let i = 0; i < 40 && !useChatStore.getState().isStreaming && useTaskRegistryStore.getState().tasks.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+
+    const midTasks = useTaskRegistryStore.getState().tasks.filter((t) => t.source === 'session:session-1');
+    expect(midTasks.length).toBeGreaterThan(0);
+    const newTaskId = midTasks[midTasks.length - 1]!.id;
+
+    releaseCancel();
+    await stopPromise;
+    await sendNew;
+
+    const after = useTaskRegistryStore.getState().tasks.find((t) => t.id === newTaskId);
+    expect(after).toBeDefined();
+    expect(after!.state).toBe('completed');
+    expect(after!.state).not.toBe('cancelled');
   });
 
 });
