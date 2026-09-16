@@ -98,8 +98,9 @@ function emitSessionToolTerminal(
   });
 }
 
-const NO_PROJECT_FOLDER_MESSAGE =
-  'No Project Folder is bound to this session. Set a Project Folder (the user\'s repo) before running workspace tools like list_files, write_file, create_directory, execute_command, or compile_typst_file.';
+/** Greppable unbound denial — keep in sync with chip hint / docs. */
+export const NO_PROJECT_FOLDER_MESSAGE =
+  'No Project Folder is bound. Use the Project Folder chip above the composer to bind your repo before running workspace tools (list_files, write_file, create_directory, execute_command, compile_typst_file).';
 
 function buildNoProjectFolderToolError(toolName: string): string {
   return JSON.stringify({

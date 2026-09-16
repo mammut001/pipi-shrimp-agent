@@ -46,6 +46,15 @@ describe('ChatInput two-folder copy', () => {
     expect(chipSource).toMatch(/chat\.projectFolderTooltip/);
   });
 
+  it('surfaces the unbound Project Folder hint on the empty chip', () => {
+    // Scout leftover: clearer unbound denial. The empty project chip must
+    // render chat.noProjectFolderHint (not leave the i18n key unused) and
+    // expose a stable test id for Manual D / soak observers.
+    expect(chipSource).toMatch(/chat\.noProjectFolderHint/);
+    expect(chipSource).toMatch(/project-folder-unbound-hint/);
+    expect(chipSource).toMatch(/chat\.noPipiOutputFolderHint/);
+  });
+
   it('labels the PiPi Output Folder chip with the new "output folder" terminology', () => {
     // PiPi Output Folder is the app-owned output root. It must be
     // addressable independently of the Project Folder. The labels

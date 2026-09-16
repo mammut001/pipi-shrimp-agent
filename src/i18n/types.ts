@@ -197,11 +197,15 @@ export type TranslationKeys = {
   'chat.projectFolderTooltip': string;
   'chat.setProjectFolder': string;
   'chat.noProjectFolderHint': string;
+  'chat.selectProjectFolderDialog': string;
+  'chat.folderDialogBusy': string;
+  'chat.folderDialogFailed': string;
   // Two-folder model — PiPi Output Folder (app-owned output root).
   'chat.pipiOutputFolder': string;
   'chat.pipiOutputFolderTooltip': string;
   'chat.setPipiOutputFolder': string;
   'chat.noPipiOutputFolderHint': string;
+  'chat.selectPipiOutputFolderDialog': string;
   'chat.openPipiOutputFolder': string;
   'chat.contextFiles': string;
   'chat.contextFileExternal': string;

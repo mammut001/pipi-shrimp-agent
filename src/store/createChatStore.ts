@@ -42,6 +42,11 @@ import {
   getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper,
   getSessionProjectDir as resolveSessionProjectDirHelper,
 } from '../utils/sessionFolders';
+import {
+  FOLDER_DIALOG_BUSY_ERROR,
+  folderDialogTitle,
+  isFolderDialogBusyError,
+} from '../services/workspace/folderDialog';
 import { useUIStore } from './uiStore';
 
 // AUDIT-FIX [fix-20#1] — Renamed from the legacy `ai-agent-*` namespace
@@ -1061,7 +1066,18 @@ export const useChatStore = create<ChatState>()(
     },
 
     setSessionProjectDir: async (sessionId: string) => {
-      const selectedPath = await invoke<string | null>('open_folder_dialog');
+      let selectedPath: string | null;
+      try {
+        selectedPath = await invoke<string | null>('open_folder_dialog', {
+          title: folderDialogTitle('project'),
+        });
+      } catch (error) {
+        const message = isFolderDialogBusyError(error)
+          ? `Folder picker already open (${FOLDER_DIALOG_BUSY_ERROR}). Close it, then try again.`
+          : `Could not open Project Folder picker: ${error instanceof Error ? error.message : String(error)}`;
+        useUIStore.getState().addNotification('warning', message, sessionId);
+        return null;
+      }
       if (!selectedPath) {
         return null;
       }
@@ -1097,7 +1113,18 @@ export const useChatStore = create<ChatState>()(
     },
 
     setSessionPipiOutputDir: async (sessionId: string) => {
-      const selectedPath = await invoke<string | null>('open_folder_dialog');
+      let selectedPath: string | null;
+      try {
+        selectedPath = await invoke<string | null>('open_folder_dialog', {
+          title: folderDialogTitle('output'),
+        });
+      } catch (error) {
+        const message = isFolderDialogBusyError(error)
+          ? `Folder picker already open (${FOLDER_DIALOG_BUSY_ERROR}). Close it, then try again.`
+          : `Could not open PiPi Output Folder picker: ${error instanceof Error ? error.message : String(error)}`;
+        useUIStore.getState().addNotification('warning', message, sessionId);
+        return null;
+      }
       if (!selectedPath) {
         return null;
       }
