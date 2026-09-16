@@ -666,6 +666,33 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
                 "additionalProperties": false
             }
         }),
+        serde_json::json!({
+            "name": "test_barrier_tool",
+            "description": "Harness tool (Manual D / live soak): block until release_test_barrier(barrier_id) or cancel_tool_execution(executionId). Not for production agent use.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "barrier_id": {
+                        "type": "string",
+                        "description": "Barrier identifier shared with release_test_barrier."
+                    },
+                    "barrierId": {
+                        "type": "string",
+                        "description": "CamelCase alias for barrier_id."
+                    },
+                    "executionId": {
+                        "type": "string",
+                        "description": "Optional execution identifier used to cancel this wait via cancel_tool_execution."
+                    },
+                    "execution_id": {
+                        "type": "string",
+                        "description": "Legacy snake_case alias for executionId."
+                    }
+                },
+                "required": ["barrier_id"],
+                "additionalProperties": false
+            }
+        }),
     ];
 
     if allow_browser_tools {
@@ -749,8 +776,33 @@ mod tests {
         // action (see `PLAN_MODE_SYSTEM_PROMPT` in
         // `src/services/planMode.ts`) so the model never calls a tool
         // the Rust registry does not implement.
-        assert_eq!(get_tools(false).len(), 25);
-        assert_eq!(get_tools(true).len(), 35);
+        assert_eq!(get_tools(false).len(), 26);
+        assert_eq!(get_tools(true).len(), 36);
+    }
+
+
+    #[test]
+    fn exposes_test_barrier_tool_in_model_catalog() {
+        let tools = get_tools(false);
+        let barrier = tools
+            .iter()
+            .find(|t| t.get("name").and_then(|v| v.as_str()) == Some("test_barrier_tool"))
+            .expect("test_barrier_tool must be in the model-facing catalog for Manual D / live soak");
+        assert!(
+            barrier["description"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("harness"),
+            "description should mark this as a harness tool"
+        );
+        let required = barrier["input_schema"]["required"]
+            .as_array()
+            .expect("required array");
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("barrier_id")),
+            "barrier_id must be required"
+        );
     }
 
     #[test]
